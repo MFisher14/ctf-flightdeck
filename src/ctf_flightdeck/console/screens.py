@@ -1,4 +1,4 @@
-"""Modal screens: prompts for interventions, the take-over placeholder and help."""
+"""Modal screens: fork and kill prompts, the take-over placeholder, a challenge card and help."""
 
 from __future__ import annotations
 
@@ -8,21 +8,26 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
-from ..core.model import AlertKind
+from ..core.model import AlertKind, Challenge, ChallengeStatus
+from ..text import untrusted
+from . import theme
+from .commands import COMMANDS
 
 MODAL_CSS = """
 {name} {{ align: center middle; background: $background 60%; }}
 {name} > Vertical {{
-    width: 96; max-width: 100%; height: auto; max-height: 90%;
-    border: thick $accent; background: $surface; padding: 1 2;
+    width: 100; max-width: 100%; height: auto; max-height: 90%;
+    border: round $accent; background: $surface; padding: 1 2;
 }}
 {name} .muted {{ color: $text-muted; }}
 {name} .keys {{ color: $text-muted; margin-top: 1; }}
-{name} Input, {name} Select {{ margin-top: 1; }}
+{name} Input {{ margin-top: 1; border: round #3c4146; }}
+{name} Input:focus {{ border: round $accent; }}
+{name} Select {{ margin-top: 1; }}
 {name} Horizontal {{ height: auto; margin-top: 1; }}
 {name} Button {{ margin-right: 2; }}
 """
@@ -33,41 +38,9 @@ def _keys(*pairs: tuple[str, str]) -> Text:
     for i, (key, label) in enumerate(pairs):
         if i:
             text.append("   ")
-        text.append(f" {key} ", "bold reverse")
+        text.append_text(theme.key_chip(key))
         text.append(f" {label}")
     return text
-
-
-class TextPrompt(ModalScreen[str | None]):
-    """Free text for a hint or a redirect. A suggested text arrives prefilled and selected."""
-
-    DEFAULT_CSS = MODAL_CSS.format(name="TextPrompt") + "TextPrompt > Vertical { width: 124; }"
-    BINDINGS = [Binding("escape", "cancel", "cancel")]
-
-    def __init__(self, title: Text, context: Text | None, value: str = "", placeholder: str = "") -> None:
-        super().__init__()
-        self.prompt_heading, self.prompt_context = title, context
-        self.prompt_value, self.prompt_placeholder = value, placeholder
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static(self.prompt_heading)
-            if self.prompt_context is not None:
-                yield Static(self.prompt_context, classes="muted")
-            yield Input(value=self.prompt_value, placeholder=self.prompt_placeholder, id="prompt-input")
-            yield Static(_keys(("enter", "send"), ("esc", "cancel")), classes="keys")
-
-    def on_mount(self) -> None:
-        field = self.query_one(Input)
-        field.cursor_blink = False  # steady cursor: screenshots stay deterministic
-        field.focus()
-
-    @on(Input.Submitted)
-    def _submit(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
 
 
 class ForkPrompt(ModalScreen[tuple[str, str] | None]):
@@ -84,7 +57,7 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static(self.fork_heading)
-            yield Static(Text("Approach for the new lane (optional; becomes its plan):"), classes="muted")
+            yield Static(Text("Approach for the new lane (optional; it becomes its plan):"), classes="muted")
             yield Input(value=self.fork_approach, placeholder="e.g. read the source before touching the instance", id="fork-approach")
             yield Static(Text("Model:"), classes="muted")
             yield Select([(m, m) for m in self.fork_models], value=self.fork_model, allow_blank=False, id="fork-model")
@@ -92,7 +65,7 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
 
     def on_mount(self) -> None:
         field = self.query_one(Input)
-        field.cursor_blink = False
+        field.cursor_blink = False  # a steady cursor keeps screenshots deterministic
         field.focus()
 
     @on(Input.Submitted)
@@ -104,7 +77,7 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
 
 
 class KillPrompt(ModalScreen[str | None]):
-    """Kill: re-queue the challenge fresh, or park it."""
+    """Kill: re-queue the challenge fresh, or park it. Enter cancels: it is the safe choice."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="KillPrompt")
     BINDINGS = [
@@ -123,14 +96,18 @@ class KillPrompt(ModalScreen[str | None]):
             yield Static(
                 Text(
                     "Re-queue fresh: the challenge goes to the front of the queue and a new lane "
-                    "starts with a clean context.\nPark: the challenge is set aside until you start it again."
+                    "starts with a clean context.\nPark: the challenge is set aside; queue it again "
+                    "from its board card (enter on the board) or with /queue."
                 ),
                 classes="muted",
             )
             with Horizontal():
+                yield Button("Cancel (esc)", id="cancel")
                 yield Button("Re-queue fresh (r)", id="requeue", variant="warning")
                 yield Button("Park (p)", id="park", variant="error")
-                yield Button("Cancel (esc)", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
@@ -158,8 +135,9 @@ class TakeOverScreen(ModalScreen[None]):
         title = Text()
         title.append(f"Take over {lane}", "bold")
         title.append(" · ")
-        title.append(self.challenge_name, "bold")
-        title.append("    placeholder: this is the M0 mock", "bold black on yellow")
+        title.append(untrusted(self.challenge_name, one_line=True), "bold")
+        title.append("    ")
+        title.append_text(theme.chip("placeholder: this is the M0 mock", theme.INK, theme.ACCENT))
         here = Text()
         here.append("In M1 this drops you into a shell in the lane's workspace:\n")
         docker, host = ("bold", "dim") if self.containerized else ("dim", "bold")
@@ -175,7 +153,7 @@ class TakeOverScreen(ModalScreen[None]):
         here.append("Right now ", "dim")
         here.append(lane, "bold")
         here.append(" is in state ", "dim")
-        here.append("takeover", "bold cyan")
+        here.append("takeover", f"bold {theme.CYAN}")
         here.append(" and does not run.", "dim")
         with Vertical():
             yield Static(title)
@@ -191,25 +169,76 @@ class TakeOverScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class ChallengeCard(ModalScreen[str | None]):
+    """A challenge from the board: what it is, who has it, and what you can do with it."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="ChallengeCard")
+    BINDINGS = [
+        Binding("q", "choose('queue')", "queue"),
+        Binding("c", "choose('claim')", "claim"),
+        Binding("escape", "choose('')", "close"),
+    ]
+
+    def __init__(self, challenge: Challenge, lanes: list[str], owner: str, team: bool) -> None:
+        super().__init__()
+        self.card_challenge, self.card_lanes, self.card_owner, self.card_team = challenge, lanes, owner, team
+
+    def compose(self) -> ComposeResult:
+        from .views import BOARD_MARK
+
+        ch = self.card_challenge
+        mark, color = BOARD_MARK[ch.status]
+        title = Text()
+        title.append(untrusted(ch.name, one_line=True), "bold")
+        title.append(f"   {ch.category} · {ch.points} pts · {ch.solves} solves · ", "dim")
+        title.append(f"{mark} {ch.status.value}", color)
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(style="bold dim", no_wrap=True)
+        grid.add_column()
+        grid.add_row("about", Text(untrusted(ch.description or "-", one_line=True)))
+        grid.add_row("files", Text(untrusted(", ".join(ch.files) or "-", one_line=True) + (" · live instance" if ch.live else ""), "dim"))
+        if self.card_owner:
+            grid.add_row("owner", Text(untrusted(self.card_owner, one_line=True)))
+        if ch.note:
+            grid.add_row("note", Text(untrusted(ch.note, one_line=True), theme.YELLOW))
+        grid.add_row("lanes", Text(", ".join(self.card_lanes) or "none", "dim"))
+        keys: list[tuple[str, str]] = []
+        if ch.status in (ChallengeStatus.PARKED, ChallengeStatus.NEW) and not self.card_lanes:
+            keys.append(("q", "queue a fresh lane"))
+        if self.card_team and not ch.closed:
+            keys.append(("c", "claim or release"))
+        keys.append(("esc", "close"))
+        with Vertical():
+            yield Static(Group(title, Text(""), grid))
+            yield Static(_keys(*keys), classes="keys")
+
+    def action_choose(self, choice: str) -> None:
+        self.dismiss(choice or None)
+
+
 KEY_HELP = (
+    ("enter / o", "Open the selected lane full screen (its transcript, files and a chat box)"),
     ("p", "Pause or resume the selected lane"),
-    ("h", "Hint: free text injected into the lane's next turn"),
-    ("r", "Redirect: replace the lane's plan with a new direction"),
+    ("h", "Hint: a message the lane reads on its next turn (opens /hint in the bar)"),
+    ("r", "Redirect: replace the lane's plan (opens /redirect, with the suggestion)"),
     ("f", "Fork: a sibling lane on the same challenge, another approach or model"),
     ("k", "Kill the lane: re-queue the challenge fresh, or park it"),
     ("e", "Escalate: hand a compact summary to the next stronger model"),
     ("t", "Take over: a shell in the lane's workspace (placeholder in M0)"),
     ("a", "Approve what the lane waits for: submit, more budget, live-box access"),
     ("c", "Team mode: claim or release the selected challenge"),
-    ("/", "Filter lanes (words match name, category, model, state, alert)"),
+    ("/", "Command bar: slash commands with completion; plain text messages the lane"),
     ("s", "Change the lane sort: attention, idle, cost, turns, lane"),
-    ("tab", "Move focus: board, lanes, detail"),
-    ("enter", "On the 'finished' row: expand or collapse finished lanes"),
+    ("tab", "Move focus: board, lanes, command bar"),
+    ("enter on ▸", "Expand or collapse finished lanes"),
+    ("enter on board", "A challenge's card: queue it, claim it, open its lane"),
+    ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
+    ("ctrl+n", "In a lane: jump to the next lane that needs you"),
     ("q", "Quit"),
 )
 MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
-    (".", "Step the mock clock one tick (while frozen)"),
+    (".", "Step the mock clock one tick"),
 )
 ALERT_HELP = (
     (AlertKind.EFFORT, "Turns or tokens are high for a low-point challenge with many solves"),
@@ -228,7 +257,10 @@ BOARD_HELP = (
 
 
 class HelpScreen(ModalScreen[None]):
-    DEFAULT_CSS = MODAL_CSS.format(name="HelpScreen") + "HelpScreen > Vertical { width: 110; }"
+    DEFAULT_CSS = MODAL_CSS.format(name="HelpScreen") + """
+    HelpScreen > Vertical { width: 112; }
+    HelpScreen #help-body { height: auto; max-height: 1fr; }
+    """
     BINDINGS = [
         Binding("escape", "close", "close"),
         Binding("question_mark", "close", "close"),
@@ -240,32 +272,36 @@ class HelpScreen(ModalScreen[None]):
         self.show_mock_keys = mock
 
     def compose(self) -> ComposeResult:
-        from .views import alert_style
-
         keys = Table.grid(padding=(0, 2))
         keys.add_column(style="bold", no_wrap=True)
         keys.add_column()
         for key, text in KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
             keys.add_row(Text(key), Text(text))
+        commands = Table.grid(padding=(0, 2))
+        commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
+        commands.add_column()
+        for command in COMMANDS:
+            commands.add_row(Text(f"/{command.name} {command.args}".rstrip()), Text(command.help))
         alerts = Table.grid(padding=(0, 2))
         alerts.add_column(no_wrap=True)
         alerts.add_column()
         for kind, text in ALERT_HELP:
-            alerts.add_row(Text(f"▲ {kind.tag}", alert_style(kind)), Text(f"{kind.label}: {text}"))
-        alerts.add_row(Text("◆ ...", "bold magenta"), Text("Waiting for your approval (press a)"))
+            alerts.add_row(theme.chip(kind.tag, *theme.alert_colors(kind)), Text(f"{kind.label}: {text}"))
+        alerts.add_row(theme.chip("submit", *theme.PENDING_COLORS), Text("Waiting for your approval (press a, or /approve)"))
         board = Text()
         for mark, meaning in BOARD_HELP:
             board.append(f"{mark} ", "bold")
             board.append(f"{meaning}   ")
         body = Group(
-            Text("Keys", "bold underline"), keys, Text(""),
-            Text("Alerts (lanes are sorted with alerts first, then approvals, then running by idle time)", "bold underline"),
-            alerts, Text(""),
+            Text("Keys (fleet)", "bold underline"), keys, Text(""),
+            Text("Commands (the bar at the bottom; plain text is a message to the lane)", "bold underline"), commands, Text(""),
+            Text("Alerts (lanes that need you come first, most urgent first)", "bold underline"), alerts, Text(""),
             Text("Board", "bold underline"), board,
         )
         with Vertical():
-            yield Static(body)
-            yield Static(_keys(("esc", "close")), classes="keys")
+            with VerticalScroll(id="help-body"):
+                yield Static(body)
+            yield Static(_keys(("esc", "close"), ("↑↓", "scroll")), classes="keys")
 
     def action_close(self) -> None:
         self.dismiss(None)

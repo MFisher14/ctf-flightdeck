@@ -64,12 +64,14 @@ def mock(
     ] = None,
     speed: Annotated[
         float, typer.Option("--speed", min=0.25, max=20.0, help="Mock clock ticks per second (live console).")
-    ] = 2.0,
+    ] = 1.0,
 ) -> None:
     """Open the console on fake, scripted data (M0 mock). No models, no network."""
     containerized = None if host is None else not host
     if screenshot is not None:
         from .mock.screenshots import capture
+
+        screenshot = screenshot.expanduser()  # the shell leaves ~ alone in --screenshot=~/x
 
         try:
             screenshot.mkdir(parents=True, exist_ok=True)
