@@ -13,7 +13,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..core.driver import TurnReport
-from ..core.model import Alert, AlertKind, Challenge, Lane, LaneState, Pending, PendingKind
+from ..core.model import (
+    Alert,
+    AlertKind,
+    Challenge,
+    EscalationSummary,
+    FileChange,
+    Lane,
+    LaneState,
+    Pending,
+    PendingKind,
+)
 
 if TYPE_CHECKING:
     from ..core.deck import Deck
@@ -37,6 +47,7 @@ class Step:
     tokens: int | None = None  # None: grows with the turn number (context grows)
     plan: str | None = None
     artifacts: tuple[str, ...] = ()
+    files: tuple[FileChange, ...] = ()  # files this step changed in the workspace
     alert: Alert | AlertFactory | None = None  # a factory sees the lane after this turn
     clear: tuple[AlertKind, ...] = ()
     pending: Pending | None = None
@@ -70,6 +81,7 @@ class _Run:
     next_at: float
     index: int = 0
     inserted: list[Step] = field(default_factory=list)  # acknowledgements go first
+    unread_hints: int = 0  # hints sent since the last step; the next step reads them
 
 
 class ScriptedDriver:
@@ -115,6 +127,7 @@ class ScriptedDriver:
 
     def hint(self, lane: Lane, text: str) -> None:
         run = self.runs[lane.id]
+        run.unread_hints += 1
         if run.script.on_hint:
             self._branch(run, run.script.on_hint)
         else:
@@ -127,7 +140,7 @@ class ScriptedDriver:
         else:
             run.inserted.append(Step(do=f"switches to the new plan: {text}", out="dropping the old plan"))
 
-    def escalate(self, lane: Lane, model: str, summary: str) -> None:
+    def escalate(self, lane: Lane, model: str, summary: EscalationSummary) -> None:
         run = self.runs[lane.id]
         if run.script.on_escalate:
             self._branch(run, run.script.on_escalate)
@@ -165,6 +178,7 @@ class ScriptedDriver:
         price = self.prices.get(lane.model)
         dollars = None if price is None else tokens * price / 1_000_000
         alert = step.alert
+        hints_taken, run.unread_hints = run.unread_hints, 0
         self.deck.report(
             lane.id,
             TurnReport(
@@ -174,11 +188,13 @@ class ScriptedDriver:
                 dollars=dollars,
                 plan=step.plan,
                 artifacts=step.artifacts,
+                files=step.files,
                 alerts=(alert,) if isinstance(alert, Alert) else (),
                 clear=step.clear,
                 pending=step.pending,
                 flag=step.flag,
                 gave_up=step.gave_up,
+                hints_taken=hints_taken,
             ),
         )
         if alert is not None and not isinstance(alert, Alert) and not lane.finished:
@@ -208,3 +224,15 @@ class ScriptedDriver:
         run.repeat_from = None
         run.inserted.clear()
         run.next_at = self.deck.now + SECONDS_PER_TICK
+
+
+def new_file(path: str, body: str) -> FileChange:
+    """A file the lane created, as a unified diff."""
+    lines = body.strip("\n").splitlines()
+    head = f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{len(lines)} @@\n"
+    return FileChange(path, head + "\n".join("+" + line for line in lines), "added")
+
+
+def edit(path: str, hunk: str) -> FileChange:
+    """A file the lane changed; `hunk` is the unified-diff body from the @@ line on."""
+    return FileChange(path, f"--- a/{path}\n+++ b/{path}\n" + hunk.strip("\n"), "modified")

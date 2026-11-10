@@ -1,9 +1,9 @@
 """`flightdeck mock --screenshot DIR`: play a scenario headless and save SVG screenshots
-of its key moments (wave drop, an alert with its suggested action, an intervention,
-the detail pane, team stop, approve submit, the prompts, take over and help).
+of its key moments.
 
 Moments are found by watching the deck, so any scenario works; a moment the scenario
-does not have (no teammates in solo mode, say) is reported as skipped, not faked.
+does not have (no teammates in solo mode, no wave) is reported as skipped, never faked.
+The clock is advanced without redrawing between ticks, so a run takes seconds.
 """
 
 from __future__ import annotations
@@ -14,21 +14,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..console.app import FlightdeckApp
+from ..console.focus import FocusScreen
 from ..core.attention import SortMode, sort_lanes
-from ..core.model import AlertKind, Lane, LaneState, PendingKind
+from ..core.model import AlertKind, ChallengeStatus, Lane, LaneState, PendingKind
 from . import scenarios
+from .scenarios import ReleaseAt
 from .world import FakeWorld
 
-SIZE = (160, 48)
+SIZE = (160, 46)
+NARROW = (120, 36)
 
-# Which key answers which alert, for the "intervention" moment.
-ANSWER = {
-    AlertKind.HINT: "r",
-    AlertKind.DIRECTION: "r",
-    AlertKind.EFFORT: "h",
-    AlertKind.LOOP: "h",
-    AlertKind.STALL: "e",
-}
+# The course alerts, in the order the runner looks for one to show and answer.
 PREFERRED = (AlertKind.HINT, AlertKind.DIRECTION, AlertKind.EFFORT, AlertKind.LOOP, AlertKind.STALL)
 
 
@@ -51,103 +47,108 @@ def capture(
     return asyncio.run(_capture(world, Path(out_dir), size))
 
 
-class _Shots:
-    def __init__(self, app: FlightdeckApp, pilot, out_dir: Path, result: CaptureResult) -> None:
-        self.app, self.pilot, self.out_dir, self.result = app, pilot, out_dir, result
+class _Run:
+    def __init__(self, app: FlightdeckApp, world: FakeWorld, pilot, out_dir: Path, result: CaptureResult) -> None:
+        self.app, self.world, self.pilot, self.out_dir, self.result = app, world, pilot, out_dir, result
 
-    async def take(self, name: str, *, keep_toasts: bool = False) -> None:
-        if not keep_toasts:
-            self.app.clear_notifications()
+    async def shot(self, name: str) -> None:
+        self.app.refresh_view()
         await self.pilot.pause()
         filename = f"{len(self.result.saved) + 1:02d}-{name}.svg"
         self.result.saved.append(Path(self.app.save_screenshot(filename=filename, path=str(self.out_dir))))
-        self.app.clear_notifications()  # the next shot shows only its own toasts
 
     async def advance_until(self, done: Callable[[], bool], limit: int) -> bool:
+        """Tick the world (no redraw per tick) until `done`, then redraw once."""
+        reached = done()
         for _ in range(limit):
-            if done():
-                return True
-            self.app.step()
-            await self.pilot.pause()
-        return done()
+            if reached:
+                break
+            self.world.tick()
+            reached = done()
+        self.app.refresh_view()
+        await self.pilot.pause()
+        return reached
 
     async def press(self, *keys: str) -> None:
         await self.pilot.press(*keys)
+        await self.pilot.pause()
+
+    async def fleet(self, select: str | None = None) -> None:
+        self.app.show_fleet(select=select)
         await self.pilot.pause()
 
 
 async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> CaptureResult:
     deck = world.deck
     result = CaptureResult()
-    app = FlightdeckApp(deck, ticker=world.tick, mock=f"MOCK · {world.scenario.name}")
-    async with app.run_test(size=size, notifications=True) as pilot:
-        shots = _Shots(app, pilot, out_dir, result)
+    app = FlightdeckApp(deck, ticker=world.tick, mock=f"MOCK · {world.scenario.name}", refresh_seconds=None)
+    async with app.run_test(size=size) as pilot:
+        run = _Run(app, world, pilot, out_dir, result)
 
         def top_lane() -> Lane | None:
             ordered = sort_lanes(deck.lanes.values(), SortMode.ATTENTION, deck.now)
             return ordered[0] if ordered else None
 
-        await shots.take("open")
-
-        # Wave drop: ten or more challenges released at once.
-        sizes = [len(deck.challenges)]
-
-        def wave_dropped() -> bool:
-            sizes.append(len(deck.challenges))
-            return sizes[-1] - sizes[-2] >= 10
-
-        if await shots.advance_until(wave_dropped, limit=80):
-            lane = top_lane()
-            if lane is not None:
-                app.select_lane(lane.id)
-            await shots.take("wave-drop", keep_toasts=True)
-        else:
-            result.skipped.append("wave-drop: the scenario releases no wave of 10+ challenges")
-
-        # An alert with its suggested action, then the player answering it.
-        def course_lane() -> Lane | None:
+        def course_lane() -> tuple[Lane, AlertKind] | None:
             for kind in PREFERRED:
                 for lane in deck.active_lanes():
-                    if lane.alert(kind) is not None:
-                        return lane
+                    if lane.alert(kind) is not None and lane.pending is None:
+                        return lane, kind
             return None
 
-        if await shots.advance_until(lambda: course_lane() is not None, limit=60):
-            lane = course_lane()
-            assert lane is not None
-            kind = next(k for k in PREFERRED if lane.alert(k) is not None)
-            app.select_lane(lane.id)
-            await shots.take(f"alert-{kind.tag}")
-            key = ANSWER[kind]
-            await shots.press(key)
-            if key in ("r", "h"):
-                await shots.take("redirect-prompt" if key == "r" else "hint-prompt")
-                await shots.press("enter")
-            await shots.take(f"intervened-{kind.tag}", keep_toasts=True)
-            if await shots.advance_until(lambda: lane.pending is not None or lane.finished, limit=12):
-                app.select_lane(lane.id)
-                await shots.take("detail-pane")
+        await run.shot("open")
+
+        # Wave drop: only if the scenario has one still to come.
+        waves = [at for at, ev in world.scenario.timeline if isinstance(ev, ReleaseAt) and len(ev.ids) >= 10 and at > world.ticks]
+        if waves:
+            await run.advance_until(lambda: world.ticks >= waves[0], limit=waves[0] - world.ticks + 1)
+            top = top_lane()
+            if top is not None:
+                app.fleet.select_lane(top.id)
+            await run.shot("wave-drop")
         else:
-            result.skipped.append("alert: no lane raised a course alert (hint, wrong way, effort, loop, stall)")
-            lane = None
+            result.skipped.append("wave-drop: the scenario has no wave of 10+ challenges still to come")
 
-        # Approve submit: a lane waiting with a flag, then the board after approval.
-        def flag_lane() -> Lane | None:
-            if lane is not None and lane.pending and lane.pending.kind is PendingKind.SUBMIT:
-                return lane
-            return next(
-                (x for x in deck.active_lanes() if x.pending and x.pending.kind is PendingKind.SUBMIT),
-                None,
-            )
+        # An alert with its suggested answers, the command bar, then the lane in focus.
+        if await run.advance_until(lambda: course_lane() is not None, limit=60):
+            lane, kind = course_lane()  # type: ignore[misc]
+            app.fleet.select_lane(lane.id)
+            await run.shot(f"alert-{kind.tag}")
+            await run.press("slash")
+            await run.shot("command-menu")
+            await run.press("escape", "escape")
+            app.open_lane(lane.id)
+            await pilot.pause()
+            await run.shot("focus-lane")
+            suggestion = next((s for s in lane.alert(kind).suggestions if s.key in ("r", "h", "e")), None)
+            text = {"r": "/redirect ", "h": "", "e": "/escalate"}.get(suggestion.key, "") + suggestion.text if suggestion else ""
+            chat = app.screen.query_one("#chat")
+            chat.start(text or "try a simpler approach first")
+            await pilot.pause()
+            await run.shot("chat")
+            await run.press("enter")
+            await run.advance_until(lambda: lane.pending is not None or lane.finished, limit=12)
+            await run.shot("focus-after")
+            if lane.files:
+                await run.press("slash", *"diff", "enter")
+                await run.shot("diff")
+        else:
+            result.skipped.append("alert: no lane raised a course alert (off-hint, wrong way, effort, loop, stall)")
 
-        if await shots.advance_until(lambda: flag_lane() is not None, limit=60):
-            waiting = flag_lane()
-            assert waiting is not None
-            app.select_lane(waiting.id)
-            await shots.take("approve-pending")
-            await shots.press("a")
-            app.select_challenge(waiting.challenge_id)
-            await shots.take("approve-submit", keep_toasts=True)
+        # Approve a submit from the focus view; the board updates in the fleet.
+        def waiting_flag() -> Lane | None:
+            return next((x for x in deck.active_lanes() if x.pending and x.pending.kind is PendingKind.SUBMIT), None)
+
+        if await run.advance_until(lambda: waiting_flag() is not None, limit=60):
+            lane = waiting_flag()
+            assert lane is not None
+            app.open_lane(lane.id)
+            await pilot.pause()
+            await run.shot("approve-pending")
+            await run.press("slash", *"approve", "enter")
+            await run.fleet()
+            app.fleet.select_challenge(lane.challenge_id)
+            await run.shot("approve-submit")
         else:
             result.skipped.append("approve-submit: no lane found a flag")
 
@@ -158,43 +159,54 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
                 None,
             )
 
-        if deck.config.team and await shots.advance_until(lambda: stopped_lane() is not None, limit=80):
+        await run.fleet()
+        if deck.config.team and await run.advance_until(lambda: stopped_lane() is not None, limit=80):
             stopped = stopped_lane()
             assert stopped is not None
-            app.select_lane(stopped.id)
-            await shots.take("team-stop", keep_toasts=True)
+            app.fleet.select_lane(stopped.id)
+            await run.shot("team-stop")
         else:
             why = "solo mode" if not deck.config.team else "no teammate solved a challenge a lane was on"
             result.skipped.append(f"team-stop: {why}")
 
-        # The lane list once every alert kind has had its chance to fire.
-        await shots.advance_until(lambda: False, limit=20)
+        # The fleet once more lanes have had their say, also at a narrower size.
+        await run.advance_until(lambda: False, limit=12)
         top = top_lane()
         if top is not None:
-            app.select_lane(top.id)
-        await shots.take("attention-sort")
+            app.fleet.select_lane(top.id)
+        await run.shot("attention-sort")
+        await pilot.resize_terminal(*NARROW)
+        await pilot.pause()
+        await run.shot(f"narrow-{NARROW[0]}x{NARROW[1]}")
+        await pilot.resize_terminal(*size)
+        await pilot.pause()
 
-        # Fork and kill prompts, on a lane with a course alert if there is one.
-        target = course_lane() or next(iter(deck.active_lanes()), None)
+        # Prompts and placeholders.
+        target = (course_lane() or (next(iter(deck.active_lanes()), None), None))[0]
         if target is not None:
-            app.select_lane(target.id)
-            await shots.press("f")
-            await shots.take("fork-prompt")
-            await shots.press("escape")
-            await shots.press("k")
-            await shots.take("kill-prompt")
-            await shots.press("escape")
+            app.fleet.select_lane(target.id)
+            await run.press("f")
+            await run.shot("fork-prompt")
+            await run.press("escape")
+            await run.press("k")
+            await run.shot("kill-prompt")
+            await run.press("escape")
         running = next((x for x in deck.active_lanes() if x.state is LaneState.RUNNING), None)
         if running is not None:
-            app.select_lane(running.id)
-            await shots.press("t")
-            await shots.take("take-over")
-            await shots.press("enter")
+            app.fleet.select_lane(running.id)
+            await run.press("t")
+            await run.shot("take-over")
+            await run.press("enter")
         else:
             result.skipped.append("take-over: no running lane left")
-        await shots.press("question_mark")
-        await shots.take("help")
-        await shots.press("escape")
+        idle = next((ch for ch in deck.challenges.values() if ch.status in (ChallengeStatus.PARKED, ChallengeStatus.QUEUED) and not deck.lanes_on(ch.id)), None)
+        if idle is not None:
+            app.fleet.select_challenge(idle.id)
+            await run.press("enter")
+            await run.shot("challenge-card")
+            await run.press("escape")
+        await run.press("question_mark")
+        await run.shot("help")
+        await run.press("escape")
+        assert not isinstance(app.screen, FocusScreen)
     return result
-
-

