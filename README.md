@@ -8,8 +8,24 @@ wrong way: a hint, a redirect, a fork, a kill, or taking over yourself.
 
 Bring what you have: an API key, an OpenRouter account, a coding-agent CLI, a folder of Python scripts.
 
-> **Status: pre-alpha.** Nothing to install yet. Milestone M0 (a clickable console mock) is in progress.
-> See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: pre-alpha.** Milestone M0, a clickable console mock with fake data, is ready for review.
+> Nothing talks to a model or a CTF yet. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## Try the mock (M0)
+
+Needs Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```sh
+uv run flightdeck mock                      # the default scenario: every alert, then a 43-challenge wave
+uv run flightdeck mock --scenario wave      # also: sstv, overthinking, web, team, flag
+uv run flightdeck mock --solo --host --max-lanes 8
+uv run flightdeck mock --screenshot .flightdeck/shots   # headless: SVGs of the key moments (git-ignored dir)
+```
+
+Keys: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill, `e` escalate, `t` take over,
+`a` approve, `c` claim (team), `/` filter, `s` sort, `tab` focus, `?` help, `q` quit. In the mock,
+`space` freezes the clock and `.` steps it. All challenges, teammates and flags are invented.
+`ctfdeck` is an alias for `flightdeck`. Tests: `uv run pytest`.
 
 ## Ideas
 

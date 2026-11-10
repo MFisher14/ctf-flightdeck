@@ -27,6 +27,21 @@ AI → agents off; no automation against live targets → instance access confir
 | Event log | Append-only JSONL of everything; feeds post-flight. |
 | Console | Textual UI over all of the above. |
 
+## The console seam (built in M0)
+
+The console never talks to lanes directly. It reads a `Deck` and sends it interventions:
+
+| Piece | Where | Job |
+|---|---|---|
+| Data model | `core/model.py` | `Challenge`, `Lane` (state, counters, plan, actions, artifacts, alerts, pending approval), `Alert` with `Suggestion`s, `Event`, `DeckConfig`. |
+| `Deck` | `core/deck.py` | Board, queue and lanes. Enforces `max_lanes` (paused and taken-over lanes keep their slot), the flag format and submit policy, 80%/100% caps, team-mode stops. Applies interventions; logs every change as an `Event`. |
+| Interventions | `core/interventions.py` | `Pause`, `Resume`, `Hint`, `Redirect`, `Fork`, `Kill`, `Escalate`, `TakeOver`, `HandBack`, `Approve`, `Claim`, `Release`, applied with `Deck.apply()` → `Outcome`. |
+| `LaneDriver` | `core/driver.py` | What does a lane's work. The deck calls `start/pause/resume/hint/redirect/escalate/approved/rejected/stop`; the driver answers each step with `Deck.report(lane_id, TurnReport)`. |
+| Attention sort | `core/attention.py` | Alerts, then approvals, then running by idle minute, then paused; finished last. |
+
+M0 plugs in `mock.script.ScriptedDriver` and a manual clock (`mock.world.FakeWorld`); M1 replaces them
+with an agent loop per lane behind the same `LaneDriver` protocol.
+
 ## Agent loop principles (from measured experience)
 
 These come from analysing about 300k agent responses across four 2026 CTFs:
