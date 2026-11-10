@@ -325,7 +325,7 @@ class Deck:
 
     def _fork(self, lane: Lane, approach: str, model: str | None) -> Outcome:
         ch = self.challenges[lane.challenge_id]
-        model = model or self._other_model(lane.model)
+        model = model or self.fork_model(lane.model)
         entry = QueueEntry(
             ch.id,
             model,
@@ -614,8 +614,8 @@ class Deck:
         i = ladder.index(model)
         return ladder[i + 1] if i + 1 < len(ladder) else None
 
-    def _other_model(self, model: str) -> str:
-        """For a fork: the next stronger model, else the weakest other one, else the same."""
+    def fork_model(self, model: str) -> str:
+        """Default model for a fork: the next stronger one, else the weakest other one, else the same."""
         stronger = self._stronger(model)
         if stronger is not None:
             return stronger
