@@ -22,8 +22,11 @@ uv run flightdeck mock --solo --host --max-lanes 8
 uv run flightdeck mock --screenshot .flightdeck/shots   # headless: SVGs of the key moments (git-ignored dir)
 ```
 
-Keys: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill, `e` escalate, `t` take over,
-`a` approve, `c` claim (team), `/` filter, `s` sort, `tab` focus, `?` help, `q` quit. In the mock,
+Two views. The **fleet** shows the board and every lane, sorted by what needs you; keys act on the
+selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill, `e` escalate, `t` take over,
+`a` approve, `c` claim (team), `/` commands, `s` sort, `?` help, `q` quit. **Enter** opens a lane full
+screen: its transcript, the files it changed with diffs, and a chat box (plain text is a message to
+the lane; `/redirect`, `/approve`, `/diff` and the rest are commands; `esc` goes back). In the mock,
 `space` freezes the clock and `.` steps it. All challenges, teammates and flags are invented.
 `ctfdeck` is an alias for `flightdeck`. Tests: `uv run pytest`.
 

@@ -33,11 +33,13 @@ The console never talks to lanes directly. It reads a `Deck` and sends it interv
 
 | Piece | Where | Job |
 |---|---|---|
-| Data model | `core/model.py` | `Challenge`, `Lane` (state, counters, plan, actions, artifacts, alerts, pending approval), `Alert` with `Suggestion`s, `Event`, `DeckConfig`. |
-| `Deck` | `core/deck.py` | Board, queue and lanes. Enforces `max_lanes` (paused and taken-over lanes keep their slot), the flag format and submit policy, 80%/100% caps, team-mode stops. Applies interventions; logs every change as an `Event`. |
-| Interventions | `core/interventions.py` | `Pause`, `Resume`, `Hint`, `Redirect`, `Fork`, `Kill`, `Escalate`, `TakeOver`, `HandBack`, `Approve`, `Claim`, `Release`, applied with `Deck.apply()` → `Outcome`. |
-| `LaneDriver` | `core/driver.py` | What does a lane's work. The deck calls `start/pause/resume/hint/redirect/escalate/approved/rejected/stop`; the driver answers each step with `Deck.report(lane_id, TurnReport)`. |
-| Attention sort | `core/attention.py` | Alerts, then approvals, then running by idle minute, then paused; finished last. |
+| Data model | `core/model.py` | `Challenge`, `Lane` (state, counters, plan, a log of actions that is its transcript, artifacts, changed files, alerts, approvals), `Alert` with `Suggestion`s, `EscalationSummary`, `Event`, `DeckConfig`. |
+| `Deck` | `core/deck.py` | Board, queue and lanes. Enforces `max_lanes` (paused and taken-over lanes keep their slot), the flag format and submit policy, a per-lane queue of approvals, 80%/100% caps, team-mode rules. Applies interventions and logs every change as an `Event` with a structured payload (the M1 JSONL log is the event stream). Must be called from one thread. |
+| Interventions | `core/interventions.py` | `Pause`, `Resume`, `Hint`, `Redirect`, `Fork`, `Kill`, `Escalate`, `TakeOver`, `HandBack`, `Approve`, `Claim`, `Release`, `Queue`, applied with `Deck.apply()` → `Outcome`. |
+| `LaneDriver` | `core/driver.py` | What does a lane's work. The deck calls `start/pause/resume/hint/redirect/escalate/approved/rejected/stop`; the driver answers each step with `Deck.report(lane_id, TurnReport)`. It starts a turn only while the lane is RUNNING. |
+| Attention sort | `core/attention.py` | Needs you (most urgent first), informational, running by idle minute, paused; finished last. |
+| Untrusted text | `text.py` | Everything from a challenge, lane, tool or model is drawn through `untrusted()` and never parsed as markup. |
+| Console | `console/` | Route C (D16): `FleetScreen`, `FocusScreen`, the command bar and slash commands. Redraws on its own timer and on deck events, with or without a mock clock. |
 
 M0 plugs in `mock.script.ScriptedDriver` and a manual clock (`mock.world.FakeWorld`); M1 replaces them
 with an agent loop per lane behind the same `LaneDriver` protocol.
