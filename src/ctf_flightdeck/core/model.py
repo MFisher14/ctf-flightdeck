@@ -234,6 +234,7 @@ class Event:
     text: str
     lane: str | None = None
     challenge: str | None = None
+    alert: AlertKind | None = None  # for alert events
 
 
 SUBMIT_POLICIES = ("auto", "confirm")

@@ -529,7 +529,7 @@ class Deck:
                 lane.alerts[i] = replace(alert, at=existing.at)  # same alert, newer reason
                 return
         lane.alerts.append(replace(alert, at=self.now))
-        self._emit(EventKind.ALERT, f"{lane.id} {alert.kind.label}: {alert.reason}", lane.id, lane.challenge_id)
+        self._emit(EventKind.ALERT, f"{lane.id} {alert.kind.label}: {alert.reason}", lane.id, lane.challenge_id, alert.kind)
 
     def _clear(self, lane: Lane, kind: AlertKind) -> None:
         lane.alerts = [a for a in lane.alerts if a.kind is not kind]
@@ -625,8 +625,15 @@ class Deck:
     def _note(self, lane: Lane, text: str, by: Actor = Actor.DECK) -> None:
         lane.actions.append(Action(self.now, lane.turns, text, "", by))
 
-    def _emit(self, kind: EventKind, text: str, lane: str | None = None, challenge: str | None = None) -> None:
-        event = Event(self.now, kind, text, lane, challenge)
+    def _emit(
+        self,
+        kind: EventKind,
+        text: str,
+        lane: str | None = None,
+        challenge: str | None = None,
+        alert: AlertKind | None = None,
+    ) -> None:
+        event = Event(self.now, kind, text, lane, challenge, alert)
         self.events.append(event)
         for listener in list(self._listeners):
             listener(event)
