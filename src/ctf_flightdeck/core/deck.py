@@ -2,24 +2,33 @@
 
 The console reads the deck and sends it interventions. A LaneDriver does each lane's
 work and reports back through Deck.report(). The deck has no loop and no I/O of its
-own: the M0 mock drives it from a scripted clock, M1 from real lanes.
+own: the M0 mock drives it from a scripted clock, M1 from real lanes. Every change is
+logged as an Event with a structured payload, so the M1 run log can be written from
+the event stream alone.
 
 Rules the deck enforces:
-- at most `max_lanes` lanes are active (running, waiting, paused or taken over);
-  the rest wait in the queue, which drains as lanes finish;
+- at most `max_lanes` lanes are active (running, waiting, paused or taken over); the
+  rest wait in the queue, which drains as lanes finish;
 - a candidate flag must match the flag format; with submit policy "confirm" it waits
   for the player's approval, with "auto" it is submitted at once;
+- approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
-- team mode: a challenge a teammate solved is never worked; its lanes stop.
+- team mode: a challenge a teammate solved or claimed is not worked; a teammate's
+  solve stops every lane on it.
+
+Call the deck only from the thread that created it (see core/driver.py).
 """
 
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 from .. import fmt
+from ..text import untrusted
+from .attention import attention_key
 from .driver import Clock, LaneDriver, TurnReport, Verifier
 from .interventions import (
     Approve,
@@ -32,6 +41,7 @@ from .interventions import (
     Kill,
     Outcome,
     Pause,
+    Queue,
     Redirect,
     Release,
     Resume,
@@ -41,12 +51,14 @@ from .model import (
     COURSE_ALERTS,
     ME,
     Action,
+    ActionKind,
     Actor,
     Alert,
     AlertKind,
     Challenge,
     ChallengeStatus,
     DeckConfig,
+    EscalationSummary,
     Event,
     EventKind,
     Lane,
@@ -87,7 +99,9 @@ class Deck:
         self.events: list[Event] = []
         self._listeners: list[Callable[[Event], None]] = []
         self._lane_seq = 0
+        self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
         self._flag_re = re.compile(config.flag_format)
+        self._thread = threading.get_ident()
         driver.attach(self)
 
     # ------------------------------------------------------------------ reading
@@ -110,6 +124,11 @@ class Deck:
     def queued(self, challenge_id: str) -> bool:
         return any(entry.challenge == challenge_id for entry in self.queue)
 
+    def needing(self) -> list[Lane]:
+        """Lanes that need the player, most urgent first."""
+        now = self.now
+        return sorted((lane for lane in self.lanes.values() if lane.needs_you), key=lambda lane: attention_key(lane, now))
+
     def totals(self) -> tuple[int, float, bool]:
         """Tokens and known dollars over all lanes, and whether any lane has no known price."""
         lanes = self.lanes.values()
@@ -121,53 +140,81 @@ class Deck:
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener)
 
-    def summary(self, lane: Lane) -> str:
-        """A compact state summary, as handed to a stronger model on escalation."""
+    def summary(self, lane: Lane) -> EscalationSummary:
+        """The compact state handed to a stronger model on escalation."""
         ch = self.challenges[lane.challenge_id]
-        tried = [a.text for a in lane.actions if a.by is Actor.LANE][-4:]
-        lines = [
-            f"Challenge: {ch.name} ({ch.category}, {ch.points} pts, {ch.solves} solves); "
-            f"files: {', '.join(ch.files) or 'none'}",
-            f"Plan: {lane.plan or '(none)'}",
-            f"So far: {lane.turns} turns, {fmt.tokens(lane.tokens)} tokens on {lane.model}",
-            "Tried: " + ("; ".join(tried) or "nothing yet"),
-            "Found: " + (", ".join(lane.artifacts) or "nothing yet"),
-        ]
-        if lane.alerts:
-            lines.append("Alerts: " + "; ".join(f"{a.kind.label}: {a.reason}" for a in lane.alerts))
-        return "\n".join(lines)
+        return EscalationSummary(
+            lane=lane.id,
+            challenge=ch.name,
+            category=ch.category,
+            points=ch.points,
+            solves=ch.solves,
+            files=ch.files,
+            plan=lane.plan,
+            model=lane.model,
+            turns=lane.turns,
+            tokens=lane.tokens,
+            tried=tuple(a.text for a in lane.actions if a.kind is ActionKind.STEP)[-4:],
+            found=tuple(lane.artifacts),
+            alerts=tuple(f"{a.kind.label}: {a.reason}" for a in lane.alerts),
+        )
+
+    def fork_model(self, model: str) -> str:
+        """Default model for a fork: the next stronger one, else the weakest other one, else the same."""
+        ladder = self.config.models
+        if model in ladder and ladder.index(model) + 1 < len(ladder):
+            return ladder[ladder.index(model) + 1]
+        others = [m for m in ladder if m != model]
+        return others[0] if others else model
 
     # ------------------------------------------------------------------ board
 
     def release(self, challenges: Sequence[Challenge], entries: Sequence[QueueEntry], label: str = "Release") -> None:
         """Put challenges on the board and queue the triaged entries, in order."""
+        self._on_thread("release")
+        seen: set[str] = set()
         for ch in challenges:
-            if ch.id in self.challenges:
+            if ch.id in self.challenges or ch.id in seen:
                 raise ValueError(f"challenge {ch.id!r} is already on the board")
+            seen.add(ch.id)
+        known = {ch.id for ch in challenges} | set(self.challenges)
+        for entry in entries:
+            if entry.challenge not in known:
+                raise KeyError(f"queue entry for unknown challenge {entry.challenge!r}")
+            if self.config.models and entry.model not in self.config.models:
+                raise ValueError(
+                    f"queue entry for {entry.challenge!r} uses model {entry.model!r}, which is not in "
+                    f"the model ladder ({', '.join(self.config.models)})"
+                )
         for ch in challenges:
             self.challenges[ch.id] = ch
         for entry in entries:
-            ch = self.challenges.get(entry.challenge)
-            if ch is None:
-                raise KeyError(f"queue entry for unknown challenge {entry.challenge!r}")
+            ch = self.challenges[entry.challenge]
             if self._workable(ch):
                 self.queue.append(entry)
-                ch.status = ChallengeStatus.QUEUED
-        before = self._lane_seq
+                if not self.lanes_on(ch.id):
+                    ch.status = ChallengeStatus.QUEUED
+        before = len(self.lanes)
         self._fill()
+        started = len(self.lanes) - before  # a lane whose start failed is gone again
         self._emit(
             EventKind.RELEASE,
-            f"{label}: {len(challenges)} challenges · {self._lane_seq - before} lanes started"
-            f" · {len(self.queue)} queued",
+            f"{label}: {len(challenges)} challenges · {started} lanes started · {len(self.queue)} queued",
+            data={"label": label, "challenges": [ch.id for ch in challenges], "started": started, "queued": len(self.queue)},
         )
 
     def set_solves(self, challenge_id: str, solves: int) -> None:
+        self._on_thread("set_solves")
         self.challenges[challenge_id].solves = solves
 
     def teammate_solved(self, challenge_id: str, who: str) -> None:
         """Team mode: a teammate solved a challenge. Its lanes stop and it leaves the queue."""
+        self._on_thread("teammate_solved")
         self._need_team("teammate_solved")
         ch = self.challenges[challenge_id]
+        if ch.closed:  # we, or another teammate, got there first; keep that record
+            self._emit(EventKind.TEAMMATE, f"{who} also solved {ch.name}", challenge=ch.id, data={"who": who, "solved": True})
+            return
         ch.status = ChallengeStatus.TEAMMATE
         ch.solved_by = who
         ch.solves += 1
@@ -188,22 +235,32 @@ class Deck:
         text = f"{who} solved {ch.name}"
         if stopped:
             text += f" · stopped {', '.join(stopped)}"
-        self._emit(EventKind.TEAMMATE, text, challenge=ch.id)
+        self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={"who": who, "solved": True, "stopped": stopped})
 
     def teammate_claim(self, challenge_id: str, who: str) -> None:
         """Team mode: a teammate claimed a challenge. It is not started while they hold it."""
+        self._on_thread("teammate_claim")
         self._need_team("teammate_claim")
         ch = self.challenges[challenge_id]
+        if ch.claimed_by == ME:
+            self._emit(
+                EventKind.WARNING,
+                f"{who} also claimed {ch.name}; you hold the claim",
+                challenge=ch.id,
+                data={"who": who, "conflict": True},
+            )
+            return
         ch.claimed_by = who
-        if ch.status is ChallengeStatus.QUEUED:
+        if ch.status is ChallengeStatus.QUEUED and not self.lanes_on(ch.id):
             self._drop_queued(ch.id)
             ch.status = ChallengeStatus.NEW
-        self._emit(EventKind.TEAMMATE, f"{who} claimed {ch.name}", challenge=ch.id)
+        self._emit(EventKind.TEAMMATE, f"{who} claimed {ch.name}", challenge=ch.id, data={"who": who, "claimed": True})
 
     # ------------------------------------------------------------------ lane reports
 
     def report(self, lane_id: str, rep: TurnReport) -> None:
         """Apply what a lane did. Called by the driver after each step."""
+        self._on_thread("report")
         lane = self.lanes[lane_id]
         if lane.finished:
             # A step that completed after the lane ended (a real lane can race a kill).
@@ -211,47 +268,69 @@ class Deck:
         now = self.now
         if rep.turn:
             lane.turns += 1
-            lane.hints.clear()  # queued hints went into this turn
+        if rep.hints_taken:
+            del lane.hints[: rep.hints_taken]
         lane.tokens += rep.tokens
-        if rep.dollars is None or lane.dollars is None:
+        if rep.dollars is None:
+            if lane.dollars is not None and lane.dollar_cap:
+                self._unpriced(lane)
             lane.dollars = None
-        else:
+        elif lane.dollars is not None:
             lane.dollars += rep.dollars
         lane.last_active_at = now
         if rep.action:
-            lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE))
+            lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE, ActionKind.STEP))
         if rep.plan is not None:
             lane.plan = rep.plan
         for item in rep.artifacts:
             if item not in lane.artifacts:
                 lane.artifacts.append(item)
+        for change in rep.files:
+            lane.files.pop(change.path, None)
+            lane.files[change.path] = replace(change, turn=lane.turns, at=now)
+        if rep.turn:
+            self._emit(
+                EventKind.TURN,
+                f"{lane.id} turn {lane.turns}: {rep.action}",
+                lane.id,
+                lane.challenge_id,
+                data={"turn": lane.turns, "tokens": rep.tokens, "dollars": rep.dollars, "action": rep.action},
+            )
         for kind in rep.clear:
             self._clear(lane, kind)
         for alert in rep.alerts:
             self._raise(lane, alert)
-        if rep.pending is not None:
-            self._ask(lane, rep.pending)
         if rep.flag is not None:
             self._candidate(lane, rep.flag)
             if lane.finished:
-                return
+                return  # submitted automatically and correct
+        if rep.pending is not None:
+            self._ask(lane, rep.pending)
         if rep.gave_up is not None:
-            self._finish(lane, LaneState.GAVE_UP, rep.gave_up, then=ChallengeStatus.PARKED)
-            return
+            if self._has_submit(lane):
+                self._note(lane, f"gave up ({rep.gave_up}), but a candidate flag waits for you")
+            else:
+                self._finish(lane, LaneState.GAVE_UP, rep.gave_up, then=ChallengeStatus.PARKED)
+                return
         self._check_budget(lane)
 
     # ------------------------------------------------------------------ interventions
 
     def apply(self, iv: Intervention) -> Outcome:
-        """Apply a player intervention and record it in the event log."""
+        """Apply a player intervention. Logged before its effects, with its outcome after."""
+        self._on_thread("apply")
+        name = type(iv).__name__.lower()
+        lane = getattr(iv, "lane", None)
+        challenge = getattr(iv, "challenge", None)
+        self._emit(EventKind.INTERVENTION, f"{name} {lane or challenge}", lane, challenge, data={"intervention": name, **asdict(iv)})
         outcome = self._apply(iv)
-        if outcome.ok:
-            self._emit(
-                EventKind.INTERVENTION,
-                f"{type(iv).__name__.lower()}: {outcome.message}",
-                lane=getattr(iv, "lane", None),
-                challenge=getattr(iv, "challenge", None),
-            )
+        self._emit(
+            EventKind.OUTCOME,
+            f"{name}: {outcome.message}",
+            lane,
+            challenge,
+            data={"intervention": name, "ok": outcome.ok, "message": outcome.message},
+        )
         return outcome
 
     def _apply(self, iv: Intervention) -> Outcome:
@@ -259,6 +338,8 @@ class Deck:
             return self._claim(iv.challenge)
         if isinstance(iv, Release):
             return self._release_claim(iv.challenge)
+        if isinstance(iv, Queue):
+            return self._queue(iv.challenge)
         lane = self.lanes.get(iv.lane)
         if lane is None:
             return Outcome(False, f"No lane {iv.lane}")
@@ -301,41 +382,46 @@ class Deck:
         if lane.state is not LaneState.PAUSED:
             return Outcome(False, f"{lane.id} is not paused")
         lane.state = LaneState.WAITING if lane.pending else LaneState.RUNNING
-        self.driver.resume(lane)
+        if lane.state is LaneState.RUNNING:
+            self.driver.resume(lane)
         self._note(lane, "resumed by the player", Actor.PLAYER)
-        return Outcome(True, f"Resumed {lane.id}")
+        return Outcome(True, f"Resumed {lane.id}" + (" (it waits for your approval)" if lane.pending else ""))
 
     def _hint(self, lane: Lane, text: str) -> Outcome:
         if not text:
-            return Outcome(False, "Empty hint; nothing sent")
+            return Outcome(False, "Empty message; nothing sent")
         lane.hints.append(text)
         self._clear_course(lane)
         self.driver.hint(lane, text)
-        self._note(lane, f"hint: {text}", Actor.PLAYER)
-        return Outcome(True, f"Hint queued for {lane.id}'s next turn")
+        self._note(lane, text, Actor.PLAYER, ActionKind.MESSAGE)
+        return Outcome(True, f"{lane.id} reads it on its next turn")
 
     def _redirect(self, lane: Lane, text: str) -> Outcome:
         if not text:
             return Outcome(False, "Empty plan; nothing changed")
+        if text == lane.plan:
+            return Outcome(False, "Plan unchanged; nothing sent")
         lane.plan = text
         self._clear_course(lane)
         self.driver.redirect(lane, text)
-        self._note(lane, f"redirect: {text}", Actor.PLAYER)
+        self._note(lane, f"new plan: {text}", Actor.PLAYER)
         return Outcome(True, f"{lane.id} has a new plan")
 
     def _fork(self, lane: Lane, approach: str, model: str | None) -> Outcome:
         ch = self.challenges[lane.challenge_id]
+        if not self._workable(ch):
+            return Outcome(False, f"No fork: {ch.name} is {self._why_not(ch)}")
         model = model or self.fork_model(lane.model)
+        if self.config.models and model not in self.config.models:
+            return Outcome(False, f"No fork: {model!r} is not in the model ladder ({', '.join(self.config.models)})")
         entry = QueueEntry(
-            ch.id,
-            model,
-            approach=approach,
-            parent=lane.id,
-            token_cap=lane.token_cap,
-            dollar_cap=lane.dollar_cap,
+            ch.id, model, approach=approach, parent=lane.id, token_cap=lane.token_cap, dollar_cap=lane.dollar_cap
         )
         self.queue.insert(0, entry)
         started = self._fill_and_find(entry)
+        error = self._start_errors.pop(id(entry), None)
+        if error is not None:
+            return Outcome(False, f"Fork of {lane.id} could not start: {error}")
         if started is None:
             self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", Actor.PLAYER)
             return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; all {self.config.max_lanes} lanes are busy")
@@ -344,33 +430,49 @@ class Deck:
 
     def _kill(self, lane: Lane, requeue: bool) -> Outcome:
         ch = self.challenges[lane.challenge_id]
-        if not requeue:
-            self._finish(lane, LaneState.KILLED, "by the player; parked", then=ChallengeStatus.PARKED)
-            return Outcome(True, f"Killed {lane.id}; {ch.name} is parked")
-        entry = QueueEntry(
-            ch.id,
-            lane.model,
-            attempt=lane.attempt + 1,
-            token_cap=lane.token_cap,
-            dollar_cap=lane.dollar_cap,
-        )
-        self.queue.insert(0, entry)
-        self._finish(lane, LaneState.KILLED, "by the player; re-queued fresh", then=ChallengeStatus.QUEUED)
-        started = self._started_for(entry)
-        if started is None:
-            return Outcome(True, f"Killed {lane.id}; {ch.name} is first in the queue")
-        return Outcome(True, f"Killed {lane.id}; fresh lane {started.id} started on {ch.name}")
+        if requeue and self._workable(ch):
+            entry = QueueEntry(
+                ch.id, lane.model, attempt=lane.attempt + 1, token_cap=lane.token_cap, dollar_cap=lane.dollar_cap
+            )
+            self.queue.insert(0, entry)
+            self._finish(lane, LaneState.KILLED, "by the player; re-queued fresh", then=ChallengeStatus.QUEUED)
+            started = self._started_for(entry)
+            error = self._start_errors.pop(id(entry), None)
+            if error is not None:
+                return Outcome(True, f"Killed {lane.id}; a fresh lane could not start on {ch.name}: {error}")
+            if started is None:
+                return Outcome(True, f"Killed {lane.id}; {ch.name} is first in the queue")
+            return Outcome(True, f"Killed {lane.id}; fresh lane {started.id} started on {ch.name}")
+        why = "" if not requeue else f" ({ch.name} is {self._why_not(ch)}, so it was parked, not re-queued)"
+        dropped = sum(1 for entry in self.queue if entry.challenge == ch.id)
+        self._drop_queued(ch.id)  # parking means parking: queued forks go too
+        self._finish(lane, LaneState.KILLED, "by the player; parked" + why, then=ChallengeStatus.PARKED)
+        others = self.lanes_on(ch.id)
+        if others:
+            ids = ", ".join(other.id for other in others)
+            return Outcome(True, f"Killed {lane.id}; {ids} still on {ch.name}")
+        message = f"Killed {lane.id}; {ch.name} is parked{why}"
+        if dropped:
+            message += f"; dropped {dropped} queued fork{'s' if dropped > 1 else ''}"
+        return Outcome(True, message)
 
     def _escalate(self, lane: Lane) -> Outcome:
-        stronger = self._stronger(lane.model)
+        stronger, why = self._stronger(lane)
         if stronger is None:
-            return Outcome(False, f"{lane.id} is already on the strongest model ({lane.model})")
+            return Outcome(False, why)
         summary = self.summary(lane)
         old, lane.model = lane.model, stronger
         self._clear_course(lane)
         self.driver.escalate(lane, stronger, summary)
         lane.actions.append(
-            Action(self.now, lane.turns, f"escalated {old} → {stronger} with a summary", summary, Actor.PLAYER)
+            Action(
+                self.now,
+                lane.turns,
+                f"escalated {old} → {stronger} with a summary",
+                "\n".join(summary_lines(summary)),
+                Actor.PLAYER,
+                ActionKind.PLAYER,
+            )
         )
         return Outcome(True, f"Escalated {lane.id} from {old} to {stronger}")
 
@@ -384,17 +486,20 @@ class Deck:
         if lane.state is not LaneState.TAKEOVER:
             return Outcome(False, f"{lane.id} is not taken over")
         lane.state = LaneState.WAITING if lane.pending else LaneState.RUNNING
-        self.driver.resume(lane)
+        if lane.state is LaneState.RUNNING:
+            self.driver.resume(lane)
         self._note(lane, "handed back by the player" + (f": {note}" if note else ""), Actor.PLAYER)
         return Outcome(True, f"Handed {lane.id} back")
 
     def _approve(self, lane: Lane) -> Outcome:
         pending = lane.pending
         if pending is None:
+            if lane.alert(AlertKind.BUDGET) is not None:  # approve more before the cap is hit
+                self._raise_caps(lane)
+                self._clear(lane, AlertKind.BUDGET)
+                self._note(lane, f"approved more budget: {self._cap_text(lane)}", Actor.PLAYER)
+                return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
             return Outcome(False, f"{lane.id} is not waiting for an approval")
-        lane.pending = None
-        if lane.state is LaneState.WAITING:
-            lane.state = LaneState.RUNNING
         self._note(lane, f"approved: {pending.detail}", Actor.PLAYER)
         if pending.kind is PendingKind.SUBMIT:
             assert pending.flag is not None
@@ -403,13 +508,16 @@ class Deck:
                 return Outcome(True, f"{pending.flag} is correct: {ch.name} solved by {lane.id}")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
-            if lane.token_cap:
-                lane.token_cap = int(lane.token_cap * BUDGET_RAISE)
-            if lane.dollar_cap:
-                lane.dollar_cap = lane.dollar_cap * BUDGET_RAISE
+            if lane.dollars is None and lane.dollar_cap:
+                lane.dollar_cap = None  # no price: the player chose to go on without a dollar cap
+            used = lane.budget_used()
+            if used is not None and used >= 1.0:
+                self._raise_caps(lane)
             self._clear(lane, AlertKind.BUDGET)
+            self._resolve(lane)
             self.driver.approved(lane, pending)
             return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
+        self._resolve(lane)
         self.driver.approved(lane, pending)
         return Outcome(True, f"{lane.id} may use the live box")
 
@@ -439,7 +547,45 @@ class Deck:
         ch.claimed_by = None
         return Outcome(True, f"Released {ch.name}")
 
+    def _queue(self, challenge_id: str) -> Outcome:
+        ch = self.challenges.get(challenge_id)
+        if ch is None:
+            return Outcome(False, f"No challenge {challenge_id}")
+        if not self._workable(ch):
+            return Outcome(False, f"{ch.name} is {self._why_not(ch)}")
+        if self.lanes_on(ch.id):
+            return Outcome(False, f"{ch.name} already has a lane ({', '.join(x.id for x in self.lanes_on(ch.id))})")
+        if self.queued(ch.id):
+            return Outcome(False, f"{ch.name} is already queued")
+        last = next((x for x in reversed(self.lanes.values()) if x.challenge_id == ch.id), None)
+        if last is None and not self.config.models:
+            return Outcome(False, f"No model to start {ch.name} with: it never had a lane and no model ladder is set")
+        entry = QueueEntry(
+            ch.id,
+            last.model if last else self.config.models[0],
+            attempt=last.attempt + 1 if last else 1,
+            token_cap=last.token_cap if last else None,
+            dollar_cap=last.dollar_cap if last else None,
+        )
+        self.queue.append(entry)
+        ch.status = ChallengeStatus.QUEUED
+        ch.note = ""
+        started = self._fill_and_find(entry)
+        error = self._start_errors.pop(id(entry), None)
+        if error is not None:
+            return Outcome(False, f"Could not start a lane on {ch.name}: {error}")
+        if started is None:
+            return Outcome(True, f"Queued {ch.name} (position {len(self.queue)})")
+        return Outcome(True, f"Started {started.id} on {ch.name}")
+
     # ------------------------------------------------------------------ internals
+
+    def _on_thread(self, what: str) -> None:
+        if threading.get_ident() != self._thread:
+            raise RuntimeError(
+                f"Deck.{what} was called from another thread; call it on the thread that created the "
+                "deck (from a worker thread, hop back first, e.g. app.call_from_thread)"
+            )
 
     def _need_team(self, what: str) -> None:
         if not self.config.team:
@@ -449,6 +595,15 @@ class Deck:
         if ch.closed or ch.status is ChallengeStatus.BLOCKED:
             return False
         return ch.claimed_by in (None, ME)
+
+    def _why_not(self, ch: Challenge) -> str:
+        if ch.closed:
+            return "already solved"
+        if ch.status is ChallengeStatus.BLOCKED:
+            return "blocked" + (f" ({ch.note})" if ch.note else "")
+        if ch.claimed_by not in (None, ME):
+            return f"claimed by {ch.claimed_by}"
+        return "workable"
 
     def _drop_queued(self, challenge_id: str) -> None:
         self.queue = [entry for entry in self.queue if entry.challenge != challenge_id]
@@ -460,6 +615,15 @@ class Deck:
             ch = self.challenges[entry.challenge]
             if self._workable(ch):
                 self._start(entry, ch)
+                continue
+            if ch.status is ChallengeStatus.QUEUED and not self.lanes_on(ch.id) and not self.queued(ch.id):
+                ch.status = ChallengeStatus.NEW
+            self._emit(
+                EventKind.WARNING,
+                f"dropped a queued lane for {ch.name}: it is {self._why_not(ch)}",
+                challenge=ch.id,
+                data={"reason": self._why_not(ch)},
+            )
 
     def _fill_and_find(self, entry: QueueEntry) -> Lane | None:
         self._fill()
@@ -481,7 +645,7 @@ class Deck:
             None,
         )
 
-    def _start(self, entry: QueueEntry, ch: Challenge) -> Lane:
+    def _start(self, entry: QueueEntry, ch: Challenge) -> Lane | None:
         self._lane_seq += 1
         now = self.now
         lane = Lane(
@@ -498,10 +662,30 @@ class Deck:
         )
         self.lanes[lane.id] = lane
         ch.status = ChallengeStatus.RUNNING
+        try:
+            self.driver.start(lane, ch)
+        except Exception as exc:  # the driver could not start this lane: park it and say why
+            del self.lanes[lane.id]
+            self._start_errors[id(entry)] = str(exc)
+            if not self.lanes_on(ch.id):
+                ch.status = ChallengeStatus.PARKED
+                ch.note = f"could not start a lane: {exc}"
+            self._emit(
+                EventKind.WARNING,
+                f"could not start a lane on {ch.name}: {exc}",
+                challenge=ch.id,
+                data={"error": repr(exc)},
+            )
+            return None
         how = f", fork of {entry.parent}" if entry.parent else ""
         how += f", attempt {entry.attempt}" if entry.attempt > 1 else ""
-        self._emit(EventKind.LANE_START, f"{lane.id} started on {ch.name} ({lane.model}{how})", lane.id, ch.id)
-        self.driver.start(lane, ch)
+        self._emit(
+            EventKind.LANE_START,
+            f"{lane.id} started on {ch.name} ({lane.model}{how})",
+            lane.id,
+            ch.id,
+            data={"model": lane.model, "parent": entry.parent, "attempt": entry.attempt, "approach": entry.approach},
+        )
         return lane
 
     def _finish(self, lane: Lane, state: LaneState, result: str, then: ChallengeStatus = ChallengeStatus.PARKED) -> None:
@@ -510,6 +694,7 @@ class Deck:
         lane.ended_at = self.now
         lane.result = result
         lane.pending = None
+        lane.waiting.clear()
         lane.hints.clear()
         self.driver.stop(lane)
         ch = self.challenges[lane.challenge_id]
@@ -520,7 +705,7 @@ class Deck:
                 ch.status = then
                 if then is ChallengeStatus.PARKED:
                     ch.note = f"{lane.id} {state.value}: {result}"
-        self._emit(EventKind.LANE_END, f"{lane.id} {state.value}: {result}", lane.id, ch.id)
+        self._emit(EventKind.LANE_END, f"{lane.id} {state.value}: {result}", lane.id, ch.id, data={"state": state.value, "result": result})
         self._fill()
 
     def _raise(self, lane: Lane, alert: Alert) -> None:
@@ -528,8 +713,17 @@ class Deck:
             if existing.kind is alert.kind:
                 lane.alerts[i] = replace(alert, at=existing.at)  # same alert, newer reason
                 return
-        lane.alerts.append(replace(alert, at=self.now))
-        self._emit(EventKind.ALERT, f"{lane.id} {alert.kind.label}: {alert.reason}", lane.id, lane.challenge_id, alert.kind)
+        now = self.now
+        lane.alerts.append(replace(alert, at=now))
+        lane.actions.append(Action(now, lane.turns, alert.kind.label, alert.reason, Actor.DECK, ActionKind.ALERT, alert.kind))
+        self._emit(
+            EventKind.ALERT,
+            f"{lane.id} {alert.kind.label}: {alert.reason}",
+            lane.id,
+            lane.challenge_id,
+            alert.kind,
+            data={"reason": alert.reason, "suggestions": [s.key for s in alert.suggestions]},
+        )
 
     def _clear(self, lane: Lane, kind: AlertKind) -> None:
         lane.alerts = [a for a in lane.alerts if a.kind is not kind]
@@ -538,39 +732,89 @@ class Deck:
         lane.alerts = [a for a in lane.alerts if a.kind not in COURSE_ALERTS]
 
     def _ask(self, lane: Lane, pending: Pending) -> None:
-        if lane.pending is not None:
-            return  # one approval at a time; the lane asks again later
-        lane.pending = replace(pending, at=self.now)
+        """Queue an approval. A flag goes in front of any other kind; nothing is dropped."""
+        pending = replace(pending, at=self.now)
+        current = lane.pending
+        if current is None:
+            lane.pending = pending
+        elif pending.kind is PendingKind.SUBMIT and current.kind is not PendingKind.SUBMIT:
+            lane.waiting.insert(0, current)
+            lane.pending = pending
+        else:
+            if pending.kind is PendingKind.SUBMIT:  # a flag waits only behind other flags
+                index = next((i for i, p in enumerate(lane.waiting) if p.kind is not PendingKind.SUBMIT), len(lane.waiting))
+                lane.waiting.insert(index, pending)
+            else:
+                lane.waiting.append(pending)
+            self._note(lane, f"also waiting for approval: {pending.detail}")
+            self._sync_flag_alert(lane)
+            self._emit(EventKind.PENDING, f"{lane.id} also waits for: {pending.detail}", lane.id, lane.challenge_id, data={"kind": pending.kind.value, "detail": pending.detail, "queued": True})
+            return
+        self._became_current(lane)
+
+    def _became_current(self, lane: Lane) -> None:
+        pending = lane.pending
+        assert pending is not None
         if lane.state is LaneState.RUNNING:
             lane.state = LaneState.WAITING
-        self._emit(EventKind.PENDING, f"{lane.id} waits for approval: {pending.detail}", lane.id, lane.challenge_id)
+        self._sync_flag_alert(lane)
+        lane.actions.append(Action(self.now, lane.turns, pending.detail, "", Actor.DECK, ActionKind.APPROVAL))
+        self._emit(EventKind.PENDING, f"{lane.id} waits for approval: {pending.detail}", lane.id, lane.challenge_id, data={"kind": pending.kind.value, "detail": pending.detail, "flag": pending.flag})
+
+    def _resolve(self, lane: Lane) -> None:
+        """The current approval is answered: the next one comes up, or the lane runs again."""
+        lane.pending = lane.waiting.pop(0) if lane.waiting else None
+        if lane.pending is not None:
+            self._became_current(lane)
+            return
+        self._sync_flag_alert(lane)
+        if lane.state is LaneState.WAITING:
+            lane.state = LaneState.RUNNING
+
+    def _has_submit(self, lane: Lane) -> bool:
+        return any(p.kind is PendingKind.SUBMIT for p in ([lane.pending] if lane.pending else []) + lane.waiting)
+
+    def _sync_flag_alert(self, lane: Lane) -> None:
+        """The flag alert describes the flag the lane waits on now, and how many more wait."""
+        pending = lane.pending
+        if pending is None or pending.kind is not PendingKind.SUBMIT:
+            self._clear(lane, AlertKind.FLAG)  # 'a' would approve something else
+            return
+        more = sum(1 for p in lane.waiting if p.kind is PendingKind.SUBMIT)
+        reason = f"Candidate {pending.flag} matches the flag format."
+        if more:
+            reason += f" {more} more candidate{'s wait' if more > 1 else ' waits'} behind it."
+        self._raise(lane, Alert(AlertKind.FLAG, reason, (Suggestion("a", "Approve submit"),)))
 
     def _candidate(self, lane: Lane, flag: str) -> None:
         if not self._flag_re.fullmatch(flag):
             self._note(lane, f"candidate {flag} does not match the flag format; not submitted")
             return
+        self._note(lane, f"candidate flag {flag}")
+        queued = ([lane.pending] if lane.pending else []) + lane.waiting
+        if any(p.flag == flag for p in queued):
+            return  # already waiting
         if self.config.submit == "auto":
             self._submit(lane, flag)
             return
-        self._raise(
-            lane,
-            Alert(
-                AlertKind.FLAG,
-                f"Candidate {flag} matches the flag format.",
-                (Suggestion("a", "Approve submit"),),
-            ),
-        )
         self._ask(lane, Pending(PendingKind.SUBMIT, f"submit {flag}", flag=flag))
 
     def _submit(self, lane: Lane, flag: str) -> bool:
         ch = self.challenges[lane.challenge_id]
         ok = self.verify(ch.id, flag)
-        self._clear(lane, AlertKind.FLAG)
         self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}")
-        self._emit(EventKind.SUBMIT, f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'}", lane.id, ch.id)
+        self._emit(
+            EventKind.SUBMIT,
+            f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'}",
+            lane.id,
+            ch.id,
+            data={"flag": flag, "correct": ok},
+        )
         if not ok:
-            if lane.state is LaneState.WAITING:
-                lane.state = LaneState.RUNNING
+            if lane.pending is not None and lane.pending.flag == flag:
+                self._resolve(lane)
+            else:
+                self._sync_flag_alert(lane)
             self.driver.rejected(lane, flag)
             return False
         ch.status = ChallengeStatus.SOLVED
@@ -587,17 +831,51 @@ class Deck:
         used = lane.budget_used()
         if used is None or used < BUDGET_WARN:
             return
-        suggestions = (
-            Suggestion("a", "Approve 50% more budget"),
-            Suggestion("e", "Escalate to a stronger model"),
-            Suggestion("k", "Kill the lane"),
-        )
         cap = self._cap_text(lane)
         if used >= 1.0:
-            self._raise(lane, Alert(AlertKind.BUDGET, f"At {used:.0%} of its cap ({cap}); it waits for approval before spending more.", suggestions))
-            self._ask(lane, Pending(PendingKind.BUDGET, f"raise the cap by 50% (now {cap})"))
-        elif lane.alert(AlertKind.BUDGET) is None:
-            self._raise(lane, Alert(AlertKind.BUDGET, f"At {used:.0%} of its cap ({cap}).", suggestions))
+            self._raise(
+                lane,
+                Alert(
+                    AlertKind.BUDGET,
+                    f"At {used:.0%} of its cap ({cap}); it waits for approval before spending more.",
+                    (Suggestion("a", "Approve 50% more budget"), Suggestion("k", "Kill the lane")),
+                ),
+            )
+            if not any(p.kind is PendingKind.BUDGET for p in ([lane.pending] if lane.pending else []) + lane.waiting):
+                self._ask(lane, Pending(PendingKind.BUDGET, f"raise the cap by 50% (now {cap})"))
+        else:  # raising again keeps the first time and refreshes the numbers
+            self._raise(
+                lane,
+                Alert(
+                    AlertKind.BUDGET,
+                    f"At {used:.0%} of its cap ({cap}).",
+                    (
+                        Suggestion("a", "Approve 50% more budget now"),
+                        Suggestion("e", "Escalate to a stronger model"),
+                        Suggestion("k", "Kill the lane"),
+                    ),
+                ),
+            )
+
+    def _unpriced(self, lane: Lane) -> None:
+        """A dollar-capped lane just had a turn with no price: the cap can no longer be enforced."""
+        self._raise(
+            lane,
+            Alert(
+                AlertKind.BUDGET,
+                f"No price for {lane.model}, so the ${fmt.dollars(lane.dollar_cap)} cap cannot be "
+                "enforced; it waits for approval to carry on without it.",
+                (Suggestion("a", "Carry on without the dollar cap"), Suggestion("k", "Kill the lane")),
+            ),
+        )
+        if not any(p.kind is PendingKind.BUDGET for p in ([lane.pending] if lane.pending else []) + lane.waiting):
+            self._ask(lane, Pending(PendingKind.BUDGET, f"carry on with no dollar cap (no price for {lane.model})"))
+
+    def _raise_caps(self, lane: Lane) -> None:
+        if lane.token_cap:
+            lane.token_cap = int(lane.token_cap * BUDGET_RAISE)
+        if lane.dollar_cap:
+            lane.dollar_cap = lane.dollar_cap * BUDGET_RAISE
 
     def _cap_text(self, lane: Lane) -> str:
         parts = []
@@ -607,23 +885,21 @@ class Deck:
             parts.append(f"${fmt.dollars(lane.dollars)} of ${fmt.dollars(lane.dollar_cap)}")
         return ", ".join(parts) or "no cap"
 
-    def _stronger(self, model: str) -> str | None:
+    def _stronger(self, lane: Lane) -> tuple[str | None, str]:
         ladder = self.config.models
-        if model not in ladder:
-            return ladder[-1] if ladder else None
-        i = ladder.index(model)
-        return ladder[i + 1] if i + 1 < len(ladder) else None
+        if not ladder:
+            return None, "No model ladder is configured (DeckConfig.models is empty)"
+        if lane.model not in ladder:
+            return None, f"{lane.id} runs {lane.model!r}, which is not in the model ladder ({', '.join(ladder)})"
+        i = ladder.index(lane.model)
+        if i + 1 >= len(ladder):
+            return None, f"{lane.id} is already on the strongest model ({lane.model})"
+        return ladder[i + 1], ""
 
-    def fork_model(self, model: str) -> str:
-        """Default model for a fork: the next stronger one, else the weakest other one, else the same."""
-        stronger = self._stronger(model)
-        if stronger is not None:
-            return stronger
-        others = [m for m in self.config.models if m != model]
-        return others[0] if others else model
-
-    def _note(self, lane: Lane, text: str, by: Actor = Actor.DECK) -> None:
-        lane.actions.append(Action(self.now, lane.turns, text, "", by))
+    def _note(self, lane: Lane, text: str, by: Actor = Actor.DECK, kind: ActionKind | None = None) -> None:
+        if kind is None:
+            kind = ActionKind.PLAYER if by is Actor.PLAYER else ActionKind.NOTE
+        lane.actions.append(Action(self.now, lane.turns, text, "", by, kind))
 
     def _emit(
         self,
@@ -632,8 +908,26 @@ class Deck:
         lane: str | None = None,
         challenge: str | None = None,
         alert: AlertKind | None = None,
+        data: dict[str, object] | None = None,
     ) -> None:
-        event = Event(self.now, kind, text, lane, challenge, alert)
+        event = Event(self.now, kind, text, lane, challenge, alert, data or {})
         self.events.append(event)
         for listener in list(self._listeners):
             listener(event)
+
+
+def summary_lines(summary: EscalationSummary) -> list[str]:
+    """The summary as display lines. Untrusted fields are folded to one line each, so a
+    newline in a challenge name or a command cannot forge a line of its own."""
+    def one(value: str) -> str:
+        return untrusted(value, one_line=True)
+
+    return [
+        f"Challenge: {one(summary.challenge)} ({one(summary.category)}, {summary.points} pts, "
+        f"{summary.solves} solves); files: {one(', '.join(summary.files)) or 'none'}",
+        f"Plan: {one(summary.plan) or '(none)'}",
+        f"So far: {summary.turns} turns, {fmt.tokens(summary.tokens)} tokens on {one(summary.model)}",
+        "Tried: " + ("; ".join(one(t) for t in summary.tried) or "nothing yet"),
+        "Found: " + (", ".join(one(f) for f in summary.found) or "nothing yet"),
+        "Alerts: " + ("; ".join(one(a) for a in summary.alerts) or "none"),
+    ]

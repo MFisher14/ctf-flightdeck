@@ -4,6 +4,14 @@ M0 plugs in a scripted driver (ctf_flightdeck.mock). M1 replaces it with an agen
 against a model API, behind the same protocol. A driver reports each turn back with
 Deck.report(lane_id, TurnReport(...)); the deck applies the rules (caps, flag format,
 approvals) and the console shows the result.
+
+Contract for drivers:
+- Start a model turn only while `lane.state is LaneState.RUNNING`. The deck can move a
+  lane to WAITING (an approval) or PAUSED at any report or key press; `resume()` is
+  called only when the lane is RUNNING again.
+- Every method returns at once; slow work belongs in the driver's own tasks.
+- Call deck methods only on the thread that created the deck (the console's event
+  loop). From a worker thread, hop back first (Textual: app.call_from_thread).
 """
 
 from __future__ import annotations
@@ -11,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from .model import Alert, AlertKind, Challenge, Lane, Pending
+from .model import Alert, AlertKind, Challenge, EscalationSummary, FileChange, Lane, Pending
 
 if TYPE_CHECKING:
     from .deck import Deck
@@ -38,11 +46,13 @@ class TurnReport:
     turn: bool = True  # counts as a model turn
     plan: str | None = None  # the lane's new plan, if it changed
     artifacts: tuple[str, ...] = ()
+    files: tuple[FileChange, ...] = ()  # files changed in the lane's workspace
     alerts: tuple[Alert, ...] = ()  # M0: scripted; M3: from detectors
     clear: tuple[AlertKind, ...] = ()
     pending: Pending | None = None  # ask the player for something
     flag: str | None = None  # candidate flag
     gave_up: str | None = None  # the lane ends without a flag, with this reason
+    hints_taken: int = 0  # how many queued hints this turn read (oldest first)
 
 
 class LaneDriver(Protocol):
@@ -50,7 +60,9 @@ class LaneDriver(Protocol):
 
     def attach(self, deck: Deck) -> None: ...
 
-    def start(self, lane: Lane, challenge: Challenge) -> None: ...
+    def start(self, lane: Lane, challenge: Challenge) -> None:
+        """Begin work. Raising here parks the challenge with the error as the reason."""
+        ...
 
     def pause(self, lane: Lane) -> None: ...
 
@@ -60,7 +72,7 @@ class LaneDriver(Protocol):
 
     def redirect(self, lane: Lane, text: str) -> None: ...
 
-    def escalate(self, lane: Lane, model: str, summary: str) -> None: ...
+    def escalate(self, lane: Lane, model: str, summary: EscalationSummary) -> None: ...
 
     def approved(self, lane: Lane, pending: Pending) -> None: ...
 

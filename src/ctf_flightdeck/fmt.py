@@ -4,10 +4,11 @@ from __future__ import annotations
 
 
 def tokens(n: int) -> str:
+    """950, 210k, 4.1M. Rounds before choosing the unit, so 999,600 is 1.0M, not 1000k."""
     if n < 1_000:
         return str(n)
-    if n < 1_000_000:
-        return f"{n / 1_000:.0f}k"
+    if round(n / 1_000) < 1_000:
+        return f"{round(n / 1_000)}k"
     return f"{n / 1_000_000:.1f}M"
 
 
@@ -15,7 +16,7 @@ def dollars(x: float | None, *, short: bool = False) -> str:
     """Dollar amount without the sign. short=True drops the leading zero: ".21"."""
     if x is None:
         return "-"
-    if x >= 100:
+    if round(x, 2) >= 100:
         return f"{x:.0f}"
     text = f"{x:.2f}"
     return text[1:] if short and text.startswith("0.") else text

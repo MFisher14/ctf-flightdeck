@@ -1,12 +1,15 @@
 """Lane ordering for the console: what needs the player first.
 
-Attention order (CONSOLE-SPEC): lanes with alerts first, then lanes waiting for an
-approval, then running lanes by idle time, then paused and taken-over lanes. Finished
-lanes always go last (the console collapses them).
-
-Idle time is compared in whole minutes, the precision the console shows, so running
-lanes that were active within the same minute keep a stable order instead of
-reshuffling on every tick.
+Attention order (CONSOLE-SPEC, refined at the M0 review):
+0. lanes that need the player: an approval waiting or an alert that wants an answer,
+   by urgency (a flag first, then any other approval, then budget, then the course
+   alerts), oldest first within the same urgency;
+1. lanes with only an informational alert (flightdeck already acted, e.g. a teammate
+   holds the live box);
+2. running lanes by idle time, in whole minutes (the precision the console shows), so
+   lanes active within the same minute keep their order instead of reshuffling;
+3. paused and taken-over lanes;
+4. finished lanes, most recently ended first (the console collapses them).
 """
 
 from __future__ import annotations
@@ -14,18 +17,19 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import StrEnum
 
-from .model import AlertKind, Lane, LaneState
+from .model import INFORMATIONAL_ALERTS, AlertKind, Lane, LaneState
 
 ALERT_URGENCY = {
     AlertKind.FLAG: 0,  # points waiting for one key press
-    AlertKind.BUDGET: 1,  # the lane is about to stop, or has
-    AlertKind.LOOP: 2,
-    AlertKind.EFFORT: 3,
-    AlertKind.HINT: 4,
-    AlertKind.DIRECTION: 5,
-    AlertKind.STALL: 6,
-    AlertKind.TEAMMATE: 7,  # stopping is automatic; informational
+    AlertKind.BUDGET: 2,  # the lane is about to stop, or has
+    AlertKind.LOOP: 3,
+    AlertKind.EFFORT: 4,
+    AlertKind.HINT: 5,
+    AlertKind.DIRECTION: 6,
+    AlertKind.STALL: 7,
+    AlertKind.TEAMMATE: 8,  # informational
 }
+PENDING_URGENCY = 1  # an approval with no alert of its own, e.g. live-box access
 
 
 class SortMode(StrEnum):
@@ -41,26 +45,32 @@ class SortMode(StrEnum):
 
 
 def attention_group(lane: Lane) -> int:
-    """0 alerts, 1 waiting for approval, 2 running, 3 paused or taken over, 4 finished."""
     if lane.finished:
         return 4
-    if lane.alerts:
+    if lane.needs_you:
         return 0
-    if lane.pending is not None:
+    if lane.alerts:
         return 1
     if lane.state is LaneState.RUNNING:
         return 2
     return 3
 
 
+def top_item(lane: Lane) -> tuple[int, float]:
+    """(urgency, since) of the most urgent thing the lane needs the player for."""
+    items = [(ALERT_URGENCY[a.kind], a.at) for a in lane.alerts if a.kind not in INFORMATIONAL_ALERTS]
+    if lane.pending is not None:
+        items.append((PENDING_URGENCY, lane.pending.at))
+    return min(items)
+
+
 def attention_key(lane: Lane, now: float) -> tuple:
     group = attention_group(lane)
     if group == 0:
-        top = min(lane.alerts, key=lambda a: (ALERT_URGENCY[a.kind], a.at))
-        return (0, ALERT_URGENCY[top.kind], top.at, lane.number)
+        urgency, since = top_item(lane)
+        return (0, urgency, since, lane.number)
     if group == 1:
-        assert lane.pending is not None
-        return (1, 0, lane.pending.at, lane.number)
+        return (1, 0, min(a.at for a in lane.alerts), lane.number)
     if group == 2:
         return (2, -int(lane.idle(now) // 60), 0, lane.number)
     return (group, 0, 0, lane.number)

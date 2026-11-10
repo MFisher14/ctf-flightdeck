@@ -1,24 +1,42 @@
-"""The deck's own rules, with a minimal recording driver standing in for lane work."""
+"""The deck's rules, driven through its public API.
+
+A recording driver and a recording verifier stand in for lane work and for the platform: they
+are collaborators that note what the deck asked of them. The deck itself is never mocked.
+"""
 
 from __future__ import annotations
+
+import dataclasses
+import re
+import threading
+from dataclasses import dataclass
 
 import pytest
 
 from ctf_flightdeck.core import interventions as iv
-from ctf_flightdeck.core.deck import Deck, QueueEntry
+from ctf_flightdeck.core.deck import Deck, QueueEntry, summary_lines
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import (
     ME,
+    Action,
+    ActionKind,
+    Actor,
     Alert,
     AlertKind,
     Challenge,
     ChallengeStatus,
     DeckConfig,
+    EscalationSummary,
     EventKind,
+    FileChange,
     LaneState,
     Pending,
     PendingKind,
+    Suggestion,
 )
+
+MODELS = ("small", "mid", "big")
+FLAG_FORMAT = r"t\{\w+\}"
 
 
 class Clock:
@@ -30,16 +48,19 @@ class Clock:
 
 
 class RecordingDriver:
-    """Records what the deck asked of it; does no work of its own."""
+    """Records what the deck asked of it and does no work. A challenge id in `fail` makes start() raise."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.fail: dict[str, str] = {}
         self.deck: Deck | None = None
 
     def attach(self, deck):
         self.deck = deck
 
     def start(self, lane, challenge):
+        if challenge.id in self.fail:
+            raise RuntimeError(self.fail[challenge.id])
         self.calls.append(("start", lane.id, challenge.id))
 
     def pause(self, lane):
@@ -67,26 +88,40 @@ class RecordingDriver:
         self.calls.append(("stop", lane.id))
 
     def named(self, name):
-        return [c for c in self.calls if c[0] == name]
+        """The arguments of every call to `name`, in order."""
+        return [call[1:] for call in self.calls if call[0] == name]
+
+    def started(self):
+        """Challenge ids of the lanes started, in order."""
+        return [cid for _, cid in self.named("start")]
+
+
+class RecordingVerifier:
+    """The platform's answer: only good_flag(challenge) is correct. Records every submission."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, challenge_id: str, flag: str) -> bool:
+        self.calls.append((challenge_id, flag))
+        return flag == good_flag(challenge_id)
 
 
 def good_flag(cid: str) -> str:
-    return f"t{{{cid.replace('-', '_')}}}"
+    return f"t{{{cid}}}"
 
 
-def make_deck(n=5, max_lanes=2, team=False, submit="confirm", token_cap=None):
+def make_deck(n=5, max_lanes=2, team=False, submit="confirm", token_cap=None, dollar_cap=None, models=MODELS, fail=None):
+    """A deck with challenges c0..c{n-1} (100 points, 10 solves) released and queued in that order."""
     clock, driver = Clock(), RecordingDriver()
+    driver.fail.update(fail or {})
     config = DeckConfig(
-        event="test",
-        team=team,
-        max_lanes=max_lanes,
-        flag_format=r"t\{\w+\}",
-        submit=submit,
-        models=("small", "mid", "big"),
+        event="test", team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, submit=submit, models=models
     )
-    deck = Deck(config, driver, clock, verify=lambda cid, flag: flag == good_flag(cid))
+    deck = Deck(config, driver, clock, verify=RecordingVerifier())
     challenges = [Challenge(f"c{i}", f"Chall {i}", "misc", 100, solves=10) for i in range(n)]
-    deck.release(challenges, [QueueEntry(c.id, "small", token_cap=token_cap) for c in challenges])
+    model = models[0] if models else "solo-model"
+    deck.release(challenges, [QueueEntry(c.id, model, token_cap=token_cap, dollar_cap=dollar_cap) for c in challenges])
     return deck, driver, clock
 
 
@@ -95,208 +130,896 @@ def lane_on(deck, cid):
     return lane
 
 
+def newest(deck):
+    return max(deck.lanes.values(), key=lambda lane: lane.number)
+
+
+def fork(deck, lane, **kwargs):
+    """Fork `lane`; return the sibling it started, or None if the fork was queued."""
+    before = set(deck.lanes)
+    out = deck.apply(iv.Fork(lane.id, **kwargs))
+    assert out.ok, out.message
+    new = [deck.lanes[lane_id] for lane_id in deck.lanes if lane_id not in before]
+    return new[0] if new else None
+
+
 def solve(deck, lane):
     deck.report(lane.id, TurnReport(action="solve.py", tokens=10, flag=good_flag(lane.challenge_id)))
     return deck.apply(iv.Approve(lane.id))
 
 
+def events(deck, kind, since=0):
+    return [e for e in deck.events[since:] if e.kind is kind]
+
+
+def queued_ids(deck):
+    return [entry.challenge for entry in deck.queue]
+
+
 # ---------------------------------------------------------------------- queue and max_lanes
 
 
-def test_wave_of_43_starts_16_lanes_and_queues_27():
+def test_a_wave_of_43_starts_16_lanes_in_triage_order_and_queues_27():
     deck, driver, _ = make_deck(n=43, max_lanes=16)
-    assert len(deck.active_lanes()) == 16
-    assert len(deck.queue) == 27
-    statuses = [ch.status for ch in deck.challenges.values()]
-    assert statuses.count(ChallengeStatus.RUNNING) == 16
-    assert statuses.count(ChallengeStatus.QUEUED) == 27
-    # lanes start in triage order
-    assert [c[2] for c in driver.named("start")] == [f"c{i}" for i in range(16)]
+    assert driver.started() == [f"c{i}" for i in range(16)]
+    assert [lane.id for lane in deck.active_lanes()] == [f"L{i:02d}" for i in range(1, 17)]
+    assert [lane.challenge_id for lane in deck.active_lanes()] == [f"c{i}" for i in range(16)]
+    assert queued_ids(deck) == [f"c{i}" for i in range(16, 43)]
+    statuses = [deck.challenges[f"c{i}"].status for i in range(43)]
+    assert statuses == [ChallengeStatus.RUNNING] * 16 + [ChallengeStatus.QUEUED] * 27
+    (release,) = events(deck, EventKind.RELEASE)
+    assert (release.data["started"], release.data["queued"]) == (16, 27)
 
 
-def test_queue_drains_in_order_and_never_exceeds_max_lanes():
+def test_a_later_release_counts_its_own_starts():
+    deck, _, _ = make_deck(n=2, max_lanes=3)
+    fresh = [Challenge("c8", "Chall 8", "web", 200), Challenge("c9", "Chall 9", "web", 300)]
+    deck.release(fresh, [QueueEntry(c.id, "small") for c in fresh], "Wave 2")
+    release = events(deck, EventKind.RELEASE)[-1]
+    assert dict(release.data) == {"label": "Wave 2", "challenges": ["c8", "c9"], "started": 1, "queued": 1}
+
+
+def test_the_queue_drains_in_triage_order_and_never_runs_more_than_max_lanes():
     deck, driver, _ = make_deck(n=7, max_lanes=3)
-    while deck.active_lanes():
-        assert len(deck.active_lanes()) <= 3
-        lane = min(deck.active_lanes(), key=lambda lane: lane.number)
+    active_at_each_start = []
+    deck.subscribe(
+        lambda e: active_at_each_start.append(len(deck.active_lanes())) if e.kind is EventKind.LANE_START else None
+    )
+    for solved in range(1, 8):
+        lane = min(deck.active_lanes(), key=lambda x: x.number)
         assert solve(deck, lane).ok
+        assert len(deck.active_lanes()) == min(3, 7 - solved)
     assert deck.queue == []
-    assert all(ch.status is ChallengeStatus.SOLVED for ch in deck.challenges.values())
-    assert [c[2] for c in driver.named("start")] == [f"c{i}" for i in range(7)]
+    assert driver.started() == [f"c{i}" for i in range(7)]
+    assert active_at_each_start == [3, 3, 3, 3]  # each later start filled a freed slot, never a fourth one
 
 
-def test_blocked_and_already_solved_challenges_are_not_queued():
-    clock, driver = Clock(), RecordingDriver()
-    deck = Deck(DeckConfig(event="t", max_lanes=4), driver, clock, verify=lambda c, f: False)
-    blocked = Challenge("b", "B", "misc", 100, status=ChallengeStatus.BLOCKED)
-    done = Challenge("d", "D", "misc", 100, status=ChallengeStatus.SOLVED, solved_by=ME)
+@pytest.mark.parametrize("hold", [iv.Pause, iv.TakeOver], ids=["paused", "taken over"])
+def test_a_held_lane_keeps_its_slot(hold):
+    deck, driver, _ = make_deck(n=4, max_lanes=2)
+    held, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    assert deck.apply(hold(held.id)).ok
+    assert deck.apply(iv.Kill(other.id, requeue=False)).ok
+    assert driver.started() == ["c0", "c1", "c2"]  # exactly one new start: the held lane still counts
+    assert len(deck.active_lanes()) == 2
+    assert queued_ids(deck) == ["c3"]
+
+
+def test_blocked_closed_and_teammate_claimed_challenges_are_not_queued_at_release():
+    driver = RecordingDriver()
+    deck = Deck(DeckConfig(event="t", team=True, max_lanes=1, models=MODELS), driver, Clock(), RecordingVerifier())
+    blocked = Challenge("b", "B", "misc", 100, status=ChallengeStatus.BLOCKED, note="needs a VPN")
+    solved = Challenge("s", "S", "misc", 100, status=ChallengeStatus.SOLVED, solved_by=ME)
+    theirs_solved = Challenge("m", "M", "misc", 100, status=ChallengeStatus.TEAMMATE, solved_by="bravo")
+    theirs_claimed = Challenge("t", "T", "misc", 100, claimed_by="delta")
+    ours = Challenge("o", "O", "misc", 100, claimed_by=ME)
     fresh = Challenge("f", "F", "misc", 100)
-    deck.release([blocked, done, fresh], [QueueEntry(c.id, "m") for c in (blocked, done, fresh)])
-    assert [c[2] for c in driver.named("start")] == ["f"]
-    assert blocked.status is ChallengeStatus.BLOCKED and done.status is ChallengeStatus.SOLVED
+    board = [blocked, solved, theirs_solved, theirs_claimed, ours, fresh]
+    deck.release(board, [QueueEntry(c.id, "small") for c in board])
+    assert driver.started() == ["o"]  # our own claim does not stop us
+    assert queued_ids(deck) == ["f"]
+    assert [c.status for c in board[:4]] == [
+        ChallengeStatus.BLOCKED,
+        ChallengeStatus.SOLVED,
+        ChallengeStatus.TEAMMATE,
+        ChallengeStatus.NEW,
+    ]
+    assert (ours.status, fresh.status) == (ChallengeStatus.RUNNING, ChallengeStatus.QUEUED)
 
 
-def test_release_rejects_duplicate_challenges():
+def test_release_refuses_a_challenge_already_on_the_board_and_changes_nothing():
     deck, _, _ = make_deck(n=1)
-    with pytest.raises(ValueError):
-        deck.release([Challenge("c0", "again", "misc", 1)], [])
+    with pytest.raises(ValueError, match="'c0'"):
+        deck.release([Challenge("c9", "New", "misc", 100), Challenge("c0", "Again", "misc", 1)], [QueueEntry("c9", "small")])
+    assert "c9" not in deck.challenges
+    assert deck.challenges["c0"].name == "Chall 0"
+    assert deck.queue == []
 
 
-# ---------------------------------------------------------------------- reports, flags, budget
+def test_release_refuses_the_same_challenge_twice_in_one_batch():
+    deck, _, _ = make_deck(n=0)
+    with pytest.raises(ValueError, match="'x'"):
+        deck.release([Challenge("x", "First", "misc", 100), Challenge("x", "Second", "misc", 100)], [])
+    assert deck.challenges == {}
 
 
-def test_report_updates_counters_and_idle():
+def test_release_refuses_a_queue_entry_for_an_unknown_challenge():
+    deck, _, _ = make_deck(n=1)
+    with pytest.raises(KeyError, match="ghost"):
+        deck.release([Challenge("c9", "New", "misc", 100)], [QueueEntry("ghost", "small")])
+    assert "c9" not in deck.challenges
+
+
+def test_release_refuses_an_entry_whose_model_is_not_in_the_ladder():
+    deck, _, _ = make_deck(n=1)
+    with pytest.raises(ValueError, match="huge"):
+        deck.release([Challenge("c9", "New", "misc", 100)], [QueueEntry("c9", "huge")])
+    assert "c9" not in deck.challenges and deck.queue == []
+
+
+def test_without_a_ladder_any_model_may_be_queued():
+    deck, driver, _ = make_deck(n=1, models=())
+    assert driver.started() == ["c0"]
+    assert lane_on(deck, "c0").model == "solo-model"
+
+
+@pytest.mark.parametrize("end", ["kill and park", "gave up"])
+def test_when_one_of_two_sibling_lanes_ends_the_challenge_keeps_running(end):
+    deck, _, _ = make_deck(n=1, max_lanes=2)
+    first = lane_on(deck, "c0")
+    sibling = fork(deck, first)
+    if end == "kill and park":
+        out = deck.apply(iv.Kill(first.id, requeue=False))
+        assert out.ok and f"{sibling.id} still on" in out.message
+    else:
+        deck.report(first.id, TurnReport(gave_up="no lead"))
+    assert first.finished and not sibling.finished
+    assert deck.challenges["c0"].status is ChallengeStatus.RUNNING
+    assert deck.lanes_on("c0") == [sibling]
+
+
+@pytest.mark.parametrize("forks, dropped", [(1, "dropped 1 queued fork"), (2, "dropped 2 queued forks")])
+def test_parking_drops_queued_forks_of_the_challenge(forks, dropped):
+    deck, driver, _ = make_deck(n=3, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    for _ in range(forks):
+        assert fork(deck, lane) is None  # every lane is busy: forks wait first in the queue
+    assert queued_ids(deck) == ["c0"] * forks + ["c2"]
+    out = deck.apply(iv.Kill(lane.id, requeue=False))
+    assert out.message.startswith(f"Killed {lane.id}") and "parked" in out.message
+    assert out.message.endswith(dropped)
+    assert not deck.queued("c0")
+    assert deck.challenges["c0"].status is ChallengeStatus.PARKED
+    assert driver.started() == ["c0", "c1", "c2"]  # the freed slot went to c2, not to a fork
+
+
+def test_a_challenge_whose_last_lane_ends_while_an_entry_for_it_waits_behind_another_shows_queued():
+    deck, driver, _ = make_deck(n=2, max_lanes=2)
+    a, b = lane_on(deck, "c0"), lane_on(deck, "c1")
+    assert fork(deck, b) is None
+    assert fork(deck, a) is None  # forks go first: the queue is now [fork of a, fork of b]
+    assert [(e.challenge, e.parent) for e in deck.queue] == [("c0", a.id), ("c1", b.id)]
+    deck.report(b.id, TurnReport(gave_up="no lead"))
+    assert driver.started() == ["c0", "c1", "c0"]  # b's slot went to the fork of a
+    assert deck.challenges["c1"].status is ChallengeStatus.QUEUED
+    assert queued_ids(deck) == ["c1"]
+
+
+def test_a_queued_entry_for_a_challenge_no_longer_workable_is_dropped_with_a_warning():
+    deck, driver, _ = make_deck(n=1, max_lanes=1, team=True)
+    lane = lane_on(deck, "c0")
+    assert fork(deck, lane) is None
+    deck.teammate_claim("c0", "delta")  # the running lane carries on, so its queued fork is still there
+    assert deck.queued("c0")
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(gave_up="no lead"))
+    assert driver.started() == ["c0"]  # the fork never started
+    assert deck.queue == []
+    assert deck.challenges["c0"].status is ChallengeStatus.NEW
+    (warning,) = events(deck, EventKind.WARNING, since=mark)
+    assert warning.challenge == "c0" and "claimed by delta" in warning.text
+
+
+def test_dropping_the_queued_fork_of_a_claimed_challenge_leaves_its_running_lane_alone():
+    deck, driver, _ = make_deck(n=2, max_lanes=2, team=True)
+    a, b = lane_on(deck, "c0"), lane_on(deck, "c1")
+    assert fork(deck, a) is None
+    deck.teammate_claim("c0", "delta")
+    deck.apply(iv.Kill(b.id, requeue=False))  # frees a slot: the fork comes up and is dropped
+    assert driver.started() == ["c0", "c1"]
+    assert a.state is LaneState.RUNNING
+    assert deck.challenges["c0"].status is ChallengeStatus.RUNNING  # a still works it
+    assert "claimed by delta" in events(deck, EventKind.WARNING)[-1].text
+
+
+def test_a_queued_challenge_that_becomes_blocked_is_dropped_and_stays_blocked():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    ch = deck.challenges["c1"]
+    ch.status, ch.note = ChallengeStatus.BLOCKED, "needs a VPN"  # the board changed while it waited
+    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))
+    assert driver.started() == ["c0", "c2"]
+    assert (ch.status, ch.note) == (ChallengeStatus.BLOCKED, "needs a VPN")
+    warning = events(deck, EventKind.WARNING)[-1]
+    assert warning.challenge == "c1" and "blocked (needs a VPN)" in warning.text
+
+
+def test_a_driver_that_cannot_start_a_lane_leaves_no_lane_and_parks_the_challenge():
+    deck, driver, _ = make_deck(n=3, max_lanes=1, fail={"c0": "no API key for small"})
+    assert [lane.challenge_id for lane in deck.lanes.values()] == ["c1"]  # no lane left behind for c0
+    ch = deck.challenges["c0"]
+    assert ch.status is ChallengeStatus.PARKED and "no API key for small" in ch.note
+    (warning,) = events(deck, EventKind.WARNING)
+    assert warning.challenge == "c0" and "no API key for small" in warning.text
+    assert [e.challenge for e in events(deck, EventKind.LANE_START)] == ["c1"]
+    assert driver.started() == ["c1"] and queued_ids(deck) == ["c2"]  # the next entry still started
+
+
+def test_a_fork_that_cannot_start_leaves_its_challenge_running():
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    driver.fail["c0"] = "no API key for mid"
+    deck.apply(iv.Fork(lane.id))
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.note) == (ChallengeStatus.RUNNING, "")
+    assert list(deck.lanes.values()) == [lane]
+    assert "no API key for mid" in events(deck, EventKind.WARNING)[-1].text
+
+
+def test_the_release_event_counts_only_the_lanes_that_started():
+    deck, _, _ = make_deck(n=3, max_lanes=1, fail={"c0": "no API key for small"})
+    assert len(deck.lanes) == 1
+    (release,) = events(deck, EventKind.RELEASE)
+    assert (release.data["started"], release.data["queued"]) == (1, 1)
+
+
+@pytest.mark.parametrize("what", ["fork", "kill and re-queue", "queue"])
+def test_an_intervention_whose_new_lane_cannot_start_says_so(what):
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    if what == "queue":
+        deck.apply(iv.Kill(lane.id, requeue=False))
+    driver.fail["c0"] = "no API key for this model"
+    if what == "fork":
+        out = deck.apply(iv.Fork(lane.id))
+    elif what == "kill and re-queue":
+        out = deck.apply(iv.Kill(lane.id, requeue=True))
+    else:
+        out = deck.apply(iv.Queue("c0"))
+    assert not deck.queued("c0")  # nothing waits in the queue: the start failed
+    assert "no API key for this model" in out.message, out.message
+    assert out.ok is (what == "kill and re-queue")  # the kill itself happened; the fork and the queue did not
+
+
+# ---------------------------------------------------------------------- reports
+
+
+def test_the_deck_attaches_itself_to_its_driver():
+    deck, driver, _ = make_deck(n=0)
+    assert driver.deck is deck
+
+
+def test_reports_add_up_turns_tokens_and_dollars_and_reset_idle():
     deck, _, clock = make_deck(n=1)
     lane = lane_on(deck, "c0")
     clock.t += 300
     assert lane.idle(clock.t) == 300
-    deck.report(lane.id, TurnReport(action="ls", output="a b", tokens=1500, dollars=0.25, artifacts=("a",)))
-    assert (lane.turns, lane.tokens, lane.dollars) == (1, 1500, 0.25)
+    deck.report(lane.id, TurnReport(action="ls", output="a b", tokens=1500, dollars=0.25))
     assert lane.idle(clock.t) == 0
-    assert lane.last_action == "ls" and lane.artifacts == ["a"]
-    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=None))
-    assert lane.dollars is None  # one unpriced turn makes the lane's dollars unknown
+    assert lane.actions == [Action(clock.t, 1, "ls", "a b", Actor.LANE, ActionKind.STEP)]
+    clock.t += 60
+    deck.report(lane.id, TurnReport(action="file a", tokens=500, dollars=0.5))
+    deck.report(lane.id, TurnReport(tokens=7, dollars=0.0, turn=False))  # not a model turn
+    assert (lane.turns, lane.tokens, lane.dollars) == (2, 2007, 0.75)
+    assert [a.text for a in lane.actions] == ["ls", "file a"]  # a report with no action logs no step
 
 
-def test_flag_waits_for_approval_then_solves_and_frees_the_slot():
-    deck, driver, _ = make_deck(n=3, max_lanes=1)
-    lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(action="solve.py", flag=good_flag("c0")))
-    assert lane.state is LaneState.WAITING
-    assert lane.alert(AlertKind.FLAG) is not None
-    assert lane.pending.kind is PendingKind.SUBMIT
-    assert deck.challenges["c0"].status is ChallengeStatus.RUNNING  # nothing submitted yet
-    out = deck.apply(iv.Approve(lane.id))
-    assert out.ok
-    ch = deck.challenges["c0"]
-    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.SOLVED, lane.id, 11)
-    assert lane.state is LaneState.SOLVED
-    assert [c[2] for c in driver.named("start")] == ["c0", "c1"]  # the queue moved on
-
-
-def test_candidate_that_does_not_match_the_format_is_not_submitted():
+def test_last_action_is_the_latest_step_not_an_alert_or_an_approval():
     deck, _, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(flag="FLAG{nope}"))
-    assert lane.pending is None and lane.alert(AlertKind.FLAG) is None
-    assert lane.state is LaneState.RUNNING
+    assert lane.last_action == ""
+    deck.report(lane.id, TurnReport(action="file x"))
+    deck.report(lane.id, TurnReport(action="strings x"))
+    deck.report(
+        lane.id,
+        TurnReport(alerts=(Alert(AlertKind.LOOP, "same command"),), pending=Pending(PendingKind.LIVE_BOX, "connect")),
+    )
+    assert [a.kind for a in lane.actions] == [ActionKind.STEP, ActionKind.STEP, ActionKind.ALERT, ActionKind.APPROVAL]
+    assert lane.last_action == "strings x"
 
 
-def test_rejected_flag_lets_the_lane_carry_on():
+def test_an_alert_is_logged_once_and_a_repeat_only_updates_its_reason():
+    deck, _, clock = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    loop = Alert(AlertKind.LOOP, "ran ls 3 times", (Suggestion("r", "Redirect"),))
+    deck.report(lane.id, TurnReport(turn=False, alerts=(loop,)))
+    first_at = clock.t
+    (event,) = events(deck, EventKind.ALERT, since=mark)
+    assert (event.lane, event.alert, dict(event.data)) == (
+        lane.id,
+        AlertKind.LOOP,
+        {"reason": "ran ls 3 times", "suggestions": ["r"]},
+    )
+    entry = lane.actions[-1]
+    assert (entry.kind, entry.by, entry.alert, entry.output) == (
+        ActionKind.ALERT,
+        Actor.DECK,
+        AlertKind.LOOP,
+        "ran ls 3 times",
+    )
+    clock.t += 60
+    n_actions = len(lane.actions)
+    deck.report(lane.id, TurnReport(turn=False, alerts=(Alert(AlertKind.LOOP, "ran ls 5 times"),)))
+    assert [(a.kind, a.reason, a.at) for a in lane.alerts] == [(AlertKind.LOOP, "ran ls 5 times", first_at)]
+    assert len(lane.actions) == n_actions and len(events(deck, EventKind.ALERT, since=mark)) == 1
+
+
+def test_a_report_clears_only_the_alerts_it_names():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(alerts=(Alert(AlertKind.LOOP, "x"), Alert(AlertKind.STALL, "y"))))
+    deck.report(lane.id, TurnReport(clear=(AlertKind.LOOP,)))
+    assert [a.kind for a in lane.alerts] == [AlertKind.STALL]
+
+
+def test_artifacts_are_kept_once_in_the_order_found():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(artifacts=("key.txt", "dump.bin")))
+    deck.report(lane.id, TurnReport(artifacts=("dump.bin", "notes.md")))
+    assert lane.artifacts == ["key.txt", "dump.bin", "notes.md"]
+
+
+def test_changed_files_are_stamped_and_a_later_change_to_a_path_replaces_the_earlier_one():
+    deck, _, clock = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(files=(FileChange("solve.py", "+a", "added"), FileChange("notes.md", "+n", "added"))))
+    first_at = clock.t
+    clock.t += 20
+    diff = "--- a/solve.py\n+++ b/solve.py\n@@ -1,3 +1,2 @@\n-a\n-x\n+b\n+c\n+d"
+    deck.report(lane.id, TurnReport(files=(FileChange("solve.py", diff),)))
+    assert list(lane.files) == ["notes.md", "solve.py"]  # newest change last
+    solve_py, notes = lane.files["solve.py"], lane.files["notes.md"]
+    assert (solve_py.diff, solve_py.status, solve_py.turn, solve_py.at) == (diff, "modified", 2, clock.t)
+    assert (solve_py.added, solve_py.removed) == (3, 2)  # the ---/+++ header lines do not count
+    assert (notes.diff, notes.turn, notes.at) == ("+n", 1, first_at)
+
+
+def test_one_unpriced_turn_makes_the_lane_cost_unknown_for_good():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=100, dollars=0.25))
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))
+    assert lane.dollars is None
+    deck.report(lane.id, TurnReport(tokens=100, dollars=0.5))
+    assert lane.dollars is None
+    assert lane.state is LaneState.RUNNING and lane.pending is None  # no dollar cap, so nothing to approve
+    assert lane.alert(AlertKind.BUDGET) is None
+
+
+def test_an_unpriced_turn_on_a_dollar_capped_lane_waits_for_approval_to_drop_the_cap():
+    deck, driver, _ = make_deck(n=1, token_cap=10_000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))
+    alert = lane.alert(AlertKind.BUDGET)
+    assert alert is not None and "small" in alert.reason
+    assert lane.state is LaneState.WAITING
+    assert lane.pending.kind is PendingKind.BUDGET and "small" in lane.pending.detail
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))  # a second unpriced turn asks nothing new
+    assert lane.waiting == []
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert (lane.dollar_cap, lane.token_cap) == (None, 10_000)
+    assert lane.state is LaneState.RUNNING and lane.pending is None and lane.alert(AlertKind.BUDGET) is None
+    assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))  # no cap left to ask about
+    assert lane.state is LaneState.RUNNING and lane.pending is None
+
+
+def test_dropping_the_only_cap_leaves_the_lane_uncapped():
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message.endswith("no cap")
+    assert (lane.token_cap, lane.dollar_cap, lane.budget_used()) == (None, None, None)
+
+
+def test_a_lane_with_an_unknown_price_gets_more_tokens_when_approved_at_its_token_cap():
+    deck, _, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=1000, dollars=None))
+    assert lane.pending.kind is PendingKind.BUDGET
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.token_cap == 1500 and lane.state is LaneState.RUNNING
+
+
+def test_totals_add_every_lanes_tokens_and_known_dollars_and_flag_an_unknown_price():
+    deck, _, _ = make_deck(n=2, max_lanes=2)
+    a, b = lane_on(deck, "c0"), lane_on(deck, "c1")
+    deck.report(a.id, TurnReport(tokens=1000, dollars=0.25))
+    deck.report(b.id, TurnReport(tokens=500, dollars=0.5))
+    assert deck.totals() == (1500, 0.75, False)
+    deck.report(b.id, TurnReport(tokens=100, dollars=None))
+    assert deck.totals() == (1600, 0.25, True)
+
+
+def test_hints_stay_queued_until_a_turn_reads_them_oldest_first():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.apply(iv.Hint(lane.id, "one"))
+    deck.apply(iv.Hint(lane.id, "two"))
+    deck.report(lane.id, TurnReport(action="ls"))
+    assert lane.hints == ["one", "two"]
+    deck.report(lane.id, TurnReport(action="cat a", hints_taken=1))
+    assert lane.hints == ["two"]
+    deck.report(lane.id, TurnReport(action="cat b", hints_taken=1))
+    assert lane.hints == []
+
+
+def test_a_late_report_after_the_lane_ended_changes_nothing():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.apply(iv.Kill(lane.id, requeue=False))
+    actions, n_events, calls = list(lane.actions), len(deck.events), list(driver.calls)
+    deck.report(
+        lane.id,
+        TurnReport(
+            action="cat flag",
+            tokens=500,
+            dollars=1.0,
+            plan="new plan",
+            artifacts=("a",),
+            alerts=(Alert(AlertKind.LOOP, "x"),),
+            pending=Pending(PendingKind.LIVE_BOX, "box"),
+            flag=good_flag("c0"),
+        ),
+    )
+    assert (lane.turns, lane.tokens, lane.dollars, lane.plan, lane.artifacts) == (0, 0, 0.0, "", [])
+    assert lane.actions == actions and lane.alerts == [] and lane.pending is None
+    assert lane.state is LaneState.KILLED
+    assert deck.challenges["c0"].status is ChallengeStatus.PARKED
+    assert deck.verify.calls == []
+    assert len(deck.events) == n_events and driver.calls == calls
+
+
+def test_each_turn_report_emits_a_turn_event_with_its_numbers():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(action="ls -la", tokens=1200, dollars=0.25))
+    deck.report(lane.id, TurnReport(action="cat x", tokens=300, dollars=None))
+    deck.report(lane.id, TurnReport(tokens=50, turn=False, plan="p"))
+    assert [(e.lane, e.challenge, dict(e.data)) for e in events(deck, EventKind.TURN, since=mark)] == [
+        (lane.id, "c0", {"turn": 1, "tokens": 1200, "dollars": 0.25, "action": "ls -la"}),
+        (lane.id, "c0", {"turn": 2, "tokens": 300, "dollars": None, "action": "cat x"}),
+    ]
+
+
+def test_a_turn_that_auto_submits_the_right_flag_still_emits_its_turn_event():
+    deck, _, _ = make_deck(n=1, submit="auto")
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(action="solve.py", tokens=900, dollars=0.25, flag=good_flag("c0")))
+    assert lane.state is LaneState.SOLVED
+    turns = events(deck, EventKind.TURN, since=mark)
+    assert [dict(e.data) for e in turns] == [{"turn": 1, "tokens": 900, "dollars": 0.25, "action": "solve.py"}]
+
+
+# ---------------------------------------------------------------------- flags and approvals
+
+
+def test_a_flag_waits_for_approval_then_solves_and_the_next_queued_lane_starts():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ch = deck.challenges["c0"]
+    deck.report(lane.id, TurnReport(action="solve.py", flag="t{c0}"))
+    assert lane.state is LaneState.WAITING
+    assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{c0}")
+    flag_alert = lane.alert(AlertKind.FLAG)
+    assert flag_alert is not None and "t{c0}" in flag_alert.reason
+    pending = events(deck, EventKind.PENDING)[-1]
+    assert (pending.lane, pending.data["kind"], pending.data["flag"]) == (lane.id, "submit", "t{c0}")
+    assert deck.verify.calls == [] and ch.status is ChallengeStatus.RUNNING  # nothing submitted yet
+    assert any(a.kind is ActionKind.NOTE and "t{c0}" in a.text for a in lane.actions)
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and "solved" in out.message and "rejected" not in out.message
+    assert deck.verify.calls == [("c0", "t{c0}")]
+    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.SOLVED, lane.id, 11)
+    assert lane.state is LaneState.SOLVED and lane.pending is None
+    assert (lane.id,) in driver.named("stop")
+    assert events(deck, EventKind.SUBMIT)[-1].text.endswith(": correct")
+    assert driver.started() == ["c0", "c1"]  # the queue moved on
+
+
+def test_the_flag_format_must_match_the_whole_candidate():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    for candidate in ("x t{abc} y", "t{abc} y"):
+        deck.report(lane.id, TurnReport(flag=candidate))
+        assert lane.pending is None and lane.alert(AlertKind.FLAG) is None, candidate
+        note = lane.actions[-1]
+        assert "does not match the flag format" in note.text
+        assert (note.by, note.kind) == (Actor.DECK, ActionKind.NOTE)
+    assert lane.state is LaneState.RUNNING and deck.verify.calls == []
+    deck.report(lane.id, TurnReport(flag="t{abc}"))
+    assert lane.pending.flag == "t{abc}"
+
+
+def test_a_rejected_flag_lets_the_lane_carry_on():
     deck, driver, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
     deck.report(lane.id, TurnReport(flag="t{wrong}"))
-    deck.apply(iv.Approve(lane.id))
-    assert lane.state is LaneState.RUNNING
-    assert deck.challenges["c0"].status is ChallengeStatus.RUNNING
-    assert driver.named("rejected") == [("rejected", lane.id, "t{wrong}")]
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and "rejected" in out.message
+    assert lane.state is LaneState.RUNNING and lane.pending is None
+    assert lane.alert(AlertKind.FLAG) is None
+    assert driver.named("rejected") == [(lane.id, "t{wrong}")]
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.RUNNING, None, 10)
+    submit = events(deck, EventKind.SUBMIT)[-1]
+    assert submit.data == {"flag": "t{wrong}", "correct": False} and submit.text.endswith(": incorrect")
+    assert any(a.by is Actor.DECK and "t{wrong}" in a.text and "incorrect" in a.text for a in lane.actions)
 
 
-def test_auto_submit_policy_submits_without_approval():
+def test_auto_submit_policy_submits_without_asking():
+    deck, driver, _ = make_deck(n=2, max_lanes=1, submit="auto")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    assert deck.verify.calls == [("c0", "t{wrong}")]
+    assert lane.state is LaneState.RUNNING and lane.pending is None
+    assert driver.named("rejected") == [(lane.id, "t{wrong}")]
+    deck.report(lane.id, TurnReport(flag="t{c0}"))
+    assert lane.state is LaneState.SOLVED and deck.challenges["c0"].status is ChallengeStatus.SOLVED
+    assert events(deck, EventKind.PENDING) == []
+    assert driver.started() == ["c0", "c1"]
+
+
+def test_an_auto_submitted_wrong_flag_leaves_a_pending_approval_in_place():
     deck, _, _ = make_deck(n=1, submit="auto")
     lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(flag=good_flag("c0")))
-    assert lane.state is LaneState.SOLVED and lane.pending is None
-
-
-def test_budget_alert_at_80_percent_and_approval_at_the_cap():
-    deck, driver, _ = make_deck(n=1, token_cap=1000)
-    lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(tokens=799))
-    assert lane.alert(AlertKind.BUDGET) is None
-    deck.report(lane.id, TurnReport(tokens=1))
-    assert lane.alert(AlertKind.BUDGET) is not None
-    assert lane.state is LaneState.RUNNING
-    deck.report(lane.id, TurnReport(tokens=200))
-    assert lane.state is LaneState.WAITING
-    assert lane.pending.kind is PendingKind.BUDGET
-    deck.apply(iv.Approve(lane.id))
-    assert lane.token_cap == 1500
-    assert lane.state is LaneState.RUNNING
-    assert lane.alert(AlertKind.BUDGET) is None
-    assert driver.named("approved") == [("approved", lane.id, PendingKind.BUDGET)]
-
-
-def test_live_box_request_waits_for_approval():
-    deck, driver, _ = make_deck(n=1)
-    lane = lane_on(deck, "c0")
     deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect")))
-    assert lane.state is LaneState.WAITING
-    assert deck.apply(iv.Approve(lane.id)).ok
-    assert lane.state is LaneState.RUNNING
-    assert driver.named("approved") == [("approved", lane.id, PendingKind.LIVE_BOX)]
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    assert lane.pending.kind is PendingKind.LIVE_BOX and lane.state is LaneState.WAITING
 
 
-def test_gave_up_parks_the_challenge_and_starts_the_next():
-    deck, driver, _ = make_deck(n=2, max_lanes=1)
-    lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(gave_up="no lead"))
-    assert lane.state is LaneState.GAVE_UP
-    assert deck.challenges["c0"].status is ChallengeStatus.PARKED
-    assert "no lead" in deck.challenges["c0"].note
-    assert [c[2] for c in driver.named("start")] == ["c0", "c1"]
-
-
-def test_late_report_after_the_lane_ended_changes_nothing():
+def test_two_candidates_in_a_row_are_both_kept_in_order():
     deck, _, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    deck.apply(iv.Kill(lane.id, requeue=False))
-    deck.report(lane.id, TurnReport(tokens=500, flag=good_flag("c0")))
-    assert lane.tokens == 0 and lane.state is LaneState.KILLED
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    deck.report(lane.id, TurnReport(flag="t{two}"))
+    assert lane.pending.flag == "t{one}"
+    assert [(p.kind, p.flag) for p in lane.waiting] == [(PendingKind.SUBMIT, "t{two}")]
+    reason = lane.alert(AlertKind.FLAG).reason
+    assert "t{one}" in reason and re.search(r"\b1 more candidate\b", reason)
+    deck.report(lane.id, TurnReport(flag="t{two}"))  # the same candidate again is not queued twice
+    deck.report(lane.id, TurnReport(flag="t{three}"))
+    assert [p.flag for p in lane.waiting] == ["t{two}", "t{three}"]
+    assert "2 more candidates" in lane.alert(AlertKind.FLAG).reason
+
+
+def test_approving_a_wrong_first_candidate_brings_up_the_second():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    deck.report(lane.id, TurnReport(flag="t{c0}"))
+    deck.apply(iv.Approve(lane.id))
+    assert lane.pending.flag == "t{c0}" and lane.waiting == []
+    assert lane.state is LaneState.WAITING
+    reason = lane.alert(AlertKind.FLAG).reason
+    assert "t{c0}" in reason and "t{wrong}" not in reason and "more" not in reason
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.state is LaneState.SOLVED
+    assert deck.verify.calls == [("c0", "t{wrong}"), ("c0", "t{c0}")]
+
+
+def test_a_flag_goes_before_a_pending_live_box_request_which_still_waits():
+    deck, driver, clock = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+    assert lane.pending.at == clock.t  # stamped by the deck
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{wrong}")
+    assert [p.kind for p in lane.waiting] == [PendingKind.LIVE_BOX]
+    deck.apply(iv.Approve(lane.id))  # the flag is wrong
+    assert lane.pending.kind is PendingKind.LIVE_BOX and lane.state is LaneState.WAITING
+    assert lane.alert(AlertKind.FLAG) is None
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.pending is None and lane.state is LaneState.RUNNING
+    assert driver.named("approved") == [(lane.id, PendingKind.LIVE_BOX)]
+
+
+def test_a_second_flag_goes_before_a_live_box_request_that_waits_behind_the_first():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    deck.report(lane.id, TurnReport(flag="t{c0}"))
+    deck.apply(iv.Approve(lane.id))  # t{one} is wrong
+    assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{c0}")
+    assert [p.kind for p in lane.waiting] == [PendingKind.LIVE_BOX]
+    assert "t{c0}" in lane.alert(AlertKind.FLAG).reason
+
+
+def test_other_approvals_wait_in_arrival_order_and_a_flag_goes_before_them():
+    deck, _, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+    mark, logged = len(deck.events), len(lane.actions)
+    deck.report(lane.id, TurnReport(tokens=1000, turn=False))  # at the cap: a budget request
+    assert lane.pending.kind is PendingKind.LIVE_BOX
+    assert [p.kind for p in lane.waiting] == [PendingKind.BUDGET]
+    assert any(a.kind is ActionKind.NOTE and lane.waiting[0].detail in a.text for a in lane.actions[logged:])
+    assert events(deck, EventKind.PENDING, since=mark)[-1].data["queued"] is True
+    deck.report(lane.id, TurnReport(flag="t{wrong}", turn=False))
+    assert lane.pending.flag == "t{wrong}"
+    assert [p.kind for p in lane.waiting] == [PendingKind.LIVE_BOX, PendingKind.BUDGET]
+    deck.apply(iv.Approve(lane.id))  # the flag is wrong
+    assert lane.pending.kind is PendingKind.LIVE_BOX
+    deck.apply(iv.Approve(lane.id))
+    assert lane.pending.kind is PendingKind.BUDGET
+    deck.apply(iv.Approve(lane.id))
+    assert lane.pending is None and lane.state is LaneState.RUNNING
+
+
+def test_a_budget_request_waits_behind_a_pending_submit_and_is_never_duplicated():
+    deck, _, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=1000, flag="t{wrong}"))
+    assert lane.pending.kind is PendingKind.SUBMIT
+    assert [p.kind for p in lane.waiting] == [PendingKind.BUDGET]
+    deck.report(lane.id, TurnReport(tokens=10, turn=False))
+    deck.report(lane.id, TurnReport(tokens=10, turn=False))
+    assert [p.kind for p in lane.waiting] == [PendingKind.BUDGET]
+    deck.apply(iv.Approve(lane.id))  # the flag is wrong; the budget request comes up
+    assert lane.pending.kind is PendingKind.BUDGET and lane.waiting == []
+    deck.apply(iv.Approve(lane.id))
+    assert lane.state is LaneState.RUNNING and lane.pending is None and lane.token_cap == 1500
+
+
+def test_an_approval_that_arrives_or_is_answered_while_paused_keeps_the_lane_paused():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.apply(iv.Pause(lane.id))
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect")))  # a step already in flight
+    assert lane.state is LaneState.PAUSED and lane.pending.kind is PendingKind.LIVE_BOX
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.state is LaneState.PAUSED and lane.pending is None
+    assert driver.named("resume") == []
+
+
+def test_approving_live_box_access_leaves_the_budget_alone():
+    deck, driver, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=800, pending=Pending(PendingKind.LIVE_BOX, "connect")))
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and "live box" in out.message
+    assert lane.token_cap == 1000 and lane.alert(AlertKind.BUDGET) is not None
+    assert driver.named("approved") == [(lane.id, PendingKind.LIVE_BOX)]
+
+
+def test_a_correct_flag_stops_sibling_lanes_and_drops_queued_entries_for_the_challenge():
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    assert fork(deck, lane) is None  # a second fork waits in the queue
+    deck.release([Challenge("c1", "Chall 1", "misc", 100)], [QueueEntry("c1", "small")])
+    assert queued_ids(deck) == ["c0", "c1"]
+    mark = len(deck.events)
+    assert solve(deck, lane).ok
+    assert sibling.state is LaneState.STOPPED and lane.id in sibling.result
+    assert (sibling.id,) in driver.named("stop")
+    assert deck.queue == []
+    assert driver.started() == ["c0", "c0", "c1"]  # the queued fork never started
+    assert events(deck, EventKind.WARNING, since=mark) == []  # dropped as part of the solve, not found later
+
+
+def test_giving_up_in_the_report_that_brings_a_candidate_keeps_the_lane_waiting():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}", gave_up="out of ideas"))
+    assert lane.state is LaneState.WAITING and not lane.finished
+    assert lane.pending.flag == "t{maybe}"
+    assert deck.challenges["c0"].status is ChallengeStatus.RUNNING
+    assert any("out of ideas" in a.text for a in lane.actions)
+
+
+# ---------------------------------------------------------------------- budget
+
+
+def test_the_budget_alert_starts_at_80_percent_of_the_token_cap():
+    deck, _, _ = make_deck(n=1, token_cap=10_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=7_990))  # 79.9%
+    assert lane.alert(AlertKind.BUDGET) is None
+    deck.report(lane.id, TurnReport(tokens=10))  # 80%
+    alert = lane.alert(AlertKind.BUDGET)
+    assert alert is not None and "80%" in alert.reason and "$" not in alert.reason
+    assert lane.state is LaneState.RUNNING and lane.pending is None
+
+
+def test_the_budget_rules_watch_the_dollar_cap_too():
+    deck, _, _ = make_deck(n=1, dollar_cap=1.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(dollars=0.75))
+    assert lane.alert(AlertKind.BUDGET) is None
+    deck.report(lane.id, TurnReport(dollars=0.0625))  # 81.25%
+    assert lane.alert(AlertKind.BUDGET) is not None and lane.state is LaneState.RUNNING
+    deck.report(lane.id, TurnReport(dollars=0.25))  # 106.25%
+    assert lane.state is LaneState.WAITING and lane.pending.kind is PendingKind.BUDGET
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert (lane.token_cap, lane.dollar_cap) == (None, 1.5)
+
+
+def test_approving_at_80_percent_raises_both_caps_by_half_and_clears_the_alert():
+    deck, driver, _ = make_deck(n=1, token_cap=1000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=800, dollars=0.5))
+    reason = lane.alert(AlertKind.BUDGET).reason
+    assert "800 of 1k tokens" in reason and "$0.50 of $2.00" in reason  # the numbers the player can check
+    assert lane.pending is None
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert (lane.token_cap, lane.dollar_cap) == (1500, 3.0)
+    assert lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.RUNNING
+    assert not deck.apply(iv.Approve(lane.id)).ok  # nothing left to approve
+    assert (lane.token_cap, lane.dollar_cap) == (1500, 3.0)
+
+
+def test_at_the_cap_the_lane_waits_and_approval_raises_both_caps():
+    deck, driver, _ = make_deck(n=1, token_cap=1000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=1000, dollars=0.5))
+    assert lane.state is LaneState.WAITING and lane.pending.kind is PendingKind.BUDGET
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert (lane.token_cap, lane.dollar_cap) == (1500, 3.0)
+    assert lane.alert(AlertKind.BUDGET) is None
+    assert lane.state is LaneState.RUNNING and lane.pending is None
+    assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
+
+
+def test_the_80_percent_alert_suggests_escalating_and_the_100_percent_alert_does_not():
+    deck, _, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=800))
+    keys = [s.key for s in lane.alert(AlertKind.BUDGET).suggestions]
+    assert "e" in keys and "a" in keys
+    deck.report(lane.id, TurnReport(tokens=200))
+    keys = [s.key for s in lane.alert(AlertKind.BUDGET).suggestions]
+    assert "e" not in keys and "a" in keys
 
 
 # ---------------------------------------------------------------------- team mode
 
 
-def test_teammate_solve_stops_the_lane_and_frees_its_slot():
-    deck, driver, _ = make_deck(n=3, max_lanes=2, team=True)
+def test_a_teammate_solve_stops_every_lane_on_the_challenge_and_frees_their_slots():
+    deck, driver, _ = make_deck(n=1, max_lanes=2, team=True)
     lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    assert fork(deck, lane) is None  # a second fork waits in the queue
+    deck.release([Challenge("c1", "Chall 1", "misc", 100)], [QueueEntry("c1", "small")])
+    mark = len(deck.events)
     deck.teammate_solved("c0", "bravo")
-    assert lane.state is LaneState.STOPPED
-    alert = lane.alert(AlertKind.TEAMMATE)
-    assert alert is not None and "bravo" in alert.reason
+    for stopped in (lane, sibling):
+        assert stopped.state is LaneState.STOPPED
+        assert "bravo" in stopped.alert(AlertKind.TEAMMATE).reason
+        assert (stopped.id,) in driver.named("stop")
     ch = deck.challenges["c0"]
-    assert (ch.status, ch.solved_by) == (ChallengeStatus.TEAMMATE, "bravo")
-    assert ("stop", lane.id) in driver.calls
-    assert lane_on(deck, "c2")  # the queued challenge took the slot
+    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.TEAMMATE, "bravo", 11)
+    assert deck.queue == [] and driver.started() == ["c0", "c0", "c1"]  # c1 took a freed slot
+    assert events(deck, EventKind.WARNING, since=mark) == []
+    solved = events(deck, EventKind.TEAMMATE, since=mark)[-1]
+    assert dict(solved.data) == {"who": "bravo", "solved": True, "stopped": [lane.id, sibling.id]}
+    assert solved.text.startswith("bravo solved Chall 0") and lane.id in solved.text and sibling.id in solved.text
 
 
-def test_teammate_solve_of_a_queued_challenge_means_it_never_starts():
-    deck, driver, _ = make_deck(n=4, max_lanes=1, team=True)
+def test_a_teammate_solve_of_a_queued_challenge_stops_nothing_and_it_never_starts():
+    deck, driver, _ = make_deck(n=3, max_lanes=1, team=True)
     deck.teammate_solved("c2", "bravo")
-    assert not deck.queued("c2")
-    for _ in range(3):
-        lane = deck.active_lanes()[0]
-        solve(deck, lane)
-    assert "c2" not in [c[2] for c in driver.named("start")]
+    solved = deck.events[-1]
+    assert (solved.text, solved.data["stopped"]) == ("bravo solved Chall 2", [])
+    assert queued_ids(deck) == ["c1"]
+    solve(deck, lane_on(deck, "c0"))
+    solve(deck, lane_on(deck, "c1"))
+    assert driver.started() == ["c0", "c1"] and deck.active_lanes() == []
 
 
-def test_teammate_claim_keeps_a_challenge_out_of_the_queue():
+def test_a_teammate_solve_of_a_parked_challenge_clears_its_parked_note():
+    deck, _, _ = make_deck(n=1, team=True)
+    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))
+    assert deck.challenges["c0"].note
+    deck.teammate_solved("c0", "bravo")
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.solved_by, ch.note) == (ChallengeStatus.TEAMMATE, "bravo", "")
+
+
+def test_a_teammate_solve_of_a_challenge_we_solved_changes_nothing():
+    deck, _, _ = make_deck(n=1, team=True)
+    lane = lane_on(deck, "c0")
+    solve(deck, lane)
+    deck.teammate_solved("c0", "bravo")
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.SOLVED, lane.id, 11)
+    last = deck.events[-1]
+    assert (last.kind, last.challenge) == (EventKind.TEAMMATE, "c0") and "also solved" in last.text
+    assert dict(last.data) == {"who": "bravo", "solved": True}
+
+
+def test_a_teammate_claim_takes_a_queued_challenge_out_of_the_queue():
     deck, driver, _ = make_deck(n=3, max_lanes=1, team=True)
     deck.teammate_claim("c1", "delta")
-    assert not deck.queued("c1")
-    assert deck.challenges["c1"].claimed_by == "delta"
+    ch = deck.challenges["c1"]
+    assert (ch.status, ch.claimed_by) == (ChallengeStatus.NEW, "delta")
+    assert queued_ids(deck) == ["c2"]
+    last = deck.events[-1]
+    assert (last.kind, last.challenge, dict(last.data)) == (EventKind.TEAMMATE, "c1", {"who": "delta", "claimed": True})
     solve(deck, lane_on(deck, "c0"))
-    assert [c[2] for c in driver.named("start")] == ["c0", "c2"]
+    assert driver.started() == ["c0", "c2"]
 
 
-def test_teammate_events_need_team_mode():
-    deck, _, _ = make_deck(n=1, team=False)
-    with pytest.raises(RuntimeError):
-        deck.teammate_solved("c0", "bravo")
-
-
-def test_claim_and_release_only_in_team_mode():
-    solo, _, _ = make_deck(n=1, team=False)
-    assert not solo.apply(iv.Claim("c0")).ok
-    deck, _, _ = make_deck(n=2, team=True)
-    assert deck.apply(iv.Claim("c1")).ok
-    assert deck.challenges["c1"].claimed_by == ME
-    assert not deck.apply(iv.Claim("c1")).ok  # already ours
-    assert deck.apply(iv.Release("c1")).ok
-    assert deck.challenges["c1"].claimed_by is None
+def test_a_teammate_claim_does_not_stop_a_running_lane():
+    deck, driver, _ = make_deck(n=1, team=True)
+    lane = lane_on(deck, "c0")
     deck.teammate_claim("c0", "delta")
+    assert lane.state is LaneState.RUNNING and driver.named("stop") == []
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.claimed_by) == (ChallengeStatus.RUNNING, "delta")
+
+
+def test_a_teammate_claim_on_a_parked_challenge_keeps_it_parked():
+    deck, _, _ = make_deck(n=1, team=True)
+    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))
+    note = deck.challenges["c0"].note
+    deck.teammate_claim("c0", "delta")
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.note, ch.claimed_by) == (ChallengeStatus.PARKED, note, "delta")
+
+
+@pytest.mark.parametrize("call", ["teammate_solved", "teammate_claim"])
+def test_teammate_events_need_team_mode(call):
+    deck, _, _ = make_deck(n=1, team=False)
+    with pytest.raises(RuntimeError, match="team mode"):
+        getattr(deck, call)("c0", "bravo")
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.claimed_by, ch.solved_by) == (ChallengeStatus.RUNNING, None, None)
+    assert lane_on(deck, "c0").state is LaneState.RUNNING
+
+
+def test_a_teammate_claim_over_our_own_claim_keeps_ours_and_warns():
+    deck, _, _ = make_deck(n=3, max_lanes=1, team=True)
+    assert deck.apply(iv.Claim("c1")).ok
+    deck.teammate_claim("c1", "delta")
+    ch = deck.challenges["c1"]
+    assert (ch.claimed_by, ch.status) == (ME, ChallengeStatus.QUEUED) and deck.queued("c1")
+    warning = deck.events[-1]
+    assert warning.kind is EventKind.WARNING and "delta" in warning.text and warning.data["conflict"] is True
+
+
+def test_claims_are_for_team_mode_and_respect_a_teammates_claim():
+    solo, _, _ = make_deck(n=1)
+    for intervention in (iv.Claim("c0"), iv.Release("c0")):
+        out = solo.apply(intervention)
+        assert not out.ok and "team mode" in out.message
+    assert solo.challenges["c0"].claimed_by is None
+    deck, _, _ = make_deck(n=2, team=True)
+    assert deck.apply(iv.Claim("c1")).ok and deck.challenges["c1"].claimed_by == ME
+    out = deck.apply(iv.Claim("c1"))
+    assert not out.ok and "already claimed" in out.message
+    assert deck.apply(iv.Release("c1")).ok and deck.challenges["c1"].claimed_by is None
+    assert not deck.apply(iv.Release("c1")).ok  # not ours any more
+    deck.teammate_claim("c0", "delta")
+    out = deck.apply(iv.Claim("c0"))
+    assert not out.ok and "delta" in out.message
+    assert not deck.apply(iv.Release("c0")).ok
+    assert deck.challenges["c0"].claimed_by == "delta"
+    for intervention in (iv.Claim("nope"), iv.Release("nope")):
+        out = deck.apply(intervention)
+        assert not out.ok and "nope" in out.message
+
+
+def test_a_solved_challenge_cannot_be_claimed():
+    deck, _, _ = make_deck(n=1, team=True)
+    solve(deck, lane_on(deck, "c0"))
     assert not deck.apply(iv.Claim("c0")).ok
+    assert deck.challenges["c0"].claimed_by is None
 
 
 # ---------------------------------------------------------------------- interventions
@@ -305,127 +1028,623 @@ def test_claim_and_release_only_in_team_mode():
 def test_pause_and_resume():
     deck, driver, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    assert deck.apply(iv.Pause(lane.id)).ok
-    assert lane.state is LaneState.PAUSED
+    assert deck.apply(iv.Pause(lane.id)).ok and lane.state is LaneState.PAUSED
     assert not deck.apply(iv.Pause(lane.id)).ok
-    assert deck.apply(iv.Resume(lane.id)).ok
-    assert lane.state is LaneState.RUNNING
-    assert driver.named("pause") == [("pause", lane.id)] and driver.named("resume") == [("resume", lane.id)]
+    assert driver.named("pause") == [(lane.id,)]
+    assert deck.apply(iv.Resume(lane.id)).ok and lane.state is LaneState.RUNNING
+    assert driver.named("resume") == [(lane.id,)]
+    assert not deck.apply(iv.Resume(lane.id)).ok  # not paused
+    assert driver.named("resume") == [(lane.id,)]
 
 
-def test_resume_returns_to_waiting_when_an_approval_is_pending():
-    deck, _, _ = make_deck(n=1)
-    lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(flag=good_flag("c0")))
-    deck.apply(iv.Pause(lane.id))
-    deck.apply(iv.Resume(lane.id))
-    assert lane.state is LaneState.WAITING
-
-
-def test_hint_is_queued_for_the_next_turn_and_answers_course_alerts():
+def test_resume_with_a_pending_approval_goes_back_to_waiting_and_does_not_resume_the_driver():
     deck, driver, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(alerts=(Alert(AlertKind.EFFORT, "too much"),)))
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.apply(iv.Pause(lane.id))
+    out = deck.apply(iv.Resume(lane.id))
+    assert out.ok and "approval" in out.message
+    assert lane.state is LaneState.WAITING
+    assert driver.named("resume") == []
+
+
+def test_a_hint_is_queued_and_answers_only_the_course_alerts():
+    deck, driver, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    course = (AlertKind.EFFORT, AlertKind.HINT, AlertKind.DIRECTION, AlertKind.LOOP, AlertKind.STALL)
+    alerts = tuple(Alert(kind, "x") for kind in (*course, AlertKind.TEAMMATE))
+    deck.report(lane.id, TurnReport(tokens=800, flag="t{maybe}", alerts=alerts))  # adds FLAG and BUDGET
+    assert {a.kind for a in lane.alerts} == set(AlertKind)
     assert deck.apply(iv.Hint(lane.id, "  try rot13  ")).ok
     assert lane.hints == ["try rot13"]
-    assert lane.alert(AlertKind.EFFORT) is None
-    assert driver.named("hint") == [("hint", lane.id, "try rot13")]
-    deck.report(lane.id, TurnReport(action="rot13"))
-    assert lane.hints == []
-    assert not deck.apply(iv.Hint(lane.id, "   ")).ok
+    assert {a.kind for a in lane.alerts} == {AlertKind.FLAG, AlertKind.BUDGET, AlertKind.TEAMMATE}
+    assert driver.named("hint") == [(lane.id, "try rot13")]
+    last = lane.actions[-1]
+    assert (last.text, last.by, last.kind) == ("try rot13", Actor.PLAYER, ActionKind.MESSAGE)
 
 
-def test_redirect_replaces_the_plan():
+def test_an_empty_hint_is_refused():
     deck, driver, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(plan="fuzz everything", alerts=(Alert(AlertKind.DIRECTION, "fuzzing"),)))
-    assert deck.apply(iv.Redirect(lane.id, "read the source")).ok
+    deck.report(lane.id, TurnReport(alerts=(Alert(AlertKind.STALL, "stuck"),)))
+    assert not deck.apply(iv.Hint(lane.id, "  \n ")).ok
+    assert lane.hints == [] and driver.named("hint") == []
+    assert lane.alert(AlertKind.STALL) is not None
+
+
+def test_redirect_replaces_the_plan_and_answers_the_course_alerts():
+    deck, driver, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=800, plan="fuzz everything", alerts=(Alert(AlertKind.DIRECTION, "fuzzing"),)))
+    assert deck.apply(iv.Redirect(lane.id, " read the source ")).ok
     assert lane.plan == "read the source"
-    assert lane.alert(AlertKind.DIRECTION) is None
-    assert driver.named("redirect") == [("redirect", lane.id, "read the source")]
+    assert lane.alert(AlertKind.DIRECTION) is None and lane.alert(AlertKind.BUDGET) is not None
+    assert driver.named("redirect") == [(lane.id, "read the source")]
 
 
-def test_fork_starts_a_sibling_on_another_model_when_a_slot_is_free():
+@pytest.mark.parametrize("text", ["read the source", "  read the source ", "   "], ids=["same", "same, padded", "empty"])
+def test_redirect_refuses_an_empty_or_unchanged_plan(text):
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(plan="read the source", alerts=(Alert(AlertKind.DIRECTION, "x"),)))
+    assert not deck.apply(iv.Redirect(lane.id, text)).ok
+    assert driver.named("redirect") == []
+    assert lane.plan == "read the source" and lane.alert(AlertKind.DIRECTION) is not None
+
+
+@pytest.mark.parametrize(
+    "intervention",
+    [
+        "pause",
+        "resume",
+        "redirect",
+        "fork",
+        "fork into the queue",
+        "escalate",
+        "take over",
+        "hand back",
+        "approve",
+        "approve more budget",
+    ],
+)
+def test_each_player_intervention_is_written_to_the_lanes_log(intervention):
+    deck, _, _ = make_deck(n=1, max_lanes=1 if intervention == "fork into the queue" else 2, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    if intervention == "resume":
+        deck.apply(iv.Pause(lane.id))
+    elif intervention == "hand back":
+        deck.apply(iv.TakeOver(lane.id))
+    elif intervention == "approve":
+        deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect")))
+    elif intervention == "approve more budget":
+        deck.report(lane.id, TurnReport(tokens=800))
+    action = {
+        "pause": iv.Pause(lane.id),
+        "resume": iv.Resume(lane.id),
+        "redirect": iv.Redirect(lane.id, "read the source"),
+        "fork": iv.Fork(lane.id),
+        "fork into the queue": iv.Fork(lane.id),
+        "escalate": iv.Escalate(lane.id),
+        "take over": iv.TakeOver(lane.id),
+        "hand back": iv.HandBack(lane.id),
+        "approve": iv.Approve(lane.id),
+        "approve more budget": iv.Approve(lane.id),
+    }[intervention]
+    before = len(lane.actions)
+    assert deck.apply(action).ok
+    added = lane.actions[before:]
+    assert [(a.by, a.kind) for a in added] == [(Actor.PLAYER, ActionKind.PLAYER)], added
+
+
+def test_fork_starts_a_sibling_when_a_slot_is_free():
+    deck, _, _ = make_deck(n=1, max_lanes=2, token_cap=5000, dollar_cap=1.0)
+    lane = lane_on(deck, "c0")
+    out = deck.apply(iv.Fork(lane.id, approach=" source first "))
+    sibling = next(x for x in deck.lanes_on("c0") if x is not lane)
+    assert out.ok and sibling.id in out.message
+    assert (sibling.parent, sibling.model, sibling.approach, sibling.attempt) == (lane.id, "mid", "source first", 1)
+    assert (sibling.token_cap, sibling.dollar_cap) == (5000, 1.0)
+    assert lane.state is LaneState.RUNNING
+    start = events(deck, EventKind.LANE_START)[-1]
+    assert dict(start.data) == {"model": "mid", "parent": lane.id, "attempt": 1, "approach": "source first"}
+    assert f"fork of {lane.id}" in start.text and "attempt" not in start.text
+
+
+@pytest.mark.parametrize("escalations, expected", [(0, "mid"), (1, "big"), (2, "small")])
+def test_a_fork_takes_the_next_stronger_model_or_the_weakest_other_one_from_the_top(escalations, expected):
     deck, _, _ = make_deck(n=1, max_lanes=2)
     lane = lane_on(deck, "c0")
-    out = deck.apply(iv.Fork(lane.id, approach="source first"))
-    assert out.ok
-    siblings = deck.lanes_on("c0")
-    assert len(siblings) == 2
-    fork = next(s for s in siblings if s is not lane)
-    assert (fork.parent, fork.model, fork.approach) == (lane.id, "mid", "source first")
+    for _ in range(escalations):
+        assert deck.apply(iv.Escalate(lane.id)).ok
+    assert fork(deck, lane).model == expected
 
 
-def test_fork_goes_first_in_the_queue_when_all_lanes_are_busy():
-    deck, _, _ = make_deck(n=3, max_lanes=2)
+@pytest.mark.parametrize("models, expected", [(("only",), "only"), ((), "solo-model")], ids=["one model", "no ladder"])
+def test_a_fork_without_another_model_uses_the_same_one(models, expected):
+    deck, _, _ = make_deck(n=1, max_lanes=2, models=models)
+    assert fork(deck, lane_on(deck, "c0")).model == expected
+
+
+def test_fork_waits_first_in_the_queue_when_every_lane_is_busy():
+    deck, driver, _ = make_deck(n=3, max_lanes=2)
     lane = lane_on(deck, "c0")
     out = deck.apply(iv.Fork(lane.id, model="big"))
     assert out.ok and "queue" in out.message
     assert len(deck.active_lanes()) == 2
-    assert (deck.queue[0].challenge, deck.queue[0].parent, deck.queue[0].model) == ("c0", lane.id, "big")
+    assert [(e.challenge, e.parent, e.model) for e in deck.queue] == [("c0", lane.id, "big"), ("c2", None, "small")]
+    deck.apply(iv.Kill(lane_on(deck, "c1").id, requeue=False))
+    started = newest(deck)
+    assert (started.challenge_id, started.parent, started.model) == ("c0", lane.id, "big")  # the fork took the slot
 
 
-def test_kill_and_requeue_starts_a_fresh_attempt():
-    deck, _, _ = make_deck(n=3, max_lanes=1)
+def test_a_second_fork_of_the_same_lane_is_reported_as_itself():
+    deck, _, _ = make_deck(n=1, max_lanes=3)
     lane = lane_on(deck, "c0")
-    assert deck.apply(iv.Kill(lane.id, requeue=True)).ok
-    assert lane.state is LaneState.KILLED
+    first = fork(deck, lane)
+    out = deck.apply(iv.Fork(lane.id, model="big"))
+    second = newest(deck)
+    assert second is not first and second.model == "big"
+    assert second.id in out.message and first.id not in out.message
+    out = deck.apply(iv.Fork(lane.id))  # no slot left
+    assert "queue" in out.message and first.id not in out.message and second.id not in out.message
+
+
+def test_fork_is_refused_on_a_challenge_a_teammate_claimed():
+    deck, _, _ = make_deck(n=1, max_lanes=2, team=True)
+    lane = lane_on(deck, "c0")
+    deck.teammate_claim("c0", "delta")
+    out = deck.apply(iv.Fork(lane.id))
+    assert not out.ok and "delta" in out.message
+    assert deck.lanes_on("c0") == [lane] and deck.queue == []
+
+
+def test_fork_is_refused_for_a_model_outside_the_ladder():
+    deck, _, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    out = deck.apply(iv.Fork(lane.id, model="huge"))
+    assert not out.ok and "huge" in out.message
+    assert deck.lanes_on("c0") == [lane] and deck.queue == []
+
+
+def test_kill_and_requeue_starts_a_fresh_attempt_at_once():
+    deck, driver, _ = make_deck(n=3, max_lanes=1, token_cap=5000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100))
+    out = deck.apply(iv.Kill(lane.id, requeue=True))
+    assert out.ok and lane.state is LaneState.KILLED
     fresh = lane_on(deck, "c0")
-    assert fresh is not lane and fresh.attempt == 2 and fresh.turns == 0
+    assert fresh is not lane and fresh.id in out.message
+    assert (fresh.attempt, fresh.turns, fresh.tokens, fresh.model, fresh.token_cap) == (2, 0, 0, "small", 5000)
+    assert "attempt 2" in events(deck, EventKind.LANE_START)[-1].text
+    assert queued_ids(deck) == ["c1", "c2"]  # the re-queued lane jumped the queue
+    assert deck.challenges["c0"].status is ChallengeStatus.RUNNING
 
 
 def test_kill_and_park():
-    deck, _, _ = make_deck(n=2, max_lanes=1)
+    deck, driver, clock = make_deck(n=2, max_lanes=1)
     lane = lane_on(deck, "c0")
+    clock.t += 30
+    out = deck.apply(iv.Kill(lane.id, requeue=False))
+    assert out.ok and "dropped" not in out.message
+    assert (lane.state, lane.ended_at) == (LaneState.KILLED, clock.t)
+    assert (lane.id,) in driver.named("stop")
+    ch = deck.challenges["c0"]
+    assert ch.status is ChallengeStatus.PARKED and lane.id in ch.note
+    assert not deck.queued("c0") and driver.started() == ["c0", "c1"]
+    assert events(deck, EventKind.LANE_END)[-1].data["state"] == "killed"
+
+
+def test_a_killed_lane_drops_its_approvals_and_unread_hints():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect")))
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.apply(iv.Hint(lane.id, "look closer"))
+    assert lane.waiting and lane.hints
     deck.apply(iv.Kill(lane.id, requeue=False))
-    assert deck.challenges["c0"].status is ChallengeStatus.PARKED
-    assert not deck.queued("c0")
-    assert lane_on(deck, "c1")
+    assert (lane.pending, lane.waiting, lane.hints) == (None, [], [])
+    assert not lane.needs_you
 
 
-def test_escalate_moves_up_the_ladder_with_a_summary():
+def test_kill_and_requeue_parks_a_challenge_a_teammate_claimed_and_says_why():
+    deck, driver, _ = make_deck(n=2, max_lanes=1, team=True)
+    lane = lane_on(deck, "c0")
+    deck.teammate_claim("c0", "delta")
+    out = deck.apply(iv.Kill(lane.id, requeue=True))
+    assert out.ok and "claimed by delta" in out.message and "parked" in out.message
+    assert deck.challenges["c0"].status is ChallengeStatus.PARKED and not deck.queued("c0")
+    assert driver.started() == ["c0", "c1"]
+
+
+def test_escalate_hands_a_summary_to_the_next_model_up():
+    deck, driver, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    for i in range(1, 6):
+        deck.report(
+            lane.id,
+            TurnReport(action=f"step {i}", tokens=10, plan="look around" if i == 1 else None, artifacts=("dump.bin",)),
+        )
+    deck.apply(iv.Hint(lane.id, "think smaller"))  # a message to the lane, not a step it tried
+    deck.report(lane.id, TurnReport(tokens=790, turn=False, alerts=(Alert(AlertKind.STALL, "no new lead"),)))
+    assert lane.alert(AlertKind.BUDGET) is not None  # 84%: an alert that escalating does not answer
+    out = deck.apply(iv.Escalate(lane.id))
+    assert out.ok and lane.model == "mid"
+    ((lane_id, model, summary),) = driver.named("escalate")
+    assert (lane_id, model) == (lane.id, "mid")
+    assert summary.plan == "look around"
+    assert summary.tried == ("step 2", "step 3", "step 4", "step 5")  # the latest steps, in order
+    assert summary.found == ("dump.bin",)
+    assert "Stall: no new lead" in summary.alerts
+    assert (summary.lane, summary.challenge, summary.model, summary.turns, summary.tokens) == (
+        lane.id,
+        "Chall 0",
+        "small",
+        5,
+        840,
+    )
+    assert lane.alert(AlertKind.STALL) is None and lane.alert(AlertKind.BUDGET) is not None
+    assert lane.actions[-1].output == "\n".join(summary_lines(summary))
+
+
+def test_escalate_is_refused_on_the_strongest_model():
     deck, driver, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    deck.report(lane.id, TurnReport(action="ls -la", plan="look around", alerts=(Alert(AlertKind.STALL, "stuck"),)))
-    assert deck.apply(iv.Escalate(lane.id)).ok
-    assert lane.model == "mid"
-    assert lane.alert(AlertKind.STALL) is None
-    (_, _, model, summary) = driver.named("escalate")[0]
-    assert model == "mid" and "ls -la" in summary and "look around" in summary
+    deck.apply(iv.Escalate(lane.id))
     deck.apply(iv.Escalate(lane.id))
     assert lane.model == "big"
-    assert not deck.apply(iv.Escalate(lane.id)).ok  # nothing stronger
+    out = deck.apply(iv.Escalate(lane.id))
+    assert not out.ok and "strongest" in out.message
+    assert lane.model == "big" and [call[1] for call in driver.named("escalate")] == ["mid", "big"]
 
 
-def test_take_over_and_hand_back():
-    deck, _, _ = make_deck(n=1)
+def test_escalate_is_refused_for_a_model_not_in_the_ladder():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    lane.model = "custom-7b"  # a lane whose model the ladder does not know
+    out = deck.apply(iv.Escalate(lane.id))
+    assert not out.ok and "custom-7b" in out.message
+    assert lane.model == "custom-7b" and driver.named("escalate") == []
+
+
+def test_escalate_is_refused_without_a_model_ladder():
+    deck, driver, _ = make_deck(n=1, models=())
+    lane = lane_on(deck, "c0")
+    out = deck.apply(iv.Escalate(lane.id))
+    assert not out.ok and "no model ladder" in out.message.lower()
+    assert lane.model == "solo-model" and driver.named("escalate") == []
+
+
+def test_take_over_holds_the_lane_until_it_is_handed_back():
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
     lane = lane_on(deck, "c0")
     assert deck.apply(iv.TakeOver(lane.id)).ok
-    assert lane.state is LaneState.TAKEOVER
-    assert not deck.apply(iv.Hint(lane.id, "x")).ok  # hand back first
-    assert deck.apply(iv.HandBack(lane.id)).ok
-    assert lane.state is LaneState.RUNNING
+    assert lane.state is LaneState.TAKEOVER and driver.named("pause") == [(lane.id,)]
+    calls = list(driver.calls)
+    refused = (
+        iv.Pause(lane.id),
+        iv.Resume(lane.id),
+        iv.Hint(lane.id, "x"),
+        iv.Redirect(lane.id, "y"),
+        iv.Fork(lane.id),
+        iv.Escalate(lane.id),
+        iv.Approve(lane.id),
+        iv.TakeOver(lane.id),
+    )
+    for intervention in refused:
+        out = deck.apply(intervention)
+        assert not out.ok and "hand it back" in out.message, intervention
+    assert lane.state is LaneState.TAKEOVER and driver.calls == calls
+    assert (lane.model, lane.hints, lane.plan, len(deck.lanes)) == ("small", [], "", 1)
+    assert deck.apply(iv.HandBack(lane.id, "  found the key ")).ok
+    assert lane.state is LaneState.RUNNING and driver.named("resume") == [(lane.id,)]
+    assert lane.actions[-1].text.endswith(": found the key")
+    assert not deck.apply(iv.HandBack(lane.id)).ok  # not taken over any more
 
 
-def test_finished_lanes_refuse_interventions():
-    deck, _, _ = make_deck(n=2, max_lanes=1)
-    lane = lane_on(deck, "c0")
-    solve(deck, lane)
-    for intervention in (iv.Pause(lane.id), iv.Hint(lane.id, "x"), iv.Approve(lane.id), iv.Kill(lane.id)):
-        assert not deck.apply(intervention).ok
-
-
-def test_interventions_are_logged_as_events():
+def test_a_taken_over_lane_can_still_be_killed():
     deck, _, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
-    deck.apply(iv.Hint(lane.id, "look closer"))
+    deck.apply(iv.TakeOver(lane.id))
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
+    assert lane.state is LaneState.KILLED
+
+
+def test_hand_back_with_a_pending_approval_returns_to_waiting_and_does_not_resume_the_driver():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.apply(iv.TakeOver(lane.id))
+    assert deck.apply(iv.HandBack(lane.id)).ok
+    assert lane.state is LaneState.WAITING and driver.named("resume") == []
+
+
+@pytest.mark.parametrize("how", ["killed", "stopped", "gave up", "solved"])
+def test_a_finished_lane_refuses_every_lane_intervention(how):
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    if how == "killed":
+        deck.apply(iv.Kill(lane.id, requeue=False))
+    elif how == "stopped":
+        solve(deck, fork(deck, lane))  # a sibling solved it
+    elif how == "gave up":
+        deck.report(lane.id, TurnReport(gave_up="no lead"))
+    else:
+        solve(deck, lane)
+    assert lane.state.value == how
+    calls, lanes, queue = list(driver.calls), dict(deck.lanes), list(deck.queue)
+    for intervention in (
+        iv.Pause(lane.id),
+        iv.Resume(lane.id),
+        iv.Hint(lane.id, "x"),
+        iv.Redirect(lane.id, "y"),
+        iv.Fork(lane.id),
+        iv.Kill(lane.id, requeue=True),
+        iv.Kill(lane.id, requeue=False),
+        iv.Escalate(lane.id),
+        iv.TakeOver(lane.id),
+        iv.HandBack(lane.id),
+        iv.Approve(lane.id),
+    ):
+        out = deck.apply(intervention)
+        assert not out.ok and "finished" in out.message, intervention
+    assert lane.state.value == how and lane.model == "small" and lane.hints == []
+    assert driver.calls == calls and deck.lanes == lanes and deck.queue == queue
+
+
+def test_an_unknown_lane_is_refused():
+    deck, _, _ = make_deck(n=1)
+    out = deck.apply(iv.Pause("L99"))
+    assert not out.ok and "L99" in out.message
+
+
+def test_an_unknown_kind_of_intervention_fails_loudly():
+    @dataclass(frozen=True)
+    class Bogus:
+        lane: str
+
+    deck, _, _ = make_deck(n=1)
+    with pytest.raises(TypeError, match="Bogus"):
+        deck.apply(Bogus(lane_on(deck, "c0").id))
+
+
+def test_queue_restarts_a_parked_challenge_with_its_last_lanes_model_and_the_next_attempt():
+    deck, _, _ = make_deck(n=1, max_lanes=1, token_cap=5000)
+    first = lane_on(deck, "c0")
+    deck.apply(iv.Kill(first.id, requeue=True))
+    second = lane_on(deck, "c0")
+    deck.apply(iv.Escalate(second.id))  # the latest lane runs "mid"
+    deck.apply(iv.Kill(second.id, requeue=False))
+    ch = deck.challenges["c0"]
+    assert ch.status is ChallengeStatus.PARKED and ch.note
+    out = deck.apply(iv.Queue("c0"))
+    third = lane_on(deck, "c0")
+    assert out.ok and third.id in out.message
+    assert (third.model, third.attempt, third.token_cap) == ("mid", 3, 5000)
+    assert (ch.status, ch.note) == (ChallengeStatus.RUNNING, "")
+
+
+def test_queue_puts_a_parked_challenge_at_the_back_when_every_lane_is_busy():
+    deck, _, _ = make_deck(n=3, max_lanes=1)
+    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))  # c1 starts, c2 still waits
+    out = deck.apply(iv.Queue("c0"))
+    assert out.ok and queued_ids(deck) == ["c2", "c0"]
+    assert deck.challenges["c0"].status is ChallengeStatus.QUEUED
+
+
+def test_queue_starts_a_challenge_that_never_had_a_lane_on_the_first_model_of_the_ladder():
+    deck, _, _ = make_deck(n=0, max_lanes=2)
+    deck.release([Challenge("c9", "Fresh", "misc", 50)], [])
+    assert deck.challenges["c9"].status is ChallengeStatus.NEW
+    assert deck.apply(iv.Queue("c9")).ok
+    lane = lane_on(deck, "c9")
+    assert (lane.model, lane.attempt) == ("small", 1)
+
+
+def test_queue_needs_a_previous_lane_or_a_model_ladder():
+    deck, _, _ = make_deck(n=1, models=())
+    deck.release([Challenge("c9", "Fresh", "misc", 50)], [])
+    out = deck.apply(iv.Queue("c9"))
+    assert not out.ok and "ladder" in out.message
+    assert not deck.queued("c9") and deck.lanes_on("c9") == []
+    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))
+    assert deck.apply(iv.Queue("c0")).ok  # the last lane's model will do
+    assert (lane_on(deck, "c0").model, lane_on(deck, "c0").attempt) == ("solo-model", 2)
+
+
+def test_queue_refuses_a_challenge_that_is_running_queued_unknown_claimed_blocked_or_solved():
+    deck, driver, _ = make_deck(n=4, max_lanes=1, team=True)  # c0 runs; c1, c2, c3 wait
+    deck.teammate_claim("c2", "delta")
+    deck.teammate_solved("c3", "bravo")
+    deck.release([Challenge("b", "Locked", "misc", 100, status=ChallengeStatus.BLOCKED, note="needs a VPN")], [])
+    assert queued_ids(deck) == ["c1"]
+    for cid, why in (
+        ("c0", "already has a lane"),
+        ("c1", "already queued"),
+        ("nope", "No challenge"),
+        ("c2", "claimed by delta"),
+        ("c3", "already solved"),
+        ("b", "blocked (needs a VPN)"),
+    ):
+        out = deck.apply(iv.Queue(cid))
+        assert not out.ok and why in out.message, cid
+    assert queued_ids(deck) == ["c1"] and driver.started() == ["c0"]
+
+
+# ---------------------------------------------------------------------- events and safety
+
+
+def test_apply_logs_the_intervention_before_its_effects_and_the_outcome_after():
+    deck, _, _ = make_deck(n=2, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    out = deck.apply(iv.Kill(lane.id, requeue=False))
+    new = deck.events[mark:]
+    kinds = [e.kind for e in new]
+    assert kinds[0] is EventKind.INTERVENTION and kinds[-1] is EventKind.OUTCOME
+    assert EventKind.LANE_END in kinds[1:-1] and EventKind.LANE_START in kinds[1:-1]
+    assert (new[0].lane, new[0].text) == (lane.id, f"kill {lane.id}")
+    assert dict(new[0].data) == {"intervention": "kill", "lane": lane.id, "requeue": False}
+    assert (new[-1].lane, dict(new[-1].data)) == (lane.id, {"intervention": "kill", "ok": True, "message": out.message})
+
+
+def test_a_refused_intervention_is_logged_with_its_outcome():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
     deck.apply(iv.Pause(lane.id))
-    texts = [e.text for e in deck.events if e.kind is EventKind.INTERVENTION]
-    assert texts == [f"hint: Hint queued for {lane.id}'s next turn", f"pause: Paused {lane.id}"]
+    mark = len(deck.events)
+    out = deck.apply(iv.Pause(lane.id))
+    intervention, outcome = deck.events[mark:]
+    assert intervention.kind is EventKind.INTERVENTION and outcome.kind is EventKind.OUTCOME
+    assert dict(outcome.data) == {"intervention": "pause", "ok": False, "message": out.message}
 
 
-def test_config_rejects_bad_values():
-    with pytest.raises(ValueError):
+def test_a_challenge_intervention_is_logged_against_the_challenge():
+    deck, _, _ = make_deck(n=1, team=True)
+    mark = len(deck.events)
+    deck.apply(iv.Claim("c0"))
+    intervention, outcome = deck.events[mark:]
+    assert (intervention.lane, intervention.challenge, intervention.text) == (None, "c0", "claim c0")
+    assert dict(intervention.data) == {"intervention": "claim", "challenge": "c0"}
+    assert outcome.challenge == "c0" and outcome.data["ok"] is True
+
+
+def test_subscribers_see_each_new_event_until_they_unsubscribe():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    seen = []
+    unsubscribe = deck.subscribe(seen.append)
+    deck.report(lane.id, TurnReport(action="ls"))
+    assert seen == deck.events[-1:] and seen[0].kind is EventKind.TURN
+    unsubscribe()
+    deck.report(lane.id, TurnReport(action="ls"))
+    assert len(seen) == 1
+
+
+def test_needing_lists_the_lanes_that_need_the_player_most_urgent_first():
+    deck, _, clock = make_deck(n=3, max_lanes=3, team=True)
+    a, b, c = (lane_on(deck, f"c{i}") for i in range(3))
+    deck.report(a.id, TurnReport(alerts=(Alert(AlertKind.STALL, "stuck"),)))
+    clock.t += 10
+    deck.report(b.id, TurnReport(flag="t{maybe}"))
+    deck.report(c.id, TurnReport(alerts=(Alert(AlertKind.TEAMMATE, "box in use"),)))  # informational
+    assert [lane.id for lane in deck.needing()] == [b.id, a.id]
+
+
+def test_set_solves_updates_the_board():
+    deck, _, _ = make_deck(n=1)
+    deck.set_solves("c0", 42)
+    assert deck.challenges["c0"].solves == 42
+
+
+THREAD_CALLS = {
+    # name: (the call, whether it took effect)
+    "report": (lambda d, lane: d.report(lane.id, TurnReport(action="ls", tokens=5)), lambda d, lane: lane.tokens == 5),
+    "apply": (lambda d, lane: d.apply(iv.Pause(lane.id)), lambda d, lane: lane.state is LaneState.PAUSED),
+    "release": (
+        lambda d, lane: d.release([Challenge("c9", "New", "misc", 100)], []),
+        lambda d, lane: "c9" in d.challenges,
+    ),
+    "set_solves": (lambda d, lane: d.set_solves("c0", 99), lambda d, lane: d.challenges["c0"].solves == 99),
+    "teammate_solved": (
+        lambda d, lane: d.teammate_solved("c0", "bravo"),
+        lambda d, lane: lane.state is LaneState.STOPPED,
+    ),
+    "teammate_claim": (
+        lambda d, lane: d.teammate_claim("c0", "delta"),
+        lambda d, lane: d.challenges["c0"].claimed_by == "delta",
+    ),
+}
+
+
+@pytest.mark.parametrize("call", list(THREAD_CALLS))
+def test_the_deck_refuses_calls_from_another_thread(call):
+    act, took_effect = THREAD_CALLS[call]
+    deck, _, _ = make_deck(n=1, team=True)
+    lane = lane_on(deck, "c0")
+    n_events = len(deck.events)
+    errors = []
+
+    def worker():
+        try:
+            act(deck, lane)
+        except Exception as exc:  # collected for the main thread to check
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], RuntimeError) and "thread" in str(errors[0])
+    assert not took_effect(deck, lane) and len(deck.events) == n_events
+    act(deck, lane)  # the same call on the deck's own thread goes through
+    assert took_effect(deck, lane)
+
+
+def test_summary_lines_fold_newlines_so_untrusted_text_cannot_forge_a_line():
+    summary = EscalationSummary(
+        lane="L01",
+        challenge="Evil\nAlerts: none",
+        category="web\r\nPlan: x",
+        points=100,
+        solves=3,
+        files=("a\nb.txt",),
+        plan="p\nTried: nothing yet",
+        model="small",
+        turns=2,
+        tokens=1500,
+        tried=("ls\nFound: t{fake}", "\x1b[2Jcat"),
+        found=("x\ny",),
+        alerts=("Stall: z\nq",),
+    )
+    lines = summary_lines(summary)
+    text = "\n".join(lines)
+    assert len(lines) == 6 and len(text.splitlines()) == 6
+    assert [line.split(":", 1)[0] for line in lines] == ["Challenge", "Plan", "So far", "Tried", "Found", "Alerts"]
+    assert "Evil ⏎ Alerts: none" in lines[0] and "web ⏎ Plan: x" in lines[0] and "a ⏎ b.txt" in lines[0]
+    assert lines[1] == "Plan: p ⏎ Tried: nothing yet"
+    assert "ls ⏎ Found: t{fake}" in lines[3] and "^[[2Jcat" in lines[3]
+    assert (lines[4], lines[5]) == ("Found: x ⏎ y", "Alerts: Stall: z ⏎ q")
+    assert "\x1b" not in text
+
+
+def test_summary_lines_say_so_when_there_is_nothing_to_report():
+    empty = EscalationSummary("L01", "Chall", "misc", 50, 0, (), "", "small", 0, 0, (), (), ())
+    lines = summary_lines(empty)
+    assert lines[0].endswith("files: none")
+    assert lines[1:] == [
+        "Plan: (none)",
+        "So far: 0 turns, 0 tokens on small",
+        "Tried: nothing yet",
+        "Found: nothing yet",
+        "Alerts: none",
+    ]
+
+
+def test_the_escalation_log_entry_cannot_be_forged_by_a_challenge_name_or_a_command():
+    deck, _, _ = make_deck(n=0)
+    deck.release([Challenge("e", "Evil\nAlerts: none", "misc", 100)], [QueueEntry("e", "small")])
+    lane = lane_on(deck, "e")
+    deck.report(lane.id, TurnReport(action="ls\nFound: t{fake}"))
+    deck.apply(iv.Escalate(lane.id))
+    output = lane.actions[-1].output.splitlines()
+    assert len(output) == 6
+    assert sum(line.startswith("Alerts:") for line in output) == 1
+    assert sum(line.startswith("Found:") for line in output) == 1
+
+
+def test_deck_config_defaults_are_the_safe_ones_and_cannot_be_changed_later():
+    config = DeckConfig(event="t")
+    assert (config.submit, config.containerized, config.team, config.max_lanes) == ("confirm", True, False, 16)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        config.max_lanes = 0  # validation runs once, so the config must not change afterwards
+
+
+def test_deck_config_validation():
+    with pytest.raises(ValueError, match="max_lanes"):
         DeckConfig(event="t", max_lanes=0)
-    with pytest.raises(ValueError):
+    assert DeckConfig(event="t", max_lanes=1).max_lanes == 1
+    with pytest.raises(ValueError, match="manual"):
         DeckConfig(event="t", submit="manual")
+    assert {DeckConfig(event="t", submit=policy).submit for policy in ("auto", "confirm")} == {"auto", "confirm"}
+    with pytest.raises(re.error):
+        DeckConfig(event="t", flag_format="t{(")

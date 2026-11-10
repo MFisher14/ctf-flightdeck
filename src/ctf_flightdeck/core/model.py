@@ -1,13 +1,18 @@
-"""Shared data: challenges, lanes, alerts, approvals and events.
+"""Shared data: challenges, lanes, alerts, approvals, files and events.
 
 The deck owns these objects and is the only thing that changes them. Drivers report
 what a lane did; the console only reads. Nothing here knows whether a lane is
 scripted (the M0 mock) or a real agent (M1).
+
+Text that comes from a challenge, a lane, a tool or a model is untrusted. It is kept
+as is here; whoever shows it or hands it to a model must treat it as data (see
+ctf_flightdeck.text and EscalationSummary).
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -100,11 +105,11 @@ _ALERT_LABELS = {
 }
 _ALERT_TAGS = {
     AlertKind.EFFORT: "effort",
-    AlertKind.HINT: "hint",
+    AlertKind.HINT: "offhint",
     AlertKind.DIRECTION: "wrongway",
     AlertKind.LOOP: "loop",
     AlertKind.STALL: "stall",
-    AlertKind.TEAMMATE: "team",
+    AlertKind.TEAMMATE: "teammate",
     AlertKind.BUDGET: "budget",
     AlertKind.FLAG: "flag",
 }
@@ -114,12 +119,15 @@ COURSE_ALERTS = frozenset(
 )
 """Alerts about the lane's course. A hint, redirect or escalation answers them."""
 
+INFORMATIONAL_ALERTS = frozenset({AlertKind.TEAMMATE})
+"""Alerts that need no answer: flightdeck already acted (stopped the lane, kept it off a box)."""
+
 
 @dataclass(frozen=True)
 class Suggestion:
-    key: str  # the console key for the intervention, e.g. "r"
+    key: str  # the console key for the intervention, e.g. "r" ("" when nothing to press)
     label: str  # what pressing it does
-    text: str = ""  # prefill for the hint, redirect or fork prompt
+    text: str = ""  # prefill for the hint, redirect or fork
 
 
 @dataclass
@@ -152,13 +160,69 @@ class Actor(StrEnum):
     DECK = "flightdeck"
 
 
+class ActionKind(StrEnum):
+    STEP = "step"  # the lane did something
+    MESSAGE = "message"  # the player's message to the lane (a hint)
+    PLAYER = "player"  # another intervention by the player
+    NOTE = "note"  # a note from flightdeck (a submit result, a format check)
+    ALERT = "alert"  # an alert fired: text is its label, output its reason
+    APPROVAL = "approval"  # the lane asked for approval: text is what
+
+
 @dataclass(frozen=True)
 class Action:
+    """One entry in a lane's log. The log is the lane's transcript, in order."""
+
     at: float
     turn: int
     text: str
     output: str = ""
     by: Actor = Actor.LANE
+    kind: ActionKind = ActionKind.STEP
+    alert: AlertKind | None = None
+
+
+@dataclass(frozen=True)
+class FileChange:
+    """A file the lane changed in its workspace, with a unified diff."""
+
+    path: str
+    diff: str = ""
+    status: str = "modified"  # added | modified | deleted
+    turn: int = 0  # set by the deck
+    at: float = 0.0  # set by the deck
+
+    @property
+    def added(self) -> int:
+        return sum(1 for ln in self.diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
+
+    @property
+    def removed(self) -> int:
+        return sum(1 for ln in self.diff.splitlines() if ln.startswith("-") and not ln.startswith("---"))
+
+
+@dataclass(frozen=True)
+class EscalationSummary:
+    """What a stronger model is told about a lane.
+
+    Everything except the counts is untrusted text from the challenge or the lane. A
+    driver must hand it to a model as data (for example as JSON fields after its own
+    instructions), never pasted into the instructions themselves.
+    """
+
+    lane: str
+    challenge: str
+    category: str
+    points: int
+    solves: int
+    files: tuple[str, ...]
+    plan: str
+    model: str
+    turns: int
+    tokens: int
+    tried: tuple[str, ...]
+    found: tuple[str, ...]
+    alerts: tuple[str, ...]
 
 
 @dataclass
@@ -182,9 +246,11 @@ class Lane:
     result: str = ""  # one line, once finished
     actions: list[Action] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
+    files: dict[str, FileChange] = field(default_factory=dict)  # newest change per path, newest last
     alerts: list[Alert] = field(default_factory=list)
-    pending: Pending | None = None
-    hints: list[str] = field(default_factory=list)  # queued for the next turn
+    pending: Pending | None = None  # the approval the lane waits for now
+    waiting: list[Pending] = field(default_factory=list)  # further approvals, oldest first
+    hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
 
     @property
     def id(self) -> str:
@@ -196,7 +262,17 @@ class Lane:
 
     @property
     def last_action(self) -> str:
-        return self.actions[-1].text if self.actions else ""
+        for action in reversed(self.actions):
+            if action.kind not in (ActionKind.ALERT, ActionKind.APPROVAL):
+                return action.text
+        return ""
+
+    @property
+    def needs_you(self) -> bool:
+        """Something only the player can answer: an approval or a non-informational alert."""
+        if self.finished:
+            return False
+        return self.pending is not None or any(a.kind not in INFORMATIONAL_ALERTS for a in self.alerts)
 
     def idle(self, now: float) -> float:
         """Seconds since the lane last did something itself."""
@@ -219,12 +295,15 @@ class EventKind(StrEnum):
     RELEASE = "release"
     LANE_START = "lane.start"
     LANE_END = "lane.end"
+    TURN = "turn"
     ALERT = "alert"
     PENDING = "pending"
-    INTERVENTION = "intervention"
+    INTERVENTION = "intervention"  # the player asked for something (before its effects)
+    OUTCOME = "outcome"  # what came of it
     SUBMIT = "submit"
     TEAMMATE = "teammate"
     BOARD = "board"
+    WARNING = "warning"  # something did not happen as asked, with the reason
 
 
 @dataclass(frozen=True)
@@ -234,7 +313,8 @@ class Event:
     text: str
     lane: str | None = None
     challenge: str | None = None
-    alert: AlertKind | None = None  # for alert events
+    alert: AlertKind | None = None
+    data: Mapping[str, object] = field(default_factory=dict)  # structured payload for the log
 
 
 SUBMIT_POLICIES = ("auto", "confirm")

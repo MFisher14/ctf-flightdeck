@@ -91,6 +91,13 @@ class Release:
     challenge: str
 
 
+@dataclass(frozen=True)
+class Queue:
+    """Queue a fresh lane for a parked or new challenge."""
+
+    challenge: str
+
+
 Intervention = (
     Pause
     | Resume
@@ -104,6 +111,7 @@ Intervention = (
     | Approve
     | Claim
     | Release
+    | Queue
 )
 
 
