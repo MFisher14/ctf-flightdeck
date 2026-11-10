@@ -1,0 +1,29 @@
+[project]
+name = "ctf-flightdeck"
+version = "0.0.0"
+description = "A terminal harness for playing CTFs with AI agents, where the player runs the loop."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "textual>=8.2.8",
+    "typer>=0.29.0",
+]
+
+[project.scripts]
+flightdeck = "ctf_flightdeck.cli:main"
+ctfdeck = "ctf_flightdeck.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
