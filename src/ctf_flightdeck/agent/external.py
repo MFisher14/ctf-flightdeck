@@ -11,6 +11,9 @@ go to the CLI as user messages. Same LaneDriver protocol as AgentDriver (agent/d
 Claude Code runs as one process per lane (`--input-format stream-json`: one JSON line per
 user message on stdin). Codex runs one `codex exec` process per turn: the prompt on stdin,
 then stdin closed; later turns resume the thread (`codex exec ... resume <thread id>`).
+For the deck, each tool call is a turn (lane.turns counts them). When the agent's turn
+ends with nothing waiting for it, it is nudged to carry on; an agent that ends
+MAX_IDLE_TURNS turns in a row without a tool call or a candidate flag gives up.
 
 How the player's controls reach the CLI:
 - pause: SIGSTOP to the CLI's process group; resume: SIGCONT. A take-over first lets the
