@@ -1,0 +1,11 @@
+{
+  "name": "Wrong Jar",
+  "category": "forensics",
+  "points": 50,
+  "solves": 254,
+  "description": "The committee's minutes will not open in any PDF reader. Trust what is in the jar, not the label.",
+  "files": [
+    "minutes.pdf"
+  ],
+  "id": "wrong-jar"
+}

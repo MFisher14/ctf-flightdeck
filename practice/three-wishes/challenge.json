@@ -1,0 +1,12 @@
+{
+  "name": "Three Wishes",
+  "category": "crypto",
+  "points": 250,
+  "solves": 38,
+  "description": "Textbook RSA with a 2048-bit modulus. We picked e = 3 to keep it quick.",
+  "files": [
+    "encrypt.py",
+    "output.txt"
+  ],
+  "id": "three-wishes"
+}

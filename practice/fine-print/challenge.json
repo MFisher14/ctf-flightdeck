@@ -1,0 +1,11 @@
+{
+  "name": "Fine Print",
+  "category": "forensics",
+  "points": 100,
+  "solves": 152,
+  "description": "Nothing is hidden in the pixels of this harbour at dawn. Read the PNG's text chunks instead.",
+  "files": [
+    "harbour_dawn.png"
+  ],
+  "id": "fine-print"
+}

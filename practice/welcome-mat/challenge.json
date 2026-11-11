@@ -1,0 +1,13 @@
+{
+  "name": "Welcome Mat",
+  "category": "web",
+  "points": 100,
+  "solves": 137,
+  "description": "The keepers' portal checks your PIN in the browser. There is no server: everything the page needs is in the handout.",
+  "files": [
+    "index.html",
+    "portal.js",
+    "style.css"
+  ],
+  "id": "welcome-mat"
+}

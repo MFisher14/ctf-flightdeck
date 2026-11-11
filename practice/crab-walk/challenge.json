@@ -1,0 +1,11 @@
+{
+  "name": "Crab Walk",
+  "category": "crypto",
+  "points": 50,
+  "solves": 312,
+  "description": "A postcard from the practice range. Every letter took the same few steps sideways; walk them back.",
+  "files": [
+    "postcard.txt"
+  ],
+  "id": "crab-walk"
+}

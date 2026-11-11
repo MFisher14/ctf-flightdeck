@@ -1,0 +1,11 @@
+{
+  "name": "Quiet Night",
+  "category": "forensics",
+  "points": 150,
+  "solves": 84,
+  "description": "The harbour's web server had a quiet night. One visitor spoke in a different encoding.",
+  "files": [
+    "access_log"
+  ],
+  "id": "quiet-night"
+}

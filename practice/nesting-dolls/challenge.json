@@ -1,0 +1,11 @@
+{
+  "name": "Nesting Dolls",
+  "category": "forensics",
+  "points": 100,
+  "solves": 171,
+  "description": "Open one, find another.",
+  "files": [
+    "dolls.zip"
+  ],
+  "id": "nesting-dolls"
+}

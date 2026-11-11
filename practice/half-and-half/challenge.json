@@ -1,0 +1,11 @@
+{
+  "name": "Half and Half",
+  "category": "misc",
+  "points": 50,
+  "solves": 276,
+  "description": "Two halves, two bases.",
+  "files": [
+    "halves.txt"
+  ],
+  "id": "half-and-half"
+}

@@ -1,0 +1,4 @@
+{
+  "event": "Practice Range",
+  "flag_format": "practice\\{[a-z0-9_]+\\}"
+}
