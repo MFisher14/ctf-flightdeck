@@ -22,7 +22,9 @@ import io
 import json
 import os
 import re
+import shutil
 import struct
+import subprocess
 import urllib.parse
 import zipfile
 import zlib
@@ -33,7 +35,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-PRACTICE = REPO / "practice"
+PRACTICE = REPO / "src" / "ctf_flightdeck" / "practice"  # inside the package, so it ships in the wheel
 
 
 def load_json(path: Path):
@@ -471,12 +473,31 @@ def test_challenge_ids_and_names_are_unique():
         assert [value for value, n in Counter(values).items() if n > 1] == []
 
 
+NOT_HANDOUT = {".DS_Store"}  # Finder's folder metadata: git ignores it, and it is no part of a challenge
+
+
+def handout_files(folder: Path) -> list[str]:
+    """Every regular file below `folder` but its challenge.json, dotfiles too, as relative paths.
+
+    A lane's workspace is a copy of the whole directory, dotfiles included, so a .solution left
+    here would reach the lane, and a listed .hidden is a real handout file.
+    """
+    found = {p.relative_to(folder).as_posix() for p in files_under(folder) if p.name not in NOT_HANDOUT}
+    return sorted(found - {"challenge.json"})
+
+
+def test_the_handout_files_include_dotfiles_and_leave_out_finder_metadata(tmp_path):
+    for name in ("challenge.json", "postcard.txt", ".solution", ".hidden", "sub/.notes", "sub/challenge.json", ".DS_Store", "sub/.DS_Store"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("synthetic\n", encoding="utf-8")
+    assert handout_files(tmp_path) == [".hidden", ".solution", "postcard.txt", "sub/.notes", "sub/challenge.json"]
+
+
 @pytest.mark.parametrize("folder", CHALLENGES, ids=lambda p: p.name)
 def test_the_files_list_names_every_handout_file_and_nothing_else(folder):
     listed = challenge(folder).get("files")
     assert listed is not None, "the practice set lists its handout files explicitly"
-    present = {p.relative_to(folder).as_posix() for p in files_under(folder) if not p.name.startswith(".")}
-    assert sorted(listed) == sorted(present - {"challenge.json"})
+    assert sorted(listed) == handout_files(folder)
 
 
 def test_descriptions_are_short_and_hold_nothing_in_the_flag_format():
@@ -518,24 +539,74 @@ def test_the_reference_solver_recovers_the_flag_from_the_handout(folder):
     assert digest == ANSWERS[cid], f"{cid}: the recovered flag does not hash to the answer on file"
 
 
-def repository_files() -> list[Path]:
-    """The repository's own files: what is committed or about to be (no venv, caches or .git)."""
-    found = [p for p in REPO.iterdir() if p.is_file()]
-    for top in ("practice", "tests", "src", "docs", ".githooks"):
-        found += [p for p in files_under(REPO / top) if "__pycache__" not in p.parts]
-    return found
+def git_or_skip() -> str:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not installed, and the repository's file list comes from git ls-files")
+    return git
+
+
+def git_env() -> dict[str, str]:
+    """The environment without GIT_* variables, so git finds the repository from its working
+    directory: a hook's GIT_DIR or GIT_INDEX_FILE would point it at another one."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
+def repository_files(root: Path = REPO) -> list[Path]:
+    """What a commit of `root` could publish: every file git tracks, plus every untracked one it
+    does not ignore. git lists them, so no directory can be left off a list kept here, and what
+    .gitignore covers (the venv, caches, build output, private notes, agent worktrees, run state)
+    is left out."""
+    if not (root / ".git").exists():
+        pytest.skip(f"{root} is not a git checkout, so there is no repository to scan")
+    listing = subprocess.run(
+        [git_or_skip(), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=root, env=git_env(), capture_output=True, timeout=60,
+    )
+    assert listing.returncode == 0, f"git ls-files failed in {root}: {listing.stderr.decode('utf-8', 'replace').strip()}"
+    paths = {root / os.fsdecode(name) for name in listing.stdout.split(b"\0") if name}
+    # a tracked file deleted from the work tree, or a submodule, has no file here to read
+    return sorted(path for path in paths if path.is_symlink() or path.is_file())
+
+
+def flag_leaks(root: Path, flags: dict[str, bytes]) -> list[str]:
+    """'<name> in <path>' for each flag written verbatim in a file a commit of `root` could publish."""
+    leaks = []
+    for path in repository_files(root):
+        # a symlink is published as the text of its target, so that is what is read, never the target
+        data = os.fsencode(os.readlink(path)) if path.is_symlink() else path.read_bytes()
+        leaks += [f"{name} in {path.relative_to(root).as_posix()}" for name, flag in flags.items() if flag in data]
+    return leaks
+
+
+def test_the_flag_scan_reads_every_file_git_would_publish_and_nothing_it_ignores(tmp_path):
+    """A directory nobody thought to list (examples/, .github/) is scanned all the same."""
+    git = git_or_skip()
+    canary = os.urandom(16).hex().encode()  # stands in for a flag
+    files = {
+        ".gitignore": b"ignored/\n.venv/\n*.log\n",
+        "README.md": b"top level, tracked ",
+        "docs/guide.md": b"tracked ",
+        "examples/demo-run.jsonl": b"untracked and not ignored ",
+        ".github/workflows/ci.yml": b"in a dot directory ",
+        "ignored/notes.md": b"ignored ",
+        ".venv/lib/site.py": b"ignored ",
+        "run.log": b"ignored ",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(text + canary + b"\n")
+    for args in (["init", "-q"], ["add", ".gitignore", "README.md", "docs/guide.md"]):
+        subprocess.run([git, *args], cwd=tmp_path, env=git_env(), check=True, capture_output=True, timeout=60)
+    publishable = [".gitignore", "README.md", "docs/guide.md", "examples/demo-run.jsonl", ".github/workflows/ci.yml"]
+    assert sorted(flag_leaks(tmp_path, {"canary": canary})) == sorted(f"canary in {name}" for name in publishable)
 
 
 def test_no_flag_is_written_in_plain_text_anywhere_in_the_repository():
     """Not in another file, and not in its own handout either: every challenge takes a step."""
+    assert Path(__file__).resolve() in repository_files(), "git's file list for the repository misses this file"
     flags = {challenge_id(f): SOLVERS[challenge_id(f)](f).encode() for f in CHALLENGES}
-    leaks = [
-        f"{cid} in {path.relative_to(REPO)}"
-        for path in repository_files()
-        for cid, flag in flags.items()
-        if flag in path.read_bytes()
-    ]
-    assert leaks == []
+    assert flag_leaks(REPO, flags) == []
 
 
 EXECUTABLE_MAGIC = (
@@ -546,6 +617,7 @@ EXECUTABLE_MAGIC = (
     (b"\xfe\xed\xfa\xcf", "Mach-O"),
     (b"\xcf\xfa\xed\xfe", "Mach-O"),
     (b"\xca\xfe\xba\xbe", "Mach-O universal or Java class"),
+    (b"\xca\xfe\xba\xbf", "Mach-O universal (64-bit)"),
 )
 
 
@@ -560,6 +632,55 @@ def executable_problems(name: str, data: bytes, mode: int) -> list[str]:
     elif data.startswith(b"\x1f\x8b"):
         problems += executable_problems(f"{name}!gunzip", gzip.decompress(data), 0)
     return problems
+
+
+# The headers the check must catch, written out on their own rather than read from
+# EXECUTABLE_MAGIC, so a format missing from that list fails here.
+EXECUTABLE_HEADERS = {
+    "ELF": b"\x7fELF\x02\x01\x01\x00",
+    "PE": b"MZ\x90\x00\x03\x00\x00\x00",
+    "Mach-O 32-bit big-endian": b"\xfe\xed\xfa\xce\x00\x00\x00\x12",
+    "Mach-O 32-bit little-endian": b"\xce\xfa\xed\xfe\x07\x00\x00\x00",
+    "Mach-O 64-bit big-endian": b"\xfe\xed\xfa\xcf\x01\x00\x00\x12",
+    "Mach-O 64-bit little-endian": b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01",
+    "Mach-O universal": b"\xca\xfe\xba\xbe\x00\x00\x00\x02",
+    "Mach-O universal 64-bit": b"\xca\xfe\xba\xbf\x00\x00\x00\x02",
+}
+
+
+def zipped(name: str, data: bytes, mode: int) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        info = zipfile.ZipInfo(name)
+        info.external_attr = mode << 16
+        archive.writestr(info, data)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("header", EXECUTABLE_HEADERS.values(), ids=EXECUTABLE_HEADERS.keys())
+def test_the_executable_check_finds_each_format_plain_zipped_and_gzipped(header):
+    data = header + bytes(56)
+    found = {
+        "gate.bin": executable_problems("gate.bin", data, 0o100644),
+        "box.zip": executable_problems("box.zip", zipped("inner/gate", data, 0o100644), 0o100644),
+        "box.gz": executable_problems("box.gz", gzip.compress(data), 0o100644),
+    }
+    where = {packed: [problem.partition(":")[0] for problem in problems] for packed, problems in found.items()}
+    assert where == {"gate.bin": ["gate.bin"], "box.zip": ["box.zip!inner/gate"], "box.gz": ["box.gz!gunzip"]}
+    assert all("magic bytes" in problem for problems in found.values() for problem in problems)
+
+
+def test_the_executable_check_finds_executable_modes_and_passes_plain_data():
+    script = b"#!/bin/sh\necho synthetic\n"
+    assert executable_problems("run.sh", script, 0o100755) == ["run.sh: mode 100755 is executable"]
+    assert executable_problems("box.zip", zipped("run.sh", script, 0o100755), 0o100644) == ["box.zip!run.sh: mode 100755 is executable"]
+    plain = {
+        "notes.txt": b"just words\n",
+        "image.png": b"\x89PNG\r\n\x1a\n" + bytes(24),
+        "box.zip": zipped("notes.txt", b"just words\n", 0o100644),
+        "notes.gz": gzip.compress(b"just words\n"),
+    }
+    assert {name: executable_problems(name, data, 0o100644) for name, data in plain.items()} == {name: [] for name in plain}
 
 
 def test_nothing_in_the_set_is_executable_or_a_symlink():
@@ -578,8 +699,46 @@ def test_each_handout_is_under_1_mb_and_the_whole_set_under_2_mb():
     assert sum(p.stat().st_size for p in files_under(PRACTICE)) < 2_000_000
 
 
+def test_the_wheel_ships_every_file_of_the_set_byte_for_byte(tmp_path):
+    """`flightdeck practice` must work right after `pip install`, with no clone of the repository."""
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed, and building the wheel needs it")
+    build = subprocess.run(
+        [uv, "build", "--wheel", "--offline", "--out-dir", str(tmp_path), str(REPO)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+    )
+    if build.returncode != 0 and "network was disabled" in build.stderr:
+        pytest.skip("uv cannot build the wheel offline here: the build backend is not in uv's cache")
+    assert build.returncode == 0, f"uv build failed:\n{build.stderr}"
+    (wheel,) = tmp_path.glob("*.whl")
+    missing, changed, executable = [], [], []
+    with zipfile.ZipFile(wheel) as archive:
+        for path in files_under(PRACTICE):
+            name = "ctf_flightdeck/practice/" + path.relative_to(PRACTICE).as_posix()
+            try:
+                info = archive.getinfo(name)
+            except KeyError:
+                missing.append(name)
+                continue
+            if archive.read(info) != path.read_bytes():
+                changed.append(name)
+            if (info.external_attr >> 16) & 0o111:
+                executable.append(name)
+    assert (missing, changed, executable) == ([], [], [])
+
+
 def test_the_readme_says_how_to_play_and_that_honest_practice_uses_docker():
     readme = (PRACTICE / "README.md").read_text(encoding="utf-8")
-    assert "flightdeck play practice" in readme
+    assert "flightdeck practice" in readme
     assert "host runtime" in readme and "docker runtime" in readme
     assert "tests/test_practice.py" in readme  # where the spoilers are
+
+
+def test_the_readme_says_docker_isolates_the_filesystem_but_not_the_network():
+    """A docker lane has network (DockerWorkspace's default is docker's bridge network, and the
+    lane config has no network key), and the repository holds every reference solver, so the
+    README must not promise that a docker lane can reach nothing but its own copy."""
+    readme = " ".join((PRACTICE / "README.md").read_text(encoding="utf-8").split())  # line breaks do not matter
+    assert "Docker isolates the filesystem only." in readme
+    assert "until lanes run without network, a lane can download this repository" in readme
