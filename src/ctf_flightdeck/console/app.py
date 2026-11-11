@@ -10,7 +10,7 @@ emits an event, whether or not a mock clock is ticking.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from rich.text import Text
 from textual.app import App
@@ -55,10 +55,18 @@ class FlightdeckApp(App[None]):
         tick_seconds: float | None = None,
         mock: str = "",
         refresh_seconds: float | None = 0.5,
+        on_start: Callable[[], None] | None = None,
+        on_exit: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """`on_start` runs once the console's event loop is up (a real run releases the board
+        there, so lanes start on this loop); `on_exit` is awaited before the console quits
+        (a real run stops its lanes and closes their workspaces)."""
         super().__init__()
         self.deck = deck
         self.mock = mock
+        self._on_start = on_start
+        self._on_exit = on_exit
+        self._exiting = False
         self._ticker = ticker
         self._tick_seconds = tick_seconds
         self._refresh_seconds = refresh_seconds
@@ -85,6 +93,18 @@ class FlightdeckApp(App[None]):
             self.set_interval(self._tick_seconds, self._on_tick)
         if self._refresh_seconds:
             self.set_interval(self._refresh_seconds, self.refresh_view)
+        if self._on_start is not None:
+            self._on_start()
+
+    async def action_quit(self) -> None:
+        """Stop the run's lanes (on_exit) before the console exits."""
+        if self._exiting:
+            return
+        self._exiting = True
+        if self._on_exit is not None:
+            self.say("Stopping lanes and closing their workspaces...")
+            await self._on_exit()
+        self.exit()
 
     def on_unmount(self) -> None:
         self._unsubscribe()
@@ -320,15 +340,38 @@ class FlightdeckApp(App[None]):
         self.push_screen(KillPrompt(self._title("Kill", lane)), done)
 
     def take_over(self, lane: Lane) -> None:
+        """The lane's shell for the player (its driver's), or the M0 placeholder."""
         if not self.apply(iv.TakeOver(lane.id)).ok:
             return
         lane_id = lane.id
+        offer = getattr(self.deck.driver, "takeover", None)
+        session = offer(lane) if offer is not None else None
+        if session is not None:
+            self.run_worker(self._shell(lane_id, session), name=f"take over {lane_id}", exit_on_error=False)
+            return
 
         def done(_: None) -> None:
             self.apply(iv.HandBack(lane_id))
 
         name = self.deck.challenges[lane.challenge_id].name
         self.push_screen(TakeOverScreen(lane.id, name, self.deck.config.containerized), done)
+
+    async def _shell(self, lane_id: str, session) -> None:
+        from textual.app import SuspendNotSupported
+
+        from .takeover import run_in_terminal
+
+        shell = session.shell
+        try:
+            await run_in_terminal(self, shell.argv, shell.cwd, shell.env)
+        except SuspendNotSupported:
+            self.apply(iv.HandBack(lane_id, "no shell: this console cannot hand over the terminal"))
+            self.warn("This console cannot hand over the terminal; the lane carries on")
+            return
+        except OSError as exc:
+            self.apply(iv.HandBack(lane_id, f"the shell did not start: {exc}"))
+            return
+        self.apply(iv.HandBack(lane_id, session.finish()))
 
     def claim_toggle(self, challenge_id: str) -> None:
         ch = self.deck.challenges[challenge_id]
@@ -381,7 +424,7 @@ class FlightdeckApp(App[None]):
         elif name == "help":
             self.action_help()
         elif name == "quit":
-            self.exit()
+            self.call_later(self.action_quit)
 
     def _lane_command(self, name: str, arg: str, lane: Lane) -> None:
         if name == "hint":

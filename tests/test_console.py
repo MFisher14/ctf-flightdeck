@@ -2184,3 +2184,85 @@ def test_a_suggested_hint_that_starts_like_a_lane_id_goes_to_the_lane_it_was_sug
         assert first.hints == [f"{second.id} is a decoy"] and second.hints == []
 
     drive(app, script)
+
+
+# ---------------------------------------------------------------------- M1: hooks for a real run
+
+
+def test_on_start_runs_once_on_the_consoles_running_event_loop():
+    world = FakeWorld(scenarios.get("sstv"))
+    seen = []
+
+    def on_start():
+        seen.append(asyncio.get_running_loop())  # raises if no loop is running
+
+    app = FlightdeckApp(world.deck, refresh_seconds=None, on_start=on_start)
+
+    async def script(pilot):
+        await pilot.pause()
+        assert len(seen) == 1 and seen[0] is asyncio.get_running_loop()
+
+    drive(app, script)
+
+
+@pytest.mark.parametrize("how", ["q", "/quit"])
+def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
+    world = FakeWorld(scenarios.get("sstv"))
+    calls = []
+
+    async def on_exit():
+        calls.append("started")
+        await asyncio.sleep(0.01)  # a shutdown that takes a moment
+        calls.append("done")
+
+    app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        if how == "q":
+            await pilot.press("q")
+        else:
+            bar(app).start(how)
+            await pilot.press("enter")
+        for _ in range(50):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["started", "done"]
+        assert not app.is_running
+
+    drive(app, script)
+
+
+def test_take_over_with_a_shell_hands_the_lane_back_when_the_console_cannot_let_go_of_the_terminal():
+    """Headless (as here, or a web console), Textual cannot suspend: the lane is not left taken over."""
+    finished = []
+
+    class Session:
+        shell = type("Spec", (), {"argv": ["true"], "cwd": None, "env": None})()
+
+        def finish(self) -> str:
+            finished.append(True)
+            return "no files changed"
+
+    class ShellDriver(QuietDriver):
+        def takeover(self, lane):
+            return Session()
+
+    deck = Deck(DeckConfig(event="ev", models=("glm",)), ShellDriver(), ManualClock(), wrong_flag)
+    deck.release([Challenge("a", "A", "misc", 50)], [QueueEntry("a", "glm")])
+    (lane,) = deck.lanes_on("a")
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        for _ in range(50):
+            if lane.state is not LaneState.TAKEOVER:
+                break
+            await pilot.pause(0.01)
+        assert lane.state is LaneState.RUNNING
+        assert not isinstance(app.screen, TakeOverScreen)  # no placeholder: this driver has a shell
+        assert finished == []  # nothing ran, so nothing to report as changed
+        assert_warning(app, "This console cannot hand over the terminal")
+        assert "no shell: this console cannot hand over the terminal" in lane.actions[-1].text
+
+    drive(app, script)
