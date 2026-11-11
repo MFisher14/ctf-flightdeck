@@ -16,8 +16,11 @@ import re
 from pathlib import Path
 
 import pytest
+import typer
 from markdown_it import MarkdownIt
+from typer.testing import CliRunner
 
+from ctf_flightdeck import postflight_cli
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -790,3 +793,69 @@ def test_md_helpers_pick_fences_longer_than_any_backtick_run():
     assert md_fence(["a\nb"]) == ["```text", "a \u23ce b", "```"]
     assert md_text("- item") == "\\- item" and md_text("1. item") == "1\\. item"
     assert md_text("a" * 300) == "a" * 199 + "\u2026"
+
+
+# ---------------------------------------------------------------------- the command
+
+
+def mounted() -> typer.Typer:
+    """The main CLI's shape: a group with a callback, the report app mounted with no name."""
+    root = typer.Typer()
+
+    @root.callback()
+    def main() -> None:
+        pass
+
+    root.add_typer(postflight_cli.app)
+    return root
+
+
+runner = CliRunner()
+
+
+def test_report_writes_report_md_and_prints_the_summary(played):
+    board, record = played
+    result = runner.invoke(mounted(), ["report", str(record.dir), "--board", str(board_dir(record))])
+    assert result.exit_code == 0, result.output
+    written = record.dir / "report.md"
+    assert written.read_text(encoding="utf-8") == report(load_run(record.dir), board=board)
+    assert result.output == summary(load_run(record.dir), board=board) + f"report: {written}\n"
+
+
+def board_dir(record) -> Path:
+    return record.dir.parent / "board"
+
+
+def test_report_replaces_an_old_report_and_never_follows_a_symlink(played, tmp_path):
+    _, record = played
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep me")
+    (record.dir / "report.md").symlink_to(outside)
+    result = runner.invoke(mounted(), ["report", str(record.dir)])
+    assert result.exit_code == 0, result.output
+    assert outside.read_text() == "keep me"
+    assert not (record.dir / "report.md").is_symlink()
+    assert (record.dir / "report.md").read_text(encoding="utf-8") == report(load_run(record.dir))
+    assert not list(record.dir.glob(".report.*"))  # no temporary file left behind
+
+
+def test_report_on_a_folder_that_is_not_a_run_fails_with_the_reason(tmp_path):
+    result = runner.invoke(mounted(), ["report", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "no events.jsonl (is this a flightdeck run folder?)" in result.output
+    assert not (tmp_path / "report.md").exists()
+
+
+def test_report_with_a_board_that_cannot_be_read_fails_with_the_reason(played, tmp_path):
+    _, record = played
+    empty = tmp_path / "empty-board"
+    empty.mkdir()
+    result = runner.invoke(mounted(), ["report", str(record.dir), "--board", str(empty)])
+    assert result.exit_code == 2
+    assert "--board:" in result.output and "no challenge directories" in result.output
+    assert not (record.dir / "report.md").exists()
+
+
+def test_report_needs_an_existing_folder(tmp_path):
+    result = runner.invoke(mounted(), ["report", str(tmp_path / "nope")])
+    assert result.exit_code == 2
