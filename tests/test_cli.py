@@ -416,7 +416,8 @@ def test_main_runs_the_cli_under_the_name_it_was_started_as(monkeypatch, capsys)
     with pytest.raises(SystemExit) as exit_:
         cli.main()
     assert exit_.value.code == 0
-    assert capsys.readouterr().out == "ctfdeck 0.0.0\n"
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    assert capsys.readouterr().out == f"ctfdeck {declared}\n"
 
 
 # ---------------------------------------------------------------------- screenshot mode
