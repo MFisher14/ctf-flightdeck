@@ -189,6 +189,8 @@ def _api(path: Path, table: dict) -> ApiConfig:
     _known(path, ("api",), table, _API_KEYS)
     defaults = ApiConfig()
     base_url = _string(path, table, ("api", "base_url"), defaults.base_url)
+    if not _plain(base_url):  # urlsplit would quietly drop them, and the client would not
+        raise _error(path, ("api", "base_url"), "must not contain spaces or control characters")
     url = _split_url(base_url)
     if url is None or url.scheme not in ("http", "https") or not url.hostname:
         raise _error(path, ("api", "base_url"), "must start with http:// or https:// and name a host")
@@ -258,9 +260,11 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
     if not _is_int(max_lanes) or max_lanes < 1:
         raise _error(path, ("lanes", "max_lanes"), f"must be a whole number, at least 1{_got(max_lanes)}")
     image = _string(path, table, ("lanes", "image"), defaults.image)
-    if image.startswith("-") or any(ch.isspace() for ch in image):
+    if image.startswith("-") or not _plain(image):
         # docker would read "-..." as one of its own options
-        raise _error(path, ("lanes", "image"), "must be a docker image name: no spaces, and not starting with -")
+        raise _error(
+            path, ("lanes", "image"), "must be a docker image name: no spaces or control characters, and not starting with -"
+        )
     return LaneConfig(
         max_lanes=max_lanes,
         runtime=_choice(path, table, ("lanes", "runtime"), defaults.runtime, RUNTIMES),
@@ -349,6 +353,11 @@ def _split_url(value: str) -> SplitResult | None:
     except ValueError:
         return None
     return url
+
+
+def _plain(value: str) -> bool:
+    """No whitespace and no control or other unprintable characters."""
+    return all(ch.isprintable() and not ch.isspace() for ch in value)
 
 
 def _is_int(value: object) -> bool:
