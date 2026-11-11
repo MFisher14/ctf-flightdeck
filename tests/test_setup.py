@@ -104,3 +104,12 @@ def test_report_marks_each_check_and_says_what_to_do():
     assert status == 1
     text, status = report([Check("terminal", False, "80x24", "bigger is easier", essential=False)])
     assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice`.")
+
+
+def test_doctor_says_plainly_when_there_is_no_config_and_points_at_a_broken_one(tmp_path):
+    missing = {c.name: c for c in doctor(tmp_path / "none.toml", environ={})}["config"]
+    assert missing.detail == f"no config at {tmp_path / 'none.toml'}" and "flightdeck init" in missing.fix
+    broken = tmp_path / "broken.toml"
+    broken.write_text("[models]\nladder = []\n")
+    check = {c.name: c for c in doctor(broken, environ={})}["config"]
+    assert not check.ok and "--force" in check.fix and str(broken) in check.detail

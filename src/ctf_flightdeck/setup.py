@@ -104,13 +104,16 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
     checks.append(Check("python", version_ok, f"Python {sys.version.split()[0]}, flightdeck {__version__}",
                         "flightdeck needs Python 3.12 or newer"))
     path = (config_path or default_config_path()).expanduser()
-    try:
-        config = load_config(path)
-    except ConfigError as exc:
-        checks.append(Check("config", False, str(exc), "run `flightdeck init` to write one"))
-        config = None
+    config = None
+    if not path.exists():
+        checks.append(Check("config", False, f"no config at {path}", "run `flightdeck init` to write one"))
     else:
-        checks.append(Check("config", True, f"{path}: {len(config.models)} model(s), runtime {config.lanes.runtime}"))
+        try:
+            config = load_config(path)
+        except ConfigError as exc:
+            checks.append(Check("config", False, str(exc), "fix it, or run `flightdeck init --force` to write a new one"))
+        else:
+            checks.append(Check("config", True, f"{path}: {len(config.models)} model(s), runtime {config.lanes.runtime}"))
     if config is not None:
         name = config.api.key_env
         if not name:
