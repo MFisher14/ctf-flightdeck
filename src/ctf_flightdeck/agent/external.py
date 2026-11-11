@@ -1087,8 +1087,8 @@ class _Run:
                     self.deliver()
                 finally:
                     self._delivering = False
-            if lane.state is LaneState.RUNNING and not lane.gave_up_later and not lane.finished and not self.stopped:
-                self.thaw()  # still running after what deliver() reported
+            if lane.state is LaneState.RUNNING and not lane.gave_up_later:  # still, after what deliver() reported
+                self.thaw()
         elif lane.state is LaneState.TAKEOVER:
             self.takeover_freeze()
         else:  # waiting for the player, paused, or gave up
