@@ -173,14 +173,6 @@ def test_version_is_the_one_pyproject_declares():
     assert invoke("--version").stdout == f"flightdeck {declared}\n"
 
 
-def test_no_command_shows_the_help_and_exits_2():
-    result = invoke()
-    assert result.exit_code == 2
-    text = flat(result.output)
-    assert "Usage: flightdeck [OPTIONS] COMMAND" in text
-    assert "mock Open the console on fake, scripted data" in text  # the command list, not just usage
-
-
 def test_mock_help_lists_every_scenario_with_its_summary():
     result = invoke("mock", "--help")
     assert result.exit_code == 0
@@ -637,3 +629,31 @@ def test_the_root_help_groups_the_commands():
         assert panel in out
     for name in ("preflight", "ctfd", "team", "l1", "report", "writeups", "score", "eval-local", "gaps"):
         assert f" {name} " in out
+
+
+# ---------------------------------------------------------------------- the first command a new player types
+
+
+def test_flightdeck_alone_says_what_it_is_and_the_next_step(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "config.toml"))
+    result = invoke()
+    assert result.exit_code == 0, result.output
+    assert "No config yet. Start here:" in result.output
+    for step in ("flightdeck init", "flightdeck doctor", "flightdeck practice", "flightdeck mock"):
+        assert step in result.output
+    (tmp_path / "config.toml").write_text('[models]\nladder = ["m"]\n')
+    again = invoke()
+    assert again.exit_code == 0 and f"Your config: {tmp_path / 'config.toml'}" in again.output
+    assert "flightdeck init" not in again.output
+
+
+def test_a_path_under_a_user_that_does_not_exist_is_a_message_not_a_traceback():
+    result = invoke("play", "~no-such-player-5150/board")
+    assert result.exit_code == 2, result.output
+    assert "for a user that does not exist" in result.output
+
+
+@pytest.mark.parametrize("command", [("build", "gap"), ("build", "check")], ids=" ".join)
+def test_build_mode_is_mounted(command):
+    result = invoke(*command, "--help")
+    assert result.exit_code == 0, result.output

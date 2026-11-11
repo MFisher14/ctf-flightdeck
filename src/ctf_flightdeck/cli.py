@@ -20,7 +20,6 @@ PLAY, SETUP, EVENT, AFTER, SOLVERS = "Play", "Set up", "Before and during an eve
 
 app = typer.Typer(
     name="flightdeck",
-    no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="markdown",
     help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
@@ -35,13 +34,55 @@ def _version(ctx: typer.Context, value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def root(
+    ctx: typer.Context,
     version: Annotated[
         bool, typer.Option("--version", callback=_version, is_eager=True, help="Show the version and exit.")
     ] = False,
 ) -> None:
     """A terminal harness for playing CTFs with AI agents, where you run the loop."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(_next_steps(), nl=False)
+
+
+def _next_steps() -> str:
+    """What `flightdeck` alone says: what it is, and the next step on this machine."""
+    from .config import ConfigError, default_config_path
+
+    head = f"flightdeck {__version__}: a terminal harness for playing CTFs with AI agents, where you run the loop.\n\n"
+    try:
+        path = default_config_path()
+        have = path.exists()
+    except ConfigError as exc:
+        return head + f"{exc}\n"
+    if not have:
+        steps = [
+            ("flightdeck init", "a few questions; writes your config"),
+            ("flightdeck doctor", "checks your setup and says how to fix what is missing"),
+            ("flightdeck practice", "plays 14 small practice challenges that ship with flightdeck"),
+        ]
+        text = head + "No config yet. Start here:\n"
+    else:
+        steps = [
+            ("flightdeck doctor", "checks your setup"),
+            ("flightdeck practice", "the practice set, or: flightdeck play BOARD"),
+        ]
+        text = head + f"Your config: {path}\n"
+    width = max(len(command) for command, _ in steps)
+    text += "".join(f"  {command:<{width}}  {what}\n" for command, what in steps)
+    return text + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
+
+
+def _path(path: Path) -> Path:
+    """`path` with ~ expanded, or a clean exit naming the problem (a ~user that does not exist)."""
+    from .config import ConfigError, expand
+
+    try:
+        return expand(path)
+    except ConfigError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
 
 
 @app.command(epilog=SCENARIO_LIST, rich_help_panel=PLAY)
@@ -75,7 +116,7 @@ def mock(
     if screenshot is not None:
         from .mock.screenshots import capture
 
-        screenshot = screenshot.expanduser()  # the shell leaves ~ alone in --screenshot=~/x
+        screenshot = _path(screenshot)  # the shell leaves ~ alone in --screenshot=~/x
 
         try:
             screenshot.mkdir(parents=True, exist_ok=True)
@@ -155,18 +196,18 @@ def play(
     from .run import RunError, RunOptions, host_warning, prepare_run
 
     options = RunOptions(
-        board=board.expanduser() if board else None,
-        answers=answers.expanduser() if answers else None,
-        config=config.expanduser() if config else None,
+        board=_path(board) if board else None,
+        answers=_path(answers) if answers else None,
+        config=_path(config) if config else None,
         max_lanes=max_lanes,
         runtime=None if host is None else ("host" if host else "docker"),
         team=team,
         submit=submit.value if submit else None,
         model=model,
-        run_dir=run_dir.expanduser() if run_dir else None,
-        pack=pack.expanduser() if pack else None,
+        run_dir=_path(run_dir) if run_dir else None,
+        pack=_path(pack) if pack else None,
         event=event,  # load_profile expands ~ itself, and says so when it cannot
-        team_dir=team_dir.expanduser() if team_dir else None,
+        team_dir=_path(team_dir) if team_dir else None,
         handle=handle,
         confirm=_ask if _at_terminal() else None,
     )
@@ -307,7 +348,7 @@ def init(
         runtime = need(None, "Runtime: docker or host" + ("" if docker_reason is None else f" (docker: {docker_reason})"), default)
     else:
         runtime = "host" if host else "docker"
-    target = (path or default_config_path()).expanduser()
+    target = _path(path or default_config_path())
     # A local model costs nothing and reports no cost: a dollar cap would only make every lane
     # stop once to ask whether to carry on without it.
     dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
@@ -350,7 +391,7 @@ def config_command(
     if example:
         typer.echo(example_config(), nl=False)
         return
-    target = (path or default_config_path()).expanduser()
+    target = _path(path or default_config_path())
     try:
         loaded = load_config(target)
     except ConfigError as exc:
@@ -375,7 +416,7 @@ def config_command(
 
 
 def _mount() -> None:
-    from . import gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
+    from . import build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
     from .l1 import cli as l1_cli
     from .platform import ctfd_cli
 
@@ -388,6 +429,8 @@ def _mount() -> None:
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
     app.command("gaps", rich_help_panel=SOLVERS)(gaps_cli.gaps_command)
+    app.add_typer(build_cli.app, name="build", rich_help_panel=SOLVERS,
+                  help="Build mode: turn a gap into a new L1 engine, with a test that proves a raw handout reaches it.")
     app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)
 
 
