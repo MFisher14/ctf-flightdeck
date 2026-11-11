@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -985,11 +986,32 @@ def outside_fences(text: str) -> str:
     return "".join(out) + rest
 
 
+class Gate:
+    """A lane command that holds until the test opens the gate; `started` is there once it
+    runs. A test that acts while a tool runs waits for `started`, not for the turn: a turn
+    looks at the workspace before its first command starts. And the command lasts until
+    the test has acted, however loaded the machine. Both files are outside the workspace,
+    so neither is a change of the lane's."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.started = tmp_path / "gate-started"
+        self.opened = tmp_path / "gate-open"
+
+    def command(self, then: str) -> str:
+        started, opened = shlex.quote(str(self.started)), shlex.quote(str(self.opened))
+        return f"touch {started} && until [ -e {opened} ]; do sleep 0.02; done && {then}"
+
+    def open(self) -> None:
+        self.opened.touch()
+
+
 def test_escalating_while_a_tool_runs_ends_the_turn_there_and_keeps_it_out_of_the_new_context(tmp_path):
+    gate = Gate(tmp_path)
+
     def responder(record):
         if calls_to(server) == 1:
             return tool_calls_reply(
-                [("shell", {"command": "sleep 1 && touch one.txt"}), ("shell", {"command": "touch two.txt"})],
+                [("shell", {"command": gate.command("touch one.txt")}), ("shell", {"command": "touch two.txt"})],
                 prompt_tokens=1000, completion_tokens=0,
             )
         return tool_call_reply("submit_flag", {"flag": "t{big}"})
@@ -1005,9 +1027,9 @@ def test_escalating_while_a_tool_runs_ends_the_turn_there_and_keeps_it_out_of_th
             assert lab.deck.apply(iv.Pause(lane.id)).ok  # before its first call, so that call carries the hint
             assert lab.deck.apply(iv.Hint(lane.id, "look at the date")).ok
             assert lab.deck.apply(iv.Resume(lane.id)).ok
-            run_ = lab.driver.runs[lane.id]
-            await until(lambda: not run_.idle.is_set(), "the first turn running its tools")
+            await until(gate.started.exists, "the first command running")
             assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            gate.open()
             await until(lambda: lane.pending is not None, "the stronger model's candidate")
             first, second = server.requests
             assert last_user(first) == "Message from the player: look at the date"
@@ -1028,10 +1050,12 @@ def test_escalating_while_a_tool_runs_ends_the_turn_there_and_keeps_it_out_of_th
 
 
 def test_taking_over_while_a_tool_runs_stops_the_turn_there_and_the_shell_waits_for_that_command(tmp_path):
+    gate = Gate(tmp_path)
+
     def responder(record):
         if calls_to(server) == 1:
             return tool_calls_reply([
-                ("shell", {"command": "sleep 3 && touch lane-a.txt"}),  # still running when the test takes over, even under load
+                ("shell", {"command": gate.command("touch lane-a.txt")}),  # still running when the test takes over
                 ("shell", {"command": "touch lane-b.txt"}),
                 ("shell", {"command": "touch lane-c.txt"}),
             ])
@@ -1045,11 +1069,11 @@ def test_taking_over_while_a_tool_runs_stops_the_turn_there_and_the_shell_waits_
             lab.release()
             lane = lab.lane()
             work = lab.work(lane)
-            run_ = lab.driver.runs[lane.id]
-            await until(lambda: not run_.idle.is_set(), "the first command running")
+            await until(gate.started.exists, "the first command running")
             session = lab.driver.takeover(lane)
             assert lab.deck.apply(iv.TakeOver(lane.id)).ok
             assert session.busy  # the player's shell waits for the lane's command
+            asyncio.get_running_loop().call_later(0.3, gate.open)  # the command ends while begin() waits for it
             await asyncio.wait_for(session.begin(), 10)
             assert (work / "lane-a.txt").exists()
             assert not (work / "lane-b.txt").exists() and not (work / "lane-c.txt").exists()
