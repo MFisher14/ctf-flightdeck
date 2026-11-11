@@ -1,8 +1,10 @@
 """`flightdeck gaps RUN_DIR [--pack PACK] [--board PATH]`: the gap report for a run folder.
 
 Writes RUN_DIR/gaps.md (for you) and RUN_DIR/gaps.json (for build mode) and prints a short
-summary. With --pack, each gap is routed again offline against your pack, which needs the
-board the run played (--board) for the handouts; routing never runs an engine.
+summary. RUN_DIR is the run folder or its events.jsonl (the path a run prints when it ends).
+With --pack, each gap is routed again offline against your pack, which needs the board the
+run played for the handouts: --board, else the one the run recorded (RUN_DIR/run.json),
+said on stderr; routing never runs an engine.
 
 Nothing is written through a symlink: each file is written new in the run folder and renamed
 over the old one, so a symlink planted where a report goes (a lane on the host runtime can
@@ -30,14 +32,14 @@ app = typer.Typer(add_completion=False, help="The gap report: the challenges no 
 def gaps_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A run folder (it holds events.jsonl)."),
+        typer.Argument(exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
     ],
     pack: Annotated[
         Path | None,
         typer.Option(
             "--pack", exists=True, file_okay=False, dir_okay=True,
             help="Your L1 pack: route each gap again offline and say which engines would reach it now "
-            "(nothing is run). Needs --board.",
+            "(nothing is run). Needs the board: --board, else the one the run recorded.",
         ),
     ] = None,
     board: Annotated[
@@ -54,15 +56,26 @@ def gaps_command(
     from .gaps import JSON_FILE, MARKDOWN_FILE, GapError, gap_report, gaps_json, gaps_markdown, summary
     from .l1.manifest import ManifestError
     from .platform.manual import BoardError, load_board
-    from .runrecord import RunFolderError, load_run
+    from .runrecord import RunFolderError, load_run, read_run_info, run_folder
 
-    if pack is not None and board is None:
-        _fail("--pack needs --board: routing reads each challenge's handout from the board the run played")
-    run_dir = run_dir.expanduser()
     try:
+        run_dir = run_folder(run_dir.expanduser())
         record = load_run(run_dir)
     except RunFolderError as exc:
         _fail(str(exc))
+    try:
+        recorded = read_run_info(run_dir) if pack is not None and board is None else None
+    except RunFolderError as exc:
+        _fail(f"{exc}; name the board the run played with --board")
+    if pack is not None and board is None:
+        if recorded is None or recorded.board is None:
+            _fail("--pack needs --board: routing reads each challenge's handout from the board the run played "
+                  "(this run recorded none)")
+        board = recorded.board
+        if not board.is_dir():
+            _fail(f"the board this run played, {board} (recorded in {run_dir / 'run.json'}), is not there any more: "
+                  "name it with --board")
+        typer.echo(f"flightdeck: board: {_show(board)} (recorded by the run)", err=True)
     loaded = None
     if board is not None:
         try:
