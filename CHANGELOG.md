@@ -190,9 +190,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   thinking first (`[light] thinking`: false by default there, and written by
   `init --light ollama|mlx`): a model that reasons first spent a job's few hundred tokens
   reasoning and answered nothing. `thinking = true` sends nothing extra, and an API elsewhere
-  gets nothing extra unless you set `thinking = false`. The run says when thinking is off, and
-  `flightdeck eval-local --thinking on|off` measures either way (by default as your `[light]
-  thinking` says for that server).
+  gets nothing extra unless you set `thinking = false`. The run says when thinking is off,
+  `flightdeck doctor` says whether it is, and `flightdeck eval-local --thinking on|off` measures
+  either way (by default as your `[light] thinking` says for that server).
 
 ### M4: after a run
 
