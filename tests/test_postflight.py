@@ -22,7 +22,7 @@ import typer
 from markdown_it import MarkdownIt
 from typer.testing import CliRunner
 
-from ctf_flightdeck import postflight_cli, writeup
+from ctf_flightdeck import cli, writeup
 from ctf_flightdeck.agent.l1stage import FLAG_STATUSES
 from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core import interventions as iv
@@ -1160,15 +1160,8 @@ def test_md_helpers_pick_fences_longer_than_any_backtick_run():
 
 
 def mounted() -> typer.Typer:
-    """The main CLI's shape: a group with a callback, the report app mounted with no name."""
-    root = typer.Typer()
-
-    @root.callback()
-    def main() -> None:
-        pass
-
-    root.add_typer(postflight_cli.app)
-    return root
+    """The `flightdeck` command the player runs: cli.py mounts `report` there."""
+    return cli.app
 
 
 runner = CliRunner()
@@ -1220,6 +1213,7 @@ def test_report_with_a_board_that_cannot_be_read_fails_with_the_reason(played, t
 def test_report_needs_an_existing_folder(tmp_path):
     result = runner.invoke(mounted(), ["report", str(tmp_path / "nope")])
     assert result.exit_code == 2
+    assert "Invalid value for 'run_dir'" in result.output  # not "No such command"
 
 
 needs_permissions = pytest.mark.skipif(
