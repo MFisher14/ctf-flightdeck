@@ -315,7 +315,7 @@ def _light(light: LightAnswers | None) -> str:
     out = head + f"engine = {json.dumps(light.engine)}\n"
     if light.engine == "cactus":
         return out + "\n"
-    out += f"model ={json.dumps(light.model)}\nbase_url = {json.dumps(light.base_url)}\n"
+    out += f"model = {json.dumps(light.model)}\nbase_url = {json.dumps(light.base_url)}\n"
     out += f"key_env = {json.dumps(light.key_env)}" + ("   # a server on this machine needs no key\n" if not light.key_env else "\n")
     if light.price is not None:
         parts = [f"input = {light.price.input:g}", f"output = {light.price.output:g}"]

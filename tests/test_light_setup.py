@@ -33,6 +33,7 @@ def test_init_writes_an_open_weight_model_served_on_this_machine(tmp_path, monke
     result, target = init(tmp_path, monkeypatch, "--light", "ollama", "--light-model", "qwen3.5:9b")
     assert result.exit_code == 0, result.output
     assert load_config(target).light == LightConfig("openai", "qwen3.5:9b", "http://127.0.0.1:11434/v1", "")
+    assert '\nengine = "openai"\nmodel = "qwen3.5:9b"\nbase_url = "http://127.0.0.1:11434/v1"\n' in target.read_text()
     assert ("measure it against the rules: flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 "
             "--model qwen3.5:9b") in result.output
     result, target = init(tmp_path, monkeypatch, "--light", "mlx", "--light-model", "some-mlx-model", "--force")
