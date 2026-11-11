@@ -627,7 +627,7 @@ class Deck:
                 return Outcome(True, f"{pending.flag} is correct: {ch.name} solved by {lane.id}")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
-            if lane.dollars is None and lane.dollar_cap:
+            if lane.no_price() and lane.dollar_cap:
                 lane.dollar_cap = None  # no price: the player chose to go on without a dollar cap
             used = lane.budget_used()
             if used is not None and used >= 1.0:
@@ -1092,7 +1092,10 @@ class Deck:
         lane that has ended counts it all the same and asks for nothing: no cap is left to
         enforce. A coding-agent CLI's step (dollars_later) leaves the lane's dollars unsettled
         until the CLI reports what the turn cost (turn_end), which is logged as a SPEND event
-        marked turn_end: the CLI's own cost of its turn, not spend outside a turn."""
+        marked turn_end: the CLI's own cost of its turn, not spend outside a turn. A turn whose
+        cost never came (unreported: the CLI was stopped in it, or exited) leaves the lane's
+        total not known, but no price is missing for it: nothing is asked, and a dollar cap
+        holds on what is known (Lane.budget_used). Spend with no price asks once (P7)."""
         due = lane.dollars_later  # a turn_end that settles it is logged even when it adds nothing: the log says so too
         lane.tokens += rep.tokens
         lane.cached_tokens += rep.cached_tokens
@@ -1100,8 +1103,14 @@ class Deck:
             lane.dollars_later = True
         elif rep.dollars is None:
             lane.unpriced += 1
-            if not lane.finished and lane.dollars is not None and lane.dollar_cap:
-                self._unpriced(lane, rep)
+            if rep.unreported:
+                lane.unreported += 1
+                if not lane.finished and lane.dollar_cap and lane.unreported == 1:
+                    self._note(lane, f"the cost of a turn of {rep.model or lane.model} never came (its CLI did not report "
+                                     f"it): the ${fmt.dollars(lane.dollar_cap)} cap holds on the "
+                                     f"${fmt.dollars(lane.known_dollars)} that is known")
+            elif not lane.finished and lane.dollar_cap and lane.unpriced - lane.unreported == 1:
+                self._unpriced(lane, rep)  # the first spend with no price: the cap cannot be enforced any more
             lane.dollars = None
         else:
             lane.known_dollars += rep.dollars
@@ -1117,17 +1126,18 @@ class Deck:
                                    "model": rep.model or lane.model, "why": rep.why}
         if rep.turn_end:
             data["turn_end"] = True
+        if rep.unreported:
+            data["unreported"] = True
         where = "in a turn of its CLI" if rep.turn_end else "outside a turn"  # a turn_end's why says when it was reported
         self._emit(EventKind.SPEND, f"{lane.id} spent {rep.tokens} tokens {where}" + (f": {rep.why}" if rep.why else ""),
                    lane.id, lane.challenge_id, data=data)
 
     def _unpriced(self, lane: Lane, rep: TurnReport) -> None:
         """A dollar-capped lane just spent something with no price: the cap can no longer be
-        enforced. Said of the model that spent it (an escalated lane's old model, say); for a
-        coding-agent CLI, the cost of a turn it reported with none, or never reported (cut
-        short), whatever its model's price."""
-        model = rep.model or lane.model
-        why = f"the cost of a turn of {model} is not known" if rep.turn_end else f"no price for {model}"
+        enforced. Said of the model that spent it (an escalated lane's old model, say), a
+        coding-agent CLI's model too: its report of a turn with no cost, and no price for it
+        in the config. (A turn whose cost the CLI never reported asks nothing: _spend.)"""
+        why = f"no price for {rep.model or lane.model}"
         self._raise(
             lane,
             Alert(
@@ -1151,7 +1161,8 @@ class Deck:
         if lane.token_cap:
             parts.append(f"{fmt.tokens(lane.tokens)} of {fmt.tokens(lane.token_cap)} tokens")
         if lane.dollar_cap:
-            parts.append(f"${fmt.dollars(lane.dollars)} of ${fmt.dollars(lane.dollar_cap)}")
+            spent = fmt.dollars(lane.dollars) if lane.dollars is not None else f"{fmt.dollars(lane.known_dollars)}+"  # what is known
+            parts.append(f"${spent} of ${fmt.dollars(lane.dollar_cap)}")
         return ", ".join(parts) or "no cap"
 
     def _stronger(self, lane: Lane) -> tuple[str | None, str]:

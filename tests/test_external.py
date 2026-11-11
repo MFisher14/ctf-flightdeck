@@ -1071,23 +1071,63 @@ def test_a_codex_turn_open_when_the_run_closes_stays_a_cost_that_never_came_and_
     assert (head["state"], head["dollars"], head["dollars_later"]) == ("run", 0.0, True)  # reports read: never came
 
 
-def test_a_cost_with_no_price_asks_about_the_cap_naming_the_model_that_spent_it(tmp_path):
-    # escalated mid-turn: the small model's turn was cut, and codex never says what it cost
-    script = {"turns": [{"items": [{"command": "echo one"}, {"sleep": 30.0}], "usage": [300, 100, 50]}]}
+@pytest.mark.parametrize("priced", [True, False], ids=["every model priced", "no price"])
+def test_escalating_a_capped_codex_lane_mid_turn_keeps_its_cap_and_asks_only_about_a_model_with_no_price(tmp_path, priced):
+    # codex never says what the turn it was stopped in cost: that cost is not known, but no price is missing for it, so
+    # the dollar cap stays, on what is known; a model with no price is still asked about once (P7), and named
+    script = {"turns": [
+        {"items": [{"command": "echo one"}, {"sleep": 30.0}], "usage": [300, 100, 50]},
+        {"items": [{"command": "echo two"}, {"message": "done"}], "usage": [200, 0, 20]},
+    ]}
+    prices = {"small": Price(input=1.0, output=10.0), "big": Price(input=2.0, output=20.0)} if priced else {}
 
     async def main():
-        lab = Lab(tmp_path, script, kind="codex", prices={"small": Price(input=1.0, output=10.0),
-                                                          "big": Price(input=2.0, output=20.0)}, dollar_cap=2.0)
+        lab = Lab(tmp_path, script, kind="codex", prices=prices, dollar_cap=2.0)
         try:
             lab.release()
             lane = lab.lane()
             await until(lambda: "$ echo one" in steps(lane), "the step")
             assert lab.deck.apply(iv.Escalate(lane.id)).ok and lane.model == "big"
-            await until(lambda: lane.alert(AlertKind.BUDGET) is not None, "the cap that cannot be enforced")
-            alert = lane.alert(AlertKind.BUDGET)
-            assert alert.reason.startswith("The cost of a turn of small is not known, so the $2.00 cap cannot be enforced")
-            assert lane.pending.detail == "carry on with no dollar cap (the cost of a turn of small is not known)"
-            assert "big" not in alert.reason  # it has a price: not the model whose cost is missing
+            await until(lambda: len(spends(lab.deck)) == 2, "the cut turn's end, then the stronger model's turn")
+            cut, ended = spends(lab.deck)
+            assert (cut["model"], cut["tokens"], cut["dollars"], cut["turn_end"], cut.get("unreported")) == (
+                "small", 0, None, True, True)
+            assert (ended["model"], ended["tokens"], ended["turn_end"], ended.get("unreported")) == ("big", 220, True, None)
+            assert lane.dollars is None and not lane.dollars_later  # the cut turn's part is not known
+            if priced:
+                assert ended["dollars"] == pytest.approx((200 * 2.0 + 20 * 20.0) / 1e6)
+                assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.RUNNING
+                assert lane.dollar_cap == 2.0 and lane.known_dollars == pytest.approx(ended["dollars"])
+                assert lane.budget_used() == pytest.approx(ended["dollars"] / 2.0)  # the cap holds on what is known
+            else:
+                await until(lambda: lane.pending is not None, "the cap that cannot be enforced")
+                assert lane.alert(AlertKind.BUDGET).reason.startswith("No price for big, so the $2.00 cap cannot be enforced")
+                assert lane.pending.detail == "carry on with no dollar cap (no price for big)"
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_quitting_while_claude_is_in_a_turn_it_never_reports_asks_nothing_about_the_cap(tmp_path):
+    # quitting stops every lane without ending it; claude, hung, exits on SIGTERM with no result: that turn's cost is
+    # not known (no price here), and no approval comes of it while the run closes
+    script = {"turns": [{"calls": [
+        {"tools": [bash("echo one")], "usage": [100, 10, 0, 0]}, {"text": "hmm", "usage": [50, 5, 0, 0], "ignore": ["INT"]},
+        {"think": 30.0},
+    ]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, dollar_cap=2.0)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lab.run(lane).pending_tokens == 55, "the tokens counted after the step")
+            await lab.finish()  # what the console's quit does: the driver's shutdown
+            assert not lane.finished and lane.tokens == 165 and lane.dollars is None
+            assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.RUNNING
+            (spent,) = spends(lab.deck)
+            assert (spent["tokens"], spent["dollars"], spent["turn_end"], spent["unreported"]) == (55, None, True, True)
         finally:
             await lab.finish()
 

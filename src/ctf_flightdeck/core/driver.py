@@ -60,6 +60,7 @@ class TurnReport:
     model: str | None = None  # the model that took this turn, when it is not the lane's model now (escalated meanwhile)
     dollars_later: bool = False  # a coding-agent CLI's step: the CLI reports what it cost only when its turn ends (turn_end), so `dollars` is not known yet, rather than $0.00
     turn_end: bool = False  # what a coding-agent CLI reported for a turn that ended (or was cut short, or that it exited in): the turn's own cost, which its steps (dollars_later) did not carry
+    unreported: bool = False  # with turn_end and dollars None: the CLI never said what the turn cost (it was stopped in it, or exited), so its cost is not known though no price is missing; a dollar cap then holds on what is known (Lane.unreported)
 
 
 def spend_only(rep: TurnReport) -> bool:

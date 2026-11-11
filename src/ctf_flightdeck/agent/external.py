@@ -1506,11 +1506,12 @@ class _Run:
         """A run of the CLI ended in a turn whose cost it never reported (no result; codex: no
         turn.completed): the turn ends here, with the tokens counted since its last step and,
         as its cost, the config price of the turn's tokens when there is one, else unknown
-        (None), never $0.00. Not while codex goes on in the same thread (its turn was cut to
-        hand it a message): its next turn.completed counts the whole thread, this turn too.
-        Nor, when the run closes with the lane still open, for a turn with nothing counted and
-        no price (codex): it stays open (the lane's dollars_later), which every report reads
-        as a cost that never came, and the deck is not asked about a cap while the run ends."""
+        (None, marked unreported: no price is missing, so the deck asks nothing and keeps a
+        dollar cap on what is known), never $0.00. Not while codex goes on in the same thread
+        (its turn was cut to hand it a message): its next turn.completed counts the whole
+        thread, this turn too. Nor, when the run closes with the lane still open, for a turn
+        with nothing counted and no price (codex): it stays open (the lane's dollars_later),
+        which every report reads as a cost that never came."""
         tokens, cached = self.take_tokens()
         prompt, completion, cached_in_turn = self.turn_tokens
         if not (self.cost_due or tokens or prompt or completion) or self.thread_goes_on(proc):
@@ -1524,7 +1525,8 @@ class _Run:
         self.turn_tokens = [0, 0, 0]
         self.cost_due = False
         self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
-                               why=LEFTOVER.format(kind=self.kind), model=proc.model, turn_end=True))
+                               why=LEFTOVER.format(kind=self.kind), model=proc.model, turn_end=True,
+                               unreported=dollars is None))
 
     def thread_goes_on(self, proc: _Proc) -> bool:
         """Whether the lane's next turn goes on in the conversation this run of the CLI had,
