@@ -13,7 +13,10 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
+from typer.testing import CliRunner
 
+from ctf_flightdeck import practice_cli, practice_set
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -838,4 +841,110 @@ def test_solves_not_checked_against_an_answers_file_are_marked(tmp_path):
     assert "No answers file: solves are as the run recorded them" in card
     assert "solved L01 **" in card
     assert "** not checked against an answers file: you said the platform accepted it" in card
+
+
+# ---------------------------------------------------------------------- flightdeck score
+
+
+runner = CliRunner()
+
+
+def flightdeck() -> typer.Typer:
+    """A command line with the practice app mounted the way cli.py mounts it."""
+    root = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="markdown")
+
+    @root.callback()
+    def main() -> None:
+        """flightdeck"""
+
+    root.add_typer(practice_cli.app)
+    return root
+
+
+def invoke(*args: str):
+    return runner.invoke(flightdeck(), list(args), prog_name="flightdeck")
+
+
+def test_score_prints_the_scorecard_of_a_run_folder(played):
+    path = played.close()
+    result = invoke("score", str(path.parent), "--board", str(played.folder))
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == scorecard(score(path, played.board))
+    assert result.stdout.startswith("Sample Archive: solved 2 of 4 · 250 of 650 points\n")
+
+
+def test_score_takes_the_event_log_itself_too(played):
+    path = played.close()
+    result = invoke("score", str(path), "--board", str(played.folder))
+    assert result.exit_code == 0 and result.stdout == scorecard(score(path, played.board))
+
+
+def test_score_checks_flags_against_a_named_answers_file(tmp_path):
+    played = Played(tmp_path, answers=None)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="guess", flag=WRONG))
+    deck.apply(iv.Approve("L01"))
+    deck.apply(iv.Approve("L01"))  # wrongly accepted by the player
+    path = played.close()
+    kept = tmp_path / "answers-kept-apart.json"
+    kept.write_text(json.dumps({"alpha": sha(FLAGS["alpha"])}))
+    plain = invoke("score", str(path.parent), "--board", str(played.folder))
+    judged = invoke("score", str(path.parent), "--board", str(played.folder), "--answers", str(kept))
+    assert plain.stdout.startswith("Sample Archive: solved 1 of 4")
+    assert judged.exit_code == 0 and judged.stdout.startswith("Sample Archive: solved 0 of 4")
+    assert "Flags checked against answers-kept-apart.json" in judged.stdout
+
+
+def test_score_defaults_to_the_practice_set(played, monkeypatch):
+    path = played.close()
+    monkeypatch.setattr(practice_set, "practice_dir", lambda: played.folder)
+    result = invoke("score", str(path.parent))
+    assert result.exit_code == 0 and result.stdout == scorecard(score(path, played.board))
+
+
+def test_score_without_a_practice_set_says_to_name_the_board(played, monkeypatch):
+    path = played.close()
+
+    def missing():
+        raise FileNotFoundError("the practice set is missing from this installation (looked in /x)")
+
+    monkeypatch.setattr(practice_set, "practice_dir", missing)
+    result = invoke("score", str(path.parent))
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "flightdeck: the practice set is missing from this installation (looked in /x); name the board the run played with --board" in result.stderr
+
+
+@pytest.mark.parametrize("make", ["empty folder", "nothing there"])
+def test_score_of_something_that_is_not_a_run_says_so(tmp_path, make):
+    board = make_board(tmp_path / "archive")
+    target = tmp_path / "target"
+    if make == "empty folder":
+        target.mkdir()
+    result = invoke("score", str(target), "--board", str(board))
+    assert result.exit_code == 2 and result.stdout == ""
+    expected = "no events.jsonl here, so it is not a run folder" if make == "empty folder" else "no such run folder or event log"
+    assert f"flightdeck: {target}: {expected}" in result.stderr
+
+
+def test_score_against_the_wrong_board_fails_with_the_reason(played):
+    path = played.close()
+    other = make_board(played.folder.parent / "other", {"echo": ("Echo", "misc", 10)}, answers=None)
+    result = invoke("score", str(path.parent), "--board", str(other))
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "the run played challenges that are not on the board" in result.stderr
+
+
+def test_score_with_a_board_that_does_not_load_fails_with_the_reason(played, tmp_path):
+    path = played.close()
+    result = invoke("score", str(path.parent), "--board", str(tmp_path / "no-board-here"))
+    assert result.exit_code == 2 and "no such directory" in result.stderr
+
+
+def test_score_is_listed_in_the_help_with_its_arguments():
+    listed = invoke("--help")
+    assert listed.exit_code == 0 and "score" in listed.stdout
+    usage = invoke("score", "--help")
+    assert usage.exit_code == 0
+    text = " ".join(usage.stdout.split())
+    assert "RUN_DIR" in text and "--board" in text and "--answers" in text and "practice set" in text
 
