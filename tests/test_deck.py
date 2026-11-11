@@ -1978,3 +1978,24 @@ def test_taking_over_a_paused_lane_leaves_it_paused_on_hand_back():
     assert deck.apply(iv.Resume(lane.id)).ok and driver.named("resume") == [(lane.id,)]
     assert deck.apply(iv.TakeOver(lane.id)).ok  # a running lane taken over runs again on hand back
     assert deck.apply(iv.HandBack(lane.id)).ok and lane.state is LaneState.RUNNING
+
+
+# ---------------------------------------------------------------------- warnings and teammates' releases
+
+
+def test_a_warning_that_belongs_to_no_lane_is_an_event():
+    deck, _, _ = make_deck(n=1)
+    deck.warn("the team folder is not mounted", data={"source": "team"})
+    event = deck.events[-1]
+    assert (event.kind, event.text, event.lane, event.data) == (EventKind.WARNING, "the team folder is not mounted", None, {"source": "team"})
+
+
+def test_a_teammates_released_claim_frees_the_challenge_but_not_someone_elses_claim():
+    deck, _, _ = make_deck(n=2, max_lanes=1, team=True)  # c1 waits in the queue
+    deck.teammate_claim("c1", "alice")
+    deck.teammate_release("c1", "bob")  # not bob's claim: nothing changes
+    assert deck.challenges["c1"].claimed_by == "alice"
+    deck.teammate_release("c1", "alice")
+    assert deck.challenges["c1"].claimed_by is None
+    assert deck.events[-1].data == {"who": "alice", "claimed": False}
+    assert deck.apply(iv.Queue("c1")).ok  # it can be worked again

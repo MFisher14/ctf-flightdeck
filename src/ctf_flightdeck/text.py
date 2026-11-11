@@ -42,6 +42,17 @@ _UNSAFE = re.compile(
 )
 MARK = "\ufffd"  # the replacement character
 NEWLINE = " \u23ce "  # how a folded newline shows
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _escaped(match: re.Match[str]) -> str:
+    """A lone surrogate: a byte that was not UTF-8 (a Linux file name, PEP 383) shows as \\xNN,
+    any other as \\uNNNN. Printed as it is, one would crash a strict UTF-8 terminal or reach a
+    lenient one as a raw byte (0x9b starts a control sequence)."""
+    code = ord(match.group())
+    if 0xDC80 <= code <= 0xDCFF:
+        return f"\\x{code - 0xDC00:02x}"
+    return f"\\u{code:04x}"
 
 
 def _visible(match: re.Match[str]) -> str:
@@ -57,4 +68,4 @@ def untrusted(text: str, *, one_line: bool = False) -> str:
     """`text` made safe to draw. one_line=True also folds newlines and tabs."""
     if one_line:
         text = text.replace("\r\n", "\n").replace("\n", NEWLINE).replace("\t", " ")
-    return _UNSAFE.sub(_visible, text)
+    return _UNSAFE.sub(_visible, _SURROGATE.sub(_escaped, text))

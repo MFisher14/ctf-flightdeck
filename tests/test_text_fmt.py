@@ -156,3 +156,13 @@ def test_duration(seconds, text):
 )
 def test_clock(seconds, text):
     assert fmt.clock(seconds) == text
+
+
+def test_a_lone_surrogate_shows_as_an_escape_and_never_reaches_the_terminal_raw():
+    from ctf_flightdeck.text import untrusted
+
+    not_utf8 = b"report\x9b2J.txt".decode("utf-8", "surrogateescape")  # a Linux file name that is not UTF-8
+    shown = untrusted(not_utf8)
+    assert shown == "report\\x9b2J.txt"
+    assert untrusted("a\ud800b") == "a\\ud800b"
+    shown.encode("utf-8")  # strict UTF-8: no lone surrogate is left

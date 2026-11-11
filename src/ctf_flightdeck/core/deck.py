@@ -282,6 +282,23 @@ class Deck:
             data={"engine": engine, "status": status, "flags": list(flags), "seconds": seconds, "notes": notes},
         )
 
+    def warn(self, text: str, *, challenge: str | None = None, data: dict | None = None) -> None:
+        """A warning for the player that belongs to no lane (a team folder problem, a failed
+        poll): a WARNING event, which the console shows and the run log keeps."""
+        self._on_thread("warn")
+        self._emit(EventKind.WARNING, text, challenge=challenge, data=dict(data or {}))
+
+    def teammate_release(self, challenge_id: str, who: str) -> None:
+        """Team mode: a teammate's claim is gone (released, or gone stale), so the challenge can
+        be worked again. A claim someone else holds now is left alone."""
+        self._on_thread("teammate_release")
+        self._need_team("teammate_release")
+        ch = self.challenges[challenge_id]
+        if ch.claimed_by != who:
+            return
+        ch.claimed_by = None
+        self._emit(EventKind.TEAMMATE, f"{who} no longer claims {ch.name}", challenge=ch.id, data={"who": who, "claimed": False})
+
     def teammate_claim(self, challenge_id: str, who: str) -> None:
         """Team mode: a teammate claimed a challenge. It is not started while they hold it."""
         self._on_thread("teammate_claim")

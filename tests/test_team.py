@@ -748,20 +748,19 @@ def test_a_second_watcher_does_not_apply_what_the_first_already_did(folder):
     assert events(deck, EventKind.TEAMMATE, since=mark) == []
 
 
-def test_a_teammates_release_is_reported_once_when_the_deck_cannot_drop_their_claim(folder):
+def test_a_teammates_release_frees_the_challenge_on_our_deck_once(folder):
     deck, _ = make_deck(max_lanes=1)
     bravo = TeamChannel(folder, "bravo")
     bravo.claim("c1")
     w, reports = watcher(folder, deck)
     w.poll()
+    assert deck.challenges["c1"].claimed_by == "bravo"
     bravo.release("c1")
     for _ in range(3):
         w.poll()
-    assert deck.challenges["c1"].claimed_by == "bravo"
-    assert reports == [
-        "team: bravo no longer claims c1, but this deck cannot drop a teammate's claim "
-        "(it has no teammate_release), so it stays claimed by bravo here"
-    ]
+    assert deck.challenges["c1"].claimed_by is None
+    released = [e for e in events(deck, EventKind.TEAMMATE) if e.data.get("claimed") is False]
+    assert [e.text for e in released] == ["bravo no longer claims Chall c1"] and reports == []
 
 
 def test_a_released_or_stale_claim_is_dropped_on_a_deck_that_can(folder, wall):

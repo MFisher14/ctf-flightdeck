@@ -419,19 +419,12 @@ class TeamWatcher:
         self._clashes = {
             cid: who for cid, who in self._clashes.items() if held.get(cid) == who and deck.challenges[cid].claimed_by == ME
         }
-        release = getattr(deck, "teammate_release", None)
         for ch in list(deck.challenges.values()):
             who = ch.claimed_by
             if who is None or who == ME or held.get(ch.id) == who:
                 continue
             # the deck shows a teammate's claim that the folder no longer has
-            if release is not None:
-                self._do(messages, f"drop {who}'s released claim on {ch.id}", release, ch.id, who)
-            elif not ch.closed:
-                messages.append(
-                    f"team: {who} no longer claims {ch.id}, but this deck cannot drop a teammate's claim "
-                    f"(it has no teammate_release), so it stays claimed by {who} here"
-                )
+            self._do(messages, f"drop {who}'s released claim on {ch.id}", deck.teammate_release, ch.id, who)
 
     def _follow_deck(self, state: TeamState, messages: list[str]) -> None:
         deck, channel = self.deck, self.channel
@@ -868,10 +861,7 @@ def _deck_warnings(deck: Deck) -> Callable[[str], None]:
     console shows and the run log keeps. Like any deck call, on the deck's thread only."""
 
     def warn(text: str) -> None:
-        # The deck has no public way to raise a warning yet (Deck.warn() is proposed); these
-        # are the two calls its own warnings make.
-        deck._on_thread("_emit")
-        deck._emit(EventKind.WARNING, text, data={"source": "team"})
+        deck.warn(text, data={"source": "team"})
 
     return warn
 
