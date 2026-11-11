@@ -65,6 +65,8 @@ import secrets
 import shutil
 import stat
 import tempfile
+import threading
+import time
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -94,6 +96,7 @@ left on the challenge: CTFd did not check the flag."""
 MAX_WAIT = 30.0  # seconds: the longest pause between tries, whatever Retry-After asks for
 CONNECT_TIMEOUT = 10.0  # seconds: a connection that takes longer is not coming
 MAX_API_BYTES = 20_000_000  # an API answer bigger than this is refused
+MAX_ATTEMPT_BYTES = 64 * 1024  # the verifier's limit for an answer to a flag (CTFd's is a few hundred bytes)
 MAX_FILE_BYTES = 1 << 30  # a handout file bigger than this is refused (1 GiB); fetch it by hand
 MAX_STATE_BYTES = 1_000_000  # a ctfd.json bigger than this is refused
 MAX_PAGES = 500  # pages of one listing; more means a server that never stops
@@ -114,6 +117,7 @@ _URL = re.compile(r"https?://[^\s<>\"'`\\]+", re.IGNORECASE)
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _FILE_TOKEN = re.compile(r"([?&]token=)[^&#\s]*", re.IGNORECASE)
 _NOT_JSON = object()
+_LATE = object()  # an answer that was not all in by the deadline
 _TRANSIENT = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
 _UNSENT = (httpx.ConnectError, httpx.ConnectTimeout)  # the request never left this machine
 
@@ -635,9 +639,13 @@ class CTFdVerifier:
 
     The deck calls it synchronously on the console's event loop, so it never touches asyncio:
     one request with its own httpx.Client, which blocks the console for that round trip (a
-    rare, player-approved action). It never retries: a retried submit could count twice.
-    `ids` maps board ids (slugs) to CTFd ids: Pull.ids, or load_ids(board folder); after a
-    wave, add the new ones to `verifier.ids`.
+    rare, player-approved action), and never longer than `timeout` seconds in all. httpx's
+    timeouts bound each step of a request only (a server that sends a byte now and then
+    never trips them), so the request runs in a worker thread the call waits for; one
+    still going when the time is up is left to end on its own, and the answer is unknown.
+    It never retries: a retried submit could count twice. `ids` maps board ids (slugs) to
+    CTFd ids: Pull.ids, or load_ids(board folder); after a wave, add the new ones to
+    `verifier.ids`.
     """
 
     def __init__(
@@ -657,6 +665,7 @@ class CTFdVerifier:
             if not isinstance(key, str) or not _is_number(value):
                 raise ValueError("ids must map board ids (strings) to CTFd challenge ids (whole numbers, 1 or more)")
             self.ids[key] = value
+        self.timeout = timeout
         self.last_error: str | None = None
         self.last_attempt: Attempt | None = None
         self._http = httpx.Client(
@@ -690,17 +699,13 @@ class CTFdVerifier:
             return None
         endpoint = f"POST {API}/challenges/attempt"
         content = json.dumps({"challenge_id": number, "submission": flag}, ensure_ascii=True).encode("ascii")
-        answer, failure = None, None
-        try:
-            with self._http.stream("POST", self._site.root + API + "/challenges/attempt", content=content) as response:
-                body = _read_sync(response, MAX_API_BYTES)
-                answer = _Answer(endpoint, response.status_code, response.headers, body if body is not None else b"")
-        except httpx.HTTPError as exc:
-            failure = _describe(exc)
-        if failure is not None:
-            self.last_error = str(self._site.no_answer(endpoint, failure, 1, submit=True))
+        answer = self._submit(content, endpoint)
+        if isinstance(answer, CTFdError):
+            self.last_error = str(answer)
             return None
-        assert answer is not None
+        if isinstance(answer, _Failure):
+            self.last_error = str(self._site.no_answer(endpoint, answer, 1, submit=True))
+            return None
         error = None
         try:
             attempt = _attempt(self._site, answer)
@@ -716,6 +721,51 @@ class CTFdVerifier:
             return False
         self.last_error = _unjudged(attempt)
         return None
+
+    def _submit(self, content: bytes, endpoint: str) -> _Answer | _Failure | CTFdError:
+        """The submission's one request, in a worker thread the call waits for, at most
+        `timeout` seconds from now: CTFd's answer, the failure that left none, or the error
+        that says none came in time (or one too big to be CTFd's)."""
+        deadline = time.monotonic() + self.timeout
+        unknown = "; the flag may have reached CTFd: check the challenge there before submitting it again"
+        late = self._site.error(
+            f"no complete answer from CTFd at {self._site.root} to {endpoint} within {self.timeout:g} s{unknown}",
+            endpoint=endpoint,
+            retryable=True,
+        )
+        box: list[_Answer | _Failure | CTFdError | BaseException] = []
+
+        def exchange() -> None:
+            try:
+                with self._http.stream("POST", self._site.root + API + "/challenges/attempt", content=content) as response:
+                    body = _read_sync(response, MAX_ATTEMPT_BYTES, deadline)
+                    if isinstance(body, bytes):
+                        box.append(_Answer(endpoint, response.status_code, response.headers, body))
+                    elif body is None:
+                        box.append(
+                            self._site.error(
+                                f"CTFd at {self._site.root} answered {endpoint} with more than {MAX_ATTEMPT_BYTES:,} "
+                                f"bytes, which is not an answer to a flag{unknown}",
+                                endpoint=endpoint,
+                                status=response.status_code,
+                            )
+                        )
+                    else:
+                        box.append(late)
+            except httpx.HTTPError as exc:
+                box.append(_describe(exc))  # the error itself is dropped: its request holds the token
+            except BaseException as exc:  # a bug: raised again in the caller's thread, never lost
+                box.append(exc)
+
+        worker = threading.Thread(target=exchange, name="ctfd-submit", daemon=True)
+        worker.start()
+        worker.join(max(0.0, deadline - time.monotonic()))
+        if not box:
+            return late  # the worker ends when the server answers, gives up or hangs up; its result is dropped
+        outcome = box[0]
+        if isinstance(outcome, BaseException) and not isinstance(outcome, CTFdError):
+            raise outcome
+        return outcome
 
 
 def _unjudged(attempt: Attempt) -> str:
@@ -1504,13 +1554,17 @@ async def _read(response: httpx.Response, limit: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def _read_sync(response: httpx.Response, limit: int) -> bytes | None:
+def _read_sync(response: httpx.Response, limit: int, deadline: float) -> bytes | None | object:
+    """The body; None when it is longer than `limit` bytes; _LATE when it is not all in by
+    `deadline` (a time.monotonic() value): then the reading stops, and the connection with it."""
     chunks, size = [], 0
     for chunk in response.iter_bytes():
         size += len(chunk)
         if size > limit:
             return None
         chunks.append(chunk)
+        if time.monotonic() > deadline:
+            return _LATE
     return b"".join(chunks)
 
 

@@ -891,6 +891,26 @@ def test_the_verifier_never_retries_and_keeps_the_reason():
     assert TOKEN not in verify.last_error
 
 
+def test_the_verifier_never_blocks_the_console_much_longer_than_its_timeout():
+    # httpx's timeouts bound each read; a server that sends a byte now and then never trips them
+    incorrect = {"success": True, "data": {"status": "incorrect", "message": "Incorrect"}}
+    with FakeCTFd(sample()) as fake, CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}, timeout=1.0) as verify:
+        for stalled in (Reply(200, incorrect, drip=0.2), Reply(200, incorrect, drip=0.2, drip_head=True)):
+            fake.script("POST", "/api/v1/challenges/attempt", stalled)  # 14 s for the body; 30 s with the head
+            started = time.monotonic()
+            assert verify("warmup", "test{hello}") is None
+            assert time.monotonic() - started < 2.5
+            assert "no complete answer from CTFd" in verify.last_error and "within 1 s" in verify.last_error
+            assert "may have reached CTFd" in verify.last_error and verify.last_attempt is None
+
+
+def test_the_verifier_refuses_an_answer_too_big_to_be_ctfds():
+    with FakeCTFd(sample()) as fake, CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}) as verify:
+        fake.script("POST", "/api/v1/challenges/attempt", Reply(200, b"x" * 100_000))
+        assert verify("warmup", "test{hello}") is None
+    assert "more than 65,536 bytes" in verify.last_error and "may have reached CTFd" in verify.last_error
+
+
 def test_the_verifier_with_ctfd_unreachable_says_the_flag_was_not_submitted():
     with CTFdVerifier(f"http://127.0.0.1:{closed_port()}", TOKEN, {"warmup": 1}) as verify:
         assert verify("warmup", "test{hello}") is None

@@ -99,6 +99,8 @@ class Reply:
     headers: dict[str, str] = field(default_factory=dict)
     hang_up: bool = False  # close the connection without answering
     until_close: bool = False  # no Content-Length: the body ends when the connection closes
+    drip: float = 0.0  # seconds between the bytes of the body, sent one at a time (a server that stalls)
+    drip_head: bool = False  # with drip: the status line and headers too
 
 
 HANG_UP = Reply(hang_up=True)
@@ -534,6 +536,9 @@ class _Handler(BaseHTTPRequestHandler):
         headers.update(reply.headers)
         if reply.until_close:
             headers["Connection"] = "close"
+        if reply.drip:
+            self._drip(reply, headers, data)
+            return
         try:
             self.send_response(reply.status)
             for name, value in headers.items():
@@ -546,6 +551,25 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         if reply.until_close:
             self.close_connection = True
+
+    def _drip(self, reply: Reply, headers: dict[str, str], data: bytes) -> None:
+        """The answer a byte at a time, `reply.drip` seconds apart (each read gets a byte in time,
+        so no per-read timeout ever fires)."""
+        lines = [f"HTTP/1.1 {reply.status} {self.responses.get(reply.status, ('',))[0]}"]
+        lines += [f"{name}: {value}" for name, value in headers.items()]
+        if not any(name.lower() == "content-length" for name in headers):
+            lines.append(f"Content-Length: {len(data)}")
+        head = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
+        self.close_connection = True
+        try:
+            if not reply.drip_head:
+                self.wfile.write(head)
+                head = b""
+            for byte in head + data:
+                self.wfile.write(bytes([byte]))
+                time.sleep(reply.drip)
+        except OSError:
+            pass  # the client gave up, or the fake is stopping
 
     def log_message(self, format: str, *args: object) -> None:
         pass
