@@ -101,5 +101,6 @@ own cost, which wins. A dollar-capped lane whose spend has no price asks you onc
 carries on without its cap, and the console shows its dollars as "at least" (`$0.42+`).
 
 A coding-agent CLI reports what a turn cost only when the turn ends, so its lane's dollars end in
-`…` until then. A turn whose cost never came (the CLI was stopped in it, or exited) leaves them
-"at least" too, but asks nothing: the dollar cap holds on what is known.
+`…` until then. A turn whose cost never came (the CLI was stopped in it, or exited) is priced
+from your config when it has a price for the turn's tokens; otherwise it leaves the dollars "at
+least" too, but asks nothing: the dollar cap holds on what is known.

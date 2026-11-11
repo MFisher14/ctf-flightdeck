@@ -33,9 +33,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A coding-agent CLI reports what a turn cost only when the turn ends, so its lane's cost ends in
   `…` meanwhile instead of showing a settled $0.00, and a cost reported after the lane ended
   (solved or killed mid-turn) still counts for the lane, the run and the reports. A turn whose
-  cost never came (the CLI was stopped in it, or exited) makes the lane's dollars an "at least"
-  figure (`$0.42+`): a dollar cap then holds on what is known, and only spend with no price asks
-  you to drop the cap.
+  cost never came (the CLI was stopped in it, or exited) is priced from your config when it has
+  a price for its tokens; otherwise the lane's dollars become an "at least" figure (`$0.42+`), a
+  dollar cap holds on what is known, and only spend with no price asks you to drop the cap.
 - `[prices."<model>"]` may name a model of an `[agents]` ladder, so codex lanes, which report
   tokens but no cost, get dollars; `play` names the codex models with no price, and
   `flightdeck config` lists their prices. claude keeps its own figure.
