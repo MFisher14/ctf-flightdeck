@@ -155,6 +155,9 @@ def play(
         run.app().run()
     finally:
         run.close()
+        card = run.scorecard()
+        if card:
+            typer.echo(card, nl=False)
         typer.echo(f"run log: {run.log.path}")
         for problem in run.driver.errors:
             typer.echo(f"flightdeck: {problem}", err=True)

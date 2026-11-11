@@ -310,3 +310,26 @@ def test_a_real_run_has_the_course_detectors_watching_its_lanes(tmp_path):
 
         asyncio.run(main())
         run.close()
+
+
+def test_a_run_on_a_board_with_answers_ends_with_a_scorecard(tmp_path):
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", READER, route='keywords = ["note"]')
+    with FakeModelServer() as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), pack=pack))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the L1 flag's approval")
+            from ctf_flightdeck.core import interventions as iv
+
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    card = run.scorecard()
+    assert card is not None and "solved 1 of 1" in card and "Note       misc   50  solved L01" in card, card

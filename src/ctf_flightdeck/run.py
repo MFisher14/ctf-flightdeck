@@ -97,6 +97,18 @@ class Run:
         self.transcripts.close()
         self.log.close()
 
+    def scorecard(self) -> str | None:
+        """After close(): the run scored against the board's answers (practice mode), or None
+        when the board has no answers to check flags against."""
+        if not self.board.answers:
+            return None
+        from .practice_mode import ScoreError, score, scorecard
+
+        try:
+            return scorecard(score(self.log.path, self.board))
+        except ScoreError as exc:
+            return f"no scorecard: {exc}\n"
+
     def app(self, refresh_seconds: float | None = 0.5):
         from .console.app import FlightdeckApp
 
