@@ -537,7 +537,7 @@ def test_a_wave_re_pull_keeps_every_folder_and_adds_the_new_ones(tmp_path):
         asked = len(fake.requests)
         result = pulled(fake, dest)
         second = [r.route for r in fake.requests[asked:]]
-    assert result.added == ("second-wave",)
+    assert result.added == ("second-wave",) and result.problems == ()  # the folders there are kept, not in the way
     assert second == ["/api/v1/challenges", "/api/v1/challenges/5", second[2]] and second[2].endswith("/disk.img")
     assert (dest / "warmup" / "challenge.json").read_bytes() == before
     assert (dest / "warmup" / "notes.txt").read_text() == "the player's notes"
