@@ -1840,6 +1840,84 @@ def test_a_take_over_waits_for_the_agents_command_freezes_the_cli_and_tells_it_w
     run(main())
 
 
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_the_take_over_shell_opens_only_once_the_step_of_the_command_it_waited_for_is_on_the_lane(tmp_path, monkeypatch, kind):
+    """The CLI freezes as soon as the agent's command ends, but its step goes on the lane only
+    after a look at the workspace, in a thread a loaded machine can hold up (here for half a
+    second). The shell waits for that step: the file the command made is on the lane as the
+    agent's before the player can change anything, so no change of the player's can be
+    taken for one of the agent's."""
+    real = external.take_snapshot
+
+    def held_up(root):
+        if (Path(root) / "lane-a.txt").exists():  # the look after the agent's command
+            time.sleep(0.5)
+        return real(root)
+
+    monkeypatch.setattr(external, "take_snapshot", held_up)
+    command = "sleep 0.5 && touch lane-a.txt"
+    if kind == "claude":
+        script = {"turns": [{"calls": [{"tools": [bash(command)]}, {"think": 30.0}]}]}
+    else:
+        script = {"turns": [{"items": [{"command": command}, {"sleep": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind=kind)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lab.run(lane).in_flight, "the agent's command running")
+            session = lab.driver.takeover(lane)
+            assert lab.deck.apply(iv.TakeOver(lane.id)).ok
+            await asyncio.wait_for(session.begin(), 10)
+            assert "lane-a.txt" in lane.files and lane.files["lane-a.txt"].by == "lane"
+            assert steps(lane) == ["$ sleep 0.5 && touch lane-a.txt"]
+            session.finish()
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_hand_back_interrupts_the_frozen_cli_before_it_runs_again(tmp_path, monkeypatch):
+    """The agent had chosen its next step before the take-over, and the wait before it ran out
+    while the CLI was frozen. A loaded machine can hold flightdeck up between the signals of a
+    hand-back (here for half a second after SIGCONT): the interrupt went first, so the CLI
+    wakes with it and that step never runs."""
+    real_killpg = os.killpg
+
+    def held_up(pgid, sig):
+        real_killpg(pgid, sig)
+        if sig == signal.SIGCONT:
+            time.sleep(0.5)
+
+    monkeypatch.setattr(os, "killpg", held_up)
+    script = {"turns": [
+        {"calls": [{"tools": [bash("touch lane-a.txt")]}, {"think": 1.0, "tools": [bash("touch lane-b.txt")]}]},
+        {"calls": [{"tools": [bash("echo back")]}]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            work = lab.work(lane)
+            await until(lambda: "lane-a.txt" in lane.files, "the agent's first step")
+            session = lab.driver.takeover(lane)
+            assert lab.deck.apply(iv.TakeOver(lane.id)).ok  # frozen at once: no command runs
+            await asyncio.wait_for(session.begin(), 10)
+            await asyncio.sleep(1.5)  # past the end of the agent's wait, while it is frozen
+            assert not (work / "lane-b.txt").exists()
+            assert lab.deck.apply(iv.HandBack(lane.id, session.finish())).ok
+            await until(lambda: "$ echo back" in steps(lane), "the step after the hand-back")
+            assert not (work / "lane-b.txt").exists()  # the step it had chosen before was cut off
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_a_budget_cap_freezes_the_cli_until_the_player_approves_more(tmp_path):
     script = {"turns": [
         {"calls": [{"tools": [bash("echo one")], "usage": [400, 10, 0, 0]}, {"think": 0.3, "tools": [bash("echo two")]}]},

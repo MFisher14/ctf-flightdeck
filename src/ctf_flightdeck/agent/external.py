@@ -34,7 +34,8 @@ a turn ends.
 
 How the player's controls reach the CLI:
 - pause: SIGSTOP to the CLI's process group; resume: SIGCONT. A take-over first lets the
-  command the agent is running finish (as AgentDriver does), then freezes the CLI.
+  command the agent is running finish (as AgentDriver does), then freezes the CLI; the
+  player's shell opens once that command's step is on the lane.
 - a lane that waits for the player (a flag to approve, a budget cap) is frozen the same
   way: the CLI decides by itself when to call its model, so freezing it is how the deck's
   rule "a waiting lane spends nothing" holds. So is a lane that gave up while a flag of it
@@ -42,8 +43,10 @@ How the player's controls reach the CLI:
   no new CLI, and ends when the deck ends it.
 - a hint, a new plan, a verdict on a flag or a hand-back while the agent works: SIGINT
   ends the agent's turn (Claude Code ends the turn and waits for input; Codex exits), and
-  the message goes in as the next turn. Notes that can wait (budget approved) go with the
-  next message.
+  the message goes in as the next turn. A frozen CLI gets the SIGINT before its SIGCONT,
+  so it wakes with the interrupt there, not after going on with a step it had chosen
+  before (one whose wait ran out while it was frozen). Notes that can wait (budget
+  approved) go with the next message.
 - stop: stdin closed, then SIGINT, SIGTERM after a grace period, then SIGKILL, to the
   process group and to every process the CLI started.
 - escalation: the CLI is stopped and started again on the stronger model, in a fresh
@@ -86,6 +89,7 @@ against a real run yet; claude_argv() and codex_argv() hold every flag in one pl
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import json
 import math
@@ -98,7 +102,7 @@ import stat
 import subprocess
 import time
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -1001,6 +1005,7 @@ class _Run:
         self.procs: list[_Proc] = []  # every run of the CLI, so that closing ends them all
         self.snapshot: Snapshot | None = None
         self.in_flight: dict[str, str] = {}  # tool call id -> its action, until its result
+        self.recording = 0  # steps of ended commands going on the lane now (record_step)
         self.timer: asyncio.TimerHandle | None = None  # a take-over freezes after TAKEOVER_WAIT whatever runs
         self.log: _Log | None = None
         self.spawns = 0
@@ -1076,13 +1081,14 @@ class _Run:
         self.wake.set()
         if lane.state is LaneState.RUNNING and not lane.gave_up_later:
             self.cancel_timer()
-            self.thaw()
-            if not self._delivering:
+            if not self._delivering:  # first: a frozen CLI then wakes with the interrupt already there
                 self._delivering = True
                 try:
                     self.deliver()
                 finally:
                     self._delivering = False
+            if lane.state is LaneState.RUNNING and not lane.gave_up_later and not lane.finished and not self.stopped:
+                self.thaw()  # still running after what deliver() reported
         elif lane.state is LaneState.TAKEOVER:
             self.takeover_freeze()
         else:  # waiting for the player, paused, or gave up
@@ -1116,10 +1122,25 @@ class _Run:
 
     def update_idle(self) -> None:
         proc = self.proc
-        if proc is None or not proc.alive or proc.ending is not None or (proc.frozen and proc.landed):
+        if self.recording:
+            self.idle.clear()  # a step is going on the lane: the take-over shell waits for it
+        elif proc is None or not proc.alive or proc.ending is not None or (proc.frozen and proc.landed):
             self.idle.set()
         else:
             self.idle.clear()
+
+    @contextlib.contextmanager
+    def record_step(self) -> Iterator[None]:
+        """While the step of a command that ended goes on the lane, from before the freeze a
+        take-over makes then. The step's look at the workspace runs in a thread, which a loaded
+        machine can hold up: the take-over's shell opens only after it, so the files the command
+        changed are the agent's, and what the player changes is never in its step."""
+        self.recording += 1
+        try:
+            yield
+        finally:
+            self.recording -= 1
+            self.update_idle()
 
     def takeover_freeze(self) -> None:
         """The player takes the shell: let the command the agent is running finish, then
@@ -1821,9 +1842,10 @@ class _ClaudeRun(_Run):
                 return
             for block in _blocks(message.get("content")):
                 if block.get("type") == "tool_result":
-                    action = self.finished_tool(_str(block.get("tool_use_id"))) or "(a tool call flightdeck did not see start)"
-                    error = block.get("is_error") is True
-                    await self.step(action, _result_text(block.get("content")), prefix="error: " if error else "")
+                    with self.record_step():  # from before a take-over's freeze: its shell waits for this step
+                        action = self.finished_tool(_str(block.get("tool_use_id"))) or "(a tool call flightdeck did not see start)"
+                        error = block.get("is_error") is True
+                        await self.step(action, _result_text(block.get("content")), prefix="error: " if error else "")
         elif kind == "result":
             await self.result(proc, event, current)
         elif kind == "system":
@@ -2063,15 +2085,16 @@ class _CodexRun(_Run):
             if kind == "item.started":
                 self.in_flight[iid] = action
             elif kind == "item.completed":
-                self.finished_tool(iid)
-                code = item.get("exit_code")
-                status = _str(item.get("status"))
-                prefix = ""
-                if status == "declined":
-                    prefix = "declined by codex · "
-                elif isinstance(code, int) and not isinstance(code, bool) and code != 0:
-                    prefix = f"exit {code} · "
-                await self.step(action, _str(item.get("aggregated_output")), prefix=prefix)
+                with self.record_step():  # from before a take-over's freeze: its shell waits for this step
+                    self.finished_tool(iid)
+                    code = item.get("exit_code")
+                    status = _str(item.get("status"))
+                    prefix = ""
+                    if status == "declined":
+                        prefix = "declined by codex · "
+                    elif isinstance(code, int) and not isinstance(code, bool) and code != 0:
+                        prefix = f"exit {code} · "
+                    await self.step(action, _str(item.get("aggregated_output")), prefix=prefix)
         elif itype == "file_change" and kind == "item.completed":
             listed: list[FileChange] = []
             for change in item.get("changes") if isinstance(item.get("changes"), list) else []:
