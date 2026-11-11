@@ -28,7 +28,7 @@ How the player's controls reach the CLI:
 - stop: stdin closed, then SIGINT, SIGTERM after a grace period, then SIGKILL, to the
   process group and to every process the CLI started.
 - escalation: the CLI is stopped and started again on the stronger model, in a fresh
-  context, with the brief and prompts.escalation(summary).
+  context, with the brief and prompts.escalation(lane summary).
 
 Security. The CLI is the player's own tool and holds the player's credential for its model
 API, so the agent's own API key (or login token) is in the CLI's environment and the
@@ -74,6 +74,7 @@ from types import MappingProxyType
 from typing import Any
 
 from ..core.driver import TakeoverRefused, TurnReport
+from ..core.summary import lane_summary
 from ..core.model import (
     Challenge,
     EscalationSummary,
@@ -787,7 +788,7 @@ class _Run:
         self.docker = isinstance(workspace, DockerWorkspace)
         self.cli = driver.agent.executable  # docker: the CLI's path in the container, once found
         self.generation = 0  # bumped at escalation: the old CLI's events then only count their cost
-        self.escalation: EscalationSummary | None = None
+        self.escalation: str | None = None  # the lane summary handed to the stronger model (core/summary.py)
         self.notes: list[str] = []  # for the agent now: interrupts a running turn (the take-over's note lands here)
         self.later: list[str] = []  # for the agent with its next message
         self.flags: set[str] = set()  # candidates already raised by this lane
@@ -968,7 +969,7 @@ class _Run:
 
     # ------------------------------------------------------------------ the deck -> the agent
 
-    def escalate(self, model: str, summary: EscalationSummary) -> None:
+    def escalate(self, model: str, summary: str) -> None:
         try:
             _check_model(model)
         except AgentError as exc:
@@ -1834,7 +1835,7 @@ class ExternalDriver:
     def escalate(self, lane: Lane, model: str, summary: EscalationSummary) -> None:
         run = self.runs.get(lane.id)
         if run is not None:
-            run.escalate(model, summary)
+            run.escalate(model, lane_summary(self.deck, lane, before=summary))
 
     def approved(self, lane: Lane, pending: Pending) -> None:
         run = self.runs.get(lane.id)
