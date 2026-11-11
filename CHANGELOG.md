@@ -4,6 +4,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+### Model APIs
+
+- The Anthropic API for flightdeck's own lanes: `flightdeck init --provider anthropic` (Claude
+  Haiku, Sonnet and Opus 5.5 with their prices), with OpenRouter offered as a fallback when
+  `OPENROUTER_API_KEY` is set: a lane whose calls keep failing moves there for the rest of its
+  context and says so. Any config can name a `[fallback]` API; `flightdeck doctor` checks its key.
+
 ### M4: after a run
 
 - `flightdeck report RUN_DIR`: the post-flight report (where lanes stalled, which of your

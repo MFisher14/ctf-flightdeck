@@ -6,8 +6,8 @@ flightdeck pulls the board, runs your own no-model solvers first, starts agent l
 and submits flags, while you watch every lane on one console and step in when one goes the wrong
 way: a hint, a redirect, a fork, a kill, or taking over its shell yourself.
 
-Bring what you have: an API key (OpenRouter, OpenAI or a local model server), a coding-agent CLI
-(Claude Code, Codex), a folder of solver scripts.
+Bring what you have: an API key (Anthropic, OpenRouter, OpenAI or a local model server), a
+coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
 
 > **Status: pre-release (v0.1.0 coming).** Milestones M0 to M4 are built: the console, agent
 > lanes, your L1 solvers, CTFd events, team mode, alerts, practice scoring, post-flight reports.
@@ -27,6 +27,31 @@ flightdeck practice             # 14 small practice challenges that ship with fl
 everything (Python, the config, the API key variable, Docker, the lane image) and says how to fix
 each problem. No setup at all: `flightdeck mock` opens the console on scripted data and spends
 nothing.
+
+## Keys and model APIs
+
+Your config names the environment variable that holds each key, never the key. flightdeck reads
+the variable from your environment, else from `~/.config/ctf-flightdeck/keys.env` (or the file
+`$FLIGHTDECK_KEYS` names), which must be readable by you only:
+
+```sh
+mkdir -p ~/.config/ctf-flightdeck && touch ~/.config/ctf-flightdeck/keys.env && chmod 600 ~/.config/ctf-flightdeck/keys.env
+# then add lines like:  ANTHROPIC_API_KEY=...   OPENROUTER_API_KEY=...
+```
+
+Lane processes never see these values.
+
+With an Anthropic key, `flightdeck init --provider anthropic` writes the Anthropic API with the
+ladder `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` and their list prices, so the
+dollar caps work from the start. If `OPENROUTER_API_KEY` is set too, init offers OpenRouter as the
+fallback (`--fallback` away from a terminal): a lane whose calls to Anthropic keep failing (rate
+limits, overload, an outage, after every retry) moves to OpenRouter's names for the same models for
+the rest of its context, and its transcript says so; escalating it, or the long-context refresh,
+tries Anthropic again. A refusal or a bad request never moves a lane. On Claude Sonnet and Opus
+5.5, Anthropic retries a request its safety classifiers decline on its recommended fallback model,
+inside the same call (Claude Haiku 5.5 has no such fallback); a request still declined ends the
+lane with "the model declined (category)". Any config can have a `[fallback]` table
+(`flightdeck config --example` shows it).
 
 ## Play a board
 
