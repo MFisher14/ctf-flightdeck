@@ -2078,6 +2078,69 @@ def test_a_held_queue_starts_no_more_lanes_and_says_why_once():
     assert len(warnings) == 1 and "refused the key" in warnings[0].text
 
 
+def held_events(deck, held: bool):
+    return [e for e in deck.events if e.kind is EventKind.WARNING and e.data.get("held") is held]
+
+
+def test_lifting_the_hold_logs_it_then_starts_queued_lanes_in_the_free_slots_and_a_new_failure_holds_again():
+    deck, driver, _ = make_deck(n=4, max_lanes=2)
+    first = lane_on(deck, "c0")
+    reason = "L01's call to small failed in a way every lane would (check the account's credits): HTTP 402"
+    deck.hold_queue(reason)
+    deck.report(first.id, TurnReport(turn=False, gave_up="model API error"))
+    assert driver.started() == ["c0", "c1"] and [e.challenge for e in deck.queue] == ["c2", "c3"]
+    out = deck.release_hold()
+    assert out.ok and out.message == "Lifted the hold on the queue: 1 lane started, 1 queued"
+    assert deck.held == "" and driver.started() == ["c0", "c1", "c2"]  # one slot was free: one lane, the next in line
+    (lifted,) = held_events(deck, False)
+    assert lifted.data["reason"] == reason and lifted.text == "the player lifted the hold on the queue: lanes start again"
+    start = next(e for e in deck.events if e.kind is EventKind.LANE_START and e.challenge == "c2")
+    assert deck.events.index(lifted) < deck.events.index(start)  # logged before the lane it let start
+    deck.hold_queue("L03's call to small failed in a way every lane would (check the API key): HTTP 401")
+    assert len(held_events(deck, True)) == 2 and "HTTP 401" in deck.held  # a hold after a lift is said again
+
+
+def test_lifting_a_queue_that_is_not_held_is_refused_and_changes_nothing():
+    deck, driver, _ = make_deck(n=4, max_lanes=2)
+    events = len(deck.events)
+    out = deck.release_hold()
+    assert not out.ok and out.message == "The queue is not held: queued lanes start as slots free up"
+    assert len(deck.events) == events and driver.started() == ["c0", "c1"] and len(deck.queue) == 2
+
+
+def test_lifting_the_hold_from_another_thread_is_refused():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    deck.hold_queue("the model API does not answer")
+    deck.report(lane_on(deck, "c0").id, TurnReport(turn=False, gave_up="model API error"))
+    errors = []
+
+    def worker():
+        try:
+            deck.release_hold()
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout=5)
+    assert len(errors) == 1 and "thread" in str(errors[0])
+    assert deck.held == "the model API does not answer" and held_events(deck, False) == [] and driver.started() == ["c0"]
+    assert deck.release_hold().ok and driver.started() == ["c0", "c1"]
+
+
+def test_a_fork_while_the_queue_is_held_says_the_queue_is_held_not_that_the_lanes_are_busy():
+    deck, driver, _ = make_deck(n=1, max_lanes=3)
+    lane = lane_on(deck, "c0")
+    deck.hold_queue("the model API does not answer: is it running, and is base_url right?")
+    out = deck.apply(iv.Fork(lane.id, model="big"))
+    assert out.ok and out.message == (
+        f"Fork of {lane.id} (big) is first in the queue, which is held: the model API does not answer: is it "
+        "running, and is base_url right?"
+    )
+    assert "busy" not in out.message and lane.actions[-1].text == "fork queued first (big): the queue is held"
+    assert driver.started() == ["c0"] and deck.release_hold().ok and newest(deck).model == "big"
+
+
 def test_a_solve_the_platform_lists_closes_the_challenge_in_solo_mode_too():
     deck, driver, _ = make_deck(n=2, max_lanes=1)
     lane = lane_on(deck, "c0")

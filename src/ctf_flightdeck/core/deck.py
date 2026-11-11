@@ -8,7 +8,9 @@ the event stream alone.
 
 Rules the deck enforces:
 - at most `max_lanes` lanes are active (running, waiting, paused or taken over); the
-  rest wait in the queue, which drains as lanes finish;
+  rest wait in the queue, which drains as lanes finish, except while it is held
+  (hold_queue: a failure every lane would hit) until the player lifts the hold
+  (release_hold);
 - a candidate flag must match the flag format; with submit policy "confirm" it waits
   for the player's approval, with "auto" it is submitted at once;
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
@@ -547,6 +549,9 @@ class Deck:
         if error is not None:
             return Outcome(False, f"Fork of {lane.id} could not start: {error}")
         if started is None:
+            if self.held:  # no lane starts until the player lifts the hold, whatever slots are free
+                self._note(lane, f"fork queued first ({model}): the queue is held", Actor.PLAYER)
+                return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue, which is held: {self.held}")
             self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", Actor.PLAYER)
             return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; all {self.config.max_lanes} lanes are busy")
         self._note(lane, f"forked to {started.id} ({model})", Actor.PLAYER)
@@ -777,6 +782,23 @@ class Deck:
             return
         self.held = reason
         self._emit(EventKind.WARNING, f"no more lanes start: {reason}", data={"held": True, "reason": reason})
+
+    def release_hold(self) -> Outcome:
+        """Lift the hold: the player has fixed what it named, so queued lanes start again, as
+        many as there are free slots. Logged as a warning event with held false, the pair of the
+        hold's own (held true), before the lanes it lets start. Refused, changing nothing, when
+        the queue is not held."""
+        self._on_thread("release_hold")
+        if not self.held:
+            return Outcome(False, "The queue is not held: queued lanes start as slots free up")
+        reason, self.held = self.held, ""
+        self._emit(EventKind.WARNING, "the player lifted the hold on the queue: lanes start again",
+                   data={"held": False, "reason": reason})
+        before = len(self.lanes)
+        self._fill()
+        started = len(self.lanes) - before  # a lane whose start failed is gone again
+        return Outcome(True, f"Lifted the hold on the queue: {started} lane{'' if started == 1 else 's'} started, "
+                             f"{len(self.queue)} queued")
 
     def _fill(self) -> None:
         """Start queued lanes while there are free slots (none while the queue is held)."""
