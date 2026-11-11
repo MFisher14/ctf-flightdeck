@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -438,6 +439,29 @@ def test_folders_and_marks_take_their_modes_from_the_umask(tmp_path, umask, fold
 
     assert [mode(team / kind) for kind in ("", "claims", "boxes", "solves")] == [folder_mode] * 4
     assert [mode(team / name) for name in (MARKER, "claims/c0.json", "boxes/c0.json", "solves/c1.json")] == [file_mode] * 4
+
+
+def test_a_write_goes_through_a_hidden_temp_file_in_the_marks_own_folder(folder, monkeypatch):
+    # A temp file anywhere else (the system's temp folder, say) cannot be renamed onto a
+    # network share (EXDEV), and is made unreadable to teammates (mkstemp's 0600).
+    alpha = TeamChannel(folder, "alpha")
+    seen: list[dict[str, list[str]]] = []
+    real_fsync = os.fsync
+
+    def fsync(fd: int) -> None:  # the real fsync, after noting what each kind folder holds then
+        seen.append({kind: sorted(os.listdir(folder / kind)) for kind in ("claims", "boxes", "solves")})
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    alpha.claim("c0")
+    alpha.hold_box("c1")
+    first, second = seen  # one flush per write, each while its temp file waits in the mark's folder
+    (temp,) = first["claims"]
+    assert re.fullmatch(r"\.c0\.json\.[0-9a-f]{12}\.tmp", temp) and first["boxes"] == first["solves"] == []
+    (temp,) = second["boxes"]
+    assert re.fullmatch(r"\.c1\.json\.[0-9a-f]{12}\.tmp", temp)
+    assert second["claims"] == ["c0.json"] and second["solves"] == []
+    assert sorted(os.listdir(folder / "claims")) == ["c0.json"] and sorted(os.listdir(folder / "boxes")) == ["c1.json"]
 
 
 def test_each_write_replaces_the_file_whole(folder):
@@ -1017,6 +1041,15 @@ def test_mirror_writes_nothing_for_a_claim_the_deck_refused(folder):
     assert tree(folder) == before and reports == []
 
 
+def test_mirror_leaves_our_claim_alone_when_the_deck_refuses_a_release(folder):
+    deck, _ = make_deck()
+    TeamChannel(folder, "alpha").claim("c1")  # ours from before a restart; this deck does not hold it (yet)
+    alpha, _, reports = mirrored(folder, deck)
+    before = tree(folder)
+    assert not deck.apply(iv.Release("c1")).ok  # "Chall c1 is not claimed by you"
+    assert tree(folder) == before and reports == []
+
+
 def test_mirror_records_a_correct_flag_as_our_solve_and_never_writes_the_flag(folder):
     deck, _ = make_deck()
     alpha, _, reports = mirrored(folder, deck)
@@ -1053,6 +1086,20 @@ def test_mirror_holds_the_live_box_while_an_approved_lane_works_it(folder):
     assert alpha.current("boxes", "c0") is not None  # the fork is still on the box
     deck.apply(iv.Kill(second.id, requeue=False))
     assert alpha.current("boxes", "c0") is None
+    assert reports == []
+
+
+def test_only_a_live_box_approval_holds_the_box(folder):
+    deck, _ = make_deck(("c0",), max_lanes=1)
+    alpha, _, reports = mirrored(folder, deck)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="guess", flag="t{wrong}"))
+    assert deck.apply(iv.Approve(lane.id)).ok  # a flag, approved and rejected: the lane carries on
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.BUDGET, "raise the cap")))
+    assert deck.apply(iv.Approve(lane.id)).ok  # more budget
+    TeamWatcher(alpha, deck, report=reports.append).poll()  # the watcher holds nothing for it either
+    assert lane.state is LaneState.RUNNING
+    assert alpha.current("boxes", "c0") is None and list((folder / "boxes").iterdir()) == []
     assert reports == []
 
 
