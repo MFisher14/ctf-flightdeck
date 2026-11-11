@@ -473,12 +473,31 @@ def test_challenge_ids_and_names_are_unique():
         assert [value for value, n in Counter(values).items() if n > 1] == []
 
 
+NOT_HANDOUT = {".DS_Store"}  # Finder's folder metadata: git ignores it, and it is no part of a challenge
+
+
+def handout_files(folder: Path) -> list[str]:
+    """Every regular file below `folder` but its challenge.json, dotfiles too, as relative paths.
+
+    A lane's workspace is a copy of the whole directory, dotfiles included, so a .solution left
+    here would reach the lane, and a listed .hidden is a real handout file.
+    """
+    found = {p.relative_to(folder).as_posix() for p in files_under(folder) if p.name not in NOT_HANDOUT}
+    return sorted(found - {"challenge.json"})
+
+
+def test_the_handout_files_include_dotfiles_and_leave_out_finder_metadata(tmp_path):
+    for name in ("challenge.json", "postcard.txt", ".solution", ".hidden", "sub/.notes", "sub/challenge.json", ".DS_Store", "sub/.DS_Store"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("synthetic\n", encoding="utf-8")
+    assert handout_files(tmp_path) == [".hidden", ".solution", "postcard.txt", "sub/.notes", "sub/challenge.json"]
+
+
 @pytest.mark.parametrize("folder", CHALLENGES, ids=lambda p: p.name)
 def test_the_files_list_names_every_handout_file_and_nothing_else(folder):
     listed = challenge(folder).get("files")
     assert listed is not None, "the practice set lists its handout files explicitly"
-    present = {p.relative_to(folder).as_posix() for p in files_under(folder) if not p.name.startswith(".")}
-    assert sorted(listed) == sorted(present - {"challenge.json"})
+    assert sorted(listed) == handout_files(folder)
 
 
 def test_descriptions_are_short_and_hold_nothing_in_the_flag_format():
