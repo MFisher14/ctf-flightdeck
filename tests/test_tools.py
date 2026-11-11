@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from ctf_flightdeck.agent import tools
 from ctf_flightdeck.agent.tools import SUBMITTED, TOOLS, ToolResult, Toolbox
 from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace, docker_unavailable
 
@@ -397,8 +398,10 @@ def web():
 
 
 @pytest.fixture
-def silent():
-    """A port that listens but never accepts: a connection to it would show up as pending."""
+def silent(monkeypatch):
+    """A port that listens but never accepts: a connection to it would show up as pending.
+    The http timeout is cut to 2 s so that a request wrongly sent there fails fast."""
+    monkeypatch.setattr(tools, "HTTP_TIMEOUT", 2.0)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     sock.listen(8)
@@ -454,6 +457,9 @@ def test_http_refuses_every_other_origin_without_connecting(lane, web, silent):
         assert result.error, url
     assert "is not this challenge's instance; http goes only to " + origin(web) in call(box, "http", {"method": "GET", "url": f"http://127.0.0.1:{port(silent)}/"}).content
     assert_never_connected(silent)
+    with_password = call(box, "http", {"method": "GET", "url": f"http://user:pw@127.0.0.1:{web.server_address[1]}/"})
+    assert with_password.content == "error: no user:password@ in the URL; send an Authorization header instead"
+    assert web.requests == []
 
 
 def test_http_follows_no_redirect(lane, web, silent):

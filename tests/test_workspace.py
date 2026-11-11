@@ -34,7 +34,9 @@ from ctf_flightdeck.agent.workspace import (
     WorkspaceError,
     changed_files,
     docker_unavailable,
+    open_inside,
     take_snapshot,
+    write_inside,
 )
 
 IMAGE = "debian:bookworm-slim"
@@ -303,6 +305,33 @@ def test_the_host_take_over_shell_opens_in_the_lane_dir_with_the_allowlisted_env
     assert spec.env["HOME"] == str(lane.root / ".flightdeck" / "home")
     assert spec.env["TERM"] == "xterm-256color"  # the player's terminal, not the commands' dumb one
     assert HostWorkspace(lane.root, lane.handout, shell="zsh").shell == "zsh"
+
+
+# ---------------------------------------------------------------- flightdeck's own reads and writes
+
+
+def test_flightdeck_never_reads_or_writes_through_a_symlink_in_a_workspace(tmp_path):
+    root = tmp_path / "ws"
+    (root / "real").mkdir(parents=True)
+    (root / "real" / "f.txt").write_text("mine\n")
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "secret.txt").write_text("host file\n")
+    os.symlink(tmp_path / "outside" / "secret.txt", root / "leak")
+    os.symlink(tmp_path / "outside", root / "dirlink")
+    fd = open_inside(root, ["real", "f.txt"])
+    assert os.read(fd, 100) == b"mine\n"
+    os.close(fd)
+    for parts in (["leak"], ["dirlink", "secret.txt"]):
+        with pytest.raises(OSError):
+            open_inside(root, parts)
+    with pytest.raises(OSError):
+        write_inside(root, "dirlink/new.txt", b"x")
+    write_inside(root, "leak", b"replaced")  # the link is replaced, never written through
+    assert (root / "leak").read_bytes() == b"replaced" and not (root / "leak").is_symlink()
+    assert sorted(os.listdir(tmp_path / "outside")) == ["secret.txt"]
+    assert (tmp_path / "outside" / "secret.txt").read_text() == "host file\n"
+    with pytest.raises(ValueError):
+        write_inside(root, "../escape.txt", b"x")
 
 
 # ---------------------------------------------------------------- snapshots and diffs
