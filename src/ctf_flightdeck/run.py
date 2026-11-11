@@ -24,6 +24,7 @@ from .config import Config, ConfigError, api_key, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane
 from .eventlog import EventLog, new_run_dir
+from .transcript import TranscriptLog
 from .platform.manual import AnswerVerifier, Board, BoardError, cannot_check, load_board
 
 
@@ -52,6 +53,7 @@ class Run:
     driver: AgentDriver
     client: ModelClient
     log: EventLog
+    transcripts: TranscriptLog
     dir: Path
     runtime: str
     model: str
@@ -84,6 +86,7 @@ class Run:
         await self.client.aclose()
 
     def close(self) -> None:
+        self.transcripts.close()
         self.log.close()
 
     def app(self, refresh_seconds: float | None = 0.5):
@@ -156,7 +159,9 @@ def prepare_run(options: RunOptions) -> Run:
     )
     deck = Deck(deck_config, driver, RunClock(), verify)
     log.attach(deck)
-    return Run(board, config, deck, driver, client, log, run_dir, runtime, model)
+    transcripts = TranscriptLog(run_dir / "lanes")
+    transcripts.attach(deck)
+    return Run(board, config, deck, driver, client, log, transcripts, run_dir, runtime, model)
 
 
 def _check_docker(image: str) -> None:

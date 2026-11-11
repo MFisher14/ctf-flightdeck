@@ -89,6 +89,11 @@ def test_a_run_plays_a_lane_from_the_board_to_a_solve_through_the_console(tmp_pa
             submit = next(line for line in lines if line["kind"] == EventKind.SUBMIT.value)
             assert submit["data"]["correct"] is True and submit["data"]["by"] == "platform"
             assert all(run.driver.runs[x].closed for x in run.driver.runs)
+            transcript = [json.loads(line) for line in (run.dir / "lanes" / f"{lane.id}.jsonl").read_text().splitlines()]
+            head, steps = transcript[0], [x for x in transcript[1:] if "kind" in x]
+            assert (head["lane"], head["challenge"], head["state"]) == (lane.id, "note", "solved")
+            cat = next(x for x in steps if x["text"] == "$ cat note.txt")
+            assert cat["kind"] == "step" and f"the flag is {FLAG}" in cat["output"]
             first = server.requests[0]["json"]
             assert first["model"] == "fake/small" and "authorization" not in server.requests[0]["headers"]
 
