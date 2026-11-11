@@ -1237,7 +1237,10 @@ class Deck:
         for lane in lanes:
             self._note(lane, f"no verdict from the platform on {item.flag}: {detail or 'no reason given'}")
         confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {item.flag}? (you submit it)", flag=item.flag)
-        if not self._back_to_player(item, confirm):
+        holders, others = self._back_to_player(item, confirm)
+        for lane in others:
+            self._end_if_gave_up(lane)
+        if not holders:
             self._emit(
                 EventKind.WARNING,
                 f"no verdict from the platform on {item.flag} for {ch.name}, and {', '.join(item.lanes)} has ended: "
@@ -1246,13 +1249,14 @@ class Deck:
                 data={"flag": item.flag, "lanes": list(item.lanes)},
             )
 
-    def _back_to_player(self, item: _ToPlatform, pending: Pending, why: str = "") -> list[Lane]:
+    def _back_to_player(self, item: _ToPlatform, pending: Pending, why: str = "") -> tuple[list[Lane], list[Lane]]:
         """`item`'s flag, on its way to the platform no more, waits for the player as `pending`:
         on each lane that sent it and is still at work, as each would hold it had it never been
-        on its way, so each hears what becomes of it. A lane that sent it and gave up ends
-        instead (unless something else of it still waits), its flag waiting on those; when
-        every lane that sent it gave up, the first one still open holds it. `why`: why it did
-        not go to the platform. Returns the lanes it waits on (none when they have all ended)."""
+        on its way, so each hears what becomes of it. A lane that sent it and gave up does not
+        hold it (the caller ends it, unless something else of it still waits); when every lane
+        that sent it gave up, the first one still open holds it. `why`: why it did not go to
+        the platform. Returns the lanes it waits on (none when they have all ended), and the
+        others still open."""
         lanes = [self.lanes[lane_id] for lane_id in item.lanes if not self.lanes[lane_id].finished]
         holders = [lane for lane in lanes if not lane.gave_up_later] or lanes[:1]
         for lane in holders:  # none holds it already: a lane that sent it was asked nothing for it (_candidate)
@@ -1260,11 +1264,10 @@ class Deck:
                 self._note(lane, f"back to you: {item.flag} did not go to the platform ({why})")
             self._ask(lane, pending)
         ids = ", ".join(lane.id for lane in holders)
-        for lane in lanes:
-            if lane not in holders:
-                self._note(lane, f"{item.flag} waits for you on {ids}" + (f": it did not go to the platform ({why})" if why else ""))
-                self._end_if_gave_up(lane)
-        return holders
+        others = [lane for lane in lanes if lane not in holders]
+        for lane in others:
+            self._note(lane, f"{item.flag} waits for you on {ids}" + (f": it did not go to the platform ({why})" if why else ""))
+        return holders, others
 
     def _next_to_platform(self, ch: Challenge, ok: bool | None) -> None:
         """After an answer, the next flag waiting its turn on `ch` goes out. A flag known not to
@@ -1298,14 +1301,17 @@ class Deck:
             self._lines[ch.id] = keep
         else:
             del self._lines[ch.id]
+        ending: list[Lane] = []  # lanes that gave up end only once every flag here is placed: one may hold a later one
         for item, known in wrong:
             for lane in (self.lanes[i] for i in item.lanes):
                 if not lane.finished:
                     self._note(lane, f"not sent to the platform: {item.flag} ({known})")
                     self._tell_not_flag(lane, item.flag, known)
-                    self._end_if_gave_up(lane)
+                    ending.append(lane)
         for item, why in back:
-            self._back_to_player(item, Pending(PendingKind.SUBMIT, _submit_detail(ch, item.flag), flag=item.flag), why)
+            ending += self._back_to_player(item, Pending(PendingKind.SUBMIT, _submit_detail(ch, item.flag), flag=item.flag), why)[1]
+        for lane in ending:
+            self._end_if_gave_up(lane)
         line = self._lines.get(ch.id)
         if line and not line[0].sent:
             self._hand_over(ch)

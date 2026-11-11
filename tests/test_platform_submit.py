@@ -422,6 +422,28 @@ def test_a_lane_that_gave_up_stays_open_while_another_flag_of_it_still_waits_its
     assert (sibling.state, sibling.result) == (LaneState.GAVE_UP, "the model gave up")
 
 
+@pytest.mark.parametrize("answer", HANDED_BACK)
+def test_a_lane_that_gave_up_holds_a_flag_back_with_the_player_that_no_lane_at_work_sent(answer):
+    deck, driver, _ = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    third = fork(deck, lane)
+    deck.report(third.id, TurnReport(flag="t{w}", claimed=False))  # scraped: it waits for the player on the third lane
+    deck.report(lane.id, TurnReport(flag="t{x}"))  # on its way
+    deck.report(lane.id, TurnReport(flag="t{y}"))  # waits its turn
+    deck.report(sibling.id, TurnReport(flag="t{y}"))  # joins it
+    deck.report(sibling.id, TurnReport(flag="t{w}"))  # waits its turn
+    deck.report(sibling.id, TurnReport(flag="t{z}"))  # waits its turn: only the sibling sent it
+    assert deck.apply(iv.Decline(third.id)).ok  # t{w}: not the flag, says the player
+    deck.report(sibling.id, TurnReport(turn=False, gave_up="the model gave up"))
+    deck.platform_verdict(lane.id, "t{x}", **answer)
+    assert (PendingKind.SUBMIT, "t{y}") in asked(lane)  # held by the lane at work that sent it
+    assert asked(sibling) == [(PendingKind.SUBMIT, "t{z}")] and not sibling.finished  # no lane at work sent t{z}
+    assert (sibling.id, PendingKind.SUBMIT, "t{w}") in driver.named("declined")
+    assert deck.apply(iv.Decline(sibling.id)).ok
+    assert (sibling.state, sibling.result) == (LaneState.GAVE_UP, "the model gave up")
+
+
 def test_the_players_yes_on_another_lane_counts_for_a_flag_already_waiting_its_turn():
     deck, _, submitter = platform_deck()
     lane = lane_on(deck, "c0")
