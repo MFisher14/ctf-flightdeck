@@ -54,11 +54,10 @@ FAKE_KEY = "fake-model-key-for-tests-2208"
 # Built here, so this file never holds a token shape for the secret guard to find.
 CTFD_SHAPED = "ctfd_" + "0123456789abcdef" * 4
 HEX_SHAPED = "deadbeef" * 8
-CONFIRM_NOT_ENFORCED = (
-    'the instance policy is "confirm", but flightdeck does not yet ask you before a lane first reaches '
-    "a live instance: a lane can reach it from its first turn, and a docker lane gets an open network "
-    '(bridge: any host, not only the instance). Watch the lanes, or set [policies] instance = "manual" '
-    "to keep docker lanes off instances"
+CONFIRM_ON_HOST = (
+    'the instance policy is "confirm", but lanes run on this machine (runtime host): a lane asks you '
+    "before its http tool may reach the instance, but its shell has this machine's network and can "
+    "reach it before you answer. The docker runtime enforces it (no network until you allow it)"
 )
 
 EVENT_CTFD = {
@@ -136,11 +135,8 @@ def warnings(problems: list[Problem]) -> list[str]:
 
 
 def passing(chosen: Policies) -> list[Problem]:
-    """What check() says of policies that break no rule: nothing, but for the warning that
-    instance "confirm" is not enforced yet whenever lanes would run under it (tested on its own
-    in test_instance_confirm_warns_that_nothing_enforces_it_yet)."""
-    if chosen.instance is CONFIRM and chosen.agents is not OFF:
-        return [Problem(False, CONFIRM_NOT_ENFORCED)]
+    """What check() says of policies that break no rule, with the runtime unknown: nothing (the
+    host's own warnings are tested on their own)."""
     return []
 
 
@@ -478,13 +474,13 @@ def test_keeping_lanes_off_instances_by_choice_on_the_host_is_a_warning(instance
 
 @pytest.mark.parametrize("runtime", ["docker", "host", None])
 @pytest.mark.parametrize("agents", LANES_START)
-def test_instance_confirm_warns_that_nothing_enforces_it_yet(agents, runtime):
-    # A lane gets the instance (and a docker lane its bridge network) when it starts, and nothing
-    # asks the player first, so neither runtime keeps a lane waiting for a yes.
+def test_instance_confirm_warns_only_where_a_lanes_shell_can_reach_the_instance_first(agents, runtime):
+    # A lane asks before its first model call; in docker it has no network until the player says
+    # yes, but on the host its shell has this machine's network all along.
     for rules in ("confirm", "allowed"):  # required by the rules, or chosen
         event = profile(live_targets=rules)
         problems = check(event, policies(agents=agents, instance=CONFIRM), max_lanes=4, environ=TOKEN_SET, runtime=runtime)
-        assert problems == [Problem(False, CONFIRM_NOT_ENFORCED)], rules
+        assert problems == ([Problem(False, CONFIRM_ON_HOST)] if runtime == "host" else []), rules
         assert check(event, policies(agents=OFF, instance=CONFIRM), max_lanes=4, environ=TOKEN_SET, runtime=runtime) == []  # no lanes
     for instance in (AUTO, MANUAL, OFF):
         assert check(profile(), policies(agents=agents, instance=instance), max_lanes=4, environ=TOKEN_SET, runtime="docker") == []
@@ -873,7 +869,7 @@ def test_profile_fields_are_checked_when_built_in_code():
     "instance, urls, network",
     [
         (AUTO, ("http://127.0.0.1:8080",), "bridge"),
-        (CONFIRM, ("http://127.0.0.1:8080",), "bridge"),
+        (CONFIRM, ("http://127.0.0.1:8080",), "none"),  # connected when the player allows it
         (MANUAL, ("http://127.0.0.1:8080",), "none"),
         (OFF, ("http://127.0.0.1:8080",), "none"),
         (AUTO, (), "none"),
@@ -966,13 +962,12 @@ def test_describe_shows_every_stage_with_its_meaning_and_what_the_rules_would_al
     assert "flags     hl\\{[^}]+\\}" in lines
     assert "l1        off      no L1 solvers (the rules allow auto)" in lines
     assert "submit    confirm  each flag is submitted after you approve it (the rules allow auto)" in lines
-    # confirm is not enforced yet (no ask before a lane's first use of an instance), and bridge is open egress
-    assert "instance  confirm  lanes can reach their challenge's live instance: asking you first is not enforced yet" in lines
-    assert lines[-1] == "network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
+    assert "instance  confirm  each lane asks you before it reaches its challenge's live instance" in lines
+    assert lines[-1] == "network   a docker lane has no network until you allow it its instance, then an open one (bridge: any host)"
     assert [line.split()[0] for line in lines[4:9]] == list(STAGES)
     loose = describe(event, policies(instance=AUTO), environ=TOKEN_SET)
     assert "instance  auto     lanes may reach their challenge's live instance (looser than the rules allow: at most confirm)" in loose
-    assert loose[-1] == lines[-1]
+    assert loose[-1] == "network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
     assert describe(event, policies(instance=OFF), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "off")'
     assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "manual")'
 
@@ -1128,16 +1123,16 @@ def test_preflight_without_a_profile_is_a_usage_error(env):
     assert "name the event profile to check, or use --example to print one" in flat(result.output)
 
 
-def test_the_example_profile_loads_and_passes_warning_only_of_the_unset_token_and_confirm(tmp_path, env, monkeypatch):
+def test_the_example_profile_loads_and_passes_warning_only_of_the_unset_token(tmp_path, env, monkeypatch):
     result = invoke("--example")
     assert result.exit_code == 0 and result.stdout == example_profile()
     loaded, chosen = load_profile(write(tmp_path, result.stdout))
     assert (loaded.name, loaded.platform, loaded.token_env) == ("Example CTF", "ctfd", "CTFD_TOKEN")
     assert re.fullmatch(loaded.flag_format, "example{x}")
     assert as_tuple(chosen) == ("auto", "auto", "auto", "confirm", "confirm")
-    assert check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN}) == [Problem(False, CONFIRM_NOT_ENFORCED)]
+    assert check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN}) == []
     unset = check(loaded, chosen, max_lanes=4, environ={})
-    assert refusals(unset) == [] and len(warnings(unset)) == 2
+    assert refusals(unset) == [] and len(warnings(unset)) == 1  # the unset token
     assert warnings(unset)[0].startswith("the CTFd token variable CTFD_TOKEN (event.token_env) is not set")
 
 

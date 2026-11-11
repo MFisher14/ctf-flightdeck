@@ -41,9 +41,11 @@ everything in it is untrusted: error messages never show its string values (only
 message may quote a key, and the regular expression engine's part of the flag format), and
 whatever is shown is made safe with text.untrusted().
 
-Not enforced yet: instance "confirm". Nothing in a run asks the player before a lane first
-reaches a live instance, and lane_network() gives a docker lane its open network when it
-starts, so check() warns when lanes would run under it.
+Instance "confirm": a lane whose challenge has a live instance asks the player before its
+first model call. Until the player allows it, its http tool is off and a docker lane has no
+network; once allowed, the container joins the bridge network (open egress: any host, not only
+the instance). On the host runtime only the http tool waits (a lane's shell has this machine's
+network), so check() warns there.
 """
 
 from __future__ import annotations
@@ -236,12 +238,12 @@ def defaults(profile: EventProfile) -> Policies:
 
 
 def lane_network(policies: Policies, urls: Sequence[str]) -> str:
-    """The docker network for a lane: "bridge" only when its challenge has a live instance and
-    lanes may reach one (instance auto or confirm); "none" otherwise, so the lane cannot reach
-    the instance or anything else. Under manual the player works the instance, not the lane, so
-    that is "none" too. Bridge is open egress, not only the instance, and a lane gets it when
-    it starts: under confirm nothing holds it back until the player says yes (check() warns)."""
-    if policies.instance in (Policy.OFF, Policy.MANUAL) or not urls:
+    """The docker network a lane starts with: "bridge" only when its challenge has a live
+    instance and lanes may reach it at once (instance auto); "none" otherwise, so the lane
+    cannot reach the instance or anything else. Under confirm the run connects the container
+    to bridge when the player allows it; under manual the player works the instance, not the
+    lane. Bridge is open egress, not only the instance."""
+    if policies.instance is not Policy.AUTO or not urls:
         return "none"
     return "bridge"
 
@@ -327,14 +329,11 @@ def check(
                 f'the instance policy is "{requested.instance}", but lanes run on this machine (runtime host), '
                 "where a lane's shell can still reach an instance. The docker runtime enforces it (no network)"
             )
-    if agents_on and requested.instance is Policy.CONFIRM:
-        # lane_network() gives a docker lane its network when the lane starts, and nothing in a run
-        # asks the player before a lane's first use of an instance, so confirm is not enforced yet.
+    if agents_on and requested.instance is Policy.CONFIRM and runtime == "host":
         warn.append(
-            'the instance policy is "confirm", but flightdeck does not yet ask you before a lane first reaches '
-            "a live instance: a lane can reach it from its first turn, and a docker lane gets an open network "
-            "(bridge: any host, not only the instance). Watch the lanes, or set [policies] instance = "
-            '"manual" to keep docker lanes off instances'
+            'the instance policy is "confirm", but lanes run on this machine (runtime host): a lane asks you '
+            "before its http tool may reach the instance, but its shell has this machine's network and can "
+            "reach it before you answer. The docker runtime enforces it (no network until you allow it)"
         )
     if profile.flag_format is None:
         warn.append(
@@ -466,7 +465,7 @@ _MEANING = {
     },
     "instance": {
         Policy.AUTO: "lanes may reach their challenge's live instance",
-        Policy.CONFIRM: "lanes can reach their challenge's live instance: asking you first is not enforced yet",
+        Policy.CONFIRM: "each lane asks you before it reaches its challenge's live instance",
         Policy.MANUAL: "lanes stay off live instances; you work them yourself",
         Policy.OFF: "no lane touches a live instance",
     },
@@ -508,8 +507,10 @@ def describe(profile: EventProfile, policies: Policies, *, environ: Mapping[str,
         elif policy is not limit:
             note = f" (the rules allow {limit})"
         lines.append(f"{stage:<10}{policy.value:<9}{_MEANING[stage][policy]}{note}")
-    if policies.instance in (Policy.AUTO, Policy.CONFIRM):
+    if policies.instance is Policy.AUTO:
         lines.append("network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none")
+    elif policies.instance is Policy.CONFIRM:
+        lines.append("network   a docker lane has no network until you allow it its instance, then an open one (bridge: any host)")
     else:
         lines.append(f'network   docker lanes get no network (instance "{policies.instance}")')
     return lines
