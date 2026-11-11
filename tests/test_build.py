@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck.build import (
     BuildError,
     case_ids,
+    case_size,
     category_parts,
     check,
     extensions,
@@ -588,8 +589,9 @@ def test_build_gap_writes_the_engine_and_says_what_to_do_next(board, pack):
         "and files ext:.md | ext:.txt (priority 60)",
         "wrote tests/test_cry_layers.py: its test, test_routed and test_solved",
     ]
-    assert lines[3].startswith("wrote tests/cases/cry_layers/: a copy of the challenge as it was handed out (3 files, ")
-    assert lines[3].endswith(") and the sha256 of its flag")
+    files, size = case_size(pack / "tests" / "cases" / "cry_layers")
+    assert (files, lines[3]) == (3, "wrote tests/cases/cry_layers/: the challenge as it was handed out, in .board/layers/ "
+                                    f"(3 files, {size} bytes), and the sha256 of its flag")
     assert lines[4] == f"next: write solve() in cry/cry_layers.py, then run `flightdeck build check {pack}`; the engine is done when its test passes"
     assert result.stderr == ""
 

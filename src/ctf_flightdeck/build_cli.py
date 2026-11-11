@@ -55,7 +55,7 @@ def gap_command(
 ) -> None:
     """Write a new engine for a challenge: a solver stub, its manifest, and a test on a copy of
     the challenge that passes once the engine solves it. Nothing is overwritten."""
-    from .build import BuildError, case_ids, case_size, scaffold
+    from .build import BOARD, BuildError, case_ids, case_size, scaffold
     from .l1.manifest import ManifestError, load
     from .platform.manual import ANSWERS_FILE
 
@@ -77,12 +77,12 @@ def gap_command(
         typer.echo(f"wrote {_rel(manifest, root)}: routes {', and '.join(parts)} (priority {rule.priority})")
     typer.echo(f"wrote {_rel(test, root)}: its test, test_routed and test_solved")
     has_answer = (case / ANSWERS_FILE).is_file()
+    _, challenge = case_ids(case)
     typer.echo(
-        f"wrote {_rel(case, root)}/: a copy of the challenge as it was handed out ({files} file"
-        f"{'' if files == 1 else 's'}, {_size(size)})" + (" and the sha256 of its flag" if has_answer else "")
+        f"wrote {_rel(case, root)}/: the challenge as it was handed out, in {BOARD}/{challenge}/ ({files} file"
+        f"{'' if files == 1 else 's'}, {_size(size)})" + (", and the sha256 of its flag" if has_answer else "")
     )
     if not has_answer:
-        _, challenge = case_ids(case)
         typer.echo(
             f"flightdeck: the board has no answer for {challenge}, so test_solved fails until you write "
             f'{{"{challenge}": "<the sha256 of the flag>"}} to {_show(case / ANSWERS_FILE)}',
