@@ -1936,6 +1936,50 @@ def test_a_hand_back_interrupts_the_frozen_cli_before_it_runs_again(tmp_path, mo
     run(main())
 
 
+@pytest.mark.parametrize("how", ["kill it paused", "kill it taken over", "escalate it paused"])
+def test_killing_or_escalating_a_frozen_cli_interrupts_it_before_it_runs_again(tmp_path, monkeypatch, how):
+    """The player froze the lane because something looked wrong (a lane that waits for the
+    player is frozen the same way), and the answer the agent waited for came while it was
+    frozen. Stopping the CLI (a kill, an escalation) sends the SIGINT before the SIGCONT, so
+    the CLI wakes with it, however long flightdeck is held up after the SIGCONT, and the step
+    it had chosen never runs after the player acted."""
+    gate = tmp_path / "answer"
+
+    async def main():
+        lab = Lab(tmp_path, chosen_while_frozen(gate))
+        try:
+            lab.release()
+            lane = lab.lane()
+            work = lab.work(lane)
+            held_up_at_sigcont(monkeypatch, lab.fake, work / "lane-b.txt")
+            await until(lambda: "lane-a.txt" in lane.files, "the agent's first step")
+            pid = lab.pid(lane)
+            if how == "kill it taken over":
+                session = lab.driver.takeover(lane)
+                assert lab.deck.apply(iv.TakeOver(lane.id)).ok
+                await asyncio.wait_for(session.begin(), 10)
+            else:
+                assert lab.deck.apply(iv.Pause(lane.id)).ok
+            await until(lambda: stopped(pid), "the CLI frozen")
+            gate.touch()  # the answer comes while it is frozen
+            if how.startswith("kill"):
+                assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            else:
+                assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            await until(lambda: gone(pid), "the CLI stopped")
+            assert not (work / "lane-b.txt").exists()  # the step it had chosen never ran
+            assert [(r["sig"], r["in_turn"]) for r in lab.fake.records("signal")] == [("SIGINT", True)]  # woke with it
+            if how.startswith("escalate"):
+                assert lab.deck.apply(iv.Resume(lane.id)).ok
+                await until(lambda: "$ echo next" in steps(lane), "the stronger model's step")
+            else:
+                assert lane.state is LaneState.KILLED
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_a_budget_cap_freezes_the_cli_until_the_player_approves_more(tmp_path):
     script = {"turns": [
         {"calls": [{"tools": [bash("echo one")], "usage": [400, 10, 0, 0]}, {"think": 0.3, "tools": [bash("echo two")]}]},

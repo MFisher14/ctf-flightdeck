@@ -43,14 +43,16 @@ How the player's controls reach the CLI:
   no new CLI, and ends when the deck ends it.
 - a hint, a new plan, a verdict on a flag or a hand-back while the agent works: SIGINT
   ends the agent's turn (Claude Code ends the turn and waits for input; Codex exits), and
-  the message goes in as the next turn. A frozen CLI gets the SIGINT before its SIGCONT,
-  so it wakes with the interrupt there, not after going on with a step it had chosen
-  before (one whose wait ran out while it was frozen). Notes that can wait (budget
-  approved) go with the next message.
+  the message goes in as the next turn. Notes that can wait (budget approved) go with the
+  next message.
 - stop: stdin closed, then SIGINT, SIGTERM after a grace period, then SIGKILL, to the
   process group and to every process the CLI started.
 - escalation: the CLI is stopped and started again on the stronger model, in a fresh
   context, with the brief and prompts.escalation(lane summary).
+- whatever thaws a frozen CLI to interrupt or stop it (a message, a hand-back, a kill, an
+  escalation) sends the SIGINT before the SIGCONT: the CLI wakes with the interrupt there,
+  never going on first with a step it had chosen before (one whose wait ran out while it
+  was frozen).
 
 Security. The CLI is the player's own tool and holds the player's credential for its model
 API, so the agent's own API key (or login token) is in the CLI's environment and the
@@ -927,11 +929,13 @@ class _Proc:
             if not self.alive:
                 break
             await self._collect(problems)
-            if self.frozen and sig != signal.SIGKILL:
-                self.send(signal.SIGCONT)  # a stopped process only takes these once it runs again
-                self.frozen = False
             self.send(sig)
             self._send_seen(sig)
+            if self.frozen and sig != signal.SIGKILL:
+                # a stopped process takes it only once it runs again: woken after it, the CLI
+                # finds it there, never going on first with a step it had chosen (as in sync())
+                self.send(signal.SIGCONT)
+                self.frozen = False
             if await self._exited(grace if sig != signal.SIGKILL else 10.0):
                 break
         self._send_seen(signal.SIGKILL)
