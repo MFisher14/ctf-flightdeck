@@ -62,6 +62,7 @@ process, in order across processes. When the turns run out, the fake answers not
 (claude reads on; codex waits until it is signalled).
 - claude TURN: {"calls": [CALL, ...], "cost": dollars for the turn (null: no total_cost_usd),
   "result": text, "subtype": "success", "is_error": false}. CALL: {"think": seconds,
+  "until": path (it thinks until that file exists: the model answers when the test says),
   "raw": [lines], "stderr": line, "spawn": [{"cmd": [...], "session": bool}], "exit": status,
   "ignore": ["INT", "TERM"] (from then on those signals are ignored: a hung CLI),
   "text": text, "tools": [{"bash": cmd} | {"read": path} | {"write": [path, text]} |
@@ -72,7 +73,7 @@ process, in order across processes. When the turns run out, the fake answers not
   "fail": message}. ITEM: {"command": cmd} | {"message": text} | {"reasoning": text} |
   {"file": [path, text]} | {"todo": [[text, done], ...]} | {"warning": text} (an error item)
   | {"error": text} (a top-level error event) | {"raw": line} | {"stderr": line} |
-  {"sleep": seconds} | {"spawn": [...]} | {"exit": status}.
+  {"sleep": seconds} | {"until": path} | {"spawn": [...]} | {"exit": status}.
 """
 
 from __future__ import annotations
@@ -162,13 +163,15 @@ def next_turn() -> dict | None:
 
 
 def directives(step: dict) -> None:
-    """What a call or an item does besides its events: think, write raw lines, die, start children,
-    stop answering signals (a hung CLI)."""
+    """What a call or an item does besides its events: think (for a time, or until the test says),
+    write raw lines, die, start children, stop answering signals (a hung CLI)."""
     for name in step.get("ignore", []):
         signal.signal(getattr(signal, f"SIG{name}"), signal.SIG_IGN)
         record("ignoring", sig=f"SIG{name}")
     if step.get("think") or step.get("sleep"):
         time.sleep(float(step.get("think") or step.get("sleep")))
+    while "until" in step and not os.path.exists(step["until"]):
+        time.sleep(0.01)
     for line in step.get("raw", []) if isinstance(step.get("raw"), list) else ([step["raw"]] if "raw" in step else []):
         sys.stdout.write(line + "\n")
         sys.stdout.flush()

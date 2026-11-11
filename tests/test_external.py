@@ -1879,39 +1879,57 @@ def test_the_take_over_shell_opens_only_once_the_step_of_the_command_it_waited_f
     run(main())
 
 
-def test_a_hand_back_interrupts_the_frozen_cli_before_it_runs_again(tmp_path, monkeypatch):
-    """The agent had chosen its next step before the take-over, and the wait before it ran out
-    while the CLI was frozen. A loaded machine can hold flightdeck up between the signals of a
-    hand-back (here for half a second after SIGCONT): the interrupt went first, so the CLI
-    wakes with it and that step never runs."""
+def held_up_at_sigcont(monkeypatch, fake: Fake, step: Path) -> None:
+    """A loaded machine (or docker, one `docker exec` per signal) can hold flightdeck up between
+    the signals it sends a frozen CLI. Here each SIGCONT holds it up for as long as the CLI
+    needs to act: until the CLI has taken an interrupt, or has made `step` (at most 10 s)."""
     real_killpg = os.killpg
 
     def held_up(pgid, sig):
+        taken = len(fake.records("signal"))
         real_killpg(pgid, sig)
         if sig == signal.SIGCONT:
-            time.sleep(0.5)
+            end = time.monotonic() + 10
+            while len(fake.records("signal")) == taken and not step.exists() and time.monotonic() < end:
+                time.sleep(0.01)
 
     monkeypatch.setattr(os, "killpg", held_up)
-    script = {"turns": [
-        {"calls": [{"tools": [bash("touch lane-a.txt")]}, {"think": 1.0, "tools": [bash("touch lane-b.txt")]}]},
-        {"calls": [{"tools": [bash("echo back")]}]},
+
+
+def chosen_while_frozen(gate: Path) -> dict:
+    """A claude turn: a first step, then a step the agent chooses once `gate` exists (the
+    model's answer, which the test lets come while the CLI is frozen); then a turn for what
+    comes after."""
+    return {"turns": [
+        {"calls": [{"tools": [bash("touch lane-a.txt")]}, {"until": str(gate), "tools": [bash("touch lane-b.txt")]}]},
+        {"calls": [{"tools": [bash("echo next")]}]},
     ]}
 
+
+def test_a_hand_back_interrupts_the_frozen_cli_before_it_runs_again(tmp_path, monkeypatch):
+    """The agent had chosen its next step before the take-over, and the answer it waited for
+    came while the CLI was frozen. The interrupt of a hand-back goes first, so the CLI wakes
+    with it, however long flightdeck is held up after the SIGCONT, and that step never runs."""
+    gate = tmp_path / "answer"
+
     async def main():
-        lab = Lab(tmp_path, script)
+        lab = Lab(tmp_path, chosen_while_frozen(gate))
         try:
             lab.release()
             lane = lab.lane()
             work = lab.work(lane)
+            held_up_at_sigcont(monkeypatch, lab.fake, work / "lane-b.txt")
             await until(lambda: "lane-a.txt" in lane.files, "the agent's first step")
             session = lab.driver.takeover(lane)
             assert lab.deck.apply(iv.TakeOver(lane.id)).ok  # frozen at once: no command runs
             await asyncio.wait_for(session.begin(), 10)
-            await asyncio.sleep(1.5)  # past the end of the agent's wait, while it is frozen
-            assert not (work / "lane-b.txt").exists()
+            pid = lab.pid(lane)
+            await until(lambda: stopped(pid), "the CLI frozen")
+            gate.touch()  # the answer comes while it is frozen
             assert lab.deck.apply(iv.HandBack(lane.id, session.finish())).ok
-            await until(lambda: "$ echo back" in steps(lane), "the step after the hand-back")
+            await until(lambda: "$ echo next" in steps(lane), "the step after the hand-back")
             assert not (work / "lane-b.txt").exists()  # the step it had chosen before was cut off
+            assert [(r["sig"], r["in_turn"]) for r in lab.fake.records("signal")] == [("SIGINT", True)]  # woke with it
         finally:
             await lab.finish()
 
