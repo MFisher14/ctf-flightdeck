@@ -472,7 +472,7 @@ def prepare_run(options: RunOptions) -> Run:
         if plan.platform:
             verifier = CTFdVerifier(profile.url, token, first.ids)
     if verifier is not None:
-        verify = verifier
+        verify = _OnCTFd(verifier)
     elif plan.platform and board.answers:
         verify = AnswerVerifier(board.answers)
     else:
@@ -501,6 +501,8 @@ def prepare_run(options: RunOptions) -> Run:
         instance=instance,
     )
     deck = Deck(deck_config, driver, RunClock(), verify)
+    if isinstance(verify, _OnCTFd):
+        verify.deck = deck
     log.attach(deck)
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
@@ -710,6 +712,29 @@ def _team_channel(options: RunOptions, plan: _Plan) -> TeamChannel | None:
 # ---------------------------------------------------------------------- the CTFd board
 
 
+class _OnCTFd:
+    """The deck's verify() for a CTFd board: CTFdVerifier's answer and, when CTFd did not
+    judge the flag (paused, rate-limited, no answer, part of the answer), its reason as a
+    warning on the deck, which then asks the player to submit the flag by hand."""
+
+    def __init__(self, verifier: CTFdVerifier) -> None:
+        self.verifier = verifier
+        self.deck: Deck | None = None  # set once the deck exists
+
+    def __call__(self, challenge_id: str, flag: str) -> bool | None:
+        ok = self.verifier(challenge_id, flag)
+        reason = self.verifier.last_error
+        if ok is None and reason and self.deck is not None:
+            ch = self.deck.challenges.get(challenge_id)
+            name = untrusted(ch.name if ch is not None else challenge_id, one_line=True)
+            self.deck.warn(
+                f"CTFd did not judge {untrusted(flag, one_line=True)} for {name}: {reason}",
+                challenge=challenge_id,
+                data={"source": "ctfd"},
+            )
+        return ok
+
+
 @dataclass(frozen=True)
 class _FirstPull:
     board: Board
@@ -737,15 +762,14 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
     once the player says yes), with the solves CTFd lists for the account."""
     profile, policies = plan.profile, plan.policies
     assert profile is not None and policies is not None and profile.url is not None and options.board is not None
+    # check() refuses a CTFd profile whose pull policy is manual or off: nothing to play then
+    assert policies.pull in USES_PLATFORM
     folder = options.board
     url, where = _show(profile.url), _show(folder)
-    if policies.pull not in USES_PLATFORM:  # check() refuses this for a CTFd profile; kept for when it allows it
-        try:
-            board = load_board(folder)
-            ids = load_ids(folder)
-        except (BoardError, CTFdError) as exc:
-            raise RunError(f"{exc}: run `flightdeck ctfd pull` first") from None
-        return _FirstPull(board, folder, ids, frozenset(), ())
+    try:
+        client = CTFdClient(profile.url, token)
+    except ValueError as exc:  # the token holds what a header cannot carry; the message never shows it
+        raise RunError(f"{exc} ({profile.token_env}, the variable event.token_env names)") from None
     if policies.pull is Policy.CONFIRM:
         if options.confirm is None:
             raise RunError(
@@ -755,8 +779,8 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
         if not options.confirm(f"Pull the board from {url} into {where}?"):
             raise RunError("you said no to the pull, so nothing was pulled and the run did not start")
     try:
-        result, solved, unread = _sync(_pull_and_solves(profile.url, token, folder, profile.name, profile.flag_format))
-    except (CTFdError, BoardError, ValueError) as exc:  # ValueError: a token a header cannot carry
+        result, solved, unread = _sync(_pull_and_solves(client, folder, profile.name, profile.flag_format))
+    except (CTFdError, BoardError) as exc:
         raise RunError(f"could not pull the board from CTFd: {exc}") from None
     except OSError as exc:
         raise RunError(f"{where}: cannot write the board ({exc.strerror or type(exc).__name__})") from None
@@ -787,10 +811,11 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
 
 
 async def _pull_and_solves(
-    url: str, token: str, folder: Path, event: str, flag_format: str | None
+    client: CTFdClient, folder: Path, event: str, flag_format: str | None
 ) -> tuple[Pull, set[int], str | None]:
-    """Pull the board, then read the solves (the reason they could not be read, or None)."""
-    async with CTFdClient(url, token) as client:
+    """Pull the board, then read the solves (the reason they could not be read, or None).
+    The client is closed at the end: it is used on this loop only."""
+    async with client:
         result = await pull(client, folder, event=event, flag_format=flag_format)
         try:
             return result, await client.solved_ids(), None

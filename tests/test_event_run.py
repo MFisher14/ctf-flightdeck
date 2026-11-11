@@ -307,6 +307,15 @@ def test_submit_may_be_made_stricter_than_the_profile_never_looser(tmp_path):
     assert run.deck.config.submit == "confirm" and run.options.submit == "confirm"
 
 
+def test_a_board_named_to_play_wins_over_the_profiles_and_a_note_says_so(tmp_path):
+    root = folder_board(tmp_path)
+    other = folder_board(tmp_path / "elsewhere")
+    run = prepare_run(RunOptions(board=other, event=event(tmp_path, platform="manual", board=root), config=config(tmp_path)))
+    run.close()
+    assert run.board.challenges[0].handout == (other / "note").resolve()
+    assert f"board: {other}, as you asked (the event profile names {root})" in run.notes()
+
+
 @pytest.mark.parametrize(
     "case, expected",
     [
@@ -348,21 +357,43 @@ def test_a_ctfd_event_pulls_the_board_before_anything_starts(tmp_path, token):
     assert {b.challenge.id for b in run.board.challenges} == {"warmup", "baby-rsa", "echo-service"}
     assert (folder / "warmup" / "hello.txt").read_text() == "hello\n"
     assert routes[0] == "/api/v1/challenges" and routes[-1] == "/api/v1/teams/me/solves"  # the solves, read once pulled
-    assert isinstance(run.verifier, CTFdVerifier) and run.deck.verify is run.verifier
+    assert isinstance(run.verifier, CTFdVerifier)  # the flags test below shows the deck submits through it
     assert run.verifier.ids == {"warmup": 1, "baby-rsa": 2, "echo-service": 4} == run.ctfd.ids
     assert (run.deck.config.event, run.deck.config.flag_format) == ("Fake CTF", FLAG_FORMAT)
     assert run.deck.challenges == {} and run.ctfd.waves  # the board goes on the deck once the console runs
     assert f"board: 3 challenges from CTFd at {fake.base_url} in {folder} (3 new)" in run.notes()
 
 
-def test_a_ctfd_event_without_its_token_stops_before_any_request(tmp_path, monkeypatch):
-    monkeypatch.delenv(TOKEN_VAR, raising=False)
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: export your CTFd API token"),
+        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: export your CTFd API token"),
+        (f"Token {TOKEN}", "holds characters an HTTP header cannot carry (spaces, line breaks, non-ASCII); check the "
+                           f"variable it came from ({TOKEN_VAR}, the variable event.token_env names)"),
+    ],
+)
+def test_a_ctfd_event_without_a_usable_token_stops_before_any_request(tmp_path, monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv(TOKEN_VAR, raising=False)
+    else:
+        monkeypatch.setenv(TOKEN_VAR, value)  # the last: pasted with its "Token " scheme
     with FakeCTFd(three()) as fake:
         with pytest.raises(RunError) as caught:
             prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), config=config(tmp_path)))
         assert fake.requests == []
-    assert str(caught.value).startswith(f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: export")
+    assert expected in str(caught.value) and TOKEN not in str(caught.value)
     assert not (tmp_path / "board").exists() and not (tmp_path / "runs").exists()
+
+
+def test_a_ctfd_run_can_be_prepared_on_a_loop_that_is_already_running(tmp_path, token):
+    with FakeCTFd(three()) as fake:
+        async def main():
+            return prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), config=config(tmp_path)))
+
+        run = asyncio.run(main())
+        run.close()
+    assert {b.challenge.id for b in run.board.challenges} == {"warmup", "baby-rsa", "echo-service"}
 
 
 def test_pull_confirm_asks_first_and_no_pulls_nothing(tmp_path, token):
@@ -413,6 +444,29 @@ def test_a_new_wave_on_ctfd_is_pulled_and_released_on_the_deck(tmp_path, token):
     assert ctfd_warnings(run) == []
 
 
+def test_a_challenge_the_first_pull_left_out_is_a_note_and_a_later_wave_pulls_it(tmp_path, token):
+    far = FakeChallenge(5, "Far Away", file_urls=["https://cdn.example.org/files/far.zip"])  # refused before any request
+    locked = FakeChallenge(6, "Locked", type="hidden")
+    with FakeCTFd(three() + [far, locked]) as fake, FakeModelServer(responder=Model()) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url),
+                                     config=config(tmp_path, server.base_url, max_lanes=1), wave_seconds=0.05))
+        notes = run.notes()
+
+        async def body(run):
+            await wait_for(lambda: len(fake.to("/api/v1/challenges")) >= 4, "waves that leave it out again")
+            fake.challenges[5].file_urls = None
+            fake.challenges[5].files = {"far.zip": b"PK fake"}
+            await wait_for(lambda: "far-away" in run.deck.challenges, "the wave that pulls it")
+
+        play(run, body)
+    (left_out,) = [n for n in notes if n.startswith("not pulled: ")]
+    assert left_out.startswith('not pulled: challenge 5 ("Far Away"): ') and left_out.endswith("; the next wave tries it again")
+    assert "1 challenge is locked on CTFd until a prerequisite is solved; a later wave pulls them once they unlock" in notes
+    assert ctfd_warnings(run) == []  # the same problem again is not news
+    releases = [(e["data"]["label"], e["data"]["challenges"]) for e in log(run) if e["kind"] == "release"]
+    assert releases[1:] == [("Wave 2", ["far-away"])]
+
+
 def test_flags_go_to_ctfd_through_the_verifier_a_wrong_one_then_the_right_one(tmp_path, token):
     model = Model({"Warmup": [submit("test{nope}"), submit("test{hello}")]})
     with FakeCTFd(three()) as fake, FakeModelServer(responder=model) as server:
@@ -436,6 +490,26 @@ def test_flags_go_to_ctfd_through_the_verifier_a_wrong_one_then_the_right_one(tm
     assert submits == [("test{nope}", False, "platform"), ("test{hello}", True, "platform")]
 
 
+def test_a_flag_ctfd_does_not_judge_says_why_and_waits_for_the_player(tmp_path, token):
+    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url),
+                                     config=config(tmp_path, server.base_url, max_lanes=1)))
+        fake.paused = True
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            assert lane.pending.kind is PendingKind.CONFIRM and lane.pending.flag == "test{hello}"  # you submit it
+
+        play(run, body)
+    (warning,) = ctfd_warnings(run)
+    assert warning["challenge"] == "warmup" and warning["text"] == (
+        "CTFd did not judge test{hello} for Warmup: CTFd is paused, so it did not check the flag (CTFd says: Fake CTF "
+        "is paused). Submit it by hand when CTFd runs again"
+    )
+
+
 def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
     with FakeCTFd(three()) as fake, FakeModelServer(responder=Model()) as server:
         run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), team=True,
@@ -454,6 +528,26 @@ def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
     assert [e["text"] for e in log(run) if e["kind"] == "teammate"] == [f"{YOUR_TEAM} solved Warmup · stopped L01"]
     assert run.deck.lanes["L02"].challenge_id == "baby-rsa"  # the slot went to the next challenge
     assert any(n.startswith("team mode with no team folder: your claims stay on this deck, and CTFd's solves") for n in run.notes())
+
+
+def test_a_flag_the_player_is_submitting_by_hand_is_not_taken_for_a_teammates_solve(tmp_path, token):
+    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url, submit="manual"),
+                                     team=True, config=config(tmp_path, server.base_url, max_lanes=1), solves_seconds=0.05))
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            assert lane.pending.kind is PendingKind.CONFIRM  # submit manual: the player submits it on CTFd
+            fake.solved.add(1)  # ... and CTFd took it
+            polls = len(fake.to("/api/v1/teams/me/solves"))
+            await wait_for(lambda: len(fake.to("/api/v1/teams/me/solves")) >= polls + 3, "polls that see it solved")
+            assert not lane.finished
+            assert run.deck.apply(iv.Approve(lane.id)).ok  # "it was accepted"
+            assert lane.state is LaneState.SOLVED
+
+        play(run, body)
+    assert run.deck.challenges["warmup"].solved_by == "L01" and fake.to("/api/v1/challenges/attempt") == []
 
 
 def test_in_solo_mode_a_solve_on_ctfd_is_one_warning_and_the_lane_goes_on(tmp_path, token):
@@ -562,20 +656,22 @@ def test_shutdown_stops_the_polls_and_closes_the_ctfd_clients(tmp_path, token):
                                      config=config(tmp_path, server.base_url, max_lanes=1),
                                      wave_seconds=0.02, solves_seconds=0.02))
 
-        async def main() -> tuple[int, int]:
+        async def main() -> tuple[int, int, int, int, list]:
             run.release()
             await wait_for(lambda: len(fake.to("/api/v1/challenges")) >= 3 and len(fake.to("/api/v1/teams/me/solves")) >= 3,
                            "a few polls")
             await run.shutdown()
-            asked = len(fake.requests)
+            left = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            asked, events = len(fake.requests), len(run.deck.events)
             await asyncio.sleep(0.2)  # ten intervals, on the same loop
             with pytest.raises(RuntimeError, match="closed"):
                 await run.ctfd.client.solved_ids()
-            return asked, len(fake.requests)
+            return asked, len(fake.requests), events, len(run.deck.events), left
 
-        asked, later = asyncio.run(main())
+        asked, later, events, more_events, left = asyncio.run(main())
         run.close()
-        assert later == asked
+        assert left == []  # nothing of the run still runs on the console's loop
+        assert later == asked and more_events == events
         with pytest.raises(RuntimeError, match="closed"):
             run.verifier("warmup", "test{hello}")
 
@@ -587,8 +683,9 @@ def test_two_runs_on_one_team_folder_see_each_others_claims_and_solves(tmp_path)
     shared = init_folder(tmp_path / "team")
     root = folder_board(tmp_path, ("note", "memo", "card"))
     with FakeModelServer(responder=Model({"Note": [submit("t{note}")]})) as a, FakeModelServer(responder=Model()) as b:
+        # alpha's watcher reads the folder at the start only: what alpha does reaches the folder through mirror()
         alpha = prepare_run(RunOptions(board=root, config=config(tmp_path / "a", a.base_url, max_lanes=1),
-                                       team_dir=shared, handle="alpha", team_seconds=0.05))
+                                       team_dir=shared, handle="alpha", team_seconds=3600))
         bravo = prepare_run(RunOptions(board=root, config=config(tmp_path / "b", b.base_url, max_lanes=1),
                                        team_dir=shared, handle="bravo", team_seconds=0.05))
 
@@ -598,6 +695,7 @@ def test_two_runs_on_one_team_folder_see_each_others_claims_and_solves(tmp_path)
             try:
                 ours, theirs = alpha.deck.lanes["L01"], bravo.deck.lanes["L01"]
                 assert ours.challenge_id == theirs.challenge_id == "note"  # nothing was claimed yet
+                await wait_for(lambda: theirs.turns > 0, "bravo's lane at work")  # alpha's watcher has read the folder
                 assert alpha.deck.apply(iv.Claim("memo")).ok
                 await wait_for(lambda: bravo.deck.challenges["memo"].claimed_by == "alpha", "alpha's claim on bravo's deck")
                 assert not bravo.deck.queued("memo")
@@ -636,6 +734,31 @@ def test_a_challenge_a_teammate_claimed_or_solved_gets_no_lane_at_the_start(tmp_
             assert run.deck.challenges["memo"].status is ChallengeStatus.TEAMMATE
 
         play(run, body)
+
+
+@pytest.mark.parametrize("folder_gone", [False, True])
+def test_shutdown_frees_our_live_box_holds_or_says_why_it_could_not(tmp_path, folder_gone):
+    shared = init_folder(tmp_path / "team")
+    root = folder_board(tmp_path, urls=("http://127.0.0.1:9",))
+    teammate = TeamChannel(shared, "bravo")
+    with FakeModelServer(responder=Model()) as server:
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url), team_dir=shared, handle="alpha",
+                                     instance="confirm"))
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the live-box question")
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            assert teammate.current("boxes", "note").who == "alpha"  # mirror() wrote our hold
+            if folder_gone:
+                (shared / "flightdeck-team.txt").rename(tmp_path / "away.txt")  # the drive went away
+
+        play(run, body)
+    if folder_gone:
+        (problem,) = run.errors
+        assert problem.startswith("team: could not free your live-box holds in the team folder: ") and "flightdeck team init" in problem
+    else:
+        assert teammate.current("boxes", "note") is None and run.errors == []
 
 
 def test_the_team_handle_is_the_login_name_unless_given_and_a_note_says_which(tmp_path, monkeypatch):
