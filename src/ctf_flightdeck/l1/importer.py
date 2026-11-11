@@ -3,17 +3,23 @@
 import_scripts(folder) writes a generated manifest for every script there that has no
 manifest of its own, into folder/.flightdeck/generated/<relative path>.manifest.toml:
 
-- a *.py file with an `if __name__ == "__main__":` block runs as `python3 <relative path>`;
+- a *.py file with an `if __name__ == "__main__":` block (at the top level; also written
+  `if (__name__ == "__main__"):`, or with more conditions after it) runs as
+  `python3 <relative path>`;
 - any other file with an executable bit and a #! line runs as itself;
 
 both with output "text" (every flag-format match in what they print is a candidate), tag
 "imported", priority 20, and one route: the category code its folder's name maps to
 (crypto/ -> cry, forensics/ -> for, the board's own mapping) and keywords from its file
 name's words (the name without its extension, split on _ - . and spaces; words of 3+
-letters, minus solve, solver, script, exploit and main). The script gets the challenge directory as its last argument. A script with
-neither a category nor a keyword gets no manifest, since a route with no condition would
-never match: it is listed as skipped, with the reason. So is a script some manifest
-already runs.
+letters, minus solve, solver, script, exploit and main). The script gets the challenge
+directory as its last argument.
+
+Nothing that looks like a script is left out without a word: each is listed as skipped,
+with the reason. A script with neither a category nor a keyword gets no manifest, since a
+route with no condition would never match; nor does a script some manifest already runs,
+a .py file with no main block (a module, or a script whose code runs when it is imported:
+write a manifest for it), or a #! script without an executable bit.
 
 Hidden files and directories and .flightdeck/ are not searched, and symlinks are not
 followed. Re-running the import rewrites only files under .flightdeck/generated/:
@@ -44,7 +50,11 @@ MAX_SCRIPT_BYTES = 5 * 1024 * 1024  # a .py bigger than this is not read for a m
 FOLDER_CATEGORIES = {**CATEGORY_CODES, **{code: code for code in CATEGORY_CODES.values()}}
 """Folder names (lower-cased) that name a category: the board's names and its short codes."""
 
-_MAIN = re.compile(r"""^if\s+(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)\s*:""", re.M)
+# A main block at the top level: `if __name__ == "__main__":`, also parenthesised, the other
+# way round, or with more conditions after it (`... and len(sys.argv) > 1:`).
+_MAIN = re.compile(r"""^if\s*\(?\s*(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)""", re.M)
+NO_MAIN = 'no `if __name__ == "__main__":` block, and not an executable with a #! line; write a manifest for it'
+NOT_EXECUTABLE = "a #! script without an executable bit: chmod +x it, or write a manifest for it"
 _SPLIT = re.compile(r"[_.\-\s]+")  # the contract's _ - . and whitespace: "rsa attack.py" is two words
 _TEMP_PREFIX, _TEMP_SUFFIX = ".import-", ".tmp"
 
@@ -150,7 +160,7 @@ def _scripts(root: Path) -> tuple[list[_Script], list[tuple[Path, str]]]:
             if not entry.is_file(follow_symlinks=False) or entry.name.endswith(SUFFIX):
                 continue
             try:
-                kind = _kind(path)
+                kind, why = _kind(path)
             except OSError as exc:
                 skipped.append((path, f"cannot read it ({exc.strerror})"))
                 continue
@@ -158,6 +168,8 @@ def _scripts(root: Path) -> tuple[list[_Script], list[tuple[Path, str]]]:
                 skipped.append((path, f"over {MAX_SCRIPT_BYTES // (1024 * 1024)} MB, not read"))
                 continue
             if kind is None:
+                if why:  # it looks like a script: say why it is not one, never drop it quietly
+                    skipped.append((path, why))
                 continue
             try:
                 rel.encode("utf-8")
@@ -173,19 +185,22 @@ class _TooBig(Exception):
     pass
 
 
-def _kind(path: Path) -> str | None:
-    """"python", "exec" or None (not a script)."""
+def _kind(path: Path) -> tuple[str | None, str | None]:
+    """("python" | "exec", None) for a script; (None, why not) for a file that looks like one
+    (a .py file, a file with a #! line); (None, None) for anything else."""
     info = path.stat()
     if path.name.endswith(".py"):
         if info.st_size > MAX_SCRIPT_BYTES:
             raise _TooBig
         if _MAIN.search(path.read_bytes().decode("utf-8", "replace")):
-            return "python"
-    if info.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
-        with open(path, "rb") as handle:
-            if handle.read(2) == b"#!":
-                return "exec"
-    return None
+            return "python", None
+    with open(path, "rb") as handle:
+        shebang = handle.read(2) == b"#!"
+    if shebang and info.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        return "exec", None
+    if path.name.endswith(".py"):
+        return None, NO_MAIN
+    return None, NOT_EXECUTABLE if shebang else None
 
 
 def _looks_like_script(path: Path) -> bool:
