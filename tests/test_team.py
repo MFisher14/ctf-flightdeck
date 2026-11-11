@@ -565,16 +565,25 @@ def test_a_path_that_is_not_utf8_shows_its_bytes_as_escapes(tmp_path):
     assert "flightdeck team init" in message and "\x1b" not in message
 
 
-def test_a_file_name_that_is_not_utf8_is_reported_with_its_bytes_escaped(folder, wall, tmp_path):
-    claims = os.fsencode(folder / "claims")
+def not_utf8_file(folder: Path) -> None:
+    """A file in claims/ whose name holds the byte 0x9b (the 8-bit escape that starts a
+    control sequence), which is not UTF-8; skips where the filesystem refuses one."""
     try:
-        with open(claims + b"/\x9b2J\x9b31mred.json", "wb"):
+        with open(os.fsencode(folder / "claims") + b"/\x9b2J\x9b31mred.json", "wb"):
             pass
     except OSError as exc:  # APFS on macOS, for one, refuses such a name
         pytest.skip(f"this filesystem refuses a file name that is not UTF-8 ({exc.strerror}); Linux allows one")
+
+
+def test_a_file_name_that_is_not_utf8_is_reported_with_its_bytes_escaped(folder, wall):
+    not_utf8_file(folder)
     alpha, _ = pair(folder, wall)
     (problem,) = alpha.state().problems
     assert problem == "claims/\\x9b2J\\x9b31mred.json: is not named <challenge id>.json; ignored"
+
+
+def test_cli_shows_a_name_that_is_not_utf8_with_its_bytes_escaped(folder, tmp_path):
+    not_utf8_file(folder)
     result = CliRunner().invoke(team_cli.app, ["status", str(folder)])
     assert result.exit_code == 0, result.output
     assert b"\x9b" not in result.stdout_bytes and "ignored: claims/\\x9b2J\\x9b31mred.json" in result.output
