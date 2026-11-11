@@ -523,6 +523,11 @@ class HostWorkspace:
             raise WorkspaceError("workspace not prepared: call prepare() first")
         return self._bash
 
+    def environment(self) -> dict[str, str]:
+        """The environment a lane's commands get (the allowlist below), for a process flightdeck
+        starts in the lane itself (an external agent's CLI)."""
+        return self._env()
+
     def _env(self) -> dict[str, str]:
         """The allowlist, built fresh for each command: nothing else of this machine's
         environment (no API keys, no tokens). HOME and TMPDIR are the lane's own, which

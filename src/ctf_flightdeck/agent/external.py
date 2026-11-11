@@ -1147,7 +1147,7 @@ class _Run:
     def host_env(self) -> dict[str, str]:
         """HostWorkspace's allowlist (what its commands get: no keys, no tokens), plus the
         CLI's settings and its own auth variable."""
-        make = getattr(self.workspace, "_env", None)
+        make = getattr(self.workspace, "environment", None)
         if not callable(make):
             raise WorkspaceError(f"{type(self.workspace).__name__} cannot run an external agent (a host or docker workspace can)")
         env = dict(make())
