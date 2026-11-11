@@ -567,7 +567,8 @@ def prepare_run(options: RunOptions) -> Run:
 
         if l1 is not None:
             plan.notes.append(f"your L1 pack is not used: L1 runs before flightdeck's own lanes, not {agent.kind} lanes (for now)")
-        driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices)
+        held = _held_secrets(config, profile, token)  # each shown as [NAME] wherever the CLI writes it
+        driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices, secrets=held)
     else:
         assert client is not None
         driver = AgentDriver(
@@ -598,6 +599,35 @@ def prepare_run(options: RunOptions) -> Run:
     if isinstance(verify, _OnCTFd):
         verify.solved = run._apply_solves
     return run
+
+
+def _held_secrets(config: Config, profile: EventProfile | None, token: str | None) -> dict[str, str]:
+    """Every secret this run holds, as name -> value, for a coding-agent lane's redaction
+    (agent/external.py shows each value as [NAME] wherever its CLI writes it, before anything
+    is shown, logged or put in a transcript): each value in the keys file, the [api] and
+    [fallback] keys (a coding-agent run uses neither, but a host lane can read them), and the
+    CTFd token. A variable set in the environment wins over the keys file, as it does
+    everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
+    [NAME_IN_KEYS_FILE]. A key that is not set is no secret to hide, and no error here."""
+    from .keys import KeysError, load_keys
+
+    try:
+        filed = {name: value.strip() for name, value in load_keys().items()}
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
+    environ = _environment()
+    spare = config.fallback.key_env if config.fallback is not None else ""
+    held = {
+        name: value
+        for name in dict.fromkeys([*filed, config.api.key_env, spare])
+        if name and (value := environ.get(name, "").strip() or filed.get(name, ""))
+    }
+    if profile is not None and profile.token_env and token:
+        held[profile.token_env] = token
+    for name, value in filed.items():
+        if value and value != held.get(name):
+            held[f"{name}_IN_KEYS_FILE"] = value
+    return held
 
 
 def _check_apis(config: Config, key: str | None, spare_key: str | None, notes: list[str]) -> None:

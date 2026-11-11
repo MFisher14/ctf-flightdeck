@@ -598,3 +598,63 @@ def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude
         cfg = config(tmp_path, server.base_url, runtime="docker")
         with pytest.raises(RunError, match="the lane image debian:bookworm-slim has no claude CLI.*--host"):
             prepare_run(RunOptions(board=board(tmp_path), config=cfg, agent="claude"))
+
+
+def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_and_transcripts(tmp_path, monkeypatch):
+    """The keys file's values, the [api] and [fallback] keys and the agent's own credential:
+    a host lane can read them (here: a file in the handout holds them all, as the keys file
+    would), and each shows as [NAME] in what the run keeps (agent/external.py takes them out
+    of what the CLI writes, before anything is logged). A keys-file value the environment
+    overrides is still a secret."""
+    from test_external import Fake
+
+    own = "fake-anthropic-credential-for-tests"
+    api, spare = "api-key-from-the-environment-for-tests-55aa", "fallback-key-from-the-keys-file-for-tests-7d1e"
+    file_only, overridden = "a-value-only-the-keys-file-holds-for-tests-91c4", "keys-file-anthropic-value-for-tests-03"
+    keys = tmp_path / "keys.env"
+    keys.write_text(
+        f"FLIGHTDECK_TEST_FILE_SECRET={file_only}\nANTHROPIC_API_KEY={overridden}\nFLIGHTDECK_TEST_SPARE_KEY={spare}\n"
+    )
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    monkeypatch.setenv("FLIGHTDECK_TEST_API_KEY", api)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", own)  # the agent's own credential: the environment wins
+    fake = Fake(tmp_path, {"turns": [{"calls": [{"tools": [{"bash": "cat leak.txt"}]}, {"text": "Read it."}]}]})
+    path = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(fake.bin), *path]))
+    root = board(tmp_path)
+    (root / "note" / "leak.txt").write_text(f"{own}\n{api}\n{spare}\n{file_only}\n{overridden}\n")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[api]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = "FLIGHTDECK_TEST_API_KEY"\n'
+        '[models]\nladder = ["fake/small"]\n'
+        '[fallback]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = "FLIGHTDECK_TEST_SPARE_KEY"\nladder = ["fake/spare"]\n'
+        f'[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+    )
+    try:
+        run = prepare_run(RunOptions(board=root, config=cfg, agent="claude", runtime="host"))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: any(a.text == "$ cat leak.txt" and a.output for a in lane.actions), "the step")
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    finally:
+        fake.kill_leftovers()
+    kept = [run.log.path, *(run.dir / "lanes").iterdir()]
+    assert len(kept) == 2
+    for path in kept:
+        text = path.read_text()
+        for secret in (own, api, spare, file_only, overridden):
+            assert secret not in text, (path.name, secret)
+    shown = next(a.output for a in run.deck.lanes["L01"].actions if a.text == "$ cat leak.txt")
+    assert shown.split() == [
+        "[ANTHROPIC_API_KEY]", "[FLIGHTDECK_TEST_API_KEY]", "[FLIGHTDECK_TEST_SPARE_KEY]", "[FLIGHTDECK_TEST_FILE_SECRET]",
+        "[ANTHROPIC_API_KEY_IN_KEYS_FILE]",
+    ]
+    assert not any(secret in note for note in run.notes() for secret in (own, api, spare, file_only, overridden))
+
