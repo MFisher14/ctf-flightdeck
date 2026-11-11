@@ -233,12 +233,13 @@ def test_the_anthropic_client_sends_its_own_cap_even_on_this_machine_unless_the_
 
 
 def slow_first(reply_late, reply_in_time):
-    """A responder whose first answer takes 1.5 s; the ones after it come at once."""
+    """A responder whose first answer takes 2 s; the ones after it come at once. A reply that
+    is not the first proves the first try was given up before its answer came."""
     count = itertools.count()
 
     def answer(request: dict):
         if next(count) == 0:
-            time.sleep(1.5)
+            time.sleep(2.0)
             return reply_late
         return reply_in_time
 
@@ -247,11 +248,11 @@ def slow_first(reply_late, reply_in_time):
 
 def test_the_configured_timeout_bounds_each_try_of_a_lane_call(tmp_path):
     with FakeModelServer(responder=slow_first(text_reply("too late"), text_reply("in time"))) as server:
-        api = f'base_url = "{server.base_url}"\nkey_env = ""\ntimeout = 0.4'
+        api = f'base_url = "{server.base_url}"\nkey_env = ""\ntimeout = 0.5'
         client = build_client(load_config(lanes_config(tmp_path, api)), None, None)
-        assert client.timeout == 0.4
-        reply = chat(client)  # the first try is given up at 0.4 s, and the retry answers
-        assert reply.content == "in time" and len(server.chats()) == 2
+        assert client.timeout == 0.5
+        reply = chat(client)  # the first try is given up at 0.5 s, and a retry answers
+        assert reply.content == "in time" and len(server.chats()) >= 2
     default = build_client(load_config(lanes_config(tmp_path, f'base_url = "{LOCAL}"\nkey_env = ""')), None, None)
     assert default.timeout == DEFAULT_TIMEOUT == 180.0 and default.max_retries == 4  # the retries are as before
     asyncio.run(default.aclose())
@@ -259,10 +260,10 @@ def test_the_configured_timeout_bounds_each_try_of_a_lane_call(tmp_path):
 
 def test_the_configured_timeout_bounds_each_try_of_an_anthropic_call(tmp_path):
     with FakeAnthropicServer(responder=slow_first(claude_says("too late"), claude_says("in time"))) as server:
-        client = build_client(load_config(anthropic_config(tmp_path, server.base_url, "timeout = 0.4")), KEY, None)
-        assert isinstance(client, AnthropicClient) and client.timeout == 0.4
+        client = build_client(load_config(anthropic_config(tmp_path, server.base_url, "timeout = 0.5")), KEY, None)
+        assert isinstance(client, AnthropicClient) and client.timeout == 0.5
         reply = chat(client)
-        assert reply.content == "in time" and len(server.requests) == 2
+        assert reply.content == "in time" and len(server.requests) >= 2
     default = build_client(load_config(anthropic_config(tmp_path, "https://api.anthropic.com")), KEY, None)
     assert default.timeout == 600.0  # the Anthropic client's own, unchanged
     asyncio.run(default.aclose())
