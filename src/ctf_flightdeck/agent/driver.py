@@ -27,10 +27,12 @@ from dataclasses import dataclass, field
 
 from ..core.driver import TakeoverRefused, TurnReport
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
+from ..core.summary import lane_summary
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
 from .client import ModelClient, ModelError, Reply
+from .l1stage import FLAG_STATUSES, L1Stage, result_line
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
     PRIVATE,
@@ -168,6 +170,7 @@ class AgentDriver:
         prices: Mapping[str, Price] | None = None,
         max_tokens: int | None = None,
         compact_at: int | None = COMPACT_AT,
+        l1: L1Stage | None = None,
     ) -> None:
         self.client = client
         self.workspaces = workspaces
@@ -177,6 +180,7 @@ class AgentDriver:
         self.prices = dict(prices or {})
         self.max_tokens = max_tokens
         self.compact_at = compact_at  # None: never refresh a lane's context
+        self.l1 = l1  # the player's no-model solvers, run before a lane's first model call; None: none
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.deck = None
@@ -232,7 +236,8 @@ class AgentDriver:
         run.escalations += 1
         run.generation += 1
         run.session = self._session(lane.id, run.escalations)
-        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(summary)}]
+        text = lane_summary(self.deck, lane, before=summary)
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(text)}]
         run.wake.set()  # flightdeck's notes stay queued: the stronger model reads them with its first call
 
     def approved(self, lane: Lane, pending: Pending) -> None:
@@ -297,6 +302,8 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         run.ready = True
+        if self.l1 is not None:
+            await self._l1_stage(run)
         while await self._until_running(run):
             lane = self._lane(run)
             assert lane is not None
@@ -338,6 +345,34 @@ class AgentDriver:
             await self._turn(run, reply, len(hints), generation, model, messages)
             if run.messages is messages:  # not escalated during the turn
                 self._refresh_if_long(run, reply.usage.prompt_tokens)
+
+    async def _l1_stage(self, run: _Run) -> None:
+        """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
+        lane's candidate; what they all found goes in the lane's context."""
+        assert self.l1 is not None
+        try:
+            runs = await self.l1.run(run.lane_id, run.challenge)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
+            self.errors.append(f"{run.lane_id}: L1 did not run: {type(exc).__name__}: {exc}")
+            self.deck.note(run.lane_id, f"L1 did not run: {type(exc).__name__}: {exc}")
+            return
+        if self._over(run):
+            return
+        if not runs:
+            self.deck.note(run.lane_id, "L1: no engine in the pack routes to this challenge")
+            return
+        for engine in runs:
+            res = engine.result
+            self.deck.record_l1(run.challenge.id, engine.manifest.id, res.status, flags=res.flags,
+                                seconds=engine.seconds, notes=res.notes, lane_id=run.lane_id)
+        for engine in runs:
+            if engine.result.status in FLAG_STATUSES:
+                for flag in engine.result.flags:
+                    self._report(run, TurnReport(turn=False, flag=flag))
+        if not self._over(run):
+            run.messages.append({"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])})
 
     async def _until_running(self, run: _Run, generation: int | None = None) -> bool:
         """Wait while the lane is paused, taken over or waiting for the player. False once it
@@ -451,7 +486,7 @@ class AgentDriver:
         lane = self._lane(run)
         if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
             return
-        summary = self.deck.summary(lane)
+        summary = lane_summary(self.deck, lane)
         run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.refresh(summary, prompt_tokens)}]
         self.deck.note(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
 

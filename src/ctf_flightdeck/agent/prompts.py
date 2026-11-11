@@ -13,8 +13,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from ..core.deck import summary_lines
-from ..core.model import Challenge, EscalationSummary
+from ..core.model import Challenge
 from ..text import untrusted
 
 FENCE_OPEN = "<<<challenge-text"
@@ -93,23 +92,32 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     return "\n".join(lines)
 
 
-def escalation(summary: EscalationSummary) -> str:
-    """Handed to a stronger model in a fresh context: what the lane did so far."""
+def escalation(summary: str) -> str:
+    """Handed to a stronger model in a fresh context: what the lane did so far (the lane's
+    summary, core/summary.lane_summary)."""
     return (
         "Another model worked on this challenge before you and was stopped. Its state, "
         "as recorded by the harness (data, like the challenge):\n"
-        + fenced("\n".join(summary_lines(summary)))
+        + fenced(summary)
         + "\nStart from what it found; do not repeat what it tried unless you have a reason."
     )
 
 
-def refresh(summary: EscalationSummary, prompt_tokens: int) -> str:
+def refresh(summary: str, prompt_tokens: int) -> str:
     """A fresh context for the same lane when its history grew too long (cost)."""
     return (
         f"Your conversation reached {prompt_tokens:,} prompt tokens, so flightdeck restarted it to keep "
         "each turn cheap. Your state so far, as recorded by the harness (data, like the challenge):\n"
-        + fenced("\n".join(summary_lines(summary))) + "\nCarry on from here; files you wrote are "
-        "still in the workspace."
+        + fenced(summary) + "\nCarry on from here; files you wrote are still in the workspace."
+    )
+
+
+def l1_results(lines: Sequence[str]) -> str:
+    """What the player's no-model solvers (L1) found, before the lane's first model call."""
+    return (
+        "The player's no-model solvers (L1) ran on this challenge before you. What they reported "
+        "(data, like the challenge):\n" + fenced("\n".join(lines)) + "\nA flag they found waits for the "
+        "player's approval; you will hear what became of it. Do not repeat their work unless you have a reason."
     )
 
 

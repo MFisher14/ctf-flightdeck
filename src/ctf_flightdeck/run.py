@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .agent.client import ModelClient
 from .agent.driver import AgentDriver
+from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
 from .clock import RunClock
 from .config import Config, ConfigError, api_key, load_config
@@ -43,6 +44,7 @@ class RunOptions:
     submit: str | None = None  # "confirm" | "auto"; default: the config's
     model: str | None = None  # the model lanes start on; default: the weakest in the ladder
     run_dir: Path | None = None  # where run folders go; default: the config's
+    pack: Path | None = None  # the L1 pack; default: the config's [l1] pack, if any
 
 
 @dataclass
@@ -57,11 +59,16 @@ class Run:
     dir: Path
     runtime: str
     model: str
+    watch: object = None  # detect.Watch: the course detectors, attached to the deck
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
         out = []
         lanes = self.config.lanes
+        l1 = self.driver.l1
+        if l1 is not None:
+            where = " (on this machine, as you, even though lanes run in Docker)" if self.runtime == "docker" else ""
+            out.append(f"L1: {len(l1.manifests)} engine(s) from your pack run first on each challenge{where}")
         unpriced = [m for m in self.config.models if m not in self.config.prices]
         if lanes.dollar_cap and unpriced and "openrouter.ai" not in self.config.api.base_url:
             out.append(
@@ -132,8 +139,9 @@ def prepare_run(options: RunOptions) -> Run:
         **({"flag_format": board.flag_format} if board.flag_format else {}),
     )
     verify = AnswerVerifier(board.answers) if board.answers else cannot_check
-    client = ModelClient(config.api.base_url, key)
     handouts = {b.challenge.id: b.handout for b in board.challenges}
+    l1 = _l1_stage(options.pack or config.l1.pack, handouts, run_dir, deck_config.flag_format, config.l1.concurrency)
+    client = ModelClient(config.api.base_url, key)
 
     urls = {b.challenge.id: b.urls for b in board.challenges}
 
@@ -156,12 +164,41 @@ def prepare_run(options: RunOptions) -> Run:
         files={b.challenge.id: b.challenge.files for b in board.challenges},
         urls=urls,
         prices=config.prices,
+        l1=l1,
     )
     deck = Deck(deck_config, driver, RunClock(), verify)
     log.attach(deck)
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
-    return Run(board, config, deck, driver, client, log, transcripts, run_dir, runtime, model)
+    watch = _watch(deck)
+    return Run(board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch)
+
+
+def _l1_stage(pack: Path | None, handouts: dict[str, Path], run_dir: Path, flag_format: str, concurrency: int) -> L1Stage | None:
+    """The L1 stage for a pack, checked before anything starts; None without a pack."""
+    if pack is None:
+        return None
+    from .l1.manifest import ManifestError, discover
+
+    try:
+        manifests = discover(pack.expanduser())
+    except ManifestError as exc:
+        raise RunError(f"the L1 pack cannot be used: {exc}") from None
+    if not manifests:
+        raise RunError(
+            f"the L1 pack {pack} has no engines (no .manifest.toml files): `flightdeck l1 import` writes them "
+            "for a folder of scripts"
+        )
+    return L1Stage(manifests, handouts, run_dir, flag_format, concurrency=concurrency)
+
+
+def _watch(deck: Deck):
+    """The course detectors (M3), raising and clearing alerts after every turn."""
+    from .detect import Watch, default_detectors
+
+    watch = Watch(deck, default_detectors())
+    watch.attach()
+    return watch
 
 
 def _check_docker(image: str) -> None:

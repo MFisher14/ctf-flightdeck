@@ -54,7 +54,7 @@ class Lab:
 
     def __init__(self, tmp_path: Path, server: FakeModelServer, *, verify=None, max_lanes: int = 2,
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
-                 max_retries: int = 0, backoff: float = 0.0) -> None:
+                 max_retries: int = 0, backoff: float = 0.0, l1=None) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -65,6 +65,7 @@ class Lab:
             run_id="run1",
             files={cid: sorted(p.name for p in path.iterdir()) if path.is_dir() else [] for cid, path in self.handouts.items()},
             prices=prices or {},
+            l1=l1,
         )
         config = DeckConfig(event="t", flag_format=FLAG, models=MODELS, max_lanes=max_lanes)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
@@ -923,6 +924,131 @@ def test_no_take_over_before_the_workspace_is_ready(tmp_path):
             assert lane.state is LaneState.RUNNING
             await until(lambda: lab.driver.runs[lane.id].ready, "the workspace ready")
             lab.driver.takeover(lane)  # now it can
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- the L1 stage
+
+
+def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str]):
+    """A pack in tmp with one python engine per entry (routed to every challenge: the brief's
+    description says "About ...")."""
+    from ctf_flightdeck.agent.l1stage import L1Stage
+    from ctf_flightdeck.l1.manifest import discover
+
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    for name, body in engines.items():
+        python_engine(pack, name, body, route='keywords = ["about"]')
+    return L1Stage(discover(pack), handouts, tmp_path / "runs", FLAG)
+
+
+SOLVES = """
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        flag = (challenge_dir / "note.txt").read_text().split()[-1]
+        return SolverResult("solved", flags=[flag], evidence=[Evidence("read", "the note says so", "note.txt", 12)])
+    """
+NOTHING = """
+    from ctf_flightdeck.l1.result import SolverResult
+
+    def solve(challenge_dir):
+        return SolverResult("none", notes="no rot13 here")
+    """
+WRONG = """
+    from ctf_flightdeck.l1.result import SolverResult
+
+    def solve(challenge_dir):
+        return SolverResult("candidate", flags=["t{decoy}"], notes="the first thing that looked like one")
+    """
+
+
+def test_an_l1_engine_that_solves_it_waits_for_approval_before_any_model_call(tmp_path):
+    server = FakeModelServer(responder=lambda record: text_reply("should not be asked"))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"reader": SOLVES}))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the L1 flag's approval", timeout=30)
+            assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}")
+            l1 = [e for e in lab.deck.events if e.kind is EventKind.L1]
+            assert [(e.data["engine"], e.data["status"], e.data["flags"]) for e in l1] == [("reader", "solved", ["t{note}"])]
+            assert lab.deck.apply(iv.Approve(lane.id)).ok
+            assert lane.state is LaneState.SOLVED
+            await until(lambda: lab.driver.runs[lane.id].closed, "the lane's workspace closes")
+            assert server.requests == []  # solved without a token spent
+            await lab.finish()
+
+    run(main())
+
+
+def test_when_l1_does_not_solve_it_the_model_hears_what_the_engines_found(tmp_path):
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"rot": NOTHING}))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(server.requests) >= 1, "the first model call", timeout=30)
+            messages = server.requests[0]["json"]["messages"]
+            assert [m["role"] for m in messages] == ["system", "user", "user"]
+            l1 = messages[2]["content"]
+            assert "no-model solvers (L1) ran on this challenge" in l1
+            assert l1.index(FENCE_OPEN) < l1.index("rot: none (no rot13 here)") < l1.index(FENCE_CLOSE)
+            await lab.finish()
+
+    run(main())
+
+
+def test_an_l1_flag_the_platform_rejects_hands_the_lane_to_the_model_which_hears_it(tmp_path):
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"guess": WRONG}))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the L1 candidate", timeout=30)
+            assert lane.pending.flag == "t{decoy}" and server.requests == []
+            assert lab.deck.apply(iv.Approve(lane.id)).ok  # the platform says wrong
+            await until(lambda: len(server.requests) >= 1, "the model's turn")
+            first = server.requests[0]["json"]["messages"]
+            assert "t{decoy} was submitted and it is not correct." in first[-1]["content"]
+            assert "guess: candidate, found t{decoy}" in first[2]["content"]
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_challenge_no_engine_routes_to_goes_straight_to_the_model_and_says_so(tmp_path):
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            from ctf_flightdeck.agent.l1stage import L1Stage
+            from ctf_flightdeck.l1.manifest import discover
+
+            from l1_kit import python_engine
+
+            handouts = {"note": handout(tmp_path)}
+            python_engine(tmp_path / "pack", "web_only", NOTHING, route='category = ["web"]')
+            stage = L1Stage(discover(tmp_path / "pack"), handouts, tmp_path / "runs", FLAG)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the model's candidate")
+            assert [m["role"] for m in server.requests[0]["json"]["messages"]] == ["system", "user"]
+            assert any("no engine in the pack routes to this challenge" in a.text for a in lane.actions)
             await lab.finish()
 
     run(main())

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from ctf_flightdeck.config import (
+    L1Config,
     ApiConfig,
     Config,
     ConfigError,
@@ -464,3 +465,23 @@ def test_the_default_lane_image_is_the_one_flightdeck_builds():
     from ctf_flightdeck.lane import IMAGE
 
     assert LaneConfig().image == IMAGE
+
+
+def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
+    config = load_config(write(tmp_path, LADDER + '[l1]\npack = "~/solvers"\nconcurrency = 2\n'))
+    assert config.l1 == L1Config(pack=Path("~/solvers").expanduser(), concurrency=2)
+    assert load_config(write(tmp_path, LADDER)).l1 == L1Config(pack=None, concurrency=4)  # no pack: no L1 stage
+
+
+@pytest.mark.parametrize(
+    "table, message",
+    [
+        ('pack = "solvers"', "l1.pack must be an absolute path or start with ~"),
+        ("pack = 3", "l1.pack must be a string"),
+        ("concurrency = 0", "l1.concurrency must be a whole number, at least 1"),
+        ('engines = "x"', "l1.engines"),
+    ],
+)
+def test_a_bad_l1_table_is_an_error_that_names_the_key(tmp_path, table, message):
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        load_config(write(tmp_path, LADDER + f"[l1]\n{table}\n"))

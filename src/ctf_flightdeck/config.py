@@ -32,7 +32,7 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1")
 _API_KEYS = ("base_url", "key_env")
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
 _PRICE_KEYS = ("input", "output", "cached_input")
@@ -58,6 +58,12 @@ class LaneConfig:
 
 
 @dataclass(frozen=True)
+class L1Config:
+    pack: Path | None = None  # a folder of L1 engines (manifests); None: no L1 stage
+    concurrency: int = 4  # engines run at once on one challenge
+
+
+@dataclass(frozen=True)
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
@@ -65,6 +71,7 @@ class Config:
     lanes: LaneConfig
     run_dir: Path  # expanded (~)
     source: Path | None  # the file it was read from
+    l1: L1Config = L1Config()
 
 
 class ConfigError(Exception):
@@ -92,6 +99,7 @@ def load_config(path: Path | None = None) -> Config:
         lanes=_lanes(path, _table(path, doc, "lanes")),
         run_dir=_run_dir(path, _table(path, doc, "run")),
         source=path,
+        l1=_l1(path, _table(path, doc, "l1")),
     )
 
 
@@ -155,6 +163,14 @@ submit = "confirm"              # "confirm": you approve each flag; "auto": subm
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
+
+[l1]
+# Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
+# (`flightdeck l1 import` makes the manifests for a folder of scripts). A lane runs the engines
+# routed to its challenge before its first model call; a flag one finds waits for your approval.
+# They run on this machine, as you (they are your code), each in a copy of the handout.
+# pack = "~/ctf/solvers"        # no pack: no L1 stage
+concurrency = 4                 # engines run at once on one challenge
 """
 
 _NOT_A_NAME = (
@@ -278,6 +294,24 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         dollar_cap=_cap(path, table, "dollar_cap", defaults.dollar_cap, whole=False),
         submit=_choice(path, table, ("lanes", "submit"), defaults.submit, SUBMIT_POLICIES),
     )
+
+
+def _l1(path: Path, table: dict) -> L1Config:
+    _known(path, ("l1",), table, ("pack", "concurrency"))
+    defaults = L1Config()
+    concurrency = table.get("concurrency", defaults.concurrency)
+    if not _is_int(concurrency) or concurrency < 1:
+        raise _error(path, ("l1", "concurrency"), f"must be a whole number, at least 1{_got(concurrency)}")
+    if "pack" not in table:
+        return L1Config(concurrency=concurrency)
+    raw = _string(path, table, ("l1", "pack"), "")
+    try:
+        pack = Path(raw).expanduser()
+    except RuntimeError:
+        raise _error(path, ("l1", "pack"), "starts with ~ for a home directory that cannot be found") from None
+    if not raw or not pack.is_absolute():
+        raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
+    return L1Config(pack=pack, concurrency=concurrency)
 
 
 def _run_dir(path: Path, table: dict) -> Path:

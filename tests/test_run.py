@@ -231,3 +231,73 @@ def test_practice_without_a_config_says_how_to_make_one(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli.app, ["practice"])
     assert result.exit_code == 2
     assert "none.toml" in result.output and "config" in result.output
+
+
+# ---------------------------------------------------------------------- M2-M3 wiring: L1 first, detectors on
+
+
+READER = """
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        flag = (challenge_dir / "note.txt").read_text().split()[-1]
+        return SolverResult("solved", flags=[flag], evidence=[Evidence("read", "the note says so", "note.txt", 0)])
+    """
+
+
+async def wait_for(cond, what: str, seconds: float = 20.0) -> None:
+    for _ in range(int(seconds * 100)):
+        if cond():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_a_run_with_an_l1_pack_runs_its_engines_before_any_model_call(tmp_path):
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", READER, route='keywords = ["note"]')
+    with FakeModelServer() as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), pack=pack))
+        assert [m.id for m in run.driver.l1.manifests] == ["reader"]
+        assert any(note.startswith("L1: 1 engine(s) from your pack run first") for note in run.notes())
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the L1 flag's approval")
+            assert lane.pending.flag == FLAG
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+        assert server.requests == []
+    l1 = [json.loads(line) for line in run.log.path.read_text().splitlines() if '"kind": "l1"' in line]
+    assert [(e["data"]["engine"], e["data"]["status"]) for e in l1] == [("reader", "solved")]
+
+
+def test_an_l1_pack_that_cannot_be_used_stops_the_run_before_it_starts(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with FakeModelServer() as server:
+        cfg = config(tmp_path, server.base_url)
+        with pytest.raises(RunError, match="the L1 pack cannot be used: .*no such pack folder"):
+            prepare_run(RunOptions(board=board(tmp_path), config=cfg, pack=tmp_path / "nowhere"))
+        with pytest.raises(RunError, match="has no engines .*flightdeck l1 import"):
+            prepare_run(RunOptions(board=tmp_path / "board", config=cfg, pack=tmp_path / "empty"))
+
+
+def test_a_real_run_has_the_course_detectors_watching_its_lanes(tmp_path):
+    from ctf_flightdeck.core.model import AlertKind
+
+    with FakeModelServer(responder=lambda record: tool_call_reply("shell", {"command": "ls"})) as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.alert(AlertKind.LOOP) is not None, "the loop alert")
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()

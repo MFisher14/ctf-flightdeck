@@ -123,8 +123,11 @@ def play(
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The model lanes start on (default: the weakest in the ladder).")] = None,
     run_dir: Annotated[Path | None, typer.Option("--run-dir", file_okay=False, help="Where run folders go (default: the config's).")] = None,
+    pack: Annotated[
+        Path | None, typer.Option("--pack", file_okay=False, help="Your L1 pack: no-model solvers a lane runs first (default: the config's [l1] pack).")
+    ] = None,
 ) -> None:
-    """Play a board with agent lanes (M1). Spends tokens on the API in your config."""
+    """Play a board with agent lanes. Spends tokens on the API in your config."""
     from .run import RunError, RunOptions, host_warning, prepare_run
 
     options = RunOptions(
@@ -137,6 +140,7 @@ def play(
         submit=submit.value if submit else None,
         model=model,
         run_dir=run_dir.expanduser() if run_dir else None,
+        pack=pack.expanduser() if pack else None,
     )
     try:
         run = prepare_run(options)
@@ -167,6 +171,9 @@ def practice(
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The model lanes start on (default: the weakest in the ladder).")] = None,
     run_dir: Annotated[Path | None, typer.Option("--run-dir", file_okay=False, help="Where run folders go (default: the config's).")] = None,
+    pack: Annotated[
+        Path | None, typer.Option("--pack", file_okay=False, help="Your L1 pack: no-model solvers a lane runs first (default: the config's [l1] pack).")
+    ] = None,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends tokens like `play`."""
@@ -179,7 +186,7 @@ def practice(
         raise typer.Exit(2) from None
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
-        team=False, submit=None, model=model, run_dir=run_dir,
+        team=False, submit=None, model=model, run_dir=run_dir, pack=pack,
     )
 
 
