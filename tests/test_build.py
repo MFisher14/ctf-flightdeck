@@ -304,6 +304,22 @@ def test_a_folder_that_is_not_a_challenge_is_refused(board, pack):
         scaffold(pack, board / "empty")
 
 
+def test_with_nothing_else_to_route_by_the_keywords_come_from_the_name(tmp_path, pack):
+    folder = challenge_dir(tmp_path / "b", "crackme", {"chall": b"\x00\x01"}, category="Reverse Engineering",
+                           title="Baby Crackme", description="")
+    _, manifest, _, _ = scaffold(pack, folder)
+    assert load(manifest).routes == (Route(keywords=("crackme", "baby"), priority=60),)
+    assert "# distinctive words of its name (its description has none)" in manifest.read_text()
+    case_test(pack, "reverse_engineering_crackme").test_routed()
+
+
+def test_a_challenge_nothing_can_route_is_refused_and_nothing_is_kept(tmp_path, pack):
+    folder = challenge_dir(tmp_path / "b", "x", {"chall": b"\x00"}, category="Reverse Engineering", title="X", description="")
+    with pytest.raises(BuildError, match="nothing about x can make a route"):
+        scaffold(pack, folder)
+    assert not pack.exists()  # it made the pack, then the case, and took both back
+
+
 def test_a_scaffold_that_fails_its_own_check_leaves_nothing_behind(board, pack, monkeypatch):
     pack.mkdir()
     (pack / "mine.txt").write_text("the player's\n")

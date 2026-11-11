@@ -216,7 +216,7 @@ def scaffold(pack: Path, challenge_dir: Path, *, engine_id: str | None = None, a
         for parts in ((folder,), (TESTS, CASES)):
             _real_dirs(pack, parts, created)
         _write_case(layout, item.handout, board, engine, challenge.id, digest, created)
-        archived, archived_item = _archived(layout, challenge.id)
+        _, archived_item = _archived(layout, challenge.id)
         words, from_name = keywords(challenge.description), False
         files = extensions(archived_item.handout)
         if not (route_category or words or files):
