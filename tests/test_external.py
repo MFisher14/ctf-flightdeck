@@ -664,6 +664,27 @@ def test_an_agent_that_does_nothing_is_nudged_and_gives_up_after_three_idle_turn
     run(main())
 
 
+def test_each_turn_costs_what_claudes_running_total_grew_by(tmp_path):
+    script = {"turns": [
+        {"calls": [{"tools": [bash("true")]}], "cost": 0.01},
+        {"calls": [{"tools": [bash("true")]}], "cost": 0.02},
+        {"calls": [{"think": 1.0, "text": "t{note}"}]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(lab.fake.messages()) == 3, "two turns ended")
+            await until(lambda: lane.dollars and lane.dollars > 0.02, "the second turn's cost")
+            assert lane.dollars == pytest.approx(0.03)  # total_cost_usd went 0.01, then 0.03
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_without_a_reported_cost_the_config_price_applies_else_the_cost_is_unknown(tmp_path):
     script = {"turns": [{"calls": [{"tools": [bash("true")], "usage": [1000, 100, 0, 0]}, {"text": "t{note}"}], "cost": None}]}
 
