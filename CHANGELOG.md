@@ -10,6 +10,23 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   Haiku, Sonnet and Opus 5.5 with their prices), with OpenRouter offered as a fallback when
   `OPENROUTER_API_KEY` is set: a lane whose calls keep failing moves there for the rest of its
   context and says so. Any config can name a `[fallback]` API; `flightdeck doctor` checks its key.
+- Fast mode on the Anthropic API: `[api] fast = ["claude-opus-5-5"]` calls those ladder models at
+  up to 2.5x the output speed, priced at the fast rate. A model without fast mode is refused with
+  the reason. On fast mode's own rate limit a lane goes on at standard speed and says so.
+
+### Light model
+
+- `[light]` picks the light model for small jobs: `rules` (the default: none), `openai` (any
+  OpenAI-compatible server; recommended: an open-weight model on your own machine through Ollama
+  or an MLX server), `anthropic` or `cactus`. `flightdeck init --light ollama --light-model M`
+  writes one; `flightdeck doctor` checks it.
+- Its first job in a run is the hint judge: an "ignores the hint" alert shows at once, and comes
+  down if the light model says the lane follows the hint after all. The light model never holds
+  up a lane or an alert: when it refuses, fails, times out or answers outside the options, the
+  rules' answer stands and the run says so once. Its spend is counted on the lane.
+- `flightdeck eval-local` scores any engine against the rules, and `--compare` several side by
+  side: accuracy, refusals and failures, time and cost per job, on hint, judge and summary
+  cases. A paid API is announced first, with its number of calls (one per case).
 
 ### M4: after a run
 

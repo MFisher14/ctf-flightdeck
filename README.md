@@ -53,6 +53,46 @@ inside the same call (Claude Haiku 5.5 has no such fallback); a request still de
 lane with "the model declined (category)". Any config can have a `[fallback]` table
 (`flightdeck config --example` shows it).
 
+With the Anthropic API, `[api] fast = ["claude-opus-5-5"]` calls those ladder models in fast mode:
+up to 2.5x the output speed at twice the price ($8 / $40 per million tokens on Claude Opus 5.5).
+Only a model with fast mode is accepted (Claude Opus 5.5, Fable 5.2 and Mythos 5.2; Opus 5 and
+Opus 4.8 as research previews, Opus 4.8 until 2026-11-30), and fast calls are priced at the fast
+rate. Fast mode has its own rate limit: on a 429 the lane goes on at standard speed for the rest
+of its session and says so (switching speed starts the prompt cache again).
+
+## Light model
+
+A few small jobs can use a small model. Today that is the hint judge: when a lane seems to ignore
+what its description hints at, the alert shows at once, and the light model checks the lane's
+steps; if it says the lane is using the technique after all, the alert comes down. By default
+there is no light model, only the rules. Four choices, in `[light]`:
+
+- `rules`: no model (the default).
+- `openai`: any OpenAI-compatible server. **Recommended: an open-weight model on your own
+  machine**, served by Ollama (`http://127.0.0.1:11434/v1`) or an MLX server
+  (`http://127.0.0.1:8080/v1`), with `key_env = ""`. No provider's safety classifier stands
+  between it and security work, and it costs nothing.
+- `anthropic`: a Claude model (`claude-haiku-5-5`, say).
+- `cactus`: Cactus Needle, on this machine (the `[cactus]` extra).
+
+Measure one before you switch it on. Models worth measuring, as examples and not endorsements:
+Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B, Phi-4-mini. `eval-local` decides:
+
+```sh
+flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> \
+    --compare anthropic:claude-haiku-5-5 --compare cactus
+flightdeck init --light ollama --light-model <model>     # or edit [light]; `flightdeck doctor` checks it
+```
+
+eval-local runs each engine and the rules over the bundled cases (naming the hinted technique,
+judging a lane, summarising one) and prints them side by side: accuracy, refusals and failures,
+time and cost per job. A paid API is announced first with its number of calls: one per case,
+never a retry.
+
+The light model never holds anything up. When it refuses, fails, times out or answers outside the
+options, the rules' answer stands, and the run says so once. A refused request is never sent on
+to another model or provider: you see the refusal and decide.
+
 ## Play a board
 
 ```sh
@@ -140,9 +180,9 @@ All challenges, teammates and flags there are invented.
 
 ## Optional extras
 
-- `ctf-flightdeck[cactus]`: Cactus Needle, a small on-device model, for experiments
-  (`flightdeck eval-local` measures a local model against the rules first). Its telemetry is
-  turned off. Nothing uses it unless you ask.
+- `ctf-flightdeck[cactus]`: Cactus Needle, a small on-device model, one of the light model's
+  choices (`flightdeck eval-local --engine cactus` measures it against the rules first). Its
+  telemetry is turned off. Nothing uses it unless you ask.
 - `ctf-flightdeck[build]`: pytest, for `flightdeck build check`.
 
 ## Docs
