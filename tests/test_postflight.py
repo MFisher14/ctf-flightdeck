@@ -630,6 +630,43 @@ def test_solved_within_ten_turns_counts_the_lanes_turns_after_the_alert(tmp_path
     assert stall[3] == f"Solved within 10 turns: {solved}"
 
 
+@pytest.mark.parametrize("turns, solved", [(10, "yes, L01 solved it 10 turns later"), (11, "no, L01 solved it 11 turns later")])
+def test_a_budget_alert_for_a_turn_with_no_price_is_at_that_turn(tmp_path, turns, solved):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)], dollar_cap=1.0)
+    lane = run.lane("x")
+    run.at(10)
+    run.turn(lane, "turn one", dollars=0.01)
+    run.at(20)
+    run.turn(lane, "turn two", dollars=None)  # no price, so the $1 cap cannot hold: the deck alerts before logging the turn
+    run.do(iv.Approve(lane))  # carry on without the dollar cap
+    for turn in range(1, turns + 1):
+        run.turn(lane, f"try {turn}", dollars=None, flag="t{x}" if turn == turns else None)
+    run.do(iv.Approve(lane))
+    record = run.close()
+    alert = next(a for a in record.lanes[lane].actions if a.kind == "alert")
+    assert alert.turn == 2  # the transcript's own account
+    stall = items(sections(report(record), "### ")["T+00:00:20 · L01 on X: Budget"])
+    assert stall[0] == "When: T+00:00:20, at turn 2"
+    assert stall[3] == f"Solved within 10 turns: {solved}"
+
+
+def test_two_alerts_of_a_kind_on_a_lane_each_have_their_own_turn_and_steps(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls")
+    run.turn(lane, "ls", alerts=(Alert(AlertKind.LOOP, "ls twice"),))
+    run.do(iv.Hint(lane, "stop listing"))  # answers the alert and clears it
+    run.turn(lane, "ls -a")
+    run.turn(lane, "ls -a", alerts=(Alert(AlertKind.LOOP, "ls -a twice"),))  # the same instant on this clock
+    text = report(run.close())
+    assert [line for line in text.splitlines() if line.startswith("- When:")] == [
+        "- When: T+00:00:00, at turn 2", "- When: T+00:00:00, at turn 4",
+    ]
+    assert [t.content for t in walk(text) if t.type == "fence"] == ["ls\nls\n", "ls\nls -a\nls -a\n"]
+
+
 @pytest.mark.parametrize("budget_approved", [False, True], ids=["left waiting", "approved"])
 def test_a_flags_verdict_does_not_answer_a_budget_alert(tmp_path, budget_approved):
     run = Script(tmp_path, flags={"x": "t{right}"})

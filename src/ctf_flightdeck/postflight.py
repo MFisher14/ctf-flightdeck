@@ -6,9 +6,10 @@
   points, tokens and the cached share, dollars (or "unknown") and the cost per solve;
 - a timeline per challenge: release, L1 runs, lanes starting and ending with their models,
   alerts, interventions and what came of them, flags submitted right or wrong, the solve;
-- where lanes stalled: each alert about a lane's course or budget, when it fired, how it
-  was answered and whether the lane then solved within 10 turns (flag-found and teammate
-  alerts are not stalls; they are in the timeline). An approve or decline answers a budget
+- where lanes stalled: each alert about a lane's course or budget, when it fired (at the
+  turn its line in the lane's transcript has), how it was answered and whether the lane
+  then solved within 10 turns (flag-found and teammate alerts are not stalls; they are in
+  the timeline). An approve or decline answers a budget
   alert only when it answered the budget request (or approved more budget with nothing
   waiting), not a flag's verdict or the live box: the lane's current approval is replayed
   from its pending events;
@@ -596,6 +597,7 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
     for step in steps:
         if step.lane and step.ok:
             on_lane.setdefault(step.lane, []).append(step)
+    lines = _alert_lines(events, lanes)
     out = []
     for index, event in enumerate(events):
         if event.kind != EventKind.ALERT or not event.lane or (event.alert or "") in NOT_STALLS:
@@ -611,7 +613,10 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
                 unanswered = f"no answer before the lane ended ({facts.state})"
             else:
                 unanswered = "no answer; the lane was still open when the run ended"
-        turn = facts.turn_before(index)
+        head, line = facts.record, lines.get(index)
+        # The transcript has the turn the deck counted when it raised the alert; the log's turn
+        # events cannot say, since an alert for a turn with no price comes before that turn's event.
+        turn = head.actions[line].turn if head is not None and line is not None else facts.turn_before(index)
         solved_turns = None
         if facts.state == "solved":
             if facts.end is not None:
@@ -620,8 +625,38 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
                 solved_turns = max(0, facts.turns - turn)
         out.append(Stall(
             index, event.at, event.lane, facts.challenge, kind, _str(event.data.get("reason")) or event.text,
-            turn, answer, unanswered, solved_turns, _steps_before(facts.record, event),
+            turn, answer, unanswered, solved_turns, _steps_before(head, line, event),
         ))
+    return out
+
+
+def _alert_lines(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts]) -> dict[int, int]:
+    """Each lane alert's line in its lane's transcript, as event index -> action index. The
+    deck writes the line and the event together (Deck._raise), so the k-th alert of a kind on
+    a lane is the k-th alert line of that kind, whatever the clock. When that line does not
+    fit (a damaged folder), the last line of that kind no later than the alert stands in."""
+    found: dict[tuple[str, str], list[int]] = {}
+    for lid, facts in lanes.items():
+        for i, action in enumerate(facts.record.actions if facts.record is not None else ()):
+            if action.kind == ActionKind.ALERT.value and action.alert:
+                found.setdefault((lid, action.alert), []).append(i)
+    seen: Counter[tuple[str, str]] = Counter()
+    out: dict[int, int] = {}
+    for index, event in enumerate(events):
+        if event.kind != EventKind.ALERT or not event.lane or not event.alert:
+            continue
+        key = (event.lane, event.alert)
+        k, seen[key] = seen[key], seen[key] + 1
+        candidates = found.get(key)
+        record = lanes[event.lane].record
+        if not candidates or record is None:
+            continue
+        if k < len(candidates) and record.actions[candidates[k]].at <= event.at:
+            out[index] = candidates[k]
+            continue
+        earlier = [i for i in candidates if record.actions[i].at <= event.at]
+        if earlier:
+            out[index] = earlier[-1]
     return out
 
 
@@ -636,17 +671,13 @@ def _answers(step: Step, alert: str) -> bool:
     return step.name in BUDGET_ANSWERS
 
 
-def _steps_before(head: LaneRecord | None, alert: EventLine) -> tuple[str, ...]:
-    """The lane's last few steps before an alert, from its transcript."""
+def _steps_before(head: LaneRecord | None, line: int | None, alert: EventLine) -> tuple[str, ...]:
+    """The lane's last few steps before an alert, from its transcript: those before the
+    alert's own line, or without one, those no later than the alert."""
     if head is None:
         return ()
-    actions = list(head.actions)
-    stop = next(
-        (i for i, a in enumerate(actions) if a.kind == "alert" and a.alert == alert.alert and a.at == alert.at),
-        None,
-    )
-    before = actions[:stop] if stop is not None else [a for a in actions if a.at <= alert.at]
-    return tuple(a.text for a in before if a.kind == "step")[-STEPS_SHOWN:]
+    before = head.actions[:line] if line is not None else [a for a in head.actions if a.at <= alert.at]
+    return tuple(a.text for a in before if a.kind == ActionKind.STEP.value)[-STEPS_SHOWN:]
 
 
 def _proposed(record: RunRecord, asked: Mapping[tuple[str, str], int]) -> dict[tuple[str, str], tuple[int | None, float | None]]:
