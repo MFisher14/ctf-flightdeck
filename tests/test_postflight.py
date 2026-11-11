@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import re
 from pathlib import Path
 
@@ -981,6 +982,57 @@ def test_values_of_the_wrong_type_become_unknowns_not_crashes_or_zeros(tmp_path)
     assert ["(none)", "1", "0", "0%", "unknown"] in table_rows(text)  # a price that is not a number is unknown, not $0
 
 
+def rewrite(path: Path, change) -> None:
+    """Rewrite a JSONL file of the run, line by line (json writes NaN and Infinity as is)."""
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    path.write_text("".join(json.dumps(change(line)) + "\n" for line in lines))
+
+
+def test_times_that_are_not_times_show_as_unknown_not_a_crash(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    run.at(10)
+    run.turn(run.lane("x"), "ls", gave_up="nothing here")
+    run.close()
+    rewrite(tmp_path / "events.jsonl", lambda e: {**e, "at": float("nan")} if e.get("kind") == "lane.end" else e)
+    with (tmp_path / "events.jsonl").open("a") as handle:  # json reads all of these as floats
+        for at in ("NaN", "Infinity", "1e400", "-5"):
+            handle.write('{"kind": "warning", "at": %s, "text": "odd %s", "challenge": "x", "data": {}}\n' % (at, at))
+    record = load_run(tmp_path)
+    text = report(record)
+    x = items(sections(text, "### ")["X (misc, 10 pts): not solved"])
+    assert x[-5:] == [
+        "T+? · L01 gave up after 1 turn on small (1k tokens, $0.01): nothing here",
+        "T+? · warning: odd NaN", "T+? · warning: odd Infinity", "T+? · warning: odd 1e400", "T+? · warning: odd -5",
+    ]
+    assert "- Duration: 10s (first to last event)" in text.splitlines()
+    assert items(sections(text)["Lanes that gave up or were killed"]) == ["L01 on X gave up after 1 turn: nothing here"]
+    assert (
+        "5 events in the run log have a time that is not one (not a number, infinite or negative): "
+        "shown as T+? and left out of the duration"
+    ) in items(sections(text)["Problems reading the run"])
+    assert summary(record).splitlines()[1].startswith("10s, 1 challenge, 0 solved")
+    result = runner.invoke(mounted(), ["report", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "report.md").read_text(encoding="utf-8") == text
+
+
+def test_numbers_that_are_not_finite_are_unknown_not_a_crash(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    run.turn(run.lane("x"), "ls", dollars=0.5)
+    run.close()
+    rewrite(tmp_path / "lanes" / "L01.jsonl", lambda line: {**line, "dollars": float("inf")} if "lane" in line else line)
+    with (tmp_path / "events.jsonl").open("a") as handle:  # a count too big for a float, and a price that is not a number
+        handle.write('{"kind": "turn", "at": 1, "lane": "L01", "challenge": "x", "data": {"model": "small", '
+                     '"tokens": %s, "dollars": NaN}}\n' % ("9" * 400))
+    text = report(load_run(tmp_path))
+    rows = table_rows(text)
+    assert ["small", "2", "1,000", "25%", "unknown (at least $0.50; 1 of 2 turns had no price)"] in rows  # nothing made up
+    assert ["L01", "X", "small", "1", "1,000", "25%", "unknown", "still open"] in rows  # the transcript's price is no number
+    assert "- Dollars: unknown (at least $0.50; the lane had a turn with no price)" in text.splitlines()
+
+
 def test_a_run_with_nothing_in_it_still_reports(tmp_path):
     run = Script(tmp_path)
     text = report(run.close())
@@ -1155,3 +1207,50 @@ def test_report_with_a_board_that_cannot_be_read_fails_with_the_reason(played, t
 def test_report_needs_an_existing_folder(tmp_path):
     result = runner.invoke(mounted(), ["report", str(tmp_path / "nope")])
     assert result.exit_code == 2
+
+
+needs_permissions = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="not run: file permissions do not stop root"
+)
+
+
+def small_run(folder: Path) -> Path:
+    run = Script(folder)
+    run.release([Challenge("x", "X", "misc", 10)])
+    run.turn(run.lane("x"), "ls")
+    return run.close().dir
+
+
+@needs_permissions
+def test_report_on_a_run_with_a_file_it_cannot_read_fails_with_the_reason(tmp_path):
+    transcript = small_run(tmp_path) / "lanes" / "L01.jsonl"
+    transcript.chmod(0)
+    try:
+        result = runner.invoke(mounted(), ["report", str(tmp_path)])
+    finally:
+        transcript.chmod(0o644)
+    assert result.exit_code == 2, result.output
+    assert f"flightdeck: cannot read {transcript}: Permission denied" in result.output
+    assert not (tmp_path / "report.md").exists()
+
+
+def test_report_on_a_run_whose_transcript_has_a_count_that_is_not_finite_fails_with_the_reason(tmp_path):
+    rewrite(small_run(tmp_path) / "lanes" / "L01.jsonl", lambda line: {**line, "turns": float("nan")} if "lane" in line else line)
+    result = runner.invoke(mounted(), ["report", str(tmp_path)])
+    assert result.exit_code == 2, result.output
+    assert f"flightdeck: cannot read the run in {tmp_path}: a number in it is not finite" in result.output
+    assert not (tmp_path / "report.md").exists()
+
+
+@needs_permissions
+def test_report_with_a_board_it_cannot_search_fails_with_the_reason(played):
+    _, record = played
+    board = board_dir(record)
+    board.chmod(0o600)  # it can be listed, but nothing in it can be opened
+    try:
+        result = runner.invoke(mounted(), ["report", str(record.dir), "--board", str(board)])
+    finally:
+        board.chmod(0o755)
+    assert result.exit_code == 2, result.output
+    assert f"flightdeck: --board: cannot read {board.resolve() / 'board.json'}: Permission denied" in result.output
+    assert not (record.dir / "report.md").exists()
