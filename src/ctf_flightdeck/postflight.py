@@ -38,9 +38,14 @@ and only the platform accepts a flag (l1/result.py). `solves()` gives them, one 
 
 Dollars: a lane's dollars are unknown once anything it spent had no price, and the part that
 had one is still counted (the transcript's known_dollars, else its priced turns and spend
-events), so the floor the report gives is the one the console and the scorecard give. Spend
-outside a turn (a reply dropped on escalation) is a `spend` event in a format 2 log; in an
-older one it is what a lane's transcript counts beyond its turns.
+events), so the floor the report gives is the one the console and the scorecard give. A
+`spend` event (a format 2 log) counts in the row of the model that spent it (its data's
+model: an escalated lane's old model, say), whichever model the lane ran by then. It is
+either spend outside a turn (a reply dropped on escalation), which the timeline lists, or a
+coding-agent CLI's own cost of a turn, which the CLI reports when the turn ends (turn_end;
+its steps, the lane's turns, carry none of it), summed like a turn and not listed. The spend
+table shows each as a part of the model rows. In an older log, spend outside a turn is what
+a lane's transcript counts beyond its turns, in no model's row.
 
 Names, categories and points come from the run log's releases (a format 2 log), the lane
 transcripts, then the board if one is given; the event's name from the board, else the log.
@@ -72,6 +77,7 @@ from . import fmt
 from .core.model import FINISHED, ME, ActionKind, Actor, AlertKind, EventKind, PendingKind
 from .runrecord import (
     L1, LANE, PLAYER, TEAM, TEAMMATE, YOUR_TEAM, Credit, EventLine, LaneRecord, RunRecord, Solve, finite, l1_flags, run_time,
+    turn_end,
 )
 from .runrecord import solves as _first_solves
 from .text import untrusted
@@ -222,11 +228,15 @@ class LaneFacts:
     turn_cached: int = 0
     turn_dollars: float = 0.0
     turn_unpriced: int = 0
-    spends: int = 0  # spend events: what it spent outside a turn (a format 2 log has one for each)
+    spends: int = 0  # spend events (a format 2 log has one for each spend outside a turn, and for each CLI turn's cost)
     spend_tokens: int = 0
     spend_cached: int = 0
     spend_dollars: float = 0.0
     spend_unpriced: int = 0
+    outside_tokens: int = 0  # of the spend events, those outside a turn: not a coding-agent CLI's turn_end
+    outside_cached: int = 0
+    outside_dollars: float = 0.0
+    outside_unpriced: int = 0
     cost_due: bool = False  # its coding-agent CLI's last turn (dollars_later steps) never reported its cost
 
     @property
@@ -309,22 +319,61 @@ class Judged:
 
 @dataclass(frozen=True)
 class Outside:
-    """What lanes spent outside their turns (a model reply dropped on escalation, for one)."""
+    """A part of the run's spend that the spend table gives a row of its own: what lanes spent
+    outside their turns (a model reply dropped on escalation, for one), or what coding-agent
+    CLIs reported as their turns' own cost when each turn ended."""
 
     tokens: int
     cached: int
     dollars: float  # the part that had a price
     unpriced: bool  # some of it had no price
+    included: bool = False  # in the model rows too (spend events, each in its model's row); False: in no model's row
+
+    def __bool__(self) -> bool:
+        return bool(self.tokens or self.dollars > 0 or self.unpriced)
+
+
+_NOTHING = Outside(0, 0, 0.0, False)
 
 
 @dataclass(frozen=True)
 class ModelSpend:
     model: str
     turns: int
-    tokens: int
+    tokens: int  # its turns', and its spend events' (outside a turn, or a CLI's report at a turn's end)
     cached: int
-    dollars: float
-    unpriced: int  # turns with no known price
+    dollars: float  # the part that had a price
+    unpriced: int  # turns and spend events with no known price
+    costs: int = 0  # turns and spend events with a cost of their own (a CLI's step has none: its turn's end has it)
+    spends: int = 0  # spend events credited to it
+    turn_ends: int = 0  # of those, a coding-agent CLI's reports of a turn's own cost (turn_end)
+
+
+@dataclass
+class _Sum:
+    """What a model, or one kind of spend, added up to."""
+
+    turns: int = 0
+    tokens: int = 0
+    cached: int = 0
+    dollars: float = 0.0
+    unpriced: int = 0
+    costs: int = 0
+    spends: int = 0
+    turn_ends: int = 0
+
+    def add(self, tokens: int, cached: int, dollars: float | None) -> None:
+        """A cost of its own: a turn's, or a spend event's."""
+        self.tokens += tokens
+        self.cached += cached
+        self.costs += 1
+        if dollars is None:
+            self.unpriced += 1
+        else:
+            self.dollars += dollars
+
+    def part(self) -> Outside:
+        return Outside(self.tokens, self.cached, self.dollars, self.unpriced > 0, included=True)
 
 
 @dataclass(frozen=True)
@@ -339,14 +388,16 @@ class Flight:
     steps: list[Step]
     stalls: list[Stall]
     judged: list[Judged]
-    models: list[ModelSpend]
-    outside: Outside
+    models: list[ModelSpend]  # each with its turns and its spend events (data["model"]: the model that spent it)
+    outside: Outside  # spend outside a turn that spend events logged (in the model rows too)
     l1_runs: int
     by_challenge: dict[str, list[int]]  # event indices shown on each challenge's timeline
     notes: list[str]  # problems reading the run, and things the report could not know
     duration: float = 0.0  # seconds from the first to the last deck event with a usable time
     warnings: list[int] = field(default_factory=list)  # event indices of the warnings that belong to no challenge
     event_from: str = ""  # where the event's name came from: "the board" or "the run log"
+    turn_ends: Outside = _NOTHING  # what coding-agent CLIs reported as their turns' own cost when each turn ended (in the model rows)
+    outside_older: Outside = _NOTHING  # spend outside a turn only an older log's transcripts count (in no model's row)
 
     # ------------------------------------------------------------------ totals
 
@@ -369,7 +420,8 @@ class Flight:
 
     @property
     def priced_turns(self) -> int:
-        return sum(spend.turns - spend.unpriced for spend in self.models)
+        """Turns and spend events that had a price."""
+        return sum(spend.costs - spend.unpriced for spend in self.models)
 
     def solved_by(self, by: str) -> int:
         return sum(1 for solve in self.solves.values() if solve.by == by)
@@ -410,7 +462,8 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     open_steps: list[Step] = []
     by_challenge: dict[str, list[int]] = {}
     unread: Counter[str] = Counter()
-    model_spend: dict[str, list[float]] = {}
+    model_spend: dict[str, _Sum] = {}  # model -> what it spent: its turns, and its spend events (data["model"])
+    turn_ends = _Sum()  # what coding-agent CLIs reported as their turns' own cost, when each turn ended
     # lane -> the kind of approval it waits on now. The deck logs a pending event each time an
     # approval becomes the lane's current one ("queued" ones wait behind it); an approve or
     # decline answers the current one, and the lane's end drops what is left.
@@ -486,31 +539,48 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             dollars = _num(data.get("dollars"))
             facts.turn_tokens += tokens
             facts.turn_cached += cached
-            spend = model_spend.setdefault(model, [0, 0, 0, 0.0, 0])
-            spend[0] += 1
-            spend[1] += tokens
-            spend[2] += cached
+            spend = model_spend.setdefault(model, _Sum())
+            spend.turns += 1
             if dollars is None and data.get("dollars_later") is True:
-                facts.cost_due = True  # a coding-agent CLI's step: its turn_end spend event has the cost
-            elif dollars is None:
-                facts.turn_unpriced += 1
-                spend[4] += 1
+                facts.cost_due = True  # a coding-agent CLI's step: no cost of its own, its turn_end spend event has it
+                spend.tokens += tokens
+                spend.cached += cached
             else:
-                facts.turn_dollars += dollars
-                spend[3] += dollars
+                spend.add(tokens, cached, dollars)
+                if dollars is None:
+                    facts.turn_unpriced += 1
+                else:
+                    facts.turn_dollars += dollars
             continue  # turns are summed, not listed
-        elif kind == EventKind.SPEND and event.lane:  # summed, and listed: a reply dropped on escalation cost something
+        elif kind == EventKind.SPEND and event.lane:
+            # Counted for its lane, and in the row of the model that spent it (data["model"]: an
+            # escalated lane's old model, say), not the lane's model at the time. Spend outside a
+            # turn is listed too: a reply dropped on escalation cost something. A coding-agent CLI's
+            # report of a turn's own cost (turn_end) is summed like a turn, and not listed.
             facts = lanes[event.lane]
             dollars = _num(data.get("dollars"))
-            if data.get("turn_end") is True:
-                facts.cost_due = False  # the CLI's cost of the turn its steps were in
+            tokens, cached = _int(data.get("tokens")), _int(data.get("cached_tokens"))
             facts.spends += 1
-            facts.spend_tokens += _int(data.get("tokens"))
-            facts.spend_cached += _int(data.get("cached_tokens"))
+            facts.spend_tokens += tokens
+            facts.spend_cached += cached
             if dollars is None:
                 facts.spend_unpriced += 1
             else:
                 facts.spend_dollars += dollars
+            spend = model_spend.setdefault(_str(data.get("model")), _Sum())
+            spend.add(tokens, cached, dollars)
+            spend.spends += 1
+            if turn_end(data):
+                facts.cost_due = False  # the CLI's cost of the turn its steps were in
+                spend.turn_ends += 1
+                turn_ends.add(tokens, cached, dollars)
+                continue  # summed like the turns, not listed
+            facts.outside_tokens += tokens
+            facts.outside_cached += cached
+            if dollars is None:
+                facts.outside_unpriced += 1
+            else:
+                facts.outside_dollars += dollars
         elif kind == EventKind.WARNING and not cid:
             named = data.get("solved")  # a warning about several challenges at once (CTFd lists them as solved)
             ids = [c for c in named if isinstance(c, str) and c] if isinstance(named, list) else []
@@ -619,13 +689,15 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     stalls = _stalls(events, lanes, steps)
     judged = _judged(steps, lanes, solved, _proposed(record, asked))
     models = [
-        ModelSpend(model, int(s[0]), int(s[1]), int(s[2]), float(s[3]), int(s[4])) for model, s in model_spend.items()
+        ModelSpend(model, s.turns, s.tokens, s.cached, s.dollars, s.unpriced, s.costs, s.spends, s.turn_ends)
+        for model, s in model_spend.items()
     ]
+    outside, older = _outside(lanes, record.format)
     return Flight(
         record=record, event=event_name, challenges=challenges, lanes=lanes, solves=solved, steps=steps,
-        stalls=stalls, judged=judged, models=models, outside=_outside(lanes),
+        stalls=stalls, judged=judged, models=models, outside=outside,
         l1_runs=len(record.of(L1)), by_challenge=by_challenge, notes=notes, duration=duration,
-        warnings=warnings, event_from=event_from if event_name else "",
+        warnings=warnings, event_from=event_from if event_name else "", turn_ends=turn_ends.part(), outside_older=older,
     )
 
 
@@ -815,21 +887,25 @@ def _reached(steps: Sequence[Step], lanes: Mapping[str, LaneFacts]) -> dict[int,
     return {index: tuple(ids) for index, ids in reached.items()}
 
 
-def _outside(lanes: Mapping[str, LaneFacts]) -> Outside:
-    """What lanes spent outside their turns (a model reply dropped on escalation, for one): the
-    spend events of a lane that has them (a format 2 log has one for each such spend), else
-    what its transcript counts beyond its turns (an older log), never both."""
+def _outside(lanes: Mapping[str, LaneFacts], log_format: int) -> tuple[Outside, Outside]:
+    """What lanes spent outside their turns (a model reply dropped on escalation, for one), in
+    two parts, never both for one lane. A lane's spend events (a format 2 log has one for each
+    such spend) are in the model rows too, each in the row of the model that spent it; a
+    coding-agent CLI's report of a turn's own cost (turn_end) is no spend outside a turn. A
+    lane with none in an older log has that spend only in its transcript: what it counts
+    beyond the lane's turns, in no model's row."""
+    logged = _Sum()
     tokens = cached = 0
     dollars, unpriced = 0.0, False
     for facts in lanes.values():
         if facts.spends:
-            tokens += facts.spend_tokens
-            cached += facts.spend_cached
-            dollars += facts.spend_dollars
-            unpriced = unpriced or facts.spend_unpriced > 0
+            logged.tokens += facts.outside_tokens
+            logged.cached += facts.outside_cached
+            logged.dollars += facts.outside_dollars
+            logged.unpriced += facts.outside_unpriced
             continue
-        if facts.record is None:
-            continue
+        if facts.record is None or log_format >= 2:
+            continue  # a format 2 log has a spend event for every spend: the transcript adds none
         extra = max(0, facts.tokens - facts.turn_tokens)
         tokens += extra
         cached += max(0, facts.cached - facts.turn_cached)
@@ -839,7 +915,7 @@ def _outside(lanes: Mapping[str, LaneFacts]) -> Outside:
             dollars += max(0.0, facts.dollars - facts.turn_dollars)
     if abs(dollars) < 1e-9:
         dollars = 0.0
-    return Outside(tokens, cached, dollars, unpriced)
+    return logged.part(), Outside(tokens, cached, dollars, unpriced)
 
 
 # ---------------------------------------------------------------------- rendering
@@ -858,6 +934,23 @@ def _money(amount: float, unpriced: int, total: int, what: str) -> str:
         which = "the lane" if total == 1 else "every lane" if unpriced >= total else f"{unpriced} of {total} lanes"
         return f"unknown (at least ${fmt.dollars(amount)}; {which} had a turn with no price)"
     return f"unknown (at least ${fmt.dollars(amount)}; {unpriced} of {total} {what} had no price)"
+
+
+OUTSIDE_ROW = "outside a turn (a reply dropped on escalation, for one)"
+TURN_END_ROW = "coding-agent CLIs' own cost of their turns, reported when each turn ended"
+
+
+def _model_money(spend: ModelSpend) -> str:
+    """A model's dollars, out of what had a cost of its own: its turns, and the spend events
+    credited to it. A coding-agent CLI's steps have none: the CLI reports what each of its
+    turns cost when the turn ends."""
+    if not spend.spends:
+        what = "turns"
+    elif spend.turn_ends == spend.costs:
+        what = "CLI turns"
+    else:
+        what = "turns and spends"
+    return _money(spend.dollars, spend.unpriced, spend.costs, what)
 
 
 def _spent(flight: Flight) -> str:
@@ -1269,19 +1362,23 @@ def _spend_section(flight: Flight) -> list[str]:
         return out + ["No lanes ran, so no model spend.", ""]
     out += ["### By model", "", "| Model | Turns | Tokens | Cached | Dollars |", "|---|---:|---:|---:|---:|"]
     for spend in sorted(flight.models, key=lambda s: (-s.tokens, s.model)):
-        dollars = _money(spend.dollars, spend.unpriced, spend.turns, "turns")
         out.append(
-            f"| {md_text(spend.model) or '(none)'} | {spend.turns} | {spend.tokens:,} | {_share(spend.cached, spend.tokens)} | {dollars} |"
+            f"| {md_text(spend.model) or '(none)'} | {spend.turns} | {spend.tokens:,} | "
+            f"{_share(spend.cached, spend.tokens)} | {_model_money(spend)} |"
         )
-    outside = flight.outside
-    if outside.tokens or outside.dollars > 0 or outside.unpriced:
-        shown = f"${fmt.dollars(outside.dollars)}"
-        if outside.unpriced:
-            shown = f"unknown (at least {shown})" if outside.dollars > 0 else "unknown"
+    parts = ((flight.outside_older, OUTSIDE_ROW), (flight.outside, OUTSIDE_ROW), (flight.turn_ends, TURN_END_ROW))
+    for part, label in parts:
+        if not part:
+            continue
+        shown = f"${fmt.dollars(part.dollars)}"
+        if part.unpriced:
+            shown = f"unknown (at least {shown})" if part.dollars > 0 else "unknown"
         out.append(
-            f"| outside a turn (a reply dropped on escalation, for one) | - | {outside.tokens:,} | "
-            f"{_share(outside.cached, outside.tokens)} | {shown} |"
+            f"| {'of which ' if part.included else ''}{label} | - | {part.tokens:,} | {_share(part.cached, part.tokens)} | {shown} |"
         )
+    if flight.outside or flight.turn_ends:
+        out += ["", "A row that starts with \"of which\" is a part of the model rows above: each spend is in the row of "
+                "the model that spent it."]
     out.append("")
     lanes = list(flight.lanes.values())
     priced = all(lane.dollars is not None for lane in lanes)

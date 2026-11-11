@@ -753,6 +753,49 @@ def test_a_cli_lanes_cost_is_what_its_cli_reported_at_each_turns_end_after_the_s
     assert not any("no price" in note or "never reported" in note for note in result.notes)  # its steps were not unpriced
 
 
+EARLIER_TURN_END = "what codex reported when its turn ended: the turn's cost, and tokens no step carried"  # before turn_end marks
+
+
+@pytest.mark.parametrize("marked", [True, False], ids=["marked turn_end", "an earlier log's why"])
+def test_a_cli_turn_cost_with_no_price_is_noted_as_the_clis_own_cost_of_its_turns_not_spend_outside_them(tmp_path, marked):
+    # codex reports a turn's tokens but no cost: with no price in the config, each turn's cost is unknown
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=1200, dollars=None, turn_end=True, why=EARLIER_TURN_END))
+    deck.report("L01", TurnReport(action="python3 solve.py", dollars_later=True, flag=FLAGS["alpha"]))
+    deck.report("L01", TurnReport(turn=False, tokens=800, dollars=None, turn_end=True, why=EARLIER_TURN_END))
+    deck.report("L01", TurnReport(turn=False, tokens=500, dollars=None, why="a reply dropped on escalation"))
+    deck.apply(iv.Approve("L01"))
+    path = played.close()
+    if not marked:  # a log from before spend events were marked turn_end: its why says what it was
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        for line in lines:
+            line.get("data", {}).pop("turn_end", None)
+        path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    result = score(path, played.board)
+    assert result.lanes["L01"].tokens == 2500 and result.lanes["L01"].dollars is None and result.unpriced == ("L01",)
+    assert result.notes == (
+        f"L01 spent 500 tokens {OUTSIDE_TURNS} with no price, so its cost is not fully known: the dollars count only "
+        "what had a price.",  # the reply dropped on escalation alone: the CLI's turns are not spend outside them
+        "L01: its coding-agent CLI's own cost of 2 turns (2k tokens), reported when each ended, had no price, so its "
+        "cost is not fully known: the dollars count only what had a price ([prices] in your config can price its model).",
+    )
+    assert "Spent 2k tokens · $0.00+ · $0.00+ per solve" in scorecard(result).splitlines()
+
+
+def test_a_cli_turn_that_ended_with_no_cost_reported_or_counted_is_noted_as_one_turn(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True))  # codex stopped mid-turn: nothing counted
+    result = score(played.close(), played.board)
+    assert result.notes == (
+        "L01: its coding-agent CLI's own cost of 1 turn, reported when it ended, had no price, so its cost is not fully "
+        "known: the dollars count only what had a price ([prices] in your config can price its model).",
+    )
+
+
 def test_a_log_that_ends_inside_a_cli_turn_gives_that_lane_no_settled_cost(tmp_path):
     played = Played(tmp_path)
     deck = played.at(0).deck

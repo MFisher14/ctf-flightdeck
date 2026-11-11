@@ -57,7 +57,7 @@ from ctf_flightdeck.core.model import (
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.runrecord import load_run
 
-FAKE =Path(__file__).with_name("fake_agent_cli.py")
+FAKE = Path(__file__).with_name("fake_agent_cli.py")
 FLAG = r"t\{[a-z0-9_]+\}"
 KEY = "fake-anthropic-credential-for-tests"
 CODEX_SECRET = "fake-codex-credential-for-tests"

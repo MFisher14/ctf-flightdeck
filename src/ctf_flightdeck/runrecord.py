@@ -357,6 +357,27 @@ def l1_flags(data: Mapping[str, object]) -> list[str]:
     return [f for f in flags if isinstance(f, str) and f] if isinstance(flags, list) else []
 
 
+# What a coding-agent CLI's report of a turn's cost said as its why before spend events were
+# marked turn_end (agent/external.py at the time): a log written then is read the same way.
+_EARLIER_TURN_ENDS = frozenset(
+    text.format(kind=kind)
+    for kind in ("claude", "codex")
+    for text in (
+        "what {kind} reported when its turn ended: the turn's cost, and tokens no step carried",
+        "what {kind} reported for a turn it was stopped in (an escalation, or the lane's end)",
+        "tokens {kind} counted after its last step, when it exited",
+    )
+)
+
+
+def turn_end(data: Mapping[str, object]) -> bool:
+    """Whether a spend event is a coding-agent CLI's own cost of a turn, which it reports when
+    the turn ends (TurnReport.turn_end), and so not spend outside a turn: marked so, or in a
+    log from before the mark, said so by its why."""
+    why = data.get("why")
+    return data.get("turn_end") is True or (isinstance(why, str) and why in _EARLIER_TURN_ENDS)
+
+
 class Credit:
     """Who a solve goes to: the one rule every report uses (the post-flight report, writeups,
     the gap report and the scorecard), so no two of them give the same solve to different
