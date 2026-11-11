@@ -109,6 +109,7 @@ class Deck:
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
+        self.held = ""  # why no more lanes start (hold_queue), "" while they do
         self._flag_re = re.compile(config.flag_format)
         self._thread = threading.get_ident()
         driver.attach(self)
@@ -252,6 +253,28 @@ class Deck:
             text += f" · stopped {', '.join(stopped)}"
         self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={"who": who, "solved": True, "stopped": stopped})
 
+    def platform_solved(self, challenge_id: str, who: str, *, before_run: bool = False) -> None:
+        """The platform lists a challenge as solved by this account or its team (CTFd), solo
+        or team mode: it is closed, its lanes stop and it leaves the queue. `who` says by whom
+        as far as the platform tells ("you", "your team"). A solve event records it, so
+        reports count it."""
+        self._on_thread("platform_solved")
+        ch = self.challenges[challenge_id]
+        data = {"who": who, "solved": True, "source": "platform", "before_run": before_run}
+        if ch.closed:
+            self._emit(EventKind.TEAMMATE, f"the platform lists {ch.name} as solved ({who})", challenge=ch.id, data=data)
+            return
+        ch.status = ChallengeStatus.TEAMMATE
+        ch.solved_by = who
+        ch.note = ""
+        self._drop_queued(ch.id)
+        stopped = []
+        for lane in self.lanes_on(ch.id):
+            self._finish(lane, LaneState.STOPPED, f"the platform lists {ch.name} as solved ({who})")
+            stopped.append(lane.id)
+        text = f"the platform lists {ch.name} as solved ({who})" + (f" · stopped {', '.join(stopped)}" if stopped else "")
+        self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={**data, "stopped": stopped})
+
     def note(self, lane_id: str, text: str) -> None:
         """A flightdeck note on a lane's transcript (from a component outside the deck)."""
         self._on_thread("note")
@@ -377,13 +400,14 @@ class Deck:
         for alert in rep.alerts:
             self._raise(lane, alert)
         if rep.flag is not None:
-            self._candidate(lane, rep.flag)
+            self._candidate(lane, rep.flag, claimed=rep.claimed)
             if lane.finished:
                 return  # submitted automatically and correct
         if rep.pending is not None:
             self._ask(lane, rep.pending)
         if rep.gave_up is not None:
             if self._has_submit(lane):
+                lane.gave_up_later = rep.gave_up
                 self._note(lane, f"gave up ({rep.gave_up}), but a candidate flag waits for you")
             else:
                 self._finish(lane, LaneState.GAVE_UP, rep.gave_up, then=ChallengeStatus.PARKED)
@@ -630,6 +654,9 @@ class Deck:
         self.driver.declined(lane, pending)
         if pending.kind is PendingKind.SUBMIT and pending.flag is not None:
             self._drop_known_wrong(lane, pending.flag)
+        if self._end_if_gave_up(lane):
+            what = f"Not submitted: {pending.flag}" if pending.kind is PendingKind.SUBMIT else "Declined"
+            return Outcome(True, f"{what}; {lane.id} had given up, so it has ended")
         if pending.kind is PendingKind.SUBMIT:
             return Outcome(True, f"Not submitted: {pending.flag}; {lane.id} carries on")
         return Outcome(True, f"{lane.id} stays off the live box")
@@ -721,9 +748,18 @@ class Deck:
     def _drop_queued(self, challenge_id: str) -> None:
         self.queue = [entry for entry in self.queue if entry.challenge != challenge_id]
 
+    def hold_queue(self, reason: str) -> None:
+        """Start no more lanes (the queue stays): something wrong for every lane, such as a
+        model API that refuses the key or the model id. Said once, as a warning."""
+        self._on_thread("hold_queue")
+        if self.held:
+            return
+        self.held = reason
+        self._emit(EventKind.WARNING, f"no more lanes start: {reason}", data={"held": True, "reason": reason})
+
     def _fill(self) -> None:
-        """Start queued lanes while there are free slots."""
-        while self.queue and len(self.active_lanes()) < self.config.max_lanes:
+        """Start queued lanes while there are free slots (none while the queue is held)."""
+        while self.queue and not self.held and len(self.active_lanes()) < self.config.max_lanes:
             entry = self.queue.pop(0)
             ch = self.challenges[entry.challenge]
             if self._workable(ch):
@@ -904,7 +940,7 @@ class Deck:
             reason += f" {more} more candidate{'s wait' if more > 1 else ' waits'} behind it."
         self._raise(lane, Alert(AlertKind.FLAG, reason, answers))
 
-    def _candidate(self, lane: Lane, flag: str) -> None:
+    def _candidate(self, lane: Lane, flag: str, *, claimed: bool = True) -> None:
         if not self._flag_re.fullmatch(flag):
             self._note(lane, f"candidate {flag} does not match the flag format; not submitted")
             return
@@ -917,9 +953,11 @@ class Deck:
         queued = ([lane.pending] if lane.pending else []) + lane.waiting
         if any(p.flag == flag for p in queued):
             return  # already waiting
-        if self.config.submit == "auto":
+        if self.config.submit == "auto" and claimed:
             self._submit(lane, flag)
             return
+        # under auto, a match scraped from text the lane read (a decoy flag.txt, an example
+        # in a comment) waits for the player: a wrong try can cost a CTFd attempt
         self._ask(lane, Pending(PendingKind.SUBMIT, f"submit {flag}", flag=flag))
 
     def _submit(self, lane: Lane, flag: str) -> bool | None:
@@ -957,6 +995,7 @@ class Deck:
                 self._sync_flag_alert(lane)
             self.driver.rejected(lane, flag)
             self._drop_known_wrong(lane, flag)
+            self._end_if_gave_up(lane)
             return
         ch.status = ChallengeStatus.SOLVED
         ch.solved_by = lane.id
@@ -966,6 +1005,14 @@ class Deck:
         self._finish(lane, LaneState.SOLVED, f"solved with {flag}")
         for other in self.lanes_on(ch.id):
             self._finish(other, LaneState.STOPPED, f"{lane.id} solved it")
+
+    def _end_if_gave_up(self, lane: Lane) -> bool:
+        """A lane whose driver gave up while a flag waited ends once no flag waits (nothing
+        drives it any more). True if it ended."""
+        if lane.gave_up_later and not lane.finished and not self._has_submit(lane):
+            self._finish(lane, LaneState.GAVE_UP, lane.gave_up_later, then=ChallengeStatus.PARKED)
+            return True
+        return False
 
     def _remember_not_flag(self, challenge_id: str, flag: str, why: str) -> None:
         """`flag` is not the flag of that challenge. A weaker reason never replaces a stronger
@@ -1003,6 +1050,7 @@ class Deck:
             if dropped:
                 self._note(other, f"candidate {flag} dropped: {why} on {lane.id}")
                 self._tell_not_flag(other, flag, why)
+                self._end_if_gave_up(other)
 
     def _check_budget(self, lane: Lane) -> None:
         used = lane.budget_used()

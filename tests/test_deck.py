@@ -2025,3 +2025,50 @@ def test_a_platform_rejection_is_never_replaced_by_a_weaker_reason():
     assert deck.apply(iv.Approve(lane.id)).ok  # rejected by the platform
     deck._remember_not_flag("c0", "t{x}", "the player declined to submit it")
     assert deck.not_flag("c0", "t{x}") == "rejected by the platform"
+
+
+# ---------------------------------------------------------------------- claimed flags, gave up, held queue, platform solves
+
+
+def test_under_auto_only_a_claimed_flag_is_submitted_and_a_scraped_one_waits():
+    deck, driver, _ = make_deck(n=1, submit="auto")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{decoy}", claimed=False))  # read in a flag.txt
+    assert deck.verify.calls == [] and lane.pending is not None and lane.pending.flag == "t{decoy}"
+    deck.report(lane.id, TurnReport(flag="t{c0}"))  # submit_flag: claimed
+    assert deck.verify.calls == [("c0", "t{c0}")] and lane.state is LaneState.SOLVED
+
+
+@pytest.mark.parametrize("answer", ["decline", "reject"])
+def test_a_lane_that_gave_up_while_its_flag_waited_ends_once_the_flag_is_answered(answer):
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.report(lane.id, TurnReport(turn=False, gave_up="claude exited with status 137"))
+    assert lane.state is LaneState.WAITING  # the flag still waits for the player
+    out = deck.apply(iv.Decline(lane.id) if answer == "decline" else iv.Approve(lane.id))  # approve: the platform says wrong
+    assert out.ok and lane.state is LaneState.GAVE_UP and lane.result == "claude exited with status 137"
+    if answer == "decline":
+        assert out.message == f"Not submitted: t{{maybe}}; {lane.id} had given up, so it has ended"
+
+
+def test_a_held_queue_starts_no_more_lanes_and_says_why_once():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    first = lane_on(deck, "c0")
+    deck.hold_queue("the model API refused the key in OPENROUTER_API_KEY (HTTP 401)")
+    deck.hold_queue("again")
+    deck.report(first.id, TurnReport(turn=False, gave_up="model API error"))
+    assert driver.started() == ["c0"] and [e.challenge for e in deck.queue] == ["c1", "c2"]
+    warnings = [e for e in deck.events if e.kind is EventKind.WARNING and e.data.get("held")]
+    assert len(warnings) == 1 and "refused the key" in warnings[0].text
+
+
+def test_a_solve_the_platform_lists_closes_the_challenge_in_solo_mode_too():
+    deck, driver, _ = make_deck(n=2, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.platform_solved("c1", "your team", before_run=True)  # still queued: it leaves the queue
+    deck.platform_solved("c0", "you", before_run=False)  # its lane stops, and nothing is left to start
+    assert lane.state is LaneState.STOPPED and deck.challenges["c0"].closed and deck.challenges["c1"].closed
+    assert deck.queue == [] and driver.started() == ["c0"]
+    solved = [e.data for e in deck.events if e.kind is EventKind.TEAMMATE and e.data.get("source") == "platform"]
+    assert [(d["who"], d["before_run"]) for d in solved] == [("your team", True), ("you", False)]

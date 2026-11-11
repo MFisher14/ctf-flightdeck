@@ -258,6 +258,7 @@ class Lane:
     waiting: list[Pending] = field(default_factory=list)  # further approvals, oldest first
     hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
     paused_before_takeover: bool = False  # hand back leaves it paused
+    gave_up_later: str = ""  # its driver gave up while a flag waited: the lane ends once no flag waits
 
     @property
     def id(self) -> str:
