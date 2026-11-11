@@ -24,6 +24,7 @@ import pytest
 
 from ctf_flightdeck import writeup
 from ctf_flightdeck.agent.client import ModelClient, ModelError
+from ctf_flightdeck.agent.driver import _step as driver_step
 from ctf_flightdeck.agent.tools import Toolbox, ToolResult
 from ctf_flightdeck.agent.workspace import RunResult, changed_files, take_snapshot
 from ctf_flightdeck.core import interventions as iv
@@ -34,7 +35,7 @@ from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.mock.world import ManualClock
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.runrecord import RunRecord, load_run
-from ctf_flightdeck.text import untrusted
+from ctf_flightdeck.text import NEWLINE, untrusted
 from ctf_flightdeck.transcript import TranscriptLog
 from fake_model import FakeModelServer, error_reply, text_reply
 
@@ -211,10 +212,40 @@ def test_the_steps_that_mattered_are_the_one_whose_output_held_the_flag_and_the_
     headings = [line for line in section if line.startswith("### ")]
     assert headings == [f"### Turn {n}" for n in range(6, 11)] + ["### Turn 11 (the flag shows here)"]
     key = section.index("### Turn 11 (the flag shows here)")
-    assert section[key + 2] == "`$ python3 solve.py`"
-    assert section[key + 4: key + 8] == ["```text", "decoding", ALPHA, "```"]
+    assert section[key + 2: key + 5] == ["```text", "$ python3 solve.py", "```"]  # the command, in its own block
+    assert section[key + 6: key + 10] == ["```text", "decoding", ALPHA, "```"]  # then its output
     turn10 = section.index("### Turn 10")
-    assert section[turn10 + 2: turn10 + 5] == ["`$ cat > solve.py <<'EOF'`", "", "No output recorded."]
+    assert section[turn10 + 2: turn10 + 7] == ["```text", "$ cat > solve.py <<'EOF'", "```", "", "No output recorded."]
+
+
+def test_a_command_is_its_own_fenced_block_with_the_lines_the_transcript_folded(tmp_path, markdown_it):
+    command = "cat > solve.py <<'EOF'\nimport base64\nprint(base64.b64decode(open('note.txt').read()).decode())\nEOF\npython3 solve.py"
+    shell = tool(tmp_path, "shell", {"command": command}, b"t{c}\n")
+    assert NEWLINE in shell.action and "\n" not in shell.action  # one line, as the transcript keeps it
+    run = Run(tmp_path / "run", [Challenge("c", "Cmd", "misc", 10)], answers={"c": "t{c}"})
+    lane = run.lane("c")
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, "submit t{c}", flag="t{c}")
+    run.apply(iv.Approve(lane))
+    text = writeup.draft(run.close(), "c")
+    fences = [(t.info, t.content) for t in markdown_it.parse(text) if t.type == "fence"]
+    assert fences[0] == ("text", f"$ {command}\n")  # its lines back, in a block of its own
+    assert fences[1] == ("text", "t{c}\n")
+    spans = [c.content for t in markdown_it.parse(text) if t.type == "inline" for c in t.children if c.type == "code_inline"]
+    assert not [span for span in spans if "solve.py" in span]  # never a one-line code span
+
+
+def test_a_turn_with_more_calls_shows_its_command_alone_and_says_there_were_more(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("m", "More", "misc", 10)], answers={"m": "t{m}"})
+    lane = run.lane("m")
+    run.step(lane, "$ ls  (+2 more)", "t{m}")  # agent/driver.py keeps the first real call of a turn
+    run.step(lane, "submit t{m}", flag="t{m}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "m"), "## Steps that mattered")
+    key = section.index("### Turn 1 (the flag shows here)")
+    assert section[key + 2: key + 7] == [
+        "```text", "$ ls", "```", "", "The turn made 2 more tool calls; the transcript keeps only this one.",
+    ]
 
 
 def test_the_files_the_lane_wrote_are_shown_whole(tmp_path):
@@ -283,6 +314,25 @@ def test_a_redirect_that_is_the_last_plan_is_not_listed_twice(tmp_path):
     run.apply(iv.Approve(r))
     items = [line for line in lines_of(writeup.draft(run.close(), "r"), "## Approach") if line]
     assert items == ["1. Turn 1, you redirected it: try rot13"]
+
+
+def test_a_turn_that_set_the_plan_and_submitted_lists_the_plan_once_and_stays_a_step(tmp_path):
+    plan = tool(tmp_path, "set_plan", {"plan": "submit the decoded note"})
+    submit = tool(tmp_path, "submit_flag", {"flag": "t{p}", "how": "decoded the note"})
+    action, output = driver_step([plan, submit], None)  # the step text a real lane's turn gets
+    assert action == "plan: submit the decoded note  (+1 more)"
+    run = Run(tmp_path / "run", [Challenge("p", "Plans", "misc", 10)], answers={"p": "t{p}"})
+    p = run.lane("p")
+    run.step(p, "$ cat note.txt", "dGhlIGZsYWc=")
+    run.step(p, action, output, plan=plan.plan, flag=submit.flag)
+    run.apply(iv.Approve(p))
+    text = writeup.draft(run.close(), "p")
+    assert [line for line in lines_of(text, "## Approach") if line] == ["1. Turn 2, the lane's plan: submit the decoded note"]
+    section = lines_of(text, "## Steps that mattered")
+    key = section.index("### Turn 2 (the last step)")  # it submitted the flag: a step, not only a plan
+    assert section[key + 2: key + 7] == [
+        "```text", "plan: submit the decoded note", "```", "", "The turn made 1 more tool call; the transcript keeps only this one.",
+    ]
 
 
 # ---------------------------------------------------------------------- which steps mattered
@@ -357,7 +407,7 @@ def test_long_outputs_are_cut_to_twenty_lines_and_long_lines_short_and_the_draft
     run.step(o, "submit t{o}", flag="t{o}")
     run.apply(iv.Approve(o))
     section = lines_of(writeup.draft(run.close(), "o"), "## Steps that mattered")
-    start = section.index("```text")
+    start = section.index("```text", section.index("$ ./dump"))  # the output's block, after the command's
     end = section.index("```", start + 1)
     assert section[start + 1: end] == ["t{o}"] + [f"line {k}" for k in range(2, 21)]
     assert section[end + 2] == "Output cut: the first 20 of its 30 lines are shown."
@@ -371,7 +421,7 @@ def test_a_line_over_the_limit_is_cut_and_the_draft_says_so(tmp_path):
     run.step(w, "submit t{w}", flag="t{w}")
     run.apply(iv.Approve(w))
     section = lines_of(writeup.draft(run.close(), "w"), "## Steps that mattered")
-    start = section.index("```text")
+    start = section.index("```text", section.index("$ ./wide"))
     assert section[start + 1: start + 4] == ["w" * writeup.LINE_CHARS, "t{w}", "```"]
     assert section[start + 5] == f"Output cut: lines over {writeup.LINE_CHARS} characters are cut short."
 

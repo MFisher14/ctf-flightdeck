@@ -15,13 +15,17 @@ accepted flag is one an `l1` event on that challenge reported before it was acce
 The steps that mattered: the first step whose output holds the flag; failing that, the last
 step that ran a file the lane wrote (a shell command naming it, not one that only shows or
 edits it); failing that, the last step before the flag was accepted. The draft says which
-rule picked it, and shows it with the 5 steps before it, outputs cut to 20 lines. A plan the
-lane stated is not a step: it is in the approach.
+rule picked it, and shows it with the 5 steps before it: each command in a fenced block (a
+multi-line one with its lines back), each output in another, cut to 20 lines. A plan the lane
+stated is not a step: it is in the approach (a turn that set the plan and also submitted a
+flag stays a step).
 
-What the transcript cannot tell. A lane's plan change shows up only when it was all the lane
-did in that turn (a "plan: ..." step); otherwise only its last plan, in the transcript's
-header, is known, and the draft says so. The transcript keeps the newest change to each file,
-so a file the lane added and then edited shows as modified, with its last diff.
+What the transcript cannot tell. A lane's plan change shows up only when it was the first
+thing the lane did in that turn and nothing else acted (a "plan: ..." step); otherwise only
+its last plan, in the transcript's header, is known, and the draft says so. A turn with
+several tool calls keeps one in the transcript, and the draft says how many more it made.
+The transcript keeps the newest change to each file, so a file the lane added and then edited
+shows as modified, with its last diff.
 
 Untrusted text. Everything read from a run came from a challenge, a model, a tool or a file
 a lane wrote, and a draft is meant to be read, edited and published. So nothing in it may act
@@ -33,8 +37,8 @@ as Markdown:
 - a one-line value stays plain text only when it is letters, digits, spaces and a few marks
   that mean nothing in Markdown (inline()); anything else becomes a code span whose backtick
   run is longer than any inside it (code());
-- multi-line text (outputs, files, diffs, the flag) goes in a fenced block whose fence is
-  longer than any backtick run inside, with an info string of ours (fenced()).
+- multi-line text (commands, outputs, files, diffs, the flag) goes in a fenced block whose
+  fence is longer than any backtick run inside, with an info string of ours (fenced()).
 
 A draft therefore never holds raw HTML, an entity, a link, an image or a mention from the
 run, and nothing from the run can end a block early or start one. Our own words never use
@@ -59,7 +63,7 @@ from typing import TYPE_CHECKING
 
 from . import fmt
 from .runrecord import ActionLine, EventLine, FileLine, LaneRecord, RunRecord
-from .text import MARK, untrusted
+from .text import MARK, NEWLINE, untrusted
 
 if TYPE_CHECKING:
     from .agent.client import ModelClient, Usage
@@ -80,7 +84,7 @@ _NUMBERED = re.compile(r"\d+\)")  # "1) x" would start an ordered list
 _TICKS = re.compile(r"`+")
 _LANG = re.compile(r"[a-z]*")
 _SURROGATE = re.compile("[\ud800-\udfff]")  # half of a UTF-16 pair: JSON allows one alone; UTF-8 cannot hold it
-_MORE = re.compile(r"\s+\(\+\d+ more\)$")  # agent/driver.py: a turn with several tool calls
+_MORE = re.compile(r"  \(\+(\d+) more\)$")  # agent/driver.py: a turn with several tool calls
 _SEPARATORS = re.compile(r"&&|\|\||[;|&\n]")
 _REDIRECT = re.compile(r"\d*(?:>>?|<<?<?)\s*(?:'[^']*'|\"[^\"]*\"|\S+)")  # > out.txt, < in.txt, <<'EOF'
 _VIEWERS = frozenset(
@@ -326,11 +330,24 @@ def _language(path: str) -> str:
     return _LANGUAGES.get(PurePosixPath(path).suffix.lower(), "text")
 
 
+def _without_more(text: str) -> tuple[str, int]:
+    """A step's text without the "  (+N more)" that agent/driver.py adds for a turn with
+    several tool calls (it keeps one), and N (0 when there is none)."""
+    match = _MORE.search(text)
+    return (text[: match.start()], int(match.group(1))) if match else (text, 0)
+
+
+def _only_plan(text: str) -> bool:
+    """A step that only set the plan. A turn whose other calls did not act either, such as a
+    submit, reads "plan: ...  (+1 more)": it did more than set a plan, so it stays a step."""
+    return text.startswith(PLAN) and _MORE.search(text) is None
+
+
 def _command(step: ActionLine) -> str | None:
     """A shell step's command line ("$ ..."), without the "(+N more)" a multi-call turn adds."""
     if not step.text.startswith("$ "):
         return None
-    return _MORE.sub("", step.text[2:])
+    return _without_more(step.text)[0][2:]
 
 
 def _ran(step: ActionLine, paths: Sequence[str]) -> str | None:
@@ -532,7 +549,7 @@ class _Writer:
         last = ""
         for action in lane.actions:
             if action.kind == "step" and action.text.startswith(PLAN):
-                last = action.text[len(PLAN):]
+                last = _without_more(action.text)[0][len(PLAN):]
                 items.append(f"Turn {action.turn}, the lane's plan: {self.t(last)}")
             elif action.by == "player" and action.text.startswith(NEW_PLAN):
                 last = action.text[len(NEW_PLAN):]
@@ -550,9 +567,7 @@ class _Writer:
     def _steps(self, lane: LaneRecord) -> list[ActionLine]:
         """The steps that mattered; returns every step of the lane up to the solve."""
         self.out("## Steps that mattered", "")
-        steps = [
-            a for a in lane.actions if a.kind == "step" and not a.text.startswith(PLAN) and a.at <= self.solve.at
-        ]
+        steps = [a for a in lane.actions if a.kind == "step" and not _only_plan(a.text) and a.at <= self.solve.at]
         if not steps:
             self.out("The transcript has no steps before the flag was accepted.", "")
             return steps
@@ -562,17 +577,25 @@ class _Writer:
         with_it = f" Here it is with the {before} step{'s' if before != 1 else ''} before it." if before else ""
         self.out(why + with_it, "")
         for step in shown:
-            key = step is steps[index]
-            self.out(f"### Turn {step.turn}" + (f" ({mark})" if key else ""), "")
-            self.out(self.t(step.text) if step.text else "(no command recorded)", "")
-            text, cut = _cut(self._clean(step.output))
-            if not text.strip():
-                self.out("No output recorded.", "")
-                continue
-            self.block(text, cleaned=True)
-            if cut:
-                self.out(f"Output cut: {cut}.", "")
+            self._step(step, mark if step is steps[index] else "")
         return steps
+
+    def _step(self, step: ActionLine, mark: str) -> None:
+        self.out(f"### Turn {step.turn}" + (f" ({mark})" if mark else ""), "")
+        text, more = _without_more(step.text)
+        if text:  # a multi-line command, one line in the transcript, gets its lines back
+            self.block(self._clean(text).replace(NEWLINE, "\n"), cleaned=True)
+        else:
+            self.out("No command recorded.", "")
+        if more:
+            self.out(f"The turn made {more} more tool call{'s' if more != 1 else ''}; the transcript keeps only this one.", "")
+        output, cut = _cut(self._clean(step.output))
+        if not output.strip():
+            self.out("No output recorded.", "")
+            return
+        self.block(output, cleaned=True)
+        if cut:
+            self.out(f"Output cut: {cut}.", "")
 
     def _key(self, lane: LaneRecord, steps: list[ActionLine]) -> tuple[int, str, str]:
         """The step that mattered, why, and how its heading marks it."""
