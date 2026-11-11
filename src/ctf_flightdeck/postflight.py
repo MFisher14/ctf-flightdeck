@@ -13,7 +13,8 @@
   waiting), not a flag's verdict or the live box: the lane's current approval is replayed
   from its pending events;
 - the hints, redirects, forks and escalations that helped (a lane solved that challenge
-  within 10 turns or 15 minutes) and those with no effect seen;
+  within 10 turns or 15 minutes, with a flag it proposed after the step) and those with no
+  effect seen (a step taken while the solving flag already waited did not help);
 - spend by model and the five most expensive lanes;
 - the lanes that gave up, were killed or were stopped, with their reasons.
 
@@ -48,7 +49,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from . import fmt
-from .core.model import FINISHED, ME, AlertKind, EventKind, PendingKind
+from .core.model import FINISHED, ME, ActionKind, Actor, AlertKind, EventKind, PendingKind
 from .runrecord import EventLine, LaneRecord, RunRecord
 from .text import untrusted
 
@@ -79,6 +80,7 @@ BUDGET_ANSWERS = frozenset({"approve", "decline", "kill", "escalate"})
 VERDICTS = frozenset({"approve", "decline"})
 """Interventions that answer the lane's current approval, whatever it is."""
 BUDGET = PendingKind.BUDGET.value
+CANDIDATE = "candidate flag "  # core/deck.py's transcript note when a lane first proposes a flag
 FINISHED_STATES = frozenset(state.value for state in FINISHED)
 ENDED_WITHOUT_FLAG = ("gave up", "killed", "stopped")
 SHOWN_PENDING = frozenset({"budget", "live box"})  # flag approvals show as the flag alert and the submit
@@ -279,6 +281,8 @@ class Judged:
     turns: int | None  # turns the solving lane took after the step
     seconds: float | None
     helped: bool
+    waited: bool = False  # the solving flag was already proposed (waiting for you) before the step
+    since: float | None = None  # when it was first proposed, when waited
 
 
 @dataclass(frozen=True)
@@ -374,6 +378,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     # approval becomes the lane's current one ("queued" ones wait behind it); an approve or
     # decline answers the current one, and the lane's end drops what is left.
     current: dict[str, str] = {}
+    asked: dict[tuple[str, str], int] = {}  # (lane, flag) -> the first pending event asking about it
 
     def challenge(cid: str) -> ChallengeFacts:
         if cid not in challenges:
@@ -478,6 +483,9 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
         elif kind == EventKind.PENDING:
             if event.lane and data.get("queued") is not True:
                 current[event.lane] = _str(data.get("kind"))
+                flag = data.get("flag")
+                if isinstance(flag, str) and flag:
+                    asked.setdefault((event.lane, flag), index)
             if _str(data.get("kind")) not in SHOWN_PENDING:
                 continue
         if cid:
@@ -537,7 +545,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
 
     solved = solves(record)
     stalls = _stalls(events, lanes, steps)
-    judged = _judged(steps, lanes, solved)
+    judged = _judged(steps, lanes, solved, _proposed(record, asked))
     models = [
         ModelSpend(model, int(s[0]), int(s[1]), int(s[2]), float(s[3]), int(s[4])) for model, s in model_spend.items()
     ]
@@ -637,7 +645,27 @@ def _steps_before(head: LaneRecord | None, alert: EventLine) -> tuple[str, ...]:
     return tuple(a.text for a in before if a.kind == "step")[-STEPS_SHOWN:]
 
 
-def _judged(steps: Sequence[Step], lanes: Mapping[str, LaneFacts], solved: Mapping[str, Solve]) -> list[Judged]:
+def _proposed(record: RunRecord, asked: Mapping[tuple[str, str], int]) -> dict[tuple[str, str], tuple[int | None, float | None]]:
+    """When each lane first proposed each flag, by (lane, flag): the index of the first
+    pending event asking about it, and the earliest time known. The transcript's "candidate
+    flag" note is written as the lane proposes it, so it is earlier than the pending event of
+    a flag that waited behind another."""
+    out = {key: (index, _num(record.events[index].at)) for key, index in asked.items()}
+    for lid, head in record.lanes.items():
+        for action in head.actions:
+            if action.kind != ActionKind.NOTE.value or action.by != Actor.DECK.value or not action.text.startswith(CANDIDATE):
+                continue
+            key, at = (lid, action.text[len(CANDIDATE):]), _num(action.at)
+            index, known = out.get(key, (None, None))
+            if at is not None and (known is None or at < known):
+                out[key] = (index, at)
+    return out
+
+
+def _judged(
+    steps: Sequence[Step], lanes: Mapping[str, LaneFacts], solved: Mapping[str, Solve],
+    proposed: Mapping[tuple[str, str], tuple[int | None, float | None]],
+) -> list[Judged]:
     out = []
     for step in steps:
         if step.name not in JUDGED or not step.ok or not step.challenge:
@@ -645,6 +673,10 @@ def _judged(steps: Sequence[Step], lanes: Mapping[str, LaneFacts], solved: Mappi
         solve = solved.get(step.challenge)
         if solve is None or solve.by != "lane" or solve.index < step.index:
             out.append(Judged(step, solve, None, None, False))
+            continue
+        index, at = proposed.get((solve.who, solve.flag or ""), (None, None))
+        if (index is not None and index < step.index) or (at is not None and step.at is not None and at < step.at):
+            out.append(Judged(step, solve, None, None, False, waited=True, since=at))  # its flag came before it
             continue
         solver = lanes.get(solve.who)
         turns = solver.turns_between(step.index, solve.index) if solver else 0
@@ -970,7 +1002,8 @@ def _intervention_section(flight: Flight) -> list[str]:
     no_effect = [j for j in flight.judged if not j.helped]
     out += [
         f"{_plural(len(steps), 'intervention')}, {len(refused)} refused. A hint, redirect, fork or escalation "
-        f"helped when a lane solved that challenge within {HELP_TURNS} turns or {HELP_SECONDS // 60} minutes of it.",
+        f"helped when a lane solved that challenge within {HELP_TURNS} turns or {HELP_SECONDS // 60} minutes of it, "
+        "with a flag it found after it.",
         "",
         f"### Helped ({len(helped)})", "",
     ]
@@ -996,6 +1029,9 @@ def _judged_line(judged: Judged, flight: Flight) -> str:
     solve = judged.solve
     if solve is None:
         return head + "; not solved"
+    if judged.waited:
+        since = f" since {_clock(judged.since)}" if judged.since is not None else ""
+        return head + f"; {md_text(solve.who)} solved it with a flag already waiting{since}"
     if judged.turns is None:
         return head + f"; solved by {_who(solve)}"
     return head + (

@@ -693,6 +693,57 @@ def test_helped_means_a_solve_within_ten_turns_or_fifteen_minutes(tmp_path, turn
     assert len(items(found["No effect seen (0)" if helped else "No effect seen (1)"])) == (0 if helped else 1)
 
 
+@pytest.mark.parametrize(
+    "step, at", [("escalate", 50), ("hint", 50), ("hint", 40)], ids=["escalate", "hint", "hint at the same instant"],
+)
+def test_a_step_taken_while_the_solving_flag_waited_did_not_help(tmp_path, step, at):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.at(40)
+    run.turn(lane, "cat flag.txt", flag="t{x}")  # it waits for your approval
+    run.at(at)  # at 40 only the log's order says the flag came first
+    assert run.do(iv.Escalate(lane) if step == "escalate" else iv.Hint(lane, "try harder")).ok
+    run.at(60)
+    run.do(iv.Approve(lane))
+    record = run.close()
+    found = sections(report(record), "### ")
+    assert found["Helped (0)"] == ["None."]
+    (line,) = items(found["No effect seen (1)"])
+    assert line.endswith("(on X); L01 solved it with a flag already waiting since T+00:00:40")
+    assert "Interventions: 0 helped, 1 no effect seen" in summary(record).splitlines()
+
+
+def test_a_hint_to_one_lane_did_not_help_another_lanes_flag_that_already_waited(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)], ["x", "x"])  # two lanes on X
+    run.at(40)
+    run.turn("L02", "cat flag.txt", flag="t{x}")
+    run.at(50)
+    run.do(iv.Hint("L01", "look at the headers"))
+    run.at(60)
+    run.do(iv.Approve("L02"))
+    (line,) = items(sections(report(run.close()), "### ")["No effect seen (1)"])
+    assert line.startswith("T+00:00:50 · you: hint L01: look at the headers")
+    assert line.endswith("(on X); L02 solved it with a flag already waiting since T+00:00:40")
+
+
+def test_a_flag_queued_behind_another_was_found_when_the_lane_proposed_it(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.at(40)
+    run.turn(lane, "submit two", flag="t{a}")  # one reply with two candidates (agent/driver.py)...
+    run.deck.report(lane, TurnReport(turn=False, flag="t{x}"))  # ...so t{x} waits behind t{a}
+    run.at(50)
+    run.do(iv.Hint(lane, "try harder"))
+    run.at(60)
+    run.do(iv.Approve(lane))  # t{a} is rejected and t{x} comes up only now
+    run.do(iv.Approve(lane))
+    (line,) = items(sections(report(run.close()), "### ")["No effect seen (1)"])
+    assert line.endswith("(on X); L01 solved it with a flag already waiting since T+00:00:40")
+
+
 def test_a_solve_by_a_teammate_after_a_hint_is_not_the_hint_helping(tmp_path):
     run = Script(tmp_path)
     run.release([Challenge("x", "X", "misc", 10)])
