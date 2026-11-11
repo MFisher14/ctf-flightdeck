@@ -367,6 +367,31 @@ def test_stdout_lists_exactly_the_saved_files_in_order(default_run):
     assert lines == [str(path) for path in sorted(out.iterdir())]
 
 
+def accounted(saved: list[str], skipped: list[str]) -> list[str]:
+    """The moments a run covered: each saved file's moment, and each moment a skip line names."""
+    names = []
+    for name in saved:
+        stem = Path(name).stem[3:]
+        names.append("alert" if re.fullmatch(ALERT_SHOT, stem) else stem)
+    for line in skipped:
+        head, sep, _ = line.partition(": ")
+        assert sep, f"a skip line says why: {line!r}"
+        names += [part.strip() for part in head.split(",")]
+    return names
+
+
+@pytest.mark.parametrize("scenario", ["sstv", "team"])
+def test_every_moment_is_either_saved_or_reported_as_skipped(scenario, tmp_path):
+    result = screenshots.capture(scenario, tmp_path)
+    assert sorted(accounted([p.name for p in result.saved], result.skipped)) == sorted(MOMENTS)
+
+
+def test_the_cli_runs_account_for_every_moment_too(default_run, flag_runs):
+    for result, _ in (default_run, flag_runs[0]):
+        skipped = [line.removeprefix("skipped ") for line in result.stderr.splitlines() if line.startswith("skipped ")]
+        assert sorted(accounted(result.stdout.splitlines(), skipped)) == sorted(MOMENTS)
+
+
 def test_the_default_scenario_skips_no_moment(default_run):
     result, _ = default_run
     assert result.exit_code == 0, result.output
@@ -489,7 +514,7 @@ def test_the_flag_scenario_reports_the_moments_it_does_not_have(flag_runs):
     assert result.exit_code == 0, result.output
     skipped = result.stderr.splitlines()
     assert any(line.startswith("skipped wave-drop: ") for line in skipped), skipped
-    assert any(line.startswith("skipped alert: ") for line in skipped), skipped
+    assert any(line.startswith("skipped alert, command-menu, focus-lane, chat, focus-after, diff: ") for line in skipped), skipped
     names = [p.name for p in out.iterdir()]
     assert not [name for name in names if "wave-drop" in name or "-alert-" in name]
     assert any(name.endswith("-approve-submit.svg") for name in names)  # it did play

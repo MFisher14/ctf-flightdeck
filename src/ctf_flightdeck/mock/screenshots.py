@@ -27,6 +27,14 @@ NARROW = (120, 36)
 # The course alerts, in the order the runner looks for one to show and answer.
 PREFERRED = (AlertKind.HINT, AlertKind.DIRECTION, AlertKind.EFFORT, AlertKind.LOOP, AlertKind.STALL)
 
+# Every moment, in order. Each run saves a moment (as NN-<moment>[-detail].svg) or reports it
+# in CaptureResult.skipped as "<moment>[, <moment>...]: why".
+MOMENTS = (
+    "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
+    "approve-pending", "approve-submit", "team-stop", "attention-sort", f"narrow-{NARROW[0]}x{NARROW[1]}", "fork-prompt",
+    "kill-prompt", "take-over", "challenge-card", "help",
+)
+
 
 @dataclass
 class CaptureResult:
@@ -132,8 +140,13 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             if lane.files:
                 await run.press("slash", *"diff", "enter")
                 await run.shot("diff")
+            else:
+                result.skipped.append(f"diff: {lane.id} changed no files")
         else:
-            result.skipped.append("alert: no lane raised a course alert (off-hint, wrong way, effort, loop, stall)")
+            result.skipped.append(
+                "alert, command-menu, focus-lane, chat, focus-after, diff: "
+                "no lane raised a course alert (off-hint, wrong way, effort, loop, stall)"
+            )
 
         # Approve a submit from the focus view; the board updates in the fleet.
         def waiting_flag() -> Lane | None:
@@ -150,7 +163,7 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             app.fleet.select_challenge(lane.challenge_id)
             await run.shot("approve-submit")
         else:
-            result.skipped.append("approve-submit: no lane found a flag")
+            result.skipped.append("approve-pending, approve-submit: no lane found a flag")
 
         # Team stop: a teammate's solve stops a lane by itself.
         def stopped_lane() -> Lane | None:
@@ -191,6 +204,8 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             await run.press("k")
             await run.shot("kill-prompt")
             await run.press("escape")
+        else:
+            result.skipped.append("fork-prompt, kill-prompt: no active lane left")
         running = next((x for x in deck.active_lanes() if x.state is LaneState.RUNNING), None)
         if running is not None:
             app.fleet.select_lane(running.id)
@@ -205,6 +220,8 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             await run.press("enter")
             await run.shot("challenge-card")
             await run.press("escape")
+        else:
+            result.skipped.append("challenge-card: no parked or queued challenge without a lane")
         await run.press("question_mark")
         await run.shot("help")
         await run.press("escape")
