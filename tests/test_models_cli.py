@@ -22,6 +22,17 @@ from ctf_flightdeck.hardware import OLLAMA, SERVERS
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def no_real_machine(monkeypatch):
+    """A test that runs the command without saying which machine it is on fails, rather than
+    probing this one (and asking its own Ollama or MLX server)."""
+
+    def unsaid(environ=os.environ):
+        raise AssertionError("this test did not say which machine `flightdeck models` runs on: call on()")
+
+    monkeypatch.setattr(hardware, "RealHost", unsaid)
+
+
 def tags(*models: tuple[str, int]) -> bytes:
     return json.dumps({"models": [{"name": name, "size": size} for name, size in models]}).encode()
 

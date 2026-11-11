@@ -15,7 +15,8 @@
 # docs/MODELS.md (one machine: an Apple M4 Max with 36 GB): `ollama show` output
 # (logs/ollama-show-*.txt) and the "disk" record of each runtime's measure file
 # (results/<runtime>-<model>.measure.json), named beside each value. A value it did not record
-# is left out, and `flightdeck models` says it cannot tell whether that build fits.
+# is left out: `flightdeck models` then says it cannot tell whether that build fits, unless
+# Ollama on the player's machine has pulled it and gives its size.
 # The memory a model needs is not stored here: model_catalog.py estimates it as its weights
 # (size_bytes) plus an allowance for the context (CONTEXT_ALLOWANCE). An estimate, not a
 # measurement.
