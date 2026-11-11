@@ -9,7 +9,8 @@ and then the model APIs themselves, asked once whether they take the key and ser
 ladder's models (apicheck.py). Only then does it pull a CTFd board (under the pull policy
 "confirm", after the player says yes). Then the console starts, and the board is released
 on the console's event loop, so lanes run there (the deck's single-thread rule); so do the
-run's background tasks (CTFd waves and solves, the team watcher), which shutdown() stops.
+run's background tasks (CTFd waves, solves and submits, the team watcher), which shutdown()
+stops.
 
 An event profile's policies, stage by stage (preflight.py):
 - agents: auto or confirm start lanes as usual (starting play is the player's yes); manual
@@ -33,6 +34,13 @@ when CTFd did not say. Its lanes stop, and the solve is a platform event the rep
 lives only in the CTFd client and verifier: it is never printed, logged, or put in a note or
 an error.
 
+A CTFd run's flags go to CTFd from one worker task (_Submits, the deck's submitter), one at a
+time and off the console's loop: the lane carries on, and CTFd's answer reaches the deck when
+it is in (Deck.platform_verdict). A challenge whose tries CTFd counts (its max_attempts, or a
+wrong flag's "N tries remaining") gets no flag without the player, under auto too. A flag
+still on its way when the run ends is named on the way out, as not known to have been
+submitted.
+
 The team channel (team.py): mirror() writes our claims, solves and live-box holds to the
 team folder as the deck makes them, and the team watcher applies the teammates' marks. A
 challenge the team folder shows as solved, or claimed by a teammate, is not queued.
@@ -42,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import getpass
 import json
 import math
@@ -64,7 +73,7 @@ from .config import Config, ConfigError, api_key, fallback_key, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
-from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, Solves, check_site, load_ids, pull
+from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, Solves, Verdict, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
     USES_PLATFORM,
@@ -175,7 +184,7 @@ class Run:
     profile: EventProfile | None = None
     policies: Policies | None = None
     ctfd: CTFdLink | None = None
-    verifier: CTFdVerifier | None = None  # the deck's verify() for a CTFd board, when submit uses the platform
+    verifier: CTFdVerifier | None = None  # what submits a CTFd board's flags, when submit uses the platform
     team: TeamChannel | None = None
     _notes: list[str] = field(default_factory=list, repr=False)
     _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
@@ -185,6 +194,7 @@ class Run:
     _team_stop: asyncio.Event | None = field(default=None, repr=False)
     _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
     _errors: list[str] = field(default_factory=list, repr=False)
+    _submits: _Submits | None = field(default=None, repr=False)  # the deck's submitter, with the verifier
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -210,8 +220,10 @@ class Run:
 
     @property
     def errors(self) -> list[str]:
-        """Problems to show when the run has ended: the lanes' cleanup, the team folder's."""
-        return [*self.driver.errors, *self._errors]
+        """Problems to show when the run has ended: the lanes' cleanup, the team folder's, the
+        flags still on their way to CTFd."""
+        submits = self._submits.errors if self._submits is not None else []
+        return [*self.driver.errors, *submits, *self._errors]
 
     def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
         """The challenges (default: the board's) in triage order: cheap first (fewest points,
@@ -235,6 +247,8 @@ class Run:
         if self.team is not None:
             self._watcher = TeamWatcher(self.team, self.deck)
             state = self._watcher.poll()  # its marks wait until the board is on the deck
+        if self._submits is not None:  # before any lane starts: it sends their flags to CTFd
+            self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if state is not None:
             self._watcher.apply(state)
@@ -261,6 +275,8 @@ class Run:
             if isinstance(outcome, Exception):
                 self._errors.append(f"{task.get_name()}: {type(outcome).__name__}: {outcome}")
         await self.driver.shutdown()
+        if self._submits is not None:  # after the lanes, so a flag one handed over as it stopped is named too
+            self._errors += self._submits.unsent()
         if self.team is not None:
             try:
                 self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
@@ -316,14 +332,15 @@ class Run:
         solved by whom CTFd says (CTFdLink.who): its lanes stop, it leaves the queue, and a
         platform event records it for the reports. `before_run`: CTFd listed it before the
         run started. A challenge whose flag the player is submitting by hand waits for their
-        answer (it is then the lane's solve)."""
+        answer (it is then the lane's solve), and so does one whose flag is on its way to CTFd
+        (its answer may be that very solve)."""
         link = self.ctfd
         assert link is not None
         for cid in link.solved_board_ids():
             ch = self.deck.challenges.get(cid)
             if ch is None or ch.closed:
                 continue
-            if self._confirming(cid) and cid not in link.answered:
+            if (self._confirming(cid) and cid not in link.answered) or self.deck.submitting(cid):
                 continue
             self.deck.platform_solved(cid, link.who(cid), before_run=before_run)
 
@@ -524,7 +541,7 @@ def prepare_run(options: RunOptions) -> Run:
     except ValueError as exc:  # a key no HTTP header can carry; never shown
         raise RunError(f"the model API cannot be used: {exc}") from None
     instance = options.instance
-    link = verifier = None
+    link = verifier = submits = None
     if first is not None:
         assert profile is not None and profile.url is not None and plan.policies is not None and token is not None
         link = CTFdLink(
@@ -543,7 +560,8 @@ def prepare_run(options: RunOptions) -> Run:
             verifier = CTFdVerifier(profile.url, token, first.ids)
     if verifier is not None:
         assert link is not None
-        verify = _OnCTFd(verifier, link)
+        submits = _Submits(verifier, link)
+        verify = _never_verify  # flags go to CTFd through the submitter, never through verify()
     elif plan.platform and board.answers:
         verify = AnswerVerifier(board.answers)
     else:
@@ -580,9 +598,9 @@ def prepare_run(options: RunOptions) -> Run:
             l1=l1,
             instance=instance,
         )
-    deck = Deck(deck_config, driver, RunClock(), verify)
-    if isinstance(verify, _OnCTFd):
-        verify.deck = deck
+    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits)
+    if submits is not None:
+        submits.deck = deck
     log.attach(deck)
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
@@ -593,10 +611,10 @@ def prepare_run(options: RunOptions) -> Run:
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
-        _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror,
+        _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
     )
-    if isinstance(verify, _OnCTFd):
-        verify.solved = run._apply_solves
+    if submits is not None:
+        submits.solved = run._apply_solves
     return run
 
 
@@ -812,45 +830,113 @@ def _team_channel(options: RunOptions, plan: _Plan) -> TeamChannel | None:
 # ---------------------------------------------------------------------- the CTFd board
 
 
-class _OnCTFd:
-    """The deck's verify() for a CTFd board: CTFdVerifier's answer and, when CTFd did not
-    judge the flag (paused, rate-limited, out of tries, no answer, part of the answer), its
-    reason as a warning on the deck, which then asks the player to submit the flag by hand.
+class _Submits:
+    """The deck's submitter for a CTFd board (Deck(submitter=...)): flags go to CTFd from one
+    worker task on the console's loop, one at a time, so a slow CTFd never holds the console
+    or a lane up.
 
+    The deck hands a flag over by calling this, which only queues it. work() sends it with
+    CTFdVerifier.submit() in a thread (asyncio.to_thread: the call returns its Verdict and
+    sets nothing the loop reads), then, back on the loop, does the run's bookkeeping and gives
+    the deck the answer (Deck.platform_verdict), with the tries CTFd says are left. When CTFd
+    did not judge the flag (paused, rate-limited, out of tries, no answer, part of the answer)
+    its reason is a warning on the deck, which then asks the player to submit it by hand.
     "already solved" (by the account, so by the team) is news, not a problem: the run takes
     CTFd's word for it, as for a solve its poll finds, without waiting for the player's
-    answer about this flag. That happens once the deck's call is over, never from inside it."""
+    answer about this flag. A flag still on its way when the run ends is named then
+    (unsent()), as not known to have been submitted."""
 
     def __init__(self, verifier: CTFdVerifier, link: CTFdLink) -> None:
         self.verifier = verifier
         self.link = link
         self.deck: Deck | None = None  # set once the deck exists
         self.solved: Callable[[], None] | None = None  # the run's: close what CTFd lists as solved
+        self.queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (lane, challenge, flag) to send, in order
+        self.sending: tuple[str, str, str] | None = None  # the one sent now, until its answer is applied
+        self.errors: list[str] = []  # bookkeeping that failed (a flightdeck bug), shown when the run ends
 
-    def __call__(self, challenge_id: str, flag: str) -> bool | None:
-        ok = self.verifier(challenge_id, flag)
-        attempt = self.verifier.last_attempt
-        number = self.verifier.ids.get(challenge_id)
-        if ok is None and attempt is not None and attempt.status == "already_solved" and number is not None:
-            self.link.answered.add(challenge_id)
-            self.link.solved.add(number)
+    def __call__(self, lane_id: str, challenge_id: str, flag: str) -> None:
+        self.queue.put_nowait((lane_id, challenge_id, flag))
+
+    async def work(self) -> None:
+        """Send each flag in turn, and apply CTFd's answer on this loop. Cancelled at shutdown."""
+        while True:
+            item = await self.queue.get()
+            self.sending = item
+            lane_id, challenge_id, flag = item
             try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:  # the deck is driven without a loop (no run): the next poll applies it
-                loop = None
-            if loop is not None and self.solved is not None:
-                loop.call_soon(self.solved)
-            return ok
-        reason = self.verifier.last_error
-        if ok is None and reason and self.deck is not None:
-            ch = self.deck.challenges.get(challenge_id)
+                verdict = await asyncio.to_thread(self.verifier.submit, challenge_id, flag)
+            except Exception as exc:  # a bug in the verifier: the outcome is not known, and the worker goes on
+                verdict = Verdict(None, error=(
+                    f"flightdeck could not submit it ({type(exc).__name__}: {exc}); it may have reached CTFd: check the "
+                    "challenge there before submitting it again"
+                ))
+            try:
+                self.answer(lane_id, challenge_id, flag, verdict)
+            except Exception as exc:  # a bug: said now and at the end, and the next flag still goes
+                problem = f"CTFd: could not apply CTFd's answer to {_show(flag)}: {type(exc).__name__}: {exc}"
+                self.errors.append(problem)
+                with contextlib.suppress(Exception):
+                    self.deck.warn(problem, challenge=challenge_id, data={"source": "ctfd"})
+            self.sending = None
+
+    def answer(self, lane_id: str, challenge_id: str, flag: str, verdict: Verdict) -> None:
+        """CTFd's answer to a flag, on the deck's thread: the run's bookkeeping, then the deck's."""
+        deck, link = self.deck, self.link
+        assert deck is not None
+        attempt = verdict.attempt
+        tries = attempt.tries_left if attempt is not None else None
+        detail = verdict.error or (attempt.message if attempt is not None else "")
+        number = self.verifier.ids.get(challenge_id)
+        if verdict.ok is None and attempt is not None and attempt.status == "already_solved" and number is not None:
+            link.answered.add(challenge_id)
+            link.solved.add(number)
+            deck.platform_verdict(lane_id, flag, None, detail, tries_left=tries)
+            if self.solved is not None:
+                self.solved()
+            return
+        if verdict.ok is None and verdict.error:
+            ch = deck.challenges.get(challenge_id)
             name = untrusted(ch.name if ch is not None else challenge_id, one_line=True)
-            self.deck.warn(
-                f"CTFd did not judge {untrusted(flag, one_line=True)} for {name}: {reason}",
+            deck.warn(
+                f"CTFd did not judge {untrusted(flag, one_line=True)} for {name}: {verdict.error}",
                 challenge=challenge_id,
                 data={"source": "ctfd"},
             )
-        return ok
+        deck.platform_verdict(lane_id, flag, verdict.ok, detail, tries_left=tries)
+
+    def unsent(self) -> list[str]:
+        """After the worker has stopped: the flags on their way to CTFd when the run ended,
+        said for the player, made safe to print. The one being sent may have reached CTFd;
+        the others did not leave flightdeck."""
+        deck = self.deck
+        out: list[str] = []
+
+        def named(lane_id: str, challenge_id: str, flag: str) -> str:
+            ch = deck.challenges.get(challenge_id) if deck is not None else None
+            return f"{_show(flag)} ({lane_id}, {_show(ch.name if ch is not None else challenge_id)})"
+
+        if self.sending is not None:
+            lane_id, challenge_id, flag = self.sending
+            out.append(
+                f"CTFd: {named(lane_id, challenge_id, flag)} was on its way to CTFd when the run ended, so it is not known "
+                "to have been submitted: check the challenge on CTFd before you submit it again"
+            )
+        while not self.queue.empty():
+            out.append(f"CTFd: {named(*self.queue.get_nowait())} was not submitted: it was waiting to go to CTFd when the run ended")
+        if deck is not None:
+            for challenge_id in deck.challenges:
+                for lane_id, flag in deck.submitting(challenge_id)[1:]:
+                    out.append(
+                        f"CTFd: {named(lane_id, challenge_id, flag)} was not submitted: it was waiting for the answer to "
+                        "another flag of that challenge when the run ended"
+                    )
+        return out
+
+
+def _never_verify(challenge_id: str, flag: str) -> bool | None:
+    """The deck's verify() when flags go to CTFd through its submitter: the deck never calls it."""
+    raise RuntimeError("a CTFd run's flags go to CTFd through the run's submitter, never through verify()")
 
 
 @dataclass(frozen=True)

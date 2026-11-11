@@ -498,7 +498,7 @@ def test_flags_go_to_ctfd_through_the_verifier_a_wrong_one_then_the_right_one(tm
                 await wait_for(lambda: lane.pending is not None and lane.pending.flag == flag, f"{flag} to approve")
                 assert lane.pending.kind is PendingKind.SUBMIT  # submit confirm: the player approves first
                 assert run.deck.apply(iv.Approve(lane.id)).ok
-            assert lane.state is LaneState.SOLVED
+            await wait_for(lambda: lane.state is LaneState.SOLVED, "CTFd's answer to the right flag")
 
         play(run, body)
         sent = [r.json for r in fake.to("/api/v1/challenges/attempt")]
@@ -518,6 +518,7 @@ def test_a_flag_ctfd_does_not_judge_says_why_and_waits_for_the_player(tmp_path, 
             lane = run.deck.lanes["L01"]
             await wait_for(lambda: lane.pending is not None, "the flag")
             assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: lane.pending is not None, "CTFd's answer")
             assert lane.pending.kind is PendingKind.CONFIRM and lane.pending.flag == "test{hello}"  # you submit it
 
         play(run, body)
