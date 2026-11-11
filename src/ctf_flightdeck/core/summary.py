@@ -10,25 +10,36 @@ four commands and the alerts. lane_summary() says more, in this order:
     Last steps (n of m):              then one line per step, newest last:
       turn 12: the command → its output
     Files changed: path (status, turn n), ...
-    Candidate flags: flag (what became of it); ...
+    Candidate flags: "flag" (what became of it); ...
+    Not the flag: "flag" (why); ...                  only when a flag is known not to be it
     Open alerts: label: reason; ...
     Player's messages: text (turn n); ...
 
 Everything that came from a challenge, a lane, a tool, a model or the player is untrusted.
 Each such field is folded onto one line (text.untrusted with one_line=True) and then
 shortened, so no value can start a line of its own: the lines and their labels are
-flightdeck's. The whole summary stays within max_chars: the oldest steps go first; if the
+flightdeck's. A flag is also shown as a JSON string (in double quotes, with its own quotes
+and backslashes escaped), so where it ends is plain and no flag text can pass for a
+verdict. A model gets the summary inside agent/prompts.fenced(), which marks all of it
+as data and removes anything that reads as a fence marker.
+
+The whole summary stays within max_chars: the oldest steps go first; if the
 other lines alone are still too long, the longest of them are cut to fair shares.
 
-What became of a candidate flag is read from the deck's own notes in the lane's log (the
-deck writes them; a lane's steps, which a model writes, are never read for it), so it
-follows deck.py's wording; tests/test_summary.py pins that wording through a real Deck.
+What became of a lane's candidate flags is read from its log, in order: the deck's own
+notes (a lane's steps, which a model writes, are never read for it) and the player's
+answers. The kind and flag of each approval come from the PENDING event the deck logs
+whenever an approval comes up, so a decline counts against a flag only when the player
+declined a submit. Which flags are known not to be the flag comes from Deck.not_flag().
+The notes are matched by deck.py's wording; tests/test_summary.py pins it through a real
+Deck.
 """
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from .. import fmt
@@ -50,7 +61,8 @@ COMMAND = 160
 OUTPUT = 160
 PATH = 100  # a file the lane changed
 STATUS = 20
-FLAG = 100
+FLAG = 100  # before it is quoted
+WHY = 80  # why a flag is known not to be the flag
 ALERT = 240  # an alert's label and reason
 MESSAGE = 200
 RESULT = 160  # how a finished lane ended
@@ -58,12 +70,13 @@ RESULT = 160  # how a finished lane ended
 # How many shown: the rest are counted.
 HANDOUT = 12  # the first ones, in board order
 FILES = 12  # the newest ones
-FLAGS = 8  # the newest ones
+FLAGS = 8  # the newest ones (candidate flags, and flags known not to be the flag)
 MESSAGES = 6  # the newest ones
 
-# The deck's notes about flags (deck.py: _candidate, _verdict, _decline), matched exactly.
+# The deck's notes about candidate flags (deck.py: _candidate, _verdict), matched exactly.
 CANDIDATE = "candidate flag "
 MALFORMED = re.compile(r"candidate (?P<flag>.*) does not match the flag format; not submitted", re.DOTALL)
+AGAIN = re.compile(r"candidate (?P<flag>.*) again; not asked: .*", re.DOTALL)  # a flag known not to be it
 SUBMITTED = "submitted "
 VERDICTS = (  # how the note ends (no ending is the end of another), and what it means
     (": correct (you said so)", "correct"),
@@ -71,7 +84,7 @@ VERDICTS = (  # how the note ends (no ending is the end of another), and what it
     (": correct", "correct"),
     (": incorrect", "wrong"),
 )
-DECLINED = "declined: submit "
+DECLINED = "declined: "  # the player's note on declining the approval that was up (deck.py: _decline)
 
 
 def lane_summary(
@@ -91,7 +104,17 @@ def lane_summary(
         raise ValueError(f"`before` is the summary of {before.lane}, not of {lane.id}")
     challenge = deck.challenges[lane.challenge_id]
     head = [_challenge_line(challenge), _plan_line(lane), _so_far_line(deck, lane)]
-    tail = [_files_line(lane), _flags_line(deck, lane), _alerts_line(lane, before), _messages_line(lane)]
+    tail = [
+        line
+        for line in (
+            _files_line(lane),
+            _flags_line(deck, lane),
+            _not_flags_line(deck, lane),
+            _alerts_line(lane, before),
+            _messages_line(lane),
+        )
+        if line is not None
+    ]
     every_step = [a for a in lane.actions if a.kind is ActionKind.STEP]
     steps = [_step_line(a.turn, a.text, a.output) for a in every_step[-STEPS:]]
     while True:
@@ -162,8 +185,28 @@ def _files_line(lane: Lane) -> str:
 
 
 def _flags_line(deck: Deck, lane: Lane) -> str:
-    items = [f"{_one(flag, FLAG)} ({', then '.join(fates)})" for flag, fates in _flag_fates(deck, lane).items()]
+    items = [f"{_quoted(flag)} ({', then '.join(fates)})" for flag, fates in _flag_fates(deck, lane).items()]
     return _listing("Candidate flags", items, FLAGS)
+
+
+def _not_flags_line(deck: Deck, lane: Lane) -> str | None:
+    """The flags known not to be the flag of the lane's challenge, found by any lane, with
+    the deck's reason (Deck.not_flag); None if there are none. Every such flag was up for
+    approval (a PENDING event) or submitted (a SUBMIT event): they are listed in the order
+    they first came up."""
+    seen: set[str] = set()
+    items: list[str] = []
+    for event in deck.events:
+        if event.challenge != lane.challenge_id or event.kind not in (EventKind.PENDING, EventKind.SUBMIT):
+            continue
+        flag = event.data.get("flag")
+        if not isinstance(flag, str) or flag in seen:
+            continue
+        seen.add(flag)
+        why = deck.not_flag(lane.challenge_id, flag)
+        if why is not None:
+            items.append(f"{_quoted(flag)} ({_one(why, WHY)})")
+    return _listing("Not the flag", items, FLAGS) if items else None
 
 
 def _alerts_line(lane: Lane, before: EscalationSummary | None) -> str:
@@ -188,16 +231,31 @@ def _messages_line(lane: Lane) -> str:
 
 def _flag_fates(deck: Deck, lane: Lane) -> dict[str, list[str]]:
     """Each candidate flag (in the order the lane found them) and what became of it, in
-    order. Read from the deck's notes and the lane's approvals only."""
+    order. Read from the deck's notes, the player's answers and the approvals only."""
     flag_re = re.compile(deck.config.flag_format)
+    approvals = _approvals(deck, lane)
+    up: Mapping[str, object] | None = None  # the approval that is up: its PENDING event's data
     fates: dict[str, list[str]] = {}
-    for action in lane.actions:
+    for n, action in enumerate(lane.actions):
         text = action.text
-        if action.by is Actor.DECK and action.kind is ActionKind.NOTE:
+        if action.by is Actor.DECK and action.kind is ActionKind.APPROVAL:
+            up = next(approvals, None)
+            if up is None or up.get("detail") != text:
+                raise RuntimeError(
+                    f"{lane.id}'s log and the deck's PENDING events disagree about the approval at "
+                    f"entry {n}, so the summary cannot tell what the player approved or declined"
+                )
+            if up.get("kind") in FLAG_PENDING and isinstance(up.get("flag"), str):
+                fates.setdefault(str(up["flag"]), [])
+        elif action.by is Actor.DECK and action.kind is ActionKind.NOTE:
             if text.startswith(CANDIDATE) and flag_re.fullmatch(text[len(CANDIDATE):]):
                 fates.setdefault(text[len(CANDIDATE):], [])
             elif (malformed := MALFORMED.fullmatch(text)) is not None:
                 _fate(fates, malformed["flag"], "not the flag format")
+            elif (again := AGAIN.fullmatch(text)) is not None and (
+                deck.not_flag(lane.challenge_id, again["flag"]) is not None  # the deck says so only of such a flag
+            ):
+                _fate(fates, again["flag"], "not asked again")
             elif text.startswith(SUBMITTED):
                 for suffix, fate in VERDICTS:
                     if text.endswith(suffix):
@@ -206,9 +264,11 @@ def _flag_fates(deck: Deck, lane: Lane) -> dict[str, list[str]]:
                             _fate(fates, flag, fate)
                         break
         elif action.by is Actor.PLAYER and action.kind is ActionKind.PLAYER and text.startswith(DECLINED):
-            flag = text[len(DECLINED):]
-            if flag in fates:  # a submit the player declined (not a live box or a budget)
-                _fate(fates, flag, "declined by the player")
+            # The player said no to the approval that was up. Only a declined submit is a
+            # flag not submitted: a confirmation answered no is a verdict (a note of its
+            # own), and a live box or a budget is no flag, whatever its detail says.
+            if up is not None and up.get("kind") == PendingKind.SUBMIT and isinstance(up.get("flag"), str):
+                _fate(fates, str(up["flag"]), "declined by the player")
     for pending in [lane.pending, *lane.waiting]:
         if pending is not None and pending.kind in FLAG_PENDING and pending.flag is not None:
             if pending.kind is PendingKind.SUBMIT:
@@ -219,6 +279,15 @@ def _flag_fates(deck: Deck, lane: Lane) -> dict[str, list[str]]:
         if not said:
             said.append("not answered before the lane ended" if lane.finished else "not answered")
     return fates
+
+
+def _approvals(deck: Deck, lane: Lane) -> Iterator[Mapping[str, object]]:
+    """The data (kind, detail, flag) of each approval that came up on the lane, in order:
+    the deck logs a PENDING event with each APPROVAL entry in the lane's log. A PENDING
+    event marked "queued" is an approval waiting behind another: it comes up later."""
+    for event in deck.events:
+        if event.kind is EventKind.PENDING and event.lane == lane.id and not event.data.get("queued"):
+            yield event.data
 
 
 def _fate(fates: dict[str, list[str]], flag: str, fate: str) -> None:
@@ -239,6 +308,12 @@ def _one(text: str, cap: int) -> str:
     text = text.strip()
     folded = untrusted(text[: cap + 1], one_line=True)
     return folded if len(folded) <= cap else folded[: cap - 1] + CUT
+
+
+def _quoted(flag: str) -> str:
+    """A flag on one line, at most FLAG characters, as a JSON string: in double quotes, its
+    own quotes and backslashes escaped, so a flag cannot seem to end early."""
+    return json.dumps(_one(flag, FLAG), ensure_ascii=False)
 
 
 def _count(n: int, noun: str) -> str:
