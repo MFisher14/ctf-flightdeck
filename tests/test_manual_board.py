@@ -321,6 +321,12 @@ def test_a_bad_challenge_json_names_the_file_and_the_problem(board, content, pro
     assert problem in message
 
 
+def test_a_listed_file_outside_the_challenge_directory_is_refused_even_when_it_exists(board):
+    put(board / "secret.txt", "next to the challenge, not in it")
+    challenge(board, "sample-one", spec(files=["../secret.txt"]))
+    assert '"../secret.txt" must be a relative path inside the challenge directory' in board_error(board)
+
+
 def test_a_challenge_json_that_is_not_utf8_is_an_error(board):
     directory = challenge(board, "sample-one")
     put(directory / "challenge.json", b'{"name": "\xff"}')
