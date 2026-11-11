@@ -15,7 +15,8 @@ Rules the deck enforces:
   hand); a platform over the network (CTFd) gets the flag through the submitter instead
   (core/driver.py), which only queues it: the lane carries on (sending() names its flags on
   their way), and the answer comes back through platform_verdict(). One flag at a time goes
-  to the platform per challenge; another waits its turn;
+  to the platform per challenge; another waits its turn. A lane that gives up meanwhile
+  ends once the answer is in;
 - when that platform counts the tries at a challenge's flag (Challenge.limited: the board
   says so, or the platform did), a flag for it waits for the player under "auto" too, so
   flightdeck never spends one of those tries on its own; each approval says how many are
@@ -542,7 +543,9 @@ class Deck:
         if rep.gave_up is not None:
             if self._has_submit(lane):
                 lane.gave_up_later = rep.gave_up
-                self._note(lane, f"gave up ({rep.gave_up}), but a candidate flag waits for you")
+                waits = ("a candidate flag waits for you" if self._flag_waits(lane)
+                         else "its flag is on its way to the platform: it ends once the answer is in")
+                self._note(lane, f"gave up ({rep.gave_up}), but {waits}")
             else:
                 self._finish(lane, LaneState.GAVE_UP, rep.gave_up, then=ChallengeStatus.PARKED)
                 return
@@ -1062,9 +1065,11 @@ class Deck:
 
     def _has_submit(self, lane: Lane) -> bool:
         """A flag of the lane waits: for the player, or for the platform's answer."""
-        if any(p.kind in FLAG_PENDING for p in ([lane.pending] if lane.pending else []) + lane.waiting):
-            return True
-        return any(lane.id in item.lanes for item in self._lines.get(lane.challenge_id, ()))
+        return self._flag_waits(lane) or bool(self.sending(lane.id))
+
+    def _flag_waits(self, lane: Lane) -> bool:
+        """A flag of the lane waits for the player (to approve it, or to say how it went)."""
+        return any(p.kind in FLAG_PENDING for p in ([lane.pending] if lane.pending else []) + lane.waiting)
 
     def _sync_flag_alert(self, lane: Lane) -> None:
         """The flag alert describes the flag the lane waits on now, and how many more wait."""

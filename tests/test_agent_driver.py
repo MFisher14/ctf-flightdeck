@@ -57,7 +57,8 @@ class Lab:
     def __init__(self, tmp_path: Path, server: FakeModelServer, *, verify=None, max_lanes: int = 2,
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
                  max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
-                 submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG) -> None:
+                 submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG,
+                 submitter=None) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -74,7 +75,7 @@ class Lab:
             compact_at=compact_at,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit)
-        self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
+        self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"), submitter=submitter)
 
     def release(self, *ids: str) -> None:
         ids = ids or tuple(self.handouts)
@@ -489,6 +490,46 @@ def test_a_search_of_the_handout_cut_short_is_said_on_the_lane(tmp_path, monkeyp
             assert any(a.text.startswith("the search of the handout for flags stopped after -1 s; a flag the model "
                                          "submits that is written in the rest of it may be submitted without you")
                        for a in lane.actions)
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- a flag on its way to the platform
+
+
+@pytest.mark.parametrize("ok, state", [(False, LaneState.GAVE_UP), (True, LaneState.SOLVED)], ids=["wrong", "right"])
+def test_a_lane_that_gives_up_while_its_flag_is_with_the_platform_calls_the_model_no_more(tmp_path, ok, state):
+    """With a platform over the network the lane carries on while its flag is on its way (the
+    deck's submitter only queues it). A model that then answers three times without a tool
+    gives up: the lane stays open for the platform's answer, without another model call, and
+    ends as that answer says."""
+    sent: list[tuple[str, str, str]] = []
+
+    def responder(record):
+        if calls_to(server) == 1:
+            return tool_call_reply("submit_flag", {"flag": "t{real}"})
+        return text_reply("Submitted; waiting to hear back.")
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", submitter=lambda *item: sent.append(item),
+                      handouts={"note": handout(tmp_path, files={"note.txt": "no flag in here\n"})})
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.gave_up_later, "the lane to give up")
+            assert sent == [(lane.id, "note", "t{real}")] and lab.deck.sending(lane.id) == ("t{real}",)
+            await asyncio.sleep(0.3)
+            assert calls_to(server) == 4 and lane.state is LaneState.RUNNING  # its flag's answer is not in yet
+            assert ("gave up (the model answered 3 times in a row without calling a tool; it last said: Submitted; waiting "
+                    "to hear back.), but its flag is on its way to the platform: it ends once the answer is in"
+                    ) in [a.text for a in lane.actions]
+            lab.deck.platform_verdict(lane.id, "t{real}", ok, "Correct" if ok else "Incorrect")
+            assert lane.state is state and lab.deck.sending(lane.id) == ()
+            await asyncio.sleep(0.2)
+            assert calls_to(server) == 4
             await lab.finish()
 
     run(main())

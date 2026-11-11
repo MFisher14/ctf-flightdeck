@@ -15,7 +15,9 @@ A flag the model submits that the challenge's own text holds (its description, o
 file as it came: often a decoy) is not claimed: under submit auto too it waits for the
 player, and the model hears why, as agent/external.py's lanes do.
 
-A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call. A model call that
+A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call, and then calls the
+model no more, also while the deck keeps it open for a flag that still waits (for the player,
+or for the platform's answer). A model call that
 fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
 queue before the lane ends, so the next challenges are not started only to fail the same way.
 
@@ -409,7 +411,9 @@ class AgentDriver:
                 # count what it cost.
                 self._overtaken(run, messages, hints, notes, reply, model)
                 continue
-            await self._turn(run, reply, len(hints), generation, model, messages)
+            if await self._turn(run, reply, len(hints), generation, model, messages):
+                await self._until_over(run)  # it gave up: no more model calls, though a flag of it may still wait
+                return
             if run.messages is messages:  # not escalated during the turn
                 self._refresh_if_long(run, reply.usage.prompt_tokens)
 
@@ -567,7 +571,8 @@ class AgentDriver:
         )
 
     async def _turn(self, run: _Run, reply: Reply, hints_taken: int, generation: int, model: str,
-                    messages: list[dict]) -> None:
+                    messages: list[dict]) -> bool:
+        """Run the reply's tool calls and report the turn. True when the lane gave up with it."""
         lane = self._lane(run)
         assert lane is not None
         turn = lane.turns + 1
@@ -579,7 +584,7 @@ class AgentDriver:
             for index, call in enumerate(reply.tool_calls):
                 if not await self._until_running(run, generation):  # paused: wait; escalated or taken over: stop
                     if self._over(run):
-                        return
+                        return False
                     break
                 results.append(await run.toolbox.call(call.name, call.arguments, turn=turn, index=index))
             after = await asyncio.to_thread(take_snapshot, root)
@@ -587,7 +592,7 @@ class AgentDriver:
         finally:
             run.idle.set()
         if self._over(run):
-            return
+            return False
         same = run.messages is messages  # else escalated during the turn: none of it goes into the new context
         notes: list[str] = []
         files = tuple(changes[:MAX_FILES_PER_TURN])
@@ -655,6 +660,16 @@ class AgentDriver:
             self._report(run, TurnReport(
                 turn=False, gave_up=f"the model answered {MAX_IDLE_TURNS} times in a row without calling a tool; it last said: {last}",
             ))
+        return idle
+
+    async def _until_over(self, run: _Run) -> None:
+        """After the lane gave up: call the model no more, and wait until the deck ends the lane.
+        It does at once, or once no flag of the lane waits any more, for the player or for the
+        platform's answer; while its flag is with the platform the lane stays RUNNING, so the
+        loop must not go on."""
+        while not self._over(run):
+            run.wake.clear()
+            await run.wake.wait()
 
     def _flags_said(self, run: _Run, text: str) -> list[str]:
         """Matches of the flag format in what the model wrote, new to this lane, at most

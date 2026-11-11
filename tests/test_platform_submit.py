@@ -260,8 +260,18 @@ def test_a_lane_that_gave_up_while_its_flag_was_on_its_way_ends_once_the_answer_
     deck.report(lane.id, TurnReport(flag="t{maybe}"))
     deck.report(lane.id, TurnReport(turn=False, gave_up="the model gave up"))
     assert not lane.finished  # its flag's answer is not in yet
+    assert notes(lane)[-1] == "gave up (the model gave up), but its flag is on its way to the platform: it ends once the answer is in"
     deck.platform_verdict(lane.id, "t{maybe}", False)
     assert lane.state is LaneState.GAVE_UP and lane.result == "the model gave up"
+
+
+def test_a_lane_that_gave_up_while_its_flag_waits_for_the_player_says_so():
+    deck, _, _ = platform_deck(submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.report(lane.id, TurnReport(turn=False, gave_up="the model gave up"))
+    assert notes(lane)[-1] == "gave up (the model gave up), but a candidate flag waits for you"
+    assert deck.apply(iv.Decline(lane.id)).ok and lane.state is LaneState.GAVE_UP
 
 
 def test_sending_names_each_lanes_flags_on_their_way_until_their_answer_is_in():
