@@ -12,7 +12,8 @@ says so and stops.
 
 --base-url may carry credentials (a user name and password, or a token in the query string,
 for a server behind a proxy). They are sent, never shown: messages name the endpoint
-without them, and they are cut out of any text the server sends back.
+without them, and any of them MIN_SECRET characters or longer is cut out of text the
+server sends back.
 
 Exit codes: 0 with the scorecard; 2 when the evaluation cannot run (options, cases, the
 lexicon, the server); 1 after the scorecard when most replies held no answer, since that
