@@ -86,6 +86,35 @@ def test_add_stores_only_digests_as_typed_and_as_names_are_compared(tmp_path, mo
     assert any(rule.startswith("denylisted value") for rule in blocks)
 
 
+def test_remove_takes_out_both_forms_of_a_name_made_public_and_nothing_else(tmp_path, monkeypatch, capsys):
+    import io
+    import stat
+
+    path = tmp_path / "denylist.sha256"
+    path.write_text("".join(d + "\n" for d in (digest("Quokka  Crew"), digest("quokka crew"), digest("10.20.30.40"))))
+    monkeypatch.setenv("FLIGHTDECK_DENYLIST", str(path))
+    monkeypatch.setattr("sys.stdin", io.StringIO("Quokka  Crew\nnot on the list\n"))
+    assert scan_mod.main(["secret_scan.py", "--remove"]) == 0
+    assert set(path.read_text().split()) == {digest("10.20.30.40")}  # the IP stays denied
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    out = capsys.readouterr().out
+    assert "removed 2 digest(s) for 2 string(s)" in out and "Quokka" not in out
+    blocks, _ = scan_mod.scan("notes.md", b"the quokka crew won", set(path.read_text().split()))
+    assert not blocks  # the name may appear now
+
+
+def test_remove_says_so_when_nothing_matched(tmp_path, monkeypatch, capsys):
+    import io
+
+    path = tmp_path / "denylist.sha256"
+    path.write_text(digest("10.20.30.40") + "\n")
+    monkeypatch.setenv("FLIGHTDECK_DENYLIST", str(path))
+    monkeypatch.setattr("sys.stdin", io.StringIO("someone else\n"))
+    assert scan_mod.main(["secret_scan.py", "--remove"]) == 0
+    assert "removed 0 digest(s) for 1 string(s): none of them was on the denylist" in capsys.readouterr().out
+    assert path.read_text().split() == [digest("10.20.30.40")]
+
+
 def test_history_finds_a_name_that_only_an_old_commit_holds(tmp_path, monkeypatch):
     import subprocess
 
