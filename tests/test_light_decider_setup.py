@@ -38,9 +38,10 @@ def test_init_writes_a_decider_and_says_how_to_start_its_server(tmp_path, monkey
     assert load_config(target).light == LightConfig("decider", "", "http://127.0.0.1:8000", "", 30.0, None, 0.9)
     for words in ("pip install strands-decider",
                   "strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --port 8000",
-                  "--device mlx", 'pip install -e ".[mlx]"',
+                  "--device mlx", 'pip install "strands-decider[mlx]>=0.3"',  # on PyPI since 0.3.0: no clone
                   "flightdeck eval-local --engine decider --base-url http://127.0.0.1:8000"):
         assert words in result.output, words
+    assert "pip install -e" not in result.output  # an editable install of whatever is in the current folder
     assert "threshold = 0.9" in target.read_text() and "key_env" not in target.read_text().split("[light]")[1].split("[")[0]
     result, target = init(tmp_path, monkeypatch, "--light", "decider", "--light-model", MODEL, "--force")
     assert result.exit_code == 0, result.output

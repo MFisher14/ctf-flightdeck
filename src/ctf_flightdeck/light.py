@@ -597,11 +597,13 @@ def _needle_name(ident: str) -> str:
 DECIDER_PATH = "/v1/systemone"  # POST a state and typed questions (docs/inference.md, Serve)
 DECIDER_HEALTH = "/health"  # GET: {"status": "ok", "model", "max_length", "device", ...} (src/strands_decider/server.py)
 DECIDER_MODEL = "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610"  # the reference model (its README)
-DECIDER_INSTALL = "pip install strands-decider"  # its README; the Gemma 4 models need its main branch
+DECIDER_INSTALL = "pip install strands-decider"  # its README
 DECIDER_SERVE = f"strands-decider serve {DECIDER_MODEL} --port 8000"  # its README's "Running as a server"
-# On Apple silicon `--device mlx` needs the mlx extra, which is not on PyPI until its next release
-# (README; docs/inference.md, Environments for serving).
-DECIDER_MLX = 'on Apple silicon add --device mlx, with the mlx extra installed from a clone: pip install -e ".[mlx]"'
+# On Apple silicon `--device mlx` needs the mlx extra. Its README and docs/inference.md say to install
+# that (and the Gemma 4 models' support) from a clone until the next release, but strands-decider 0.3.0
+# on PyPI (2026-11-05) has both: the extra is installed from PyPI, at 0.3 or later so an older install
+# is upgraded rather than left without it.
+DECIDER_MLX = 'on Apple silicon add --device mlx, with its mlx extra: pip install "strands-decider[mlx]>=0.3"'
 WINDOW = 4096  # tokens: the published models' window (docs/inference.md, Gemma 4 models); longer is HTTP 422
 DECIDER_QUESTION = "pick"  # every request's one question; the server never shows the model this name
 SPARE_TOKENS = 64  # of the window: tokens the tokenizer adds (a begin-of-text token), and some to spare
