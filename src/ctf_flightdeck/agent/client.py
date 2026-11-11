@@ -120,10 +120,11 @@ class ModelClient:
 
     `chat()` may run for several lanes at once on one event loop. httpx pools connections
     per loop, so keep the client on that loop and `aclose()` it when done (or use `async
-    with`). `timeout` bounds each try, in seconds: an answer that has not come by then is
-    given up on and tried again (a non-streaming answer only starts once the model has
-    finished); connecting gets at most CONNECT_TIMEOUT of it. A call makes at most
-    `max_retries + 1` tries. With `transport` given, httpx ignores proxy variables.
+    with`). `timeout` bounds each try as a whole, in seconds, from connecting to the last
+    byte of the answer: an answer that is not complete by then is given up on and tried
+    again (a non-streaming answer only starts once the model has finished); connecting gets
+    at most CONNECT_TIMEOUT of it. A call makes at most `max_retries + 1` tries. With
+    `transport` given, httpx ignores proxy variables.
     """
 
     def __init__(
@@ -151,6 +152,7 @@ class ModelClient:
             raise ValueError(f"max_retries must not be negative, got {max_retries}")
         if not backoff >= 0:
             raise ValueError(f"backoff must not be negative, got {backoff}")
+        self.timeout = timeout
         self.max_retries = max_retries
         self.backoff = backoff
         self._key = api_key
@@ -216,11 +218,16 @@ class ModelClient:
     async def _post(self, content: bytes) -> tuple[httpx.Response | None, str, bool]:
         """One try: the response, or None with what went wrong and whether a retry may help.
 
-        The httpx error is described here and dropped, never chained onto a ModelError: its
-        request holds the Authorization header.
+        httpx's timeouts bound each wait for bytes, not the whole answer, so a server that
+        sends a byte now and then could hold a try for as long as it liked: the deadline
+        here bounds the whole try. The httpx error is described here and dropped, never
+        chained onto a ModelError: its request holds the Authorization header.
         """
         try:
-            return await self._http.post(self._url, content=content), "", False
+            async with asyncio.timeout(self.timeout):
+                return await self._http.post(self._url, content=content), "", False
+        except TimeoutError:  # the deadline passed: no complete answer in time
+            return None, f"timed out after {self.timeout:g} s", True
         except httpx.HTTPError as exc:
             what = type(exc).__name__ + (f": {exc}" if str(exc) else "")
             return None, what, isinstance(exc, TRANSIENT)

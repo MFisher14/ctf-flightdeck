@@ -14,6 +14,7 @@ import json
 import socket
 import threading
 import time
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -118,6 +119,91 @@ def reply_with_message(message: dict) -> dict:
     body = text_reply("unused")
     body["choices"][0]["message"] = message
     return body
+
+
+class RawServer:
+    """A loopback HTTP server for the misbehaviour the fake model server will not show.
+
+    Each connection's request is read in full, then `answer(conn, number)` writes what it
+    likes (number counts the connections from 0) and the connection is closed. A failed
+    try never reuses its connection, so `connections` counts the tries.
+    """
+
+    def __init__(self, answer: Callable[[socket.socket, int], None]) -> None:
+        self._answer = answer
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self._listener.settimeout(0.05)  # so the accept loop sees the stop flag
+        self.base_url = f"http://127.0.0.1:{self._listener.getsockname()[1]}/v1"
+        self.connections = 0
+        self._stop = threading.Event()
+        self._workers: list[threading.Thread] = []
+        self._acceptor = threading.Thread(target=self._accept, name="raw-server", daemon=True)
+
+    def __enter__(self) -> RawServer:
+        self._acceptor.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._acceptor.join()
+        for worker in self._workers:
+            worker.join(5.0)
+        self._listener.close()
+
+    def _accept(self) -> None:
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._listener.accept()
+            except TimeoutError:
+                continue
+            worker = threading.Thread(target=self._serve, args=(conn, self.connections), daemon=True)
+            self.connections += 1
+            self._workers.append(worker)
+            worker.start()
+
+    def _serve(self, conn: socket.socket, number: int) -> None:
+        with conn:
+            conn.settimeout(5.0)
+            try:
+                read_request(conn)
+                self._answer(conn, number)
+            except OSError:  # the client hung up first: it gave up on the try
+                pass
+
+
+def read_request(conn: socket.socket) -> None:
+    """Read one HTTP request, its head and its Content-Length body, off the connection."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(65536)
+        if not chunk:
+            return
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    length = 0
+    for line in head.split(b"\r\n")[1:]:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-length":
+            length = int(value)
+    while len(body) < length:
+        chunk = conn.recv(65536)
+        if not chunk:
+            return
+        body += chunk
+
+
+def http_200(body: dict) -> tuple[bytes, bytes]:
+    """The head and the body of a complete HTTP/1.1 200 answer carrying `body` as JSON."""
+    data = json.dumps(body).encode()
+    head = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n" % len(data)
+    return head, data
+
+
+def trickle(conn: socket.socket, data: bytes) -> None:
+    """Send `data` a byte every 50 ms: each wait for bytes is short, the whole answer is not."""
+    for byte in data:
+        conn.sendall(bytes([byte]))
+        time.sleep(0.05)
 
 
 # ------------------------------------------------------------------ the request
@@ -502,6 +588,42 @@ def test_a_try_that_times_out_is_tried_again():
         reply = call(server.base_url, timeout=0.2, max_retries=1)
         assert len(server.requests) == 2
     assert reply.content == "on the second try"
+
+
+def test_an_answer_that_trickles_in_is_given_up_on_when_the_try_runs_out_of_time():
+    # httpx's own timeouts bound each wait for bytes, and every byte here comes in 50 ms;
+    # only a deadline on the whole try stops the first answer, which would take over 10 s
+    def first_trickles(conn: socket.socket, number: int) -> None:
+        head, data = http_200(text_reply("too late" if number == 0 else "on the second try"))
+        conn.sendall(head)
+        if number == 0:
+            trickle(conn, data)
+        else:
+            conn.sendall(data)
+
+    with RawServer(first_trickles) as server:
+        start = time.monotonic()
+        reply = call(server.base_url, timeout=0.3, max_retries=1)
+        elapsed = time.monotonic() - start
+    assert reply.content == "on the second try"
+    assert server.connections == 2
+    assert elapsed < 2.0
+
+
+def test_when_the_last_try_runs_out_of_time_the_error_says_so_and_is_retryable():
+    def trickles(conn: socket.socket, number: int) -> None:
+        head, data = http_200(text_reply("too late"))
+        conn.sendall(head)  # a status line came, but no complete answer
+        trickle(conn, data)
+
+    with RawServer(trickles) as server:
+        start = time.monotonic()
+        err = fails(server.base_url, key=KEY, timeout=0.3, max_retries=0)
+        elapsed = time.monotonic() - start
+    assert err.status is None and err.retryable is True
+    assert "timed out after 0.3 s" in str(err) and KEY not in str(err)
+    assert err.__cause__ is None and err.__context__ is None
+    assert elapsed < 2.0
 
 
 def test_a_refused_connection_is_tried_again_then_fails_as_retryable():
