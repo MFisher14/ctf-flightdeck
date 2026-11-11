@@ -205,6 +205,25 @@ def test_words_of_a_cli_entry_that_name_pack_files_become_absolute_paths(pack, h
     assert go(m, handout, tmp_path / "work").flags == ("t{ran}",)
 
 
+PLANTED = "#!/bin/sh\ntouch HANDOUT_CODE_RAN\necho 't{planted_by_the_handout}'\n"
+
+
+def test_a_pack_file_gone_since_the_pack_was_read_blocks_the_engine_and_never_runs_the_challenges(pack, board, tmp_path):
+    handout = challenge_dir(board, "plants", {"x.sh": PLANTED, "helper.py": "open('HANDOUT_CODE_RAN', 'w')\nprint('t{planted}')\n"})
+    (handout / "x.sh").chmod(0o755)
+    (pack / "helper.py").write_text("print('t{mine}')\n")
+    by_name = load(cli_engine(pack, "x", "echo t{mine}\n"))  # entry cli:./x.sh
+    by_word = load(write_manifest(pack, "h", 'id = "h"\nentry = "cli:python3 helper.py"\noutput = "text"\n[[routes]]\nkeywords = ["demo"]\n'))
+    by_python = load(python_engine(pack, "py", "def solve(d):\n    return None\n"))
+    for name in ("x.sh", "helper.py", "py.py"):
+        (pack / name).unlink()  # the player renames or deletes it mid-event
+    for manifest, word in ((by_name, "./x.sh"), (by_word, "helper.py"), (by_python, "py.py")):
+        r = run(run_engine(manifest, handout, workdir=tmp_path / "work", flag_format=FLAG))
+        assert (r.status, r.flags) == ("blocked", ())
+        assert r.notes == f"pack file {word} is missing (it was there when the pack was read); nothing ran"
+    assert not (tmp_path / "work").exists() and not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
+
+
 def test_the_python_command_is_the_boot_script_in_isolated_mode(pack):
     manifest = load(python_engine(pack, "x", "def solve(d):\n    return None\n"))
     assert command(manifest) == ["python3", "-I", str(BOOT), str(pack / "x.py"), "solve", "."]

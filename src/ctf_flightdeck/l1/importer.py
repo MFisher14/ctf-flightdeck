@@ -44,7 +44,7 @@ from pathlib import Path, PurePosixPath
 from ..agent.workspace import PRIVATE
 from ..platform.manual import CATEGORY_CODES
 from ..text import untrusted
-from .manifest import GENERATED, MAX_ID, SUFFIX, Manifest, ManifestError, challenge_files, load, manifest_files, pack_file
+from .manifest import GENERATED, MAX_ID, SUFFIX, Manifest, ManifestError, challenge_files, load, manifest_files
 
 PRIORITY = 20
 TAG = "imported"
@@ -225,12 +225,8 @@ def _run_files(manifests: list[Manifest]) -> dict[Path, Path]:
     """Every file a manifest runs (resolved) -> that manifest's path."""
     runs: dict[Path, Path] = {}
     for manifest in manifests:
-        if manifest.entry_file is not None:
-            runs.setdefault(manifest.entry_file.resolve(), manifest.path)
-        for word in manifest.entry.argv:
-            target = pack_file(word, manifest.base)
-            if target is not None:
-                runs.setdefault(target.resolve(), manifest.path)
+        for target in manifest.files:
+            runs.setdefault(target.resolve(), manifest.path)
     return runs
 
 

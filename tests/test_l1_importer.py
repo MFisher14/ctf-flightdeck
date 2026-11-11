@@ -67,7 +67,8 @@ def test_every_script_gets_a_generated_manifest_and_the_rest_are_listed_with_a_r
 
     rsa = load(gen / "crypto/solve_rsa-small.e.py.manifest.toml")
     assert rsa.id == "imported.crypto.solve_rsa-small.e.py"
-    assert rsa.entry == Entry("cli", None, None, ("python3", "./crypto/solve_rsa-small.e.py"))
+    assert rsa.entry == Entry("cli", None, None, ("python3", "./crypto/solve_rsa-small.e.py"), pack_files=(1,))
+    assert rsa.files == (scripts / "crypto" / "solve_rsa-small.e.py",)
     assert (rsa.output, rsa.tags, rsa.timeout_seconds) == ("text", ("imported",), 60)
     assert rsa.routes == (Route(category=("cry",), keywords=("rsa", "small"), priority=20),)
     assert rsa.base == scripts

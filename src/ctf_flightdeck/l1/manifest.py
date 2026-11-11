@@ -18,7 +18,13 @@ returns a SolverResult; the file must lie inside the manifest's folder (a relati
 no `..`, not leaving it through a symlink). A cli entry is a command, split like a shell
 line; the challenge directory is appended to it when it runs. The command runs in a copy
 of the challenge, so a word of it that names a file in the manifest's folder (`solve.sh`,
-`tools/x.py`) is run as that file: the runner passes its absolute path.
+`tools/x.py`) is run as that file: the runner passes its absolute path. Which words those
+are is settled when the manifest is loaded (Entry.pack_files), never again when it runs: a
+pack file that has gone by then blocks the engine; it never falls back to the bare word,
+which in the copy would name the challenge's own file. For the same reason a word that
+reads as a relative path to a file (it has a `/`, or ends in .py .sh .bash .pl .rb .js)
+but names no file of the pack is an error: it could only ever be the challenge's file. So
+is a file of the pack that lies in a folder holding a challenge's files (see below).
 
 Outputs. "result": the last non-empty line the engine prints is a SolverResult as JSON (a
 python entry gets this for free from the boot script). "text": free text; every match of
@@ -58,6 +64,8 @@ from ..text import untrusted
 
 SUFFIX = ".manifest.toml"
 WORKSPACE_LOG = "prepare.log"  # <workspace>/.flightdeck/prepare.log: every workspace has one once prepared
+SCRIPT_SUFFIXES = (".py", ".sh", ".bash", ".pl", ".rb", ".js")  # a word ending so names a script file
+STALE = "this manifest was written by `flightdeck l1 import` and is stale: run the import again"
 GENERATED = "generated"  # <folder>/.flightdeck/generated/: the importer's manifests
 MAX_BYTES = 256 * 1024
 MAX_ID = 100
@@ -97,6 +105,7 @@ class Entry:
     path: str | None  # python: the .py path relative to the manifest's folder (see Manifest.base)
     function: str | None  # python: the function name
     argv: tuple[str, ...] = ()  # cli: the command (shell-split)
+    pack_files: tuple[int, ...] = ()  # cli: the positions in argv of the words that name a file of the pack
 
 
 @dataclass(frozen=True)
@@ -120,6 +129,14 @@ class Manifest:
     def entry_file(self) -> Path | None:
         """A python entry's file, absolute; None for a cli entry."""
         return self.base / self.entry.path if self.entry.kind == "python" and self.entry.path else None
+
+    @property
+    def files(self) -> tuple[Path, ...]:
+        """The files of the pack the entry runs or names, absolute: a python entry's file, or
+        the words of a cli entry that name files of the pack (Entry.pack_files)."""
+        if self.entry.kind == "python":
+            return (self.entry_file,) if self.entry_file is not None else ()
+        return tuple(self.base / self.entry.argv[i] for i in self.entry.pack_files)
 
 
 def generated_root(path: Path) -> Path | None:
@@ -315,9 +332,11 @@ def _entry(path: Path, value: object, base: Path) -> Entry:
         raise ManifestError(path, "entry", f"{_value(file)} must be a relative path inside the pack, with no ..")
     full = base / rel
     if not full.is_file():
-        raise ManifestError(path, "entry", f"{_value(file)} {'is not a file' if full.exists() else 'does not exist'} in {_show(base)}")
+        hint = f" ({STALE})" if generated_root(path) is not None else ""
+        raise ManifestError(path, "entry", f"{_value(file)} {'is not a file' if full.exists() else 'does not exist'} in {_show(base)}{hint}")
     if not full.resolve().is_relative_to(base.resolve()):
         raise ManifestError(path, "entry", f"{_value(file)} leaves {_show(base)} through a symlink")
+    _not_a_challenges(path, file, base)
     return Entry("python", rel.as_posix(), function)
 
 
@@ -328,17 +347,47 @@ def _cli_entry(path: Path, command: str, base: Path) -> Entry:
         raise ManifestError(path, "entry", f"the command does not split like a shell line ({exc})") from None
     if not argv:
         raise ManifestError(path, "entry", 'the command after "cli:" is empty')
-    program = argv[0]
-    if "/" in program and not program.startswith("/"):
-        rel = PurePosixPath(program)
-        if ".." in rel.parts:
-            raise ManifestError(path, "entry", f"{_value(program)} must be inside the pack, with no ..")
-        full = base / rel
-        if not full.is_file():
-            raise ManifestError(path, "entry", f"{_value(program)} does not exist in {_show(base)}")
-        if not os.access(full, os.X_OK):
-            raise ManifestError(path, "entry", f"{_value(program)} is not executable (chmod +x it, or run it with its interpreter)")
-    return Entry("cli", None, None, tuple(argv))
+    positions: list[int] = []
+    for i, word in enumerate(argv):
+        target = pack_file(word, base)
+        if target is not None:
+            _not_a_challenges(path, word, base)
+            if i == 0 and not os.access(target, os.X_OK):
+                raise ManifestError(path, "entry", f"{_value(word)} is not executable (chmod +x it, or run it with its interpreter)")
+            positions.append(i)
+        elif _names_a_file(word):
+            if ".." in PurePosixPath(word).parts:
+                raise ManifestError(path, "entry", f"{_value(word)} must be inside the pack, with no ..")
+            hint = STALE if generated_root(path) is not None else "put the file there, or run it by its absolute path"
+            raise ManifestError(
+                path, "entry",
+                f"{_value(word)} does not exist in {_show(base)}: the command runs in a copy of the challenge, where "
+                f"it would be the challenge's file of that name ({hint})",
+            )
+    return Entry("cli", None, None, tuple(argv), tuple(positions))
+
+
+def _names_a_file(word: str) -> bool:
+    """A word that reads as a relative path to a file: it has a / or ends like a script. Not
+    an option, an absolute path, a URL, or "." (the challenge directory itself)."""
+    if not word or word.startswith(("-", "/")) or "://" in word or not PurePosixPath(word).parts:
+        return False
+    return "/" in word or word.lower().endswith(SCRIPT_SUFFIXES)
+
+
+def _not_a_challenges(path: Path, word: str, base: Path) -> None:
+    """Refuse a file of the pack that lies in a folder holding a challenge's files (a copy
+    of a challenge left in the pack, say): running it would run the challenge's code."""
+    folder = base
+    for part in PurePosixPath(word).parts[:-1]:
+        held = challenge_files(folder)
+        if held:
+            break
+        folder = folder / part
+    else:
+        held = challenge_files(folder)
+    if held:
+        raise ManifestError(path, "entry", f"{_value(word)} is in {_show(folder)}, {held}: an engine never runs a challenge's file")
 
 
 def _words(path: Path, key: str, value: object, *, lower: bool = False) -> tuple[str, ...]:

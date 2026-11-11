@@ -7,8 +7,10 @@ tokens), its own process group, killed with its children on timeout, output capt
 command is the entry with "." (the copy) appended:
 
 - python entry: python3 -I <flightdeck's _boot.py> <absolute engine file> <function> .
-- cli entry: its argv, where a word naming a file in the manifest's folder becomes that
-  file's absolute path (the command runs in the copy, not in the pack).
+- cli entry: its argv, where each word the manifest named as a file of the pack (settled
+  when it was loaded: Entry.pack_files) becomes that file's absolute path (the command runs
+  in the copy, not in the pack). A pack file that has gone since blocks the engine: the bare
+  word would name the challenge's file of that name in the copy.
 
 Then what it printed becomes a SolverResult:
 - output "result": the last non-empty stdout line, read as a SolverResult (not one: unsure);
@@ -17,7 +19,7 @@ Then what it printed becomes a SolverResult:
 - a timeout: unsure, "timed out after Ns"; a non-zero exit with no result: unsure, "exited
   N: <the end of its stderr>";
 - tools missing from PATH (needs_tools, python3 for a python entry, the program of a cli
-  entry): blocked, naming them, and nothing runs;
+  entry), or files of the pack that have gone: blocked, naming them, and nothing runs;
 - a workspace that cannot be prepared: blocked, with the reason.
 engine and challenge_id are filled in, and cost.seconds is the measured run time.
 
@@ -47,7 +49,7 @@ from pathlib import Path
 from ..agent.workspace import PRIVATE, HostWorkspace, RunResult, Workspace, WorkspaceError, open_inside
 from ..platform.manual import CHALLENGE_FILE
 from ..text import untrusted
-from .manifest import Manifest, pack_file
+from .manifest import Manifest
 from .result import Cost, Evidence, ResultError, SolverResult
 from .router import Hit
 
@@ -95,6 +97,9 @@ async def run_engine(
         cost = Cost(seconds=seconds, usd=result.cost.usd, tokens=result.cost.tokens)
         return dataclasses.replace(result, engine=manifest.id, challenge_id=label, cost=cost)
 
+    gone = missing_files(manifest)
+    if gone:
+        return done(SolverResult("blocked", notes=f"pack file {', '.join(gone)} is missing (it was there when the pack was read); nothing ran"), 0.0)
     missing = missing_tools(manifest)
     if missing:
         return done(SolverResult("blocked", notes=f"missing tools: {', '.join(missing)} (not on PATH); nothing ran"), 0.0)
@@ -159,8 +164,18 @@ def command(manifest: Manifest) -> list[str]:
     entry = manifest.entry
     if entry.kind == "python":
         return [PYTHON, "-I", str(BOOT), str(manifest.entry_file), str(entry.function), "."]
-    words = [str(pack_file(word, manifest.base) or word) for word in entry.argv]
+    words = list(entry.argv)
+    for i in entry.pack_files:  # settled when the manifest was loaded, never looked up again here
+        words[i] = str(manifest.base / entry.argv[i])
     return [*words, "."]
+
+
+def missing_files(manifest: Manifest) -> list[str]:
+    """The files of the pack the entry names (Manifest.files) that are no longer there, as
+    the manifest wrote them."""
+    entry = manifest.entry
+    words = [entry.path] if entry.kind == "python" else [entry.argv[i] for i in entry.pack_files]
+    return [str(word) for word, path in zip(words, manifest.files) if not path.is_file()]
 
 
 def missing_tools(manifest: Manifest) -> list[str]:
@@ -168,10 +183,8 @@ def missing_tools(manifest: Manifest) -> list[str]:
     needed: list[str] = []
     if manifest.entry.kind == "python":
         needed.append(PYTHON)
-    else:
-        program = manifest.entry.argv[0]
-        if pack_file(program, manifest.base) is None and (program.startswith("/") or "/" not in program):
-            needed.append(program)
+    elif 0 not in manifest.entry.pack_files:
+        needed.append(manifest.entry.argv[0])  # a command on PATH, or an absolute path
     needed += manifest.needs_tools
     return [tool for tool in dict.fromkeys(needed) if shutil.which(tool) is None]
 

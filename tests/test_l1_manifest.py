@@ -74,20 +74,65 @@ def test_defaults_and_a_cli_entry(pack):
         [[routes]]
         files = ["name:*.bin"]
         """))
-    assert m.entry == Entry("cli", None, None, ("./tool.sh", "--fast", "two words"))
+    assert m.entry == Entry("cli", None, None, ("./tool.sh", "--fast", "two words"), pack_files=(0,))
+    assert m.files == (pack / "tool.sh",)
     assert m.entry_file is None
     assert (m.tags, m.needs_tools, m.timeout_seconds, m.output) == ((), (), 60, "result")
     assert m.routes[0].priority == 50
 
 
 def test_a_cli_entry_may_name_a_command_on_path_or_an_absolute_program(pack):
-    for i, entry in enumerate(("cli:python3 x.py", "cli:/usr/bin/env python3", "cli:zsteg -a")):
+    (pack / "x.py").write_text("print('x')\n")
+    for i, (entry, files) in enumerate((("cli:python3 x.py", (1,)), ("cli:/usr/bin/env python3", ()), ("cli:zsteg -a", ()))):
         m = load(write_manifest(pack, f"e{i}", f'id = "e{i}"\nentry = "{entry}"\n[[routes]]\nkeywords = ["k"]\n'))
-        assert m.entry.kind == "cli"
+        assert m.entry.kind == "cli" and m.entry.pack_files == files
 
 
 ROUTE = '[[routes]]\nkeywords = ["k"]\n'
 HEAD = 'id = "e"\nentry = "decode_layers.py:solve"\n'
+
+
+def test_which_words_name_pack_files_is_settled_when_the_manifest_is_loaded(pack):
+    (pack / "tools").mkdir()
+    (pack / "tools" / "words.txt").write_text("x\n")
+    m = load(write_manifest(pack, "w", 'id = "w"\nentry = "cli:./tool.sh --list tools/words.txt -o out.bin . ./ '
+                                       'http://localhost:8000/a/b.py notes.txt"\n' + ROUTE))
+    assert m.entry.pack_files == (0, 2)  # options, ".", URLs and a name with no / are passed as they are
+    assert m.files == (pack / "tool.sh", pack / "tools" / "words.txt")
+
+
+@pytest.mark.parametrize("word", ["helper.py", "tools/helper.sh", "./x.pl", "lib/data.txt", "Solve.PY", "a.rb", "b.js", "c.bash"])
+def test_a_word_that_names_a_file_the_pack_does_not_have_is_an_error(pack, word):
+    # run in the copy of the challenge, it could only ever be the challenge's file of that name
+    path = write_manifest(pack, "m", f'id = "m"\nentry = "cli:python3 {word}"\n' + ROUTE)
+    with pytest.raises(ManifestError) as caught:
+        load(path)
+    assert caught.value.key == "entry"
+    assert "does not exist in" in caught.value.problem and "the challenge's file of that name" in caught.value.problem
+
+
+def test_a_stale_generated_manifest_says_to_run_the_import_again(pack):
+    (pack / "crypto").mkdir()
+    (pack / "crypto" / "xor_brute_v2.py").write_text('if __name__ == "__main__":\n    print(1)\n')  # renamed by the player
+    gen = pack / ".flightdeck" / "generated" / "crypto"
+    path = write_manifest(gen, "xor_brute.py", 'id = "g"\nentry = "cli:python3 ./crypto/xor_brute.py"\n' + ROUTE)
+    with pytest.raises(ManifestError, match="stale: run the import again"):
+        load(path)
+    py = write_manifest(gen, "other.py", 'id = "h"\nentry = "crypto/gone.py:solve"\n' + ROUTE)
+    with pytest.raises(ManifestError, match="stale: run the import again"):
+        load(py)
+
+
+def test_a_pack_file_inside_a_challenge_folder_is_never_run(pack):
+    copy = pack / "runs" / "20261111-000000" / "grep"  # an engine's copy of a challenge, left in the pack
+    (copy / ".flightdeck").mkdir(parents=True)
+    (copy / ".flightdeck" / "prepare.log").write_text("copied\n")
+    (copy / "chall.py").write_text('if __name__ == "__main__":\n    print("t{planted}")\n')
+    (copy / "solve.py").write_text("def solve(d):\n    return None\n")
+    for entry in ("cli:python3 ./runs/20261111-000000/grep/chall.py", "runs/20261111-000000/grep/solve.py:solve"):
+        path = write_manifest(pack, "m", f'id = "m"\nentry = "{entry}"\n' + ROUTE)
+        with pytest.raises(ManifestError, match="an engine never runs a challenge's file"):
+            load(path)
 
 
 @pytest.mark.parametrize(
