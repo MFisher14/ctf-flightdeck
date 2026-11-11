@@ -85,6 +85,7 @@ STAYS = [  # ordinary CTF content: no credential's name in front of it, no crede
     "std::KEY::value",
     "os.environ['ANTHROPIC_API_KEY']",  # names the variable, holds no value
     "ANTHROPIC_API_KEY=",
+    "ANTHROPIC_API_KEY :=",  # a Makefile's, with no value: its = is no value either
     "TOKEN=[ANTHROPIC_API_KEY]",  # taken out already, by the first layer
     "Authorization: Bearer [OPENROUTER_API_KEY]",
     "API_KEY=[redacted]",
