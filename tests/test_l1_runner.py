@@ -709,6 +709,96 @@ def test_an_engines_copy_is_removed_once_its_result_is_read_whatever_it_left_the
     assert (tmp_path / "pack" / "messy.sh").is_file()
 
 
+def wait_for(path: Path, what: str, timeout: float = 20.0):
+    async def waiting():
+        deadline = time.monotonic() + timeout
+        while not path.exists():
+            assert time.monotonic() < deadline, f"timed out waiting for {what}"
+            await asyncio.sleep(0.02)
+    return waiting()
+
+
+def test_an_engine_cancelled_while_it_runs_is_killed_and_its_copy_removed_all_the_same(pack, handout, tmp_path):
+    """A lane killed, a sibling's solve, or a quit cancels the L1 stage while an engine runs."""
+    pids = tmp_path / "pids"
+    pids.mkdir()
+    m = cli_engine(pack, "sleeper", f"""
+        head -c 1000000 /dev/zero > big.bin
+        sleep 60 &
+        echo $! > {pids}/child.pid
+        touch started.marker
+        wait
+        """)
+    work = tmp_path / "work"
+
+    async def scenario():
+        task = asyncio.ensure_future(run_engine(load(m), handout, workdir=work, flag_format=FLAG))
+        await wait_for(work / "sleeper" / "started.marker", "the engine to start")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    run(scenario())
+    assert not (work / "sleeper").exists()  # gone by the time the cancelled run returned
+    pid = int((pids / "child.pid").read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail(f"the engine's child {pid} is still alive after the cancel")
+
+
+def test_a_run_cancelled_while_the_handout_is_still_being_copied_removes_the_copy_once_it_is_made(pack, handout, tmp_path, monkeypatch):
+    """The copy runs in a thread a cancel cannot stop: the copy is removed after it is made,
+    never before (when the thread would then leave a whole copy behind)."""
+    import threading
+
+    from ctf_flightdeck.agent import workspace as workspace_module
+
+    real_copy = workspace_module.copy_handout
+    copying = threading.Event()
+
+    def slow_copy(source, root):
+        copying.set()
+        time.sleep(0.6)
+        real_copy(source, root)
+
+    monkeypatch.setattr(workspace_module, "copy_handout", slow_copy)
+    m = cli_engine(pack, "e", "touch ran.marker\necho t{x}\n")
+    work = tmp_path / "work"
+
+    async def scenario():
+        task = asyncio.ensure_future(run_engine(load(m), handout, workdir=work, flag_format=FLAG))
+        while not copying.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    run(scenario())
+    time.sleep(1.0)  # past the copy thread's end
+    assert not (work / "e").exists()
+
+
+def test_a_kept_copy_stays_when_its_run_is_cancelled(pack, handout, tmp_path):
+    m = cli_engine(pack, "sleeper", "touch started.marker\nsleep 60\n")
+    work = tmp_path / "work"
+
+    async def scenario():
+        task = asyncio.ensure_future(run_engine(load(m), handout, workdir=work, flag_format=FLAG, keep=True))
+        await wait_for(work / "sleeper" / "started.marker", "the engine to start")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    run(scenario())
+    assert (work / "sleeper" / "note.txt").is_file()
+
+
 def test_run_routed_keeps_the_copies_only_when_asked(pack, handout, tmp_path):
     hits = [hit(cli_engine(pack, "a", "echo t{a}\n")), hit(cli_engine(pack, "b", "echo t{b}\n"))]
     gone = run(run_routed(hits, handout, workdir=tmp_path / "w1", flag_format=FLAG))

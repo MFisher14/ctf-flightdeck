@@ -131,7 +131,9 @@ async def run_engine(
     `challenge_id` defaults to the handout's challenge.json id, else its folder name. The
     engine's copy of the challenge is removed once its result is read (a forensics image
     times every engine routed to it adds up), unless `keep`; a folder that was there before
-    the run is never removed."""
+    the run is never removed. A run that is cancelled (a lane killed, flightdeck quitting)
+    still closes its workspace and removes its copy before the cancel goes on: the clean-up
+    is shielded, and waits for a copy still being made (its thread cannot be stopped)."""
     pattern = _flag_pattern(flag_format)
     limit = manifest.timeout_seconds if timeout is None else timeout
     if not (isinstance(limit, (int, float)) and not isinstance(limit, bool) and math.isfinite(limit) and limit > 0):
@@ -161,21 +163,38 @@ async def run_engine(
     workspace = (workspace_factory or host_workspace)(manifest.id, Path(workdir) / manifest.id, handout)
     root = Path(workspace.root)
     ours = not os.path.lexists(root)  # made by prepare(): this run's to remove
-    trouble: list[str] = []  # said in the notes, after the engine's own
+    # prepare() runs as a task of its own: a cancel must not leave the handout's copy thread
+    # running unseen, so the clean-up below can wait for it
+    preparing = asyncio.ensure_future(workspace.prepare())
     try:
-        result, seconds = await _run_in(workspace, manifest, argv, path, limit, pattern)
+        result, seconds = await _run_in(workspace, preparing, manifest, argv, path, limit, pattern)
     finally:
-        try:
-            await workspace.close()
-        except WorkspaceError as exc:  # e.g. docker rm failed: say so, keep the result
-            trouble.append(f"its workspace did not close cleanly: {_safe(str(exc))}")
-    if not keep and ours and os.path.lexists(root):
+        tidy = asyncio.ensure_future(_tidy(workspace, preparing, root, remove=ours and not keep))
+        trouble = await asyncio.shield(tidy)  # cancelled meanwhile: the clean-up still runs to its end
+    if trouble:  # said in the notes, after the engine's own
+        result = dataclasses.replace(result, notes="; ".join(filter(None, [result.notes, *trouble])))
+    return done(result, seconds)
+
+
+async def _tidy(workspace: Workspace, preparing: asyncio.Future[None], root: Path, *, remove: bool) -> list[str]:
+    """After an engine's run, however it ended: wait until its workspace is prepared or has
+    failed to be (the copy may still be going on after a cancel), close the workspace, and
+    remove the copy when `remove`. What went wrong, for the notes; it never raises."""
+    trouble: list[str] = []
+    await asyncio.wait([preparing])
+    if not preparing.cancelled():
+        preparing.exception()  # its failure is the run's result already (or the run never got to it)
+    try:
+        await workspace.close()
+    except WorkspaceError as exc:  # e.g. docker rm failed: say so, keep the result
+        trouble.append(f"its workspace did not close cleanly: {_safe(str(exc))}")
+    except Exception as exc:  # a flightdeck bug: the copy is still removed, and the notes say so
+        trouble.append(f"its workspace did not close cleanly: {type(exc).__name__}: {_safe(str(exc))}")
+    if remove and os.path.lexists(root):
         left = await asyncio.to_thread(remove_tree, root)
         if left:
             trouble.append(f"its copy of the challenge {_safe(str(root))} could not be removed: {left}")
-    if trouble:
-        result = dataclasses.replace(result, notes="; ".join(filter(None, [result.notes, *trouble])))
-    return done(result, seconds)
+    return trouble
 
 
 def remove_tree(root: Path) -> str:
@@ -333,11 +352,13 @@ def challenge_id_of(handout: Path) -> str:
 
 
 async def _run_in(
-    workspace: Workspace, manifest: Manifest, argv: list[str], path: str, limit: float, pattern: re.Pattern[str]
+    workspace: Workspace, preparing: asyncio.Future[None], manifest: Manifest, argv: list[str], path: str, limit: float,
+    pattern: re.Pattern[str],
 ) -> tuple[SolverResult, float]:
-    """(result, seconds the command ran) for one engine in a workspace that is not prepared yet."""
+    """(result, seconds the command ran) for one engine in a workspace that `preparing` (its
+    prepare(), as a task) gets ready."""
     try:
-        await workspace.prepare()
+        await asyncio.shield(preparing)  # a cancel leaves it running: run_engine's clean-up waits for it
     except WorkspaceError as exc:
         return SolverResult("blocked", notes=f"its workspace could not be prepared: {_safe(str(exc))}"), 0.0
     name = f"l1-result-{secrets.token_hex(16)}.json"  # a challenge cannot know it, so cannot plant it
