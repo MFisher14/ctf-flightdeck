@@ -609,7 +609,7 @@ def test_taking_over_while_a_tool_runs_stops_the_turn_there_and_the_shell_waits_
     def responder(record):
         if calls_to(server) == 1:
             return tool_calls_reply([
-                ("shell", {"command": "sleep 1 && touch lane-a.txt"}),
+                ("shell", {"command": "sleep 3 && touch lane-a.txt"}),  # still running when the test takes over, even under load
                 ("shell", {"command": "touch lane-b.txt"}),
                 ("shell", {"command": "touch lane-c.txt"}),
             ])
