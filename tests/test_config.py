@@ -373,17 +373,17 @@ def test_a_key_pasted_into_key_env_is_refused_and_never_shown(tmp_path, pasted):
 def test_api_key_never_shows_a_key_pasted_into_key_env(monkeypatch, pasted):
     """A config built in code skips load_config's check; api_key() still refuses to show it,
     whether or not a variable of that name happens to be set."""
-    monkeypatch.delenv(pasted, raising=False)
     config = Config(ApiConfig(key_env=pasted), ("m",), {}, LaneConfig(), Path("/runs"), None)
+    monkeypatch.delenv(pasted, raising=False)
     with pytest.raises(ConfigError) as caught:
         api_key(config)
     message = str(caught.value)
     assert "api.key_env" in message
     assert pasted not in message and KEY_CORE not in message and pasted[4:20] not in message
-    if pasted.isidentifier():
-        monkeypatch.setenv(pasted, FAKE_KEY)
-        with pytest.raises(ConfigError):
-            api_key(config)
+    monkeypatch.setenv(pasted, FAKE_KEY)
+    with pytest.raises(ConfigError) as caught:
+        api_key(config)
+    assert pasted not in str(caught.value)
 
 
 @pytest.mark.parametrize("name", ["OPENROUTER_API_KEY", "HF_TOKEN", "_KEY", "KEY2", "K" * 64])
