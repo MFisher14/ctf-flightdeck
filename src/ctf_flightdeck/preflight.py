@@ -464,7 +464,10 @@ _MEANING = {
         Policy.OFF: "no model-driven lanes",
     },
     "submit": {
-        Policy.AUTO: "flags are submitted to the platform at once",
+        Policy.AUTO: (
+            "a flag a lane claims goes to the platform at once (a model's submit_flag, a coding agent's FLAG: line, "
+            "a flag an L1 engine returns as its result); any other match waits for your approval"
+        ),
         Policy.CONFIRM: "each flag is submitted after you approve it",
         Policy.MANUAL: "you submit flags yourself and tell flightdeck how it went",
         Policy.OFF: "flightdeck never submits flags",
@@ -478,9 +481,24 @@ _MEANING = {
 }
 
 
-def describe(profile: EventProfile, policies: Policies, *, environ: Mapping[str, str] | None = None) -> list[str]:
-    """What a run with this profile and these policies will do, one line each, made safe to show."""
+NO_PACK = (
+    "there is no [l1] pack in your config, so nothing runs at this stage: set pack = \"FOLDER\" under [l1] in it "
+    "(a folder of engines; `flightdeck l1 import` makes their manifests), or give play --pack FOLDER"
+)
+
+
+def describe(
+    profile: EventProfile,
+    policies: Policies,
+    *,
+    environ: Mapping[str, str] | None = None,
+    config: Config | ConfigError | None = None,
+) -> list[str]:
+    """What a run with this profile and these policies will do, one line each, made safe to show.
+    `config` is the player's config, or the ConfigError loading it raised, or None: with a
+    config that names no L1 pack, the l1 stage says nothing runs there and how to set one."""
     env = os.environ if environ is None else environ
+    no_pack = isinstance(config, Config) and config.l1.pack is None
     mode = "team" if profile.team else "solo"
     if profile.platform == "ctfd":
         where = f"ctfd at {_shown_url(profile)}"
@@ -512,7 +530,10 @@ def describe(profile: EventProfile, policies: Policies, *, environ: Mapping[str,
             note = f" (looser than the rules allow: at most {limit})"
         elif policy is not limit:
             note = f" (the rules allow {limit})"
-        lines.append(f"{stage:<10}{policy.value:<9}{_MEANING[stage][policy]}{note}")
+        meaning = _MEANING[stage][policy]
+        if stage == "l1" and policy is not Policy.OFF and no_pack:
+            meaning = NO_PACK
+        lines.append(f"{stage:<10}{policy.value:<9}{meaning}{note}")
     if policies.instance is Policy.AUTO:
         lines.append("network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none")
     elif policies.instance is Policy.CONFIRM:

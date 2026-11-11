@@ -990,6 +990,36 @@ def test_describe_shows_every_stage_with_its_meaning_and_what_the_rules_would_al
     assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "manual")'
 
 
+NO_PACK_SAID = (
+    "there is no [l1] pack in your config, so nothing runs at this stage: set pack = \"FOLDER\" under [l1] in it "
+    "(a folder of engines; `flightdeck l1 import` makes their manifests), or give play --pack FOLDER"
+)
+
+
+@pytest.mark.parametrize("l1", [AUTO, CONFIRM, MANUAL])
+def test_describe_says_nothing_runs_at_the_l1_stage_when_the_config_names_no_pack_and_how_to_set_one(tmp_path, l1):
+    without = load_config(config_file(tmp_path))
+    pack = tmp_path / "pack"
+    (tmp_path / "with.toml").write_text(config_file(tmp_path).read_text() + f'[l1]\npack = "{pack}"\n')
+    with_pack = load_config(tmp_path / "with.toml")
+    note = "" if l1 is AUTO else " (the rules allow auto)"
+    assert f"l1        {l1.value:<9}{NO_PACK_SAID}{note}" in describe(profile(), policies(l1=l1), environ=TOKEN_SET, config=without)
+    meaning = {AUTO: "your no-model solvers run on each challenge", CONFIRM: "your no-model solvers run after you say yes",
+               MANUAL: "flightdeck lists the solvers that match; you run them"}[l1]
+    for known in (with_pack, ConfigError("no config file"), None):  # a pack, or no config to tell: as before
+        assert f"l1        {l1.value:<9}{meaning}{note}" in describe(profile(), policies(l1=l1), environ=TOKEN_SET, config=known)
+    off = describe(profile(), policies(l1=OFF), environ=TOKEN_SET, config=without)
+    assert "l1        off      no L1 solvers (the rules allow auto)" in off
+
+
+def test_describe_says_under_submit_auto_only_a_flag_a_lane_claims_goes_at_once():
+    lines = describe(profile(), policies(submit=AUTO), environ=TOKEN_SET)
+    assert (
+        "submit    auto     a flag a lane claims goes to the platform at once (a model's submit_flag, a coding agent's "
+        "FLAG: line, a flag an L1 engine returns as its result); any other match waits for your approval"
+    ) in lines
+
+
 def test_describe_draws_a_hostile_profile_safely(tmp_path):
     event = manual(tmp_path, name="Night\x1b[2J\x1b]52;c;cGFzdGU=\x07Shift\u202e", flag_format="a\x1b[31m")
     text = "\n".join(describe(event, policies(), environ={}))
@@ -1052,6 +1082,17 @@ def test_preflight_prints_the_event_and_every_stage_and_exits_0(tmp_path, env):
     assert f"lanes     4 at a time · runtime docker · config {tmp_path / 'config.toml'}" in out
     assert out[-1] == "preflight: ok"
     assert result.stderr == ""
+
+
+def test_preflight_says_whether_your_l1_pack_runs_from_the_config_it_checks(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))  # no [l1] in it
+    assert result.exit_code == 0, result.output
+    assert f"l1        auto     {NO_PACK_SAID}" in result.stdout.splitlines()
+    packed = tmp_path / "packed.toml"
+    packed.write_text(config_file(tmp_path).read_text() + f'[l1]\npack = "{tmp_path / "pack"}"\n')
+    result = invoke(str(path), "--config", str(packed))
+    assert "l1        auto     your no-model solvers run on each challenge" in result.stdout.splitlines()
 
 
 def test_preflight_prints_warnings_and_still_exits_0(tmp_path, env, monkeypatch):
