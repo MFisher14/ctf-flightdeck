@@ -1,0 +1,124 @@
+# The model catalog behind `flightdeck models` (model_catalog.py loads and checks it). It lists
+# model choices for flightdeck's two model roles: lanes (the tool loop, on [api] and the
+# [models] ladder) and the light role ([light]: small classification jobs). `flightdeck models`
+# matches it against this machine and recommends: it never picks for the player and never
+# changes a config.
+#
+# [[local]]: an open-weight model served on the player's machine.
+#   id          what `flightdeck models ID` takes
+#   name, family, parameters (as `ollama show` counts them), license
+#   roles       the roles it may serve: "lanes" (needs reliable tool calls) and "light"
+#   measured    per role, a one-line result from docs/MODELS.md; empty until measured there
+#   [local.ollama], [local.mlx]: the runtime's name for it (an Ollama tag; a Hugging Face repo
+#               for mlx_lm.server), its quantization and size_bytes (its weights on disk)
+# Every quantization and size below comes from the records of the benchmark behind
+# docs/MODELS.md (one machine: an Apple M4 Max with 36 GB): `ollama show` output
+# (logs/ollama-show-*.txt) and the "disk" record of each runtime's measure file
+# (results/<runtime>-<model>.measure.json), named beside each value. A value it did not record
+# is left out, and `flightdeck models` says it cannot tell whether that build fits.
+# The memory a model needs is not stored here: model_catalog.py estimates it as its weights
+# (size_bytes) plus an allowance for the context (CONTEXT_ALLOWANCE). An estimate, not a
+# measurement.
+#
+# [[api]]: a model API. classifier = true: the provider's safety classifier can decline
+# security work. The Anthropic entry's ladder and prices are the ones `flightdeck init
+# --provider anthropic` writes (setup.py ANTHROPIC_LADDER and ANTHROPIC_PRICES), read from there
+# and never copied here. The OpenRouter entry names no models: its list changes.
+
+[[local]]
+id = "qwen3.5-9b"
+name = "Qwen3.5 9B"
+family = "Qwen3.5"
+parameters = "9.0B"        # logs/ollama-show-qwen3.5_9b.txt: parameters
+license = "Apache-2.0"     # logs/ollama-show-qwen3.5_9b.txt: License (Apache License, Version 2.0)
+roles = ["lanes", "light"]
+measured = {}
+
+[local.ollama]
+model = "qwen3.5:9b"
+quantization = "Q4_K_M"    # logs/ollama-show-qwen3.5_9b.txt: quantization
+size_bytes = 6550825550    # results/ollama-qwen.measure.json: disk.size_bytes
+
+[local.mlx]
+model = "mlx-community/Qwen3.5-9B-MLX-4bit"
+quantization = "4-bit, group size 64, affine"  # results/mlx-qwen.measure.json: disk.quantization
+size_bytes = 5950221072    # results/mlx-qwen.measure.json: disk.weights_bytes
+
+[[local]]
+id = "gpt-oss-20b"
+name = "gpt-oss 20B"
+family = "gpt-oss"
+parameters = "20.9B"       # logs/ollama-show-gpt-oss_20b.txt: parameters
+license = "Apache-2.0"     # logs/ollama-show-gpt-oss_20b.txt: License (Apache License, Version 2.0)
+roles = ["lanes", "light"]
+measured = {}
+
+[local.ollama]
+model = "gpt-oss:20b"
+quantization = "MXFP4"     # logs/ollama-show-gpt-oss_20b.txt: quantization
+# size_bytes: not recorded by the benchmark
+
+[local.mlx]
+model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
+# quantization, size_bytes: not recorded by the benchmark
+
+[[local]]
+id = "gemma4-12b"
+name = "Gemma 4 12B"
+family = "Gemma 4"
+parameters = "11.9B"       # logs/ollama-show-gemma4_12b.txt: parameters
+license = "Apache-2.0"     # logs/ollama-show-gemma4_12b.txt: License (Apache License, Version 2.0)
+roles = ["lanes", "light"]
+measured = {}
+
+[local.ollama]
+model = "gemma4:12b"
+quantization = "Q4_K_M"    # logs/ollama-show-gemma4_12b.txt: quantization
+# size_bytes: not recorded by the benchmark
+
+[local.mlx]
+model = "mlx-community/gemma-4-12B-it-4bit"
+# quantization, size_bytes: not recorded by the benchmark
+
+[[local]]
+id = "phi4-mini"
+name = "Phi-4-mini"
+family = "Phi-4"
+parameters = "3.8B"        # logs/ollama-show-phi4-mini.txt: parameters
+# Ollama's record shows only the license's first lines ("Microsoft. Copyright (c) Microsoft
+# Corporation."); the model card of mlx-community/Phi-4-mini-instruct-4bit names it: license: mit.
+license = "MIT"
+# The light role only: a 3.8B model, and lanes need reliable tool calls over a long loop. In the
+# benchmark's tool-call check it made no usable tool call on either runtime
+# (results/mlx-phi.measure.json and results/ollama-phi.measure.json: tool_calls).
+roles = ["light"]
+measured = {}
+
+[local.ollama]
+model = "phi4-mini"
+quantization = "Q4_K_M"    # logs/ollama-show-phi4-mini.txt: quantization
+size_bytes = 2491876774    # results/ollama-phi.measure.json: disk.size_bytes
+
+[local.mlx]
+model = "mlx-community/Phi-4-mini-instruct-4bit"
+quantization = "4-bit, group size 64"  # results/mlx-phi.measure.json: disk.quantization
+size_bytes = 2158100796    # results/mlx-phi.measure.json: disk.weights_bytes
+
+[[api]]
+id = "anthropic"
+name = "Anthropic API (Claude)"
+provider = "anthropic"
+roles = ["lanes", "light"]
+classifier = true
+note = """Anthropic's safety classifiers can decline security work: a declined request ends the \
+lane ("the model declined"), and for the light role leaves the rules' answer."""
+
+[[api]]
+id = "openrouter"
+name = "OpenRouter"
+provider = "openrouter"
+roles = ["lanes", "light"]
+classifier = true
+models_page = "https://openrouter.ai/models"
+note = """Its list of models changes, so the catalog names none. An open-weight model there runs \
+on a provider's servers and does not avoid a classifier of that provider's own: check its terms."""
