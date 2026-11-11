@@ -34,6 +34,8 @@ COMMANDS = (
     Command("diff", "[file]", "show the files the lane changed"),
     Command("open", "<lane>", "open a lane in the focus view"),
     Command("queue", "<challenge>", "queue a parked or new challenge", lane=False),
+    Command("unhold", "", "lift the hold on the queue once its cause is fixed (a key or model id changed in "
+                          "your config needs a new run)", lane=False),
     Command("claim", "[challenge]", "team mode: claim or release a challenge", lane=False),
     Command("filter", "[words]", "filter the lane list", lane=False),
     Command("sort", "[mode]", "sort lanes: attention, idle, cost, turns, lane", lane=False),

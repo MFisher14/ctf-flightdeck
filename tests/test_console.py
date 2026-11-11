@@ -219,8 +219,9 @@ def region_text(app: FlightdeckApp, selector: str) -> str:
 
 
 def prompt_text(app: FlightdeckApp) -> str:
-    """What the open modal says, as one line: its border, buttons' edges and line breaks left out."""
-    return " ".join(re.sub(r"[│╭╮╰╯─▔▁]", " ", region_text(app, "Vertical")).split())
+    """What the open modal says, as one line: its border, buttons' edges, a scrollbar's thumb
+    (which can sit at the end of any row of text) and line breaks left out."""
+    return " ".join(re.sub(r"[│╭╮╰╯─▔▁▂▃▄▅▆▇█]", " ", region_text(app, "Vertical")).split())
 
 
 def status_line(app: FlightdeckApp) -> str:
@@ -2609,3 +2610,103 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
         assert "the workspace could not be checked" in lane.actions[-1].text
 
     drive(app, script)
+
+
+# ---------------------------------------------------------------------- a held queue
+
+HELD_WHY = "L01's call to glm failed in a way every lane would (check the API key): model API error: HTTP 401: no credentials"
+
+
+def held_run(*, max_lanes: int = 1, flag_on: str | None = None) -> Deck:
+    """A run's deck whose first lane failed in a way every lane would: the queue is held with
+    challenges still in it. `flag_on`: a lane on that challenge waits for the player with a flag."""
+    names = ["alpha", "bravo", "charlie", "delta"]
+    deck = quiet_deck(DeckConfig(event="Harbour Lights", models=("glm",), max_lanes=max_lanes, flag_format=r"t\{[a-z]+\}"))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    if flag_on is not None:
+        deck.report(deck.lanes_on(flag_on)[0].id, TurnReport(flag=f"t{{{flag_on}}}"))
+    deck.hold_queue(HELD_WHY)
+    deck.report("L01", TurnReport(turn=False, gave_up="model API error: HTTP 401"))
+    return deck
+
+
+async def nothing() -> None:
+    pass
+
+
+def test_a_held_queue_is_in_the_header_with_why_never_all_clear_and_unhold_from_the_bar_starts_the_queue():
+    deck = held_run()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        header = region_text(app, "#header")
+        assert "lanes 0/1 · queue 3" in header and "all clear" not in header and "need you" not in header
+        # why, as far as the room goes: tokens, dollars, the clock and the event's name gave way to it
+        assert "queue held: L01's call to glm failed in a way every lane would (check the API key): model" in header
+        assert "tok " not in header and "$" not in header and "T+" not in header and "Harbour" not in header
+        await press(pilot, "slash")
+        entries = [line for line in region_text(app, "#menu").splitlines() if line.strip("│╭╮╰╯─ ")]
+        assert "/unhold" in entries[0] and "suggested" in entries[0] and "the queue is held: L01's call" in entries[0]
+        await press(pilot, *"unhold", "enter")
+        assert deck.held == "" and [lane.challenge_id for lane in deck.active_lanes()] == ["bravo"]
+        assert "Lifted the hold on the queue: 1 lane started, 2 queued" in status_line(app)
+        header = region_text(app, "#header")
+        assert "queue held" not in header and "all clear" in header and "lanes 1/1 · queue 2" in header
+        assert "tok " in header and "T+" in header and "Harbour Lights" in header  # back once there is no reason to show
+        await press(pilot, "slash")
+        assert "/unhold" not in region_text(app, "#menu").splitlines()[1]  # suggested no more
+        await press(pilot, *"unhold", "enter")
+        assert_warning(app, "The queue is not held: queued lanes start as slots free up")
+
+    drive(app, script)
+
+
+def test_a_hold_while_the_console_runs_says_why_and_how_to_lift_it_and_the_focus_view_shows_it_too():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=1))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo")], [QueueEntry(n, "glm") for n in ("alpha", "bravo")])
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert "all clear" in region_text(app, "#header")
+        deck.hold_queue(HELD_WHY)
+        await pilot.pause()
+        assert_warning(app, f"queue held until you /unhold it: {HELD_WHY}")
+        header = region_text(app, "#header")
+        assert "queue held: L01's call to glm" in header and "all clear" not in header
+        await send(pilot, app, "/unhold")  # a command, not a lane message: it works from a lane's chat box too
+        assert deck.held == "" and "Lifted the hold on the queue: 0 lanes started, 1 queued" in status_line(app)
+        assert deck.lanes["L01"].hints == []
+
+    drive(app, script)
+
+
+def test_help_and_the_command_menu_list_unhold_and_what_it_does():
+    deck = held_run()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+    said = "lift the hold on the queue once its cause is fixed (a key or model id changed in your config needs a new run)"
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert f"/unhold {said}" in prompt_text(app)
+        await press(pilot, "escape")
+        bar(app).start("/unh")
+        await pilot.pause()
+        assert f"/unhold {said[:40]}" in " ".join(region_text(app, "#bar").split())
+
+    drive(app, script, size=(160, 100))  # tall enough for help to show every command without scrolling
+
+
+def test_the_header_keeps_need_you_and_queue_held_and_gives_the_reason_only_room_tokens_and_the_clock_leave():
+    deck = held_run(max_lanes=2, flag_on="bravo")
+    wide = views.header(deck, width=400).plain
+    assert "▲ 1 need you" in wide and f"queue held: {HELD_WHY} ╱ tok 0 ╱ $0.00 ╱ T+" in wide  # room for everything
+    mid = views.header(deck, width=150)
+    assert mid.cell_len == 150 and "▲ 1 need you" in mid.plain and "Harbour Lights" not in mid.plain
+    assert "queue held: L01's call to glm failed" in mid.plain and mid.plain.rstrip().endswith("…")
+    for gone in ("tok ", "$", "T+"):
+        assert gone not in mid.plain
+    tight = views.header(deck, width=80)
+    assert tight.plain.rstrip().endswith("▲ 1 need you ╱ queue held") and tight.cell_len <= 80  # no room for why
+    lifted = views.header(quiet_deck(DeckConfig(event="ev", models=("glm",))), width=200).plain
+    assert "all clear" in lifted and "queue held" not in lifted

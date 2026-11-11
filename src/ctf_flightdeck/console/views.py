@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rich import box
+from rich.cells import cell_len, set_cell_size
 from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.style import Style
@@ -127,31 +128,110 @@ def quick_answers(lane: Lane) -> list[QuickAnswer]:
 # ---------------------------------------------------------------------- header
 
 
-def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200) -> Text:
-    """The slanted header. Low-priority pieces drop out first when the terminal is narrow."""
+@dataclass(frozen=True)
+class HeaderFacts:
+    """What the header shows (header_facts() reads them off a deck)."""
+
+    event: str
+    team: bool
+    containerized: bool
+    lanes: int  # active lanes
+    max_lanes: int
+    queue: int
+    need: int  # lanes that need the player
+    held: str  # why the queue is held (Deck.held); "" while lanes start
+    tokens: int
+    dollars: float  # known dollars
+    unpriced: bool  # some spend has no price
+    clock: float  # seconds since the event started
+    mock: str = ""  # the mock's tag; "" in a run
+
+
+def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
     cfg = deck.config
     tokens, dollars, unpriced = deck.totals()
-    need = len(deck.needing())
-    pieces: list[tuple[int, tuple[str, str, str, bool]]] = [
-        (0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
-        (3, (untrusted(cfg.event, one_line=True), theme.TEXT, theme.SEGMENT, True)),
+    return HeaderFacts(
+        cfg.event, cfg.team, cfg.containerized, len(deck.active_lanes()), cfg.max_lanes, len(deck.queue),
+        len(deck.needing()), deck.held, tokens, dollars, unpriced, deck.now, mock,
+    )
+
+
+HELD = "queue held"
+HELD_WHY_MIN = 12  # cells: less room than this after the other pieces, and the header names no reason
+WHY_OUTRANKS = 3  # pieces of this drop rank or more (the event's name, the clock, tokens, dollars) make room for it
+HEADER_WORDS = {  # the pieces that can drop, as doctor names them
+    "event": "the event's name", "mock": "the mock tag", "runtime": "docker or host",
+    "tokens": "tokens", "dollars": "dollars", "clock": "the event clock",
+}
+
+
+def header_pieces(facts: HeaderFacts) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
+    """(name, drop rank, segment) for each piece, in order. Rank 0 never drops; on a narrow
+    terminal the highest rank drops first, the later piece first on a tie (D16)."""
+    out: list[tuple[str, int, tuple[str, str, str, bool]]] = [
+        ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
+        ("event", 3, (untrusted(facts.event, one_line=True), theme.TEXT, theme.SEGMENT, True)),
     ]
-    if mock:
-        pieces.append((2, (mock, theme.INK, theme.ACCENT, True)))
-    pieces += [
-        (0, ("team" if cfg.team else "solo", theme.CYAN if cfg.team else theme.TEXT, theme.SEGMENT, True)),
-        (1, ("docker", theme.TEXT, theme.SEGMENT, False) if cfg.containerized else ("host", theme.INK, theme.YELLOW, True)),
-        (0, (f"lanes {len(deck.active_lanes())}/{cfg.max_lanes} · queue {len(deck.queue)}", theme.TEXT, theme.SEGMENT, False)),
-        (0, (f"▲ {need} need you", theme.WHITE, theme.RED, True) if need else ("all clear", theme.MUTED, theme.SEGMENT, False)),
-        (4, (f"tok {fmt.tokens(tokens)}", theme.TEXT, theme.SEGMENT, False)),
-        (4, (f"${fmt.dollars(dollars)}" + ("+" if unpriced else ""), theme.TEXT, theme.SEGMENT, False)),
-        (3, (fmt.clock(deck.now), theme.TEXT, theme.SEGMENT, False)),
+    if facts.mock:
+        out.append(("mock", 2, (facts.mock, theme.INK, theme.ACCENT, True)))
+    out += [
+        ("mode", 0, ("team" if facts.team else "solo", theme.CYAN if facts.team else theme.TEXT, theme.SEGMENT, True)),
+        ("runtime", 1, ("docker", theme.TEXT, theme.SEGMENT, False) if facts.containerized else ("host", theme.INK, theme.YELLOW, True)),
+        ("lanes", 0, (f"lanes {facts.lanes}/{facts.max_lanes} · queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)),
     ]
-    text = theme.segments([part for _, part in pieces])
-    while text.cell_len > width and any(rank for rank, _ in pieces):
-        drop = max(range(len(pieces)), key=lambda i: (pieces[i][0], i))
-        pieces.pop(drop)
-        text = theme.segments([part for _, part in pieces])
+    if facts.need:
+        out.append(("need", 0, (f"▲ {facts.need} need you", theme.WHITE, theme.RED, True)))
+    elif not facts.held:  # a held queue is not all clear: nothing starts until the player lifts it
+        out.append(("need", 0, ("all clear", theme.MUTED, theme.SEGMENT, False)))
+    if facts.held:
+        out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
+    out += [
+        ("tokens", 4, (f"tok {fmt.tokens(facts.tokens)}", theme.TEXT, theme.SEGMENT, False)),
+        ("dollars", 4, (f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else ""), theme.TEXT, theme.SEGMENT, False)),
+        ("clock", 3, (fmt.clock(facts.clock), theme.TEXT, theme.SEGMENT, False)),
+    ]
+    return out
+
+
+def fit_header(facts: HeaderFacts, width: int) -> tuple[Text, list[str]]:
+    """The header in `width` cells, and the names of the pieces it leaves out, in the order
+    they drop. While the queue is held, why follows "queue held": the event's name, the clock,
+    tokens and dollars give way to it (in their usual order), and it is cut to the room left."""
+    pieces = header_pieces(facts)
+    left_out: list[str] = []
+    text = theme.segments([part for _, _, part in pieces])
+
+    def drop() -> None:
+        nonlocal text
+        index = max(range(len(pieces)), key=lambda i: (pieces[i][1], i))
+        left_out.append(pieces.pop(index)[0])
+        text = theme.segments([part for _, _, part in pieces])
+
+    while text.cell_len > width and any(rank for _, rank, _ in pieces):
+        drop()
+    if not facts.held:
+        return text, left_out
+    why = untrusted(facts.held, one_line=True)
+    while width - text.cell_len - len(": ") < cell_len(why) and any(rank >= WHY_OUTRANKS for _, rank, _ in pieces):
+        drop()
+    room = width - text.cell_len - len(": ")
+    if room >= HELD_WHY_MIN:
+        index = next(i for i, (name, _, _) in enumerate(pieces) if name == "held")
+        name, rank, (_, fg, bg, bold) = pieces[index]
+        pieces[index] = (name, rank, (f"{HELD}: {_cut(why, room)}", fg, bg, bold))
+        text = theme.segments([part for _, _, part in pieces])
+    return text, left_out
+
+
+def _cut(text: str, cells: int) -> str:
+    """`text` in at most `cells` cells, ending in "…" when it was cut."""
+    return text if cell_len(text) <= cells else set_cell_size(text, cells - 1) + "…"
+
+
+def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200) -> Text:
+    """The slanted header. Low-priority pieces drop out first when the terminal is narrow.
+    While the queue is held it says so, never "all clear", and why, as room allows."""
+    text, _ = fit_header(header_facts(deck, mock), width)
     if note and text.cell_len + len(note) + 2 <= width:
         text.append("  " + note, theme.MUTED)
     return text

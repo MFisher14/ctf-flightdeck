@@ -238,7 +238,10 @@ class FlightdeckApp(App[None]):
 
     def _on_deck_event(self, event: Event) -> None:
         if event.kind in STATUS_EVENTS:
-            self.say(event.text, "warning" if event.kind is EventKind.WARNING else "information")
+            text = event.text
+            if event.kind is EventKind.WARNING and event.data.get("held") is True:  # the deck held the queue
+                text = f"queue held until you /unhold it: {event.data.get('reason')}"
+            self.say(text, "warning" if event.kind is EventKind.WARNING else "information")
         if self.is_running and not self._redraw_queued:  # one redraw for a burst of events
             self._redraw_queued = True
             self.call_later(self._redraw)
@@ -308,11 +311,14 @@ class FlightdeckApp(App[None]):
         return ""
 
     def command_suggestions(self, lane_id: str | None, *, with_lane: bool) -> tuple[tuple[str, str], ...]:
-        """The lane's suggested answers as full commands, for the command bar's menu."""
+        """The lane's suggested answers as full commands, for the command bar's menu; while the
+        queue is held, /unhold first, whatever lane is selected."""
+        out: list[tuple[str, str]] = []
+        if self.deck.held:
+            out.append(("/unhold", f"the queue is held: {untrusted(self.deck.held, one_line=True)}"))
         lane = self.deck.lanes.get(lane_id or "")
         if lane is None or lane.finished:
-            return ()
-        out: list[tuple[str, str]] = []
+            return tuple(out)
         if lane.pending is not None:
             out.append(("/approve" + (f" {lane.id}" if with_lane else ""), untrusted(lane.pending.detail, one_line=True)))
         for alert in sorted(lane.alerts, key=lambda a: views.ALERT_URGENCY[a.kind]):
@@ -465,6 +471,12 @@ class FlightdeckApp(App[None]):
         except Exception as exc:
             return f"the workspace could not be checked: {exc}", f"handed back, but its workspace could not be checked: {exc}"
 
+    def unhold(self) -> None:
+        """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""
+        outcome = self.deck.release_hold()
+        self.say(outcome.message, "information" if outcome.ok else "warning")
+        self.refresh_view()
+
     def claim_toggle(self, challenge_id: str) -> None:
         ch = self.deck.challenges[challenge_id]
         self.apply(iv.Release(challenge_id) if ch.claimed_by == ME else iv.Claim(challenge_id))
@@ -500,6 +512,8 @@ class FlightdeckApp(App[None]):
             cid = self._challenge_arg(arg, lane_id)
             if cid is not None:
                 self.claim_toggle(cid)
+        elif name == "unhold":
+            self.unhold()
         elif name == "filter":
             self.show_fleet()
             self._fleet.set_filter(arg)
