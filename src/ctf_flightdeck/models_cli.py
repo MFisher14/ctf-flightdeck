@@ -39,6 +39,7 @@ from .model_catalog import (
     Catalog,
     CatalogError,
     LocalModel,
+    NotFor,
     Option,
     advise,
     api_lines,
@@ -49,6 +50,7 @@ from .model_catalog import (
     load_catalog,
     local_lines,
     measure_command,
+    sizing,
 )
 from .text import untrusted
 
@@ -123,7 +125,7 @@ def overview_text(catalog: Catalog, machine: Machine) -> str:
     plan = budget(machine)
     lines = ["This machine", *machine_lines(machine), "", f"{_budget_line(plan)}.", MEMORY_RULE]
     for role in ROLES:
-        lines += ["", *role_lines(advise(catalog, machine, role, plan), catalog)]
+        lines += ["", *role_lines(advise(catalog, machine, role, plan))]
     example = next((o.model.id for role in ROLES for o in advise(catalog, machine, role, plan).fits), catalog.local[0].id)
     lines += [
         "",
@@ -208,9 +210,10 @@ def _models(names: tuple[str, ...]) -> str:
     return f"{len(names)} model{'s' if len(names) != 1 else ''}: {shown}{more}"
 
 
-def role_lines(advice: Advice, catalog: Catalog) -> list[str]:
+def role_lines(advice: Advice) -> list[str]:
     """One role's section: what comes first and why, the local models (fit, too big, cannot
-    tell, not for this machine) and the model APIs, in the order the advice leads with."""
+    tell, not for this machine, not for this role) and the model APIs, in the order the advice
+    leads with."""
     role = advice.role
     lines = [ROLE_TITLES[role], f"  First: {_lead(advice)}"]
     fits = [f"    {_option_line(o)}" for o in advice.fits]
@@ -234,16 +237,13 @@ def role_lines(advice: Advice, catalog: Catalog) -> list[str]:
         named = ", ".join(f"{o.model.id} on {_runtime_label(o.build.runtime)}" for o in advice.not_here)
         why = "; ".join(dict.fromkeys(o.why for o in advice.not_here))
         lines.append(f"  Not for this machine: {named} ({why})")
-    others = [m.id for m in catalog.local if role not in m.roles]
-    if others:
-        lines.append(f"  Not for {ROLE_NAMES[role]}: {', '.join(others)} (the catalog lists "
-                     f"{'it' if len(others) == 1 else 'them'} for {' and '.join(_role_names(others, catalog))} only)")
+    if advice.not_for:
+        lines += [f"  Not for {ROLE_NAMES[role]}:", *(f"    {_not_for_name(item)}: {_safe(item.why)}" for item in advice.not_for)]
     return lines
 
 
-def _role_names(ids: list[str], catalog: Catalog) -> list[str]:
-    roles = dict.fromkeys(role for i in ids for role in catalog.get(i).roles)
-    return [ROLE_NAMES[role] for role in roles]
+def _not_for_name(item: NotFor) -> str:
+    return item.model.id if item.build is None else f"{item.model.id} on {_runtime_label(item.build.runtime)}"
 
 
 def _lead(advice: Advice) -> str:
@@ -305,24 +305,32 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
     model = choice
     roles = " and ".join(ROLE_HEADS[r] for r in model.roles)
     lines = [f"{model.name} ({model.id}): {model.family}, {model.parameters} parameters, {model.license}. For {roles}."]
-    measured = "; ".join(f"{ROLE_HEADS[r]}: {_safe(text)}" for r, text in model.measured.items())
+    measured = "; ".join(f"on {_runtime_label(b.runtime)}, for {ROLE_HEADS[r]}: {_safe(text)}"
+                         for b in model.builds for r, text in b.measured.items())
     lines.append(f"Measured: {measured} ({MODELS_DOC})." if measured else f"Measured: not yet ({MODELS_DOC} has the results).")
     for build in model.builds:
-        options = {role: judge(model, build, role, machine, plan) for role in model.roles}
-        first = next(iter(options.values()))
+        found = sizing(build, machine)
         facts = [_safe(build.model)]
         if build.quantization:
             facts.append(_safe(build.quantization))
-        if first.sized_by == SIZE_SERVER:
-            facts.append(f"{gib(first.size)} on disk, as {_runtime_label(build.runtime)} here gives it")
+        if found.sized_by == SIZE_SERVER:
+            facts.append(f"{gib(found.size)} on disk, as {_runtime_label(build.runtime)} here gives it")
         else:
             facts.append(f"{gib(build.size)} on disk" if build.size is not None else "size not recorded")
-        if first.present:
+        if found.present:
             facts.append("pulled here" if build.runtime == OLLAMA else "a server here lists it")
         lines += ["", f"On {_runtime_label(build.runtime)}: {', '.join(facts)}"]
-        lines += [f"  here, for {ROLE_HEADS[role]}: {option.verdict}: {option.why}" for role, option in options.items()]
-        lines += ["  get it:", *(f"    {command}" for command in get_commands(build, machine))]
         for role in model.roles:
+            if role in build.not_for:
+                lines.append(f"  not for {ROLE_HEADS[role]}: {_safe(build.not_for[role])}")
+            else:
+                option = judge(model, build, role, machine, plan)
+                lines.append(f"  here, for {ROLE_HEADS[role]}: {option.verdict}: {option.why}")
+        serves = model.serves(build)
+        if not serves:
+            continue  # nothing to get it for, and no config lines to give
+        lines += ["  get it:", *(f"    {command}" for command in get_commands(build, machine))]
+        for role in serves:
             lines.append(f"  {ROLE_HEADS[role]}: {TABLES[role]}")
             lines += _indented(local_lines(build, role))
             check = "try it" if role == LANES else "measure it first"
@@ -390,6 +398,7 @@ def advice_json(advice: Advice) -> dict:
         "too_big": [option_json(o) for o in advice.too_big],
         "cannot_tell": [option_json(o) for o in advice.cannot_tell],
         "not_here": [option_json(o) for o in advice.not_here],
+        "not_for": [not_for_json(item) for item in advice.not_for],
         "api": [api_json(a) for a in advice.api],
     }
     if advice.role == LIGHT:
@@ -403,9 +412,17 @@ def option_json(option: Option) -> dict:
     return {
         "id": option.model.id, "name": option.model.name, "runtime": build.runtime, "model": build.model,
         "quantization": build.quantization, "size_bytes": build.size, "weights_bytes": option.size,
-        "sized_by": option.sized_by or None, "verdict": option.verdict, "need_bytes": option.need, "estimate": True,
-        "why": option.why, "present": option.present, "measured": option.measured or None, "basis": basis,
+        "sized_by": option.sized_by or None, "server_args": list(build.server_args), "verdict": option.verdict,
+        "need_bytes": option.need, "estimate": True, "why": option.why, "present": option.present,
+        "measured": option.measured or None, "basis": basis,
     }
+
+
+def not_for_json(item: NotFor) -> dict:
+    """A model (runtime None) or one build the catalog does not offer for the role, and why."""
+    build = item.build
+    return {"id": item.model.id, "runtime": build.runtime if build else None, "model": build.model if build else None,
+            "why": item.why}
 
 
 def api_json(api: ApiChoice) -> dict:
@@ -431,24 +448,25 @@ def entry_json(choice: LocalModel | ApiChoice, machine: Machine | None) -> dict:
     plan = budget(machine)
     builds = []
     for build in choice.builds:
-        options = {role: judge(choice, build, role, machine, plan) for role in choice.roles}
-        first = next(iter(options.values()))
+        found = sizing(build, machine)
+        options = {role: judge(choice, build, role, machine, plan) for role in choice.serves(build)}
         roles = {
             role: {
                 "verdict": option.verdict, "need_bytes": option.need, "estimate": True, "why": option.why,
-                "config": local_lines(build, role), "replaces": TABLES[role], "check": measure_command(build, role),
-                "init": init_command(choice, role, build),
+                "measured": option.measured or None, "config": local_lines(build, role), "replaces": TABLES[role],
+                "check": measure_command(build, role), "init": init_command(choice, role, build),
             }
             for role, option in options.items()
         }
         builds.append({
             "runtime": build.runtime, "model": build.model, "quantization": build.quantization, "size_bytes": build.size,
-            "weights_bytes": first.size, "sized_by": first.sized_by or None, "present": first.present,
-            "get": get_commands(build, machine), "roles": roles,
+            "weights_bytes": found.size, "sized_by": found.sized_by or None, "present": found.present,
+            "server_args": list(build.server_args), "measured": dict(build.measured), "not_for": dict(build.not_for),
+            "get": get_commands(build, machine) if roles else [], "roles": roles,
         })
     return {
         "id": choice.id, "name": choice.name, "family": choice.family, "parameters": choice.parameters,
-        "license": choice.license, "roles": list(choice.roles), "measured": dict(choice.measured),
+        "license": choice.license, "roles": list(choice.roles),
         "measured_results": MODELS_DOC, "builds": builds, "local_models": {"where": plan.where, "memory_bytes": plan.bytes},
         "changes_config": False,
     }

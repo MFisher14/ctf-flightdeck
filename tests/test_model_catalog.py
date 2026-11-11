@@ -4,6 +4,7 @@ fit a machine for each role. Machines are fakes (fake_host.py); nothing is probe
 from __future__ import annotations
 
 import re
+import shlex
 
 import pytest
 from fake_host import GIB, FakeHost, apple_mac, linux_box
@@ -52,13 +53,14 @@ def machine(host: FakeHost):
     return probe(host, servers=OFF)
 
 
-def one_model(size: int | None = TEN, *, mlx: bool = False, measured: str = "", ident: str = "test-10g",
-              roles: str = '["lanes", "light"]') -> str:
+def one_model(size: int | None = TEN, *, mlx: bool = False, ident: str = "test-10g", roles: str = '["lanes", "light"]',
+              ollama: str = "", mlx_lines: str = "") -> str:
+    """A catalog with one model on Ollama (and MLX); `ollama` and `mlx_lines` are added to each build's table."""
     size_line = f"size_bytes = {size}\n" if size is not None else ""
     out = (f'[[local]]\nid = "{ident}"\nname = "Test 10G"\nfamily = "Test"\nparameters = "20B"\nlicense = "MIT"\n'
-           f"roles = {roles}\nmeasured = {{{measured}}}\n\n[local.ollama]\nmodel = \"{ident}:q4\"\n{size_line}")
+           f"roles = {roles}\n\n[local.ollama]\nmodel = \"{ident}:q4\"\n{size_line}{ollama}")
     if mlx:
-        out += f'\n[local.mlx]\nmodel = "test/{ident}-4bit"\n{size_line}'
+        out += f'\n[local.mlx]\nmodel = "test/{ident}-4bit"\n{size_line}{mlx_lines}'
     return out
 
 
@@ -80,20 +82,51 @@ def test_the_shipped_catalog_has_the_four_benchmarked_models_on_ollama_and_mlx()
         "gemma4-12b": {OLLAMA: "gemma4:12b", MLX: "mlx-community/gemma-4-12B-it-4bit"},
         "phi4-mini": {OLLAMA: "phi4-mini", MLX: "mlx-community/Phi-4-mini-instruct-4bit"},
     }
-    assert all(m.measured == {} for m in catalog.local)  # filled from docs/MODELS.md, never invented
+    assert all(b.measured == {} for m in catalog.local for b in m.builds)  # filled from docs/MODELS.md, never invented
     assert [a.id for a in catalog.api] == ["anthropic", "openrouter"]
 
 
 def test_the_shipped_sizes_are_the_benchmarks_records_and_nothing_else():
     catalog = load_catalog()
     sizes = {(m.id, b.runtime): b.size for m in catalog.local for b in m.builds}
-    assert sizes == {
+    assert sizes == {  # results/<runtime>-<model>.measure.json: disk.size_bytes (Ollama), disk.weights_bytes (MLX)
         ("qwen3.5-9b", OLLAMA): 6550825550, ("qwen3.5-9b", MLX): 5950221072,
+        ("gpt-oss-20b", OLLAMA): 13793441566, ("gpt-oss-20b", MLX): 12076207568,
+        ("gemma4-12b", OLLAMA): 8021618941, ("gemma4-12b", MLX): 6741039511,
         ("phi4-mini", OLLAMA): 2491876774, ("phi4-mini", MLX): 2158100796,
-        # the benchmark recorded no size for these: left out, never estimated
-        ("gpt-oss-20b", OLLAMA): None, ("gpt-oss-20b", MLX): None, ("gemma4-12b", OLLAMA): None, ("gemma4-12b", MLX): None,
     }
-    assert catalog.get("gpt-oss-20b").build(MLX).quantization is None
+    quantizations = {(m.id, b.runtime): b.quantization for m in catalog.local for b in m.builds}
+    assert quantizations == {  # `ollama show` (Ollama), disk.quantization (MLX)
+        ("qwen3.5-9b", OLLAMA): "Q4_K_M", ("qwen3.5-9b", MLX): "4-bit, group size 64, affine",
+        ("gpt-oss-20b", OLLAMA): "MXFP4", ("gpt-oss-20b", MLX): "MXFP4 4-bit, group size 32; 122 layers 8-bit, group size 64",
+        ("gemma4-12b", OLLAMA): "Q4_K_M", ("gemma4-12b", MLX): "4-bit, group size 64, affine",
+        ("phi4-mini", OLLAMA): "Q4_K_M", ("phi4-mini", MLX): "4-bit, group size 64",
+    }
+
+
+NO_THINKING = ("--chat-template-args", '{"enable_thinking":false}', "--max-tokens", "8192")
+
+
+def test_thinking_models_are_served_as_the_benchmark_found_they_work_and_never_offered_where_they_did_not():
+    catalog = load_catalog()
+    # mlx_lm.server with thinking off and room to reply: the setting the benchmark measured working
+    served = {(m.id, b.runtime): b.server_args for m in catalog.local for b in m.builds if b.server_args}
+    assert served == {("qwen3.5-9b", MLX): NO_THINKING, ("gemma4-12b", MLX): NO_THINKING}
+    # Ollama's thinking cannot be turned off by anything flightdeck sends; mlx_lm.server passes gpt-oss's
+    # channel format on as text
+    refused = {(m.id, b.runtime): tuple(b.not_for) for m in catalog.local for b in m.builds if b.not_for}
+    assert refused == {("qwen3.5-9b", OLLAMA): (LIGHT,), ("gemma4-12b", OLLAMA): (LIGHT,), ("gpt-oss-20b", MLX): (LANES, LIGHT)}
+    assert "thinking on" in catalog.get("qwen3.5-9b").build(OLLAMA).not_for[LIGHT]
+    assert "as text" in catalog.get("gpt-oss-20b").build(MLX).not_for[LANES]
+    mac = machine(apple_mac(memory=36 * GIB))
+    light = advise(catalog, mac, LIGHT)
+    assert ("qwen3.5-9b", OLLAMA) not in [(o.model.id, o.build.runtime) for o in light.fits]
+    assert ("qwen3.5-9b", MLX) in [(o.model.id, o.build.runtime) for o in light.fits]
+    assert [(n.model.id, n.build.runtime) for n in light.not_for] == [
+        ("qwen3.5-9b", OLLAMA), ("gpt-oss-20b", MLX), ("gemma4-12b", OLLAMA)]
+    lanes = advise(catalog, mac, LANES)
+    assert [(n.model.id, n.build and n.build.runtime) for n in lanes.not_for] == [("gpt-oss-20b", MLX), ("phi4-mini", None)]
+    assert ("gpt-oss-20b", MLX) not in [(o.model.id, o.build.runtime) for o in (*lanes.fits, *lanes.too_big, *lanes.cannot_tell)]
 
 
 def test_the_anthropic_entry_is_inits_ladder_and_prices_imported_not_copied(monkeypatch):
@@ -141,9 +174,22 @@ BASE = one_model()
     (BASE.replace(f"size_bytes = {TEN}", "size_bytes = true"), "size_bytes must be a positive whole number"),
     (BASE.replace('roles = ["lanes", "light"]', 'roles = ["lanes", "judge"]'), "roles must list each of its roles once"),
     (BASE.replace('roles = ["lanes", "light"]', 'roles = ["light", "light"]'), "roles must list each of its roles once"),
-    (one_model(roles='["light"]', measured='lanes = "5/5"'), "measured.lanes is not one of its roles"),
-    (one_model(measured='light = ""'), "measured.light must be a one-line result"),
-    (one_model(measured='light = "a\\nb"'), "measured.light must be a one-line result"),
+    # measured, not_for and server_args belong to a build: results and settings differ by runtime
+    (BASE.replace('license = "MIT"\n', 'license = "MIT"\nmeasured = {}\n'), "[[local]] entry 1 (test-10g): unknown key measured"),
+    (one_model(roles='["light"]', ollama='measured = { lanes = "5/5" }\n'), "[local.ollama]: measured.lanes is not one of its roles"),
+    (one_model(ollama='measured = { light = "" }\n'), "[local.ollama]: measured.light must be one line"),
+    (one_model(ollama='measured = { light = "a\\nb" }\n'), "[local.ollama]: measured.light must be one line"),
+    (one_model(ollama='measured = "5/5"\n'), "[local.ollama]: measured must be a table of role"),
+    (one_model(ollama='not_for = { judge = "no" }\n'), "[local.ollama]: not_for.judge is not one of its roles"),
+    (one_model(ollama='not_for = { light = " " }\n'), "[local.ollama]: not_for.light must be one line"),
+    (one_model(ollama='not_for = { light = "it thinks" }\nmeasured = { light = "1/44" }\n'),
+     "[local.ollama]: measured.light and not_for.light"),
+    (one_model(ollama='server_args = ["--max-tokens", "8192"]\n'), "[local.ollama]: server_args is for [local.mlx] only"),
+    (one_model(mlx=True, mlx_lines='server_args = "--max-tokens 8192"\n'), "[local.mlx]: server_args must list mlx_lm.server's arguments"),
+    (one_model(mlx=True, mlx_lines="server_args = []\n"), "[local.mlx]: server_args must list mlx_lm.server's arguments"),
+    (one_model(mlx=True, mlx_lines='server_args = ["--max-tokens", 8192]\n'), "[local.mlx]: server_args must list"),
+    (one_model(mlx=True, mlx_lines='server_args = ["--port", "9000"]\n'), "[local.mlx]: server_args sets --port; the command sets"),
+    (one_model(mlx=True, mlx_lines='server_args = ["--host=0.0.0.0"]\n'), "[local.mlx]: server_args sets --host=0.0.0.0"),
     (BASE.replace('parameters = "20B"', 'parameters = "twenty"'), "parameters must be a count like 9.0B"),
     (BASE.split("[local.ollama]")[0], "test-10g): names no runtime"),
     (BASE + '\n[[api]]\nid = "x"\nname = "X"\nprovider = "acme"\nroles = ["lanes"]\nclassifier = true\nnote = "n"\n',
@@ -278,11 +324,33 @@ def test_on_the_cpu_lanes_lead_with_an_api_and_the_light_role_with_the_rules_sma
 
 
 def test_a_measured_model_comes_before_one_that_only_fits_by_size():
-    catalog = parse_catalog(one_model(ident="plain") + "\n" + one_model(ident="tried", measured='light = "28/30 hints"'))
+    catalog = parse_catalog(one_model(ident="plain") + "\n" + one_model(ident="tried", ollama='measured = { light = "28/30 hints" }\n'))
     mac = machine(apple_mac(memory=64 * GIB))
     advice = advise(catalog, mac, LIGHT)
     assert [(o.model.id, o.measured) for o in advice.fits] == [("tried", "28/30 hints"), ("plain", "")]
     assert [o.model.id for o in advise(catalog, mac, LANES).fits] == ["plain", "tried"]  # measured for light only
+
+
+def test_a_result_belongs_to_the_build_it_was_measured_on():
+    catalog = parse_catalog(one_model(mlx=True, mlx_lines='measured = { light = "41/44 with thinking off" }\n'))
+    advice = advise(catalog, machine(apple_mac(memory=64 * GIB)), LIGHT)
+    assert [(o.build.runtime, o.measured) for o in advice.fits] == [(MLX, "41/44 with thinking off"), (OLLAMA, "")]
+
+
+def test_a_build_that_is_not_for_a_role_is_never_offered_for_it():
+    catalog = parse_catalog(one_model(mlx=True, ollama='not_for = { light = "it thinks first" }\n'))
+    model = catalog.local[0]
+    for box in (machine(apple_mac(memory=64 * GIB)), machine(apple_mac(memory=8 * GIB)), machine(linux_box(1, files={}))):
+        light = advise(catalog, box, LIGHT)
+        offered = [*light.fits, *light.too_big, *light.cannot_tell, *light.not_here]
+        assert [o.build.runtime for o in offered] == [MLX]
+        assert [(n.model.id, n.build.runtime, n.why) for n in light.not_for] == [("test-10g", OLLAMA, "it thinks first")]
+        lanes = advise(catalog, box, LANES)
+        assert sorted(o.build.runtime for o in (*lanes.fits, *lanes.too_big, *lanes.cannot_tell, *lanes.not_here)) == [MLX, OLLAMA]
+        assert lanes.not_for == ()
+    assert model.serves(model.build(OLLAMA)) == (LANES,) and model.serves(model.build(MLX)) == (LANES, LIGHT)
+    with pytest.raises(ValueError, match="does not serve light"):
+        judge(model, model.build(OLLAMA), LIGHT, machine(apple_mac()), budget(machine(apple_mac())))
 
 
 def test_when_nothing_fits_lanes_lead_with_an_api_and_the_light_role_with_the_rules():
@@ -302,6 +370,10 @@ def load_catalog_api_text() -> str:
 # ---------------------------------------------------------------------- the commands, and the config lines
 
 
+QWEN_MLX_SERVER = ("mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080 "
+                   "--chat-template-args '{\"enable_thinking\":false}' --max-tokens 8192")
+
+
 def test_the_commands_that_get_a_model():
     catalog = load_catalog()
     qwen = catalog.get("qwen3.5-9b")
@@ -309,11 +381,16 @@ def test_the_commands_that_get_a_model():
     assert get_commands(qwen.build(OLLAMA), bare) == [
         "# Ollama is not on PATH: install it first (https://ollama.com/download)", "ollama pull qwen3.5:9b"]
     assert get_commands(qwen.build(MLX), bare)[0].startswith("uv tool install mlx-lm")
-    assert get_commands(qwen.build(MLX), bare)[-1] == (
-        "mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080")
+    assert get_commands(qwen.build(MLX), bare)[1] == QWEN_MLX_SERVER
     ready = machine(apple_mac(programs={"ollama": "/opt/homebrew/bin/ollama", "mlx_lm.server": "/opt/bin/mlx_lm.server"}))
     assert get_commands(qwen.build(OLLAMA), ready) == ["ollama pull qwen3.5:9b"]
-    assert get_commands(qwen.build(MLX), ready) == ["mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080"]
+    assert get_commands(qwen.build(MLX), ready) == [
+        QWEN_MLX_SERVER, "# keep the arguments after --port 8080: the benchmark behind docs/MODELS.md served it with them"]
+    # the shell gives mlx_lm.server exactly the catalog's arguments, after the address flightdeck uses
+    assert shlex.split(QWEN_MLX_SERVER) == ["mlx_lm.server", "--model", "mlx-community/Qwen3.5-9B-MLX-4bit", "--host",
+                                            "127.0.0.1", "--port", "8080", *NO_THINKING]
+    phi = catalog.get("phi4-mini").build(MLX)  # served as it comes: nothing to keep
+    assert get_commands(phi, ready) == ["mlx_lm.server --model mlx-community/Phi-4-mini-instruct-4bit --host 127.0.0.1 --port 8080"]
     assert measure_command(qwen.build(MLX), LIGHT) == (
         "flightdeck eval-local --engine openai --base-url http://127.0.0.1:8080/v1 --model mlx-community/Qwen3.5-9B-MLX-4bit")
 
@@ -339,20 +416,25 @@ INIT_CONFIG = setup.render(setup.Answers(
 LANE_TABLES = ("api", "models", "prices", "fallback")  # what `flightdeck models` says the lane lines replace
 
 
-@pytest.mark.parametrize(("ident", "runtime"), [(m.id, b.runtime) for m in load_catalog().local for b in m.builds])
-def test_a_local_models_config_lines_replace_the_tables_they_name_and_load(ident, runtime, tmp_path):
+SERVED = [(m.id, b.runtime, role) for m in load_catalog().local for b in m.builds for role in m.serves(b)]  # what it offers
+URLS = {OLLAMA: "http://127.0.0.1:11434/v1", MLX: "http://127.0.0.1:8080/v1"}  # each runtime's server, as config.py names it
+
+
+@pytest.mark.parametrize(("ident", "runtime", "role"), SERVED)
+def test_a_local_models_config_lines_replace_the_tables_they_name_and_load(ident, runtime, role, tmp_path):
     model = load_catalog().get(ident)
     build = model.build(runtime)
-    url = {OLLAMA: "http://127.0.0.1:11434/v1", MLX: "http://127.0.0.1:8080/v1"}[runtime]
+    url = URLS[runtime]
     path = tmp_path / "config.toml"
-    if LANES in model.roles:
+    if role == LANES:
         path.write_text(without(INIT_CONFIG, *LANE_TABLES) + "\n" + local_lines(build, LANES))
         config = load_config(path)
         assert (config.api.provider, config.api.base_url, config.api.key_env) == ("openai", url, "")
         assert config.models == (build.model,) and config.prices == {} and config.fallback is None
-    path.write_text(without(INIT_CONFIG, "light") + "\n" + local_lines(build, LIGHT))
-    light = load_config(path).light
-    assert (light.engine, light.model, light.base_url, light.key_env) == ("openai", build.model, url, "")
+    else:
+        path.write_text(without(INIT_CONFIG, "light") + "\n" + local_lines(build, LIGHT))
+        light = load_config(path).light
+        assert (light.engine, light.model, light.base_url, light.key_env) == ("openai", build.model, url, "")
 
 
 def test_the_api_config_lines_replace_the_tables_they_name_and_load(tmp_path):

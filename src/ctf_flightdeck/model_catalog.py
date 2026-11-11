@@ -32,6 +32,12 @@ local models (budget()):
 
 A build with no size, or a machine whose memory (or GPU) is unknown, is "cannot tell": never a
 guess. MLX runs on Apple Silicon only.
+
+Each build (a model on one runtime) carries what was found serving it: the arguments its MLX
+server was measured with (server_args, printed in the command that serves it), the roles it
+should not serve and why (not_for: it is never offered for them), and its measured results
+(measured, from docs/MODELS.md). A model's results and settings differ by runtime: thinking can
+be turned off at an MLX server, and not by anything flightdeck sends to Ollama.
 """
 
 from __future__ import annotations
@@ -65,9 +71,10 @@ SIZE_CATALOG, SIZE_SERVER = "catalog", "server"  # where a build's size came fro
 FITS, TOO_BIG, CANNOT_TELL, NOT_HERE = "fits", "too big", "cannot tell", "not on this machine"
 LOCAL, API, RULES = "local", "api", "rules"  # what a role's advice leads with
 
-_LOCAL_KEYS = ("id", "name", "family", "parameters", "license", "roles", "measured", *BUILDS)
-_LOCAL_REQUIRED = ("id", "name", "family", "parameters", "license", "roles", "measured")
-_BUILD_KEYS = ("model", "quantization", "size_bytes")
+_LOCAL_KEYS = ("id", "name", "family", "parameters", "license", "roles", *BUILDS)
+_LOCAL_REQUIRED = ("id", "name", "family", "parameters", "license", "roles")
+_BUILD_KEYS = ("model", "quantization", "size_bytes", "server_args", "not_for", "measured")
+SET_BY_COMMAND = ("--model", "--host", "--port")  # mlx_lm.server arguments serve_command() sets itself
 _API_KEYS = ("id", "name", "provider", "roles", "classifier", "note", "models_page")
 _API_REQUIRED = ("id", "name", "provider", "roles", "classifier", "note")
 _ID = re.compile(r"[a-z0-9][a-z0-9.-]*")
@@ -78,6 +85,9 @@ class CatalogError(ValueError):
     """The catalog cannot be used; the message names the file and the entry."""
 
 
+_NO_LINES: Mapping[str, str] = MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class Build:
     """A local model as one runtime serves it."""
@@ -86,6 +96,9 @@ class Build:
     model: str  # the runtime's name for it: an Ollama tag, a Hugging Face repo for mlx_lm.server
     quantization: str | None = None  # None: not recorded
     size: int | None = None  # bytes of its weights on disk; None: not recorded
+    server_args: tuple[str, ...] = ()  # MLX: what mlx_lm.server was measured with, after serve_command()'s own
+    not_for: Mapping[str, str] = _NO_LINES  # role -> why this build should not serve it (one line)
+    measured: Mapping[str, str] = _NO_LINES  # role -> a one-line result from docs/MODELS.md
 
 
 @dataclass(frozen=True)
@@ -96,11 +109,14 @@ class LocalModel:
     parameters: str  # "9.0B"
     license: str
     roles: tuple[str, ...]
-    measured: Mapping[str, str]  # role -> a one-line result from docs/MODELS.md
     builds: tuple[Build, ...]
 
     def build(self, runtime: str) -> Build | None:
         return next((b for b in self.builds if b.runtime == runtime), None)
+
+    def serves(self, build: Build) -> tuple[str, ...]:
+        """The roles `build` may serve: the model's, less those the build is not for."""
+        return tuple(role for role in self.roles if role not in build.not_for)
 
 
 @dataclass(frozen=True)
@@ -214,24 +230,44 @@ def _local(entry: object, where: str) -> LocalModel:
     parameters = _text(entry, "parameters", name)
     if not _PARAMETERS.fullmatch(parameters):
         raise CatalogError(f"{name}: parameters must be a count like 9.0B or 750M")
-    measured = entry["measured"]
-    if not isinstance(measured, dict):
-        raise CatalogError(f"{name}: measured must be a table of role = \"result\" (empty until measured)")
-    for role, result in measured.items():
-        if role not in roles:
-            raise CatalogError(f"{name}: measured.{role} is not one of its roles ({', '.join(roles)})")
-        if not isinstance(result, str) or not result.strip() or not result.isprintable():
-            raise CatalogError(f"{name}: measured.{role} must be a one-line result")
-    builds = tuple(_build(entry[runtime], runtime, name) for runtime in BUILDS if runtime in entry)
+    builds = tuple(_build(entry[runtime], runtime, name, roles) for runtime in BUILDS if runtime in entry)
     if not builds:
         raise CatalogError(f"{name}: names no runtime: add [local.ollama] or [local.mlx]")
     return LocalModel(
         id=entry["id"], name=_text(entry, "name", name), family=_text(entry, "family", name), parameters=parameters,
-        license=_text(entry, "license", name), roles=roles, measured=MappingProxyType(dict(measured)), builds=builds,
+        license=_text(entry, "license", name), roles=roles, builds=builds,
     )
 
 
-def _build(table: object, runtime: str, name: str) -> Build:
+def _lines(table: dict, key: str, where: str, roles: tuple[str, ...], what: str) -> Mapping[str, str]:
+    """A build's table of role = "one line" (`what` the line is), for the model's roles only."""
+    lines = table.get(key, {})
+    if not isinstance(lines, dict):
+        raise CatalogError(f"{where}: {key} must be a table of role = \"{what}\"")
+    for role, text in lines.items():
+        if role not in roles:
+            raise CatalogError(f"{where}: {key}.{role} is not one of its roles ({', '.join(roles)})")
+        if not isinstance(text, str) or not text.strip() or text != text.strip() or not text.isprintable():
+            raise CatalogError(f"{where}: {key}.{role} must be one line: {what}")
+    return MappingProxyType(dict(lines))
+
+
+def _server_args(table: dict, runtime: str, where: str) -> tuple[str, ...]:
+    if "server_args" not in table:
+        return ()
+    if runtime != MLX:
+        raise CatalogError(f"{where}: server_args is for [local.mlx] only: mlx_lm.server serves one model, and "
+                           "Ollama's one server serves them all")
+    args = table["server_args"]
+    if not isinstance(args, list) or not args or not all(isinstance(a, str) and a and a.isprintable() for a in args):
+        raise CatalogError(f"{where}: server_args must list mlx_lm.server's arguments, each one line of text")
+    clash = [a for a in args if a.split("=", 1)[0] in SET_BY_COMMAND]
+    if clash:
+        raise CatalogError(f"{where}: server_args sets {', '.join(clash)}; the command sets {', '.join(SET_BY_COMMAND)} itself")
+    return tuple(args)
+
+
+def _build(table: object, runtime: str, name: str, roles: tuple[str, ...]) -> Build:
     where = f"{name}: [local.{runtime}]"
     if not isinstance(table, dict):
         raise CatalogError(f"{where} must be a table")
@@ -249,7 +285,14 @@ def _build(table: object, runtime: str, name: str) -> Build:
     size = table.get("size_bytes")
     if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size <= 0):
         raise CatalogError(f"{where}: size_bytes must be a positive whole number of bytes, or left out when it was not recorded")
-    return Build(runtime, model, quantization, size)
+    server_args = _server_args(table, runtime, where)
+    not_for = _lines(table, "not_for", where, roles, "why this build should not serve the role")
+    measured = _lines(table, "measured", where, roles, "a result from docs/MODELS.md")
+    both = [role for role in measured if role in not_for]
+    if both:
+        raise CatalogError(f"{where}: measured.{both[0]} and not_for.{both[0]}: a build that is not for a role is never "
+                           "shown for it, with or without a result")
+    return Build(runtime, model, quantization, size, server_args, not_for, measured)
 
 
 def _api(entry: object, where: str) -> ApiChoice:
@@ -343,20 +386,38 @@ class Option:
 
     @property
     def measured(self) -> str:
-        return self.model.measured.get(self.role, "")
+        """This build's measured result for the role ("" until docs/MODELS.md has one)."""
+        return self.build.measured.get(self.role, "")
 
 
-def judge(model: LocalModel, build: Build, role: str, machine: Machine, plan: Budget) -> Option:
-    """Whether `build` fits this machine for `role`, and why. Its size is the catalog's; for a
-    build the catalog has no size for, the one its server here gives it (Ollama, once pulled)."""
+@dataclass(frozen=True)
+class Sizing:
+    """A build's weights on this machine: the size the estimate uses, where it came from, and
+    whether its runtime's server here lists it now."""
+
+    size: int | None  # bytes; None: neither the catalog nor a server here gives one
+    sized_by: str  # SIZE_CATALOG, SIZE_SERVER, or "" with no size
+    present: bool
+
+
+def sizing(build: Build, machine: Machine) -> Sizing:
+    """The catalog's size for `build`; for a build the catalog has no size for, the one its
+    server here gives it (Ollama, once pulled)."""
     runtime = machine.runtime(build.runtime)
     server = runtime.server if runtime is not None else None
     present = bool(server and server.lists(build.model))
-    size, sized_by = build.size, SIZE_CATALOG
-    if size is None and server is not None:
-        size, sized_by = server.size(build.model), SIZE_SERVER
-    if size is None:
-        sized_by = ""
+    if build.size is not None:
+        return Sizing(build.size, SIZE_CATALOG, present)
+    size = server.size(build.model) if server is not None else None
+    return Sizing(size, SIZE_SERVER if size is not None else "", present)
+
+
+def judge(model: LocalModel, build: Build, role: str, machine: Machine, plan: Budget) -> Option:
+    """Whether `build` fits this machine for `role`, and why (its size: sizing())."""
+    if role not in model.serves(build):
+        raise ValueError(f"{model.id} on {RUNTIME_NAMES[build.runtime]} does not serve {role}")
+    found = sizing(build, machine)
+    size, sized_by, present = found.size, found.sized_by, found.present
     need = None if size is None else size + CONTEXT_ALLOWANCE[role]
 
     def option(verdict: str, why: str) -> Option:
@@ -379,6 +440,18 @@ def judge(model: LocalModel, build: Build, role: str, machine: Machine, plan: Bu
 
 
 @dataclass(frozen=True)
+class NotFor:
+    """A local model, or one build of it, the catalog does not offer for a role, and why."""
+
+    model: LocalModel
+    build: Build | None  # None: the whole model (the role is not among its roles)
+    why: str
+
+
+ROLE_WORDS = {LANES: "lanes", LIGHT: "the light role"}  # "the catalog lists it for the light role only"
+
+
+@dataclass(frozen=True)
 class Advice:
     """One role's recommendations on this machine."""
 
@@ -391,16 +464,29 @@ class Advice:
     cannot_tell: tuple[Option, ...]
     not_here: tuple[Option, ...]
     api: tuple[ApiChoice, ...]
+    not_for: tuple[NotFor, ...] = ()  # in catalog order: never judged for this role
+
+
+def not_for(catalog: Catalog, role: str) -> tuple[NotFor, ...]:
+    """The local models, and builds, the catalog does not offer for `role`, with the reason."""
+    out = []
+    for model in catalog.local:
+        if role not in model.roles:
+            out.append(NotFor(model, None, f"the catalog lists it for {' and '.join(ROLE_WORDS[r] for r in model.roles)} only"))
+            continue
+        out += [NotFor(model, build, build.not_for[role]) for build in model.builds if role in build.not_for]
+    return tuple(out)
 
 
 def advise(catalog: Catalog, machine: Machine, role: str, plan: Budget | None = None) -> Advice:
     """The catalog's choices for `role` on this machine: local ones that fit first where local
     models run well (Apple Silicon, an NVIDIA GPU), else an API for lanes and the rules (or a
-    small model) for the light role."""
+    small model) for the light role. A build the catalog says is not for the role is never
+    offered for it (Advice.not_for)."""
     if role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}, not {role!r}")
     plan = plan if plan is not None else budget(machine)
-    options = [judge(m, b, role, machine, plan) for m in catalog.local if role in m.roles for b in m.builds]
+    options = [judge(m, b, role, machine, plan) for m in catalog.local for b in m.builds if role in m.serves(b)]
     fits = [o for o in options if o.verdict == FITS]
     if plan.where == CPU:  # slow either way: the smallest first
         fits.sort(key=lambda o: (not o.measured, o.need))
@@ -422,6 +508,7 @@ def advise(catalog: Catalog, machine: Machine, role: str, plan: Budget | None = 
         cannot_tell=tuple(o for o in options if o.verdict == CANNOT_TELL),
         not_here=tuple(o for o in options if o.verdict == NOT_HERE),
         api=tuple(a for a in catalog.api if role in a.roles),
+        not_for=not_for(catalog, role),
     )
 
 
@@ -429,19 +516,25 @@ def advise(catalog: Catalog, machine: Machine, role: str, plan: Budget | None = 
 
 
 OLLAMA_DOWNLOAD = "https://ollama.com/download"
+KEEP_ARGS = "# keep the arguments after --port 8080: the benchmark behind {doc} served it with them"
+
+
+def serve_command(build: Build) -> str:
+    """The mlx_lm.server command that serves `build` on 127.0.0.1 (MLX_URL's port), with its server_args."""
+    return shlex.join(["mlx_lm.server", "--model", build.model, "--host", "127.0.0.1", "--port", "8080", *build.server_args])
 
 
 def get_commands(build: Build, machine: Machine | None = None) -> list[str]:
     """The commands that get `build` and serve it on this machine: first how to install its
     runtime, when `machine` shows it is not installed."""
-    model = shlex.quote(build.model)
     runtime = machine.runtime(build.runtime) if machine is not None else None
     missing = runtime is not None and not runtime.installed
     if build.runtime == OLLAMA:
         install = [f"# Ollama is not on PATH: install it first ({OLLAMA_DOWNLOAD})"] if missing else []
-        return [*install, f"ollama pull {model}"]
-    install = ["uv tool install mlx-lm   # mlx_lm.server comes with the mlx-lm package (or: pip install mlx-lm)"]
-    return [*(install if missing else []), f"mlx_lm.server --model {model} --host 127.0.0.1 --port 8080"]
+        return [*install, f"ollama pull {shlex.quote(build.model)}"]
+    install = ["uv tool install mlx-lm   # mlx_lm.server comes with the mlx-lm package (or: pip install mlx-lm)"] if missing else []
+    keep = [KEEP_ARGS.format(doc=MODELS_DOC)] if build.server_args else []
+    return [*install, serve_command(build), *keep]
 
 
 def measure_command(build: Build, role: str) -> str:

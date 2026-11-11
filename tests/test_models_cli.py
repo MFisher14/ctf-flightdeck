@@ -56,6 +56,14 @@ def section(out: str, title: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def group(block: str, title: str) -> str:
+    """The lines under the line `title` in a role's block (each indented four spaces), without the title."""
+    lines = block.splitlines()
+    start = lines.index(title)
+    end = next((i for i in range(start + 1, len(lines)) if not lines[i].startswith("    ")), len(lines))
+    return "\n".join(lines[start + 1:end])
+
+
 def mac_with_ollama(memory: int = 36 * GIB) -> FakeHost:
     return apple_mac(memory=memory, programs={"ollama": "/opt/homebrew/bin/ollama"},
                      http={SERVERS[OLLAMA]: (200, tags(("qwen3.5:9b", 6550825550), ("gpt-oss:20b", 13793441244)))})
@@ -80,13 +88,74 @@ def test_on_an_apple_silicon_mac_local_models_that_fit_come_first(monkeypatch):
     assert lanes.index("Fit here:") < lanes.index("Model APIs:")
     assert ("qwen3.5-9b on Ollama (qwen3.5:9b, pulled here): needs about 12.1 GiB (6.1 GiB of weights + 6 GiB for the "
             "context) of the 24 GiB here; fits by size only: not measured for a lane yet") in lanes
-    assert "gpt-oss-20b on Ollama (gpt-oss:20b, pulled here): needs about 18.8 GiB" in lanes  # its size from Ollama here
-    assert "gemma4-12b on Ollama (gemma4:12b): its size on disk is not recorded in the catalog" in section(lanes, "  Cannot tell:")
-    assert "Not for a lane: phi4-mini (the catalog lists it for the light role only)" in lanes
+    assert "gpt-oss-20b on Ollama (gpt-oss:20b, pulled here): needs about 18.8 GiB" in lanes
+    assert "Cannot tell" not in out  # the catalog has every build's size
+    assert group(lanes, "  Not for a lane:").splitlines() == [
+        "    gpt-oss-20b on MLX: mlx_lm.server passed its tool calls on as text, in gpt-oss's own channel format, so a lane "
+        "gets none",
+        "    phi4-mini: the catalog lists it for the light role only"]
     light = section(out, "Light role:")
     assert "phi4-mini on MLX (mlx-community/Phi-4-mini-instruct-4bit): needs about 4 GiB" in light
     assert "docs/MODELS.md" in out and out.rstrip().endswith("This only recommends: it never changes your config.")
     assert host.fetched == list(SERVERS.values()) and {urlsplit(u).hostname for u in host.fetched} == {"127.0.0.1"}
+
+
+def test_on_the_36_gb_mac_the_benchmark_ran_on_gemma_4_fits_on_both_runtimes(monkeypatch):
+    on(monkeypatch, apple_mac(memory=36 * GIB))
+    out = models().output
+    lanes, light = section(out, "Lanes:"), section(out, "Light role:")
+    assert ("gemma4-12b on MLX (mlx-community/gemma-4-12B-it-4bit): needs about 12.3 GiB (6.3 GiB of weights + 6 GiB for the "
+            "context) of the 24 GiB here") in group(lanes, "  Fit here:")
+    assert "gemma4-12b on Ollama (gemma4:12b): needs about 13.5 GiB (7.5 GiB of weights + 6 GiB" in group(lanes, "  Fit here:")
+    assert "gemma4-12b on MLX (mlx-community/gemma-4-12B-it-4bit): needs about 8.3 GiB" in group(light, "  Fit here:")
+    assert "Cannot tell" not in out and "not recorded" not in out
+    entry = models("gemma4-12b").output
+    assert "On MLX: mlx-community/gemma-4-12B-it-4bit, 4-bit, group size 64, affine, 6.3 GiB on disk" in entry
+    assert "On Ollama: gemma4:12b, Q4_K_M, 7.5 GiB on disk" in entry
+
+
+QWEN_MLX_SERVER = ("mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080 "
+                   "--chat-template-args '{\"enable_thinking\":false}' --max-tokens 8192")
+THINKING_ON_OLLAMA = ("Ollama runs it with thinking on, which flightdeck's requests do not turn off, and its light-role "
+                      "replies then held no answer")
+
+
+def test_a_thinking_model_is_served_with_thinking_off_and_never_offered_where_flightdeck_cannot_turn_it_off(monkeypatch):
+    """Qwen3.5 9B served as it comes thinks first: no answer to the light role's jobs. mlx_lm.server
+    can turn that off; nothing flightdeck sends to Ollama can."""
+    on(monkeypatch, apple_mac(programs={"ollama": "/opt/homebrew/bin/ollama", "mlx_lm.server": "/opt/bin/mlx_lm.server"}))
+    out = models("qwen3.5-9b").output
+    ollama, mlx = section(out, "On Ollama:"), out[out.index("On MLX:"):]
+    assert ("  get it:\n    " + QWEN_MLX_SERVER + "\n    # keep the arguments after --port 8080: the benchmark behind "
+            "docs/MODELS.md served it with them\n") in mlx
+    assert f"  not for the light role: {THINKING_ON_OLLAMA}" in ollama
+    assert "here, for lanes: fits" in ollama and "the light role: in your config" not in ollama
+    assert 'model = "qwen3.5:9b"' not in out and "--light ollama" not in out  # no [light] lines for the Ollama build
+    assert "the light role: in your config, these replace its [light] table" in mlx
+    overview = models().output
+    light = section(overview, "Light role:")
+    assert "qwen3.5-9b on MLX" in group(light, "  Fit here:") and "qwen3.5-9b on Ollama" not in group(light, "  Fit here:")
+    assert f"    qwen3.5-9b on Ollama: {THINKING_ON_OLLAMA}" in group(light, "  Not for the light role:").splitlines()
+    data = json.loads(models("qwen3.5-9b", "--json").output)
+    builds = {b["runtime"]: b for b in data["builds"]}
+    assert list(builds["ollama"]["roles"]) == ["lanes"] and builds["ollama"]["not_for"] == {"light": THINKING_ON_OLLAMA}
+    assert list(builds["mlx"]["roles"]) == ["lanes", "light"]
+    assert builds["mlx"]["server_args"] == ["--chat-template-args", '{"enable_thinking":false}', "--max-tokens", "8192"]
+    assert builds["mlx"]["get"][0] == QWEN_MLX_SERVER
+    not_for = json.loads(models("--json").output)["roles"]["light"]["not_for"]
+    assert {"id": "qwen3.5-9b", "runtime": "ollama", "model": "qwen3.5:9b", "why": THINKING_ON_OLLAMA} in not_for
+
+
+def test_a_build_that_serves_no_role_gets_no_commands_or_config_lines(monkeypatch):
+    on(monkeypatch, apple_mac())
+    out = models("gpt-oss-20b").output
+    mlx = out[out.index("On MLX:"):]
+    assert "  not for lanes: mlx_lm.server passed its tool calls on as text" in mlx
+    assert "  not for the light role: mlx_lm.server passed its replies on in gpt-oss's own channel format" in mlx
+    assert "get it" not in mlx and "mlx_lm.server --model" not in out and "[light]" not in mlx
+    data = json.loads(models("gpt-oss-20b", "--json").output)
+    mlx_build = next(b for b in data["builds"] if b["runtime"] == "mlx")
+    assert (mlx_build["roles"], mlx_build["get"], sorted(mlx_build["not_for"])) == ({}, [], ["lanes", "light"])
 
 
 def test_on_a_linux_box_with_an_nvidia_gpu_its_memory_is_the_budget(monkeypatch):
@@ -96,7 +165,7 @@ def test_on_a_linux_box_with_an_nvidia_gpu_its_memory_is_the_budget(monkeypatch)
     assert "Local models may use about 24 GiB here: the memory of the NVIDIA GeForce RTX 4090." in out
     lanes = section(out, "Lanes:")
     assert "First: an open-weight model on this machine" in lanes and "qwen3.5-9b on Ollama (qwen3.5:9b): needs about 12.1 GiB" in lanes
-    assert "Not for this machine: qwen3.5-9b on MLX, gpt-oss-20b on MLX, gemma4-12b on MLX (MLX runs on Apple Silicon only)" in lanes
+    assert "Not for this machine: qwen3.5-9b on MLX, gemma4-12b on MLX (MLX runs on Apple Silicon only)" in lanes
 
 
 def test_on_a_cpu_only_box_lanes_lead_with_an_api_and_the_light_role_with_the_rules(monkeypatch):
@@ -153,14 +222,35 @@ def test_json_gives_scripts_the_same_advice(monkeypatch):
     lanes = data["roles"]["lanes"]
     assert lanes["lead"] == "local" and [a["id"] for a in lanes["api"]] == ["anthropic", "openrouter"]
     assert [(o["id"], o["runtime"], o["basis"]) for o in lanes["fits"]] == [
-        ("qwen3.5-9b", "ollama", "size only"), ("qwen3.5-9b", "mlx", "size only"), ("gpt-oss-20b", "ollama", "size only")]
-    assert lanes["fits"][2]["sized_by"] == "server" and lanes["fits"][0]["sized_by"] == "catalog"
-    assert [o["basis"] for o in lanes["cannot_tell"]] == [None, None, None]
-    for role, title in (("lanes", "Lanes:"), ("light", "Light role:")):  # the text says the same
-        block = section(text, title)
+        ("qwen3.5-9b", "ollama", "size only"), ("qwen3.5-9b", "mlx", "size only"), ("gpt-oss-20b", "ollama", "size only"),
+        ("gemma4-12b", "ollama", "size only"), ("gemma4-12b", "mlx", "size only")]
+    assert {o["sized_by"] for o in lanes["fits"]} == {"catalog"} and lanes["cannot_tell"] == []
+    assert lanes["fits"][1]["server_args"] == ["--chat-template-args", '{"enable_thinking":false}', "--max-tokens", "8192"]
+    for role, title, others in (("lanes", "Lanes:", "  Not for a lane:"), ("light", "Light role:", "  Not for the light role:")):
+        block = section(text, title)  # the text says the same
         for option in data["roles"][role]["fits"]:
-            assert f"{option['id']} on {hardware.RUNTIME_NAMES[option['runtime']]} ({option['model']}" in section(block, "  Fit here")
+            assert f"{option['id']} on {hardware.RUNTIME_NAMES[option['runtime']]} ({option['model']}" in group(block, "  Fit here:")
+        not_for = group(block, others).splitlines()
+        assert [f"    {n['id']}{' on ' + hardware.RUNTIME_NAMES[n['runtime']] if n['runtime'] else ''}: {n['why']}"
+                for n in data["roles"][role]["not_for"]] == not_for
+    assert [(n["id"], n["runtime"]) for n in lanes["not_for"]] == [("gpt-oss-20b", "mlx"), ("phi4-mini", None)]
     assert data["roles"]["light"]["default"] == "rules"
+
+
+def test_a_build_with_no_catalog_size_is_sized_by_ollama_here_once_pulled(monkeypatch, tmp_path):
+    shipped = (model_catalog.files("ctf_flightdeck") / "models.toml").read_text(encoding="utf-8")
+    size = "size_bytes = 13793441566   # results/ollama-gptoss.measure.json: disk.size_bytes\n"
+    assert shipped.count(size) == 1
+    (tmp_path / "models.toml").write_text(shipped.replace(size, ""), encoding="utf-8")
+    monkeypatch.setattr(model_catalog, "files", lambda package: tmp_path)
+    on(monkeypatch, mac_with_ollama())  # its Ollama has pulled gpt-oss:20b, and gives 13793441244 bytes
+    lanes = json.loads(models("--json").output)["roles"]["lanes"]
+    gpt_oss = next(o for o in lanes["fits"] if (o["id"], o["runtime"]) == ("gpt-oss-20b", "ollama"))
+    assert (gpt_oss["sized_by"], gpt_oss["size_bytes"], gpt_oss["weights_bytes"]) == ("server", None, 13793441244)
+    assert "(12.8 GiB of weights, as Ollama here gives them + 6 GiB for the context)" in section(models().output, "Lanes:")
+    on(monkeypatch, apple_mac())  # not pulled here: no size at all
+    assert "gpt-oss-20b on Ollama (gpt-oss:20b): its size on disk is not recorded in the catalog, and Ollama here has not " \
+           "pulled it" in group(section(models().output, "Lanes:"), "  Cannot tell:")
 
 
 # ---------------------------------------------------------------------- one model: how to get it, and its config lines
@@ -177,21 +267,23 @@ def test_one_model_gives_the_commands_and_the_exact_config_lines(monkeypatch, tm
     assert "here, for lanes: fits: needs about 12.1 GiB" in ollama
     assert "    ollama pull qwen3.5:9b" in ollama
     assert "uv tool install mlx-lm" in mlx  # mlx_lm is not installed on this fake Mac
-    assert "    mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080" in mlx
+    assert "    " + QWEN_MLX_SERVER + "\n" in mlx
     assert "lanes: in your config, these replace its [api], [models] and [prices] tables" in out
-    assert ('    [light]\n    engine = "openai"\n    model = "qwen3.5:9b"\n    base_url = "http://127.0.0.1:11434/v1"\n'
-            '    key_env = ""') in out
-    assert "measure it first: flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b" in out
+    assert ('    [light]\n    engine = "openai"\n    model = "mlx-community/Qwen3.5-9B-MLX-4bit"\n'
+            '    base_url = "http://127.0.0.1:8080/v1"\n    key_env = ""') in mlx
+    assert ("measure it first: flightdeck eval-local --engine openai --base-url http://127.0.0.1:8080/v1 "
+            "--model mlx-community/Qwen3.5-9B-MLX-4bit") in mlx
     data = json.loads(models("qwen3.5-9b", "--json").output)
     assert data["changes_config"] is False
     by_runtime = {b["runtime"]: b for b in data["builds"]}
     assert by_runtime["ollama"]["get"] == ["ollama pull qwen3.5:9b"]
-    assert by_runtime["mlx"]["get"][-1] == "mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080"
+    assert by_runtime["mlx"]["get"][-2] == QWEN_MLX_SERVER
     lanes = by_runtime["mlx"]["roles"]["lanes"]
     config = parse_config(lanes["config"] + '\n[lanes]\nruntime = "host"\n', tmp_path / "c.toml")
     assert (config.api.base_url, config.models) == ("http://127.0.0.1:8080/v1", ("mlx-community/Qwen3.5-9B-MLX-4bit",))
-    light = by_runtime["ollama"]["roles"]["light"]
-    assert parse_config('[models]\nladder = ["m"]\n' + light["config"], tmp_path / "c.toml").light.model == "qwen3.5:9b"
+    light = by_runtime["mlx"]["roles"]["light"]
+    assert parse_config('[models]\nladder = ["m"]\n' + light["config"], tmp_path / "c.toml").light.model == (
+        "mlx-community/Qwen3.5-9B-MLX-4bit")
     assert light["verdict"] == "fits" and light["estimate"] is True
 
 
@@ -214,20 +306,26 @@ def test_an_unknown_model_is_named_with_the_choices(monkeypatch):
     assert "no model 'llama-9000' in the catalog; it has qwen3.5-9b, gpt-oss-20b, gemma4-12b, phi4-mini, anthropic, openrouter" in result.output
 
 
-def test_a_measured_model_says_so_and_names_where_the_results_are(monkeypatch, tmp_path):
+def test_a_measured_build_says_so_comes_first_and_names_where_the_results_are(monkeypatch, tmp_path):
     shipped = (model_catalog.files("ctf_flightdeck") / "models.toml").read_text(encoding="utf-8")
-    assert shipped.index('id = "qwen3.5-9b"') < shipped.index("measured = {}") < shipped.index('id = "gpt-oss-20b"')
-    measured = shipped.replace("measured = {}", 'measured = { light = "29/30 hints, 1.2 s a job" }', 1)  # Qwen3.5 9B's
+    gemma = 'size_bytes = 6741039511    # results/mlx-gemma.measure.json: disk.weights_bytes\n'  # Gemma 4 12B on MLX
+    assert shipped.count(gemma) == 1
+    measured = shipped.replace(gemma, gemma + 'measured = { light = "29/30 hints, 1.2 s a job" }\n')
     (tmp_path / "models.toml").write_text(measured, encoding="utf-8")
     monkeypatch.setattr(model_catalog, "files", lambda package: tmp_path)
     on(monkeypatch, apple_mac())
     out = models().output
     light = section(out, "Light role:")
-    assert ("qwen3.5-9b on Ollama (qwen3.5:9b): needs about 8.1 GiB (6.1 GiB of weights + 2 GiB for the context) of the "
-            "24 GiB here; measured: 29/30 hints, 1.2 s a job (docs/MODELS.md)") in light
-    fits = section(light, "  Fit here:").splitlines()[1:]
-    assert [line.split(" on ")[0].strip() for line in fits][:2] == ["qwen3.5-9b", "qwen3.5-9b"]  # measured first
-    assert "fits by size only: not measured for a lane yet" in section(out, "Lanes:")
+    fits = group(light, "  Fit here:").splitlines()
+    assert fits[0] == ("    gemma4-12b on MLX (mlx-community/gemma-4-12B-it-4bit): needs about 8.3 GiB (6.3 GiB of weights + "
+                       "2 GiB for the context) of the 24 GiB here; measured: 29/30 hints, 1.2 s a job (docs/MODELS.md)")
+    assert all("fits by size only: not measured for the light role yet" in line for line in fits[1:])  # its other runtime too
+    assert "gemma4-12b on MLX (mlx-community/gemma-4-12B-it-4bit): needs about 12.3 GiB" in section(out, "Lanes:")
+    assert "measured" not in section(out, "Lanes:").replace("not measured", "")  # measured for the light role only
+    entry = models("gemma4-12b").output
+    assert "Measured: on MLX, for the light role: 29/30 hints, 1.2 s a job (docs/MODELS.md)." in entry
+    data = json.loads(models("gemma4-12b", "--json").output)
+    assert [(b["runtime"], b["measured"]) for b in data["builds"]] == [("ollama", {}), ("mlx", {"light": "29/30 hints, 1.2 s a job"})]
 
 
 # ---------------------------------------------------------------------- what it never does

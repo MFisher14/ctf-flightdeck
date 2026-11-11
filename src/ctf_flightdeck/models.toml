@@ -8,15 +8,23 @@
 #   id          what `flightdeck models ID` takes
 #   name, family, parameters (as `ollama show` counts them), license
 #   roles       the roles it may serve: "lanes" (needs reliable tool calls) and "light"
-#   measured    per role, a one-line result from docs/MODELS.md; empty until measured there
-#   [local.ollama], [local.mlx]: the runtime's name for it (an Ollama tag; a Hugging Face repo
-#               for mlx_lm.server), its quantization and size_bytes (its weights on disk)
+#   [local.ollama], [local.mlx]: the model as one runtime serves it.
+#     model         the runtime's name for it: an Ollama tag; a Hugging Face repo for mlx_lm.server
+#     quantization, size_bytes (its weights on disk)
+#     server_args   [local.mlx] only: the arguments mlx_lm.server was run with when it was measured;
+#                   `flightdeck models` prints them in the command that serves it. Thinking models
+#                   need theirs: served as they come, they spend their replies thinking.
+#     not_for       per role, one line: why this build should not serve that role. It is then
+#                   listed as not for that role, with the line, and never as a fit for it.
+#     measured      per role, a one-line result from docs/MODELS.md for this build as served here
+#                   (with its server_args); left out until it is measured there
 # Every quantization and size below comes from the records of the benchmark behind
 # docs/MODELS.md (one machine: an Apple M4 Max with 36 GB): `ollama show` output
 # (logs/ollama-show-*.txt) and the "disk" record of each runtime's measure file
-# (results/<runtime>-<model>.measure.json), named beside each value. A value it did not record
-# is left out: `flightdeck models` then says it cannot tell whether that build fits, unless
-# Ollama on the player's machine has pulled it and gives its size.
+# (results/<runtime>-<model>.measure.json), named beside each value; server_args and not_for
+# name theirs too. A value it did not record is left out: `flightdeck models` then says it
+# cannot tell whether that build fits, unless Ollama on the player's machine has pulled it and
+# gives its size.
 # The memory a model needs is not stored here: model_catalog.py estimates it as its weights
 # (size_bytes) plus an allowance for the context (CONTEXT_ALLOWANCE). An estimate, not a
 # measurement.
@@ -33,17 +41,25 @@ family = "Qwen3.5"
 parameters = "9.0B"        # logs/ollama-show-qwen3.5_9b.txt: parameters
 license = "Apache-2.0"     # logs/ollama-show-qwen3.5_9b.txt: License (Apache License, Version 2.0)
 roles = ["lanes", "light"]
-measured = {}
 
 [local.ollama]
 model = "qwen3.5:9b"
 quantization = "Q4_K_M"    # logs/ollama-show-qwen3.5_9b.txt: quantization
 size_bytes = 6550825550    # results/ollama-qwen.measure.json: disk.size_bytes
+# Ollama runs it with thinking on unless a request turns that off ("reasoning_effort": "none"),
+# and flightdeck's requests do not: so served, nearly every light-role job got no answer
+# (logs/eval-ollama-qwen.log; with thinking off, logs/eval-ollama-qwen.reasoning-none.log).
+not_for = { light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off, and its light-role replies then held no answer" }
 
 [local.mlx]
 model = "mlx-community/Qwen3.5-9B-MLX-4bit"
 quantization = "4-bit, group size 64, affine"  # results/mlx-qwen.measure.json: disk.quantization
 size_bytes = 5950221072    # results/mlx-qwen.measure.json: disk.weights_bytes
+# Thinking off, and replies up to 8192 tokens (mlx_lm.server's own cap is 512): its lanes ran so
+# (results/mlx-qwen.serve.nothink-mt8192.json: server_args), and its light-role jobs with thinking
+# off (results/mlx-qwen.serve.nothink.json), which set their own reply cap. Served as it comes,
+# it got no answer to any light-role job (logs/eval-mlx-qwen.log).
+server_args = ["--chat-template-args", '{"enable_thinking":false}', "--max-tokens", "8192"]
 
 [[local]]
 id = "gpt-oss-20b"
@@ -52,16 +68,20 @@ family = "gpt-oss"
 parameters = "20.9B"       # logs/ollama-show-gpt-oss_20b.txt: parameters
 license = "Apache-2.0"     # logs/ollama-show-gpt-oss_20b.txt: License (Apache License, Version 2.0)
 roles = ["lanes", "light"]
-measured = {}
 
 [local.ollama]
 model = "gpt-oss:20b"
 quantization = "MXFP4"     # logs/ollama-show-gpt-oss_20b.txt: quantization
-# size_bytes: not recorded by the benchmark
+size_bytes = 13793441566   # results/ollama-gptoss.measure.json: disk.size_bytes
 
 [local.mlx]
 model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
-# quantization, size_bytes: not recorded by the benchmark
+quantization = "MXFP4 4-bit, group size 32; 122 layers 8-bit, group size 64"  # results/mlx-gptoss.measure.json: disk.quantization
+size_bytes = 12076207568   # results/mlx-gptoss.measure.json: disk.weights_bytes
+# mlx_lm.server passed its replies on as text in gpt-oss's own channel format: its tool calls
+# (results/mlx-gptoss.measure.json: tool_calls, none usable in 5 tries) and its answers to the
+# light role's jobs, which began with its reasoning (logs/eval-mlx-gptoss.log).
+not_for = { lanes = "mlx_lm.server passed its tool calls on as text, in gpt-oss's own channel format, so a lane gets none", light = "mlx_lm.server passed its replies on in gpt-oss's own channel format, reasoning first, so they held no answer" }
 
 [[local]]
 id = "gemma4-12b"
@@ -70,16 +90,23 @@ family = "Gemma 4"
 parameters = "11.9B"       # logs/ollama-show-gemma4_12b.txt: parameters
 license = "Apache-2.0"     # logs/ollama-show-gemma4_12b.txt: License (Apache License, Version 2.0)
 roles = ["lanes", "light"]
-measured = {}
 
 [local.ollama]
 model = "gemma4:12b"
 quantization = "Q4_K_M"    # logs/ollama-show-gemma4_12b.txt: quantization
-# size_bytes: not recorded by the benchmark
+size_bytes = 8021618941    # results/ollama-gemma.measure.json: disk.size_bytes
+# As for Qwen3.5 9B on Ollama: thinking on, and most light-role jobs got no answer
+# (logs/eval-ollama-gemma.log; with thinking off, logs/eval-ollama-gemma.reasoning-none.log).
+not_for = { light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off, and its light-role replies then held no answer" }
 
 [local.mlx]
 model = "mlx-community/gemma-4-12B-it-4bit"
-# quantization, size_bytes: not recorded by the benchmark
+quantization = "4-bit, group size 64, affine"  # results/mlx-gemma.measure.json: disk.quantization
+size_bytes = 6741039511    # results/mlx-gemma.measure.json: disk.weights_bytes
+# Thinking off, and replies up to 8192 tokens (results/mlx-gemma.serve.nothink-mt8192.json:
+# server_args): its light-role jobs and a lane ran so. Served as it comes, most light-role jobs
+# got no answer (logs/eval-mlx-gemma.log).
+server_args = ["--chat-template-args", '{"enable_thinking":false}', "--max-tokens", "8192"]
 
 [[local]]
 id = "phi4-mini"
@@ -93,7 +120,6 @@ license = "MIT"
 # benchmark's tool-call check it made no usable tool call on either runtime
 # (results/mlx-phi.measure.json and results/ollama-phi.measure.json: tool_calls).
 roles = ["light"]
-measured = {}
 
 [local.ollama]
 model = "phi4-mini"
