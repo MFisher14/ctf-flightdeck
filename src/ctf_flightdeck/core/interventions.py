@@ -80,6 +80,15 @@ class Approve:
 
 
 @dataclass(frozen=True)
+class Decline:
+    """Say no to what the lane waits for: a flag is not submitted, the live box stays off
+    limits, more budget is refused (the lane stops). On a board that cannot check flags,
+    declining the confirmation means the platform rejected the flag."""
+
+    lane: str
+
+
+@dataclass(frozen=True)
 class Claim:
     """Team mode: tell teammates we are on this challenge."""
 
@@ -109,6 +118,7 @@ Intervention = (
     | TakeOver
     | HandBack
     | Approve
+    | Decline
     | Claim
     | Release
     | Queue

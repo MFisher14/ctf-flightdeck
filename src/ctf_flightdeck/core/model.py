@@ -140,13 +140,17 @@ class Alert:
 
 class PendingKind(StrEnum):
     SUBMIT = "submit"
+    CONFIRM = "confirm"  # the board cannot check flags: the player submits by hand and says how it went
     BUDGET = "budget"
     LIVE_BOX = "live box"
 
 
+FLAG_PENDING = (PendingKind.SUBMIT, PendingKind.CONFIRM)
+
+
 @dataclass
 class Pending:
-    """Something the lane needs the player to approve (key `a`)."""
+    """Something the lane needs the player to approve (key `a`) or decline (key `d`)."""
 
     kind: PendingKind
     detail: str
@@ -237,6 +241,7 @@ class Lane:
     attempt: int = 1  # 2+ after a kill and re-queue
     turns: int = 0
     tokens: int = 0
+    cached_tokens: int = 0  # prompt tokens the API served from its cache
     dollars: float | None = 0.0  # None once any turn had no known price
     token_cap: int | None = None
     dollar_cap: float | None = None

@@ -31,8 +31,9 @@ class Clock(Protocol):
         ...
 
 
-Verifier = Callable[[str, str], bool]
-"""(challenge id, flag) -> correct? The platform adapter in M2; scenario answers in M0."""
+Verifier = Callable[[str, str], bool | None]
+"""(challenge id, flag) -> correct? None when the board cannot check flags (a folder of
+challenges with no answers): the player submits by hand and confirms the result."""
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,8 @@ class TurnReport:
 
     action: str = ""  # the command or step, one line
     output: str = ""  # short output; long output belongs in a file (M1)
-    tokens: int = 0
+    tokens: int = 0  # prompt + completion tokens of this turn's model call(s)
+    cached_tokens: int = 0  # of the prompt tokens, how many the API served from its cache
     dollars: float | None = 0.0  # None when the price is unknown
     turn: bool = True  # counts as a model turn
     plan: str | None = None  # the lane's new plan, if it changed
@@ -78,6 +80,11 @@ class LaneDriver(Protocol):
 
     def rejected(self, lane: Lane, flag: str) -> None:
         """A submitted flag was wrong; the lane carries on."""
+        ...
+
+    def declined(self, lane: Lane, pending: Pending) -> None:
+        """The player said no to `pending` (a flag not submitted, the live box refused);
+        the lane carries on. Declined budget stops the lane instead (stop() is called)."""
         ...
 
     def stop(self, lane: Lane) -> None:

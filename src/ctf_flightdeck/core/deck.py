@@ -33,6 +33,7 @@ from .driver import Clock, LaneDriver, TurnReport, Verifier
 from .interventions import (
     Approve,
     Claim,
+    Decline,
     Escalate,
     Fork,
     HandBack,
@@ -61,6 +62,7 @@ from .model import (
     EscalationSummary,
     Event,
     EventKind,
+    FLAG_PENDING,
     Lane,
     LaneState,
     Pending,
@@ -271,6 +273,7 @@ class Deck:
         if rep.hints_taken:
             del lane.hints[: rep.hints_taken]
         lane.tokens += rep.tokens
+        lane.cached_tokens += rep.cached_tokens
         if rep.dollars is None:
             if lane.dollars is not None and lane.dollar_cap:
                 self._unpriced(lane)
@@ -294,7 +297,14 @@ class Deck:
                 f"{lane.id} turn {lane.turns}: {rep.action}",
                 lane.id,
                 lane.challenge_id,
-                data={"turn": lane.turns, "tokens": rep.tokens, "dollars": rep.dollars, "action": rep.action},
+                data={
+                    "turn": lane.turns,
+                    "model": lane.model,
+                    "tokens": rep.tokens,
+                    "cached_tokens": rep.cached_tokens,
+                    "dollars": rep.dollars,
+                    "action": rep.action,
+                },
             )
         for kind in rep.clear:
             self._clear(lane, kind)
@@ -368,6 +378,8 @@ class Deck:
                 return self._hand_back(lane, note.strip())
             case Approve():
                 return self._approve(lane)
+            case Decline():
+                return self._decline(lane)
         raise TypeError(f"unknown intervention {iv!r}")
 
     def _pause(self, lane: Lane) -> Outcome:
@@ -501,10 +513,17 @@ class Deck:
                 return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
             return Outcome(False, f"{lane.id} is not waiting for an approval")
         self._note(lane, f"approved: {pending.detail}", Actor.PLAYER)
+        ch = self.challenges[lane.challenge_id]
+        if pending.kind is PendingKind.CONFIRM:
+            assert pending.flag is not None
+            self._verdict(lane, pending.flag, True, by="player")
+            return Outcome(True, f"{pending.flag} accepted: {ch.name} solved by {lane.id}")
         if pending.kind is PendingKind.SUBMIT:
             assert pending.flag is not None
-            ch = self.challenges[lane.challenge_id]
-            if self._submit(lane, pending.flag):
+            verdict = self._submit(lane, pending.flag)
+            if verdict is None:
+                return Outcome(True, f"Submit {pending.flag} on the platform, then: a accepted, d rejected")
+            if verdict:
                 return Outcome(True, f"{pending.flag} is correct: {ch.name} solved by {lane.id}")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
@@ -520,6 +539,24 @@ class Deck:
         self._resolve(lane)
         self.driver.approved(lane, pending)
         return Outcome(True, f"{lane.id} may use the live box")
+
+    def _decline(self, lane: Lane) -> Outcome:
+        pending = lane.pending
+        if pending is None:
+            return Outcome(False, f"{lane.id} is not waiting for an approval")
+        self._note(lane, f"declined: {pending.detail}", Actor.PLAYER)
+        if pending.kind is PendingKind.CONFIRM:
+            assert pending.flag is not None
+            self._verdict(lane, pending.flag, False, by="player")
+            return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
+        if pending.kind is PendingKind.BUDGET:
+            self._finish(lane, LaneState.STOPPED, "the player declined more budget")
+            return Outcome(True, f"Stopped {lane.id}: no more budget")
+        self._resolve(lane)
+        self.driver.declined(lane, pending)
+        if pending.kind is PendingKind.SUBMIT:
+            return Outcome(True, f"Not submitted: {pending.flag}; {lane.id} carries on")
+        return Outcome(True, f"{lane.id} stays off the live box")
 
     def _claim(self, challenge_id: str) -> Outcome:
         if not self.config.team:
@@ -737,12 +774,12 @@ class Deck:
         current = lane.pending
         if current is None:
             lane.pending = pending
-        elif pending.kind is PendingKind.SUBMIT and current.kind is not PendingKind.SUBMIT:
+        elif pending.kind in FLAG_PENDING and current.kind not in FLAG_PENDING:
             lane.waiting.insert(0, current)
             lane.pending = pending
         else:
-            if pending.kind is PendingKind.SUBMIT:  # a flag waits only behind other flags
-                index = next((i for i, p in enumerate(lane.waiting) if p.kind is not PendingKind.SUBMIT), len(lane.waiting))
+            if pending.kind in FLAG_PENDING:  # a flag waits only behind other flags
+                index = next((i for i, p in enumerate(lane.waiting) if p.kind not in FLAG_PENDING), len(lane.waiting))
                 lane.waiting.insert(index, pending)
             else:
                 lane.waiting.append(pending)
@@ -772,19 +809,24 @@ class Deck:
             lane.state = LaneState.RUNNING
 
     def _has_submit(self, lane: Lane) -> bool:
-        return any(p.kind is PendingKind.SUBMIT for p in ([lane.pending] if lane.pending else []) + lane.waiting)
+        return any(p.kind in FLAG_PENDING for p in ([lane.pending] if lane.pending else []) + lane.waiting)
 
     def _sync_flag_alert(self, lane: Lane) -> None:
         """The flag alert describes the flag the lane waits on now, and how many more wait."""
         pending = lane.pending
-        if pending is None or pending.kind is not PendingKind.SUBMIT:
+        if pending is None or pending.kind not in FLAG_PENDING:
             self._clear(lane, AlertKind.FLAG)  # 'a' would approve something else
             return
-        more = sum(1 for p in lane.waiting if p.kind is PendingKind.SUBMIT)
-        reason = f"Candidate {pending.flag} matches the flag format."
+        more = sum(1 for p in lane.waiting if p.kind in FLAG_PENDING)
+        if pending.kind is PendingKind.CONFIRM:
+            reason = f"Submit {pending.flag} on the platform yourself, then say if it was accepted."
+            answers = (Suggestion("a", "Accepted"), Suggestion("d", "Rejected"))
+        else:
+            reason = f"Candidate {pending.flag} matches the flag format."
+            answers = (Suggestion("a", "Approve submit"), Suggestion("d", "Decline: do not submit"))
         if more:
             reason += f" {more} more candidate{'s wait' if more > 1 else ' waits'} behind it."
-        self._raise(lane, Alert(AlertKind.FLAG, reason, (Suggestion("a", "Approve submit"),)))
+        self._raise(lane, Alert(AlertKind.FLAG, reason, answers))
 
     def _candidate(self, lane: Lane, flag: str) -> None:
         if not self._flag_re.fullmatch(flag):
@@ -799,16 +841,32 @@ class Deck:
             return
         self._ask(lane, Pending(PendingKind.SUBMIT, f"submit {flag}", flag=flag))
 
-    def _submit(self, lane: Lane, flag: str) -> bool:
+    def _submit(self, lane: Lane, flag: str) -> bool | None:
+        """Submit through the board. None: the board cannot check flags, so the player
+        submits by hand and confirms (the flag's approval becomes a confirmation)."""
         ch = self.challenges[lane.challenge_id]
         ok = self.verify(ch.id, flag)
-        self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}")
+        if ok is None:
+            confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {flag}? (you submit it)", flag=flag)
+            if lane.pending is not None and lane.pending.flag == flag:
+                lane.pending = replace(confirm, at=self.now)
+                self._became_current(lane)
+            else:
+                self._ask(lane, confirm)
+            return None
+        self._verdict(lane, flag, ok, by="platform")
+        return ok
+
+    def _verdict(self, lane: Lane, flag: str, ok: bool, *, by: str) -> None:
+        """A flag was right or wrong (the platform said, or the player for a hand submit)."""
+        ch = self.challenges[lane.challenge_id]
+        self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}" + (" (you said so)" if by == "player" else ""))
         self._emit(
             EventKind.SUBMIT,
             f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'}",
             lane.id,
             ch.id,
-            data={"flag": flag, "correct": ok},
+            data={"flag": flag, "correct": ok, "by": by},
         )
         if not ok:
             if lane.pending is not None and lane.pending.flag == flag:
@@ -816,7 +874,7 @@ class Deck:
             else:
                 self._sync_flag_alert(lane)
             self.driver.rejected(lane, flag)
-            return False
+            return
         ch.status = ChallengeStatus.SOLVED
         ch.solved_by = lane.id
         ch.solves += 1
@@ -825,7 +883,6 @@ class Deck:
         self._finish(lane, LaneState.SOLVED, f"solved with {flag}")
         for other in self.lanes_on(ch.id):
             self._finish(other, LaneState.STOPPED, f"{lane.id} solved it")
-        return True
 
     def _check_budget(self, lane: Lane) -> None:
         used = lane.budget_used()

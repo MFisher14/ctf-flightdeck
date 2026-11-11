@@ -84,6 +84,9 @@ class RecordingDriver:
     def rejected(self, lane, flag):
         self.calls.append(("rejected", lane.id, flag))
 
+    def declined(self, lane, pending):
+        self.calls.append(("declined", lane.id, pending.kind, pending.flag))
+
     def stop(self, lane):
         self.calls.append(("stop", lane.id))
 
@@ -590,8 +593,8 @@ def test_each_turn_report_emits_a_turn_event_with_its_numbers():
     deck.report(lane.id, TurnReport(action="cat x", tokens=300, dollars=None))
     deck.report(lane.id, TurnReport(tokens=50, turn=False, plan="p"))
     assert [(e.lane, e.challenge, dict(e.data)) for e in events(deck, EventKind.TURN, since=mark)] == [
-        (lane.id, "c0", {"turn": 1, "tokens": 1200, "dollars": 0.25, "action": "ls -la"}),
-        (lane.id, "c0", {"turn": 2, "tokens": 300, "dollars": None, "action": "cat x"}),
+        (lane.id, "c0", {"turn": 1, "model": "small", "tokens": 1200, "cached_tokens": 0, "dollars": 0.25, "action": "ls -la"}),
+        (lane.id, "c0", {"turn": 2, "model": "small", "tokens": 300, "cached_tokens": 0, "dollars": None, "action": "cat x"}),
     ]
 
 
@@ -602,7 +605,7 @@ def test_a_turn_with_no_action_text_still_emits_its_turn_event_and_a_non_turn_ne
     deck.report(lane.id, TurnReport(tokens=700, dollars=0.1, plan="read the source"))  # a turn that only plans
     deck.report(lane.id, TurnReport(action="note to self", tokens=5, turn=False))  # not a model turn
     turns = [dict(e.data) for e in events(deck, EventKind.TURN, since=mark)]
-    assert turns == [{"turn": 1, "tokens": 700, "dollars": 0.1, "action": ""}]
+    assert turns == [{"turn": 1, "model": "small", "tokens": 700, "cached_tokens": 0, "dollars": 0.1, "action": ""}]
 
 
 def test_a_turn_that_auto_submits_the_right_flag_still_emits_its_turn_event():
@@ -612,7 +615,7 @@ def test_a_turn_that_auto_submits_the_right_flag_still_emits_its_turn_event():
     deck.report(lane.id, TurnReport(action="solve.py", tokens=900, dollars=0.25, flag=good_flag("c0")))
     assert lane.state is LaneState.SOLVED
     turns = events(deck, EventKind.TURN, since=mark)
-    assert [dict(e.data) for e in turns] == [{"turn": 1, "tokens": 900, "dollars": 0.25, "action": "solve.py"}]
+    assert [dict(e.data) for e in turns] == [{"turn": 1, "model": "small", "tokens": 900, "cached_tokens": 0, "dollars": 0.25, "action": "solve.py"}]
 
 
 # ---------------------------------------------------------------------- flags and approvals
@@ -667,7 +670,7 @@ def test_a_rejected_flag_lets_the_lane_carry_on():
     ch = deck.challenges["c0"]
     assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.RUNNING, None, 10)
     submit = events(deck, EventKind.SUBMIT)[-1]
-    assert submit.data == {"flag": "t{wrong}", "correct": False} and submit.text.endswith(": incorrect")
+    assert submit.data == {"flag": "t{wrong}", "correct": False, "by": "platform"} and submit.text.endswith(": incorrect")
     assert any(a.by is Actor.DECK and "t{wrong}" in a.text and "incorrect" in a.text for a in lane.actions)
 
 
@@ -1734,3 +1737,146 @@ def test_deck_config_validation():
     assert {DeckConfig(event="t", submit=policy).submit for policy in ("auto", "confirm")} == {"auto", "confirm"}
     with pytest.raises(re.error):
         DeckConfig(event="t", flag_format="t{(")
+
+
+# ---------------------------------------------------------------------- decline, and boards that cannot check flags
+
+
+def test_declining_a_candidate_does_not_submit_it_and_the_lane_carries_on():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    out = deck.apply(iv.Decline(lane.id))
+    assert out.ok and out.message == f"Not submitted: t{{maybe}}; {lane.id} carries on"
+    assert deck.verify.calls == []
+    assert lane.state is LaneState.RUNNING and lane.pending is None and lane.alert(AlertKind.FLAG) is None
+    assert driver.named("declined") == [(lane.id, PendingKind.SUBMIT, "t{maybe}")]
+
+
+def test_declining_the_first_of_two_candidates_brings_up_the_second():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    deck.report(lane.id, TurnReport(flag="t{two}"))
+    deck.apply(iv.Decline(lane.id))
+    assert lane.pending.flag == "t{two}" and lane.state is LaneState.WAITING
+    assert "t{two}" in lane.alert(AlertKind.FLAG).reason
+
+
+def test_declining_live_box_access_keeps_the_lane_running_off_the_box():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+    out = deck.apply(iv.Decline(lane.id))
+    assert out.ok and "stays off the live box" in out.message
+    assert lane.state is LaneState.RUNNING and lane.pending is None
+    assert driver.named("declined") == [(lane.id, PendingKind.LIVE_BOX, None)]
+
+
+def test_declining_more_budget_stops_the_lane_and_parks_the_challenge():
+    deck, driver, _ = make_deck(n=2, max_lanes=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=1000))
+    assert lane.pending.kind is PendingKind.BUDGET
+    out = deck.apply(iv.Decline(lane.id))
+    assert out.ok and out.message == f"Stopped {lane.id}: no more budget"
+    assert lane.state is LaneState.STOPPED and lane.result == "the player declined more budget"
+    ch = deck.challenges["c0"]
+    assert ch.status is ChallengeStatus.PARKED and "declined more budget" in ch.note
+    assert driver.named("stop") == [(lane.id,)]
+    assert [x.challenge_id for x in deck.active_lanes()] == ["c1"]  # the freed slot went to the queue
+
+
+def test_decline_with_nothing_waiting_is_refused():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    out = deck.apply(iv.Decline(lane.id))
+    assert not out.ok and out.message == f"{lane.id} is not waiting for an approval"
+
+
+def unchecked_deck(submit="confirm"):
+    """A deck whose board cannot check flags (a folder of challenges, no answers)."""
+    deck, driver, clock = make_deck(n=2, max_lanes=2, submit=submit)
+    calls = []
+
+    def cannot_check(challenge_id, flag):
+        calls.append((challenge_id, flag))
+        return None
+
+    deck.verify = cannot_check
+    return deck, driver, calls
+
+
+def test_approving_a_flag_the_board_cannot_check_asks_the_player_how_the_hand_submit_went():
+    deck, _, calls = unchecked_deck()
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{c0}"))
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message == "Submit t{c0} on the platform, then: a accepted, d rejected"
+    assert calls == [("c0", "t{c0}")]
+    assert lane.state is LaneState.WAITING
+    assert (lane.pending.kind, lane.pending.flag) == (PendingKind.CONFIRM, "t{c0}")
+    alert = lane.alert(AlertKind.FLAG)
+    assert "Submit t{c0} on the platform yourself" in alert.reason
+    assert [s.key for s in alert.suggestions] == ["a", "d"]
+    assert lane.needs_you
+
+
+def test_confirming_a_hand_submit_solves_the_challenge():
+    deck, _, _ = unchecked_deck()
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{c0}"))
+    deck.apply(iv.Approve(lane.id))
+    mark = len(deck.events)
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message == f"t{{c0}} accepted: Chall 0 solved by {lane.id}"
+    ch = deck.challenges["c0"]
+    assert (lane.state, ch.status, ch.solved_by) == (LaneState.SOLVED, ChallengeStatus.SOLVED, lane.id)
+    (submit,) = events(deck, EventKind.SUBMIT, since=mark)
+    assert submit.data == {"flag": "t{c0}", "correct": True, "by": "player"}
+
+
+def test_declining_a_hand_submit_means_the_platform_rejected_it():
+    deck, driver, _ = unchecked_deck()
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{nope}"))
+    deck.apply(iv.Approve(lane.id))
+    out = deck.apply(iv.Decline(lane.id))
+    assert out.ok and out.message == f"t{{nope}} was rejected; {lane.id} carries on"
+    assert lane.state is LaneState.RUNNING and lane.pending is None and lane.alert(AlertKind.FLAG) is None
+    assert driver.named("rejected") == [(lane.id, "t{nope}")]
+    assert driver.named("declined") == []
+    assert events(deck, EventKind.SUBMIT)[-1].data == {"flag": "t{nope}", "correct": False, "by": "player"}
+
+
+def test_auto_submit_on_a_board_that_cannot_check_asks_for_the_hand_submit_at_once():
+    deck, _, calls = unchecked_deck(submit="auto")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect")))
+    deck.report(lane.id, TurnReport(flag="t{c0}"))
+    assert calls == [("c0", "t{c0}")]
+    assert (lane.pending.kind, lane.pending.flag) == (PendingKind.CONFIRM, "t{c0}")  # in front of the box
+    assert [p.kind for p in lane.waiting] == [PendingKind.LIVE_BOX]
+
+
+def test_a_new_candidate_waits_behind_a_hand_submit_in_progress():
+    deck, _, _ = unchecked_deck()
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    deck.apply(iv.Approve(lane.id))  # the player is submitting t{one} by hand
+    deck.report(lane.id, TurnReport(flag="t{two}"))
+    assert (lane.pending.kind, lane.pending.flag) == (PendingKind.CONFIRM, "t{one}")
+    assert [(p.kind, p.flag) for p in lane.waiting] == [(PendingKind.SUBMIT, "t{two}")]
+    assert "1 more candidate waits" in lane.alert(AlertKind.FLAG).reason
+    deck.report(lane.id, TurnReport(flag="t{one}"))  # the flag being confirmed is not queued again
+    assert [p.flag for p in lane.waiting] == ["t{two}"]
+
+
+def test_cached_tokens_add_up_per_lane_and_each_turn_event_says_how_many():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(action="a", tokens=5000, cached_tokens=3000))
+    deck.report(lane.id, TurnReport(action="b", tokens=5200, cached_tokens=4800))
+    assert (lane.tokens, lane.cached_tokens) == (10_200, 7800)
+    assert [e.data["cached_tokens"] for e in events(deck, EventKind.TURN, since=mark)] == [3000, 4800]

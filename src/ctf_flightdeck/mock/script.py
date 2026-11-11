@@ -155,6 +155,10 @@ class ScriptedDriver:
     def rejected(self, lane: Lane, flag: str) -> None:
         self.runs[lane.id].inserted.append(Step(do=f"{flag} was rejected; re-checking the last step"))
 
+    def declined(self, lane: Lane, pending: Pending) -> None:
+        what = f"{pending.flag} was not submitted" if pending.flag else f"no {pending.kind.value}"
+        self.runs[lane.id].inserted.append(Step(do=f"{what}; trying another way"))
+
     def stop(self, lane: Lane) -> None:
         self.runs.pop(lane.id, None)
 
