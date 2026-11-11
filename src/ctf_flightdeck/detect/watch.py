@@ -22,8 +22,8 @@ the background, on the deck's event loop (the loop the deck's thread runs). When
 says the lane is following the hint, the Watch takes the alert down, notes why on the lane,
 and keeps it down while that verdict stands (`judge_every_turns` turns); when it says the
 lane is not, the alert stays. A judge that cannot answer (the light model refused, failed,
-took too long, or said neither yes nor no) never hides an alert: the rules' answer stands, the
-alert's reason says it is unconfirmed. Without a judge the Watch needs no event loop at all.
+took too long, said neither yes nor no, or was unsure) never hides an alert: the rules' answer
+stands, the alert's reason says it is unconfirmed. Without a judge the Watch needs no event loop at all.
 """
 
 from __future__ import annotations

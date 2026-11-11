@@ -86,7 +86,7 @@ def test_cactus_takes_only_a_timeout(tmp_path):
 LIGHT_ERRORS = {
     "unknown key": ('[light]\nengine = "rules"\nmodle = "x"\n', "unknown key light.modle"),
     "unknown engine": ('[light]\nengine = "ollama"\n', 'light.engine must be "rules" or "openai" or "anthropic" or "cactus"'),
-    "rules with a model": ('[light]\nmodel = "x"\n', 'light.model is for the openai and anthropic engines, not "rules"'),
+    "rules with a model": ('[light]\nmodel = "x"\n', 'light.model is for the openai, anthropic and decider engines, not "rules"'),
     "cactus with a url": ('[light]\nengine = "cactus"\nbase_url = "http://127.0.0.1:1/v1"\n', "light.base_url is for the openai"),
     "rules with a price": ('[light]\nprice = { input = 1, output = 2 }\n', "light.price is for the openai"),
     "openai without a model": ('[light]\nengine = "openai"\nbase_url = "http://127.0.0.1:11434/v1"\nkey_env = ""\n', "light.model is required for the openai engine"),
