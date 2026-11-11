@@ -214,7 +214,8 @@ def copy_handout(handout: Path, root: Path) -> None:
     new or empty, and make root/.flightdeck with home/ and tmp/.
 
     Symlinks are skipped (they could point anywhere on this machine), so is anything that is
-    not a regular file or a directory, and so is a handout's own .flightdeck (a planted
+    not a regular file or a directory, so are __pycache__ folders (pip byte-compiles a packaged
+    handout's .py files at install), and so is a handout's own .flightdeck (a planted
     .flightdeck/home/.bashrc would run in the player's take-over shell). Each skip is written
     to root/.flightdeck/prepare.log. Nothing is ever written to the handout.
     """
@@ -267,6 +268,9 @@ def _copy_tree(source: Path, target: Path, notes: list[tuple[str, str]]) -> tupl
                 notes.append((rel, f"skipped {_quoted(rel)}: a symlink (to {to}); symlinks are never copied"))
             elif not prefix and entry.name == PRIVATE:
                 notes.append((rel, f"skipped {_quoted(rel)}: the name is reserved for flightdeck's own files"))
+            elif entry.name == "__pycache__" and entry.is_dir(follow_symlinks=False):
+                # bytecode Python wrote for the handout's .py files (pip does at install), not challenge content
+                notes.append((rel, f"skipped {_quoted(rel)}: Python's bytecode cache, not part of the handout"))
             elif entry.is_dir(follow_symlinks=False):
                 (dst_dir / entry.name).mkdir()
                 pending.append((Path(entry.path), dst_dir / entry.name, rel + "/"))

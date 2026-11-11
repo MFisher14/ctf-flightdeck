@@ -827,3 +827,23 @@ def test_a_snapshot_never_follows_a_symlink_the_container_planted(box):
     snap = take_snapshot(box.root)
     assert "real/f" in snap.files
     assert not any(p.startswith(("leak", "linked")) for p in snap.files)
+
+
+def test_a_handouts_bytecode_cache_is_not_copied_into_the_lane(tmp_path):
+    # pip byte-compiles the packaged practice set's .py handouts at install time
+    import asyncio
+
+    from ctf_flightdeck.agent.workspace import HostWorkspace
+
+    handout = tmp_path / "handout"
+    (handout / "__pycache__").mkdir(parents=True)
+    (handout / "turnstile.py").write_text("print('hi')\n")
+    (handout / "__pycache__" / "turnstile.cpython-312.pyc").write_bytes(b"\x00bytecode")
+    (handout / "sub" / "__pycache__").mkdir(parents=True)
+    (handout / "sub" / "__pycache__" / "x.pyc").write_bytes(b"\x00")
+    root = tmp_path / "lane"
+    asyncio.run(HostWorkspace(root, handout).prepare())
+    assert (root / "turnstile.py").is_file()
+    assert not (root / "__pycache__").exists() and not (root / "sub" / "__pycache__").exists()
+    log = (root / ".flightdeck" / "prepare.log").read_text()
+    assert "__pycache__" in log and "bytecode cache" in log
