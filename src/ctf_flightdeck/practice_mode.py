@@ -351,6 +351,7 @@ class _Lane:
 @dataclass(frozen=True)
 class _Submit:
     at: float
+    line: int  # its line in the log: what comes first on a time tie
     lane: str | None
     flag: str
     correct: bool
@@ -438,6 +439,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             submits.setdefault(cid, []).append(
                 _Submit(
                     at,
+                    n,
                     get.top("lane", _is_text_or_none, "a lane id or null"),
                     get.data("flag", _is_string, "the flag submitted"),
                     get.data("correct", _is_bool, "correct: true or false"),
@@ -475,7 +477,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
 
     verifier = AnswerVerifier(board.answers) if board.answers is not None else None
     per: dict[str, ChallengeScore] = {}
-    solved_at: dict[str, float] = {}
+    firsts: dict[str, _Submit] = {}  # challenge id -> its first accepted submission
     total_wrong = 0
     lane_challenge = {lane: acc.challenge for lane, acc in lanes.items()}
     iv_by_challenge = Counter(
@@ -501,7 +503,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
         on_it = [lane for lane, acc in lanes.items() if acc.challenge == ch.id]
         costs = [lanes[lane].dollars for lane in on_it]
         if first is not None:
-            solved_at[ch.id] = first.at
+            firsts[ch.id] = first
         total_wrong += wrong
         per[ch.id] = ChallengeScore(
             id=ch.id,
@@ -520,7 +522,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             wrong_submissions=wrong,
             teammate=teammates.get(ch.id) if first is None else None,
         )
-    solved = tuple(sorted(solved_at, key=lambda cid: solved_at[cid]))  # sorted() is stable: log order on a tie
+    solved = tuple(sorted(firsts, key=lambda cid: (firsts[cid].at, firsts[cid].line)))  # log order on a time tie
     unpriced = tuple(lane for lane, acc in lanes.items() if acc.dollars is None)
     for lane in unpriced:
         notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only priced turns.")
@@ -529,7 +531,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
         solved=solved,
         points=sum(on_board[cid].points for cid in solved),
         possible=sum(item.challenge.points for item in board.challenges),
-        first_solve_at=min(solved_at.values()) if solved_at else None,
+        first_solve_at=min((sub.at for sub in firsts.values()), default=None),
         per_challenge=MappingProxyType(per),
         tokens=sum(acc.tokens for acc in lanes.values()),
         dollars=None if unpriced else priced,

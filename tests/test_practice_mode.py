@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -810,6 +811,78 @@ def test_the_scorecard_columns_line_up(played):
     for row, value in zip(table[1:4], ["2k", "7k", "300"]):
         assert row[tokens_end - len(value) : tokens_end] == value and row[tokens_end - len(value) - 1] == " ", row
         assert row[tokens_end] == " ", row
+
+
+SEVEN = {
+    **CHALLENGES,
+    "echo": ("Echo Engine", "pwn", 400),
+    "foxtrot": ("Foxtrot Fax", "misc", 150),
+    "golf": ("Golf Gopher", "misc", 250),
+}
+
+
+def table(card: str) -> list[list[str]]:
+    """The scorecard's table rows (below its header, above the key) as cells."""
+    lines = card.splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith("challenge "))
+    end = lines.index("took: release to solve · iv: your interventions · wrong: wrong flags submitted")
+    return [re.split(r"\s{2,}", line.strip()) for line in lines[header + 1 : end]]
+
+
+def test_the_scorecard_rows_go_solved_in_solve_order_then_teammate_tried_released_and_never_released(tmp_path):
+    folder = make_board(tmp_path / "archive", SEVEN, timeline={"waves": [{"at": 99_999, "ids": ["foxtrot"]}]})
+    board = load_board(folder)
+    clock, driver = Clock(), Driver()
+    config = DeckConfig(event=board.event, team=True, max_lanes=6, flag_format=FLAG_FORMAT, models=MODELS)
+    deck = Deck(config, driver, clock, AnswerVerifier(board.answers))
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    every_but_echo = lambda ids: [QueueEntry(cid, MODELS[0]) for cid in ids if cid != "echo"]  # noqa: E731
+    Release(deck, board, load_timeline(board), every_but_echo).tick()
+    assert [lane.challenge_id for lane in deck.lanes.values()] == ["alpha", "bravo", "charlie", "delta", "golf"]
+    clock.t = 100.0
+    deck.report("L02", TurnReport(action="solve", tokens=100, flag=FLAGS["bravo"]))
+    deck.apply(iv.Approve("L02"))  # bravo, later on the board than alpha, is solved first
+    clock.t = 150.0
+    deck.report("L03", TurnReport(action="strings chart.bin", tokens=300))
+    deck.report("L04", TurnReport(action="objdump -d drift", tokens=5000))
+    clock.t = 200.0
+    deck.report("L01", TurnReport(action="solve", tokens=100, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    clock.t = 250.0
+    deck.teammate_solved("golf", "wren")
+    log.close()
+
+    result = score(log.path, board)
+    assert result.solved == ("bravo", "alpha") and result.first_solve_at == 100.0
+    assert [(cells[0], cells[3]) for cells in table(scorecard(result))] == [
+        ("Bravo Box", "solved L02"),
+        ("Alpha Gate", "solved L01"),
+        ("Golf Gopher", "teammate wren"),
+        ("Delta Drift", "tried (open)"),  # tried: most tokens first, and still open when the log ends
+        ("Charlie Chart", "tried (open)"),
+        ("Echo Engine", "not tried"),
+        ("Foxtrot Fax", "not released"),
+    ]
+
+
+def test_solves_at_the_same_time_keep_the_order_of_the_log(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    clock, driver = Clock(), Driver()
+    config = DeckConfig(event=board.event, max_lanes=4, flag_format=FLAG_FORMAT, models=MODELS, submit="auto")
+    deck = Deck(config, driver, clock, AnswerVerifier(board.answers))
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    Release(deck, board, load_timeline(board), cheapest_first(board)).tick()  # alpha L01, charlie L02, bravo L03, delta L04
+    clock.t = 50.0
+    deck.report("L03", TurnReport(action="solve", flag=FLAGS["bravo"]))  # submitted at once: bravo first in the log
+    deck.report("L01", TurnReport(action="solve", flag=FLAGS["alpha"]))  # then alpha, at the same deck time
+    log.close()
+    records = [json.loads(line) for line in lines_of(log.path)]
+    assert [(r["challenge"], r["at"]) for r in records if r["kind"] == "submit"] == [("bravo", 50.0), ("alpha", 50.0)]
+    result = score(log.path, board)
+    assert result.solved == ("bravo", "alpha") and result.first_solve_at == 50.0
+    assert [cells[0] for cells in table(scorecard(result))][:2] == ["Bravo Box", "Alpha Gate"]
 
 
 def test_the_scorecard_never_shows_a_flag(played):
