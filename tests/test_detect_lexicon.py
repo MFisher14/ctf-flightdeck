@@ -129,17 +129,13 @@ def test_a_custom_lexicon_round_trips(tmp_path: Path):
 # ---------------------------------------------------------------------- the local-model baseline
 
 
-def test_classify_is_the_entry_point_the_local_model_baseline_uses():
-    # localmodel._adapt_hints looks for technique_for_description, then classify, then
-    # load_lexicon().named: the real module must offer one it can call, or eval-local crashes.
+def test_classify_and_the_local_model_baseline_read_descriptions_alike():
+    # eval-local's rules baseline ranks techniques with this module (top_technique over the
+    # lexicon): what it predicts must be what classify() says, or the comparison is unfair.
     from ctf_flightdeck import localmodel as lm
-    from ctf_flightdeck.detect import hints
 
     assert classify("Decode the slow-scan TV audio.") == "sstv"
     assert classify("Welcome to the event. Good luck, have fun.") is None
-    adapted = lm._adapt_hints(hints)
-    assert adapted("Decode the slow-scan TV audio.") == "sstv"
-    assert adapted("Welcome to the event. Good luck, have fun.") == "none"
     report = lm.rules_baseline([
         lm.Case("hint", {"description": "A capture of dots and dashes."}, "morse"),
         lm.Case("hint", {"description": "Sanity check: submit the flag in this description's format."}, "none"),

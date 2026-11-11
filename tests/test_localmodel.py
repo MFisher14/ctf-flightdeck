@@ -524,7 +524,7 @@ def test_cli_shows_each_sides_accuracy_in_its_own_column(tmp_path):
         tmp_path / "cases.jsonl",
         hint_case("sstv", "a slow scan tv signal"),
         hint_case("xor", "a repeating single-byte key"),
-        hint_case("morse", "The LED blinks shorts and longs."),  # no lexicon cue: the rules say none
+        hint_case("morse", "The old radio operator left a note."),  # no lexicon cue: the rules say none
         summary_case("sstv, decoded.png", [("run", "o")]),
     )
     with FakeModelServer([
