@@ -1913,6 +1913,25 @@ def test_a_loops_suggested_hint_and_a_hint_not_read_yet_are_shown_without_creden
     drive(app, script)
 
 
+def test_an_escalations_summary_in_the_transcript_shows_no_credential():
+    """Escalating hands the stronger model a summary whose Plan and Tried lines quote what
+    the lane did. The transcript shows it under the player's entry with each credential's
+    name and not its value, as the lane's transcript file keeps it; the deck keeps the
+    summary as it was."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm", "big")))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    deck.report(lane.id, TurnReport(action=f"curl -H 'Authorization: Bearer {JWT}' 127.0.0.1", plan=f"log in with GITHUB_TOKEN={GITHUB}"))
+    assert deck.apply(iv.Escalate(lane.id)).ok
+    entry = lane.actions[-1]
+    assert entry.kind is ActionKind.PLAYER and JWT in entry.output and GITHUB in entry.output
+    lines = [line.plain for line in views.transcript_lines(deck, lane, entry)]
+    assert lines[0] == "› you  escalated glm → big with a summary"
+    assert "       Plan: log in with GITHUB_TOKEN=[redacted]" in lines
+    assert "       Tried: curl -H 'Authorization: Bearer [redacted]' 127.0.0.1" in lines
+    assert not [line for line in lines if JWT in line or "a1B2" * 9 in line]
+
+
 # ---------------------------------------------------------------------- review fixes: the fleet
 
 
