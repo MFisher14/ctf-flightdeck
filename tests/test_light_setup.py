@@ -60,7 +60,7 @@ def test_init_refuses_a_light_choice_it_does_not_know(tmp_path, monkeypatch):
     result, _ = init(tmp_path, monkeypatch, "--light", "gpt")
     assert result.exit_code == 2 and "--light must be one of rules, ollama, mlx, anthropic, cactus" in result.output
     result, _ = init(tmp_path, monkeypatch, "--light-model", "x")
-    assert result.exit_code == 2 and "--light-model needs --light ollama, mlx or anthropic" in result.output
+    assert result.exit_code == 2 and "--light-model needs --light ollama, mlx, anthropic or decider" in result.output
 
 
 def checks(tmp_path, light: LightAnswers | None, environ=None) -> dict:
