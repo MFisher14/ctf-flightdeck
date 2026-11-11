@@ -35,9 +35,15 @@ allow, a platform setting missing, more lanes than the rules allow...) and warni
 knowing before the event: a token variable that is not set...).
 
 The profile holds no secret. token_env names the environment variable that holds the platform's
-API token, and nothing here reads that variable except to see whether it is set. A profile can
-come from a teammate, so everything in it is untrusted: error messages never show its string
-values, and what is shown is made safe with text.untrusted().
+API token (an upper-case name: a token pasted there is refused without being shown), and nothing
+here reads that variable except to see whether it is set. A profile can come from a teammate, so
+everything in it is untrusted: error messages never show its string values (only TOML's own
+message may quote a key, and the regular expression engine's part of the flag format), and
+whatever is shown is made safe with text.untrusted().
+
+Not enforced yet: instance "confirm". Nothing in a run asks the player before a lane first
+reaches a live instance, and lane_network() gives a docker lane its open network when it
+starts, so check() warns when lanes would run under it.
 """
 
 from __future__ import annotations
@@ -380,9 +386,14 @@ def _check_manual(profile: EventProfile, refuse: list[str]) -> None:
     board = profile.board
     if board is None:
         refuse.append('event.board is required for platform "manual": the folder of challenge folders')
-    elif not board.is_dir():
+        return
+    try:
+        if board.is_dir():
+            return
         what = "is not a directory" if board.exists() else "no such directory"
-        refuse.append(f"event.board: {_show(board)}: {what}")
+    except OSError as exc:  # pathlib passes on all but "no such file" and the like: a name too long, no permission
+        what = f"cannot be read ({exc.strerror or type(exc).__name__})"
+    refuse.append(f"event.board: {_show(board)}: {what}")
 
 
 def _check_models(agents: Policy, env: Mapping[str, str], model_config: Config | ConfigError | None, warn: list[str]) -> None:
@@ -603,8 +614,12 @@ def _parse(path: Path) -> dict:
         raise ProfileError(f"{_show(path)}: is not UTF-8 text") from None
     try:
         return tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise ProfileError(f"{_show(path)}: is not valid TOML: {exc}") from None
+    except tomllib.TOMLDecodeError as exc:  # its message may quote a key from the file
+        raise ProfileError(f"{_show(path)}: is not valid TOML: {_show(exc)}") from None
+    except ValueError:  # the one tomllib leaves unwrapped: int() refuses a number of thousands of digits
+        raise ProfileError(f"{_show(path)}: is not valid TOML: it holds a number too long to read") from None
+    except RecursionError:
+        raise ProfileError(f"{_show(path)}: is not valid TOML: its arrays or tables are nested too deeply to read") from None
 
 
 def _table(path: Path, doc: dict, name: str, *, required: bool = True) -> dict:
@@ -724,9 +739,9 @@ def _flag_format(path: Path, table: dict) -> str | None:
         return None
     try:
         re.compile(pattern)
-    except re.error as exc:
+    except re.error as exc:  # its message may quote part of the pattern, control characters and all
         where = f" at position {exc.pos}" if exc.pos is not None else ""
-        raise _error(path, ("event", "flag_format"), f"is not a valid regular expression ({exc.msg}{where})") from None
+        raise _error(path, ("event", "flag_format"), f"is not a valid regular expression ({_show(exc.msg)}{where})") from None
     return pattern
 
 

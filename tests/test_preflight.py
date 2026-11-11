@@ -8,7 +8,10 @@ recording driver and verifier standing in for lanes and the platform.
 
 from __future__ import annotations
 
+import errno
+import os
 import re
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -24,6 +27,7 @@ from ctf_flightdeck.core.interventions import Approve
 from ctf_flightdeck.core.model import Challenge, DeckConfig, LaneState, PendingKind
 from ctf_flightdeck.platform.manual import cannot_check
 from ctf_flightdeck.preflight import (
+    MAX_PROFILE_BYTES,
     STAGES,
     EventProfile,
     Policies,
@@ -340,6 +344,30 @@ def test_a_manual_profile_needs_a_board_that_is_a_directory(tmp_path):
     afile = tmp_path / "board.txt"
     afile.write_text("not a folder")
     assert refusals(check(manual(tmp_path, board=afile), policies(), max_lanes=4, environ={})) == [f"event.board: {afile}: is not a directory"]
+
+
+def test_a_board_whose_name_is_too_long_is_refused_with_the_reason(tmp_path, env):
+    # pathlib's is_dir() raises for this (ENAMETOOLONG): one name longer than any file system allows
+    name = "\x1b[2J" + "b" * 1000
+    problems = check(manual(tmp_path, board=tmp_path / name), policies(), max_lanes=4, environ={})
+    reason = f"cannot be read ({os.strerror(errno.ENAMETOOLONG)})"
+    assert refusals(problems) == [f"event.board: {tmp_path}/^[[2J{'b' * 1000}: {reason}"]
+    event = {"name": '"Practice"', "platform": '"manual"', "board": f'"{"b" * 1000}"', "flag_format": "'x'"}
+    result = invoke(str(write(tmp_path, toml(event, RULES_OPEN))))
+    assert result.exit_code == 2, result.output
+    assert f"refuse: event.board: {tmp_path}/{'b' * 1000}: {reason}" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="not run: as root, a folder with no permissions can still be searched")
+def test_a_board_in_a_folder_the_player_cannot_open_is_refused_with_the_reason(tmp_path):
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    locked.chmod(0o000)  # pathlib's is_dir() raises PermissionError for what is inside
+    try:
+        problems = check(manual(tmp_path, board=locked / "inner" / "board"), policies(), max_lanes=4, environ={})
+    finally:
+        locked.chmod(0o755)
+    assert refusals(problems) == [f"event.board: {locked}/inner/board: cannot be read ({os.strerror(errno.EACCES)})"]
 
 
 @pytest.mark.parametrize("pull", [MANUAL, OFF])
@@ -773,6 +801,60 @@ def test_a_profile_that_cannot_be_read_says_why(tmp_path):
     huge = tmp_path / "huge.toml"
     huge.write_bytes(b"#" * 1_000_001)
     assert load_error(huge) == f"{huge}: is over 1000 KB, too big for an event profile"
+
+
+def test_a_profile_of_exactly_the_size_limit_loads(tmp_path):
+    body = toml(EVENT_CTFD, RULES_OPEN).encode("utf-8")
+    padded = body + b"#" * (MAX_PROFILE_BYTES - len(body) - 1) + b"\n"  # a comment fills it up
+    assert len(padded) == MAX_PROFILE_BYTES == 1_000_000
+    path = tmp_path / "padded.toml"
+    path.write_bytes(padded)
+    loaded, _ = load_profile(path)
+    assert loaded.name == "Harbour Lights CTF"
+    path.write_bytes(padded + b"\n")  # one byte more
+    assert load_error(path) == f"{path}: is over 1000 KB, too big for an event profile"
+
+
+@pytest.mark.parametrize(
+    "max_lanes, reason",
+    [
+        ("9" * 5000, "it holds a number too long to read"),  # int() refuses it: ValueError, not TOMLDecodeError
+        ("[" * 5000 + "]" * 5000, "its arrays or tables are nested too deeply to read"),  # RecursionError
+    ],
+)
+def test_a_profile_tomllib_cannot_read_is_an_error_not_a_crash(tmp_path, env, max_lanes, reason):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "max_lanes": max_lanes}))
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)  # Python's default, whatever PYTHONINTMAXSTRDIGITS says
+    try:
+        message = load_error(path)
+        result = invoke(str(path))
+    finally:
+        sys.set_int_max_str_digits(previous)
+    assert message == f"{path}: is not valid TOML: {reason}"
+    assert result.exit_code == 2 and result.stderr == f"flightdeck: {message}\n"
+
+
+def test_a_toml_error_that_quotes_a_key_shows_it_safely(tmp_path):
+    # tomllib quotes the key with repr(), which escapes control characters but not every
+    # invisible one: a Hangul filler is printable to Python.
+    filler = "\N{HANGUL FILLER}"
+    path = write(tmp_path, f'["{filler}"]\n["{filler}"]\n' + toml(EVENT_CTFD, RULES_OPEN))
+    message = load_error(path)
+    assert message == f"{path}: is not valid TOML: Cannot declare ('\N{REPLACEMENT CHARACTER}',) twice (at line 2, column 5)"
+    assert filler not in message
+
+
+@pytest.mark.parametrize("char, shown", [("\\u001b", "^["), ("\\u009b", "\N{REPLACEMENT CHARACTER}")])
+def test_a_bad_flag_format_is_shown_safely(tmp_path, env, char, shown):
+    # The regular expression engine puts the character after "(?" into its message as it is.
+    event = {"name": '"Practice"', "platform": '"manual"', "board": '"board"', "flag_format": f'"(?{char})"'}
+    path = write(tmp_path, toml(event, RULES_OPEN))
+    message = load_error(path)
+    assert message == f"{path}: event.flag_format is not a valid regular expression (unknown extension ?{shown} at position 1)"
+    result = invoke(str(path))
+    assert result.exit_code == 2 and result.stderr == f"flightdeck: {message}\n"
+    assert "\x1b" not in result.stderr and "\x9b" not in result.stderr
 
 
 def test_profile_fields_are_checked_when_built_in_code():
