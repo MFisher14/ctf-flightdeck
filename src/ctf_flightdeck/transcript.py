@@ -5,8 +5,8 @@ step there is one line. Post-flight reports and writeup drafts need more: every 
 with its output, flightdeck's notes, the alerts, and the files a lane changed with their
 diffs. This writes them to `<run>/lanes/<lane id>.jsonl` when a lane ends (again when
 spend comes in after its end), and for every lane still open when the run closes. Lines
-are JSON objects (pure ASCII), first a header
-for the lane, then one per action, then one per changed file.
+are JSON objects (pure ASCII), first a header for the lane, then one per action, then one
+per changed file.
 """
 
 from __future__ import annotations
