@@ -1,20 +1,55 @@
-"""A real run (M1): a folder board, the player's config, agent lanes and the console,
-wired together.
+"""A real run: a board, the player's config, agent lanes and the console, wired together;
+with an event profile (`play --event`), the event's rules and policies, a CTFd board and the
+team channel too.
 
 `prepare_run()` checks everything that would stop a run before anything starts, and says
-which: the config, the board, the API key, Docker and its image (never pulled). Then the
-console starts, and the board is released on the console's event loop, so lanes run
-there (the deck's single-thread rule).
+which: the config, the event profile (any refusal from preflight.check() stops the run), the
+board, the API key, Docker and its image (never pulled), the team folder and the CTFd token.
+Only then does it pull a CTFd board (under the pull policy "confirm", after the player says
+yes). Then the console starts, and the board is released on the console's event loop, so
+lanes run there (the deck's single-thread rule); so do the run's background tasks (CTFd
+waves and solves, the team watcher), which shutdown() stops.
+
+An event profile's policies, stage by stage (preflight.py):
+- agents: auto or confirm start lanes as usual (starting play is the player's yes); manual
+  or off refuse the run, since play is agent lanes;
+- l1: auto or confirm run the L1 pack in each lane first; manual or off do not;
+- submit: auto or confirm hand flags to the board's verifier (CTFd, or an answers file), at
+  once or after the player approves; manual or off never do (preflight.deck_submit): the
+  player submits by hand and says how it went;
+- instance: auto, confirm or off is RunOptions.instance; manual is off for lanes;
+- pull (CTFd): auto pulls the board before the console starts and again every wave_seconds;
+  confirm pulls it once, after the player says yes.
+The profile's flag format overrides the board's, its max_lanes caps the lanes (check()
+refuses more), and its team = true asks for the team folder.
+
+A CTFd run also reads the platform's solves (at the start, then every solves_seconds): a
+challenge CTFd lists as solved that this run did not solve is not queued, and in team mode
+it is closed as solved by "your team" (its lanes stop); solo mode cannot close it, so the
+player is warned. The CTFd token is read from the variable event.token_env names and lives
+only in the CTFd client and verifier: it is never printed, logged, or put in a note or an
+error.
+
+The team channel (team.py): mirror() writes our claims, solves and live-box holds to the
+team folder as the deck makes them, and the team watcher applies the teammates' marks. A
+challenge a teammate solved or claimed, by the folder, is not queued.
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import getpass
+import json
+import math
 import os
+import shlex
 import shutil
 import subprocess
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from .agent.client import ModelClient
 from .agent.driver import AgentDriver
@@ -23,10 +58,31 @@ from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_u
 from .clock import RunClock
 from .config import Config, ConfigError, api_key, load_config
 from .core.deck import Deck, QueueEntry
-from .core.model import Challenge, DeckConfig, Lane
+from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
+from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, load_ids, pull
+from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
+from .preflight import (
+    USES_PLATFORM,
+    EventProfile,
+    Policies,
+    Policy,
+    ProfileError,
+    check,
+    deck_submit,
+    load_profile,
+    looser,
+    strictest,
+)
+from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
+from .text import untrusted
 from .transcript import TranscriptLog
-from .platform.manual import AnswerVerifier, Board, BoardError, cannot_check, load_board
+
+WAVE_SECONDS = 120.0  # a CTFd board under the pull policy "auto" is pulled again this often (a new wave)
+SOLVES_SECONDS = 60.0  # a CTFd run reads the platform's solves this often
+YOUR_TEAM = "your team"  # who solved a challenge that CTFd lists as solved and this run did not solve
+INSTANCE_POLICIES = ("auto", "confirm", "off")
+SHOWN_NAMES = 5  # challenge names one warning lists; the rest are counted
 
 
 class RunError(Exception):
@@ -35,17 +91,45 @@ class RunError(Exception):
 
 @dataclass(frozen=True)
 class RunOptions:
-    board: Path
+    board: Path | None = None  # the folder board; for a CTFd event, the folder its board is pulled into
     answers: Path | None = None
     config: Path | None = None
     max_lanes: int | None = None
     runtime: str | None = None  # "docker" | "host"; default: the config's
-    team: bool = False
-    submit: str | None = None  # "confirm" | "auto"; default: the config's
+    team: bool | None = None  # team mode; None: the event profile's, else solo (team_dir turns it on)
+    submit: str | None = None  # "confirm" | "auto"; default: the config's (an event's policy: never looser)
     model: str | None = None  # the model lanes start on; default: the weakest in the ladder
     run_dir: Path | None = None  # where run folders go; default: the config's
     pack: Path | None = None  # the L1 pack; default: the config's [l1] pack, if any
     instance: str = "auto"  # may lanes reach a live instance: auto, confirm (each lane asks first), off
+    event: Path | None = None  # the event profile (event.toml): the event's rules and policies apply
+    team_dir: Path | None = None  # the team folder teammates' flightdecks share (team.py)
+    handle: str | None = None  # our handle in the team folder; default: the login name
+    wave_seconds: float = WAVE_SECONDS
+    solves_seconds: float = SOLVES_SECONDS
+    team_seconds: float = POLL_SECONDS  # how often the team folder is read
+    confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
+
+
+@dataclass(eq=False)
+class CTFdLink:
+    """A CTFd board during a run: the client its waves and solves use, and what the run knows."""
+
+    client: CTFdClient  # used on the console's loop only
+    folder: Path  # the board folder
+    event: str
+    flag_format: str | None
+    ids: dict[str, int]  # board id -> CTFd id
+    waves: bool  # pull "auto": the board is pulled again every wave_seconds
+    solved: set[int]  # the CTFd ids CTFd last listed as solved for this account
+    wave: int = 1  # the board as first pulled is wave 1
+    warned: set[str] = field(default_factory=set)  # solved on CTFd and told to the player (solo mode)
+    reported: set[str] = field(default_factory=set)  # pull problems told to the player
+    problems: dict[str, str] = field(default_factory=dict)  # "waves" | "solves" -> the failure shown last
+
+    def solved_board_ids(self) -> list[str]:
+        """The board ids of the challenges CTFd lists as solved."""
+        return [cid for cid, number in sorted(self.ids.items()) if number in self.solved]
 
 
 @dataclass
@@ -61,10 +145,24 @@ class Run:
     runtime: str
     model: str
     watch: object = None  # detect.Watch: the course detectors, attached to the deck
+    options: RunOptions = field(default_factory=RunOptions)  # as the run uses them, the event profile applied
+    profile: EventProfile | None = None
+    policies: Policies | None = None
+    ctfd: CTFdLink | None = None
+    verifier: CTFdVerifier | None = None  # the deck's verify() for a CTFd board, when submit uses the platform
+    team: TeamChannel | None = None
+    _notes: list[str] = field(default_factory=list, repr=False)
+    _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
+    _urls: dict[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
+    _unmirror: Callable[[], None] | None = field(default=None, repr=False)
+    _watcher: TeamWatcher | None = field(default=None, repr=False)
+    _team_stop: asyncio.Event | None = field(default=None, repr=False)
+    _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
+    _errors: list[str] = field(default_factory=list, repr=False)
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
-        out = []
+        out = list(self._notes)
         lanes = self.config.lanes
         l1 = self.driver.l1
         if l1 is not None:
@@ -78,22 +176,74 @@ class Run:
             )
         return out
 
-    def entries(self) -> list[QueueEntry]:
-        """The board in triage order: cheap first (fewest points, then most solves)."""
+    @property
+    def errors(self) -> list[str]:
+        """Problems to show when the run has ended: the lanes' cleanup, the team folder's."""
+        return [*self.driver.errors, *self._errors]
+
+    def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
+        """The challenges (default: the board's) in triage order: cheap first (fewest points,
+        then most solves); the ids in `skip` are left out."""
         lanes = self.config.lanes
-        order = sorted(self.board.challenges, key=lambda b: (b.challenge.points, -b.challenge.solves, b.challenge.name))
+        items = self.board.challenges if challenges is None else challenges
+        order = sorted(
+            (b for b in items if b.challenge.id not in skip),
+            key=lambda b: (b.challenge.points, -b.challenge.solves, b.challenge.name),
+        )
         return [QueueEntry(b.challenge.id, self.model, token_cap=lanes.token_cap, dollar_cap=lanes.dollar_cap) for b in order]
 
     def release(self) -> None:
-        """Put the board on the deck and start the first lanes (call on the console's loop)."""
-        self.deck.release([b.challenge for b in self.board.challenges], self.entries(), "Board")
+        """Put the board on the deck and start the first lanes, then the run's background
+        tasks: CTFd waves and solves, the team watcher (call on the console's loop).
+
+        A challenge solved on CTFd, or solved or claimed by a teammate in the team folder, is
+        not queued. The team folder is read here first, on this thread, so no lane starts on
+        a challenge a teammate holds."""
+        state = None
+        if self.team is not None:
+            self._watcher = TeamWatcher(self.team, self.deck)
+            state = self._watcher.poll()  # its marks wait until the board is on the deck
+        self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        if state is not None:
+            self._watcher.apply(state)
+        if self.ctfd is not None:
+            self._apply_solves()
+            if self.ctfd.waves:
+                self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
+            self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
+        if self._watcher is not None:
+            self._team_stop = asyncio.Event()
+            watching = self._watcher.run(interval=self.options.team_seconds, stop=self._team_stop)
+            self._tasks.append(asyncio.create_task(watching, name="flightdeck team watcher"))
 
     async def shutdown(self) -> None:
-        """Stop every lane, close its workspace, close the API client."""
+        """Stop the background tasks and every lane, close the workspaces and the API clients,
+        and free our live-box holds in the team folder."""
+        if self._team_stop is not None:
+            self._team_stop.set()
+        tasks, self._tasks = self._tasks, []
+        for task in tasks:
+            task.cancel()
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+        for task, outcome in zip(tasks, outcomes):
+            if isinstance(outcome, Exception):
+                self._errors.append(f"{task.get_name()}: {type(outcome).__name__}: {outcome}")
         await self.driver.shutdown()
+        if self.team is not None:
+            try:
+                self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
+            except TeamError as exc:
+                self._errors.append(f"team: could not free your live-box holds in the team folder: {exc}")
         await self.client.aclose()
+        if self.ctfd is not None:
+            await self.ctfd.client.aclose()
 
     def close(self) -> None:
+        if self._unmirror is not None:
+            self._unmirror()
+            self._unmirror = None
+        if self.verifier is not None:
+            self.verifier.close()
         self.transcripts.close()
         self.log.close()
 
@@ -116,47 +266,217 @@ class Run:
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown
         )
 
+    # ------------------------------------------------------------------ the event's background work
+
+    def _held(self) -> set[str]:
+        """Board ids not to queue: solved on CTFd, or in the team folder solved (by anyone)
+        or claimed by a teammate."""
+        held = set(self.ctfd.solved_board_ids()) if self.ctfd is not None else set()
+        state = self._watcher.latest if self._watcher is not None else None
+        if state is not None and self.team is not None:
+            held |= set(state.solves)
+            held |= {cid for cid, mark in state.claims.items() if mark.who != self.team.me}
+        return held
+
+    def _apply_solves(self) -> None:
+        """Close what CTFd lists as solved and this run did not solve: in team mode as solved
+        by "your team" (its lanes stop); solo mode cannot, so the player is told, once. A
+        challenge whose flag the player is submitting by hand waits for their answer."""
+        link = self.ctfd
+        assert link is not None
+        found: list[Challenge] = []
+        for cid in link.solved_board_ids():
+            ch = self.deck.challenges.get(cid)
+            if ch is None or ch.closed or cid in link.warned or self._confirming(cid):
+                continue
+            if self.deck.config.team:
+                self.deck.teammate_solved(cid, YOUR_TEAM)
+            else:
+                link.warned.add(cid)
+                found.append(ch)
+        if found:
+            self.deck.warn(
+                _solved_in_solo(found),
+                challenge=found[0].id if len(found) == 1 else None,
+                data={"source": "ctfd", "solved": [ch.id for ch in found]},
+            )
+
+    def _confirming(self, cid: str) -> bool:
+        """Whether a lane on it waits for the player to say if a flag they submitted by hand
+        was accepted (their answer closes it, as solved by that lane)."""
+        for lane in self.deck.lanes_on(cid):
+            queued = ([lane.pending] if lane.pending is not None else []) + lane.waiting
+            if any(p.kind is PendingKind.CONFIRM for p in queued):
+                return True
+        return False
+
+    async def _waves(self) -> None:
+        """Pull the board again every wave_seconds and release what is new. A failure is a
+        warning on the console (once while it lasts), never the end of the task."""
+        link = self.ctfd
+        assert link is not None
+        every = self.options.wave_seconds
+        while True:
+            await asyncio.sleep(every)
+            try:
+                result = await pull(link.client, link.folder, event=link.event, flag_format=link.flag_format)
+            except Exception as exc:  # CTFdError, BoardError, OSError, or a bug: say so, and try again later
+                self._ctfd_problem("waves", f"could not pull new challenges from CTFd: {_reason(exc)}; tried again in {every:g} s")
+                continue
+            link.problems.pop("waves", None)
+            try:
+                self._wave(result)
+            except Exception as exc:  # a bug: say so, and keep pulling
+                self._ctfd_problem("waves", f"could not release the new challenges from CTFd: {type(exc).__name__}: {exc}")
+
+    def _wave(self, result: Pull) -> None:
+        link = self.ctfd
+        assert link is not None
+        link.ids.update(result.ids)
+        if self.verifier is not None:
+            self.verifier.ids.update(result.ids)
+        for line in result.problems:
+            if line not in link.reported:
+                link.reported.add(line)
+                self.deck.warn(f"CTFd: not pulled: {line}; the next wave tries it again", data={"source": "ctfd"})
+        new = [b for b in result.board.challenges if b.challenge.id not in self.deck.challenges]
+        if not new:
+            return
+        self._add(new)
+        link.wave += 1
+        self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), f"Wave {link.wave}")
+        self._apply_solves()
+
+    def _add(self, new: Sequence[BoardChallenge]) -> None:
+        """New challenges on the board: their handouts and instances, for lanes and L1."""
+        self.board = replace(self.board, challenges=self.board.challenges + tuple(new))
+        for b in new:
+            cid = b.challenge.id
+            self._handouts[cid] = b.handout
+            self._urls[cid] = tuple(b.urls)
+            self.driver.files[cid] = b.challenge.files
+            self.driver.urls[cid] = tuple(b.urls)
+
+    async def _solves(self) -> None:
+        """Read the platform's solves every solves_seconds (the board's were read before the
+        run started). A failure is a warning on the console, once while it lasts."""
+        link = self.ctfd
+        assert link is not None
+        every = self.options.solves_seconds
+        while True:
+            await asyncio.sleep(every)
+            try:
+                solved = await link.client.solved_ids()
+            except Exception as exc:  # CTFdError, or a bug: say so, and try again later
+                self._ctfd_problem("solves", f"could not read the solves from CTFd: {_reason(exc)}; tried again in {every:g} s")
+                continue
+            link.problems.pop("solves", None)
+            link.solved = solved
+            try:
+                self._apply_solves()
+            except Exception as exc:  # a bug: say so, and keep reading
+                self._ctfd_problem("solves", f"could not apply the solves from CTFd: {type(exc).__name__}: {exc}")
+
+    def _ctfd_problem(self, kind: str, text: str) -> None:
+        """A failed CTFd poll, as a console warning: once while the same failure lasts."""
+        link = self.ctfd
+        assert link is not None
+        if link.problems.get(kind) == text:
+            return
+        link.problems[kind] = text
+        self.deck.warn(text, data={"source": "ctfd"})
+
+
+# ---------------------------------------------------------------------- preparing a run
+
+
+@dataclass
+class _Plan:
+    """The run's settings once the event profile (if any) is applied."""
+
+    options: RunOptions  # board, max_lanes, team, submit, pack and instance as the run uses them
+    profile: EventProfile | None
+    policies: Policies | None
+    platform: bool  # whether flags go to the board's verifier (preflight.DeckSubmit.platform)
+    notes: list[str]
+
+    @property
+    def ctfd(self) -> bool:
+        return self.profile is not None and self.profile.platform == "ctfd"
+
 
 def prepare_run(options: RunOptions) -> Run:
     """Everything a run needs, checked up front. Raises RunError with the reason."""
+    _check_options(options)
     try:
         config = load_config(options.config)
-    except ConfigError as exc:
-        raise RunError(str(exc)) from None
-    try:
-        board = load_board(options.board, answers=options.answers)
-    except BoardError as exc:
-        raise RunError(str(exc)) from None
-    try:
-        key = api_key(config)
     except ConfigError as exc:
         raise RunError(str(exc)) from None
     runtime = options.runtime or config.lanes.runtime
     if runtime not in ("docker", "host"):
         raise RunError(f"runtime must be docker or host, not {runtime!r}")
+    plan = _plan(options, config, runtime)
+    options = plan.options
+    board = None if plan.ctfd else _load_board(options)
+    try:
+        key = api_key(config)
+    except ConfigError as exc:
+        raise RunError(str(exc)) from None
     if runtime == "docker":
         _check_docker(config.lanes.image)
     model = options.model or config.models[0]
     if model not in config.models:
         raise RunError(f"model {model!r} is not in the ladder in {config.source}: {', '.join(config.models)}")
-    submit = options.submit or config.lanes.submit
+    manifests = _l1_manifests(options.pack)
+    team = _team_channel(options, plan)
+    profile = plan.profile
+    first = token = None
+    if plan.ctfd:  # the last check, then the first thing done: the pull
+        assert profile is not None
+        token = _ctfd_token(profile)
+        first = _pull_first(options, plan, token)
+        board = first.board
+    assert board is not None
     run_dir = new_run_dir((options.run_dir or config.run_dir).expanduser())
     log = EventLog(run_dir / "events.jsonl")
+    flag_format = (profile.flag_format if profile is not None else None) or board.flag_format
     deck_config = DeckConfig(
-        event=board.event,
-        team=options.team,
+        event=profile.name if profile is not None else board.event,
+        team=bool(options.team),
         containerized=runtime == "docker",
-        max_lanes=options.max_lanes or config.lanes.max_lanes,
-        submit=submit,
+        max_lanes=options.max_lanes,
+        submit=options.submit,
         models=config.models,
-        **({"flag_format": board.flag_format} if board.flag_format else {}),
+        **({"flag_format": flag_format} if flag_format else {}),
     )
-    verify = AnswerVerifier(board.answers) if board.answers else cannot_check
     handouts = {b.challenge.id: b.handout for b in board.challenges}
-    l1 = _l1_stage(options.pack or config.l1.pack, handouts, run_dir, deck_config.flag_format, config.l1.concurrency)
+    urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
+    l1 = None
+    if manifests is not None:
+        l1 = L1Stage(manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency)
     client = ModelClient(config.api.base_url, key)
-
-    urls = {b.challenge.id: b.urls for b in board.challenges}
+    instance = options.instance
+    link = verifier = None
+    if first is not None:
+        assert profile is not None and profile.url is not None and plan.policies is not None and token is not None
+        link = CTFdLink(
+            CTFdClient(profile.url, token),
+            first.folder,
+            profile.name,
+            profile.flag_format,
+            dict(first.ids),
+            waves=plan.policies.pull is Policy.AUTO,
+            solved=set(first.solved),
+            reported=set(first.problems),
+        )
+        if plan.platform:
+            verifier = CTFdVerifier(profile.url, token, first.ids)
+    if verifier is not None:
+        verify = verifier
+    elif plan.platform and board.answers:
+        verify = AnswerVerifier(board.answers)
+    else:
+        verify = cannot_check
 
     def workspace(lane: Lane, challenge: Challenge) -> Workspace:
         root = run_dir / lane.id.lower() / "work"
@@ -166,7 +486,7 @@ def prepare_run(options: RunOptions) -> Run:
                 handouts[challenge.id],
                 image=config.lanes.image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
-                network=lane_network(urls[challenge.id]) if options.instance == "auto" else "none",
+                network=lane_network(urls[challenge.id]) if instance == "auto" else "none",
             )
         return HostWorkspace(root, handouts[challenge.id])
 
@@ -178,18 +498,345 @@ def prepare_run(options: RunOptions) -> Run:
         urls=urls,
         prices=config.prices,
         l1=l1,
-        instance=options.instance,
+        instance=instance,
     )
     deck = Deck(deck_config, driver, RunClock(), verify)
     log.attach(deck)
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
+    # after the logs (a warning raised inside an event is logged after it), before any lane
+    # can get a live-box approval
+    unmirror = mirror(team, deck) if team is not None else None
     watch = _watch(deck)
-    return Run(board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch)
+    return Run(
+        board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
+        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
+        _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror,
+    )
 
 
-def _l1_stage(pack: Path | None, handouts: dict[str, Path], run_dir: Path, flag_format: str, concurrency: int) -> L1Stage | None:
-    """The L1 stage for a pack, checked before anything starts; None without a pack."""
+def _check_options(options: RunOptions) -> None:
+    """Options a caller set in code that the run cannot use."""
+    for name in ("wave_seconds", "solves_seconds", "team_seconds"):
+        value = getattr(options, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
+            raise RunError(f"{name} must be a positive number of seconds, not {value!r}")
+    if options.instance not in INSTANCE_POLICIES:
+        raise RunError(f"instance must be auto, confirm or off, not {options.instance!r}")
+    if options.submit not in (None, "confirm", "auto"):
+        raise RunError(f"submit must be confirm or auto, not {options.submit!r}")
+
+
+def _load_board(options: RunOptions) -> Board:
+    if options.board is None:
+        raise RunError(
+            "name the board: `flightdeck play BOARD` (a folder of challenge folders), or give an event profile with "
+            "--event EVENT.toml"
+        )
+    try:
+        return load_board(options.board, answers=options.answers)
+    except BoardError as exc:
+        raise RunError(str(exc)) from None
+
+
+# ---------------------------------------------------------------------- the event profile
+
+
+def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
+    """The run's settings: the options and the config, with the event profile's rules and
+    policies applied when there is one. RunError when the profile refuses the run."""
+    pack = options.pack or config.l1.pack
+    if options.event is None:
+        team = _team_mode(options, None)
+        effective = replace(
+            options,
+            max_lanes=options.max_lanes or config.lanes.max_lanes,
+            team=team,
+            submit=options.submit or config.lanes.submit,
+            pack=pack,
+        )
+        return _Plan(effective, None, None, True, [])
+    try:
+        profile, policies = load_profile(options.event)  # it expands ~ itself, and says so when it cannot
+    except ProfileError as exc:
+        raise RunError(str(exc)) from None
+    if policies.agents in (Policy.MANUAL, Policy.OFF):
+        raise RunError(_no_agents(profile, policies))
+    notes: list[str] = []
+    lanes = options.max_lanes
+    if lanes is None:
+        lanes = config.lanes.max_lanes
+        if profile.max_lanes is not None and lanes > profile.max_lanes:
+            most = profile.max_lanes
+            notes.append(
+                f"{most} lane{'' if most == 1 else 's'} at a time, the most the event's rules allow (rules.max_lanes; "
+                f"your config says {lanes})"
+            )
+            lanes = most
+    problems = check(profile, policies, max_lanes=lanes, model_config=config, runtime=runtime)
+    refusals = [problem.message for problem in problems if problem.refuse]
+    if refusals:
+        count = len(refusals)
+        how = f"`flightdeck preflight {_show(shlex.quote(str(profile.source)))}` shows the whole check"
+        raise RunError(
+            f"the event profile refuses this run ({count} refusal{'' if count == 1 else 's'}; {how}):\n"
+            + "\n".join(f"refuse: {message}" for message in refusals)
+        )
+    notes += [f"event profile: {problem.message}" for problem in problems]  # the warnings
+    board = options.board
+    if profile.platform == "ctfd":
+        if board is None:
+            raise RunError(
+                "a CTFd event needs the folder its board is pulled into: `flightdeck play FOLDER --event EVENT.toml` "
+                "(a new folder, or one pulled from this CTFd before: the new challenges are added)"
+            )
+        if options.answers is not None:
+            raise RunError("--answers checks flags against a file, and a CTFd event checks them on CTFd: drop --answers")
+    elif board is None:
+        board = profile.board  # check() refused a manual profile without one
+    elif profile.board is not None and _same_dir(board, profile.board) is False:
+        notes.append(f"board: {_show(board)}, as you asked (the event profile names {_show(profile.board)})")
+    submit = _event_submit(options, policies)
+    if not submit.platform:
+        notes.append(
+            f'submit is "{policies.submit}" in the event profile: flightdeck never submits a flag. It shows each one; '
+            "you submit it on the platform, then answer a (accepted) or d (rejected)"
+        )
+    if policies.agents is Policy.CONFIRM:
+        notes.append('agents is "confirm" in the event profile: starting play is your yes, so lanes start on their own up to the lane limit')
+    if policies.l1 in (Policy.MANUAL, Policy.OFF):
+        if pack is not None:
+            how = "run your solvers yourself (`flightdeck l1 route` lists those that match a challenge)" if policies.l1 is Policy.MANUAL else "nothing runs it"
+            notes.append(f'l1 is "{policies.l1}" in the event profile, so your L1 pack does not run in lanes: {how}')
+        pack = None
+    elif policies.l1 is Policy.CONFIRM and pack is not None:
+        notes.append('l1 is "confirm" in the event profile: starting play is your yes, so your L1 solvers run first on each challenge')
+    for_lanes = Policy.OFF if policies.instance is Policy.MANUAL else policies.instance  # manual: the player works the instance
+    effective = replace(
+        options,
+        board=board,
+        max_lanes=lanes,
+        team=_team_mode(options, profile),
+        submit=submit.policy,
+        pack=pack,
+        instance=strictest(options.instance, for_lanes).value,
+    )
+    return _Plan(effective, profile, policies, submit.platform, notes)
+
+
+def _no_agents(profile: EventProfile, policies: Policies) -> str:
+    if not profile.ai_allowed:
+        why = "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off"
+    else:
+        why = f'the event profile sets agents = "{policies.agents}"'
+    return (
+        f"{why}: `flightdeck play` plays with agent lanes, so it does not start. Play by hand; `flightdeck l1 run` "
+        "runs your no-model solvers"
+    )
+
+
+def _event_submit(options: RunOptions, policies: Policies):
+    """The deck's submit policy, and whether flags go to the board's verifier: the profile's
+    policy, or --submit when it is stricter (a looser one is refused)."""
+    policy = policies.submit
+    if options.submit is not None:
+        asked = Policy(options.submit)
+        if looser(asked, policy):
+            raise RunError(
+                f'--submit {asked} is looser than the event profile\'s submit policy "{policy}": drop --submit, or '
+                "change submit in the profile's [policies] if the event's rules allow it"
+            )
+        policy = strictest(asked, policy)
+    return deck_submit(policy)
+
+
+def _same_dir(a: Path, b: Path) -> bool | None:
+    """Whether two paths name the same folder; None when that cannot be told."""
+    try:
+        return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+# ---------------------------------------------------------------------- the team channel
+
+
+def _team_mode(options: RunOptions, profile: EventProfile | None) -> bool:
+    if options.team_dir is not None:
+        if options.team is False:
+            raise RunError("--solo and --team-dir do not go together: the team folder is for team mode. Drop one of them")
+        return True
+    if options.handle is not None:
+        raise RunError("--handle is your name in the team folder: give the folder with --team-dir FOLDER too")
+    if options.team is not None:
+        return options.team
+    if profile is not None and profile.team:
+        raise RunError(
+            "the event profile sets team = true, so play needs the team folder your teammates share: give it with "
+            "--team-dir FOLDER (one teammate makes it once with `flightdeck team init FOLDER`), or play alone with --solo"
+        )
+    return False
+
+
+def _team_channel(options: RunOptions, plan: _Plan) -> TeamChannel | None:
+    """Our side of the team folder (team mode with --team-dir), with a note saying who we are there."""
+    if options.team_dir is None:
+        if options.team:
+            plan.notes.append(
+                "team mode with no team folder: your claims stay on this deck"
+                + (", and CTFd's solves still stop lanes" if plan.ctfd else "")
+                + ". --team-dir FOLDER shares claims and solves with your teammates"
+            )
+        return None
+    handle, source = options.handle, "from --handle"
+    if handle is None:
+        try:
+            handle = getpass.getuser()
+        except Exception:  # no LOGNAME, USER or password entry to name us
+            raise RunError("flightdeck cannot find your login name for the team folder: give your handle with --handle NAME") from None
+        source = "your login name; --handle NAME sets another"
+    if not valid_handle(handle):
+        what = "--handle" if options.handle is not None else "your login name"
+        shown = json.dumps(printable(handle), ensure_ascii=False)
+        raise RunError(f"{what} {shown} is not a usable team handle ({HANDLE_RULE}): give one with --handle NAME")
+    try:
+        channel = TeamChannel(options.team_dir, handle)
+    except TeamError as exc:
+        raise RunError(str(exc)) from None
+    plan.notes.append(f"team: you are {handle} in the team folder {printable(channel.folder)} ({source})")
+    return channel
+
+
+# ---------------------------------------------------------------------- the CTFd board
+
+
+@dataclass(frozen=True)
+class _FirstPull:
+    board: Board
+    folder: Path
+    ids: Mapping[str, int]  # board id -> CTFd id
+    solved: frozenset[int]  # CTFd ids CTFd lists as solved for the account (empty if they could not be read)
+    problems: tuple[str, ...]  # the challenges left out, and why
+
+
+def _ctfd_token(profile: EventProfile) -> str:
+    """The CTFd token, from the variable event.token_env names. Never shown."""
+    name = profile.token_env
+    assert name is not None  # check() refuses a CTFd profile without one
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RunError(
+            f"the CTFd token variable {name} (event.token_env) is not set or is empty: export your CTFd API token in it "
+            "(CTFd: Settings, Access Tokens), then start play again"
+        )
+    return value
+
+
+def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
+    """The CTFd board before the console starts: pulled (under the pull policy "confirm",
+    once the player says yes), with the solves CTFd lists for the account."""
+    profile, policies = plan.profile, plan.policies
+    assert profile is not None and policies is not None and profile.url is not None and options.board is not None
+    folder = options.board
+    url, where = _show(profile.url), _show(folder)
+    if policies.pull not in USES_PLATFORM:  # check() refuses this for a CTFd profile; kept for when it allows it
+        try:
+            board = load_board(folder)
+            ids = load_ids(folder)
+        except (BoardError, CTFdError) as exc:
+            raise RunError(f"{exc}: run `flightdeck ctfd pull` first") from None
+        return _FirstPull(board, folder, ids, frozenset(), ())
+    if policies.pull is Policy.CONFIRM:
+        if options.confirm is None:
+            raise RunError(
+                'the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board, and it cannot ask '
+                'here (not at a terminal): start play at a terminal, or set pull = "auto" in the profile\'s [policies]'
+            )
+        if not options.confirm(f"Pull the board from {url} into {where}?"):
+            raise RunError("you said no to the pull, so nothing was pulled and the run did not start")
+    try:
+        result, solved, unread = _sync(_pull_and_solves(profile.url, token, folder, profile.name, profile.flag_format))
+    except (CTFdError, BoardError, ValueError) as exc:  # ValueError: a token a header cannot carry
+        raise RunError(f"could not pull the board from CTFd: {exc}") from None
+    except OSError as exc:
+        raise RunError(f"{where}: cannot write the board ({exc.strerror or type(exc).__name__})") from None
+    try:
+        ids = load_ids(folder)
+    except CTFdError as exc:
+        raise RunError(str(exc)) from None
+    waves = policies.pull is Policy.AUTO
+    total = len(result.board.challenges)
+    plan.notes.append(
+        f"board: {total} challenge{'' if total == 1 else 's'} from CTFd at {url} in {where} ({len(result.added)} new)"
+    )
+    later = "the next wave tries it again" if waves else "start play again to try it again"
+    plan.notes += [f"not pulled: {line}; {later}" for line in result.problems]
+    if result.hidden:
+        plan.notes.append(
+            f"{result.hidden} challenge{' is' if result.hidden == 1 else 's are'} locked on CTFd until a prerequisite is solved"
+            + ("; a later wave pulls them once they unlock" if waves else "")
+        )
+    if unread is not None:
+        plan.notes.append(f"could not read your solves from CTFd: {unread}; lanes may start on challenges already solved")
+    if not waves:
+        plan.notes.append(
+            'pull is "confirm" in the event profile: flightdeck pulled the board once, after you said yes, and pulls no '
+            "later waves; start play again to pull new challenges"
+        )
+    return _FirstPull(result.board, folder, ids, frozenset(solved), tuple(result.problems))
+
+
+async def _pull_and_solves(
+    url: str, token: str, folder: Path, event: str, flag_format: str | None
+) -> tuple[Pull, set[int], str | None]:
+    """Pull the board, then read the solves (the reason they could not be read, or None)."""
+    async with CTFdClient(url, token) as client:
+        result = await pull(client, folder, event=event, flag_format=flag_format)
+        try:
+            return result, await client.solved_ids(), None
+        except CTFdError as exc:
+            return result, set(), str(exc)
+
+
+def _sync(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Run a coroutine to the end from synchronous code: on a loop of its own, in a worker
+    thread when this thread already runs one."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _reason(exc: BaseException) -> str:
+    """Why a CTFd poll failed, for a warning. CTFd's errors never hold the token."""
+    if isinstance(exc, (CTFdError, BoardError)):
+        return str(exc)
+    if isinstance(exc, OSError):
+        return f"cannot write the board ({exc.strerror or type(exc).__name__})"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _solved_in_solo(challenges: Sequence[Challenge]) -> str:
+    names = [untrusted(ch.name, one_line=True) for ch in challenges]
+    shown = ", ".join(names[:SHOWN_NAMES]) + (f" and {len(names) - SHOWN_NAMES} more" if len(names) > SHOWN_NAMES else "")
+    it = "it" if len(names) == 1 else "them"
+    return (
+        f"CTFd lists {shown} as solved for your account (by you or your team), and this run did not solve {it}: "
+        f"solo mode leaves {it} open and unqueued, so kill any lane on {it} (k); team mode (--team) stops such lanes itself"
+    )
+
+
+def _show(value: object) -> str:
+    return untrusted(str(value), one_line=True)
+
+
+# ---------------------------------------------------------------------- lanes
+
+
+def _l1_manifests(pack: Path | None) -> list | None:
+    """The engines of the L1 pack, checked before anything starts; None without a pack."""
     if pack is None:
         return None
     from .l1.manifest import ManifestError, discover
@@ -203,7 +850,7 @@ def _l1_stage(pack: Path | None, handouts: dict[str, Path], run_dir: Path, flag_
             f"the L1 pack {pack} has no engines (no .manifest.toml files): `flightdeck l1 import` writes them "
             "for a folder of scripts"
         )
-    return L1Stage(manifests, handouts, run_dir, flag_format, concurrency=concurrency)
+    return manifests
 
 
 def _watch(deck: Deck):
