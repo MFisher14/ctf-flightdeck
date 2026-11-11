@@ -45,7 +45,8 @@ class FakeReply:
 class FakeModelServer:
     """POST /v1/chat/completions on 127.0.0.1 (a free port), in a background thread.
 
-    Each request takes the next scripted reply, or asks the responder. Entering the
+    Each request takes the next scripted reply, or asks the responder. The port is taken
+    when the server is made, so `base_url` is known before it starts. Entering the
     context starts serving; leaving it hangs up on clients still connected, stops the
     server and joins its threads.
     """
