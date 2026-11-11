@@ -830,6 +830,42 @@ def test_a_report_cleans_an_older_run_folders_event_text_and_a_result_only_its_t
     assert any(line.startswith(f"{lane} on X gave up") and line.endswith(f": the server wants {cleaned}") for line in lines)
 
 
+def test_a_challenge_whose_id_or_name_looks_like_a_credential_keeps_it_in_the_log_the_report_and_the_score(tmp_path):
+    """A challenge's id and name come from the board, and either can look like a credential:
+    a slug with a Slack token's prefix, a name with a header in it. The log keeps them whole
+    where its readers match on them (a release's challenge ids and board, the challenge a
+    claim names), so the report names each challenge once, by its name, and practice scoring
+    finds every challenge the run played on the board. A key a lane printed still loses its
+    value."""
+    folder = tmp_path / "board"
+    folder.mkdir()
+    (folder / "board.json").write_text(json.dumps({"event": "Test CTF", "flag_format": FLAG_FORMAT}))
+    for cid, name, category in (("fortune", "Fortune Cookie: Part 2", "web"), ("xoxb-slack-bot", "xoxb Slack Bot", "misc")):
+        (folder / cid).mkdir()
+        (folder / cid / "challenge.json").write_text(json.dumps({"name": name, "category": category, "points": 50}))
+    board = load_board(folder)
+    run = Script(tmp_path / "run", flags={"xoxb-slack-bot": "t{slack}"})
+    run.release([b.challenge for b in board.challenges])
+    bot = run.lane("xoxb-slack-bot")
+    run.do(iv.Claim("xoxb-slack-bot"))
+    run.turn(bot, f"echo OPENROUTER_API_KEY={OPENROUTER}", flag="t{slack}")
+    run.do(iv.Approve(bot))
+    record = run.close()
+    (release,) = [e for e in record.events if e.kind == "release"]
+    assert release.data["challenges"] == ["fortune", "xoxb-slack-bot"]
+    assert [(c["id"], c["name"]) for c in release.data["board"]] == [("fortune", "Fortune Cookie: Part 2"), ("xoxb-slack-bot", "xoxb Slack Bot")]
+    (claim,) = [e for e in record.events if e.kind == "intervention" and e.data.get("intervention") == "claim"]
+    assert claim.data["challenge"] == claim.challenge == "xoxb-slack-bot"
+    text = report(record)
+    assert "5f" * 32 not in text + (tmp_path / "run" / "events.jsonl").read_text()
+    assert headings(text, "h3")[:3] == [
+        "Fortune Cookie: Part 2 (web, 50 pts): not solved", "xoxb Slack Bot (misc, 50 pts): solved by lane L02", "Helped (0)",
+    ]
+    assert not [line for line in text.splitlines() if "no name or points" in line]
+    card = score(record.dir / "events.jsonl", board)
+    assert sorted(card.solved) == ["xoxb-slack-bot"]
+
+
 @pytest.mark.parametrize("budget_approved", [False, True], ids=["left waiting", "approved"])
 def test_a_flags_verdict_does_not_answer_a_budget_alert(tmp_path, budget_approved):
     run = Script(tmp_path, flags={"x": "t{right}"})

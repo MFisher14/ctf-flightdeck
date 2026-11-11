@@ -16,7 +16,9 @@ A run folder is read, shared and drafted into writeups, and an event's text can 
 lane did: a turn's command (curl -H 'Authorization: Bearer ...'), an alert quoting a command
 or its output, a lane's result, an error. So each line's text and every string in its data
 have the value of anything shaped like a credential taken out (credentials.py), as a lane's
-transcript has. The flags the run has named by then stay as they are: each flag an event
+transcript has; the fields that name challenges (credentials.NAMES: a release's ids and
+board, the challenge a claim names) come from the board, readers match on them, and they stay
+as they are. The flags the run has named by then stay as they are: each flag an event
 names (credentials.named_flags: a candidate waiting for the player, a submit, an L1 result),
 that event's own included. The log cannot wait for what comes later, so a flag shaped like a
 credential loses its value in a line written before the run knew it (the turn that submits
@@ -112,7 +114,7 @@ class EventLog:
                 "lane": event.lane,
                 "challenge": event.challenge,
                 "alert": event.alert.value if event.alert is not None else None,
-                "data": credentials.redact_data(json_safe(event.data), keep=self._flags),
+                "data": credentials.redact_event_data(json_safe(event.data), keep=self._flags),
             }
         )
 

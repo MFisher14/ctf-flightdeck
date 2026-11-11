@@ -96,6 +96,24 @@ def redact_data(value: object, *, keep: Iterable[str] = ()) -> object:
     return _data(value, _kept(keep))
 
 
+NAMES = frozenset({"board", "challenges", "challenge", "solved"})
+"""The fields of a deck event's data that name challenges rather than tell what happened: a
+release's challenge ids and its board (each one's id, name, category and points), the
+challenge a claim or a queue names, and the challenges an older log's warning says the
+platform lists as solved. They come from the board, never from what a lane did; the report
+and practice scoring match on them; and an id or a name can look like a credential
+(xoxb-slack-bot, "Fortune Cookie: Part 2"). So redact_event_data leaves them as they are."""
+
+
+def redact_event_data(data: object, *, keep: Iterable[str] = ()) -> object:
+    """A deck event's data (plain JSON, as eventlog.json_safe makes it), redacted as
+    redact_data() does, but the fields in NAMES stay as they are."""
+    kept = _kept(keep)
+    if not isinstance(data, Mapping):
+        return _data(data, kept)
+    return {key: item if key in NAMES else _data(item, kept) for key, item in data.items()}
+
+
 def named_flags(data: Mapping[str, object]) -> list[str]:
     """The flags a deck event's data names: its "flag" (a lane's candidate, waiting for the
     player or submitted) and its "flags" (what an L1 engine reported). These are the flags

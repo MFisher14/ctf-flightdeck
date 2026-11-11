@@ -461,16 +461,17 @@ def _known_dollars(lanes) -> tuple[float, int]:
 
 def _without_credentials(record: RunRecord) -> RunRecord:
     """The run as a report quotes it: the text of every event (its text and each string in
-    its data) and of every lane's transcript (its result, its plan, each entry's text and
-    output) with the value of anything shaped like a credential taken out (credentials.py).
-    Every flag the run's log names stays as it is."""
+    its data, but the fields that name challenges: credentials.NAMES) and of every lane's
+    transcript (its result, its plan, each entry's text and output) with the value of
+    anything shaped like a credential taken out (credentials.py). Every flag the run's log
+    names stays as it is."""
     keep = tuple(dict.fromkeys(flag for event in record.events for flag in credentials.named_flags(event.data)))
 
     def clean(text: str) -> str:
         return credentials.redact(text, keep=keep)
 
     events = tuple(
-        replace(event, text=clean(event.text), data=credentials.redact_data(dict(event.data), keep=keep))
+        replace(event, text=clean(event.text), data=credentials.redact_event_data(dict(event.data), keep=keep))
         for event in record.events
     )
     lanes = {

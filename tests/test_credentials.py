@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from ctf_flightdeck.credentials import REDACTED, named_flags, redact, redact_data
+from ctf_flightdeck.credentials import REDACTED, named_flags, redact, redact_data, redact_event_data
 from deadline import within
 
 OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
@@ -174,6 +174,26 @@ def test_every_string_in_an_events_data_is_redacted_and_the_rest_stays():
 ])
 def test_the_flags_an_event_names_are_its_flag_and_its_flags(data, flags):
     assert named_flags(data) == flags
+
+
+def test_an_events_fields_that_name_challenges_stay_as_they_are():
+    """A deck event's own fields that name challenges come from the board (a release's ids
+    and board, the challenge a claim names, the challenges a warning lists as solved), and an
+    id or a name can look like a credential: they stay as they are. Every other string loses
+    its credentials' values as redact_data() takes them out, the same names further in too."""
+    slug = "xox" + "b-slack-bot"
+    board = [{"id": slug, "name": "Fortune Cookie: Part 2", "category": "web", "points": 50}]
+    data = {
+        "challenges": [slug, "c2"], "board": board, "challenge": slug, "solved": [slug],
+        "text": f"use GITHUB_TOKEN={GITHUB}", "found": {"challenge": slug}, "turn": 3,
+    }
+    assert redact_event_data(data) == {
+        "challenges": [slug, "c2"], "board": board, "challenge": slug, "solved": [slug],
+        "text": "use GITHUB_TOKEN=[redacted]", "found": {"challenge": "xoxb-[redacted]"}, "turn": 3,
+    }
+    assert redact_data(data)["challenges"] == ["xoxb-[redacted]", "c2"]  # what each would be, were it not a name
+    assert redact_data(board)[0]["name"] == "Fortune Cookie: [redacted]"
+    assert redact_event_data(f"plain {CTFD}") == "plain ctfd_[redacted]"
 
 
 LONG_RUNS = {  # shape -> (before, unit, after): the unit repeated to a megabyte between the two
