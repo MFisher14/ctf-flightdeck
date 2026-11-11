@@ -42,6 +42,9 @@ GIB = 1024**3
 MIB = 1024**2
 LOCAL_HOST = "127.0.0.1"
 COMMAND_TIMEOUT = 2.0  # seconds for sysctl
+# The operating system's own programs, where the system keeps them: found there when a PATH
+# leaves their folder out (a cron job, `env -i`, a stripped shell). Only these, only there.
+SYSTEM_PROGRAMS = {"Darwin": {"sysctl": "/usr/sbin"}}
 GPU_TIMEOUT = 5.0  # seconds for nvidia-smi, whose first call can wait for the driver to load
 HTTP_TIMEOUT = 1.0  # seconds for a server on this machine to list its models
 MAX_BODY = 4 * 1024 * 1024  # bytes of a model list read at most
@@ -378,6 +381,8 @@ class RealHost:
 
         path = absolute_path(self.environ.get("PATH", os.defpath))
         found = shutil.which(program, path=path) if path else None
+        if found is None and program in SYSTEM_PROGRAMS.get(self.system, {}):
+            found = shutil.which(program, path=SYSTEM_PROGRAMS[self.system][program])  # a PATH that left it out
         return str(Path(found).absolute()) if found else None
 
     def run(self, argv: Sequence[str], timeout: float) -> str:

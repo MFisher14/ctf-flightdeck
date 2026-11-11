@@ -414,3 +414,16 @@ def test_doctors_machine_line_stays_a_note_when_every_probe_fails(tmp_path, monk
     (check,) = [c for c in doctor(tmp_path / "none.toml", environ={}) if c.name == "machine"]
     assert (check.ok, check.essential) == (True, False) and "memory unknown" in check.detail
     assert doctor_line(host=linux_box(8 * 1024 * 1024)).startswith("Linux on x86_64, 8 GiB of memory, no NVIDIA GPU found;")
+
+
+def test_sysctl_is_found_where_macos_keeps_it_when_path_leaves_its_folder_out(monkeypatch):
+    import platform
+
+    from ctf_flightdeck import hardware
+
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    host = RealHost({"PATH": "/usr/bin:/bin"})
+    folder = hardware.SYSTEM_PROGRAMS["Darwin"]["sysctl"]
+    monkeypatch.setattr(hardware.shutil, "which", lambda program, path=None: f"{folder}/{program}" if path == folder else None)
+    assert host.which("sysctl") == "/usr/sbin/sysctl"
+    assert host.which("nvidia-smi") is None  # only the system's own programs, only in their own folder
