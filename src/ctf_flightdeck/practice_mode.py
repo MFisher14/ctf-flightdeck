@@ -587,15 +587,14 @@ def _add_transcripts(folder: Path, lanes: dict[str, _Lane]) -> list[str]:
     missing: list[str] = []
     for lane, acc in lanes.items():
         head, problem = _transcript_header(folder, lane)
-        if head is None and problem is None:
-            missing.append(lane)
-            continue
         if head is not None:
             problem = _disagreement(head, lane, acc)
         if problem is not None:
             notes.append(f"{LANES}/{lane}.jsonl {problem}, so it is left out: {lane}'s cost is its model turns only.")
             continue
-        assert head is not None
+        if head is None:
+            missing.append(lane)
+            continue
         tokens, dollars, unpriced = head["tokens"] - acc.tokens, 0.0, False
         if acc.dollars is not None:
             if head["dollars"] is None:  # every turn had a price; something outside them did not
@@ -672,7 +671,8 @@ def _disagreement(head: dict, lane: str, acc: _Lane) -> str | None:
 
 
 def _same_money(a: float, b: float) -> bool:
-    """The same amount, but for float rounding (the deck and the log add the same prices in another order)."""
+    """The same amount but for float noise in the last digits (a sum taken another way, or
+    a number written back by another tool), which is no spend and no disagreement."""
     return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
 
 

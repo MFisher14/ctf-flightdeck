@@ -34,7 +34,8 @@ def score_command(
     ] = None,
 ) -> None:
     """Score a past run from its event log: solves, points, first solve, cost per solve,
-    interventions and wrong submissions. Reads only the log and the board; spends nothing."""
+    interventions and wrong submissions. Reads only the run folder (the log, and the lane
+    transcripts for what was spent outside a turn) and the board; spends nothing."""
     from .platform.manual import BoardError, load_board
     from .practice_mode import ScoreError, score, scorecard
 
