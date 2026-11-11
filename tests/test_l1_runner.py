@@ -442,6 +442,33 @@ def test_engines_within_the_concurrency_limit_run_at_the_same_time(pack, handout
     assert [r.result.flags for r in runs] == [("t{met_a}",), ("t{met_b}",)]  # each saw the other running
 
 
+def test_one_engine_that_cannot_run_never_stops_the_others(pack, handout, tmp_path):
+    def factory(engine_id, root, given):
+        if engine_id == "broken":
+            raise RuntimeError("no room for its copy")
+        return HostWorkspace(root, given)
+
+    broken = cli_engine(pack, "broken", "echo t{never}\n")
+    slow = cli_engine(pack, "slow", "sleep 0.5\necho t{the_real_one}\n")
+    runs = run(run_routed([hit(broken, 90), hit(slow, 10)], handout, workdir=tmp_path / "work", flag_format=FLAG,
+                          workspace_factory=factory))
+    assert [(r.manifest.id, r.result.status, r.result.flags) for r in runs] == [
+        ("broken", "unsure", ()),
+        ("slow", "candidate", ("t{the_real_one}",)),  # still ran to the end
+    ]
+    assert runs[0].result.notes == "flightdeck could not run it: RuntimeError: no room for its copy"
+    assert (runs[0].result.engine, runs[0].result.challenge_id) == ("broken", "demo-id")
+
+
+def test_a_result_with_a_number_too_big_for_a_float_is_unsure_and_the_others_still_run(pack, handout, tmp_path):
+    line = '{"schema": 1, "status": "none", "cost": {"seconds": 1' + "0" * 400 + "}}"
+    big = cli_engine(pack, "big", f"echo '{line}'\n", output="result")
+    good = cli_engine(pack, "good", "sleep 0.3\necho t{the_real_one}\n")
+    runs = run(run_routed([hit(big, 90), hit(good, 10)], handout, workdir=tmp_path / "work", flag_format=FLAG))
+    assert [(r.result.status, r.result.flags) for r in runs] == [("unsure", ()), ("candidate", ("t{the_real_one}",))]
+    assert "cost.seconds is too large" in runs[0].result.notes
+
+
 def test_run_routed_refuses_bad_arguments_before_anything_runs(pack, handout, tmp_path):
     h = hit(cli_engine(pack, "e", "touch ran.marker\n"))
     for kwargs, words in (

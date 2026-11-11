@@ -137,10 +137,16 @@ async def run_routed(
     async def one(hit: Hit) -> EngineRun:
         async with gate:
             begun = time.monotonic()
-            result = await run_engine(
-                hit.manifest, handout, workdir=workdir, flag_format=flag_format,
-                workspace_factory=workspace_factory, challenge_id=label,
-            )
+            try:
+                result = await run_engine(
+                    hit.manifest, handout, workdir=workdir, flag_format=flag_format,
+                    workspace_factory=workspace_factory, challenge_id=label,
+                )
+            except Exception as exc:  # a flightdeck bug or a failing factory: this engine's run only, never the others'
+                result = SolverResult(
+                    "unsure", engine=hit.manifest.id, challenge_id=label, cost=Cost(seconds=time.monotonic() - begun),
+                    notes=f"flightdeck could not run it: {type(exc).__name__}: {_safe(str(exc))}",
+                )
             return EngineRun(hit.manifest, result, time.monotonic() - begun)
 
     async with asyncio.TaskGroup() as group:
