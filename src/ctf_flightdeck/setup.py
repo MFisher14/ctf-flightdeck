@@ -369,6 +369,8 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     version_ok = sys.version_info >= (3, 12)
     checks.append(Check("python", version_ok, f"Python {sys.version.split()[0]}, flightdeck {__version__}",
                         "flightdeck needs Python 3.12 or newer"))
+    from .hardware import doctor_line
+    checks.append(Check("machine", True, doctor_line(environ), essential=False))
     path = (config_path or default_config_path()).expanduser()
     config = None
     if not path.exists():
