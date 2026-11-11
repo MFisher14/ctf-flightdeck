@@ -545,14 +545,16 @@ def test_a_recorded_process_that_no_longer_works_under_the_runs_folder_is_left_a
     assert proc.poll() is None and (record.run_dir / RECORD).exists()
 
 
-def test_a_runs_folder_named_in_another_case_than_on_disk_is_still_that_folder(tmp_path):
-    """Where the file system does not tell upper from lower case (macOS's default), [run] dir
+@pytest.mark.parametrize("on_disk, spelled", [("CaseRuns", "caseruns"), ("Café-runs", "Café-runs")],
+                         ids=["upper and lower case", "a decomposed and a composed accent"])
+def test_a_runs_folder_spelled_otherwise_than_on_disk_is_still_that_folder(tmp_path, on_disk, spelled):
+    """Where the file system does not tell these spellings apart (macOS's default), [run] dir
     or --run-dir may spell the runs folder otherwise than the folder on disk, which is how the
     kernel names a process's working folder: what the run left still works under its folder."""
-    (tmp_path / "CaseRuns").mkdir()
-    runs = tmp_path / "caseruns"
+    (tmp_path / on_disk).mkdir()
+    runs = tmp_path / spelled
     if not runs.is_dir():
-        pytest.skip("not run: this file system tells upper from lower case, so a folder has one spelling")
+        pytest.skip("not run: this file system tells these spellings apart, so a folder has one spelling")
     record = killed_run(runs)
     proc = lane_command(record)
     swept = sweep(runs, docker=None, clean=True)
