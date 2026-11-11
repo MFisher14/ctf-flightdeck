@@ -1099,6 +1099,29 @@ def test_preflight_with_a_profile_it_cannot_read_exits_2_with_the_reason(tmp_pat
     assert result.stderr.startswith(f'flightdeck: {path}: rules.live_targets must be "allowed", "confirm" or "off"')
 
 
+def test_preflight_with_a_profile_under_a_home_that_does_not_exist_exits_2_with_the_reason(env):
+    result = invoke("~no-such-player-6631/event.toml")  # quoted, so the shell leaves the ~ alone
+    assert result.exit_code == 2, result.exception
+    assert result.stdout == ""
+    assert result.stderr == "flightdeck: ~no-such-player-6631/event.toml: starts with ~ for a home directory that cannot be found\n"
+
+
+@pytest.mark.parametrize("how", ["--config", "FLIGHTDECK_CONFIG"])
+def test_preflight_with_a_config_under_a_home_that_does_not_exist_warns_with_the_reason(tmp_path, env, monkeypatch, how):
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
+    named = "~no-such-player-6631/config.toml"
+    if how == "--config":
+        result = invoke(str(path), "--config", named)
+        reason = f"{named}: starts with ~ for a home directory that cannot be found"
+    else:
+        monkeypatch.setenv("FLIGHTDECK_CONFIG", named)
+        result = invoke(str(path))
+        reason = "the config file ($FLIGHTDECK_CONFIG, else ~/.config/ctf-flightdeck/config.toml) is under a home directory that cannot be found"
+    assert result.exit_code == 0, result.exception
+    assert f'warn: the agents policy is "auto", but no model config could be loaded: {reason}' in result.stdout.splitlines()
+    assert "lanes     how many at a time is not known (no config, no --max-lanes)" in result.stdout
+
+
 def test_preflight_without_a_profile_is_a_usage_error(env):
     result = invoke()
     assert result.exit_code == 2

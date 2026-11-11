@@ -13,9 +13,12 @@ the profile cannot be read. It never prints a token or a key, only whether its v
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
+
+if TYPE_CHECKING:
+    from .config import Config, ConfigError
 
 app = typer.Typer(
     name="preflight",
@@ -50,7 +53,7 @@ def preflight(
     """Check an event profile against the event's rules and show the policy a run would use at
     each stage (pull, l1, agents, submit, instance: auto, confirm, manual or off). Exits 2 if
     anything refuses. Never prints a token or a key, only whether its variable is set."""
-    from .config import Config, ConfigError, load_config
+    from .config import Config
     from .preflight import Policy, ProfileError, check, describe, example_profile, load_profile
     from .text import untrusted
 
@@ -60,14 +63,11 @@ def preflight(
     if event is None:
         raise typer.BadParameter("name the event profile to check, or use --example to print one", param_hint="EVENT.toml")
     try:
-        profile, policies = load_profile(event.expanduser())
+        profile, policies = load_profile(event)  # it expands ~ itself, and says so when it cannot
     except ProfileError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
-    try:
-        loaded: Config | ConfigError = load_config(config.expanduser() if config else None)
-    except ConfigError as exc:
-        loaded = exc
+    loaded = _load_config(config)
     found = loaded if isinstance(loaded, Config) else None
     runtime = ("host" if host else "docker") if host is not None else (found.lanes.runtime if found else None)
     lanes = max_lanes or (found.lanes.max_lanes if found else None)
@@ -94,6 +94,30 @@ def preflight(
         typer.echo(f"preflight: refused ({counts}): a run with this profile must not start")
         raise typer.Exit(2)
     typer.echo("preflight: ok" + (f" ({_count(warnings, 'warning')})" if warnings else ""))
+
+
+def _load_config(config: Path | None) -> Config | ConfigError:
+    """The player's config, or the ConfigError that says why there is none (check() shows it).
+
+    The path is found here, not in load_config, because expanding a ~user that does not exist
+    (in --config or $FLIGHTDECK_CONFIG) raises RuntimeError, which load_config passes on.
+    """
+    from .config import CONFIG_ENV, ConfigError, default_config_path, load_config
+    from .text import untrusted
+
+    try:
+        path = config.expanduser() if config is not None else default_config_path()
+    except RuntimeError:  # ~user for a user that does not exist, or no home directory at all
+        if config is not None:
+            return ConfigError(f"{untrusted(str(config), one_line=True)}: starts with ~ for a home directory that cannot be found")
+        return ConfigError(
+            f"the config file (${CONFIG_ENV}, else ~/.config/ctf-flightdeck/config.toml) is under a home "
+            "directory that cannot be found"
+        )
+    try:
+        return load_config(path)
+    except ConfigError as exc:
+        return exc
 
 
 def _count(n: int, what: str) -> str:
