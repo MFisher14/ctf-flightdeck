@@ -63,11 +63,12 @@ links or images, no emphasis, no extra table cells, no headings. Flags are inlin
 commands are fenced code blocks, each fence longer than any backtick run inside. Nothing a
 run holds is ever emitted as raw HTML.
 
-Nor is a credential: the report reads the run with the value of anything shaped like one taken
-out of the text of its log and its transcripts (credentials.py), as a writeup does, so the
-steps a stall quotes, an alert's reason (which can quote a command or its output), a lane's
-result or a hint never show a key. A run folder written before the log and the transcripts
-were cleaned as they were written still holds them. The flags the run names stay as they are.
+Credentials: the report reads the run with the value of anything shaped like one taken out of
+the text of its log and its transcripts (credentials.py), as a writeup does, so the steps a
+stall quotes, an alert's reason (which can quote a command or its output), a lane's result or
+a hint show a key's name and not its value. That matters for a run folder written before the
+log and the transcripts were cleaned as they were written: it still holds them. The flags the
+run names stay as they are.
 """
 
 from __future__ import annotations
