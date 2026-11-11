@@ -1070,9 +1070,9 @@ def test_spend_counts_for_the_model_that_spent_it_not_the_lanes_model_at_the_tim
     lane = run.lane("x")
     run.turn(lane, "look", tokens=1000, dollars=0.1)
     assert run.do(iv.Escalate(lane)).ok and run.deck.lanes[lane].model == "big"
-    # the small model's reply, dropped on the escalation, logged while the lane runs "big"
+    run.turn(lane, "look again", tokens=2000, cached=0, dollars=0.5)  # the log has the lane on "big" from here
+    # the small model's reply, dropped on the escalation, logged after a turn of "big"
     run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04, model="small", why="a reply dropped on escalation"))
-    run.turn(lane, "look again", tokens=2000, cached=0, dollars=0.5)
     text = report(run.close())
     rows = table_rows(text)
     assert rows[1:4] == [
@@ -1135,7 +1135,7 @@ def test_a_cli_models_dollars_say_how_many_of_its_turns_had_no_price(tmp_path):
     run.turn(lane, "cat note", tokens=1000, cached=0, dollars_later=True)
     run.deck.report(lane, TurnReport(turn=False, dollars=None, turn_end=True))  # it exited in the turn: no price for it
     rows = table_rows(report(run.close()))
-    assert rows[1] == ["small", "2", "2,200", "0%", "unknown (at least $0.03; 1 of 2 CLI turns had no price)"]
+    assert rows[1] == ["small", "2", "2,200", "0%", "unknown (at least $0.03; 1 of 2 CLI turns had no known cost)"]
     assert rows[2] == [TURN_END_ROW, "-", "200", "0%", "unknown (at least $0.03)"]
 
 
@@ -1153,7 +1153,11 @@ def test_a_cli_turn_whose_cost_never_came_leaves_the_lanes_dollars_unknown_not_s
             path.unlink()
     text = report(load_run(tmp_path))
     assert "- Dollars: unknown (at least $0.03; the lane had a turn with no price)" in text.splitlines()
-    assert ["L01", "X", "small", "2", "2,200", "23%", "unknown", "still open"] in table_rows(text)
+    rows = table_rows(text)
+    assert ["L01", "X", "small", "2", "2,200", "23%", "unknown", "still open"] in rows
+    # its model's row and the CLIs' own cost are not settled numbers either
+    assert rows[1:3] == [["small", "2", "2,200", "23%", "unknown (at least $0.03; 1 of 2 CLI turns had no known cost)"],
+                         [TURN_END_ROW, "-", "200", "0%", "unknown (at least $0.03)"]]
     notes = items(sections(text)["Problems reading the run"])
     assert "L01's coding-agent CLI never reported what its last turn cost: its dollars are not fully known" in notes
 

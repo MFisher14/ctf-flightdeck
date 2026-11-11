@@ -346,7 +346,7 @@ class ModelSpend:
     unpriced: int  # turns and spend events with no known price
     costs: int = 0  # turns and spend events with a cost of their own (a CLI's step has none: its turn's end has it)
     spends: int = 0  # spend events credited to it
-    turn_ends: int = 0  # of those, a coding-agent CLI's reports of a turn's own cost (turn_end)
+    turn_ends: int = 0  # its coding-agent CLI's turns: reports of a turn's own cost (turn_end), and one the log ends in
 
 
 @dataclass
@@ -464,6 +464,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     unread: Counter[str] = Counter()
     model_spend: dict[str, _Sum] = {}  # model -> what it spent: its turns, and its spend events (data["model"])
     turn_ends = _Sum()  # what coding-agent CLIs reported as their turns' own cost, when each turn ended
+    open_turns: dict[tuple[str, str], None] = {}  # (lane, model): a CLI turn whose steps came and whose cost has not
     # lane -> the kind of approval it waits on now. The deck logs a pending event each time an
     # approval becomes the lane's current one ("queued" ones wait behind it); an approve or
     # decline answers the current one, and the lane's end drops what is left.
@@ -543,6 +544,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             spend.turns += 1
             if dollars is None and data.get("dollars_later") is True:
                 facts.cost_due = True  # a coding-agent CLI's step: no cost of its own, its turn_end spend event has it
+                open_turns[(event.lane, model)] = None
                 spend.tokens += tokens
                 spend.cached += cached
             else:
@@ -567,11 +569,13 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
                 facts.spend_unpriced += 1
             else:
                 facts.spend_dollars += dollars
-            spend = model_spend.setdefault(_str(data.get("model")), _Sum())
+            spent_by = _str(data.get("model"))
+            spend = model_spend.setdefault(spent_by, _Sum())
             spend.add(tokens, cached, dollars)
             spend.spends += 1
             if turn_end(data):
                 facts.cost_due = False  # the CLI's cost of the turn its steps were in
+                open_turns.pop((event.lane, spent_by), None)
                 spend.turn_ends += 1
                 turn_ends.add(tokens, cached, dollars)
                 continue  # summed like the turns, not listed
@@ -685,6 +689,11 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             "one (not a number, infinite or negative): shown as T+? and left out of the duration"
         )
 
+    for _, model in open_turns:  # the log ends inside a CLI turn: its cost never came, so it is not known
+        for part in (model_spend[model], turn_ends):
+            part.costs += 1
+            part.unpriced += 1
+            part.turn_ends += 1
     solved = solves(record)
     stalls = _stalls(events, lanes, steps)
     judged = _judged(steps, lanes, solved, _proposed(record, asked))
@@ -921,7 +930,7 @@ def _outside(lanes: Mapping[str, LaneFacts], log_format: int) -> tuple[Outside, 
 # ---------------------------------------------------------------------- rendering
 
 
-def _money(amount: float, unpriced: int, total: int, what: str) -> str:
+def _money(amount: float, unpriced: int, total: int, what: str, missing: str = "had no price") -> str:
     """Dollars; or "unknown" when some of `total` ("lanes" or "turns") had no price, with the
     known part as a floor whenever it is above zero. A lane is unpriced when any turn of it
     had no price, though its other turns' dollars are known: every lane can be unpriced while
@@ -933,7 +942,7 @@ def _money(amount: float, unpriced: int, total: int, what: str) -> str:
     if what == "lanes":
         which = "the lane" if total == 1 else "every lane" if unpriced >= total else f"{unpriced} of {total} lanes"
         return f"unknown (at least ${fmt.dollars(amount)}; {which} had a turn with no price)"
-    return f"unknown (at least ${fmt.dollars(amount)}; {unpriced} of {total} {what} had no price)"
+    return f"unknown (at least ${fmt.dollars(amount)}; {unpriced} of {total} {what} {missing})"
 
 
 OUTSIDE_ROW = "outside a turn (a reply dropped on escalation, for one)"
@@ -943,14 +952,10 @@ TURN_END_ROW = "coding-agent CLIs' own cost of their turns, reported when each t
 def _model_money(spend: ModelSpend) -> str:
     """A model's dollars, out of what had a cost of its own: its turns, and the spend events
     credited to it. A coding-agent CLI's steps have none: the CLI reports what each of its
-    turns cost when the turn ends."""
-    if not spend.spends:
-        what = "turns"
-    elif spend.turn_ends == spend.costs:
-        what = "CLI turns"
-    else:
-        what = "turns and spends"
-    return _money(spend.dollars, spend.unpriced, spend.costs, what)
+    turns cost when the turn ends, and a turn whose report never came has no known cost."""
+    if spend.turn_ends and spend.turn_ends == spend.costs:
+        return _money(spend.dollars, spend.unpriced, spend.costs, "CLI turns", "had no known cost")
+    return _money(spend.dollars, spend.unpriced, spend.costs, "turns and spends" if spend.spends else "turns")
 
 
 def _spent(flight: Flight) -> str:
