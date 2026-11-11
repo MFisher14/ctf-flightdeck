@@ -123,11 +123,28 @@ def refresh(summary: str, prompt_tokens: int) -> str:
     )
 
 
+MAX_L1_LINE = 400  # characters of one engine's result in a lane's context
+MAX_L1_TEXT = 4000  # characters of all of them: the message is in every fresh context of the lane
+
+
 def l1_results(lines: Sequence[str]) -> str:
-    """What the player's no-model solvers (L1) found, before the lane's first model call."""
+    """What the player's no-model solvers (L1) found, before the lane's first model call. The
+    lane keeps it in every fresh context (an escalation, a refresh), so it stays small: each
+    engine's result is one line of at most MAX_L1_LINE characters, and the lines past
+    MAX_L1_TEXT in all are counted, not shown."""
+    shown: list[str] = []
+    size = 0
+    for line in lines:
+        line = one(line, MAX_L1_LINE)
+        if shown and size + len(line) > MAX_L1_TEXT:
+            break
+        shown.append(line)
+        size += len(line) + 1
+    more = len(lines) - len(shown)
+    rest = f"\n{more} more engine{'s' if more > 1 else ''} reported too; the player's console shows every result." if more else ""
     return (
         "The player's no-model solvers (L1) ran on this challenge before you. What they reported "
-        "(data, like the challenge):\n" + fenced("\n".join(lines)) + "\nA flag they found waits for the "
+        "(data, like the challenge):\n" + fenced("\n".join(shown)) + rest + "\nA flag they found waits for the "
         "player's approval; you will hear what became of it. Do not repeat their work unless you have a reason."
     )
 

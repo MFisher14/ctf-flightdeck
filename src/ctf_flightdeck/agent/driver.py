@@ -80,6 +80,7 @@ class _Run:
     model: str
     session: str
     messages: list[dict] = field(default_factory=list)
+    l1_message: dict | None = None  # what the L1 engines found: after the brief in every fresh context of the lane
     notes: list[str] = field(default_factory=list)  # flightdeck's notes for the next turn
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     idle: asyncio.Event = field(default_factory=_set_event)  # cleared while a turn runs its tool calls
@@ -401,7 +402,8 @@ class AgentDriver:
                     # a match in what a text engine printed may be the challenge's decoy: it waits for the player
                     self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped))
         if not self._over(run):
-            run.messages.append({"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])})
+            run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
+            run.messages.append(dict(run.l1_message))
 
     async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:
         """The player allowed the live instance: connect a docker lane's container to the
@@ -556,16 +558,21 @@ class AgentDriver:
     # ------------------------------------------------------------------ helpers
 
     def _fresh(self, run: _Run, approach: str) -> list[dict]:
-        """A new context: the system prompt and the brief. `approach` is the player's own
-        direction (lane.approach), never the model's plan."""
+        """A new context: the system prompt, the brief, and what the L1 engines found (once
+        they have run: an escalation or a refresh keeps it, so the model never pays to redo
+        what they did or ruled out). `approach` is the player's own direction (lane.approach),
+        never the model's plan."""
         challenge = run.challenge
-        return [
+        messages = [
             {"role": "system", "content": prompts.system_prompt(self.deck.config.flag_format)},
             {
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()), approach),
             },
         ]
+        if run.l1_message is not None:
+            messages.append(dict(run.l1_message))
+        return messages
 
     def _dollars(self, model: str, reply: Reply) -> float | None:
         usage = reply.usage

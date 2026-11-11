@@ -61,6 +61,18 @@ def test_a_lane_summary_and_l1_results_are_fenced_as_data():
         assert text.index("The player asked you") < text.index(FENCE_CLOSE)
 
 
+def test_l1_results_stay_small_however_many_engines_ran_and_however_much_they_said():
+    from ctf_flightdeck.agent.prompts import MAX_L1_LINE, MAX_L1_TEXT, l1_results
+
+    text = l1_results([f"e{i}: none ({'y' * 1000})" for i in range(30)])
+    inside = text.split(FENCE_OPEN + "\n", 1)[1].split("\n" + FENCE_CLOSE, 1)[0].splitlines()
+    assert all(len(line) <= MAX_L1_LINE for line in inside) and sum(len(line) + 1 for line in inside) <= MAX_L1_TEXT + 1
+    assert inside[0].startswith("e0: none (yyy") and inside[0].endswith("...")
+    assert f"\n{30 - len(inside)} more engines reported too; the player's console shows every result." in text
+    two = l1_results(["a: none (one\ntwo)", "b: unsure"])
+    assert "a: none (one ⏎ two)\nb: unsure" in two and "more engine" not in two  # one line per engine
+
+
 def test_a_long_description_is_cut_in_the_brief_and_says_where_the_rest_is():
     from ctf_flightdeck.agent.prompts import MAX_BRIEF_DESCRIPTION
 

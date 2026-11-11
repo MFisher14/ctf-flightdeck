@@ -1058,6 +1058,89 @@ def test_a_challenge_no_engine_routes_to_goes_straight_to_the_model_and_says_so(
     run(main())
 
 
+def test_an_escalated_lane_still_knows_what_l1_found(tmp_path):
+    """Finding 12: the stronger model starts a fresh context; what the engines found and ruled
+    out is in it, after the brief and before the escalation summary."""
+    gate = threading.Event()
+
+    def responder(record):
+        if calls_to(server) == 1:
+            gate.wait(5)  # the small model is thinking when the player escalates
+            return tool_call_reply("shell", {"command": "ls"})
+        return tool_call_reply("submit_flag", {"flag": "t{note}"})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"rot": NOTHING}))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(server.requests) >= 1, "the first model call", timeout=30)
+            assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            gate.set()
+            await until(lambda: lane.pending is not None, "the stronger model's candidate")
+            first_big = server.requests[1]["json"]
+            assert first_big["model"] == "big"
+            messages = [m["content"] for m in first_big["messages"]]
+            assert len(messages) == 4
+            assert "no-model solvers (L1) ran on this challenge" in messages[2] and "rot: none (no rot13 here)" in messages[2]
+            assert "Another model worked on this challenge before you" in messages[3]
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_refreshed_context_still_knows_what_l1_found(tmp_path):
+    server = FakeModelServer([
+        tool_call_reply("shell", {"command": "echo one"}, prompt_tokens=60_000),  # over the limit
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+    ])
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"rot": NOTHING}))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag", timeout=30)
+            first, second = (r["json"]["messages"] for r in server.requests[:2])
+            assert [m["role"] for m in second] == ["system", "user", "user", "user"]
+            assert second[:3] == first[:3]  # the same prefix as the lane's first context: the API's cache still hits
+            assert "rot: none (no rot13 here)" in second[2]["content"] and "60,000 prompt tokens" in second[3]["content"]
+            await lab.finish()
+
+    run(main())
+
+
+CHATTY = """
+    from ctf_flightdeck.l1.result import SolverResult
+
+    def solve(challenge_dir):
+        return SolverResult("none", notes="x" * 200_000)
+    """
+
+
+def test_what_l1_found_is_capped_in_the_lanes_context(tmp_path):
+    """Kept in every fresh context, the engines' results must stay small: a chatty engine's
+    200,000 characters of notes would make every turn cost them, and a refresh could never
+    bring the lane back under its limit."""
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"chatty": CHATTY}))
+            lab.release()
+            await until(lambda: len(server.requests) >= 1, "the first model call", timeout=30)
+            l1 = server.requests[0]["json"]["messages"][2]["content"]
+            assert "chatty: none (xxxx" in l1 and len(l1) < 1000
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_submit_an_engines_own_flag_goes_at_once_and_one_found_in_its_output_waits(tmp_path):
     """D17: a flag matched in what a text engine printed is not claimed by the engine (it may
     be the challenge's decoy, which the engine just read out), so auto submit waits for the
