@@ -106,7 +106,7 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 | `e` | `/escalate` | Hand a compact state summary to a stronger model |
 | `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Other lanes keep running meanwhile. |
 | `a`, `1` | `/approve` | Approve the pending action (submit, more budget, live-box access); on a board that cannot check flags, "accepted" |
-| `d`, `0` | `/decline` | Say no: the flag is not submitted (or, after a hand submit, was rejected), the live box stays off, no more budget (the lane stops) |
+| `d`, `0` | `/decline` | Say no: the flag is not submitted (or, after a hand submit, was rejected), or the live box stays off, and the lane carries on; refusing more budget stops the lane |
 | `1`-`9` | | Quick answers: the numbers in the why line and the needs-you card; one key, no enter (focus view: only while the chat box is empty) |
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
@@ -114,9 +114,17 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help |
+| `q`, `ctrl+q` | `/quit` | Quit. While lanes are open it asks first, saying what is at stake: `y` stops every lane and closes its workspace (a run cannot be resumed); `n` or `esc` stays |
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
 back to the fleet and `ctrl+n` goes on to the next lane that needs you.
+
+The fleet's key line always shows `? help` and `q quit`; on a narrow terminal the keys needed least
+(sort and focus first, then fork, escalate and take over) are left out whole rather than cut.
+
+During a run, closing the terminal (or an SSH drop) and a SIGTERM stop the run the way quitting
+does, without asking: every lane stops and every workspace closes, and `play` exits with 128 plus
+the signal's number.
 
 ## Proposed at the M0 review (built in the mock, not yet signed off)
 

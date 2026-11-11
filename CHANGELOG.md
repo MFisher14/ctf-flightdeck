@@ -11,6 +11,17 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `OPENROUTER_API_KEY` is set: a lane whose calls keep failing moves there for the rest of its
   context and says so. Any config can name a `[fallback]` API; `flightdeck doctor` checks its key.
 
+### The console
+
+- Closing the terminal, an SSH drop or a SIGTERM during a run now stops every lane and closes
+  every workspace, as quitting does (before, lane commands, containers and paused agent CLIs
+  kept running); `play` exits with 128 plus the signal's number.
+- `q` while lanes are open asks first and says what quitting stops; `y` quits, `n` or `esc` stays.
+- The key line always shows `? help` and `q quit`, and keeps approve, decline and the commands on
+  a narrow terminal.
+- Help and the `/` menu say what take-over and decline do in a run; `flightdeck config` says "no
+  dollar cap" instead of "$no cap".
+
 ### M4: after a run
 
 - `flightdeck report RUN_DIR`: the post-flight report (where lanes stalled, which of your
