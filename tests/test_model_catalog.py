@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from importlib.resources import files
 
 import pytest
 from fake_host import GIB, FakeHost, apple_mac, linux_box
@@ -82,8 +83,75 @@ def test_the_shipped_catalog_has_the_four_benchmarked_models_on_ollama_and_mlx()
         "gemma4-12b": {OLLAMA: "gemma4:12b", MLX: "mlx-community/gemma-4-12B-it-4bit"},
         "phi4-mini": {OLLAMA: "phi4-mini", MLX: "mlx-community/Phi-4-mini-instruct-4bit"},
     }
-    assert all(b.measured == {} for m in catalog.local for b in m.builds)  # filled from docs/MODELS.md, never invented
     assert [a.id for a in catalog.api] == ["anthropic", "openrouter"]
+
+
+# The benchmark write-up's tables (measured 2026-11-11: one machine, under load, one run), per build
+# and role: whether the catalog offers it (measured) or not (not_for), and what its line must say:
+# practice challenges solved out of 4 and tool calls out of 5 for lanes; for the light role the
+# eval-local score out of 44 in the setting it was served with (beside the rules' 38/44).
+BENCHMARK = {
+    ("qwen3.5-9b", OLLAMA): {LANES: ("measured", ["solved 1 of 4", "as served", "tool calls 4/5"]),
+                             LIGHT: ("not_for", ["eval-local 2/44", "42/44 with reasoning_effort none"])},
+    ("qwen3.5-9b", MLX): {LANES: ("measured", ["solved 2 of 4", "with thinking off and --max-tokens 8192", "tool calls 5/5"]),
+                          LIGHT: ("measured", ["eval-local 41/44 with thinking off"])},
+    ("gpt-oss-20b", OLLAMA): {LANES: ("measured", ["solved 2 of 4", "as served", "tool calls 5/5"]),
+                              LIGHT: ("measured", ["eval-local 38/44 as served"])},
+    ("gpt-oss-20b", MLX): {LANES: ("not_for", ["tool calls 0/5"]), LIGHT: ("not_for", ["eval-local 0/44"])},
+    ("gemma4-12b", OLLAMA): {LANES: ("not_for", ["solved 0 of 4", "in two runs", "tool calls 5/5"]),
+                             LIGHT: ("not_for", ["eval-local 17/44", "42/44 with reasoning_effort none"])},
+    ("gemma4-12b", MLX): {LANES: ("not_for", ["solved 0 of 4", "0 of 4 with thinking off and --max-tokens 8192",
+                                              "tool calls 5/5"]),
+                          LIGHT: ("measured", ["eval-local 41/44 with thinking off"])},
+    ("phi4-mini", OLLAMA): {LANES: ("not_for", ["tool calls 0/5"]),
+                            LIGHT: ("not_for", ["eval-local 22/44 as served", "below the rules' 38/44"])},
+    ("phi4-mini", MLX): {LANES: ("not_for", ["tool calls 0/5"]),
+                         LIGHT: ("not_for", ["eval-local 18/44 served as it comes", "below the rules' 38/44"])},
+}
+RULES_SCORE = 38  # of 44: the rules', flightdeck's default for the light role (no model, no cost)
+
+
+def test_every_shipped_build_says_what_the_benchmark_measured_for_each_of_its_roles():
+    """No build is offered by its size alone: for each role its model takes, a build has the
+    benchmark's result, or the reason it is not for that role, with the numbers."""
+    shipped = {}
+    for model in load_catalog().local:
+        for build in model.builds:
+            lines = {role: ("measured", build.measured[role]) if role in build.measured else
+                     ("not_for", build.not_for[role]) if role in build.not_for else ("nothing", "") for role in model.roles}
+            shipped[(model.id, build.runtime)] = lines
+    assert {key: {role: kind for role, (kind, _) in lines.items()} for key, lines in shipped.items()} == {
+        key: {role: kind for role, (kind, _) in roles.items()} for key, roles in BENCHMARK.items()}
+    for key, roles in BENCHMARK.items():
+        for role, (_, numbers) in roles.items():
+            line = shipped[key][role][1]
+            assert all(number in line for number in numbers), (key, role, line)
+            assert role != LIGHT or "the rules' 38/44" in line, (key, line)  # beside flightdeck's default, no model
+
+
+def test_no_build_is_offered_for_the_light_role_on_a_score_below_the_rules():
+    """The light role's default is the rules, which need no model: a build that scored below their
+    38/44 would make it worse, so it is not offered for it (Phi-4-mini: 22/44 and 18/44)."""
+    offered = {}
+    for model in load_catalog().local:
+        for build in model.builds:
+            if LIGHT in build.measured:
+                score = re.match(r"eval-local (\d+)/44 ", build.measured[LIGHT])
+                assert score, build.measured[LIGHT]  # every light result opens with its score
+                offered[(model.id, build.runtime)] = int(score.group(1))
+    assert offered and all(score >= RULES_SCORE for score in offered.values()), offered
+    assert sorted(offered) == [("gemma4-12b", MLX), ("gpt-oss-20b", OLLAMA), ("qwen3.5-9b", MLX)]
+
+
+def test_every_result_in_the_shipped_catalog_says_when_and_how_it_was_measured():
+    """Each measured or not_for table's comment dates its numbers and says how far they go."""
+    text = (files("ctf_flightdeck") / "models.toml").read_text(encoding="utf-8")
+    blocks = re.split(r"(?m)^(?=\[)", text)
+    results = [block for block in blocks if re.match(r"\[local\.(ollama|mlx)\.(measured|not_for)\]\n", block)]
+    assert len(results) == sum(bool(b.measured) + bool(b.not_for) for m in load_catalog().local for b in m.builds) == 10
+    for block in results:
+        comment = " ".join(line.removeprefix("#").strip() for line in block.splitlines() if line.startswith("#"))
+        assert "2026-11-11, one machine, under load, one run" in comment, block
 
 
 def test_the_shipped_sizes_are_the_benchmarks_records_and_nothing_else():
@@ -113,9 +181,12 @@ def test_thinking_models_are_served_as_the_benchmark_found_they_work_and_never_o
     served = {(m.id, b.runtime): b.server_args for m in catalog.local for b in m.builds if b.server_args}
     assert served == {("qwen3.5-9b", MLX): NO_THINKING, ("gemma4-12b", MLX): NO_THINKING}
     # Ollama's thinking cannot be turned off by anything flightdeck sends; mlx_lm.server passes gpt-oss's
-    # channel format on as text
+    # channel format on as text; Gemma 4 solved no practice challenge as a lane on either runtime;
+    # Phi-4-mini made no usable tool call and scored below the rules on either runtime
     refused = {(m.id, b.runtime): tuple(b.not_for) for m in catalog.local for b in m.builds if b.not_for}
-    assert refused == {("qwen3.5-9b", OLLAMA): (LIGHT,), ("gemma4-12b", OLLAMA): (LIGHT,), ("gpt-oss-20b", MLX): (LANES, LIGHT)}
+    assert refused == {("qwen3.5-9b", OLLAMA): (LIGHT,), ("gpt-oss-20b", MLX): (LANES, LIGHT),
+                       ("gemma4-12b", OLLAMA): (LANES, LIGHT), ("gemma4-12b", MLX): (LANES,),
+                       ("phi4-mini", OLLAMA): (LANES, LIGHT), ("phi4-mini", MLX): (LANES, LIGHT)}
     assert "thinking on" in catalog.get("qwen3.5-9b").build(OLLAMA).not_for[LIGHT]
     assert "as text" in catalog.get("gpt-oss-20b").build(MLX).not_for[LANES]
     mac = machine(apple_mac(memory=36 * GIB))
@@ -123,10 +194,16 @@ def test_thinking_models_are_served_as_the_benchmark_found_they_work_and_never_o
     assert ("qwen3.5-9b", OLLAMA) not in [(o.model.id, o.build.runtime) for o in light.fits]
     assert ("qwen3.5-9b", MLX) in [(o.model.id, o.build.runtime) for o in light.fits]
     assert [(n.model.id, n.build.runtime) for n in light.not_for] == [
-        ("qwen3.5-9b", OLLAMA), ("gpt-oss-20b", MLX), ("gemma4-12b", OLLAMA)]
+        ("qwen3.5-9b", OLLAMA), ("gpt-oss-20b", MLX), ("gemma4-12b", OLLAMA), ("phi4-mini", OLLAMA), ("phi4-mini", MLX)]
+    offered = [(o.model.id, o.build.runtime) for o in (*light.fits, *light.too_big, *light.cannot_tell, *light.not_here)]
+    assert offered == [("qwen3.5-9b", MLX), ("gpt-oss-20b", OLLAMA), ("gemma4-12b", MLX)]
     lanes = advise(catalog, mac, LANES)
-    assert [(n.model.id, n.build and n.build.runtime) for n in lanes.not_for] == [("gpt-oss-20b", MLX), ("phi4-mini", None)]
-    assert ("gpt-oss-20b", MLX) not in [(o.model.id, o.build.runtime) for o in (*lanes.fits, *lanes.too_big, *lanes.cannot_tell)]
+    assert [(n.model.id, n.build and n.build.runtime) for n in lanes.not_for] == [
+        ("gpt-oss-20b", MLX), ("gemma4-12b", OLLAMA), ("gemma4-12b", MLX), ("phi4-mini", OLLAMA), ("phi4-mini", MLX)]
+    offered = [(o.model.id, o.build.runtime) for o in (*lanes.fits, *lanes.too_big, *lanes.cannot_tell, *lanes.not_here)]
+    assert offered == [("qwen3.5-9b", OLLAMA), ("qwen3.5-9b", MLX), ("gpt-oss-20b", OLLAMA)]
+    assert {m.id: m.offered_for for m in catalog.local} == {
+        "qwen3.5-9b": (LANES, LIGHT), "gpt-oss-20b": (LANES, LIGHT), "gemma4-12b": (LIGHT,), "phi4-mini": ()}
 
 
 def test_the_anthropic_entry_is_inits_ladder_and_prices_imported_not_copied(monkeypatch):
@@ -351,6 +428,38 @@ def test_a_build_that_is_not_for_a_role_is_never_offered_for_it():
     assert model.serves(model.build(OLLAMA)) == (LANES,) and model.serves(model.build(MLX)) == (LANES, LIGHT)
     with pytest.raises(ValueError, match="does not serve light"):
         judge(model, model.build(OLLAMA), LIGHT, machine(apple_mac()), budget(machine(apple_mac())))
+
+
+def test_a_model_is_offered_for_the_roles_at_least_one_of_its_builds_serves():
+    def offered(ollama: str = "", mlx_lines: str = "", roles: str = '["lanes", "light"]') -> tuple[str, ...]:
+        return parse_catalog(one_model(mlx=True, ollama=ollama, mlx_lines=mlx_lines, roles=roles)).local[0].offered_for
+
+    assert offered() == (LANES, LIGHT)
+    assert offered(ollama='not_for = { lanes = "0 of 4" }\n') == (LANES, LIGHT)  # its MLX build still serves lanes
+    assert offered(ollama='not_for = { lanes = "0 of 4" }\n', mlx_lines='not_for = { lanes = "0 of 4" }\n') == (LIGHT,)
+    assert offered(ollama='not_for = { lanes = "a", light = "b" }\n', mlx_lines='not_for = { lanes = "c", light = "d" }\n') == ()
+    assert offered(roles='["light"]') == (LIGHT,)
+
+
+def test_a_model_whose_roles_leave_one_out_is_not_for_it_with_its_roles_named():
+    catalog = parse_catalog(one_model(ident="small", size=2 * GIB, roles='["light"]') + "\n" + one_model())
+    lanes = advise(catalog, machine(apple_mac(memory=64 * GIB)), LANES)
+    assert [(n.model.id, n.build, n.why) for n in lanes.not_for] == [("small", None, "the catalog lists it for the light role only")]
+    assert [o.model.id for o in lanes.fits] == ["test-10g"]
+
+
+def test_a_build_that_is_not_for_the_role_is_not_counted_as_one_that_fits():
+    """On an 8 GB Mac only a small model fits, and the catalog does not offer it for the light role
+    (it scored below the rules): nothing the catalog offers fits, and the reason says so."""
+    weak = one_model(ident="weak", size=2 * GIB, ollama='not_for = { light = "eval-local 18/44, below the rules\' 38/44" }\n')
+    catalog = parse_catalog(weak + "\n" + one_model(ident="big", size=40 * GIB))
+    small_mac = machine(apple_mac(memory=8 * GIB, chip="Apple M1"))  # 5.3 GiB: weak's 2 GiB + 2 GiB would fit
+    light = advise(catalog, small_mac, LIGHT)
+    assert (light.lead, light.fits, [o.model.id for o in light.too_big]) == (RULES, (), ["big"])
+    assert light.lead_why == "No model the catalog offers for the light role is known to fit this machine."
+    assert [(n.model.id, n.why) for n in light.not_for] == [("weak", "eval-local 18/44, below the rules' 38/44")]
+    lanes = advise(catalog, small_mac, LANES)
+    assert (lanes.lead, lanes.lead_why) == (API, "No model the catalog offers for lanes is known to fit this machine.")
 
 
 def test_when_nothing_fits_lanes_lead_with_an_api_and_the_light_role_with_the_rules():

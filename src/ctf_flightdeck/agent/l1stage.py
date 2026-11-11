@@ -4,9 +4,11 @@ A lane routes its challenge through the pack (l1.router.route), runs every engin
 it (l1.runner.run_routed, each in its own copy of the handout), and logs each result on the
 deck (Deck.record_l1). A flag an engine found becomes the lane's candidate, so it waits for
 the player's approval like any other (or is submitted at once under the auto policy, when
-the engine claimed it: a match found in what a text engine printed always waits). If no
-engine solved the challenge, the lane goes on to the model, whose context says what the
-engines found, fenced as data: an engine's output comes from the challenge's files.
+the engine claimed it: a match found in what a text engine printed always waits, and so does
+a flag the challenge's own text holds, such as a stand-in flag.txt an engine read out: see
+agent/driver.py). If no engine solved the challenge, the lane goes on to the model, whose
+context says what the engines found, fenced as data: an engine's output comes from the
+challenge's files.
 
 Where engines run follows the lanes (D17). On the host runtime they run on this machine, as
 the player: they are the player's own code (l1/runner.py says how they are sandboxed, and

@@ -13,7 +13,8 @@ stronger model, with the deck's summary; so does the refresh of a context grown 
 
 A flag the model submits that the challenge's own text holds (its description, or a handout
 file as it came: often a decoy) is not claimed: under submit auto too it waits for the
-player, and the model hears why, as agent/external.py's lanes do.
+player, and the model hears why, as agent/external.py's lanes do. Such a flag that an L1
+engine gives as its result (a stand-in flag.txt it read out) waits too, and the lane says why.
 
 A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call, and then calls the
 model no more, also while the deck keeps it open for a flag that still waits (for the player,
@@ -426,27 +427,30 @@ class AgentDriver:
     async def _plant(self, run: _Run) -> None:
         """Remember the flag-format matches in the challenge's own text, its description and
         the handout as it came (the workspace before anything ran in it): a decoy flag.txt, an
-        example in a readme. A flag the model submits that is one of them is not claimed, so
-        it waits for the player under auto too, as agent/external.py does for its agents.
-        What the search did not cover (cut short, or parts of a big handout) is said on the lane."""
+        example in a readme. A flag the model submits, or an L1 engine gives as its result, that
+        is one of them is not claimed, so it waits for the player under auto too, as
+        agent/external.py does for its agents. What the search did not cover (cut short, or
+        parts of a big handout) is said on the lane."""
         found, done, left = await asyncio.to_thread(
             _own_flags, run.workspace.root, run.challenge.description, self._flag_re(), time.monotonic() + PLANT_SECONDS
         )
         run.planted = frozenset(found)
         if not done:
             self.deck.note(run.lane_id, f"the search of the handout for flags stopped after {PLANT_SECONDS:g} s; a flag "
-                                        "the model submits that is written in the rest of it may be submitted without you "
-                                        "under submit auto")
+                                        "the model or an L1 engine gives that is written in the rest of it may be submitted "
+                                        "without you under submit auto")
         elif left:
             self.deck.note(run.lane_id, f"the search of the handout for flags left out {'; '.join(left)}; a flag the model "
-                                        "submits that is written there may be submitted without you under submit auto")
+                                        "or an L1 engine gives that is written there may be submitted without you under "
+                                        "submit auto")
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
-        lane's candidate (claimed, unless the runner found it in what a text engine printed);
-        what they all found goes in the lane's context. In Docker an engine is online only
-        when the lane may reach the challenge's instance at once (instance auto): it runs
-        before the confirm policy's question, so it must never need the answer."""
+        lane's candidate (claimed, unless the runner found it in what a text engine printed, or
+        the challenge's own text holds it: run.planted, as for the model's submit_flag, and the
+        lane says why); what they all found goes in the lane's context. In Docker an engine is
+        online only when the lane may reach the challenge's instance at once (instance auto): it
+        runs before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
         online = bool(self.urls.get(run.challenge.id)) and self.instance == "auto"
         try:
@@ -469,8 +473,16 @@ class AgentDriver:
         for engine in runs:
             if engine.result.status in FLAG_STATUSES:
                 for flag in engine.result.flags:
-                    # a match in what a text engine printed may be the challenge's decoy: it waits for the player
-                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped))
+                    # a match in what a text engine printed may be the challenge's decoy, and so may a flag the
+                    # challenge's own text holds (a stand-in flag.txt an engine read out as its result): either waits
+                    planted = not engine.scraped and flag in run.planted
+                    # as _turn: not said of a flag known not to be the flag (the deck says why it is not asked)
+                    said = planted and self.deck.not_flag(run.challenge.id, flag) is None
+                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not planted))
+                    if said:
+                        self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a "
+                                                    "handout file), so it waits for you, though your L1 engine "
+                                                    f"{engine.manifest.id} gave it as its flag")
         if not self._over(run):
             run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
             run.messages.append(dict(run.l1_message))
