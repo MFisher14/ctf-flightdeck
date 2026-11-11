@@ -526,13 +526,13 @@ def serve_command(build: Build) -> str:
 
 def get_commands(build: Build, machine: Machine | None = None) -> list[str]:
     """The commands that get `build` and serve it on this machine: first how to install its
-    runtime, when `machine` shows it is not installed."""
+    runtime, when `machine` shows its program is not on PATH (the commands below need it)."""
     runtime = machine.runtime(build.runtime) if machine is not None else None
-    missing = runtime is not None and not runtime.installed
+    missing = runtime is not None and runtime.program is None
     if build.runtime == OLLAMA:
         install = [f"# Ollama is not on PATH: install it first ({OLLAMA_DOWNLOAD})"] if missing else []
         return [*install, f"ollama pull {shlex.quote(build.model)}"]
-    install = ["uv tool install mlx-lm   # mlx_lm.server comes with the mlx-lm package (or: pip install mlx-lm)"] if missing else []
+    install = ["uv tool install mlx-lm   # puts mlx_lm.server on PATH (or: pip install mlx-lm)"] if missing else []
     keep = [KEEP_ARGS.format(doc=MODELS_DOC)] if build.server_args else []
     return [*install, serve_command(build), *keep]
 

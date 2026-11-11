@@ -237,6 +237,20 @@ def test_json_gives_scripts_the_same_advice(monkeypatch):
     assert data["roles"]["light"]["default"] == "rules"
 
 
+def test_json_names_the_basis_of_a_fit_only(monkeypatch, tmp_path):
+    """"basis" says why a fit is offered; a model that does not fit has none, measured or not."""
+    shipped = (model_catalog.files("ctf_flightdeck") / "models.toml").read_text(encoding="utf-8")
+    phi = 'size_bytes = 2158100796    # results/mlx-phi.measure.json: disk.weights_bytes\n'
+    assert shipped.count(phi) == 1
+    (tmp_path / "models.toml").write_text(shipped.replace(phi, phi + 'measured = { light = "18/44" }\n'), encoding="utf-8")
+    monkeypatch.setattr(model_catalog, "files", lambda package: tmp_path)
+    on(monkeypatch, apple_mac(memory=4 * GIB, chip="Apple M1"))  # 2.7 GiB for local models: nothing fits
+    light = json.loads(models("--json").output)["roles"]["light"]
+    phi_mlx = next(o for o in light["too_big"] if (o["id"], o["runtime"]) == ("phi4-mini", "mlx"))
+    assert (phi_mlx["verdict"], phi_mlx["measured"], phi_mlx["basis"]) == ("too big", "18/44", None)
+    assert light["fits"] == []
+
+
 def test_a_build_with_no_catalog_size_is_sized_by_ollama_here_once_pulled(monkeypatch, tmp_path):
     shipped = (model_catalog.files("ctf_flightdeck") / "models.toml").read_text(encoding="utf-8")
     size = "size_bytes = 13793441566   # results/ollama-gptoss.measure.json: disk.size_bytes\n"

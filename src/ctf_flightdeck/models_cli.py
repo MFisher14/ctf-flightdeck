@@ -408,7 +408,7 @@ def advice_json(advice: Advice) -> dict:
 
 def option_json(option: Option) -> dict:
     build = option.build
-    basis = "measured" if option.measured else "size only" if option.verdict == FITS else None
+    basis = None if option.verdict != FITS else "measured" if option.measured else "size only"  # why it is offered
     return {
         "id": option.model.id, "name": option.model.name, "runtime": build.runtime, "model": build.model,
         "quantization": build.quantization, "size_bytes": build.size, "weights_bytes": option.size,

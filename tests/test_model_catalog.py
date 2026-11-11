@@ -395,6 +395,14 @@ def test_the_commands_that_get_a_model():
         "flightdeck eval-local --engine openai --base-url http://127.0.0.1:8080/v1 --model mlx-community/Qwen3.5-9B-MLX-4bit")
 
 
+def test_mlx_counts_as_missing_when_its_program_is_not_on_path_even_with_the_package_importable():
+    qwen = load_catalog().get("qwen3.5-9b").build(MLX)
+    package_only = machine(apple_mac(importable=["mlx_lm"]))  # flightdeck's Python has mlx_lm; the shell has no mlx_lm.server
+    assert package_only.runtime(MLX).installed and package_only.runtime(MLX).program is None
+    commands = get_commands(qwen, package_only)
+    assert commands[0].startswith("uv tool install mlx-lm") and commands[1] == QWEN_MLX_SERVER
+
+
 def without(text: str, *tables: str) -> str:
     """A config's text without the named tables ("prices" drops every [prices."..."] table)."""
     out, dropping = [], False
