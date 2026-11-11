@@ -27,6 +27,7 @@ from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.platform.manual import AnswerVerifier, cannot_check, load_board
 from ctf_flightdeck.transcript import TranscriptLog
 from ctf_flightdeck.practice_mode import (
+    MAX_COUNT,
     MAX_JSON_BYTES,
     NAME_CELLS,
     Release,
@@ -719,11 +720,12 @@ MORE = 5000  # tokens a transcript adds if it is wrongly taken in: the score mus
         ("L01", lambda h: {**h, "tokens": h["tokens"] + MORE, "dollars": h["dollars"] - 0.001}, "counts fewer dollars than L01's turns in the log"),
         ("L02", lambda h: {**h, "tokens": h["tokens"] + MORE, "dollars": 0.5}, "has a price for all of L02's cost where the log has a turn with none"),
         ("L01", lambda h: {**h, "tokens": "lots"}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {**h, "tokens": 10**400}, "does not have the turns, tokens and dollars of a lane header"),
         ("L01", lambda h: {**h, "turns": None, "tokens": h["tokens"] + MORE}, "does not have the turns, tokens and dollars of a lane header"),
         ("L01", lambda h: {**h, "dollars": -1.0, "tokens": h["tokens"] + MORE}, "does not have the turns, tokens and dollars of a lane header"),
         ("L01", lambda h: {k: v for k, v in {**h, "tokens": h["tokens"] + MORE}.items() if k != "dollars"}, "does not have the turns, tokens and dollars of a lane header"),
     ],
-    ids=["lane", "challenge", "turns", "fewer tokens", "fewer dollars", "priced", "tokens type", "turns type", "negative dollars", "no dollars"],
+    ids=["lane", "challenge", "turns", "fewer tokens", "fewer dollars", "priced", "tokens type", "tokens too big", "turns type", "negative dollars", "no dollars"],
 )
 def test_a_transcript_that_does_not_agree_with_the_log_is_left_out_with_a_note(played, lane, change, problem):
     path = played.close()
@@ -1020,6 +1022,24 @@ def test_a_submit_from_a_log_older_than_its_by_field_is_the_platforms_verdict(tm
     result = score(write_log(tmp_path / "events.jsonl", [old]), board)
     assert result.per_challenge["alpha"].checked == "platform"
     assert {cells[0]: cells[3] for cells in table(scorecard(result))}["Alpha Gate"] == "solved L01 *"
+
+
+def test_a_token_count_bigger_than_any_run_makes_is_refused_not_a_crash(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+
+    def log_with(tokens: int) -> Path:
+        return write_log(
+            tmp_path / f"run-{len(str(tokens))}-{tokens % 10}" / "events.jsonl",
+            [
+                {"kind": "lane.start", "at": 0, "lane": "L01", "challenge": "alpha", "data": {"model": "small"}},
+                {"kind": "turn", "at": 1, "lane": "L01", "challenge": "alpha", "data": {"tokens": tokens, "dollars": 0.01}},
+            ],
+        )
+
+    assert "Spent 1000000000.0M tokens" in scorecard(score(log_with(MAX_COUNT), board))
+    for tokens in (MAX_COUNT + 1, 10**400):  # 10**400 is too big for a float: the card could not show it
+        with pytest.raises(ScoreError, match=f"line 4: the turn event's data.tokens must be a token count \\(a whole number from 0 to {MAX_COUNT:,}\\)"):
+            score(log_with(tokens), board)
 
 
 def test_a_log_from_another_board_is_an_error_naming_the_strangers(played):

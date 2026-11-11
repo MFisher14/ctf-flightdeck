@@ -59,6 +59,7 @@ TIMELINE_FILE = "timeline.json"
 TIMELINE_KEYS = ("waves",)
 WAVE_KEYS = ("at", "ids")
 MAX_JSON_BYTES = 1_000_000  # a timeline bigger than this is refused before it is parsed
+MAX_COUNT = 10**15  # a count of turns or tokens above this is not one any run makes (and too big to show)
 TIMELINE_FORM = '{"waves": [{"at": <seconds from the start>, "ids": [<challenge id>, ...]}]}'
 
 _MISSING = object()
@@ -426,7 +427,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
         elif kind == "turn":
             lane = get.top("lane", _is_text, "a lane id")
             cid = known(get.top("challenge", _is_text, "a challenge id"))
-            tokens = get.data("tokens", _is_count, "a token count (a whole number, 0 or more)")
+            tokens = get.data("tokens", _is_count, f"a token count (a whole number from 0 to {MAX_COUNT:,})")
             dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
             dollars = None if dollars is None else float(dollars)
             acc = lanes.setdefault(lane, _Lane(cid))
@@ -790,7 +791,7 @@ def _is_bool(value: object) -> bool:
 
 
 def _is_count(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_COUNT
 
 
 def _is_money(value: object) -> bool:
