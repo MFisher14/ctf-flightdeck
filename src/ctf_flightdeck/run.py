@@ -124,6 +124,7 @@ class CTFdLink:
     solved: set[int]  # the CTFd ids CTFd last listed as solved for this account
     wave: int = 1  # the board as first pulled is wave 1
     warned: set[str] = field(default_factory=set)  # solved on CTFd and told to the player (solo mode)
+    answered: set[str] = field(default_factory=set)  # CTFd answered a flag for it "already solved": solved, whatever a lane waits for
     reported: set[str] = field(default_factory=set)  # pull problems told to the player
     problems: dict[str, str] = field(default_factory=dict)  # what failed (a poll, or using its answer) -> the failure shown last
 
@@ -287,7 +288,9 @@ class Run:
         found: list[Challenge] = []
         for cid in link.solved_board_ids():
             ch = self.deck.challenges.get(cid)
-            if ch is None or ch.closed or cid in link.warned or self._confirming(cid):
+            if ch is None or ch.closed or cid in link.warned:
+                continue
+            if self._confirming(cid) and cid not in link.answered:
                 continue
             if self.deck.config.team:
                 self.deck.teammate_solved(cid, YOUR_TEAM)
@@ -480,7 +483,8 @@ def prepare_run(options: RunOptions) -> Run:
         if plan.platform:
             verifier = CTFdVerifier(profile.url, token, first.ids)
     if verifier is not None:
-        verify = _OnCTFd(verifier)
+        assert link is not None
+        verify = _OnCTFd(verifier, link)
     elif plan.platform and board.answers:
         verify = AnswerVerifier(board.answers)
     else:
@@ -518,11 +522,14 @@ def prepare_run(options: RunOptions) -> Run:
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
     watch = _watch(deck)
-    return Run(
+    run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror,
     )
+    if isinstance(verify, _OnCTFd):
+        verify.solved = run._apply_solves
+    return run
 
 
 def _check_options(options: RunOptions) -> None:
@@ -722,15 +729,33 @@ def _team_channel(options: RunOptions, plan: _Plan) -> TeamChannel | None:
 
 class _OnCTFd:
     """The deck's verify() for a CTFd board: CTFdVerifier's answer and, when CTFd did not
-    judge the flag (paused, rate-limited, no answer, part of the answer), its reason as a
-    warning on the deck, which then asks the player to submit the flag by hand."""
+    judge the flag (paused, rate-limited, out of tries, no answer, part of the answer), its
+    reason as a warning on the deck, which then asks the player to submit the flag by hand.
 
-    def __init__(self, verifier: CTFdVerifier) -> None:
+    "already solved" (by the account, so by the team) is news, not a problem: the run takes
+    CTFd's word for it, as for a solve its poll finds, without waiting for the player's
+    answer about this flag. That happens once the deck's call is over, never from inside it."""
+
+    def __init__(self, verifier: CTFdVerifier, link: CTFdLink) -> None:
         self.verifier = verifier
+        self.link = link
         self.deck: Deck | None = None  # set once the deck exists
+        self.solved: Callable[[], None] | None = None  # the run's: close what CTFd lists as solved
 
     def __call__(self, challenge_id: str, flag: str) -> bool | None:
         ok = self.verifier(challenge_id, flag)
+        attempt = self.verifier.last_attempt
+        number = self.verifier.ids.get(challenge_id)
+        if ok is None and attempt is not None and attempt.status == "already_solved" and number is not None:
+            self.link.answered.add(challenge_id)
+            self.link.solved.add(number)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:  # the deck is driven without a loop (no run): the next poll applies it
+                loop = None
+            if loop is not None and self.solved is not None:
+                loop.call_soon(self.solved)
+            return ok
         reason = self.verifier.last_error
         if ok is None and reason and self.deck is not None:
             ch = self.deck.challenges.get(challenge_id)

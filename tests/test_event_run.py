@@ -510,6 +510,35 @@ def test_a_flag_ctfd_does_not_judge_says_why_and_waits_for_the_player(tmp_path, 
     )
 
 
+@pytest.mark.parametrize("team", [True, False])
+def test_already_solved_from_ctfd_closes_the_challenge_at_once_in_team_mode(tmp_path, token, team):
+    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{maybe}")]})) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), team=team,
+                                     config=config(tmp_path, server.base_url, max_lanes=1),
+                                     solves_seconds=3600))  # no poll in this test: only CTFd's answer to the flag tells
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            fake.solved.add(1)  # a teammate solved Warmup on the website meanwhile
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            if team:
+                await wait_for(lambda: lane.finished, "the lane to stop")
+            else:
+                await asyncio.sleep(0.05)
+                assert lane.pending.kind is PendingKind.CONFIRM  # solo: the player says how it went
+
+        play(run, body)
+    assert [r.json for r in fake.to("/api/v1/challenges/attempt")] == [{"challenge_id": 1, "submission": "test{maybe}"}]
+    if team:
+        warmup = run.deck.challenges["warmup"]
+        assert warmup.status is ChallengeStatus.TEAMMATE and warmup.solved_by == YOUR_TEAM
+        assert run.deck.lanes["L01"].state is LaneState.STOPPED and ctfd_warnings(run) == []
+    else:
+        (warning,) = ctfd_warnings(run)
+        assert warning["data"]["solved"] == ["warmup"] and warning["text"].startswith("CTFd lists Warmup as solved")
+
+
 def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
     with FakeCTFd(three()) as fake, FakeModelServer(responder=Model()) as server:
         run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), team=True,
