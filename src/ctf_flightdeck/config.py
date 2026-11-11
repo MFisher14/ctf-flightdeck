@@ -94,7 +94,7 @@ class L1Config:
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
-    prices: dict[str, Price]  # dollars per million tokens, for models in the ladder
+    prices: dict[str, Price]  # dollars per million tokens, for models in the ladder or in an [agents] ladder
     lanes: LaneConfig
     run_dir: Path  # expanded (~)
     source: Path | None  # the file it was read from
@@ -136,15 +136,16 @@ def parse_config(text: str, source: Path) -> Config:
 def _config(path: Path, doc: dict) -> Config:
     _known(path, (), doc, _TABLES)
     ladder = _ladder(path, _table(path, doc, "models"))
+    agents = _agents(path, _table(path, doc, "agents"))  # before [prices], which may name their models
     return Config(
         api=_api(path, _table(path, doc, "api")),
         models=ladder,
-        prices=_prices(path, _table(path, doc, "prices"), ladder),
+        prices=_prices(path, _table(path, doc, "prices"), ladder, agents),
         lanes=_lanes(path, _table(path, doc, "lanes")),
         run_dir=_run_dir(path, _table(path, doc, "run")),
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
-        agents=_agents(path, _table(path, doc, "agents")),
+        agents=agents,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
     )
 
@@ -229,6 +230,9 @@ ladder = []
 
 # Dollars per million tokens, for an API that does not report what a call cost (OpenRouter
 # does). Optional, per model in the ladder; with neither, the console shows dollars as "-".
+# A model in an [agents] ladder below (the CLI's own name for it) can have one too: codex
+# reports its tokens but no cost, so its price is how its lanes get dollars. A CLI that
+# reports its own cost (claude) keeps its number.
 # [prices."vendor/small-model"]
 # input = 0.10
 # output = 0.40
@@ -398,14 +402,18 @@ def _ladder(path: Path, table: dict) -> tuple[str, ...]:
     return tuple(ladder)
 
 
-def _prices(path: Path, table: dict, ladder: tuple[str, ...]) -> dict[str, Price]:
+def _prices(path: Path, table: dict, ladder: tuple[str, ...], agents: dict[str, tuple[str, ...]]) -> dict[str, Price]:
+    """[prices]: dollars per million tokens, per model in models.ladder or in an [agents] ladder
+    (the CLI's own model names). For a CLI it prices what the CLI reports as tokens with no cost
+    (codex), or a turn the CLI never reported; a cost the CLI reports itself (claude) wins."""
+    named = set(ladder).union(*agents.values())
     prices = {}
     for model, entry in table.items():
         where = ("prices", model)
         if not isinstance(entry, dict):
             raise _error(path, where, f"must be a table of dollars per million tokens (input, output){_got(entry)}")
-        if model not in ladder:
-            raise _error(path, where, "is for a model that is not in models.ladder")
+        if model not in named:
+            raise _error(path, where, "is for a model that is not in models.ladder or in an [agents] ladder")
         _known(path, where, entry, _PRICE_KEYS)
         for name in ("input", "output"):
             if name not in entry:

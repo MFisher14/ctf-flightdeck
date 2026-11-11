@@ -41,6 +41,7 @@ from ctf_flightdeck.agent.workspace import (
     docker_unavailable,
 )
 from ctf_flightdeck.clock import RunClock
+from ctf_flightdeck.config import load_config
 from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.transcript import TranscriptLog
 from ctf_flightdeck.core import interventions as iv
@@ -994,6 +995,34 @@ def test_a_codex_turn_cut_short_to_hand_it_a_message_is_paid_with_the_threads_ne
             assert len(lab.fake.prompts()) == 2 and "$ echo two" in steps(lane)
         finally:
             await lab.finish()
+
+    run(main())
+
+
+def test_a_config_price_for_an_agents_model_prices_what_codex_reports_and_claude_keeps_its_own_cost(tmp_path):
+    """[prices] may name a model of an [agents] ladder: codex reports its tokens but no cost,
+    so that price makes them dollars; claude reports its own cost, which wins over the price."""
+    path = tmp_path / "config.toml"
+    path.write_text('[models]\nladder = ["vendor/x"]\n[agents]\ncodex = ["small", "big"]\nclaude = ["small", "big"]\n'
+                    "[prices.small]\ninput = 1.0\noutput = 10.0\n")
+    prices = load_config(path).prices
+    codex = {"turns": [{"items": [{"command": "echo one"}, {"message": "done"}], "usage": [300, 100, 50]}]}
+    claude = {"turns": [{"calls": [{"tools": [bash("echo one")], "usage": [100, 10, 0, 0], "cost": 0.02}, {"text": "done"}]}]}
+
+    async def main():
+        for kind, script, dollars in (("codex", codex, (200 * 1.0 + 100 * 1.0 + 50 * 10.0) / 1e6), ("claude", claude, 0.02)):
+            folder = tmp_path / kind
+            folder.mkdir()
+            lab = Lab(folder, script, kind=kind, prices=prices)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: spends(lab.deck), f"what {kind} reported when its turn ended")
+                (spent,) = spends(lab.deck)
+                assert (spent["model"], spent["turn_end"], spent["dollars"]) == ("small", True, pytest.approx(dollars)), kind
+                assert lane.dollars == pytest.approx(dollars) and lane.unpriced == 0 and not lane.dollars_later, kind
+            finally:
+                await lab.finish()
 
     run(main())
 

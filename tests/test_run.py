@@ -16,6 +16,7 @@ from ctf_flightdeck import cli
 from ctf_flightdeck.agent.workspace import DockerWorkspace, docker_unavailable
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
 from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
+from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
 
 from fake_model import FakeModelServer, tool_call_reply
@@ -586,6 +587,41 @@ def test_codex_lanes_need_their_ladder_in_the_config(tmp_path):
     with FakeModelServer() as server:
         with pytest.raises(RunError, match=r"no model ladder for codex lanes: add \[agents\] codex"):
             prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="codex", runtime="host"))
+
+
+@pytest.fixture
+def fake_codex(tmp_path, monkeypatch):
+    """A `codex` that does nothing, first on PATH, with a key of its own, and no folder holding a real one."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "codex"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    monkeypatch.setenv("CODEX_API_KEY", "fake-codex-credential-for-tests")
+    return exe
+
+
+def test_codex_lanes_get_the_configs_price_for_their_model_and_play_names_the_models_with_none(tmp_path, fake_codex):
+    folder = board(tmp_path)
+    with FakeModelServer() as server:
+        path = config(tmp_path, server.base_url)
+        path.write_text(path.read_text() + '[agents]\ncodex = ["cx-small", "cx-big"]\n[prices.cx-small]\ninput = 1.25\noutput = 10\n')
+        run = prepare_run(RunOptions(board=folder, config=path, agent="codex", runtime="host"))
+        run.close()
+    assert run.deck.config.models == ("cx-small", "cx-big") and run.driver.prices["cx-small"] == Price(input=1.25, output=10.0)
+    assert (
+        "codex reports its tokens but no cost, and your config has no price for cx-big: a lane on it shows its dollars "
+        'as unknown and asks you once before it carries on without its $2 cap; a table like [prices."cx-big"] in your '
+        "config (input and output, in dollars per million tokens) prices one"
+    ) in run.notes()
+    assert "fake-codex-credential-for-tests" not in " ".join(run.notes())
+    path.write_text(path.read_text() + '[prices.cx-big]\ninput = 2\noutput = 20\n')  # every model priced: nothing to say
+    run = prepare_run(RunOptions(board=folder, config=path, agent="codex", runtime="host"))
+    run.close()
+    assert not any("no cost" in note for note in run.notes())
 
 
 def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude):
