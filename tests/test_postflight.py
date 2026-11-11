@@ -1241,12 +1241,11 @@ def test_report_on_a_run_with_a_file_it_cannot_read_fails_with_the_reason(tmp_pa
     assert not (tmp_path / "report.md").exists()
 
 
-def test_report_on_a_run_whose_transcript_has_a_count_that_is_not_finite_fails_with_the_reason(tmp_path):
+def test_report_on_a_run_whose_transcript_has_a_count_that_is_not_finite_names_it(tmp_path):
     rewrite(small_run(tmp_path) / "lanes" / "L01.jsonl", lambda line: {**line, "turns": float("nan")} if "lane" in line else line)
     result = runner.invoke(mounted(), ["report", str(tmp_path)])
-    assert result.exit_code == 2, result.output
-    assert f"flightdeck: cannot read the run in {tmp_path}: a number in it is not finite" in result.output
-    assert not (tmp_path / "report.md").exists()
+    assert result.exit_code == 0, result.output
+    assert "L01.jsonl: header turns: is not a usable number; read as 0" in (tmp_path / "report.md").read_text()
 
 
 @needs_permissions
@@ -1259,5 +1258,5 @@ def test_report_with_a_board_it_cannot_search_fails_with_the_reason(played):
     finally:
         board.chmod(0o755)
     assert result.exit_code == 2, result.output
-    assert f"flightdeck: --board: cannot read {board.resolve() / 'board.json'}: Permission denied" in result.output
+    assert f"flightdeck: --board: {board}: cannot read it (Permission denied)" in result.output
     assert not (record.dir / "report.md").exists()

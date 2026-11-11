@@ -659,3 +659,16 @@ def test_os_errors_while_loading_become_board_errors(board):
         assert "cannot read it" in board_error(board)
     finally:
         (directory / "challenge.json").chmod(0o644)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="not run: root ignores directory permissions")
+def test_a_board_folder_that_cannot_be_searched_is_a_board_error(tmp_path):
+    board = tmp_path / "board"
+    (board / "one").mkdir(parents=True)
+    (board / "board.json").write_text('{"event": "E"}')
+    board.chmod(0o600)  # it can be listed, but nothing in it can be opened
+    try:
+        with pytest.raises(BoardError, match="cannot read it"):
+            load_board(board)
+    finally:
+        board.chmod(0o755)

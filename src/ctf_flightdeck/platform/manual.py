@@ -94,11 +94,17 @@ def category_code(category: str) -> str:
 def load_board(folder: Path, *, answers: Path | None = None) -> Board:
     """Read a board folder. `answers` names an answers file; without it, the folder's own
     answers.sha256.json is used if there is one."""
-    folder = Path(folder).expanduser()
-    if not folder.is_dir():
-        raise BoardError(f"{_show(folder)}: {'is not a directory' if folder.exists() else 'no such directory'}")
-    root = folder.resolve()
-    event, flag_format = _settings(root)
+    try:
+        folder = Path(folder).expanduser()
+    except RuntimeError:  # ~user for a user that does not exist
+        raise BoardError(f"{_show(folder)}: starts with ~ for a user that does not exist") from None
+    try:
+        if not folder.is_dir():
+            raise BoardError(f"{_show(folder)}: {'is not a directory' if folder.exists() else 'no such directory'}")
+        root = folder.resolve()
+        event, flag_format = _settings(root)
+    except OSError as exc:  # a folder that can be listed but not searched, say
+        raise BoardError(f"{_show(folder)}: cannot read it ({exc.strerror or exc})") from None
     challenges: list[BoardChallenge] = []
     skipped: list[str] = []
     seen: dict[str, Path] = {}

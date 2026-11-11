@@ -91,3 +91,15 @@ def test_odd_values_in_a_log_become_defaults_not_crashes(tmp_path):
     assert (event.at, event.lane, event.data) == (0.0, None, {})
     lane = record.lanes["L01"]
     assert (lane.points, lane.dollars, lane.ended_at, lane.attempt) == (0, None, None, 1)
+
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400", "9" * 400])
+def test_a_count_that_is_no_usable_number_is_named_never_a_crash(tmp_path, number):
+    make_run(tmp_path)
+    head = json.loads((tmp_path / "lanes" / "L01.jsonl").read_text().splitlines()[0])
+    line = json.dumps({**head, "lane": "L09", "turns": 0}).replace('"turns": 0', '"turns": ' + number)
+    (tmp_path / "lanes" / "L09.jsonl").write_text(line + "\n")
+    record = load_run(tmp_path)  # int() of NaN, Infinity or 1e400 would raise here
+    assert record.lanes["L09"].turns == 0
+    assert "L09.jsonl: header turns: is not a usable number; read as 0" in record.problems

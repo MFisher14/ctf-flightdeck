@@ -9,6 +9,7 @@ in `problems`, never silently dropped; a missing event log is an error.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -119,7 +120,7 @@ def load_run(run_dir: Path) -> RunRecord:
             if not rows or "lane" not in rows[0]:
                 problems.append(f"{path.name}: no header line; skipped")
                 continue
-            record = _lane(rows)
+            record = _lane(rows, path.name, problems)
             lanes[record.lane] = record
     return RunRecord(run_dir, events, lanes, tuple(problems))
 
@@ -148,6 +149,22 @@ def _number(value: object, default: float = 0.0) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
+def _count(value: object, default: int = 0, *, where: str = "", problems: list[str] | None = None) -> int:
+    """A whole-number count from a log: the default for anything else, NaN, Infinity and
+    numbers too big for a float included (int() of those raises), named in `problems`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    try:
+        number = float(value)
+    except OverflowError:
+        number = math.inf
+    if not math.isfinite(number):
+        if problems is not None:
+            problems.append(f"{where}: is not a usable number; read as {default}")
+        return default
+    return int(number)
+
+
 def _event(raw: Mapping[str, object]) -> EventLine:
     data = raw.get("data")
     return EventLine(
@@ -162,11 +179,15 @@ def _event(raw: Mapping[str, object]) -> EventLine:
     )
 
 
-def _lane(rows: list[Mapping[str, object]]) -> LaneRecord:
+def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] | None = None) -> LaneRecord:
     head = rows[0]
+
+    def count(key: str, default: int = 0) -> int:
+        return _count(head.get(key), default, where=f"{name}: header {key}", problems=problems)
+
     actions = tuple(
         ActionLine(
-            at=_number(r.get("at")), turn=int(_number(r.get("turn"))), kind=_text(r.get("kind")), by=_text(r.get("by")),
+            at=_number(r.get("at")), turn=_count(r.get("turn")), kind=_text(r.get("kind")), by=_text(r.get("by")),
             text=_text(r.get("text")), output=_text(r.get("output")),
             alert=r.get("alert") if isinstance(r.get("alert"), str) else None,
         )
@@ -174,7 +195,7 @@ def _lane(rows: list[Mapping[str, object]]) -> LaneRecord:
         if "kind" in r
     )
     files = tuple(
-        FileLine(file=_text(r.get("file")), status=_text(r.get("status")), turn=int(_number(r.get("turn"))),
+        FileLine(file=_text(r.get("file")), status=_text(r.get("status")), turn=_count(r.get("turn")),
                  at=_number(r.get("at")), diff=_text(r.get("diff")))
         for r in rows[1:]
         if "file" in r
@@ -183,12 +204,12 @@ def _lane(rows: list[Mapping[str, object]]) -> LaneRecord:
     ended = head.get("ended_at")
     return LaneRecord(
         lane=_text(head.get("lane")), challenge=_text(head.get("challenge")), name=_text(head.get("name")),
-        category=_text(head.get("category")), points=int(_number(head.get("points"))), model=_text(head.get("model")),
-        state=_text(head.get("state")), result=_text(head.get("result")), turns=int(_number(head.get("turns"))),
-        tokens=int(_number(head.get("tokens"))), cached_tokens=int(_number(head.get("cached_tokens"))),
+        category=_text(head.get("category")), points=count("points"), model=_text(head.get("model")),
+        state=_text(head.get("state")), result=_text(head.get("result")), turns=count("turns"),
+        tokens=count("tokens"), cached_tokens=count("cached_tokens"),
         dollars=_number(dollars) if isinstance(dollars, (int, float)) and not isinstance(dollars, bool) else None,
         started_at=_number(head.get("started_at")), ended_at=_number(ended) if isinstance(ended, (int, float)) else None,
         parent=head.get("parent") if isinstance(head.get("parent"), str) else None,
-        attempt=int(_number(head.get("attempt"), 1)), plan=_text(head.get("plan")),
+        attempt=count("attempt", 1), plan=_text(head.get("plan")),
         actions=actions, files=files,
     )
