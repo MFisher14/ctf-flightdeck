@@ -293,7 +293,8 @@ def test_a_lane_in_a_run_asks_a_server_on_this_machine_for_at_most_8192_tokens_e
 
         asyncio.run(main())
         run.close()
-        asked = [request["json"]["max_tokens"] for request in server.chats()]
+        # a call cut off by the shutdown can reach the server without its body: not a call that was made
+        asked = [request["json"]["max_tokens"] for request in server.chats() if request["json"]]
     assert len(asked) >= 3 and set(asked) == {8192}
 
 

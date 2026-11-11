@@ -170,7 +170,8 @@ def test_in_a_run_the_hint_judge_on_this_machine_is_asked_for_thinking_off_and_t
 
         asyncio.run(main())
         run.close()
-        asked = [request["json"] for request in judge.chats()]
+        # a call cut off by the shutdown can reach the server without its body: not a call that was made
+        asked = [request["json"] for request in judge.chats() if request["json"]]
     assert asked and all(body["reasoning_effort"] == "none" for body in asked)
     assert all(body["chat_template_kwargs"] == {"enable_thinking": False} for body in asked)
     (note,) = [note for note in run.notes() if note.startswith("light model: openai light/m judges")]
