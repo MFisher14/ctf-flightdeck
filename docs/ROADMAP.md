@@ -73,7 +73,9 @@ no network, or the open bridge network once its instance is allowed); a real cap
 Not done in M3: Needle is an adapter only (one job: which of a few named options fits a text), not
 wired into runs, because the spike found it no better than keyword rules; the hint judge is built
 but not switched on in runs (it would spend tokens); MLX lanes are untested against a real MLX
-server (init and doctor support it).
+server (init and doctor support it). Since M3, the light role (`[light]`, P15) runs the hint judge
+in a run once a light model is set, on any of five engines, Cactus Needle among them; the rules
+stay the default.
 
 ## M4: post-flight and build (built)
 
@@ -99,8 +101,8 @@ server (init and doctor support it).
 
 ## v0.1.0: go public
 
-M0 to M2 done, docs and quickstart, secret scan `--all` clean, history reviewed, MIT license, a
-recorded demo.
+M0 to M4 built (M5, Autopilot, comes after v0.1.0: below), docs and quickstart, secret scan
+`--all` clean, history reviewed, MIT license, a recorded demo.
 
 **Easy to run (the player's requirement: people won't use it if it's hard).** A new player gets from
 nothing to a running console in a few minutes, without reading the architecture:
