@@ -45,8 +45,8 @@ mkdir -p ~/.config/ctf-flightdeck && touch ~/.config/ctf-flightdeck/keys.env && 
 # then add lines like:  ANTHROPIC_API_KEY=...   OPENROUTER_API_KEY=...
 ```
 
-flightdeck never hands these values to a lane: its commands get an environment built from an
-allowlist (but see `--host` below).
+flightdeck never hands these values to a lane's commands: they get an environment built from an
+allowlist, and a coding-agent CLI gets only its own credential (but see `--host` below).
 
 With an Anthropic key, `flightdeck init --provider anthropic` writes Claude Haiku, Sonnet and
 Opus 5.5 with their list prices, so the dollar caps work from the start. If `OPENROUTER_API_KEY`
