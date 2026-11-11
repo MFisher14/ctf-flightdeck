@@ -45,7 +45,7 @@ TAKEN_OUT = {  # text -> what it becomes
         "curl -H 'Authorization: Bearer [redacted]' http://127.0.0.1:8080/admin"
     ),
     "> authorization: Token " + "ab" * 20: "> authorization: Token [redacted]",
-    "Proxy-Authorization: Basic cGxheWVyOmh1bnRlcjI=": "Proxy-Authorization: Basic [redacted]",
+    "Proxy-Authorization: Basic " + "cGxheWVyOmh1bnRlcjI=": "Proxy-Authorization: Basic [redacted]",  # player:hunter2
     f"AUTHORIZATION: {OPENROUTER}": "AUTHORIZATION: [redacted]",
     "Cookie: session=abc123; theme=dark": "Cookie: [redacted]",
     'requests.get(url, headers={"Cookie": "session=abc123"})': 'requests.get(url, headers={"Cookie": "[redacted]"})',
