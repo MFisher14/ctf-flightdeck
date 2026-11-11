@@ -27,7 +27,10 @@ Rules the deck enforces:
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
 - team mode: a challenge a teammate solved or claimed is not worked; a teammate's
-  solve stops every lane on it.
+  solve stops every lane on it;
+- once the run is closing (close(): the player quit), its lanes stop without ending, nothing
+  raises an alert, asks the player or starts a lane, and what a lane reports counts its spend
+  only, as after a lane's end.
 
 Call the deck only from the thread that created it (see core/driver.py).
 """
@@ -163,6 +166,7 @@ class Deck:
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
+        self.closing = False  # the run is closing (close()): its lanes stop without ending
         self.listener_errors: list[str] = []  # listeners that raised (shown when the run ends)
         self._warning_listener_failure = False
         self._flag_re = re.compile(config.flag_format)
@@ -406,10 +410,11 @@ class Deck:
         self._next_to_platform(ch, ok)
 
     def note(self, lane_id: str, text: str) -> None:
-        """A flightdeck note on a lane's transcript (from a component outside the deck)."""
+        """A flightdeck note on a lane's transcript (from a component outside the deck); none
+        once the lane has ended or the run is closing."""
         self._on_thread("note")
         lane = self.lanes.get(lane_id)
-        if lane is not None and not lane.finished:
+        if lane is not None and not lane.finished and not self.closing:
             self._note(lane, text)
 
     def record_l1(
@@ -484,10 +489,12 @@ class Deck:
         ended, only spend counts (driver.spend_only): a coding-agent CLI reports a turn's cost
         when the turn ends, often after its lane has (solved mid-turn, killed), and that cost
         is the lane's and the run's all the same. Anything else in a late report (a step that
-        raced a kill) is dropped."""
+        raced a kill) is dropped. So it is for every lane once the run is closing (close()):
+        the cost of a turn that quitting cut counts, and it raises no budget alert and asks
+        for nothing."""
         self._on_thread("report")
         lane = self.lanes[lane_id]
-        if lane.finished:
+        if lane.finished or self.closing:
             if spend_only(rep):
                 self._spend(lane, rep)
             return
@@ -561,6 +568,8 @@ class Deck:
         return outcome
 
     def _apply(self, iv: Intervention) -> Outcome:
+        if self.closing:
+            return Outcome(False, "The run is closing: its lanes are stopping, so nothing more can be done on them")
         if isinstance(iv, Claim):
             return self._claim(iv.challenge)
         if isinstance(iv, Release):
@@ -909,9 +918,21 @@ class Deck:
         return Outcome(True, f"Lifted the hold on the queue: {started} lane{'' if started == 1 else 's'} started, "
                              f"{len(self.queue)} queued")
 
+    def close(self) -> None:
+        """The run is closing (the player quit, or a signal stopped it): call before its lanes
+        stop. They stop without ending, so the run log and the transcripts keep each as it was.
+        From now on nothing raises an alert, asks the player, notes a lane or starts one, and an
+        intervention is refused. What a lane reports counts as after a lane's end: its spend
+        only (the cost of a turn that quitting cut, which a coding-agent CLI reports as it
+        stops), on the lane and so the run, with its spend event, so the totals, the
+        transcripts and the scorecard have every token and dollar."""
+        self._on_thread("close")
+        self.closing = True
+
     def _fill(self) -> None:
-        """Start queued lanes while there are free slots (none while the queue is held)."""
-        while self.queue and not self.held and len(self.active_lanes()) < self.config.max_lanes:
+        """Start queued lanes while there are free slots (none while the queue is held, or the
+        run is closing)."""
+        while self.queue and not self.held and not self.closing and len(self.active_lanes()) < self.config.max_lanes:
             entry = self.queue.pop(0)
             ch = self.challenges[entry.challenge]
             if self._workable(ch):
@@ -1433,13 +1454,15 @@ class Deck:
     def _spend(self, lane: Lane, rep: TurnReport) -> None:
         """Count what a report spent, on the lane and so on the run (totals()), and log what
         was spent outside a turn as a SPEND event, with the model that spent it and why. A
-        lane that has ended counts it all the same and asks for nothing: no cap is left to
-        enforce. A coding-agent CLI's step (dollars_later) leaves the lane's dollars unsettled
-        until the CLI reports what the turn cost (turn_end), which is logged as a SPEND event
-        marked turn_end: the CLI's own cost of its turn, not spend outside a turn. A turn whose
-        cost never came (unreported: the CLI was stopped in it, or exited) leaves the lane's
-        total not known, but no price is missing for it: nothing is asked, and a dollar cap
-        holds on what is known (Lane.budget_used). Spend with no price asks once (P7)."""
+        lane that has ended, or any lane once the run is closing, counts it all the same and
+        asks for nothing: no cap is left to enforce. A coding-agent CLI's step (dollars_later)
+        leaves the lane's dollars unsettled until the CLI reports what the turn cost
+        (turn_end), which is logged as a SPEND event marked turn_end: the CLI's own cost of its
+        turn, not spend outside a turn. A turn whose cost never came (unreported: the CLI was
+        stopped in it, or exited) leaves the lane's total not known, but no price is missing
+        for it: nothing is asked, and a dollar cap holds on what is known (Lane.budget_used).
+        Spend with no price asks once (P7)."""
+        capped = bool(lane.dollar_cap) and not lane.finished and not self.closing  # a dollar cap still to enforce
         due = lane.dollars_later  # a turn_end that settles it is logged even when it adds nothing: the log says so too
         lane.tokens += rep.tokens
         lane.cached_tokens += rep.cached_tokens
@@ -1449,11 +1472,11 @@ class Deck:
             lane.unpriced += 1
             if rep.unreported:
                 lane.unreported += 1
-                if not lane.finished and lane.dollar_cap and lane.unreported == 1:
+                if capped and lane.unreported == 1:
                     self._note(lane, f"the cost of a turn of {rep.model or lane.model} never came (its CLI did not report "
                                      f"it): the ${fmt.dollars(lane.dollar_cap)} cap holds on the "
                                      f"${fmt.dollars(lane.known_dollars)} that is known")
-            elif not lane.finished and lane.dollar_cap and lane.unpriced - lane.unreported == 1:
+            elif capped and lane.unpriced - lane.unreported == 1:
                 self._unpriced(lane, rep)  # the first spend with no price: the cap cannot be enforced any more
             lane.dollars = None
         else:

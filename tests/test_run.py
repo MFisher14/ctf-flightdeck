@@ -860,6 +860,68 @@ def test_what_claude_reports_after_its_lane_solved_is_in_the_scorecard_play_prin
     assert "Spend: 165 tokens (0% cached), $0.03, $0.03 per lane solve" in summary.splitlines(), summary
 
 
+CUT_BY_QUITTING = {"turns": [{"calls": [
+    {"tools": [{"bash": "ls"}], "usage": [100, 10, 0, 0], "cost": 0.5},  # claude says what it cost at the turn's end
+    {"think": 30.0},  # and the turn goes on: quitting cuts it
+]}]}
+
+
+def two_challenge_board(tmp_path: Path) -> Path:
+    """The test board, and a second challenge (more points: it is queued behind the first)."""
+    root = board(tmp_path)
+    (root / "memo").mkdir()
+    (root / "memo" / "challenge.json").write_text(json.dumps({"name": "Memo", "category": "misc", "points": 100}))
+    answers = json.loads((root / "answers.sha256.json").read_text())
+    answers["memo"] = hashlib.sha256(b"t{memo}").hexdigest()
+    (root / "answers.sha256.json").write_text(json.dumps(answers))
+    return root
+
+
+def one_capped_lane(cfg: Path) -> Path:
+    """The config with one lane at a time, each capped at $0.40."""
+    cfg.write_text(cfg.read_text().replace("max_lanes = 2\n", "max_lanes = 1\ndollar_cap = 0.4\n"))
+    return cfg
+
+
+def test_quitting_mid_turn_counts_what_claude_reports_for_it_and_raises_asks_and_starts_nothing(tmp_path, scripted_claude):
+    """Quitting (run.shutdown, the console's on_exit) stops every lane without ending it, and
+    claude reports what the turn it cuts cost as it stops: here past the lane's $0.40 cap. That
+    cost is in the lane's and the run's totals, the run log, the lane's transcript and the
+    scorecard; and while the run closes no budget alert is raised, nothing is asked, and the
+    queued challenge does not start."""
+    scripted_claude(CUT_BY_QUITTING)
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        cfg = one_capped_lane(config(tmp_path, server.base_url))
+        run = prepare_run(RunOptions(board=two_challenge_board(tmp_path), config=cfg, agent="claude", runtime="host"))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            assert lane.dollar_cap == 0.4 and [entry.challenge for entry in run.deck.queue] == ["memo"]
+            await wait_for(lambda: lane.turns == 1, "claude's step")
+            assert lane.dollars_later and lane.known_dollars == 0.0  # what the turn costs comes when it ends
+            mark = len(run.deck.events)
+            await run.shutdown()  # as quitting does
+            return lane, mark
+
+        lane, mark = asyncio.run(main())
+        run.close()
+    assert (lane.tokens, lane.dollars, lane.dollars_later) == (110, pytest.approx(0.5), False)
+    assert run.deck.totals() == (110, pytest.approx(0.5), False)  # the console's header
+    assert lane.state is LaneState.RUNNING and lane.pending is None and lane.alerts == []  # open, as quitting left it
+    later = run.deck.events[mark:]
+    assert not [e for e in later if e.kind in (EventKind.ALERT, EventKind.PENDING, EventKind.LANE_START)], later
+    assert len(run.deck.lanes) == 1 and [entry.challenge for entry in run.deck.queue] == ["memo"]
+    (spend,) = [e for e in later if e.kind is EventKind.SPEND]
+    assert (spend.data["dollars"], spend.data["turn_end"]) == (pytest.approx(0.5), True)
+    logged = [json.loads(line) for line in run.log.path.read_text().splitlines()]
+    assert [line["data"]["dollars"] for line in logged if line["kind"] == EventKind.SPEND.value] == [pytest.approx(0.5)]
+    head = json.loads((run.dir / "lanes" / f"{lane.id}.jsonl").read_text().splitlines()[0])
+    assert (head["state"], head["tokens"], head["dollars"], head["dollars_later"]) == ("run", 110, pytest.approx(0.5), False)
+    card = run.scorecard()
+    assert card is not None and "Spent 110 tokens · $0.50" in card.splitlines(), card
+
+
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude):
     with FakeModelServer() as server:
         with pytest.raises(RunError, match='the instance policy is "confirm", but a claude lane reaches whatever its CLI can reach'):

@@ -783,6 +783,79 @@ def test_a_turn_that_auto_submits_the_right_flag_still_emits_its_turn_event():
     assert [dict(e.data) for e in turns] == [{"turn": 1, "model": "small", "tokens": 900, "cached_tokens": 0, "dollars": 0.25, "action": "solve.py"}]
 
 
+# ---------------------------------------------------------------------- the run closing (the player quit)
+
+
+CLOSING = "The run is closing: its lanes are stopping, so nothing more can be done on them"
+
+
+def test_once_the_run_is_closing_a_cost_past_the_caps_counts_but_raises_no_alert_and_asks_nothing():
+    """Quitting stops every lane without ending it, and a coding-agent CLI reports what the turn
+    it was cut in cost as it stops: that counts on the lane, the run and the log, past both
+    caps here, and nothing is raised, asked or noted on the lane while the run closes."""
+    deck, driver, _ = make_deck(n=1, token_cap=1000, dollar_cap=1.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="cat note", tokens=100, dollars_later=True))  # a CLI step: its cost comes later
+    deck.close()
+    mark, calls, actions = len(deck.events), list(driver.calls), list(lane.actions)
+    deck.report(lane.id, TurnReport(turn=False, tokens=900, dollars=1.5, turn_end=True, why=CUT, model="small"))
+    assert (lane.tokens, lane.dollars, lane.known_dollars, lane.dollars_later) == (1000, 1.5, 1.5, False)
+    assert deck.totals() == (1000, 1.5, False) and lane.budget_used() == 1.5
+    assert lane.state is LaneState.RUNNING and lane.pending is None and lane.alerts == [] and not lane.needs_you
+    (spend,) = deck.events[mark:]
+    assert spend.kind is EventKind.SPEND and spend.data == {
+        "tokens": 900, "cached_tokens": 0, "dollars": 1.5, "model": "small", "why": CUT, "turn_end": True}
+    # spend with no price, and a turn whose cost never came: counted too, and still nothing asked or noted
+    deck.report(lane.id, TurnReport(turn=False, tokens=10, dollars=None, model="small"))
+    deck.report(lane.id, TurnReport(turn=False, dollars=None, turn_end=True, unreported=True, why=UNREPORTED, model="small"))
+    assert (lane.tokens, lane.dollars, lane.unpriced, lane.unreported) == (1010, None, 2, 1) and deck.totals()[2] is True
+    assert lane.pending is None and lane.alerts == [] and lane.actions == actions and lane.state is LaneState.RUNNING
+    assert [e.kind for e in deck.events[mark:]] == [EventKind.SPEND] * 3 and driver.calls == calls
+
+
+def test_while_the_run_is_closing_a_report_of_anything_but_spend_is_dropped_whole_and_so_is_a_note():
+    deck, driver, _ = make_deck(n=1, submit="auto")
+    lane = lane_on(deck, "c0")
+    deck.close()
+    before, n_events, calls = copy.deepcopy(lane), len(deck.events), list(driver.calls)
+    deck.report(lane.id, TurnReport(action="submit_flag", tokens=500, dollars=1.0, flag=good_flag("c0"),
+                                    alerts=(Alert(AlertKind.LOOP, "x"),), pending=Pending(PendingKind.LIVE_BOX, "box")))
+    deck.report(lane.id, TurnReport(turn=False, flag="t{other}", claimed=False))  # a candidate its CLI held for the turn's end
+    deck.report(lane.id, TurnReport(turn=False, gave_up="claude exited"))
+    deck.note(lane.id, "context refreshed")
+    assert lane == before and deck.verify.calls == [] and deck.challenges["c0"].status is ChallengeStatus.RUNNING
+    assert len(deck.events) == n_events and driver.calls == calls
+
+
+def test_no_lane_starts_while_the_run_is_closing_though_slots_are_free():
+    deck, driver, _ = make_deck(n=1, max_lanes=2)  # one lane, and a free slot
+    lane = lane_on(deck, "c0")
+    deck.close()
+    deck.release([Challenge("c8", "Chall 8", "web", 200)], [QueueEntry("c8", "small")], "Wave 2")  # a wave as the run closes
+    deck.platform_solved("c0", "you")  # and its lane stops: both slots are free
+    assert lane.state is LaneState.STOPPED and driver.started() == ["c0"] and queued_ids(deck) == ["c8"]
+    assert deck.active_lanes() == [] and [e.lane for e in events(deck, EventKind.LANE_START)] == [lane.id]
+
+
+@pytest.mark.parametrize("make", [
+    lambda lane: iv.Approve(lane), lambda lane: iv.Decline(lane), lambda lane: iv.Hint(lane, "look at the header"),
+    lambda lane: iv.Redirect(lane, "a new plan"), lambda lane: iv.Fork(lane, model="big"), lambda lane: iv.Escalate(lane),
+    lambda lane: iv.Kill(lane, requeue=True), lambda lane: iv.Pause(lane), lambda lane: iv.TakeOver(lane),
+    lambda lane: iv.Queue("c9"),
+], ids=["approve", "decline", "hint", "redirect", "fork", "escalate", "kill", "pause", "take over", "queue"])
+def test_while_the_run_is_closing_every_intervention_is_refused_and_changes_nothing(make):
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
+    deck.release([Challenge("c9", "Chall 9", "web", 200)], [])  # on the board, with no lane: a free slot for it
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))  # an approval waits
+    deck.close()
+    before, calls, queue = copy.deepcopy(lane), list(driver.calls), list(deck.queue)
+    out = deck.apply(make(lane.id))
+    assert not out.ok and out.message == CLOSING
+    assert lane == before and driver.calls == calls and deck.queue == queue and deck.verify.calls == []
+    assert [e.kind for e in deck.events[-2:]] == [EventKind.INTERVENTION, EventKind.OUTCOME]  # logged, as every refusal is
+
+
 # ---------------------------------------------------------------------- flags and approvals
 
 
