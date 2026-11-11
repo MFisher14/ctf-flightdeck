@@ -485,6 +485,43 @@ def silent(monkeypatch):
     sock.close()
 
 
+@pytest.fixture
+def instance():
+    """Raw TCP servers on 127.0.0.1, for answers http.server will not send: instance(handler)
+    starts one that runs handler(conn, stop) on each connection, and returns its origin."""
+    stop = threading.Event()
+    socks: list[socket.socket] = []
+
+    def start(handler) -> str:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        sock.settimeout(0.1)  # so the server thread sees stop
+        socks.append(sock)
+
+        def serve() -> None:
+            while not stop.is_set():
+                try:
+                    conn, _ = sock.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    return
+                with conn:
+                    try:
+                        handler(conn, stop)
+                    except OSError:
+                        pass  # the client went away
+
+        threading.Thread(target=serve, daemon=True).start()
+        return f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+    yield start
+    stop.set()
+    for sock in socks:
+        sock.close()
+
+
 def origin(server) -> str:
     return f"http://127.0.0.1:{server.server_address[1]}"
 
@@ -594,6 +631,23 @@ def test_a_binary_http_body_is_saved_rather_than_shown(lane, web):
     result = call(box, "http", {"method": "GET", "url": origin(web) + "/binary"}, turn=5, index=0)
     assert result.content.endswith("\n\n[binary body, 1024 bytes; saved to .flightdeck/out/turn5-0.txt]")
     assert (lane.root / ".flightdeck" / "out" / "turn5-0.txt").read_bytes() == bytes(range(256)) * 4
+
+
+@pytest.mark.parametrize("max_chars", [1000, 8000])
+def test_a_long_reason_phrase_is_clipped_and_the_body_still_shows(lane, instance, max_chars):
+    def long_reason(conn, stop):
+        conn.recv(65536)
+        conn.sendall(b"HTTP/1.1 200 " + b"R" * 10_000 + b"\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+
+    url = instance(long_reason)
+    box = Toolbox(lane, max_chars=max_chars, http_allow=(url,))
+    result = call(box, "http", {"method": "GET", "url": url + "/"})
+    assert not result.error
+    assert len(result.content) <= max_chars
+    status = result.content.splitlines()[0]
+    assert status.startswith("HTTP/1.1 200 RRRR") and status.endswith("…") and len(status) <= 200
+    assert result.content.endswith("\n\nok")
+    assert result.output.endswith("…, 2 bytes")
 
 
 def test_an_unreachable_instance_is_an_error_the_model_can_read(lane, silent):

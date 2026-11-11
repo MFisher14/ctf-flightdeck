@@ -450,7 +450,10 @@ class Toolbox:
         return self._answer(action, response, raw, complete, turn, index)
 
     def _answer(self, action: str, response: httpx.Response, raw: bytes, complete: bool, turn: int, index: int) -> ToolResult:
-        status = f"{response.http_version} {response.status_code} {response.reason_phrase}".strip()
+        # The reason phrase is the instance's text, of any length: clipped like a header line,
+        # so it cannot push the body out of max_chars.
+        reason = untrusted(response.reason_phrase, one_line=True)
+        status = _clip(f"{response.http_version} {response.status_code} {reason}".strip(), min(200, self.max_chars // 4))
         head = "\n".join([status, *_header_lines(response.headers, self.max_chars // 4)])
         if not complete:
             head += f"\n[body over {OUTPUT_CAP // (1024 * 1024)} MB: the rest was not read]"
@@ -465,7 +468,7 @@ class Toolbox:
             body = self._fit(raw.decode("utf-8", "replace"), raw, self.max_chars - len(head) - 2, turn, index)
         else:
             body = "(empty body)"
-        summary = f"{response.status_code} {response.reason_phrase}, {len(raw)} bytes"
+        summary = f"{response.status_code} {_clip(reason, 60)}".strip() + f", {len(raw)} bytes"
         return ToolResult(f"{head}\n\n{body}", _one_line(action), _clip(summary, CONSOLE_CHARS))
 
     # ------------------------------------------------------------ flags and plans
