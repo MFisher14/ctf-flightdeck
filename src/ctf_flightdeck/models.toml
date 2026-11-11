@@ -184,8 +184,9 @@ quantization = "Q4_K_M"    # logs/ollama-show-phi4-mini.txt: quantization
 size_bytes = 2491876774    # results/ollama-phi.measure.json: disk.size_bytes
 
 [local.ollama.not_for]
-# It wrote its tool calls as text (results/ollama-phi.measure.json: tool_calls), and named fewer
-# hinted techniques than the rules (logs/eval-ollama-phi.log). 2026-11-11, one machine, under load,
+# It wrote its tool calls as text (results/ollama-phi.tools.json: tool_calls, the rerun the table
+# gives; its first run, in results/ollama-phi.measure.json, also 0/5), and named fewer hinted
+# techniques than the rules (logs/eval-ollama-phi.log). 2026-11-11, one machine, under load,
 # one run: "Tool calls": 0/5, so its lanes were not run; "Light role", as served: 22/44 against
 # the rules' 38 (hints 11/30 against their 30/30, judge 11/14 against their 8/14), 15 of 58 replies
 # with no usable answer (not exactly one of the options).
@@ -199,8 +200,9 @@ size_bytes = 2158100796    # results/mlx-phi.measure.json: disk.weights_bytes
 
 [local.mlx.not_for]
 # mlx_lm.server gave its chat template no tools ("Received tools but model does not support tool
-# calling": logs/mlx-server-phi.log; results/mlx-phi.measure.json: tool_calls), and it named fewer
-# hinted techniques than the rules (logs/eval-mlx-phi.log). 2026-11-11, one machine, under load,
+# calling": logs/mlx-server-phi.log; results/mlx-phi.tools.json: tool_calls, the rerun the table
+# gives; its first run, in results/mlx-phi.measure.json, also 0/5), and it named fewer hinted
+# techniques than the rules (logs/eval-mlx-phi.log). 2026-11-11, one machine, under load,
 # one run: "Tool calls": 0/5, so its lanes were not run; "Light role", served as it comes: 18/44
 # against the rules' 38 (hints 8/30 against their 30/30, judge 10/14 against their 8/14), 19 of 58
 # replies with no usable answer (not exactly one of the options).
