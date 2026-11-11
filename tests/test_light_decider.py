@@ -21,6 +21,7 @@ import re
 import socket
 import time
 
+import httpx
 import pytest
 
 from ctf_flightdeck import light as L
@@ -128,6 +129,16 @@ def test_the_hint_job_is_one_choice_question_over_its_options_sent_with_sorted_k
     assert list(asked["criteria"]) == sorted([*lexicon().ids, "none"])  # the job's options, "none" with them
     assert asked["criteria"]["sstv"] == "SSTV (slow-scan TV)"
     assert asked["criteria"]["none"] == "it points at no specific technique"
+
+
+def test_each_request_says_it_is_json_which_the_server_requires():
+    with FakeDeciderServer([picks("sstv", 0.97)]) as server:
+        got = ask(engine(server))
+        (request,) = server.asked()
+        bare = httpx.post(server.base_url + L.DECIDER_PATH, content=request["raw"])  # the same bytes, no content type
+    assert got.ok and request["headers"]["content-type"] == "application/json"
+    # The real server (FastAPI, strict about content types) refuses JSON it is not told is JSON; so does the fake.
+    assert bare.status_code == 422 and bare.json()["detail"][0]["type"] == "model_attributes_type"
 
 
 def test_none_is_offered_only_when_the_job_allows_it():

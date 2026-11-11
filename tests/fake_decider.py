@@ -13,14 +13,21 @@ are the decider repository's own (src/strands_decider/schema.py and server.py):
 - GET /health: {"status": "ok", "model", "checkpoint", "base_model", "max_length",
   "temperature", "device", "prefix_cache", "vision"}
 
+Like the real server (FastAPI 0.162, strict about content types by default), it reads a POST's
+body as JSON only when its Content-Type says so (application/json, or application/<x>+json);
+any other body is refused with HTTP 422 before a scripted reply is used, in FastAPI's words: a
+body without that header gets {"detail": [{"type": "model_attributes_type", "loc": ["body"],
+...}]}, as the decider's server sent it to a request made without one.
+
 Each POST takes the next scripted reply (a Reply, a body dict, or a function of the request
 that returns either), else the responder's, else 500. Every request is recorded with its raw
-body, so a test can check the very bytes sent. `most_at_once` is the largest number of
-requests the server was answering at the same time.
+body and its headers (names in lower case), so a test can check the very bytes sent.
+`most_at_once` is the largest number of requests the server was answering at the same time.
 """
 
 from __future__ import annotations
 
+import email.message
 import json
 import socket
 import socketserver
@@ -54,7 +61,7 @@ class FakeDeciderServer:
 
     def __init__(self, replies: Iterable = (), *, responder: Callable[[dict], Reply | dict] | None = None,
                  health: dict | Reply | None = None) -> None:
-        self.requests: list[dict] = []  # {"method", "path", "raw": bytes, "json": object | None, "at": monotonic}
+        self.requests: list[dict] = []  # {"method", "path", "headers", "raw": bytes, "json": object | None, "at": monotonic}
         self._replies: deque = deque(replies)
         self._responder = responder
         self.health = health_body() if health is None else health
@@ -86,12 +93,9 @@ class FakeDeciderServer:
         with self._lock:
             return [r for r in self.requests if r["method"] == "POST" and urlsplit(r["path"]).path == SYSTEMONE]
 
-    def _answer(self, method: str, path: str, raw: bytes) -> Reply:
-        try:
-            parsed = json.loads(raw) if raw else None
-        except ValueError:
-            parsed = None
-        record = {"method": method, "path": path, "raw": raw, "json": parsed, "at": time.monotonic()}
+    def _answer(self, method: str, path: str, raw: bytes, headers: dict[str, str]) -> Reply:
+        parsed, refused = _body(raw, headers.get("content-type"))
+        record = {"method": method, "path": path, "headers": headers, "raw": raw, "json": parsed, "at": time.monotonic()}
         route = urlsplit(path).path
         with self._lock:
             self.requests.append(record)
@@ -101,6 +105,8 @@ class FakeDeciderServer:
                 return Reply(200, self.health)
             if method != "POST" or route != SYSTEMONE:
                 return Reply(404, {"detail": "Not Found"})
+            if refused is not None:  # the server refuses it before any model sees it: no scripted reply is used
+                return refused
             item = self._replies.popleft() if self._replies else self._responder
         if item is None:
             return Reply(500, {"detail": "fake decider: out of scripted replies, and no responder"})
@@ -118,6 +124,30 @@ class FakeDeciderServer:
     def _end(self) -> None:
         with self._lock:
             self._at_once -= 1
+
+
+def _body(raw: bytes, content_type: str | None) -> tuple[object, Reply | None]:
+    """(the POST body as JSON, None), or (None, the 422 the real server sends): it reads a body
+    as JSON only when its Content-Type is application/json or application/<x>+json, as FastAPI
+    does with strict content types (fastapi/routing.py); anything else stays bytes, which the
+    request's schema refuses."""
+    if not raw:
+        return None, Reply(422, {"detail": [{"type": "missing", "loc": ["body"], "msg": "Field required", "input": None}]})
+    message = email.message.Message()
+    message["content-type"] = content_type or ""
+    subtype = message.get_content_subtype()
+    if not content_type or message.get_content_maintype() != "application" or not (
+            subtype == "json" or subtype.endswith("+json")):
+        return None, Reply(422, {"detail": [{
+            "type": "model_attributes_type", "loc": ["body"],
+            "msg": "Input should be a valid dictionary or object to extract fields from",
+            "input": raw.decode("utf-8", "replace")}]})
+    try:
+        return json.loads(raw), None
+    except ValueError as exc:
+        return None, Reply(422, {"detail": [{"type": "json_invalid", "loc": ["body", getattr(exc, "pos", 0)],
+                                             "msg": "JSON decode error", "input": {},
+                                             "ctx": {"error": getattr(exc, "msg", str(exc))}}]})
 
 
 # ---------------------------------------------------------------------- answers in the server's shapes
@@ -237,7 +267,8 @@ class _Handler(BaseHTTPRequestHandler):
         fake = self.server.fake
         fake._begin()
         try:
-            reply = fake._answer(method, self.path, raw)
+            headers = {name.lower(): value for name, value in self.headers.items()}
+            reply = fake._answer(method, self.path, raw, headers)
             if reply.delay:
                 time.sleep(reply.delay)
             self._send(reply)
