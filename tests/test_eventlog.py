@@ -256,15 +256,21 @@ class Opaque:
         return "<opaque thing>"
 
 
+WORDS = ["kilo", "alpha", "juliet", "echo", "bravo", "india", "delta", "hotel", "charlie", "golf"]
+
+
 def test_json_safe_turns_any_payload_into_plain_json():
+    """Sets come out sorted, so the same run writes the same line. Ten strings iterate in an
+    order set by the hash seed, sorted for about one seed in 3.6 million; these ints iterate
+    as 33, 12, 20, 41 whatever the seed. Either set catches a json_safe that does not sort."""
     payload = {
         "kind": EventKind.TURN,
         AlertKind.LOOP: "an enum key",
         3: "an int key",
         "level": Level.LOW,
         "tuple": (1, ("a", LaneState.RUNNING)),
-        "set": {"b", "a"},
-        "frozen": frozenset({2, 1}),
+        "set": set(WORDS),
+        "frozen": frozenset({33, 12, 41, 20}),
         "flags": [True, False, None],
         "nan": math.nan,
         "inf": math.inf,
@@ -281,8 +287,8 @@ def test_json_safe_turns_any_payload_into_plain_json():
         "3": "an int key",
         "level": 1,
         "tuple": [1, ["a", "run"]],
-        "set": ["a", "b"],
-        "frozen": [1, 2],
+        "set": ["alpha", "bravo", "charlie", "delta", "echo", "golf", "hotel", "india", "juliet", "kilo"],
+        "frozen": [12, 20, 33, 41],
         "flags": [True, False, None],
         "nan": "nan",
         "inf": "inf",
