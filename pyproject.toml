@@ -12,6 +12,11 @@ dependencies = [
     "typer>=0.29.0",
 ]
 
+[project.optional-dependencies]
+# Cactus Needle, an optional on-device model (see src/ctf_flightdeck/needle.py). Pinned: its
+# engine and weights download on first use, and flightdeck turns its telemetry off.
+cactus = ["cactus-compute==4.1.0"]
+
 [project.scripts]
 flightdeck = "ctf_flightdeck.cli:main"
 ctfdeck = "ctf_flightdeck.cli:main"
