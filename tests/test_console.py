@@ -2710,3 +2710,65 @@ def test_the_header_keeps_need_you_and_queue_held_and_gives_the_reason_only_room
     assert tight.plain.rstrip().endswith("▲ 1 need you ╱ queue held") and tight.cell_len <= 80  # no room for why
     lifted = views.header(quiet_deck(DeckConfig(event="ev", models=("glm",))), width=200).plain
     assert "all clear" in lifted and "queue held" not in lifted
+
+
+# ---------------------------------------------------------------------- who solved it: the reports' rule
+
+
+def solving_deck() -> Deck:
+    """A run's deck where three challenges are solved: alpha with the flag L1 engine "reader"
+    found, bravo by its lane alone, charlie by its lane with a flag L1 engine "strings" had
+    printed before (a candidate the lane then submitted itself)."""
+    names = ["alpha", "bravo", "charlie"]
+    deck = Deck(DeckConfig(event="ev", models=("glm",), max_lanes=3, flag_format=r"t\{[a-z]+\}"), QuietDriver(),
+                ManualClock(1000.0), lambda cid, flag: flag == f"t{{{cid}}}")
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    alpha, bravo, charlie = (deck.lanes_on(n)[0] for n in names)
+    deck.record_l1("alpha", "reader", "solved", flags=["t{alpha}"], lane_id=alpha.id)
+    deck.report(alpha.id, TurnReport(turn=False, flag="t{alpha}"))
+    deck.record_l1("charlie", "strings", "candidate", flags=["t{charlie}"], lane_id=charlie.id)
+    deck.report(charlie.id, TurnReport(turn=False, flag="t{charlie}", claimed=False))
+    deck.report(charlie.id, TurnReport(action="submit_flag t{charlie}", flag="t{charlie}"))
+    deck.report(bravo.id, TurnReport(action="submit_flag t{bravo}", flag="t{bravo}"))
+    for lane in (alpha, bravo, charlie):
+        assert deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+    return deck
+
+
+def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_found_to_that_engine(tmp_path):
+    from ctf_flightdeck.eventlog import EventLog
+    from ctf_flightdeck.runrecord import load_run, solves
+
+    deck = solving_deck()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        assert [cell(app, "board", n, "own") for n in ("alpha", "bravo", "charlie")] == ["L1·reader", "L02", "L1·strings"]
+        app.fleet.select_challenge("alpha")
+        await pilot.pause()
+        assert "✓ solved by L1·reader" in region_text(app, "#why")  # in full: the board's column is narrow
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ChallengeCard) and "owner L1·reader" in prompt_text(app)
+        await press(pilot, "escape", "question_mark")
+        assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
+
+    drive(app, script, size=(160, 100))
+    log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
+    log.attach(deck)
+    log.close()
+    found = solves(load_run(tmp_path).events)
+    assert {cid: (s.by, s.who) for cid, s in found.items()} == {
+        "alpha": ("l1", "reader"), "bravo": ("lane", "L02"), "charlie": ("l1", "strings"),
+    }
+
+
+def test_the_board_reads_each_event_once_as_the_deck_grows():
+    deck = solving_deck()
+    assert views.owner(deck, deck.challenges["alpha"]) == ("L1·reader", "l1")
+    deck.release([Challenge("delta", "Delta", "misc", 50)], [QueueEntry("delta", "glm")])
+    (delta,) = deck.lanes_on("delta")
+    deck.record_l1("delta", "rot", "solved", flags=["t{delta}"], lane_id=delta.id)  # after the first read
+    deck.report(delta.id, TurnReport(turn=False, flag="t{delta}"))
+    assert deck.apply(iv.Approve(delta.id)).ok
+    assert views.owner(deck, deck.challenges["delta"]) == ("L1·rot", "l1")
+    assert views.owner(deck, deck.challenges["bravo"]) == ("L02", "lane")

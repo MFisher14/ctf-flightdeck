@@ -685,6 +685,37 @@ def test_a_run_on_a_board_with_answers_ends_with_a_scorecard(tmp_path):
     assert "Note       misc   50  solved by L1 reader via L01" in card, card  # the L1 engine's flag, as every report credits it
 
 
+def test_the_console_credits_a_flag_an_l1_engine_found_to_that_engine_as_the_scorecard_does(tmp_path):
+    from textual.widgets import DataTable
+
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", READER, route='keywords = ["note"]')
+    with FakeModelServer() as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), pack=pack))
+        app = run.app(refresh_seconds=None)
+
+        async def main():
+            async with app.run_test(size=(160, 46)) as pilot:
+                await until(pilot, lambda: any(lane.pending is not None for lane in run.deck.lanes.values()), "the L1 flag")
+                app.refresh_view()
+                await pilot.pause()
+                await pilot.press("1")  # the selected lane's quick answer: submit it
+                await until(pilot, lambda: run.deck.challenges["note"].closed, "the solve")
+                app.refresh_view()
+                await pilot.pause()
+                own = app.fleet.query_one("#board", DataTable).get_cell("note", "own")
+                assert str(own) == "L1·reader"  # not the lane that submitted it, L01
+                await pilot.press("q")
+                await until(pilot, lambda: not app.is_running, "the console to quit")
+
+        asyncio.run(main())
+        run.close()
+        assert server.chats() == []  # the engine solved it: no model was asked
+    assert "Note       misc   50  solved by L1 reader via L01" in run.scorecard()
+
+
 # ---------------------------------------------------------------------- coding-agent CLIs as lanes (--agent)
 
 

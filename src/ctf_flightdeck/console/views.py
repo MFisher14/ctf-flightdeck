@@ -9,7 +9,9 @@ literally and cannot steer the console.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from weakref import WeakKeyDictionary
 
 from rich import box
 from rich.cells import cell_len, set_cell_size
@@ -31,11 +33,14 @@ from ..core.model import (
     AlertKind,
     Challenge,
     ChallengeStatus,
+    Event,
     FileChange,
     Lane,
     LaneState,
     PendingKind,
 )
+from ..runrecord import L1 as BY_L1
+from ..runrecord import Credit, EventLine, Solve, accepted
 from ..text import untrusted
 from . import theme
 from .commands import KEY_COMMAND, lane_id
@@ -259,11 +264,55 @@ def board_order(challenges: list[Challenge]) -> list[Challenge]:
     return sorted(challenges, key=key)
 
 
+class _Solves:
+    """Who solved what on a live deck, by the rule every report uses (runrecord.Credit), read
+    from the deck's events as they come: the list only grows, so each event is read once."""
+
+    def __init__(self) -> None:
+        self.credit = Credit()
+        self.read = 0
+        self.first: dict[str, Solve] = {}  # challenge id -> its first solve
+
+    def update(self, events: Sequence[Event]) -> None:
+        for index in range(self.read, len(events)):
+            event = events[index]
+            line = EventLine(event.at, "", event.kind.value, event.text, event.lane, event.challenge,
+                             event.alert.value if event.alert is not None else None, event.data)
+            self.credit.see(index, line)
+            cid = line.challenge
+            if not cid or cid in self.first:
+                continue
+            if accepted(line):
+                flag = line.data.get("flag")
+                self.first[cid] = self.credit.flag(index, line, flag if isinstance(flag, str) else "")
+            elif (solve := Credit.other(index, line)) is not None:
+                self.first[cid] = solve
+        self.read = len(events)
+
+
+_SOLVES: WeakKeyDictionary[Deck, _Solves] = WeakKeyDictionary()
+
+
+def first_solve(deck: Deck, challenge_id: str) -> Solve | None:
+    """The challenge's first solve on this deck, credited as every report credits it
+    (runrecord.Credit), or None."""
+    solves = _SOLVES.get(deck)
+    if solves is None:
+        solves = _SOLVES[deck] = _Solves()
+    solves.update(deck.events)
+    return solves.first.get(challenge_id)
+
+
 def owner(deck: Deck, ch: Challenge) -> tuple[str, str]:
-    """Who has the challenge, and what kind of owner that is: lane, me, mate or ""."""
+    """Who has the challenge, and what kind of owner that is: lane, l1, me, mate or "". A solve
+    goes where every report credits it (runrecord.Credit): the flag an L1 engine reported
+    first is that engine's solve, "L1·<engine>", whichever lane submitted it."""
     if ch.closed and ch.solved_by:
         if ch.status is ChallengeStatus.TEAMMATE:
             return ch.solved_by, "mate"
+        solve = first_solve(deck, ch.id)
+        if solve is not None and solve.by == BY_L1:
+            return f"L1·{solve.who}", "l1"
         return ch.solved_by, ("me" if ch.solved_by == ME else "lane")
     if ch.claimed_by and ch.claimed_by != ME:
         return ch.claimed_by, "mate"
@@ -276,7 +325,7 @@ def owner(deck: Deck, ch: Challenge) -> tuple[str, str]:
     return "", ""
 
 
-OWNER_STYLE = {"mate": theme.CYAN, "me": "bold", "lane": "", "": ""}
+OWNER_STYLE = {"mate": theme.CYAN, "me": "bold", "lane": "", "l1": theme.GREEN, "": ""}
 
 
 def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
@@ -545,6 +594,10 @@ def challenge_why(deck: Deck, ch: Challenge) -> Text:
     out.append(untrusted(ch.name, one_line=True), "bold")
     out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · {ch.solves} solves · ", theme.MUTED)
     out.append(f"{mark} {ch.status.value}", color)
+    if ch.status is ChallengeStatus.SOLVED:  # by whom, in full: the board's own column is narrow
+        own, _ = owner(deck, ch)
+        if own:
+            out.append(f" by {untrusted(own, one_line=True)}", color)
     if ch.note:
         out.append(f" ({untrusted(ch.note, one_line=True)})", theme.YELLOW)
     out.append("\n  ")

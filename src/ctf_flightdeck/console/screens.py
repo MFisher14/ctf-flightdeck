@@ -314,6 +314,7 @@ ALERT_HELP = (
 BOARD_HELP = (
     ("·", "new"), ("…", "queued"), ("▶", "running"), ("✓", "solved (green: us, cyan: teammate)"),
     ("✗", "blocked"), ("‖", "parked"), ("*", "after a lane id: claimed by you"),
+    ("L1·name", "solved with the flag your L1 engine of that name found"),
 )
 
 
