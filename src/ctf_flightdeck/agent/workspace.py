@@ -436,6 +436,13 @@ def _check_call(command: str, timeout: float) -> None:
 _ALLOWED_ENV = ("PATH", "LANG", "LC_ALL")
 
 
+def absolute_path(raw: str) -> str:
+    """PATH with only its absolute directories, in order. A relative entry ("." or "") is the
+    working directory of whatever looks a program up: for a lane, its copy of the handout,
+    where a challenge's own `ls` would then run in place of the real one."""
+    return os.pathsep.join(entry for entry in raw.split(os.pathsep) if os.path.isabs(entry))
+
+
 class HostWorkspace:
     """Runs a lane's commands with bash on this machine, in root (containerized = false, D9).
 
@@ -533,6 +540,8 @@ class HostWorkspace:
         environment (no API keys, no tokens). HOME and TMPDIR are the lane's own, which
         restore_private() makes sure are there."""
         env = {name: os.environ[name] for name in _ALLOWED_ENV if name in os.environ}
+        if "PATH" in env:
+            env["PATH"] = absolute_path(env["PATH"])
         env["TERM"] = "dumb"
         env["HOME"] = str(self.root / PRIVATE / "home")
         env["TMPDIR"] = str(self.root / PRIVATE / "tmp")

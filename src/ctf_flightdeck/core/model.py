@@ -334,7 +334,7 @@ class DeckConfig:
     team: bool = False
     containerized: bool = True  # D9: True runs lanes in Docker, False on the host
     max_lanes: int = 16
-    flag_format: str = r"\w+\{[^{}\s]+\}"
+    flag_format: str = r"\w{1,64}\{[^{}\s]{1,256}\}"  # bounded: searched over megabytes of output
     submit: str = "confirm"  # stage policy for submitting flags
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
 

@@ -59,3 +59,12 @@ def test_a_lane_summary_and_l1_results_are_fenced_as_data():
         assert text.count(FENCE_OPEN) == 1 and text.count(FENCE_CLOSE) == 1
         assert text.index(FENCE_OPEN) < text.index("Plan: x [fence marker removed] y") < text.index(FENCE_CLOSE)
         assert text.index("The player asked you") < text.index(FENCE_CLOSE)
+
+
+def test_a_long_description_is_cut_in_the_brief_and_says_where_the_rest_is():
+    from ctf_flightdeck.agent.prompts import MAX_BRIEF_DESCRIPTION
+
+    text = brief(Challenge("c", "Long", "misc", 50, description="x" * (MAX_BRIEF_DESCRIPTION * 10)), [], [])
+    assert len(text) < MAX_BRIEF_DESCRIPTION + 1000
+    assert f"the description is {MAX_BRIEF_DESCRIPTION * 10:,} characters; the whole of it is in challenge.json" in text
+    assert text.index("[cut:") < text.index(FENCE_CLOSE)  # still inside the fence

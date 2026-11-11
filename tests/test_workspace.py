@@ -927,3 +927,23 @@ def test_a_lane_container_started_with_no_network_can_be_connected_once_allowed(
         assert "bridge" in after
     finally:
         run(ws.close())
+
+
+def test_a_lane_command_never_finds_a_program_through_a_relative_path_entry(tmp_path, monkeypatch):
+    import asyncio
+
+    handout_dir = tmp_path / "handout"
+    handout_dir.mkdir()
+    planted = handout_dir / "ls"
+    planted.write_text("#!/bin/sh\necho PLANTED\n")
+    planted.chmod(0o755)
+    monkeypatch.setenv("PATH", "." + os.pathsep + os.environ["PATH"])
+    ws = HostWorkspace(tmp_path / "lane", handout_dir)
+    asyncio.run(ws.prepare())
+    try:
+        result = asyncio.run(ws.run("ls; printf '%s' \"$PATH\"", timeout=30))
+    finally:
+        asyncio.run(ws.close())
+    out = result.output.decode()
+    assert "PLANTED" not in out
+    assert all(os.path.isabs(entry) for entry in out.strip().splitlines()[-1].split(os.pathsep))

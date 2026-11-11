@@ -65,6 +65,7 @@ def system_prompt(flag_format: str) -> str:
 
 
 MAX_BRIEF_FILES = 40  # a handout with vendored code or a .git folder must not flood the brief
+MAX_BRIEF_DESCRIPTION = 6000  # characters: the brief is in every turn's context, so a long description costs every turn
 
 
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "") -> str:
@@ -84,12 +85,22 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         "Files in the workspace: " + (shown if files else "none"),
         "Live instance: " + (", ".join(one(url) for url in urls) if urls else "none"),
         "Description:",
-        data(challenge.description) or "(no description)",
+        _description(challenge.description),
         FENCE_CLOSE,
     ]
     if approach:
         lines.append(f"The player asked you to take this approach: {untrusted(approach, one_line=True)}")
     return "\n".join(lines)
+
+
+def _description(text: str) -> str:
+    if not text:
+        return "(no description)"
+    if len(text) <= MAX_BRIEF_DESCRIPTION:
+        return data(text)
+    return data(text[:MAX_BRIEF_DESCRIPTION]) + (
+        f"\n[cut: the description is {len(text):,} characters; the whole of it is in challenge.json in your workspace]"
+    )
 
 
 def escalation(summary: str) -> str:
