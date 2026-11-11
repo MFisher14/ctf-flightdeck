@@ -1,7 +1,7 @@
 """Practice mode: an archived board with a release timeline, and a run scored from its event log.
 
 Every board is a real folder in tmp_path, loaded with the real board loader; the deck, the
-event log, its file and the answers file are real. The driver is a stand-in that does no
+event log, its file, the lane transcripts and the answers file are real. The driver is a stand-in that does no
 work (lane work is not under test here) and the clock is turned by hand. Names, flags and
 events are synthetic.
 """
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -23,7 +25,11 @@ from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import ME, ChallengeStatus, DeckConfig, EventKind
 from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.platform.manual import AnswerVerifier, cannot_check, load_board
+from ctf_flightdeck.transcript import TranscriptLog
 from ctf_flightdeck.practice_mode import (
+    MAX_COUNT,
+    MAX_JSON_BYTES,
+    NAME_CELLS,
     Release,
     ScoreError,
     Timeline,
@@ -241,6 +247,18 @@ def test_an_oversized_timeline_is_refused_before_it_is_parsed(tmp_path):
         load_timeline(board)
 
 
+def test_a_timeline_of_the_largest_size_loads_and_one_byte_more_is_refused(tmp_path):
+    folder = make_board(tmp_path / "archive")
+    board = load_board(folder)
+    body = '{"waves": [{"at": 60, "ids": ["delta"]}]}'
+    (folder / "timeline.json").write_text(body + " " * (MAX_JSON_BYTES - len(body)))
+    assert (folder / "timeline.json").stat().st_size == MAX_JSON_BYTES
+    assert load_timeline(board) == Timeline((Wave(0.0, ("alpha", "bravo", "charlie")), Wave(60.0, ("delta",))))
+    (folder / "timeline.json").write_text(body + " " * (MAX_JSON_BYTES + 1 - len(body)))
+    with pytest.raises(TimelineError, match=f"is over {MAX_JSON_BYTES:,} bytes, too big for a timeline"):
+        load_timeline(board)
+
+
 def test_a_timeline_that_is_not_utf8_is_an_error(tmp_path):
     folder = make_board(tmp_path / "archive")
     (folder / "timeline.json").write_bytes(b'{"waves": [{"at": 1, "ids": ["\xff"]}]}')
@@ -404,6 +422,23 @@ def test_a_hand_made_timeline_must_hold_the_board_exactly_once(tmp_path, waves, 
     assert problem in str(caught.value)
 
 
+def test_a_hand_made_timeline_out_of_time_order_goes_out_in_time_order(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    deck, clock, driver = make_deck(board)
+    timeline = Timeline((Wave(600.0, ("charlie",)), Wave(7200.0, ("delta",)), Wave(0.0, ("alpha", "bravo"))))
+    release = Release(deck, board, timeline, cheapest_first(board))
+    assert release.next_at == 0.0 and [wave.at for wave in release.waiting] == [0.0, 600.0, 7200.0]
+    assert release.tick() == [Wave(0.0, ("alpha", "bravo"))]  # the wave at 0 does not wait behind the one at 600
+    assert driver.started == ["alpha", "bravo"] and releases(deck) == ["Wave 1 of 3"]
+    clock.t = 599.0
+    assert release.tick() == []
+    clock.t = 600.0
+    assert release.tick() == [Wave(600.0, ("charlie",))]
+    clock.t = 7200.0
+    assert release.tick() == [Wave(7200.0, ("delta",))]
+    assert releases(deck) == ["Wave 1 of 3", "Wave 2 of 3", "Wave 3 of 3"] and release.done
+
+
 # ---------------------------------------------------------------------- scoring a run
 
 
@@ -417,6 +452,8 @@ class Played:
         self.dir = tmp_path / "runs" / "20261110-200000"
         self.log = EventLog(self.dir / "events.jsonl")
         self.log.attach(self.deck)
+        self.transcripts = TranscriptLog(self.dir / "lanes")  # as run.py keeps them: one per lane, when it ends
+        self.transcripts.attach(self.deck)
         self.release = Release(self.deck, self.board, load_timeline(self.board), cheapest_first(self.board))
         self.l02_dollars = 0.02 if all_priced else None  # L02's model has no price unless all_priced
 
@@ -452,6 +489,7 @@ class Played:
         return self
 
     def close(self) -> Path:
+        self.transcripts.close()  # the lanes still open, as Run.close() does
         self.log.close()
         return self.log.path
 
@@ -471,6 +509,20 @@ def test_the_score_has_the_solves_points_and_first_solve_time(played):
     assert (bravo.solved_by, bravo.solved_at, bravo.checked) == ("L03", 900.0, "answers")
     assert result.event == "Sample Archive" and result.answers == played.board.answers
     assert result.ended_at == 900.0  # the last event: the tick at 1000 put nothing out
+
+
+def test_time_to_solve_runs_from_the_challenges_release_not_the_start(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck  # alpha L01, bravo L02
+    played.at(600)  # charlie's wave: L03
+    played.at(800)
+    deck.report("L03", TurnReport(action="solve", flag=FLAGS["charlie"]))
+    deck.apply(iv.Approve("L03"))
+    result = score(played.close(), played.board)
+    charlie = result.per_challenge["charlie"]
+    assert (charlie.released_at, charlie.solved_at, charlie.time_to_solve) == (600.0, 800.0, 200.0)
+    rows = {cells[0]: cells for cells in table(scorecard(result))}
+    assert rows["Charlie Chart"][3:6] == ["solved L03", "T+00:13:20", "3m"]  # took: 200 s, not the 800 since the start
 
 
 def test_every_challenge_on_the_board_has_a_line_in_board_order(played):
@@ -515,7 +567,21 @@ def test_an_unpriced_lane_makes_its_cost_unknown_and_the_known_part_a_floor(play
     assert result.per_challenge["alpha"].dollars == pytest.approx(0.007)
     assert result.dollars is None and result.cost_per_solve is None
     assert result.known_dollars == pytest.approx(0.004 + 0.003 + 0.05 + 0.001)
-    assert any(note.startswith("L02 had turns with no price") for note in result.notes)
+    assert sorted(path.name for path in (played.dir / "lanes").iterdir()) == ["L01.jsonl", "L02.jsonl", "L03.jsonl", "L04.jsonl"]
+    assert result.notes == ("L02 had turns with no price, so its cost is not fully known: the dollars count only priced turns.",)
+
+
+def test_the_known_dollars_count_every_priced_turn_of_a_lane_whose_cost_became_unknown(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=100, dollars=0.25))
+    deck.report("L01", TurnReport(action="cat notes.txt", tokens=100, dollars=None))  # a turn on a model with no price
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=100, dollars=0.5))  # priced again after it
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].dollars is None and played.deck.lanes["L01"].dollars is None
+    assert result.unpriced == ("L01",) and result.dollars is None and result.cost_per_solve is None
+    assert result.known_dollars == pytest.approx(0.75)
+    assert "Spent 300 tokens · $0.75+" in scorecard(result)
 
 
 def test_interventions_are_counted_per_challenge_and_refused_ones_are_not(played):
@@ -546,22 +612,196 @@ def test_a_challenge_queue_intervention_counts_for_that_challenge(tmp_path):
     assert result.interventions == 2 and result.per_challenge["charlie"].lanes == ("L03", "L04")
 
 
-def test_scoring_reads_only_the_log_so_a_later_score_is_the_same(played):
+def test_scoring_reads_only_the_closed_run_so_a_later_score_is_the_same(played):
     path = played.close()
     first = score(path, played.board)
-    played.deck.report("L04", TurnReport(action="too late"))  # the deck moves on; the closed log does not
-    copy = path.parent.parent / "copied" / "events.jsonl"
-    copy.parent.mkdir()
-    copy.write_bytes(path.read_bytes())
-    assert score(copy, load_board(played.folder)) == first
+    played.deck.report("L04", TurnReport(action="too late"))  # the deck moves on; the closed run does not
+    copy = path.parent.parent / "copied"
+    shutil.copytree(path.parent, copy)
+    assert score(copy / "events.jsonl", load_board(played.folder)) == first
 
 
-def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path):
+# ---------------------------------------------------------------------- spend outside a turn
+
+
+OUTSIDE_TURNS = "outside its turns (a model reply dropped on escalation, for one)"
+
+
+def test_spend_outside_a_turn_is_counted_from_the_lane_transcript(tmp_path):
+    """A model reply in flight when the player escalates is dropped, and the driver reports
+    its cost outside a turn: the deck counts it and no event records it, but the lane's
+    transcript has the deck's totals."""
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    played.at(10)
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars=0.01))
+    deck.apply(iv.Escalate("L01"))
+    deck.report("L01", TurnReport(turn=False, tokens=40_000, dollars=0.40))  # the dropped reply
+    played.at(30)
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=2000, dollars=0.02, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    path = played.close()
+    assert [e["data"]["tokens"] for e in map(json.loads, lines_of(path)) if e["kind"] == "turn"] == [1000, 2000]
+    result = score(path, played.board)
+    lane = played.deck.lanes["L01"]
+    assert result.lanes["L01"].tokens == lane.tokens == 43_000
+    assert result.lanes["L01"].dollars == pytest.approx(lane.dollars) and lane.dollars == pytest.approx(0.43)
+    alpha = result.per_challenge["alpha"]
+    assert (alpha.tokens, alpha.turns) == (43_000, 2) and alpha.dollars == pytest.approx(0.43)
+    assert result.tokens == 43_000 and result.unpriced == ()
+    assert result.dollars == pytest.approx(0.43) and result.known_dollars == pytest.approx(0.43)
+    assert result.cost_per_solve == pytest.approx(0.43)
+    assert result.notes == (
+        f"L01 spent 40k tokens and $0.40 {OUTSIDE_TURNS}: counted from its transcript, as the event log does not record it.",
+    )
+    card = scorecard(result)
+    assert "Spent 43k tokens · $0.43 · $0.43 per solve" in card.splitlines()
+    assert {cells[0]: cells[-3:] for cells in table(card)}["Alpha Gate"] == ["43k", "$0.43", "2"]  # tokens, cost, iv
+
+
+def test_spend_outside_a_turn_with_no_price_makes_the_lanes_cost_unknown(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars=0.01))
+    deck.report("L01", TurnReport(turn=False, tokens=500, dollars=None))  # outside a turn, on a model with no price
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=2000, dollars=0.02, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].tokens == played.deck.lanes["L01"].tokens == 3500
+    assert result.lanes["L01"].dollars is None and played.deck.lanes["L01"].dollars is None
+    assert result.per_challenge["alpha"].dollars is None
+    assert result.unpriced == ("L01",) and result.dollars is None and result.cost_per_solve is None
+    assert result.known_dollars == pytest.approx(0.03)  # its turns: the part known to have a price
+    assert result.notes == (  # its turns all had a price: no note says they did not
+        f"L01 spent 500 tokens {OUTSIDE_TURNS}, and not all of it had a price, so its cost is not fully known: "
+        "the dollars count only its turns.",
+    )
+    assert "Spent 4k tokens · $0.03+ · $0.03+ per solve" in scorecard(result).splitlines()
+
+
+def test_a_transcript_that_differs_from_the_turns_only_by_rounding_adds_nothing(played):
+    path = played.close()
+    whole = score(path, played.board)
+    transcript = path.parent / "lanes" / "L01.jsonl"
+    head, *rest = transcript.read_text().splitlines(keepends=True)
+    for nudge in (1e-12, -1e-12):
+        header = json.loads(head)
+        transcript.write_text(json.dumps({**header, "dollars": header["dollars"] + nudge}) + "\n" + "".join(rest))
+        result = score(path, played.board)
+        assert result.notes == whole.notes and result.lanes["L01"] == whole.lanes["L01"]
+
+
+def test_a_lane_without_a_transcript_counts_its_turns_and_the_score_says_so(played):
+    path = played.close()
+    whole = score(path, played.board)
+    (path.parent / "lanes" / "L04.jsonl").unlink()  # as if the run had stopped before writing it
+    result = score(path, played.board)
+    assert result.notes[-1] == (
+        "No transcript beside the log (lanes/) for L04: its cost is its model turns only, as the event log does not "
+        "record what is spent outside a turn (a model reply dropped on escalation, for one)."
+    )
+    assert result.tokens == whole.tokens and result.known_dollars == pytest.approx(whole.known_dollars)
+    shutil.rmtree(path.parent / "lanes")
+    result = score(path, played.board)
+    assert result.notes[-1].startswith("No transcript beside the log (lanes/) for L01, L02, L03, L04: their cost is their model turns only")
+    assert result.tokens == whole.tokens
+
+
+MORE = 5000  # tokens a transcript adds if it is wrongly taken in: the score must not show them
+
+
+@pytest.mark.parametrize(
+    ("lane", "change", "problem"),
+    [
+        ("L01", lambda h: {**h, "lane": "L02", "tokens": h["tokens"] + MORE}, "is the transcript of another lane"),
+        ("L01", lambda h: {**h, "challenge": "bravo", "tokens": h["tokens"] + MORE}, "is for another challenge than the one L01 worked in the log"),
+        ("L01", lambda h: {**h, "turns": h["turns"] + 1, "tokens": h["tokens"] + MORE}, "counts 3 turns where the log has 2"),
+        ("L01", lambda h: {**h, "tokens": h["tokens"] - 1}, "counts fewer tokens than L01's turns in the log"),
+        ("L01", lambda h: {**h, "tokens": h["tokens"] + MORE, "dollars": h["dollars"] - 0.001}, "counts fewer dollars than L01's turns in the log"),
+        ("L02", lambda h: {**h, "tokens": h["tokens"] + MORE, "dollars": 0.5}, "has a price for all of L02's cost where the log has a turn with none"),
+        ("L01", lambda h: {**h, "tokens": "lots"}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {**h, "tokens": 10**400}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {**h, "turns": None, "tokens": h["tokens"] + MORE}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {**h, "dollars": -1.0, "tokens": h["tokens"] + MORE}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {k: v for k, v in {**h, "tokens": h["tokens"] + MORE}.items() if k != "dollars"}, "does not have the turns, tokens and dollars of a lane header"),
+    ],
+    ids=["lane", "challenge", "turns", "fewer tokens", "fewer dollars", "priced", "tokens type", "tokens too big", "turns type", "negative dollars", "no dollars"],
+)
+def test_a_transcript_that_does_not_agree_with_the_log_is_left_out_with_a_note(played, lane, change, problem):
+    path = played.close()
+    whole = score(path, played.board)
+    transcript = path.parent / "lanes" / f"{lane}.jsonl"
+    head, *rest = transcript.read_text().splitlines(keepends=True)
+    transcript.write_text(json.dumps(change(json.loads(head))) + "\n" + "".join(rest))
+    result = score(path, played.board)
+    assert f"lanes/{lane}.jsonl {problem}, so it is left out: {lane}'s cost is its model turns only." in result.notes
+    assert result.lanes[lane] == whole.lanes[lane] and result.tokens == whole.tokens
+
+
+@pytest.mark.parametrize(
+    ("content", "problem"),
+    [
+        (b"", "is empty"),
+        (b"\n", "is empty"),
+        (b"not json\n", "does not start with a lane header (its first line is not JSON)"),
+        (b'{"lane": "L01", "tokens": 9', "does not start with a lane header (its first line is not JSON)"),
+        (b"[1, 2]\n", "does not start with a lane header"),
+        (b'{"lane": "L01", "name": "\xff"}\n', "is not text"),
+        (None, "is not a regular file"),
+    ],
+    ids=["empty", "blank", "not json", "cut short", "not an object", "not utf-8", "a directory"],
+)
+def test_a_transcript_with_no_readable_header_is_left_out_with_a_note(played, content, problem):
+    path = played.close()
+    whole = score(path, played.board)
+    transcript = path.parent / "lanes" / "L01.jsonl"
+    if content is None:
+        transcript.unlink()
+        transcript.mkdir()
+    else:
+        transcript.write_bytes(content)
+    result = score(path, played.board)
+    assert f"lanes/L01.jsonl {problem}, so it is left out: L01's cost is its model turns only." in result.notes
+    assert result.lanes["L01"] == whole.lanes["L01"]
+
+
+def test_a_transcript_header_over_the_size_limit_is_not_read(played):
+    path = played.close()
+    transcript = path.parent / "lanes" / "L01.jsonl"
+    transcript.write_text(" " * (MAX_JSON_BYTES + 1) + "\n")
+    result = score(path, played.board)
+    assert f"lanes/L01.jsonl has a first line over {MAX_JSON_BYTES:,} bytes, so it is left out: L01's cost is its model turns only." in result.notes
+
+
+def test_a_lane_id_that_is_not_a_plain_name_is_never_looked_up_as_a_file(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    run = tmp_path / "run"
+    lane = "../outside"
+    (run / "lanes").mkdir(parents=True)
+    planted = {"lane": lane, "challenge": "alpha", "turns": 1, "tokens": 999_999, "dollars": 9.99}
+    (run / "outside.jsonl").write_text(json.dumps(planted) + "\n")  # where lanes/../outside.jsonl would lead
+    path = write_log(
+        run / "events.jsonl",
+        [
+            {"kind": "lane.start", "at": 0, "lane": lane, "challenge": "alpha", "data": {"model": "small"}},
+            {"kind": "turn", "at": 5, "lane": lane, "challenge": "alpha", "data": {"tokens": 10, "dollars": 0.01}},
+        ],
+    )
+    result = score(path, board)
+    assert result.lanes[lane].tokens == 10 and result.dollars == pytest.approx(0.01)
+    assert result.notes[-1].startswith("No transcript beside the log (lanes/) for ../outside:")
+
+
+@pytest.mark.parametrize("fork", [False, True], ids=["one lane", "a fork after it"])
+def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path, fork):
     """Played on a board with no answers (the player confirms each hand submit), then scored
     against the archive's answers: a flag the player wrongly accepted does not count, and a
-    right one they rejected does, each with a note."""
+    right one they rejected does, each with a note. The card's row says the solve was
+    overruled, whichever state the lanes on it ended in (solved, or stopped by the solve)."""
     played = Played(tmp_path, answers=None)
     deck = played.at(0).deck
+    if fork:
+        deck.apply(iv.Fork("L01", "try the other cipher"))  # L03, on alpha: stopped when L01 "solves" it
     deck.report("L01", TurnReport(action="guess", flag=WRONG))
     deck.apply(iv.Approve("L01"))  # submit by hand...
     played.at(50)
@@ -575,6 +815,7 @@ def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path):
     as_run = score(path, played.board)  # the same board, with no answers: the run's verdicts stand
     assert as_run.solved == ("alpha",) and as_run.per_challenge["alpha"].checked == "player"
     assert as_run.per_challenge["bravo"].wrong_submissions == 1
+    assert not any(row.overruled for row in as_run.per_challenge.values())
 
     (played.folder / "answers.sha256.json").write_text(json.dumps({cid: sha(flag) for cid, flag in FLAGS.items()}))
     judged = score(path, load_board(played.folder))
@@ -583,6 +824,12 @@ def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path):
     assert judged.per_challenge["alpha"].wrong_submissions == 1 and judged.wrong_submissions == 1
     assert "The answers file rejects a flag the run took for Alpha Gate, so it is not counted." in judged.notes
     assert "The answers file accepts a flag the run was told was wrong for Bravo Box, so it is counted." in judged.notes
+    alpha = judged.per_challenge["alpha"]
+    assert (alpha.overruled, judged.per_challenge["bravo"].overruled) == (True, False)
+    assert alpha.lanes == (("L01", "L03") if fork else ("L01",))
+    assert [judged.lanes[lane].state for lane in alpha.lanes] == (["solved", "stopped"] if fork else ["solved"])
+    rows = {cells[0]: cells[3] for cells in table(scorecard(judged))}
+    assert rows["Alpha Gate"] == "tried (flag rejected by answers)" and rows["Bravo Box"] == "solved L02"
 
 
 def test_a_verdict_for_a_challenge_the_answers_file_does_not_cover_stands(tmp_path):
@@ -597,6 +844,10 @@ def test_a_verdict_for_a_challenge_the_answers_file_does_not_cover_stands(tmp_pa
     deck.apply(iv.Approve("L01"))
     result = score(played.close(), played.board)
     assert result.solved == ("alpha",) and result.per_challenge["alpha"].checked == "platform"
+    card = scorecard(result)
+    assert {cells[0]: cells[3] for cells in table(card)}["Alpha Gate"] == "solved L01 *"
+    assert "* not checked against an answers file: the run's board said so" in card.splitlines()
+    assert "** not checked" not in card
 
 
 def test_an_explicit_answers_file_outside_the_board_is_used(tmp_path):
@@ -631,6 +882,29 @@ def test_a_teammate_solve_is_recorded_and_earns_us_nothing(tmp_path):
     assert result.solved == () and result.points == 0
     assert result.per_challenge["charlie"].teammate == "wren"
     assert result.lanes[result.per_challenge["charlie"].lanes[0]].state == "stopped"
+
+
+def test_a_teammate_who_also_solved_one_of_ours_does_not_take_its_row(tmp_path):
+    folder = make_board(tmp_path / "archive")
+    board = load_board(folder)
+    clock, driver = Clock(), Driver()
+    config = DeckConfig(event=board.event, team=True, max_lanes=4, flag_format=FLAG_FORMAT, models=MODELS)
+    deck = Deck(config, driver, clock, AnswerVerifier(board.answers))
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    Release(deck, board, load_timeline(board), cheapest_first(board)).tick()
+    clock.t = 30.0
+    deck.report("L01", TurnReport(action="solve", flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    clock.t = 40.0
+    deck.teammate_solved("alpha", "wren")  # after us
+    log.close()
+    teammate = [e for e in map(json.loads, lines_of(log.path)) if e["kind"] == "teammate"]
+    assert [(e["challenge"], e["data"]["solved"]) for e in teammate] == [("alpha", True)]
+    result = score(log.path, board)
+    alpha = result.per_challenge["alpha"]
+    assert (alpha.solved, alpha.solved_by, alpha.teammate) == (True, "L01", None)
+    assert {cells[0]: cells[3] for cells in table(scorecard(result))}["Alpha Gate"] == "solved L01"
 
 
 # ---------------------------------------------------------------------- logs that are odd or wrong
@@ -713,6 +987,61 @@ def test_a_solve_the_log_gives_no_lane_is_the_players_own(tmp_path):
     assert "solved by you" in scorecard(result)
 
 
+def write_log(path: Path, events: list[dict]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [{"kind": "run-start"}, {"kind": "release", "at": 0, "data": {"challenges": list(CHALLENGES)}}, *events, {"kind": "run-end"}]
+    path.write_text("".join(json.dumps(event) + "\n" for event in lines), encoding="ascii")
+    return path
+
+
+def submit(at: float, lane: str | None, cid: str, flag: str, correct: bool) -> dict:
+    return {"kind": "submit", "at": at, "lane": lane, "challenge": cid, "data": {"flag": flag, "correct": correct, "by": "platform"}}
+
+
+def test_the_first_accepted_submission_is_the_solve(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    twice = [submit(30, "L01", "alpha", FLAGS["alpha"], True), submit(60, "L02", "alpha", FLAGS["alpha"], True)]
+    alpha = score(write_log(tmp_path / "events.jsonl", twice), board).per_challenge["alpha"]
+    assert (alpha.solved_at, alpha.solved_by) == (30.0, "L01")
+
+
+def test_a_note_the_log_gives_reason_for_twice_is_given_once(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    wrongly = [submit(10, "L01", "bravo", FLAGS["bravo"], False), submit(20, "L01", "bravo", FLAGS["bravo"], False)]
+    result = score(write_log(tmp_path / "events.jsonl", wrongly), board)
+    assert result.solved == ("bravo",) and result.per_challenge["bravo"].solved_at == 10.0
+    note = "The answers file accepts a flag the run was told was wrong for Bravo Box, so it is counted."
+    assert result.notes.count(note) == 1
+
+
+def test_a_submit_from_a_log_older_than_its_by_field_is_the_platforms_verdict(tmp_path):
+    """Before submit events said who judged a flag, only the platform did."""
+    board = load_board(make_board(tmp_path / "archive", answers=None))
+    old = submit(30, "L01", "alpha", FLAGS["alpha"], True)
+    del old["data"]["by"]
+    result = score(write_log(tmp_path / "events.jsonl", [old]), board)
+    assert result.per_challenge["alpha"].checked == "platform"
+    assert {cells[0]: cells[3] for cells in table(scorecard(result))}["Alpha Gate"] == "solved L01 *"
+
+
+def test_a_token_count_bigger_than_any_run_makes_is_refused_not_a_crash(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+
+    def log_with(tokens: int) -> Path:
+        return write_log(
+            tmp_path / f"run-{len(str(tokens))}-{tokens % 10}" / "events.jsonl",
+            [
+                {"kind": "lane.start", "at": 0, "lane": "L01", "challenge": "alpha", "data": {"model": "small"}},
+                {"kind": "turn", "at": 1, "lane": "L01", "challenge": "alpha", "data": {"tokens": tokens, "dollars": 0.01}},
+            ],
+        )
+
+    assert "Spent 1000000000.0M tokens" in scorecard(score(log_with(MAX_COUNT), board))
+    for tokens in (MAX_COUNT + 1, 10**400):  # 10**400 is too big for a float: the card could not show it
+        with pytest.raises(ScoreError, match=f"line 4: the turn event's data.tokens must be a token count \\(a whole number from 0 to {MAX_COUNT:,}\\)"):
+            score(log_with(tokens), board)
+
+
 def test_a_log_from_another_board_is_an_error_naming_the_strangers(played):
     path = played.close()
     other = load_board(
@@ -737,21 +1066,42 @@ def test_a_log_that_is_missing_a_directory_or_binary_is_an_error(tmp_path):
         score(binary, board)
 
 
-def test_untrusted_ids_in_a_log_error_cannot_reach_the_terminal_raw(tmp_path):
+NASTY = "zulu\x1b]0;owned\x07\x1b[2J\nforged: solved 99 of 99"  # sets the window title, clears the screen, forges a line
+HOSTILE_EVENTS = {
+    "an id": {"kind": "release", "at": 0, "data": {"challenges": [NASTY]}},
+    "a kind, with no at": {"kind": NASTY},
+    "a kind, with a bad at": {"kind": NASTY, "at": -1},
+    "a kind, with bad data": {"kind": NASTY, "at": 1, "data": "x"},
+}
+
+
+def hostile_log(folder: Path, case: str) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "events.jsonl"
+    path.write_text('{"kind": "run-start"}\n' + json.dumps(HOSTILE_EVENTS[case]) + "\n", encoding="ascii")
+    return path
+
+
+@pytest.mark.parametrize("case", list(HOSTILE_EVENTS))
+def test_untrusted_text_in_a_log_error_cannot_reach_the_terminal_raw(tmp_path, case):
     board = load_board(make_board(tmp_path / "archive"))
-    path = tmp_path / "events.jsonl"
-    bad = "zulu\x1b]0;owned\x07\nforged"
-    path.write_text(
-        '{"kind": "run-start"}\n'
-        + json.dumps({"kind": "release", "at": 0, "data": {"challenges": [bad]}})
-        + "\n",
-        encoding="ascii",
-    )
+    path = hostile_log(tmp_path / "run", case)
     with pytest.raises(ScoreError) as caught:
         score(path, board)
     message = str(caught.value)
     assert "\x1b" not in message and "\x07" not in message and "\n" not in message
-    assert "zulu^[]0;owned^G" in message
+    assert message.startswith(f"{path}: ") and "zulu^[]0;owned^G^[[2J ⏎ forged" in message
+
+
+def test_a_kind_flightdeck_writes_is_named_plainly_in_an_error(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    path = tmp_path / "events.jsonl"
+    path.write_text('{"kind": "run-start"}\n{"kind": "lane.start", "at": 1}\n', encoding="ascii")
+    with pytest.raises(ScoreError, match=r"line 2: the lane\.start event has no lane \(a lane id\)$"):
+        score(path, board)
+    path.write_text('{"kind": "run-start"}\n{"kind": "lane.starts", "at": 1, "data": []}\n', encoding="ascii")
+    with pytest.raises(ScoreError, match=r'line 2: the "lane\.starts" event\'s data must be an object$'):
+        score(path, board)
 
 
 # ---------------------------------------------------------------------- the scorecard
@@ -791,6 +1141,78 @@ def test_the_scorecard_columns_line_up(played):
         assert row[tokens_end] == " ", row
 
 
+SEVEN = {
+    **CHALLENGES,
+    "echo": ("Echo Engine", "pwn", 400),
+    "foxtrot": ("Foxtrot Fax", "misc", 150),
+    "golf": ("Golf Gopher", "misc", 250),
+}
+
+
+def table(card: str) -> list[list[str]]:
+    """The scorecard's table rows (below its header, above the key) as cells."""
+    lines = card.splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith("challenge "))
+    end = lines.index("took: release to solve · iv: your interventions · wrong: wrong flags submitted")
+    return [re.split(r"\s{2,}", line.strip()) for line in lines[header + 1 : end]]
+
+
+def test_the_scorecard_rows_go_solved_in_solve_order_then_teammate_tried_released_and_never_released(tmp_path):
+    folder = make_board(tmp_path / "archive", SEVEN, timeline={"waves": [{"at": 99_999, "ids": ["foxtrot"]}]})
+    board = load_board(folder)
+    clock, driver = Clock(), Driver()
+    config = DeckConfig(event=board.event, team=True, max_lanes=6, flag_format=FLAG_FORMAT, models=MODELS)
+    deck = Deck(config, driver, clock, AnswerVerifier(board.answers))
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    every_but_echo = lambda ids: [QueueEntry(cid, MODELS[0]) for cid in ids if cid != "echo"]  # noqa: E731
+    Release(deck, board, load_timeline(board), every_but_echo).tick()
+    assert [lane.challenge_id for lane in deck.lanes.values()] == ["alpha", "bravo", "charlie", "delta", "golf"]
+    clock.t = 100.0
+    deck.report("L02", TurnReport(action="solve", tokens=100, flag=FLAGS["bravo"]))
+    deck.apply(iv.Approve("L02"))  # bravo, later on the board than alpha, is solved first
+    clock.t = 150.0
+    deck.report("L03", TurnReport(action="strings chart.bin", tokens=300))
+    deck.report("L04", TurnReport(action="objdump -d drift", tokens=5000))
+    clock.t = 200.0
+    deck.report("L01", TurnReport(action="solve", tokens=100, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    clock.t = 250.0
+    deck.teammate_solved("golf", "wren")
+    log.close()
+
+    result = score(log.path, board)
+    assert result.solved == ("bravo", "alpha") and result.first_solve_at == 100.0
+    assert [(cells[0], cells[3]) for cells in table(scorecard(result))] == [
+        ("Bravo Box", "solved L02"),
+        ("Alpha Gate", "solved L01"),
+        ("Golf Gopher", "teammate wren"),
+        ("Delta Drift", "tried (open)"),  # tried: most tokens first, and still open when the log ends
+        ("Charlie Chart", "tried (open)"),
+        ("Echo Engine", "not tried"),
+        ("Foxtrot Fax", "not released"),
+    ]
+
+
+def test_solves_at_the_same_time_keep_the_order_of_the_log(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    clock, driver = Clock(), Driver()
+    config = DeckConfig(event=board.event, max_lanes=4, flag_format=FLAG_FORMAT, models=MODELS, submit="auto")
+    deck = Deck(config, driver, clock, AnswerVerifier(board.answers))
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    Release(deck, board, load_timeline(board), cheapest_first(board)).tick()  # alpha L01, charlie L02, bravo L03, delta L04
+    clock.t = 50.0
+    deck.report("L03", TurnReport(action="solve", flag=FLAGS["bravo"]))  # submitted at once: bravo first in the log
+    deck.report("L01", TurnReport(action="solve", flag=FLAGS["alpha"]))  # then alpha, at the same deck time
+    log.close()
+    records = [json.loads(line) for line in lines_of(log.path)]
+    assert [(r["challenge"], r["at"]) for r in records if r["kind"] == "submit"] == [("bravo", 50.0), ("alpha", 50.0)]
+    result = score(log.path, board)
+    assert result.solved == ("bravo", "alpha") and result.first_solve_at == 50.0
+    assert [cells[0] for cells in table(scorecard(result))][:2] == ["Bravo Box", "Alpha Gate"]
+
+
 def test_the_scorecard_never_shows_a_flag(played):
     card = scorecard(score(played.close(), played.board))
     for flag in [*FLAGS.values(), WRONG]:
@@ -814,6 +1236,18 @@ def test_names_in_the_scorecard_cannot_forge_a_line_or_reach_the_terminal(tmp_pa
     assert card.splitlines()[0] == "Sample Archive: solved 0 of 2 · 0 of 250 points"
     assert sum(line.startswith("Sample Archive:") for line in card.splitlines()) == 1
     assert "Alpha ⏎ Sample Archive:…" in card and "Bravo^[[2J^[[31m" in card  # folded, then cut at 24 cells
+
+
+def test_a_name_as_wide_as_its_column_is_shown_whole_and_a_wider_one_is_cut(tmp_path):
+    wide = {"alpha": ("A" * NAME_CELLS, "misc", 10), "bravo": ("B" * (NAME_CELLS + 1), "misc", 10)}
+    board = load_board(make_board(tmp_path / "archive", wide, answers=None))
+    deck, _, _ = make_deck(board)
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    Release(deck, board, load_timeline(board), lambda ids: []).tick()
+    log.close()
+    names = [cells[0] for cells in table(scorecard(score(log.path, board)))]
+    assert names == ["A" * NAME_CELLS, "B" * (NAME_CELLS - 1) + "…"]
 
 
 def test_a_run_with_no_solve_says_so(tmp_path):
@@ -938,6 +1372,29 @@ def test_score_with_a_board_that_does_not_load_fails_with_the_reason(played, tmp
     path = played.close()
     result = invoke("score", str(path.parent), "--board", str(tmp_path / "no-board-here"))
     assert result.exit_code == 2 and "no such directory" in result.stderr
+
+
+@pytest.mark.parametrize("case", list(HOSTILE_EVENTS))
+def test_score_of_a_hostile_log_prints_its_reason_as_one_safe_line(tmp_path, case):
+    board = make_board(tmp_path / "archive")
+    log = hostile_log(tmp_path / "run", case)
+    result = invoke("score", str(log.parent), "--board", str(board))
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "\x1b" not in result.stderr and "\x07" not in result.stderr and result.stderr.count("\n") == 1
+    assert result.stderr.startswith(f"flightdeck: {log}: ") and "zulu^[]0;owned^G^[[2J ⏎ forged" in result.stderr
+
+
+def test_score_folds_a_reason_whoever_wrote_it(played, monkeypatch):
+    path = played.close()
+
+    def missing():
+        raise FileNotFoundError(f"the practice set is missing from this installation (looked in /x/{NASTY})")
+
+    monkeypatch.setattr(practice_set, "practice_dir", missing)
+    result = invoke("score", str(path.parent))
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "\x1b" not in result.stderr and "\x07" not in result.stderr and result.stderr.count("\n") == 1
+    assert "(looked in /x/zulu^[]0;owned^G^[[2J ⏎ forged: solved 99 of 99); name the board" in result.stderr
 
 
 def test_score_is_listed_in_the_help_with_its_arguments():
