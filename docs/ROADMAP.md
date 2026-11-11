@@ -36,7 +36,7 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 
 **Exit:** the player plays the practice set through the console and it feels right.
 
-## M2: bring what you have
+## M2: bring what you have (built)
 
 - External agent drivers: `claude` and `codex` CLIs as subprocess lanes; evaluate ACP for others.
 - L1 plugin contract (`SolverResult`) and runner; script importer that wraps a folder of scripts with a
@@ -45,7 +45,11 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Pre-flight: event profile + rules → stage policies (auto/confirm/manual/off); egress allowlist.
 - Team mode: claims, teammate-solved stop, live-box courtesy.
 
-## M3: detectors and practice
+Not done in M2: evaluating ACP for other agents; a per-origin egress allowlist (a docker lane gets
+no network, or the open bridge network once its instance is allowed); a real capture of the
+`claude` and `codex` streams (the driver is tested against a fake CLI built from their docs).
+
+## M3: detectors and practice (built)
 
 - Real detectors for every alert in the spec (rules first; an optional cheap-model judge for
   "ignores the hint").
@@ -66,7 +70,12 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Practice mode: replay an archived board offline, scored against an answers file kept outside the
   handout.
 
-## M4: post-flight and build
+Not done in M3: Needle is an adapter only (one job: which of a few named options fits a text), not
+wired into runs, because the spike found it no better than keyword rules; the hint judge is built
+but not switched on in runs (it would spend tokens); MLX lanes are untested against a real MLX
+server (init and doctor support it).
+
+## M4: post-flight and build (built)
 
 - Post-flight timeline: where lanes stalled, where an intervention helped, cost per solve.
 - Gap report: which challenges no L1 solver reached and why.

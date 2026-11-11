@@ -4,6 +4,61 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+### M4: after a run
+
+- `flightdeck report RUN_DIR`: the post-flight report (where lanes stalled, which of your
+  interventions helped, cost per solve), written to `report.md` in the run folder.
+- `flightdeck writeups RUN_DIR`: a writeup draft per solved challenge from its lane's transcript
+  (`--redact` hides the flags).
+- `flightdeck gaps RUN_DIR`: the challenges no L1 solver solved, and why; with `--pack`, which of
+  your engines would reach them now.
+- Build mode: `flightdeck build gap CHALLENGE_DIR --pack PACK` writes a new engine stub, its
+  manifest and a test that passes only when a raw handout reaches the engine and it finds the
+  flag (kept as a hash); `flightdeck build check PACK` runs those tests (`[build]` extra).
+
+### M3: detectors and practice
+
+- The course alerts are real now: effort against a challenge's points and solves, ignoring the
+  description's hint, the wrong direction on web, loops and stalls. An alert you just answered
+  stays quiet for a few turns.
+- Escalation and the long-context refresh hand the model a compact summary of the lane: its
+  plan, newest steps, files, flags and what became of them, alerts and your messages.
+- A flag the platform rejected, or that you declined, is never asked about or submitted again on
+  that challenge, by any lane, and an escalated model hears about it.
+- Practice mode: `flightdeck score RUN_DIR` scores a past run against the board's answers, and a
+  run on a board with answers ends with that scorecard.
+- `flightdeck eval-local`: measure a local model (Ollama, an MLX server) against the rules on
+  small jobs before trusting it. Cactus Needle, a small on-device model, is an optional extra
+  (`pip install "ctf-flightdeck[cactus]"`) with its telemetry turned off; nothing uses it unless
+  you ask.
+
+### M2: bring what you have
+
+- L1 solver packs: your no-model solvers, each with a small manifest saying which challenges it
+  fits (`flightdeck l1 import` writes them for a folder of scripts, without changing the scripts).
+  With `[l1] pack` in the config (or `--pack`), a lane runs the engines routed to its challenge
+  before its first model call; a flag one finds waits for your approval, so a solve can cost no
+  tokens at all.
+- `flightdeck preflight event.toml`: what an event's rules allow, and how far flightdeck goes on
+  its own at each stage (pull, L1, agents, submit, live instance).
+- The live instance policy: under `confirm` a lane asks before it may reach its challenge's
+  instance, and until you say yes its container has no network.
+- `flightdeck play FOLDER --event event.toml`: play an event by its rules. A CTFd board is pulled
+  into the folder, new waves are added as they appear, the flags you approve are submitted
+  through CTFd, and your team's solves stop your lanes on those challenges. The token comes from
+  the environment variable the profile names and goes only to that CTFd.
+- Team mode: `flightdeck team init DIR`, then `--team-dir DIR`: teammates share claims,
+  live-box holds and solves through a synced folder.
+- `--agent claude` or `--agent codex`: lanes are that coding-agent CLI, with its own login and
+  models (`[agents]` in the config), behind the same controls; `flightdeck doctor --agent claude`
+  checks it first.
+
+### Easier to start
+
+- `flightdeck` on its own says what it is and the next step on your machine; a missing config
+  points at `flightdeck init`; a path under a `~user` that does not exist is a message, not a
+  traceback.
+
 ### M1: a working slice
 
 - `flightdeck play BOARD`: agent lanes play a folder of challenges against an OpenAI-compatible API

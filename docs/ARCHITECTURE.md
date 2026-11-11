@@ -84,9 +84,19 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **Prompt caching must survive routing.** With OpenRouter, use a stable `session_id` per lane; setting
   `provider.order` disables sticky routing.
 
-## Solver contract (M2, to be ported and generalised)
+## M2 to M4 in a run
 
-`SolverResult`: status `solved | candidate | none | unsure | blocked`, flags, evidence, cost, notes;
-`blocked` names what is missing. Engines take a normalised challenge (read-only handout dir plus
-`challenge.json`) and declare their inputs in a manifest. In-process Python or subprocess-with-JSON.
-See `PORTING.md` for the source.
+| Piece | Where | Job |
+|---|---|---|
+| L1 packs | `l1/` | `SolverResult` (status `solved | candidate | none | unsure | blocked`, flags, evidence, cost, notes; JSON with a schema number), engine manifests (`<name>.manifest.toml`: id, entry, tools it needs, timeout, routes by category, keywords and files), the router (which engines a challenge reaches, and why), the runner (each engine in its own copy of the handout, an allowlisted environment, its own process group, a timeout), the importer (manifests for a folder of plain scripts, never touching them). `flightdeck l1 list | route | run | import`. |
+| L1 stage | `agent/l1stage.py` | With `[l1] pack` (or `--pack`), a lane runs the engines routed to its challenge before its first model call. Each result is an `l1` event; a flag one finds waits for the player like any candidate; the model's context says what they found, fenced as data. Engines run on this machine whatever the lanes' runtime: they are the player's code. |
+| Detectors | `detect/` | Rules first: effort against points and solves, ignoring the description's hint (a technique lexicon, `hints.toml`), wrong direction on web, loops, stalls; an optional cheap-model judge may confirm a hint signal. `detect.Watch` runs them after every turn and raises or clears alerts through the deck; an alert the player just answered stays quiet for a few turns. Every real run has one. |
+| Lane summary | `core/summary.py` | What a lane did, in at most 3000 characters (plan, the newest steps, files, flags and what became of them, alerts, the player's messages). Escalation and the context refresh hand it to the model, fenced as data. |
+| Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins the bridge network. `off`: never. Pre-flight sets it from the event profile. |
+| Known-wrong flags | `core/deck.py` | A flag the platform rejected, or the player declined, is remembered per challenge: proposed again it raises no approval and is never submitted again, and an escalation's summary lists it. |
+| Pre-flight | `preflight.py` | The event profile (`event.toml`): what the rules allow, and a policy per stage (`pull`, `l1`, `agents`, `submit`, `instance`), never looser than the rules. `flightdeck preflight` checks it. |
+| CTFd | `platform/ctfd.py` | Pulls a CTFd board into a folder board (waves add new challenges), submits approved flags (`CTFdVerifier`, never retried), reads the team's solves. The token comes from the variable the profile names and goes only to that CTFd. |
+| Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
+| Local models | `localmodel.py`, `needle.py` | `flightdeck eval-local` scores a local OpenAI-compatible server against the rules on hint and summary jobs. `needle.py` adapts Cactus Needle (`pip install "ctf-flightdeck[cactus]"`), a small on-device model, for picking among a few named options; off unless asked for, its telemetry turned off. |
+| Practice mode | `practice_mode.py` | Scores a past run against the board's answers (`flightdeck score`); replays an archived board's release timeline. |
+| Post-flight | `postflight.py`, `writeup.py` | `flightdeck report RUN_DIR` (where lanes stalled, which interventions helped, cost per solve) and `flightdeck writeups RUN_DIR` (a draft per solved challenge, from its transcript). |
