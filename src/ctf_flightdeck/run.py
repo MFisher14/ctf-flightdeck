@@ -32,7 +32,7 @@ error.
 
 The team channel (team.py): mirror() writes our claims, solves and live-box holds to the
 team folder as the deck makes them, and the team watcher applies the teammates' marks. A
-challenge a teammate solved or claimed, by the folder, is not queued.
+challenge the team folder shows as solved, or claimed by a teammate, is not queued.
 """
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ class CTFdLink:
     wave: int = 1  # the board as first pulled is wave 1
     warned: set[str] = field(default_factory=set)  # solved on CTFd and told to the player (solo mode)
     reported: set[str] = field(default_factory=set)  # pull problems told to the player
-    problems: dict[str, str] = field(default_factory=dict)  # "waves" | "solves" -> the failure shown last
+    problems: dict[str, str] = field(default_factory=dict)  # what failed (a poll, or using its answer) -> the failure shown last
 
     def solved_board_ids(self) -> list[str]:
         """The board ids of the challenges CTFd lists as solved."""
@@ -321,13 +321,17 @@ class Run:
             try:
                 result = await pull(link.client, link.folder, event=link.event, flag_format=link.flag_format)
             except Exception as exc:  # CTFdError, BoardError, OSError, or a bug: say so, and try again later
-                self._ctfd_problem("waves", f"could not pull new challenges from CTFd: {_reason(exc)}; tried again in {every:g} s")
+                self._ctfd_problem(
+                    "waves", f"could not pull new challenges from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
+                )
                 continue
             link.problems.pop("waves", None)
             try:
                 self._wave(result)
             except Exception as exc:  # a bug: say so, and keep pulling
-                self._ctfd_problem("waves", f"could not release the new challenges from CTFd: {type(exc).__name__}: {exc}")
+                self._ctfd_problem("release", f"could not release the new challenges from CTFd: {type(exc).__name__}: {exc}")
+            else:
+                link.problems.pop("release", None)
 
     def _wave(self, result: Pull) -> None:
         link = self.ctfd
@@ -368,14 +372,18 @@ class Run:
             try:
                 solved = await link.client.solved_ids()
             except Exception as exc:  # CTFdError, or a bug: say so, and try again later
-                self._ctfd_problem("solves", f"could not read the solves from CTFd: {_reason(exc)}; tried again in {every:g} s")
+                self._ctfd_problem(
+                    "solves", f"could not read the solves from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
+                )
                 continue
             link.problems.pop("solves", None)
             link.solved = solved
             try:
                 self._apply_solves()
             except Exception as exc:  # a bug: say so, and keep reading
-                self._ctfd_problem("solves", f"could not apply the solves from CTFd: {type(exc).__name__}: {exc}")
+                self._ctfd_problem("apply", f"could not apply the solves from CTFd: {type(exc).__name__}: {exc}")
+            else:
+                link.problems.pop("apply", None)
 
     def _ctfd_problem(self, kind: str, text: str) -> None:
         """A failed CTFd poll, as a console warning: once while the same failure lasts."""

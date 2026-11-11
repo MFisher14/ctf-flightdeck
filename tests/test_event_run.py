@@ -611,9 +611,9 @@ def test_a_failed_poll_is_one_warning_while_it_lasts_and_the_run_goes_on(tmp_pat
     texts = sorted(w["text"] for w in ctfd_warnings(run))  # the two tasks fail in either order
     assert texts == [
         f"could not pull new challenges from CTFd: CTFd at {fake.base_url} answered HTTP 400 (Bad Request) at "
-        "GET /api/v1/challenges (CTFd says: the database is broken); tried again in 0.05 s",
+        "GET /api/v1/challenges (CTFd says: the database is broken); flightdeck tries again in 0.05 s",
         f"could not read the solves from CTFd: CTFd at {fake.base_url} answered HTTP 400 (Bad Request) at "
-        "GET /api/v1/teams/me/solves (CTFd says: the database is broken); tried again in 0.05 s",
+        "GET /api/v1/teams/me/solves (CTFd says: the database is broken); flightdeck tries again in 0.05 s",
     ]
     assert run.deck.challenges["warmup"].solved_by == YOUR_TEAM
 
