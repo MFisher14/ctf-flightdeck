@@ -105,7 +105,8 @@ def test_the_anthropic_entry_is_inits_ladder_and_prices_imported_not_copied(monk
     monkeypatch.setitem(setup.ANTHROPIC_PRICES, "claude-opus-5-5", Price(input=1.0, output=2.0))
     changed = load_catalog().get("anthropic")
     assert changed.ladder == ("claude-haiku-5-5", "claude-opus-5-5")
-    assert changed.prices["claude-opus-5-5"] == Price(input=1.0, output=2.0)
+    assert dict(changed.prices) == {"claude-haiku-5-5": setup.ANTHROPIC_PRICES["claude-haiku-5-5"],
+                                    "claude-opus-5-5": Price(input=1.0, output=2.0)}  # no model init no longer writes
 
 
 def test_openrouter_names_no_models_and_says_its_providers_classifiers_still_apply():
