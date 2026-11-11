@@ -35,6 +35,9 @@ Claude Code: `claude -p --input-format stream-json --output-format stream-json -
 - SIGINT during a turn ends the turn: a result event (subtype error_during_execution), then it
   waits for the next message (ASSUMED). SIGINT while it waits does nothing (ASSUMED). stdin
   closed: it exits 0 (ASSUMED). SIGTERM: it exits (status 143).
+- Its own configuration (user settings: hooks, env such as ANTHROPIC_BASE_URL) is
+  settings.json in $CLAUDE_CONFIG_DIR, else in $HOME/.claude (ASSUMED: CLAUDE_CONFIG_DIR as
+  the docs list it). The fake records the folder and that file's text at start.
 
 Codex: `codex exec --json ...`
 - Reads its prompt from stdin to the end: an open stdin hangs it. Options go before
@@ -50,6 +53,9 @@ Codex: `codex exec --json ...`
 - `resume <thread_id>` continues a thread; an unknown thread: exit 1.
 - -c shell_environment_policy.inherit=core: commands get only the core variables.
 - SIGINT: exit 1 at once, with no turn event.
+- Its own configuration is config.toml in $CODEX_HOME, else in $HOME/.codex (codex's docs);
+  a CODEX_HOME that is not an existing folder: exit 1 (ASSUMED: codex resolves the path it
+  names). The fake records the folder and that file's text at start.
 
 Script (JSON): {"turns": [TURN, ...]}, one TURN per claude user message or per codex
 process, in order across processes. When the turns run out, the fake answers nothing more
@@ -184,6 +190,17 @@ def wait_forever() -> None:
         time.sleep(3600)
 
 
+def own_config(variable: str, default: str, name: str) -> tuple[str, str | None]:
+    """(the folder a CLI reads its own configuration from: $variable, else $HOME/default;
+    the text of the file `name` there, None if there is none)."""
+    folder = os.environ.get(variable) or os.path.join(os.environ.get("HOME", ""), default)
+    try:
+        with open(os.path.join(folder, name), encoding="utf-8") as f:
+            return folder, f.read()
+    except OSError:
+        return folder, None
+
+
 # ---------------------------------------------------------------------- claude
 
 
@@ -240,8 +257,9 @@ def claude(args: list[str]) -> None:
     tools = opts.listed("--tools") if "--tools" in opts.values else {"Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch", "Task"}
     allowed = opts.listed("--allowedTools", "--allowed-tools")
     model = opts.one("--model", "claude-default")
+    config_dir, settings = own_config("CLAUDE_CONFIG_DIR", ".claude", "settings.json")
     record("start", cli="claude", argv=args, cwd=os.getcwd(), env=dict(os.environ), pgid=os.getpgrp(),
-           files=sorted(os.listdir(".")))
+           files=sorted(os.listdir(".")), config_dir=config_dir, settings=settings)
     session = str(uuid.uuid4())
     state = {"in_turn": False, "cost": 0.0, "init": False}
 
@@ -445,7 +463,12 @@ class CodexOptions:
 
 def codex(args: list[str]) -> None:
     opts = CodexOptions(args)
-    record("start", cli="codex", argv=args, cwd=os.getcwd(), env=dict(os.environ), pgid=os.getpgrp())
+    named = os.environ.get("CODEX_HOME")
+    if named and not os.path.isdir(named):
+        fail(f"Error: CODEX_HOME points to {named!r}, but that path does not exist", 1)
+    codex_home, config = own_config("CODEX_HOME", ".codex", "config.toml")
+    record("start", cli="codex", argv=args, cwd=os.getcwd(), env=dict(os.environ), pgid=os.getpgrp(),
+           codex_home=codex_home, config=config)
 
     def on_sigint(signum, frame):
         record("signal", sig="SIGINT")
