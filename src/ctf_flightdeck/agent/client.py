@@ -30,6 +30,7 @@ import json
 import math
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from http import HTTPStatus
 
@@ -191,8 +192,13 @@ class ModelClient:
         session_id: str,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        before_retry: Callable[[], Awaitable[None]] | None = None,
     ) -> Reply:
-        """The model's next message. Raises ModelError when the call fails for good."""
+        """The model's next message. Raises ModelError when the call fails for good.
+
+        before_retry, if given, is awaited before each retry, after the backoff: the agent
+        driver holds a paused lane's retries there, and stops them (by raising) once the
+        call no longer matters. Whatever it raises comes out of chat() as it is."""
         content = _request_body(model, messages, tools, session_id, max_tokens, temperature)
         if self._closed:
             raise RuntimeError("the model client is closed")
@@ -214,6 +220,8 @@ class ModelClient:
                 return self._reply(response)
             if attempt + 1 < tries:
                 await asyncio.sleep(wait)
+                if before_retry is not None:
+                    await before_retry()
         raise self._error(f"{failure}; gave up after {tries} tries", status=status, retryable=True)
 
     async def _post(self, content: bytes) -> tuple[httpx.Response | None, str, bool]:

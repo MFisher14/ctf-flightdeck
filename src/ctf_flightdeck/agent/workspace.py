@@ -651,7 +651,8 @@ class DockerWorkspace:
         self.pids_limit = pids_limit
         self.workdir = CONTAINER_ROOT  # root as the lane's commands see it
         self.python_missing: str | None = None  # set by prepare() when the image has no python3: why the python tool cannot run
-        self._started = False  # our container exists: close() must remove it
+        self._started = False  # our container exists, or may: close() must remove it
+        self._starting: asyncio.Future[tuple[int, str]] | None = None  # `docker run`, which a cancel must not cut off
         self._ready = False
         self._closed = False
         self._clients: set[asyncio.subprocess.Process] = set()  # docker exec clients still running
@@ -669,16 +670,21 @@ class DockerWorkspace:
         if code == 0:
             raise WorkspaceError(self._name_in_use())
         await asyncio.to_thread(copy_handout, self.handout, self.root)
-        code, out = await _docker(*self.run_args())
+        # From here the container may exist (the name was free a moment ago, so whatever has
+        # it is ours). `docker run` carries on in the docker CLI even if this lane is
+        # cancelled, so it runs as a task of its own, which close() waits for before it
+        # removes the container.
+        self._started = True
+        self._starting = asyncio.ensure_future(_docker(*self.run_args()))
+        code, out = await asyncio.shield(self._starting)
         if code != 0:
             if "already in use" in out:
-                raise WorkspaceError(self._name_in_use())  # someone else's container: never remove it
-            self._started = True  # the name was free a moment ago, so whatever has it now is ours
+                self._started = False  # someone else's container: never remove it
+                raise WorkspaceError(self._name_in_use())
             await self.close()
             if "No such image" in out:
                 raise WorkspaceError(self._image_missing())
             raise WorkspaceError(f"docker run failed for image {self.image}: {_first_line(out)}")
-        self._started = True
         code, _ = await _docker("exec", self.name, "bash", "-c", "command -v timeout")
         if code != 0:
             await self.close()
@@ -726,6 +732,13 @@ class DockerWorkspace:
         for client in list(self._clients):
             if client.returncode is None:
                 _kill_group(client.pid)
+        if self._starting is not None:
+            try:
+                code, out = await asyncio.shield(self._starting)  # a `docker run` still going: let it end first
+            except Exception:  # it failed or timed out: whatever it left is removed below
+                code, out = -1, ""
+            if code != 0 and "already in use" in out:
+                self._started = False  # someone else's container: never remove it
         if not self._started:
             return
         code, out = await _docker("rm", "-f", self.name)
@@ -736,7 +749,8 @@ class DockerWorkspace:
     def interactive_shell(self) -> ShellSpec:
         if self._closed or not self._ready:
             raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
-        return ShellSpec(["docker", "exec", "-it", "-w", CONTAINER_ROOT, self.name, "bash", "-i"], None, None)
+        history = f"HISTFILE={CONTAINER_ROOT}/{PRIVATE}/takeover_history"  # what the player ran, for the lane to hear
+        return ShellSpec(["docker", "exec", "-it", "-e", history, "-w", CONTAINER_ROOT, self.name, "bash", "-i"], None, None)
 
     def run_args(self) -> list[str]:
         """The `docker run` arguments that start this lane's container."""

@@ -5,26 +5,44 @@ deck's thread (the LaneDriver contract in core/driver.py). A turn is one model c
 reply's tool calls run in the lane's workspace, their results go back into the lane's
 context, and the turn is reported to the deck (tokens, cost, the step, changed files, a
 candidate flag). The deck applies the rules (approvals, caps, the flag format); the loop
-only calls the model while the lane is RUNNING, and waits otherwise.
+calls the model, and runs a tool call, only while the lane is RUNNING, and waits otherwise.
 
 Each lane starts with a fresh context: the fixed system prompt, then the challenge brief.
 Escalation starts a fresh context too, on the stronger model, with the deck's summary.
+
+Escalation and take-over are turn boundaries. Each bumps the lane's generation, and a reply
+asked for in an older generation runs no further tool call. After an escalation none of
+it goes into the new context (it belongs to the old one). After a take-over the calls it
+had not run yet are answered "not run", and the next call tells the model what the player
+did. A reply that arrives after either is dropped (its cost still counts).
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from ..core.driver import TurnReport
+from ..core.driver import TakeoverRefused, TurnReport
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..pricing import Price, call_cost
+from ..text import untrusted
 from . import prompts
 from .client import ModelClient, ModelError, Reply
 from .tools import TOOLS, Toolbox, ToolResult
-from .workspace import ShellSpec, Snapshot, Workspace, WorkspaceError, changed_files, take_snapshot
+from .workspace import (
+    PRIVATE,
+    ShellSpec,
+    Snapshot,
+    Workspace,
+    WorkspaceError,
+    changed_files,
+    open_inside,
+    take_snapshot,
+    write_inside,
+)
 
 WorkspaceFactory = Callable[[Lane, Challenge], Workspace]
 """Makes the workspace for a lane: HostWorkspace or DockerWorkspace, per `containerized`."""
@@ -32,6 +50,20 @@ WorkspaceFactory = Callable[[Lane, Challenge], Workspace]
 MAX_SESSION = 256  # OpenRouter's limit for session_id
 MAX_FILES_PER_TURN = 50  # an unpacked archive can change thousands; the console shows the first 50
 COMPACT_AT = 50_000  # prompt tokens: past this, a lane continues in a fresh context with a summary
+HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (its HISTFILE)
+MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
+NOT_RUN = "not run: the player took over your shell before this call ran"
+
+
+def _set_event() -> asyncio.Event:
+    event = asyncio.Event()
+    event.set()
+    return event
+
+
+class _Overtaken(Exception):
+    """Stops a failing call's retries: the lane ended, or the call no longer counts (the
+    lane was escalated or taken over while it waited)."""
 
 
 @dataclass
@@ -47,40 +79,79 @@ class _Run:
     messages: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # flightdeck's notes for the next turn
     wake: asyncio.Event = field(default_factory=asyncio.Event)
+    idle: asyncio.Event = field(default_factory=_set_event)  # cleared while a turn runs its tool calls
     task: asyncio.Task[None] | None = None
+    closing: asyncio.Future[None] | None = None  # closing the workspace: shielded, so a cancel cannot cut it short
+    ready: bool = False  # the workspace is prepared
     stopped: bool = False
     closed: bool = False
     escalations: int = 0
-    generation: int = 0  # bumped when the context is replaced (escalation): older replies are stale
+    generation: int = 0  # bumped at escalation and take-over: a reply asked for before must not run
 
 
 @dataclass
 class Takeover:
-    """The player's shell in a lane's workspace. finish() says what changed, tells the lane,
-    and puts the changed files on the lane."""
+    """The player's shell in a lane's workspace. begin() waits for the command the lane is
+    running, then gives the shell; finish() says what changed, tells the lane, and puts the
+    changed files on the lane."""
 
-    shell: ShellSpec
     run: _Run
-    before: Snapshot
     driver: AgentDriver
+    before: Snapshot | None = None
+    history: bool = False  # the history file was emptied at the start, so what it holds is this take-over's
+
+    @property
+    def busy(self) -> bool:
+        """The lane is running a command; begin() waits for it (it has its own timeout)."""
+        return not self.run.idle.is_set()
+
+    async def begin(self) -> ShellSpec:
+        run = self.run
+        await run.idle.wait()
+        if run.closed or self.driver._over(run):
+            raise TakeoverRefused(f"{run.lane_id} has ended")
+        shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
+        root = run.workspace.root
+        try:
+            await asyncio.to_thread(write_inside, root, HISTORY, b"")
+            self.history = True
+        except OSError:
+            self.history = False  # then its lines could be the lane's: they are not read
+        self.before = await asyncio.to_thread(take_snapshot, root)
+        return shell
 
     def finish(self) -> str:
-        root = self.run.workspace.root
-        changes = changed_files(self.before, take_snapshot(root), root)
+        run = self.run
+        root = run.workspace.root
+        changes = changed_files(self.before, take_snapshot(root), root) if self.before is not None else []
         if changes:
-            names = ", ".join(f"{c.path} ({c.status})" for c in changes[:8])
+            names = ", ".join(f"{prompts.one(c.path, 120)} ({c.status})" for c in changes[:8])
             note = f"changed {names}" + (f" and {len(changes) - 8} more" if len(changes) > 8 else "")
         else:
             note = "no files changed"
-        history = root / ".flightdeck" / "takeover_history"
-        commands = history.read_text(errors="replace").splitlines()[-8:] if history.is_file() else []
         told = f"The player took over your shell and handed it back ({note})."
+        commands = self._commands(root) if self.history else []
         if commands:
-            told += " Their last commands: " + "; ".join(commands) + "."
-        self.run.notes.append(told + " Look at the workspace again before you go on.")
+            told += " Their last commands, as the workspace recorded them:\n" + prompts.fenced("\n".join(commands)) + "\n"
+        run.notes.append(told + " Look at the workspace again before you go on.")
         if changes:
-            self.driver._report(self.run, TurnReport(turn=False, files=tuple(changes)))
+            self.driver._report(run, TurnReport(turn=False, files=tuple(changes)))
         return note
+
+    @staticmethod
+    def _commands(root) -> list[str]:
+        """The take-over's last commands, each one line. Read without following a symlink: in
+        its container the lane can put anything at that path, a link to a host file too."""
+        try:
+            fd = open_inside(root, HISTORY.split("/"))
+        except OSError:
+            return []
+        with os.fdopen(fd, "rb") as file:
+            size = os.fstat(file.fileno()).st_size
+            file.seek(max(0, size - MAX_HISTORY_BYTES))
+            raw = file.read(MAX_HISTORY_BYTES)
+        lines = [line for line in raw.decode("utf-8", "replace").splitlines() if line.strip()]
+        return [prompts.one(line, 200) for line in lines[-8:]]
 
 
 class AgentDriver:
@@ -130,13 +201,19 @@ class AgentDriver:
             model=lane.model,
             session=self._session(lane.id, 0),
         )
-        run.messages = self._fresh(run, lane.approach or lane.plan)
+        run.messages = self._fresh(run, lane.approach)
         self.runs[lane.id] = run
         run.task = loop.create_task(self._loop(run), name=f"flightdeck lane {lane.id}")
 
     def pause(self, lane: Lane) -> None:
-        """Nothing to interrupt: the loop checks the lane's state before every model call
-        and before running the tool calls of a reply that arrived meanwhile."""
+        """A paused lane finishes the command it is running, then waits: the loop checks the
+        lane's state before every model call and every tool call. A lane the player takes
+        over does the same, and also drops a reply asked for before the take-over, so
+        nothing the model chose before the player touched the workspace runs after."""
+        run = self.runs.get(lane.id)
+        if run is not None and lane.state is LaneState.TAKEOVER:
+            run.generation += 1
+            run.wake.set()
 
     def resume(self, lane: Lane) -> None:
         self._wake(lane)
@@ -145,7 +222,7 @@ class AgentDriver:
         self._wake(lane)  # the hint is in lane.hints; the next turn sends it and reports it taken
 
     def redirect(self, lane: Lane, text: str) -> None:
-        self._note(lane, f"The player changed your plan to: {text}")
+        self._note(lane, f"The player changed your plan to: {untrusted(text, one_line=True)}")
 
     def escalate(self, lane: Lane, model: str, summary: EscalationSummary) -> None:
         run = self.runs.get(lane.id)
@@ -155,9 +232,8 @@ class AgentDriver:
         run.escalations += 1
         run.generation += 1
         run.session = self._session(lane.id, run.escalations)
-        run.messages = self._fresh(run, lane.plan) + [{"role": "user", "content": prompts.escalation(summary)}]
-        run.notes.clear()
-        run.wake.set()
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(summary)}]
+        run.wake.set()  # flightdeck's notes stay queued: the stronger model reads them with its first call
 
     def approved(self, lane: Lane, pending: Pending) -> None:
         if pending.kind is PendingKind.LIVE_BOX:
@@ -168,15 +244,16 @@ class AgentDriver:
             self._wake(lane)
 
     def rejected(self, lane: Lane, flag: str) -> None:
-        self._note(lane, f"{flag} was submitted and it is not correct.")
+        self._note(lane, f"{prompts.one(flag, 200)} was submitted and it is not correct.")
 
     def declined(self, lane: Lane, pending: Pending) -> None:
         if pending.kind is PendingKind.SUBMIT:
-            self._note(lane, f"The player did not submit {pending.flag}: they think it is not the flag. Keep going.")
+            flag = prompts.one(pending.flag or "", 200)
+            self._note(lane, f"The player did not submit {flag}: they think it is not the flag. Keep going.")
         elif pending.kind is PendingKind.LIVE_BOX:
             self._note(lane, "The player said no to the live instance: work from the handout only.")
         else:
-            self._note(lane, f"The player declined: {pending.detail}.")
+            self._note(lane, f"The player declined: {prompts.one(pending.detail, 200)}.")
 
     def stop(self, lane: Lane) -> None:
         run = self.runs.get(lane.id)
@@ -187,12 +264,15 @@ class AgentDriver:
         if run.task is not None and not run.task.done() and run.task is not asyncio.current_task():
             run.task.cancel()  # its finally closes the workspace
 
-    def takeover(self, lane: Lane) -> Takeover | None:
-        """A shell in the lane's workspace for the player, or None if the lane has none."""
+    def takeover(self, lane: Lane) -> Takeover:
+        """The player's shell in the lane's workspace. TakeoverRefused when the lane has none
+        now: its workspace is not ready yet, or it has ended."""
         run = self.runs.get(lane.id)
-        if run is None or run.closed:
-            return None
-        return Takeover(run.workspace.interactive_shell(), run, take_snapshot(run.workspace.root), self)
+        if run is None or run.closed or run.stopped:
+            raise TakeoverRefused(f"{lane.id} has no workspace any more")
+        if not run.ready:
+            raise TakeoverRefused(f"{lane.id}'s workspace is not ready yet; try again in a moment")
+        return Takeover(run, self)
 
     # ------------------------------------------------------------------ the loop
 
@@ -216,6 +296,7 @@ class AgentDriver:
         except (WorkspaceError, OSError) as exc:
             self._report(run, TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
+        run.ready = True
         while await self._until_running(run):
             lane = self._lane(run)
             assert lane is not None
@@ -223,33 +304,47 @@ class AgentDriver:
             notes, run.notes = run.notes, []
             if hints or notes:
                 run.messages.append({"role": "user", "content": prompts.player_message(hints, notes)})
-            generation, model = run.generation, run.model
+            generation, model, messages = run.generation, run.model, run.messages
             try:
                 reply = await self.client.chat(
-                    run.model, run.messages, TOOLS, session_id=run.session, max_tokens=self.max_tokens
+                    model, messages, TOOLS, session_id=run.session, max_tokens=self.max_tokens,
+                    before_retry=lambda: self._retry_gate(run, generation),
                 )
+            except _Overtaken:
+                if self._over(run):
+                    return
+                self._overtaken(run, messages, hints, notes)
+                continue
             except ModelError as exc:
+                if run.generation != generation:
+                    # a call of the old context (escalated) or from before a take-over: its failure
+                    # does not end the lane, which goes on with the next call
+                    self._overtaken(run, messages, hints, notes)
+                    continue
                 self._report(
                     run,
-                    TurnReport(turn=False, action=f"model call to {run.model} failed", output=str(exc),
+                    TurnReport(turn=False, action=f"model call to {model} failed", output=str(exc),
                                hints_taken=len(hints), gave_up=f"model API error: {exc}"),
                 )
                 return
-            if run.generation != generation:
-                # escalated while this model was thinking: its reply belongs to the old context.
-                # Drop it, but count what it cost.
-                self._report(run, TurnReport(turn=False, tokens=reply.usage.total, cached_tokens=reply.usage.cached_tokens,
-                                             dollars=self._dollars(model, reply)))
-                continue
-            if not await self._until_running(run):
+            if not await self._until_running(run, generation) and self._over(run):
                 return  # killed or finished while the model was thinking
-            await self._turn(run, reply, len(hints))
-            self._refresh_if_long(run, reply.usage.prompt_tokens)
+            if run.generation != generation:
+                # escalated or taken over while this model was thinking, or while the lane was
+                # paused with the reply held: the reply was decided before that. Drop it, but
+                # count what it cost.
+                self._overtaken(run, messages, hints, notes, reply, model)
+                continue
+            await self._turn(run, reply, len(hints), generation, model, messages)
+            if run.messages is messages:  # not escalated during the turn
+                self._refresh_if_long(run, reply.usage.prompt_tokens)
 
-    async def _until_running(self, run: _Run) -> bool:
-        """Wait while the lane is paused, taken over or waiting for the player. False once
-        it has finished or was stopped."""
+    async def _until_running(self, run: _Run, generation: int | None = None) -> bool:
+        """Wait while the lane is paused, taken over or waiting for the player. False once it
+        has finished or was stopped, or, given a generation, once that generation is past."""
         while not run.stopped:
+            if generation is not None and run.generation != generation:
+                return False
             lane = self._lane(run)
             if lane is None or lane.finished:
                 return False
@@ -259,32 +354,79 @@ class AgentDriver:
             await run.wake.wait()
         return False
 
-    async def _turn(self, run: _Run, reply: Reply, hints_taken: int) -> None:
+    async def _retry_gate(self, run: _Run, generation: int) -> None:
+        """Before the client tries a failed call again: hold it while the lane is paused,
+        and stop it once the lane has ended or the call no longer counts."""
+        if not await self._until_running(run, generation):
+            raise _Overtaken()
+
+    def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
+                   reply: Reply | None = None, model: str = "") -> None:
+        """A call that no longer counts. Its cost does. After a take-over the context is the
+        same, and it holds the call's hints and notes; after an escalation the new context
+        has had neither, so they go again."""
+        same = run.messages is messages
+        if not same:
+            run.notes[:0] = notes
+        usage = reply.usage if reply is not None else None
+        self._report(
+            run,
+            TurnReport(
+                turn=False,
+                tokens=usage.total if usage else 0,
+                cached_tokens=usage.cached_tokens if usage else 0,
+                dollars=self._dollars(model, reply) if reply is not None else 0.0,
+                hints_taken=len(hints) if same else 0,
+            ),
+        )
+
+    async def _turn(self, run: _Run, reply: Reply, hints_taken: int, generation: int, model: str,
+                    messages: list[dict]) -> None:
         lane = self._lane(run)
         assert lane is not None
         turn = lane.turns + 1
-        run.messages.append(reply.message)
         root = run.workspace.root
-        before = await asyncio.to_thread(take_snapshot, root)
         results: list[ToolResult] = []
-        for index, call in enumerate(reply.tool_calls):
-            result = await run.toolbox.call(call.name, call.arguments, turn=turn, index=index)
-            results.append(result)
-            run.messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
-        after = await asyncio.to_thread(take_snapshot, root)
-        changes = await asyncio.to_thread(changed_files, before, after, root)
+        run.idle.clear()
+        try:
+            before = await asyncio.to_thread(take_snapshot, root)
+            for index, call in enumerate(reply.tool_calls):
+                if not await self._until_running(run, generation):  # paused: wait; escalated or taken over: stop
+                    if self._over(run):
+                        return
+                    break
+                results.append(await run.toolbox.call(call.name, call.arguments, turn=turn, index=index))
+            after = await asyncio.to_thread(take_snapshot, root)
+            changes = await asyncio.to_thread(changed_files, before, after, root)
+        finally:
+            run.idle.set()
+        if self._over(run):
+            return
+        same = run.messages is messages  # else escalated during the turn: none of it goes into the new context
+        notes: list[str] = []
         files = tuple(changes[:MAX_FILES_PER_TURN])
         if len(changes) > MAX_FILES_PER_TURN:
-            run.notes.append(f"That turn changed {len(changes)} files; the console lists the first {MAX_FILES_PER_TURN}.")
-        if not reply.tool_calls:
-            run.messages.append({"role": "user", "content": prompts.NUDGE})
+            notes.append(f"That turn changed {len(changes)} files; the console lists the first {MAX_FILES_PER_TURN}.")
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
         for flag in flags:
             if not self._flag_re().fullmatch(flag):
-                run.notes.append(f"{flag} does not match the flag format {self.deck.config.flag_format}; it was not submitted.")
-        usage = reply.usage
+                notes.append(f"{prompts.one(flag, 200)} does not match the flag format {self.deck.config.flag_format}; it was not submitted.")
+        skipped = len(reply.tool_calls) - len(results)
+        if same:
+            messages.append(reply.message)
+            for call, result in zip(reply.tool_calls, results):
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
+            for call in reply.tool_calls[len(results):]:
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": NOT_RUN})
+            if not reply.tool_calls and run.generation == generation:
+                messages.append({"role": "user", "content": prompts.NUDGE})
+            run.notes.extend(notes)
         action, output = _step(results, reply)
+        if skipped:
+            why = "taken over" if same else "escalated"
+            action = (f"{action}  " if results else "") + f"({skipped} tool call{'s' if skipped > 1 else ''} not run: {why})"
+        usage = reply.usage
         self._report(
             run,
             TurnReport(
@@ -292,11 +434,12 @@ class AgentDriver:
                 output=output,
                 tokens=usage.total,
                 cached_tokens=usage.cached_tokens,
-                dollars=self._dollars(run.model, reply),
+                dollars=self._dollars(model, reply),
                 plan=plans[-1] if plans else None,
                 files=files,
                 flag=flags[0] if flags else None,
-                hints_taken=hints_taken,
+                hints_taken=hints_taken if same else 0,
+                model=model,
             ),
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
@@ -309,12 +452,14 @@ class AgentDriver:
         if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
             return
         summary = self.deck.summary(lane)
-        run.messages = self._fresh(run, lane.plan) + [{"role": "user", "content": prompts.refresh(summary, prompt_tokens)}]
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.refresh(summary, prompt_tokens)}]
         self.deck.note(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
 
     # ------------------------------------------------------------------ helpers
 
     def _fresh(self, run: _Run, approach: str) -> list[dict]:
+        """A new context: the system prompt and the brief. `approach` is the player's own
+        direction (lane.approach), never the model's plan."""
         challenge = run.challenge
         return [
             {"role": "system", "content": prompts.system_prompt(self.deck.config.flag_format)},
@@ -338,6 +483,10 @@ class AgentDriver:
     def _lane(self, run: _Run) -> Lane | None:
         return self.deck.lanes.get(run.lane_id)
 
+    def _over(self, run: _Run) -> bool:
+        lane = self._lane(run)
+        return run.stopped or lane is None or lane.finished
+
     def _report(self, run: _Run, report: TurnReport) -> None:
         lane = self._lane(run)
         if lane is not None and not lane.finished and not run.stopped:
@@ -355,9 +504,14 @@ class AgentDriver:
             run.wake.set()
 
     async def _close(self, run: _Run) -> None:
-        if run.closed:
-            return
-        run.closed = True
+        """Close the lane's workspace once. The close runs shielded: cancelling the lane's
+        task again (shutdown does) cannot cut `docker rm` short."""
+        if run.closing is None:
+            run.closed = True
+            run.closing = asyncio.ensure_future(self._close_workspace(run))
+        await asyncio.shield(run.closing)
+
+    async def _close_workspace(self, run: _Run) -> None:
         try:
             await run.workspace.close()
         except Exception as exc:  # reported when the console exits; a lane's end is not held up
@@ -372,7 +526,8 @@ class AgentDriver:
             run.stopped = True
             run.wake.set()
             if run.task is not None and not run.task.done():
-                run.task.cancel()
+                if run.closing is None:  # still working: cancel it (its finally closes the workspace)
+                    run.task.cancel()
                 tasks.append(run.task)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -387,5 +542,7 @@ def _step(results: list[ToolResult], reply: Reply) -> tuple[str, str]:
         shown = next((r for r in results if not (r.flag or r.plan)), results[0])
         action = shown.action + (f"  (+{len(results) - 1} more)" if len(results) > 1 else "")
         return action, shown.output
+    if reply.tool_calls:
+        return "", ""
     said = reply.content.strip().splitlines()[0] if reply.content.strip() else "(an empty reply)"
     return f"says: {said[:200]}", ""

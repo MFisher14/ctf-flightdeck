@@ -19,6 +19,7 @@ from textual.screen import Screen
 from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
+from ..core.driver import TakeoverRefused
 from ..core.model import ME, Event, EventKind, Lane, LaneState
 from ..text import untrusted
 from . import theme, views
@@ -340,38 +341,70 @@ class FlightdeckApp(App[None]):
         self.push_screen(KillPrompt(self._title("Kill", lane)), done)
 
     def take_over(self, lane: Lane) -> None:
-        """The lane's shell for the player (its driver's), or the M0 placeholder."""
-        if not self.apply(iv.TakeOver(lane.id)).ok:
-            return
+        """The lane's shell for the player (its driver's), or the M0 placeholder.
+
+        The driver is asked first, so a lane whose shell cannot open now (its workspace is
+        still being prepared) is never left taken over."""
         lane_id = lane.id
         offer = getattr(self.deck.driver, "takeover", None)
-        session = offer(lane) if offer is not None else None
-        if session is not None:
-            self.run_worker(self._shell(lane_id, session), name=f"take over {lane_id}", exit_on_error=False)
+        if offer is None:
+            if not self.apply(iv.TakeOver(lane_id)).ok:
+                return
+
+            def done(_: None) -> None:
+                self.apply(iv.HandBack(lane_id))
+
+            name = self.deck.challenges[lane.challenge_id].name
+            self.push_screen(TakeOverScreen(lane_id, name, self.deck.config.containerized), done)
             return
-
-        def done(_: None) -> None:
-            self.apply(iv.HandBack(lane_id))
-
-        name = self.deck.challenges[lane.challenge_id].name
-        self.push_screen(TakeOverScreen(lane.id, name, self.deck.config.containerized), done)
+        if lane.finished:
+            self.warn(f"{lane_id} has finished ({lane.state.value})")
+            return
+        try:
+            session = offer(lane)
+        except TakeoverRefused as exc:
+            self.warn(str(exc))
+            return
+        if not self.apply(iv.TakeOver(lane_id)).ok:
+            return
+        self.run_worker(self._shell(lane_id, session), name=f"take over {lane_id}", exit_on_error=False)
 
     async def _shell(self, lane_id: str, session) -> None:
+        """Open the shell, then always hand the lane back, with what happened: a lane must
+        never stay taken over with no way back. A problem shows after the hand-back's own
+        outcome, so it is what the status line says."""
+        try:
+            note, problem = await self._open_shell(lane_id, session)
+        except Exception as exc:
+            note = problem = f"the take-over failed: {exc}"
+        lane = self.deck.lanes.get(lane_id)
+        if lane is not None and lane.state is LaneState.TAKEOVER:
+            self.apply(iv.HandBack(lane_id, note))
+        if problem:
+            self.warn(f"{lane_id}: {problem}")
+
+    async def _open_shell(self, lane_id: str, session) -> tuple[str, str]:
+        """(the hand-back note, a problem to warn about or "")."""
         from textual.app import SuspendNotSupported
 
         from .takeover import run_in_terminal
 
-        shell = session.shell
+        if getattr(session, "busy", False):
+            self.inform(f"{lane_id} is finishing a command; your shell opens when it ends")
+        try:
+            shell = await session.begin()
+        except TakeoverRefused as exc:
+            return str(exc), str(exc)
         try:
             await run_in_terminal(self, shell.argv, shell.cwd, shell.env)
         except SuspendNotSupported:
-            self.apply(iv.HandBack(lane_id, "no shell: this console cannot hand over the terminal"))
-            self.warn("This console cannot hand over the terminal; the lane carries on")
-            return
+            return "no shell: this console cannot hand over the terminal", "this console cannot hand over the terminal; the lane carries on"
         except OSError as exc:
-            self.apply(iv.HandBack(lane_id, f"the shell did not start: {exc}"))
-            return
-        self.apply(iv.HandBack(lane_id, session.finish()))
+            return f"the shell did not start: {exc}", f"the shell did not start: {exc}"
+        try:
+            return session.finish(), ""
+        except Exception as exc:
+            return f"the workspace could not be checked: {exc}", f"handed back, but its workspace could not be checked: {exc}"
 
     def claim_toggle(self, challenge_id: str) -> None:
         ch = self.deck.challenges[challenge_id]

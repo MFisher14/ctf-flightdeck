@@ -2240,6 +2240,9 @@ def test_take_over_with_a_shell_hands_the_lane_back_when_the_console_cannot_let_
     class Session:
         shell = type("Spec", (), {"argv": ["true"], "cwd": None, "env": None})()
 
+        async def begin(self):
+            return self.shell
+
         def finish(self) -> str:
             finished.append(True)
             return "no files changed"
@@ -2262,7 +2265,78 @@ def test_take_over_with_a_shell_hands_the_lane_back_when_the_console_cannot_let_
         assert lane.state is LaneState.RUNNING
         assert not isinstance(app.screen, TakeOverScreen)  # no placeholder: this driver has a shell
         assert finished == []  # nothing ran, so nothing to report as changed
-        assert_warning(app, "This console cannot hand over the terminal")
+        assert_warning(app, "L01: this console cannot hand over the terminal")
         assert "no shell: this console cannot hand over the terminal" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+def test_pressing_t_while_a_lanes_workspace_is_being_prepared_warns_and_the_console_carries_on(tmp_path):
+    """A docker lane takes a second or two to prepare; t in that window is refused, never a crash."""
+    from ctf_flightdeck.agent.client import ModelClient
+    from ctf_flightdeck.agent.driver import AgentDriver
+    from ctf_flightdeck.agent.workspace import HostWorkspace
+    from fake_model import FakeModelServer, text_reply
+
+    class SlowWorkspace(HostWorkspace):
+        async def prepare(self):
+            await asyncio.Event().wait()  # still preparing when the player presses t
+
+    (tmp_path / "board").mkdir()
+    with FakeModelServer(responder=lambda record: text_reply("thinking")) as server:
+        client = ModelClient(server.base_url, "sk-test-not-a-real-key", max_retries=0, backoff=0.0)
+        driver = AgentDriver(client, lambda lane, ch: SlowWorkspace(tmp_path / lane.id, tmp_path / "board"), run_id="r")
+        deck = Deck(DeckConfig(event="ev", models=("glm",)), driver, ManualClock(), wrong_flag)
+        app = FlightdeckApp(deck, refresh_seconds=None)
+
+        async def script(pilot):
+            deck.release([Challenge("a", "A", "misc", 50)], [QueueEntry("a", "glm")])
+            (lane,) = deck.lanes_on("a")
+            app.refresh_view()
+            app.fleet.select_lane(lane.id)
+            await pilot.pause()
+            await press(pilot, "t")
+            assert app.is_running and lane.state is LaneState.RUNNING
+            assert_warning(app, "L01's workspace is not ready yet; try again in a moment")
+            await driver.shutdown()
+            await client.aclose()
+
+        drive(app, script)
+
+
+def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back(monkeypatch):
+    from ctf_flightdeck.agent.workspace import WorkspaceError
+    from ctf_flightdeck.console import takeover
+
+    async def the_shell_ran(app, argv, cwd, env):
+        return None
+
+    monkeypatch.setattr(takeover, "run_in_terminal", the_shell_ran)
+
+    class Session:
+        async def begin(self):
+            return type("Spec", (), {"argv": ["true"], "cwd": None, "env": None})()
+
+        def finish(self) -> str:
+            raise WorkspaceError("cannot snapshot workspace /gone: No such file or directory")
+
+    class ShellDriver(QuietDriver):
+        def takeover(self, lane):
+            return Session()
+
+    deck = Deck(DeckConfig(event="ev", models=("glm",)), ShellDriver(), ManualClock(), wrong_flag)
+    deck.release([Challenge("a", "A", "misc", 50)], [QueueEntry("a", "glm")])
+    (lane,) = deck.lanes_on("a")
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        for _ in range(50):
+            if lane.state is not LaneState.TAKEOVER:
+                break
+            await pilot.pause(0.01)
+        assert lane.state is LaneState.RUNNING
+        assert_warning(app, "its workspace could not be checked: cannot snapshot workspace /gone")
+        assert "the workspace could not be checked" in lane.actions[-1].text
 
     drive(app, script)

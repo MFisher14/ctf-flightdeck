@@ -819,7 +819,8 @@ def test_an_image_without_python3_is_noted_for_the_python_tool_and_in_prepare_lo
 
 
 def test_the_docker_take_over_shell_is_docker_exec_in_work(box):
-    assert box.interactive_shell() == ShellSpec(["docker", "exec", "-it", "-w", "/work", box.name, "bash", "-i"], None, None)
+    history = "HISTFILE=/work/.flightdeck/takeover_history"
+    assert box.interactive_shell() == ShellSpec(["docker", "exec", "-it", "-e", history, "-w", "/work", box.name, "bash", "-i"], None, None)
 
 
 def test_a_snapshot_never_follows_a_symlink_the_container_planted(box):
@@ -847,3 +848,69 @@ def test_a_handouts_bytecode_cache_is_not_copied_into_the_lane(tmp_path):
     assert not (root / "__pycache__").exists() and not (root / "sub" / "__pycache__").exists()
     log = (root / ".flightdeck" / "prepare.log").read_text()
     assert "__pycache__" in log and "bytecode cache" in log
+
+
+def test_cancelling_a_lane_while_docker_run_starts_its_container_still_removes_it(tmp_path, handout, container_name):
+    """A kill, a sibling's solve or quitting in the first seconds cancels prepare() during `docker
+    run`; the docker CLI carries on and starts the container all the same."""
+    import asyncio
+
+    async def main():
+        ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name)
+        task = asyncio.ensure_future(ws.prepare())
+        for _ in range(4000):
+            if ws._starting is not None:
+                break
+            await asyncio.sleep(0.005)
+        assert ws._starting is not None, "docker run never started"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await ws.close()
+
+    run(main())
+    assert docker("container", "inspect", container_name).returncode != 0  # no container left behind
+
+
+SLOW_RUN_DOCKER = """#!/bin/sh
+# A stand-in docker CLI that logs each call; its `docker run` takes a second, like a real one starting.
+echo "$1" >> "$FAKE_DOCKER_LOG"
+case "$1" in
+  version) echo 27.0.0 ;;
+  image) echo sha256:0 ;;
+  container) exit 1 ;;
+  run) sleep 1; echo "run done" >> "$FAKE_DOCKER_LOG"; echo 0123456789ab ;;
+esac
+exit 0
+"""
+
+
+def test_close_removes_the_container_only_after_a_docker_run_it_interrupted_has_finished(tmp_path, handout, monkeypatch):
+    """Removing first would race the container's creation: docker would then start it after the
+    `docker rm`, and leave it running."""
+    import asyncio
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "docker"
+    fake.write_text(SLOW_RUN_DOCKER)
+    fake.chmod(0o755)
+    log = tmp_path / "docker.log"
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_DOCKER_LOG", str(log))
+
+    async def main():
+        ws = DockerWorkspace(tmp_path / "lane", handout, image="lane-image:1", name="flightdeck-fake-1")
+        task = asyncio.ensure_future(ws.prepare())
+        for _ in range(4000):
+            if ws._starting is not None:
+                break
+            await asyncio.sleep(0.005)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await ws.close()
+
+    run(main())
+    calls = log.read_text().splitlines()
+    assert "rm" in calls and calls.index("run done") < calls.index("rm")
