@@ -46,15 +46,19 @@ mkdir -p ~/.config/ctf-flightdeck && touch ~/.config/ctf-flightdeck/keys.env && 
 # then add lines like:  ANTHROPIC_API_KEY=...   OPENROUTER_API_KEY=...
 ```
 
-flightdeck never hands these values to a lane's commands: they get an environment built from an
-allowlist, and a coding-agent CLI gets only its own credential (but see `--host` below).
+A lane's commands get an environment built from an allowlist, so flightdeck hands them none of
+these values (but see `--host` below). A coding-agent CLI (`--agent`) gets its own credential and
+no other, and the commands it runs can read that one, in Docker too: give it a key you can
+revoke, with a low spending limit.
 
 With an Anthropic key, `flightdeck init --provider anthropic` writes Claude Haiku, Sonnet and
 Opus 5.5 with their list prices, so the dollar caps work from the start. If `OPENROUTER_API_KEY`
 is set too, it offers OpenRouter as the fallback for a lane whose calls to Anthropic keep
 failing. OpenRouter, OpenAI, Ollama, an MLX server or any OpenAI-compatible API work as well.
-The fallback, what happens when a model declines, fast mode and prices:
-[`docs/MODEL-APIS.md`](docs/MODEL-APIS.md).
+For Ollama or an MLX server, `init` suggests a model, and for any server on your machine it lets
+a lane wait up to 10 minutes for a reply of up to 8192 tokens, since a local model can take
+minutes to answer. The fallback, what happens when a model declines, fast mode, time and reply
+limits, and prices: [`docs/MODEL-APIS.md`](docs/MODEL-APIS.md).
 
 ## Models
 
@@ -62,7 +66,7 @@ Which models fit your machine? `flightdeck models` looks at it (chip, memory, NV
 the model servers running on it; it contacts nothing but 127.0.0.1) and lists, for lanes and for
 the light model, the models that fit and why: open-weight models on your machine first where
 they run well, then model APIs. `flightdeck models qwen3.5-9b` prints how to get one and the
-config lines that use it. It recommends; it never changes your config. How the models measured:
+config lines that use it. It recommends; it never changes your config. How the models did:
 [`docs/MODELS.md`](docs/MODELS.md).
 
 ## Play a board
@@ -111,8 +115,8 @@ Docker lanes get no network unless their challenge has a live instance (a web or
 service like `nc host port`: `tcp://host:port` in a challenge's `urls`). `--host` runs lane
 commands as you, on this machine: a lane can read your files, your keys file and flightdeck's
 own environment, and what it reads goes to its model and onto your screen. Transcripts and
-writeup drafts take out anything shaped like a credential, but that is cleanup, not a fence: use
-Docker, a disposable VM, or a separate low-limit key.
+writeup drafts take out what looks like a key or token (see [After a run](#after-a-run)), but
+that is cleanup, not a fence: use Docker, a disposable VM, or a separate low-limit key.
 
 Every run writes an append-only `events.jsonl` and each lane's transcript; a board with answers
 (like the practice set) ends with a scorecard. `q` asks first while lanes are open, and a run
@@ -154,7 +158,9 @@ lane's cost ends in `…` until then; codex reports no cost at all, so give its 
 
 Point flightdeck at a folder of your no-model solvers and each of flightdeck's own lanes runs the
 ones that fit its challenge before its first model call (coding-agent lanes do not use the pack
-yet); a flag one finds waits for your approval, so a solve can cost no tokens at all. When lanes
+yet), so a solve can cost no tokens at all. A flag an engine returns as its result waits for your
+approval, or under auto submit goes to the platform at once; a flag that is only a match in what
+an engine printed (a plain script that `l1 import` took in, say) always waits for you. When lanes
 run in Docker, so do your solvers: each in a container of the lane image, your pack mounted
 read-only, with no network unless the live-instance policy is `auto` and the challenge has an
 instance. With `--host` they run on this machine, as you.
@@ -176,10 +182,12 @@ flightdeck build gap CHALLENGE_DIR --pack ~/ctf/solvers   # a new engine stub wi
 ```
 
 When a run ends, `play` prints its run folder with the report, writeups and gaps commands for it
-(and score, when the board has answers), ready to paste. A writeup draft never shows a
-credential: the value of anything shaped like an API key, token, password, cookie or
-Authorization header becomes `[redacted]`, with or without `--redact`, and lane transcripts are
-cleaned the same way.
+(and score, when the board has answers), ready to paste. Writeup drafts and lane transcripts
+take out what looks like a key or token, with or without `--redact`: the value of an upper-case
+`NAME=value` or `NAME: value` whose name holds KEY, TOKEN, SECRET, PASSWORD, PASSWD, COOKIE or
+AUTH, of an Authorization or Cookie header, and of a key with a well-known prefix (`sk-ant-`,
+`ghp_` and the like) becomes `[redacted]`. Anything else stays, lower-case names included (a
+`password` is everyday CTF content), so read a draft before you share it.
 
 ## Light model
 
@@ -192,7 +200,9 @@ there is no light model, only the rules. Five choices, in `[light]`:
 - `openai`: any OpenAI-compatible server. **Recommended: an open-weight model on your own
   machine**, served by Ollama (`http://127.0.0.1:11434/v1`) or an MLX server
   (`http://127.0.0.1:8080/v1`), with `key_env = ""`. No provider's safety classifier stands
-  between it and security work, and it costs nothing.
+  between it and security work, and it costs nothing. flightdeck asks a model on your machine to
+  answer without thinking first (`thinking = false`, the default there): one that reasons first
+  spends a small job's few hundred tokens thinking and answers nothing.
 - `anthropic`: a Claude model (`claude-haiku-5-5`, say).
 - `cactus`: Cactus Needle, on this machine (the `[cactus]` extra).
 - `decider`: Strands Decider, a decision model, served on your own machine. It writes no text: it
@@ -211,15 +221,17 @@ Measure one before you switch it on: which models to try, and how they did, is i
 flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> \
     --compare anthropic:claude-haiku-5-5 --compare cactus
 flightdeck eval-local --engine decider --base-url http://127.0.0.1:8000   # or a column: --compare decider@URL
-flightdeck init --light ollama --light-model <model>     # or edit [light]; `flightdeck doctor` checks it
+flightdeck init --light ollama --light-model <model>     # or edit [light]; at a terminal, init suggests a model
 ```
 
 eval-local runs each engine and the rules over the bundled cases (naming the hinted technique,
 judging a lane, summarising one) and prints them side by side: accuracy, refusals and failures,
 time and cost per job. A paid API is announced first with its number of calls: one per case,
-never a retry. The decider's unsure answers get a row of their own and count neither right nor
-wrong, so its accuracy says how often an answer it was sure of is right; its summary cases show
-as n/a, since a decision model writes no text.
+never a retry. `--thinking on|off` says whether a model on an OpenAI-compatible server may think
+first; by default it is off on your machine and on elsewhere, unless your `[light] thinking`
+says otherwise for that server. The decider's unsure answers get a row of their own and count
+neither right nor wrong, so its accuracy says how often an answer it was sure of is right; its
+summary cases show as n/a, since a decision model writes no text.
 
 The light model never holds anything up. When it refuses, fails, times out, answers outside the
 options or (the decider) is unsure, the rules' answer stands, and the run says so once. A refused
