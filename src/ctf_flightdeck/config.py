@@ -16,7 +16,8 @@ agent/fastmode.py lists for fast mode is accepted.
 
 The optional [light] table names the light model for flightdeck's small jobs (light.py):
 engine "rules" (the default: no model), "openai" (an OpenAI-compatible server; recommended:
-an open-weight model on this machine), "anthropic" or "cactus". Its key, like the API's, is
+an open-weight model on this machine), "anthropic", "cactus" or "decider" (a Strands Decider
+server: a decision model, with a confidence threshold and no key). Its key, like the API's, is
 read from the variable its key_env names, by light_key().
 
 Nothing that matters has a silent default. A missing file says how to create one, the
@@ -58,10 +59,16 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
-LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus")
+LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
-_LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price")
+_LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold")
 LIGHT_TIMEOUT = 30.0  # seconds a light job may take, all its tries; then the rules' answer stands
+DECIDER_URL = "http://127.0.0.1:8000"  # `strands-decider serve MODEL --port 8000`, its README's example
+# The decider's confidence below which its answer is "unsure" and the rules' answer stands. 0.9 is
+# the Strands Decider README's calibration claim: on short classification tasks it has never seen,
+# answers at a confidence of 0.9 or more are right about 95% of the time (its evaluation/results.md,
+# Summary), and its routing convention acts without a check at 0.9 or above (docs/architecture.md).
+DECIDER_THRESHOLD = 0.9
 OLLAMA_URL = "http://127.0.0.1:11434/v1"  # Ollama's OpenAI-compatible endpoint on this machine
 MLX_URL = "http://127.0.0.1:8080/v1"  # an MLX server's (mlx_lm.server's default port)
 _PRICE_KEYS = ("input", "output", "cached_input")
@@ -92,12 +99,13 @@ class FallbackConfig:
 class LightConfig:
     """[light]: the light model for flightdeck's small jobs (light.py). Absent: rules only."""
 
-    engine: str = "rules"  # rules | openai | anthropic | cactus
-    model: str = ""  # openai and anthropic: the model id
-    base_url: str = ""  # openai and anthropic
+    engine: str = "rules"  # rules | openai | anthropic | cactus | decider
+    model: str = ""  # openai and anthropic: the model id; decider (optional): the model its server serves
+    base_url: str = ""  # openai, anthropic and decider
     key_env: str = ""  # openai and anthropic; "" for a server that needs no key (openai only)
     timeout: float = LIGHT_TIMEOUT  # seconds a job may take, all its tries
     price: Price | None = None  # dollars per million tokens, for an API that reports no cost
+    threshold: float = DECIDER_THRESHOLD  # decider: the confidence below which an answer is unsure
 
 
 @dataclass(frozen=True)
@@ -309,7 +317,7 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # claude-haiku-5-5) and "cactus" (Cactus Needle, the [cactus] extra) are there too. The light
 # model never holds up a lane or an alert: when it refuses, fails, times out or answers outside
 # the options, the rules' answer stands and the run says so once.
-engine = "rules"   # rules | openai | anthropic | cactus
+engine = "rules"   # rules | openai | anthropic | cactus | decider
 # With engine = "openai" (an open-weight model on this machine, say), also set:
 #   model = "<model>"                         # the name your server gives the model
 #   base_url = "http://127.0.0.1:11434/v1"    # required (no default)
@@ -317,6 +325,11 @@ engine = "rules"   # rules | openai | anthropic | cactus
 # With engine = "anthropic": model = "claude-haiku-5-5", say; base_url and key_env default to
 # "https://api.anthropic.com" and "ANTHROPIC_API_KEY". For either:
 #   price = { input = 0.10, output = 0.50 }   # optional: dollars per million tokens, for an API that reports no cost
+# With engine = "decider" (Strands Decider, a decision model: it picks one of the options with a
+# calibrated confidence and writes no text; `flightdeck init --light decider` says how to start its
+# server): base_url = "http://127.0.0.1:8000" (required), model = "<the model it serves>" (optional:
+# checked against what the server reports) and threshold = 0.9 (the default: below this confidence
+# an answer is unsure and the rules' answer stands). No key: the server is your own process.
 # For any engine:
 #   timeout = 30                              # seconds a job may take; then the rules' answer stands
 
@@ -432,10 +445,15 @@ def _light(path: Path, table: dict) -> LightConfig:
     timeout = table.get("timeout", LIGHT_TIMEOUT)
     if not _is_number(timeout) or not math.isfinite(timeout) or timeout <= 0:
         raise _error(path, ("light", "timeout"), f"must be a positive number of seconds{_got(timeout)}")
+    if "threshold" in table and engine != "decider":
+        raise _error(path, ("light", "threshold"), f'is for the decider engine, not "{engine}"')
+    if engine == "decider":
+        return _decider(path, table, float(timeout))
     if engine not in MODEL_ENGINES:
         for key in ("model", "base_url", "key_env", "price"):
             if key in table:
-                raise _error(path, ("light", key), f'is for the openai and anthropic engines, not "{engine}"')
+                which = "openai, anthropic and decider" if key in ("model", "base_url") else "openai and anthropic"
+                raise _error(path, ("light", key), f'is for the {which} engines, not "{engine}"')
         return LightConfig(engine=engine, timeout=float(timeout))
     example = "for example claude-haiku-5-5" if engine == "anthropic" else "the name your server gives the model"
     if "model" not in table:
@@ -460,6 +478,43 @@ def _light(path: Path, table: dict) -> LightConfig:
             raise _error(path, ("light", "price"), f"must be a table of dollars per million tokens (input, output){_got(entry)}")
         price = _price(path, ("light", "price"), entry)
     return LightConfig(engine=engine, model=model, base_url=base_url, key_env=key_env, timeout=float(timeout), price=price)
+
+
+def _decider(path: Path, table: dict, timeout: float) -> LightConfig:
+    """[light] engine = "decider": a Strands Decider server's address (required), the model it
+    serves (optional, checked against what the server reports) and the confidence threshold. No
+    key and no price: the server is the player's own process, with no authentication."""
+    from .light import DECIDER_PATH
+
+    for key in ("key_env", "price"):
+        if key in table:
+            raise _error(path, ("light", key), "is not for the decider engine: a decision model server is your own "
+                                               "process, with no key and no bill per call")
+    if "base_url" not in table:
+        raise _error(path, ("light", "base_url"), f'is required for the decider engine: the address its server listens '
+                                                  f'on, for one on this machine base_url = "{DECIDER_URL}"')
+    base_url = _string(path, table, ("light", "base_url"), "")
+    if not _plain(base_url):
+        raise _error(path, ("light", "base_url"), "must not contain spaces or control characters")
+    url = _split_url(base_url)
+    if url is None or url.scheme not in ("http", "https") or not url.hostname:
+        raise _error(path, ("light", "base_url"), f'must start with http:// or https:// and name a host, like "{DECIDER_URL}"')
+    if url.username is not None or url.password is not None:
+        raise _error(path, ("light", "base_url"), "must not carry a user name or password: a decision model server takes none")
+    if url.path.rstrip("/").endswith(("/v1", DECIDER_PATH)):
+        raise _error(path, ("light", "base_url"), f'is the server\'s address without {DECIDER_PATH}, which flightdeck '
+                                                  f'adds itself: like "{DECIDER_URL}"')
+    model = ""
+    if "model" in table:
+        model = _string(path, table, ("light", "model"), "")
+        if model != model.strip() or not _plain(model):
+            raise _error(path, ("light", "model"), "must be a model id: no spaces or control characters")
+    threshold = table.get("threshold", DECIDER_THRESHOLD)
+    if not _is_number(threshold) or not math.isfinite(threshold) or not 0 < threshold <= 1:
+        raise _error(path, ("light", "threshold"), "must be a number above 0 and at most 1: the confidence below which "
+                                                   f"the decider's answer is unsure (default {DECIDER_THRESHOLD:g})"
+                                                   f"{_got(threshold)}")
+    return LightConfig(engine="decider", model=model, base_url=base_url, timeout=timeout, threshold=float(threshold))
 
 
 def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfig:

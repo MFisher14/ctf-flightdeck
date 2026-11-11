@@ -12,8 +12,10 @@ The judge is the light model's judge_hint job (light.py), asked at most once per
 stands. A job that fails (the model declined, the API failed or took longer than the [light]
 timeout, or the answer was cut off, empty, or not "yes" or "no") gives no verdict: the rules'
 answer stands, so the alert stays up and its reason says it is unconfirmed, and the deck shows
-a warning once per kind of failure, naming the light model. Nothing moves a declined request
-to another model: the player sees the refusal and decides.
+a warning once per kind of failure, naming the light model. A decision model (the decider
+engine) whose confidence is below the [light] threshold is unsure: no verdict either, the rules'
+answer stands, and that is said once too. Nothing moves a declined request to another model:
+the player sees the refusal and decides.
 
 What a job spent is reported to the deck as spend outside a turn (a SPEND event, why "the hint
 judge (<engine> <model>)", the light model named): tokens and dollars on the lane's meter. The
@@ -21,8 +23,8 @@ cost is the API's figure, else the [light] price's, else $0 for a server on this
 unknown (None): the deck then treats the lane as unpriced, and a dollar-capped lane asks the
 player before going on.
 
-The description and the steps are untrusted: light.py fences and folds them for the model and
-reads its answer strictly.
+The description and the steps are untrusted: light.py fences and folds them for the model (a
+decision model gets them only as its state) and reads its answer strictly.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from ..agent import prompts
 from ..core.deck import Deck
 from ..core.driver import TurnReport
 from ..core.model import Challenge, Lane
-from ..light import ERROR, MAX_STEPS, NO, NO_ANSWER, OUTSIDE, REFUSED, TIMEOUT, Light
+from ..light import ERROR, MAX_STEPS, NO, NO_ANSWER, OUTSIDE, REFUSED, TIMEOUT, UNSURE, Light
 from .base import DetectConfig, quote, steps
 from .hints import Technique
 
@@ -50,6 +52,7 @@ WHAT = {  # a failed job, for the player's warning
     TIMEOUT: "took too long to judge",
     NO_ANSWER: "gave no answer about",
     OUTSIDE: "answered neither yes nor no about",
+    UNSURE: "was unsure about",
 }
 
 
@@ -68,7 +71,7 @@ class Judgement:
     tokens: int = 0
     cost: float | None = 0.0  # dollars; None when the job's price is unknown
     cached: bool = False  # a recent verdict was reused without asking again
-    failure: str = ""  # light.REFUSED, ERROR, TIMEOUT, NO_ANSWER or OUTSIDE when there is no verdict
+    failure: str = ""  # light.REFUSED, ERROR, TIMEOUT, NO_ANSWER, OUTSIDE or UNSURE when there is no verdict
 
 
 class HintJudge:
@@ -132,9 +135,10 @@ class HintJudge:
         if failure in self._warned:
             return
         self._warned.add(failure)
+        kind = "for an unsure answer" if failure == UNSURE else "for this kind of failure"
         deck.warn(
-            f"{lane.id}: {reason}. The rules' answer stands: the hint alert stays up. Said once for this kind "
-            "of failure; the light model is asked again later.",
+            f"{lane.id}: {reason}. The rules' answer stands: the hint alert stays up. Said once {kind}; the light "
+            "model is asked again later.",
             challenge=lane.challenge_id,
             data={"source": "light", "engine": self.light.engine, "model": self.light.model, "failure": failure,
                   "lane": lane.id},
@@ -145,6 +149,8 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
     """The hint judge for a run, and a line for the player about it ("" for none): None when
     [light] is absent or rules. A light model that cannot be made (a key not set, Cactus not
     installed) leaves the judge off and says why: the light role never stops a run."""
+    from urllib.parse import urlsplit
+
     from ..config import ConfigError, light_key
     from ..light import LightError, build, on_this_machine
 
@@ -159,6 +165,15 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
         f"light model: {engine.label} judges each 'ignores the hint' alert (the alert shows at once; it comes down "
         "if the light model says the lane follows the hint; when it fails or refuses, the rules' answer stands)"
     )
+    if light.engine == "decider":
+        note = (
+            f"light model: {engine.label} (Strands Decider, a decision model) judges each 'ignores the hint' alert (the "
+            f"alert shows at once; it comes down if the decider says, at a confidence of {light.threshold:g} or more, "
+            "that the lane follows the hint; when it is unsure or fails, the rules' answer stands)"
+        )
+        if not on_this_machine(light.base_url):
+            note += (f"; its requests go to {urlsplit(light.base_url).hostname}, not this machine, and their cost is "
+                     "unknown: a dollar-capped lane may ask you once")
     unpriced = "; no [light] price in your config, so its calls are unpriced"
     if light.price is None and light.engine == "anthropic":
         note += unpriced + ": a dollar-capped lane asks you once before it carries on without its cap"

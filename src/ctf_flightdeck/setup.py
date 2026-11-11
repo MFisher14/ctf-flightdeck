@@ -56,7 +56,7 @@ OPENROUTER_NAMES = {
 }
 
 
-LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus")  # `init --light`
+LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # `init --light`
 LIGHT_EXAMPLES = "Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B or Phi-4-mini"  # to measure, not endorsements
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
@@ -65,7 +65,7 @@ LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light
 class LightAnswers:
     """[light] as `init` writes it (None in Answers: the rules alone)."""
 
-    engine: str  # openai | anthropic | cactus
+    engine: str  # openai | anthropic | cactus | decider
     model: str = ""
     base_url: str = ""
     key_env: str = ""
@@ -75,10 +75,11 @@ class LightAnswers:
 def light_answers(choice: str, model: str | None) -> LightAnswers | None:
     """[light] for `init --light CHOICE [--light-model MODEL]`: None for rules. ValueError says
     what is missing. ollama and mlx are an open-weight model served on this machine: the
-    recommended light model, measured first with eval-local."""
+    recommended light model, measured first with eval-local. decider is a Strands Decider server
+    on this machine; its --light-model (optional) is the model the server must report serving."""
     if choice == "rules":
         if model:
-            raise ValueError("--light-model needs --light ollama, mlx or anthropic")
+            raise ValueError("--light-model needs --light ollama, mlx, anthropic or decider")
         return None
     if choice in ("ollama", "mlx"):
         url = PROVIDERS["local" if choice == "ollama" else "mlx"][0]
@@ -95,6 +96,10 @@ def light_answers(choice: str, model: str | None) -> LightAnswers | None:
         if model:
             raise ValueError("--light-model is not for cactus: Cactus Needle is its one model")
         return LightAnswers("cactus")
+    if choice == "decider":
+        from .config import DECIDER_URL
+
+        return LightAnswers("decider", model or "", DECIDER_URL, "")
     raise ValueError(f"--light must be one of {', '.join(LIGHT_CHOICES)}, not {choice!r}")
 
 
@@ -110,6 +115,15 @@ def light_line(light: LightAnswers | None) -> str:
         return (f"light model: {light.model} (Anthropic): a refusal leaves the rules' answer; an open-weight model on "
                 "this machine has no provider classifier in front of it. Measure it: flightdeck eval-local --engine "
                 f"anthropic --model {light.model}")
+    if light.engine == "decider":
+        from .config import DECIDER_THRESHOLD
+        from .light import DECIDER_INSTALL, DECIDER_MLX, DECIDER_SERVE
+
+        serves = f", serving {light.model}" if light.model else ""
+        return (f"light model: Strands Decider, a decision model, at {light.base_url}{serves}; below confidence "
+                f"{DECIDER_THRESHOLD:g} its answer is unsure and the rules' answer stands. Start its server: "
+                f"{DECIDER_INSTALL}, then {DECIDER_SERVE} ({DECIDER_MLX}). Measure it: flightdeck eval-local "
+                f"--engine decider --base-url {light.base_url}")
     return f'light model: Cactus Needle ({EXTRA_CACTUS}); measure it: flightdeck eval-local --engine cactus'
 
 
@@ -287,6 +301,17 @@ def _light(light: LightAnswers | None) -> str:
             "# measured first with `flightdeck eval-local`. `flightdeck config --example` shows every key.\n"
             'engine = "rules"\n\n'
         )
+    if light.engine == "decider":
+        from .config import DECIDER_THRESHOLD
+        from .light import DECIDER_INSTALL, DECIDER_SERVE
+
+        out = head + 'engine = "decider"   # Strands Decider, a decision model: no key\n'
+        out += f"# Start its server first: {DECIDER_INSTALL}; {DECIDER_SERVE}\n"
+        out += f"base_url = {json.dumps(light.base_url)}\n"
+        if light.model:
+            out += f"model = {json.dumps(light.model)}   # checked against the model the server reports\n"
+        out += f"threshold = {DECIDER_THRESHOLD:g}   # below this confidence its answer is unsure: the rules' answer stands\n"
+        return out + "\n"
     out = head + f"engine = {json.dumps(light.engine)}\n"
     if light.engine == "cactus":
         return out + "\n"
@@ -534,6 +559,8 @@ def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
         detail = "Cactus Needle, " + ("installed" if found else "not installed")
         return [Check("light model", found, detail + "; measure it: flightdeck eval-local --engine cactus",
                       f'{EXTRA_CACTUS}, or set [light] engine = "rules"', essential=False)]
+    if light.engine == "decider":
+        return _decider_checks(light, config.source)
     shown = _shown(light.base_url)
     measure = f"flightdeck eval-local --engine {light.engine} --model {light.model}"
     if light.engine == "openai":
@@ -551,6 +578,67 @@ def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
         checks += [replace(c, essential=False) for c in
                    _local_server_check(light.base_url, (light.model,), name="light server", source=config.source)]
     return checks
+
+
+def _decider_checks(light, source: Path | None) -> list[Check]:
+    """[light] engine = "decider": what it is (and where its requests go, when its server is not
+    on this machine), and whether that server answers GET /health as a Strands Decider server
+    does, serving the model [light] names. Nothing is essential."""
+    from urllib.parse import urlsplit
+
+    from .light import on_this_machine
+
+    shown = _shown(light.base_url)
+    measure = f"flightdeck eval-local --engine decider --base-url {shown}" + (f" --model {light.model}" if light.model else "")
+    detail = (f"Strands Decider (a decision model) at {shown}; below confidence {light.threshold:g} its answer is unsure "
+              f"and the rules' answer stands; measure it against the rules: {measure}")
+    if not on_this_machine(light.base_url):
+        detail += (f"; its requests (challenge descriptions and lane steps) go to {urlsplit(light.base_url).hostname}, "
+                   "not this machine")
+    return [Check("light model", True, detail, essential=False), _decider_server_check(light, source)]
+
+
+def _decider_server_check(light, source: Path | None) -> Check:
+    """GET /health on the decider's server (its docs: answered once it is warmed up, with the
+    model it serves and its window). Never essential: without it the rules' answer stands."""
+    import httpx
+
+    from .light import DECIDER_HEALTH, DECIDER_INSTALL, DECIDER_SERVE, WINDOW, same_model
+    from .light import shown as folded
+
+    root = httpx.URL(light.base_url)
+    url = root.copy_with(path=root.path.rstrip("/") + DECIDER_HEALTH)
+    shown = _shown(light.base_url)
+    try:
+        answer = httpx.get(url, timeout=2.0, follow_redirects=False)
+    except httpx.HTTPError as exc:
+        return Check("light server", False, f"nothing answers at {shown} ({type(exc).__name__})",
+                     f"start it ({DECIDER_INSTALL}; {DECIDER_SERVE}; it answers once warmed up), or check [light] "
+                     "base_url", essential=False)
+    data = None
+    if answer.is_success:
+        try:
+            data = answer.json()
+        except (ValueError, RecursionError):
+            data = None
+    if not isinstance(data, dict) or data.get("status") != "ok":
+        return Check("light server", False, f"{shown} answered {DECIDER_HEALTH} with HTTP {answer.status_code}, not as a "
+                                            "Strands Decider server does",
+                     "check [light] base_url: the address `strands-decider serve` listens on", essential=False)
+    reported = data.get("model") if isinstance(data.get("model"), str) else ""
+    if light.model and reported and not same_model(light.model, reported):
+        where = f" in {source}" if source is not None else ""
+        return Check("light server", False, f"{shown} serves {folded(reported)}, not {light.model}",
+                     f"serve {light.model} there, or set [light] model{where} to the model it serves", essential=False)
+    window = data.get("max_length")
+    window = window if isinstance(window, int) and not isinstance(window, bool) else None
+    if window is not None and window < WINDOW:
+        return Check("light server", False, f"{shown} has a window of {window} tokens; flightdeck sizes its requests for "
+                                            f"{WINDOW}, so a long one would be refused",
+                     "serve a published Strands Decider model (their window is 4,096 tokens)", essential=False)
+    serves = f"serves {folded(reported)}" if reported else "answers"
+    return Check("light server", True, f"{shown} {serves}" + (f" (window {window} tokens)" if window else ""),
+                 essential=False)
 
 
 def _l1_check(pack: Path) -> Check:

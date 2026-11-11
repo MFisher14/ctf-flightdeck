@@ -411,8 +411,10 @@ def init(
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Replace an existing config.")] = False,
     light: Annotated[str, typer.Option("--light", help="The light model for small jobs: rules (none, the default); ollama or "
-                                       "mlx (an open-weight model on this machine: recommended, with --light-model); anthropic; cactus.")] = "rules",
-    light_model: Annotated[str | None, typer.Option("--light-model", help="The light model's id (anthropic: claude-haiku-5-5 by default).")] = None,
+                                       "mlx (an open-weight model on this machine: recommended, with --light-model); anthropic; cactus; "
+                                       "decider (a Strands Decider server on this machine, port 8000).")] = "rules",
+    light_model: Annotated[str | None, typer.Option("--light-model", help="The light model's id (anthropic: claude-haiku-5-5 by default; "
+                                                    "decider: optional, the model its server must serve).")] = None,
 ) -> None:
     """Write a config by answering a few questions (or give them all as options)."""
     from .setup import light_answers, light_line

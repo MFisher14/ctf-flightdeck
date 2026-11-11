@@ -2,8 +2,9 @@
 
 The orchestrator is code; a light model (light.py) only does small jobs, and only after the
 player has measured it against the rules. This module runs a synthetic case set through any
-light engines (rules, an OpenAI-compatible model, Claude, Cactus Needle) and scores each, so
-the player can compare them: accuracy per job, refusals and failures, time and cost per job.
+light engines (rules, an OpenAI-compatible model, Claude, Cactus Needle, a Strands Decider
+server) and scores each, so the player can compare them: accuracy per job, refusals and
+failures (and a decision model's unsure answers), time and cost per job.
 
 Three jobs, one per case kind:
 
@@ -15,15 +16,19 @@ Three jobs, one per case kind:
   "no"): the hint judge's job in a run (detect/judge.py). A judge case names a lexicon technique.
   The rules answer from the technique's action cues, as the "ignores the hint" detector does.
 - **summary**: write a short escalation summary of a lane's steps. Scored by whether it names
-  every keyword a correct summary must contain (case-insensitive). The rules and Cactus write no
-  summaries, so they report these as not applicable, and the scorecard compares columns only
-  over the kinds each one does.
+  every keyword a correct summary must contain (case-insensitive). The rules, Cactus and a
+  decision model write no summaries, so they report these as not applicable (n/a, never a
+  failure), and the scorecard compares columns only over the kinds each one does.
 
 Each engine answers each case it can do with one job: one try, within its time limit, so a
 paid engine makes at most as many calls as there are cases. A job that fails (the model
 declined, the API failed or timed out, the reply was cut off or empty, or it named no allowed
 option) scores wrong, and the scorecard counts it by kind next to the accuracy: a model that
-never answers does not read as a weak one, nor a refusing one as a wrong one. An engine whose
+never answers does not read as a weak one, nor a refusing one as a wrong one. A decision
+model's unsure answer (its confidence below its threshold: in a run, the rules' answer stands)
+is neither right nor wrong: it is left out of the accuracy, which for a decision model is over
+the answers it was sure of (and any jobs it failed), so it says how often a sure answer is
+right; the unsure answers have a row of their own, apart from the failures. An engine whose
 first jobs all fail with an error (a server that is down, a model that is not there) is
 stopped with EngineFailed rather than run through the whole set.
 
@@ -46,6 +51,7 @@ from pathlib import Path
 from .agent.prompts import FENCE_CLOSE as FENCE_CLOSE
 from .agent.prompts import FENCE_OPEN as FENCE_OPEN
 from .light import (
+    DECIDER,
     ERROR,
     HINT,
     JUDGE,
@@ -56,6 +62,7 @@ from .light import (
     REFUSED,
     SUMMARY,
     TIMEOUT,
+    UNSURE,
     YES,
     Answer,
     Choice,
@@ -103,8 +110,10 @@ class Case:
 class CaseResult:
     """How one case scored. `predicted` is what the engine answered, folded to one safe line
     for display. `applicable` is False for a case the engine does not do (a summary, for the
-    rules): it is left out of its accuracy. `answered` is False when the job failed, and
-    `failure` says how (light.REFUSED, ERROR, TIMEOUT, NO_ANSWER, OUTSIDE), `detail` in words."""
+    rules): it is left out of its accuracy. `answered` is False when the job failed or a
+    decision model was unsure, and `failure` says how (light.REFUSED, ERROR, TIMEOUT, NO_ANSWER,
+    OUTSIDE, or UNSURE), `detail` in words. An UNSURE result is never `correct`, and is left out
+    of the accuracy too: it is neither right nor wrong."""
 
     kind: str
     expected: str
@@ -130,25 +139,40 @@ class EvalReport:
 
     @property
     def scored(self) -> tuple[CaseResult, ...]:
-        """The results that count toward accuracy (applicable ones): one per job run."""
+        """The results of the jobs run (the applicable ones): one per job."""
         return tuple(r for r in self.results if r.applicable)
 
     @property
+    def graded(self) -> tuple[CaseResult, ...]:
+        """The results the accuracy is over: every job run but a decision model's unsure ones,
+        which are neither right nor wrong (in a run, the rules' answer stands on them)."""
+        return tuple(r for r in self.scored if r.failure != UNSURE)
+
+    @property
     def correct(self) -> int:
-        return sum(1 for r in self.scored if r.correct)
+        return sum(1 for r in self.graded if r.correct)
 
     @property
     def total(self) -> int:
+        """How many jobs were run, unsure ones included: what the rates and the time and cost
+        per job are over."""
         return len(self.scored)
 
     @property
     def accuracy(self) -> float:
-        return self.correct / self.total if self.total else 0.0
+        graded = len(self.graded)
+        return self.correct / graded if graded else 0.0
 
     @property
     def unanswered(self) -> int:
-        """How many jobs held no answer (refused, failed, cut off, empty, not an option)."""
-        return sum(1 for r in self.scored if not r.answered)
+        """How many jobs failed to answer (refused, failed, cut off, empty, not an option); a
+        decision model's unsure answers are counted apart (`unsure`)."""
+        return sum(1 for r in self.scored if not r.answered and r.failure != UNSURE)
+
+    @property
+    def unsure(self) -> int:
+        """How many jobs a decision model answered below its confidence threshold."""
+        return self.count(UNSURE)
 
     def count(self, *failures: str) -> int:
         """How many jobs failed in one of these ways."""
@@ -163,13 +187,15 @@ class EvalReport:
         return [k for k in KINDS if any(r.kind == k for r in self.scored)]
 
     def by_kind(self, kinds: Sequence[str] | None = None) -> dict[str, tuple[int, int]]:
-        """{kind: (correct, total)} over the scored results (of `kinds`, when given)."""
+        """{kind: (correct, graded)} for each kind it ran jobs of (of `kinds`, when given): a
+        kind whose every job was unsure is (0, 0)."""
         out: dict[str, tuple[int, int]] = {}
         for result in self.scored:
             if kinds is not None and result.kind not in kinds:
                 continue
             got, had = out.get(result.kind, (0, 0))
-            out[result.kind] = (got + int(result.correct), had + 1)
+            graded = result.failure != UNSURE
+            out[result.kind] = (got + int(graded and result.correct), had + int(graded))
         return out
 
 
@@ -438,11 +464,14 @@ MIN_COLUMN = 16
 
 def format_scorecard(reports: Sequence[EvalReport]) -> str:
     """The reports side by side, one column each, as plain text for the terminal: accuracy per
-    kind and overall, refusals, failures and replies with no answer, time and cost per job.
+    kind and overall, a decision model's unsure answers (a row only when a decider is one of the
+    columns), refusals, failures and replies with no answer, time and cost per job.
 
     All must be over the same cases. A column shows n/a for a kind its engine does not do, and
     the overall row is over the kinds every column does, so no two columns are compared over
-    different cases."""
+    different kinds. A decision model's accuracy leaves out the jobs it was unsure of (its own
+    row counts them): it is how often an answer it was sure of is right, and "all unsure" when
+    it was sure of none."""
     if not reports:
         raise LocalModelError("no reports to show")
     first = reports[0]
@@ -461,12 +490,10 @@ def format_scorecard(reports: Sequence[EvalReport]) -> str:
     lines = [f"eval-local: {len(first.results)} cases ({listed}); one job per case, one try each", ""]
     lines.append(row("", "cases", [report.label for report in reports]))
     for kind in present:
-        lines.append(row(kind, counts[kind], [_cell(*report.by_kind([kind]).get(kind, (0, 0))) for report in reports]))
-    overall = []
-    for report in reports:
-        got = report.by_kind(shared)
-        overall.append(_cell(sum(c for c, _ in got.values()), sum(t for _, t in got.values())))
-    lines.append(row("overall", sum(counts[k] for k in shared), overall))
+        lines.append(row(kind, counts[kind], [_accuracy(report, [kind]) for report in reports]))
+    lines.append(row("overall", sum(counts[k] for k in shared), [_accuracy(report, shared) for report in reports]))
+    if any(r.engine == DECIDER for r in reports):  # only a decision model says how sure it is
+        lines.append(row("unsure", "", [_rate(r, r.unsure) if r.engine == DECIDER else "-" for r in reports]))
     lines.append(row("refused", "", [_rate(r, r.count(REFUSED)) for r in reports]))
     lines.append(row("failed", "", [_rate(r, r.count(ERROR, TIMEOUT)) for r in reports]))
     lines.append(row("no answer", "", [_rate(r, r.count(NO_ANSWER, OUTSIDE)) for r in reports]))
@@ -482,6 +509,10 @@ def format_scorecard(reports: Sequence[EvalReport]) -> str:
     if any(r.count(REFUSED) for r in reports):
         lines.append("refused: the model declined the job. In a run the rules' answer stands when it does; an "
                      "open-weight model on your own machine has no provider classifier to decline security work.")
+    if any(r.unsure for r in reports):
+        lines.append("unsure: the decision model's confidence was below its threshold, so in a run the rules' "
+                     "answer stands. An unsure job counts neither right nor wrong: the decision model's accuracy "
+                     "is over the jobs it answered at or above its threshold, and any it failed.")
     if any(r.count(NO_ANSWER, OUTSIDE) for r in reports):
         lines.append("no answer: replies cut off at the token cap, empty, or not exactly one of the options; "
                      "each counts as wrong.")
@@ -495,6 +526,16 @@ def _cell(correct: int, total: int) -> str:
     if not total:
         return "n/a"
     return f"{correct}/{total} {round(100 * correct / total)}%"
+
+
+def _accuracy(report: EvalReport, kinds: Sequence[str]) -> str:
+    """Right answers over graded jobs, for these kinds: n/a when the engine does none of them,
+    "all unsure" when it ran them and a decision model was unsure on every one."""
+    got = report.by_kind(kinds)
+    if not got:
+        return "n/a"
+    graded = sum(t for _, t in got.values())
+    return _cell(sum(c for c, _ in got.values()), graded) if graded else "all unsure"
 
 
 def _rate(report: EvalReport, count: int) -> str:
