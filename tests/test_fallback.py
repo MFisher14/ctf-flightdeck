@@ -337,7 +337,8 @@ def test_after_a_529_the_lane_moves_to_openrouter_says_so_and_stays_there(tmp_pa
 def test_escalating_a_moved_lane_tries_anthropic_again_on_the_stronger_model(tmp_path):
     claude = FakeAnthropicServer([OVERLOADED, OVERLOADED, tool_message("submit_flag", {"flag": "t{big}"},
                                                                        model="claude-sonnet-5-5")])
-    router = FakeModelServer([tool_call_reply("shell", {"command": "echo on openrouter"})], responder=lambda r: text_reply("waiting"))
+    router = FakeModelServer([tool_call_reply("shell", {"command": "echo on openrouter"})],
+                             responder=lambda r: tool_call_reply("set_plan", {"plan": "waiting"}))  # busy until the escalation
 
     async def main():
         with claude, router:

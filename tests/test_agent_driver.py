@@ -25,7 +25,7 @@ from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.agent.driver import NOT_RUN
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN
+from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, NUDGE
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, EventKind, LaneState, PendingKind
 from ctf_flightdeck.pricing import Price
 
@@ -217,6 +217,106 @@ def test_a_reply_without_tool_calls_gets_a_nudge(tmp_path):
             await until(lambda: len(server.requests) >= 2, "the second model call")
             assert "no tool was called" in last_user(server.requests[1])
             assert lane.actions[0].text == "says: I think it is base64."
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_model_that_keeps_answering_without_a_tool_gives_up_after_three_replies(tmp_path):
+    """Finding 15: each text-only reply got a nudge and the next call went out at once, until
+    the lane's token or dollar cap. Now the third in a row ends the lane, with what it said."""
+    server = FakeModelServer([
+        text_reply("Let me think."),
+        text_reply("Still thinking."),
+        text_reply("I have nothing more to try."),
+        tool_call_reply("shell", {"command": "touch never.txt"}),
+    ])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished, "the lane to give up")
+            await asyncio.sleep(0.2)
+            assert calls_to(server) == 3 and lane.state is LaneState.GAVE_UP
+            assert lane.result == "the model answered 3 times in a row without calling a tool; it last said: I have nothing more to try."
+            assert [last_user(server.requests[i]) for i in (1, 2)] == [NUDGE, NUDGE]
+            assert lab.deck.challenges["note"].status is ChallengeStatus.PARKED
+            assert not (lab.work(lane) / "never.txt").exists()
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_tool_call_between_replies_without_one_starts_the_count_again(tmp_path):
+    server = FakeModelServer([
+        text_reply("one"), text_reply("two"),
+        tool_call_reply("shell", {"command": "ls"}),
+        text_reply("three"), text_reply("four"),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+    ])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None or lane.finished, "the candidate flag")
+            assert not lane.finished and calls_to(server) == 6
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_message_from_the_player_starts_the_count_again(tmp_path):
+    gate = threading.Event()
+
+    def responder(record):
+        if calls_to(server) == 2:
+            gate.wait(5)  # the player writes while the model answers its second call
+        return text_reply(f"reply {calls_to(server)}")
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: calls_to(server) >= 2, "the second call")
+            assert lab.deck.apply(iv.Hint(lane.id, "look at the note again")).ok
+            gate.set()
+            await until(lambda: lane.finished, "the lane to give up")
+            assert calls_to(server) == 5  # 2, then the hint, then 3 more without a tool
+            assert "Message from the player: look at the note again" in last_user(server.requests[2])
+            assert lane.result.endswith("it last said: reply 5")
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_flag_the_model_writes_without_calling_a_tool_waits_for_the_player(tmp_path):
+    """A flag in a reply with no tool call is a candidate, never submitted on its own (auto
+    submit waits too: the model may be quoting a decoy it read), and that reply is not idle."""
+    server = FakeModelServer([text_reply("I think it is t{note}, from note.txt."), text_reply("ok"), text_reply("ok"),
+                              text_reply("ok")])
+    tried: list[str] = []
+
+    def verify(cid, flag):
+        tried.append(flag)
+        return flag == "t{note}"
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=verify)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate in the model's words")
+            assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, "t{note}", [])
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: lane.finished, "the lane to give up")
+            assert calls_to(server) == 4  # the reply with the flag did not count
             await lab.finish()
 
     run(main())
@@ -1028,7 +1128,7 @@ def test_the_hand_back_never_follows_a_symlink_planted_at_the_history(tmp_path):
 def test_no_take_over_before_the_workspace_is_ready(tmp_path):
     from ctf_flightdeck.core.driver import TakeoverRefused
 
-    server = FakeModelServer(responder=lambda record: text_reply("thinking"))
+    server = FakeModelServer(responder=lambda record: tool_call_reply("set_plan", {"plan": "thinking"}))  # it keeps working
 
     async def main():
         with server:

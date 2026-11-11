@@ -56,6 +56,9 @@ HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (i
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
 INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, as lanes see it (manual is off)
+MAX_IDLE_TURNS = 3  # replies in a row without a tool call before the lane gives up (as agent/external.py's lanes do)
+MAX_SAID_FLAGS = 3  # candidates taken from one reply's text, at most
+SAID_SCAN = 20_000  # characters of a reply's text searched for flags
 EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, and what the player should check
     401: "check the API key",
     402: "check the account's credits",
@@ -99,6 +102,8 @@ class _Run:
     instance: str = ""  # the live instance under the confirm policy: asked, allowed, open, declined, failed
     escalations: int = 0
     generation: int = 0  # bumped at escalation and take-over: a reply asked for before must not run
+    idle_turns: int = 0  # replies in a row with no tool call (and no new flag in their text) since the player last spoke
+    said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
 
 
 @dataclass
@@ -256,6 +261,7 @@ class AgentDriver:
         run.model = model
         run.escalations += 1
         run.generation += 1
+        run.idle_turns = 0  # the stronger model gets its own chances
         run.session = self._session(lane.id, run.escalations)
         text = lane_summary(self.deck, lane, before=summary)
         run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(text)}]
@@ -344,8 +350,9 @@ class AgentDriver:
             assert lane is not None
             hints = list(lane.hints)
             notes, run.notes = run.notes, []
-            if hints or notes:
+            if hints or notes:  # the player spoke (or flightdeck on their behalf): a reply to it starts the count again
                 run.messages.append({"role": "user", "content": prompts.player_message(hints, notes)})
+                run.idle_turns = 0
             generation, model, messages = run.generation, run.model, run.messages
             try:
                 reply = await self.client.chat(
@@ -549,13 +556,22 @@ class AgentDriver:
             if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
                 notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
         skipped = len(reply.tool_calls) - len(results)
+        said: list[str] = []  # flags the model wrote in a reply with no tool call: candidates it did not submit
+        idle = False  # the last of MAX_IDLE_TURNS replies in a row that did nothing: the lane gives up
+        if same and run.generation == generation:
+            if reply.tool_calls:
+                run.idle_turns = 0
+            else:
+                said = self._flags_said(run, reply.content)
+                run.idle_turns = 0 if said else run.idle_turns + 1
+                idle = run.idle_turns >= MAX_IDLE_TURNS
         if same:
             messages.append(reply.message)
             for call, result in zip(reply.tool_calls, results):
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
             for call in reply.tool_calls[len(results):]:
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": NOT_RUN})
-            if not reply.tool_calls and run.generation == generation:
+            if not reply.tool_calls and run.generation == generation and not idle:
                 messages.append({"role": "user", "content": prompts.NUDGE})
             run.notes.extend(notes)
         action, output = _step(results, reply)
@@ -580,6 +596,28 @@ class AgentDriver:
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag))
+        for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
+            self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
+        if idle:
+            run.idle_turns = 0
+            last = prompts.one(reply.content, 200) if reply.content.strip() else "(nothing)"
+            self._report(run, TurnReport(
+                turn=False, gave_up=f"the model answered {MAX_IDLE_TURNS} times in a row without calling a tool; it last said: {last}",
+            ))
+
+    def _flags_said(self, run: _Run, text: str) -> list[str]:
+        """Matches of the flag format in what the model wrote, new to this lane, at most
+        MAX_SAID_FLAGS of them (a model that lists made-up flags asks the player a few times,
+        not a hundred)."""
+        found: list[str] = []
+        for match in self._flag_re().finditer(text[:SAID_SCAN]):
+            flag = match.group(0)
+            if flag and flag not in run.said and flag not in found:
+                found.append(flag)
+                if len(found) == MAX_SAID_FLAGS:
+                    break
+        run.said.update(found)
+        return found
 
     def _refresh_if_long(self, run: _Run, prompt_tokens: int) -> None:
         """Past compact_at prompt tokens, continue in a fresh context: the same prefix and
