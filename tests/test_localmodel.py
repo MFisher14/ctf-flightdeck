@@ -759,7 +759,8 @@ def test_cli_prices_jobs_with_price(tmp_path):
 def test_cli_refuses_a_compare_it_cannot_read(tmp_path, spec):
     cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "slow scan"))
     result = runner.invoke(mount(), ["eval-local", "--engine", "rules", "--cases", str(cases), "--compare", spec])
-    assert result.exit_code == 2 and "--compare takes rules, cactus, anthropic:MODEL or openai:MODEL@BASE_URL" in result.output
+    assert result.exit_code == 2
+    assert "--compare takes rules, cactus, anthropic:MODEL, openai:MODEL@BASE_URL or decider@BASE_URL" in result.output
 
 
 def test_cli_rules_alone(tmp_path):

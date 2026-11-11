@@ -12,9 +12,14 @@ the light role falls back to):
 - `--engine anthropic --model M`: a Claude model (claude-haiku-5-5, say), key from
   `--key-env` (default ANTHROPIC_API_KEY), base URL the SDK's unless `--base-url`.
 - `--engine cactus`: Cactus Needle on this machine (the [cactus] extra).
+- `--engine decider --base-url URL`: a Strands Decider server (a decision model; e.g.
+  http://127.0.0.1:8000 for `strands-decider serve MODEL --port 8000`), `--model` optional (the
+  model it should report serving). An answer below `--threshold` (default 0.9) is unsure, a row
+  of its own; summary cases are n/a (a decision model writes no text). It is always announced
+  first: the server it calls and at most how many times (one call per hint and judge case).
 - `--engine rules`: the rules alone.
 - `--compare SPEC`, as often as you like: another column, `rules`, `cactus`,
-  `anthropic:MODEL` or `openai:MODEL@BASE_URL` (a server with no key).
+  `anthropic:MODEL`, `openai:MODEL@BASE_URL` (a server with no key) or `decider@BASE_URL`.
 
 Before any call the cases are checked and the rules scored (no network): a missing lexicon, or
 a case that names an id it lacks, stops the command before anything is spent. A paid API
@@ -41,6 +46,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, NoReturn
+from urllib.parse import urlsplit
 
 import httpx
 import typer
@@ -70,14 +76,16 @@ class Spec:
 def eval_local(
     engine: Annotated[
         str, typer.Option("--engine", help="openai (an OpenAI-compatible server; recommended: an open-weight model on "
-                                            "this machine), anthropic, cactus or rules.")
+                                            "this machine), anthropic, cactus, decider (a Strands Decider server) or rules.")
     ] = "openai",
     base_url: Annotated[
         str | None,
         typer.Option("--base-url", help=f"The OpenAI-compatible base URL, e.g. {EXAMPLE_URL} (Ollama) or "
-                                        "http://127.0.0.1:8080/v1 (an MLX server); for anthropic, another API URL."),
+                                        "http://127.0.0.1:8080/v1 (an MLX server); for anthropic, another API URL; for "
+                                        f"decider, its server's address, e.g. {L.DECIDER_URL}."),
     ] = None,
-    model: Annotated[str | None, typer.Option("--model", help="The model id to evaluate.")] = None,
+    model: Annotated[str | None, typer.Option("--model", help="The model id to evaluate (decider: optional, the model "
+                                                               "its server must report serving).")] = None,
     key_env: Annotated[
         str | None, typer.Option("--key-env", help="The variable holding the key (anthropic: ANTHROPIC_API_KEY by "
                                                    "default; openai: none unless given). Never the key itself.")
@@ -87,10 +95,15 @@ def eval_local(
                                  help="Dollars per million tokens, for an API that reports no cost.")
     ] = None,
     timeout: Annotated[float, typer.Option("--timeout", help="Seconds one job may take.")] = 30.0,
+    threshold: Annotated[
+        float | None, typer.Option("--threshold", help=f"Decider columns: the confidence below which an answer is "
+                                                       f"unsure (default {L.DECIDER_THRESHOLD:g}).")
+    ] = None,
     compare: Annotated[
         list[str] | None,
         typer.Option("--compare", metavar="SPEC",
-                     help="Another engine to score beside it: rules, cactus, anthropic:MODEL or openai:MODEL@BASE_URL."),
+                     help="Another engine to score beside it: rules, cactus, anthropic:MODEL, openai:MODEL@BASE_URL or "
+                          "decider@BASE_URL."),
     ] = None,
     cases: Annotated[
         Path | None,
@@ -101,6 +114,13 @@ def eval_local(
     if not math.isfinite(timeout) or timeout <= 0:
         _fail("--timeout must be a positive number of seconds")
     specs = [_main_spec(engine, base_url, model, key_env)] + [_compare_spec(text) for text in compare or ()]
+    if threshold is not None and not any(spec.engine == "decider" for spec in specs):
+        _fail("--threshold is for a decider column (--engine decider or --compare decider@BASE_URL)")
+    if threshold is not None and not (math.isfinite(threshold) and 0 < threshold <= 1):
+        _fail("--threshold must be a number above 0 and at most 1: the confidence below which an answer is unsure")
+    sure = L.DECIDER_THRESHOLD if threshold is None else threshold
+    if price is not None and specs[0].engine == "decider":
+        _fail("--price is not for --engine decider: a decision model server is your own, with no bill per call")
     priced = _price(price) if price is not None else None
 
     try:
@@ -121,11 +141,11 @@ def eval_local(
             columns.append(spec)
     keys = {spec: _key(spec) for spec in columns}
     for spec in columns:
-        notice = _spend_notice(spec, loaded, priced if spec == specs[0] else None)
+        notice = _spend_notice(spec, loaded, priced if spec == specs[0] else None) or _decider_notice(spec, loaded, sure)
         if notice:
             typer.echo(f"flightdeck: {notice}", err=True)
 
-    reports = asyncio.run(_run(columns, keys, loaded, priced if specs[0] in columns else None, specs[0], timeout))
+    reports = asyncio.run(_run(columns, keys, loaded, priced if specs[0] in columns else None, specs[0], timeout, sure))
     reports = [rules, *reports]
     typer.echo(localmodel.format_scorecard(reports), nl=False)
     worst = [message for report in reports[1:] if (message := _unmeasured(report))]
@@ -160,7 +180,15 @@ def _main_spec(engine: str, base_url: str | None, model: str | None, key_env: st
         if base_url:
             _check_url(base_url)
         return Spec("anthropic", model, base_url or "https://api.anthropic.com", _key_env(key_env or ANTHROPIC_KEY_ENV))
-    _fail(f"unknown engine {engine!r}; use openai, anthropic, cactus or rules")
+    if engine == "decider":
+        if not base_url:
+            _fail(f"--engine decider needs --base-url, its server's address, e.g. {L.DECIDER_URL} for one on this "
+                  f"machine (start it: {L.DECIDER_SERVE})")
+        if key_env:
+            _fail("--key-env is not for --engine decider: a decision model server takes no key")
+        _check_decider_url(base_url)
+        return Spec("decider", model or "", base_url, "")
+    _fail(f"unknown engine {engine!r}; use openai, anthropic, cactus, decider or rules")
 
 
 def _compare_spec(text: str) -> Spec:
@@ -175,8 +203,12 @@ def _compare_spec(text: str) -> Spec:
             url = rest[at + 1:]
             _check_url(url, option="--compare")
             return Spec("openai", rest[:at], url, "")
-    _fail("--compare takes rules, cactus, anthropic:MODEL or openai:MODEL@BASE_URL "
-          f"(e.g. openai:some-model@{EXAMPLE_URL})")
+    if text.startswith("decider@http"):
+        url = text[len("decider@"):]
+        _check_decider_url(url, option="--compare")
+        return Spec("decider", "", url, "")
+    _fail("--compare takes rules, cactus, anthropic:MODEL, openai:MODEL@BASE_URL or decider@BASE_URL "
+          f"(e.g. openai:some-model@{EXAMPLE_URL} or decider@{L.DECIDER_URL})")
 
 
 def _key_env(name: str) -> str:
@@ -246,9 +278,29 @@ def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | Non
             f"{max(tokens.values())} output tokens; {how}")
 
 
-def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float) -> L.Light:
+def _decider_notice(spec: Spec, cases: list[localmodel.Case], threshold: float) -> str:
+    """What a decider column will do, said before any call; "" for another engine."""
+    if spec.engine != "decider":
+        return ""
+    calls = sum(1 for case in cases if case.kind in (L.HINT, L.JUDGE))
+    skipped = sum(1 for case in cases if case.kind == L.SUMMARY)
+    where = urlsplit(spec.base_url).hostname
+    elsewhere = "" if L.on_this_machine(spec.base_url) else f"; its requests (descriptions, lane steps) go to {where}"
+    na = f"; its {skipped} summary case{'s are' if skipped != 1 else ' is'} n/a: a decision model writes no text" if skipped else ""
+    return (f"decider at {_shown(spec.base_url)}: at most {calls} calls to the decision model server, one per hint and "
+            f"judge case (no retries){na}; an answer below confidence {threshold:g} counts as unsure{elsewhere}")
+
+
+def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float,
+            threshold: float = L.DECIDER_THRESHOLD) -> L.Light:
     if spec.engine == "cactus":
         return L.CactusLight(timeout)
+    if spec.engine == "decider":
+        try:
+            return L.DeciderLight(spec.base_url, spec.model, timeout=timeout, threshold=threshold)
+        except ValueError:  # _check_decider_url checks the same; never quote the URL: it may carry a credential
+            raise localmodel.LocalModelError(f"--base-url cannot be used as a decider server's address, e.g. "
+                                             f"{L.DECIDER_URL}") from None
     if spec.engine == "openai":
         from .agent.client import ModelClient
 
@@ -269,11 +321,11 @@ def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float) 
 
 
 async def _run(columns: list[Spec], keys: dict, cases: list[localmodel.Case], price: L.Price | None, main: Spec,
-               timeout: float) -> list[localmodel.EvalReport]:
+               timeout: float, threshold: float = L.DECIDER_THRESHOLD) -> list[localmodel.EvalReport]:
     reports = []
     for spec in columns:
         try:
-            engine = _engine(spec, keys[spec], price if spec == main else None, timeout)
+            engine = _engine(spec, keys[spec], price if spec == main else None, timeout, threshold)
         except (L.LightError, localmodel.LocalModelError) as exc:
             _fail(str(exc))
         try:
@@ -292,6 +344,8 @@ def _failed(spec: Spec, why: str) -> str:
         return f"the local model at {_shown(spec.base_url)} failed: {_redact(why, spec.base_url)}"
     if spec.engine == "anthropic":
         return f"the Anthropic API failed for {spec.model}: {why}"
+    if spec.engine == "decider":
+        return f"the decision model at {_shown(spec.base_url)} failed: {_redact(why, spec.base_url)}"
     return f"Cactus Needle failed: {why}"
 
 
@@ -322,6 +376,13 @@ def _check_url(base_url: str, *, option: str = "--base-url") -> None:
     problem = _url_problem(base_url, option)
     if problem:
         _fail(problem)
+
+
+def _check_decider_url(base_url: str, *, option: str = "--base-url") -> None:
+    _check_url(base_url, option=option)
+    problem = L.decider_url_problem(base_url)
+    if problem:
+        _fail(f"{option} {problem}")
 
 
 def _url_problem(base_url: str, option: str = "--base-url") -> str:
