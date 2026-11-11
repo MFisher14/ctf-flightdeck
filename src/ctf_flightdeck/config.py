@@ -27,6 +27,7 @@ from urllib.parse import SplitResult, urlsplit
 
 from .core.model import SUBMIT_POLICIES
 from .pricing import Price
+from .text import untrusted
 
 CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
@@ -79,16 +80,21 @@ class ConfigError(Exception):
 
 
 def default_config_path() -> Path:
-    """$FLIGHTDECK_CONFIG if it is set, else ~/.config/ctf-flightdeck/config.toml."""
+    """$FLIGHTDECK_CONFIG if it is set, else ~/.config/ctf-flightdeck/config.toml. ConfigError
+    when a ~ in it names a user that does not exist, or there is no home directory."""
     named = os.environ.get(CONFIG_ENV)
-    if named:
-        return Path(named).expanduser()
-    return Path.home() / ".config" / "ctf-flightdeck" / "config.toml"
+    try:
+        if named:
+            return Path(named).expanduser()
+        return Path.home() / ".config" / "ctf-flightdeck" / "config.toml"
+    except RuntimeError:
+        where = f"${CONFIG_ENV} starts with ~ for a user that does not exist" if named else "there is no home directory"
+        raise ConfigError(f"cannot find the config: {where}; name the file with an absolute path in ${CONFIG_ENV}") from None
 
 
 def load_config(path: Path | None = None) -> Config:
     """Read and check the config file (default: default_config_path())."""
-    path = default_config_path() if path is None else Path(path).expanduser()
+    path = default_config_path() if path is None else expand(Path(path))
     doc = _parse(path)
     _known(path, (), doc, _TABLES)
     ladder = _ladder(path, _table(path, doc, "models"))
@@ -192,7 +198,7 @@ def _parse(path: Path) -> dict:
             how = f"mkdir -p {shlex.quote(str(path.parent))} && {how}"
         try:
             usual = path == default_config_path()
-        except RuntimeError:  # no home directory to compare with
+        except ConfigError:  # no home directory to compare with
             usual = False
         init = "flightdeck init" if usual else f"flightdeck init --path {shlex.quote(str(path))}"
         raise ConfigError(
@@ -208,7 +214,17 @@ def _parse(path: Path) -> dict:
     except UnicodeDecodeError:
         raise ConfigError(f"{path}: is not UTF-8 text") from None
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"{path}: is not valid TOML: {exc}") from None
+        raise ConfigError(f"{path}: is not valid TOML: {untrusted(str(exc), one_line=True)}") from None
+    except (ValueError, RecursionError) as exc:  # a number too long to read, tables nested too deep
+        raise ConfigError(f"{path}: cannot be read as TOML ({type(exc).__name__}: {untrusted(str(exc)[:200], one_line=True)})") from None
+
+
+def expand(path: Path) -> Path:
+    """`path` with ~ expanded. ConfigError when it names a user that does not exist."""
+    try:
+        return path.expanduser()
+    except RuntimeError:
+        raise ConfigError(f"{path}: starts with ~ for a user that does not exist (or there is no home directory)") from None
 
 
 def _api(path: Path, table: dict) -> ApiConfig:

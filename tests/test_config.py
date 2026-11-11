@@ -493,3 +493,24 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
 def test_a_bad_l1_table_is_an_error_that_names_the_key(tmp_path, table, message):
     with pytest.raises(ConfigError, match=re.escape(message)):
         load_config(write(tmp_path, LADDER + f"[l1]\n{table}\n"))
+
+
+@pytest.mark.parametrize(
+    "text, what",
+    [
+        ("[models]\nladder = [\"a\"]\nx = " + "9" * 5000 + "\n", "ValueError"),  # a number too long for Python to read
+        ("a = " + "[" * 2000 + "]" * 2000 + "\n", "RecursionError"),
+    ],
+)
+def test_a_config_toml_cannot_read_is_a_config_error_not_a_crash(tmp_path, text, what):
+    message = error(write(tmp_path, text))
+    assert "cannot be read as TOML" in message and what in message
+
+
+def test_a_path_for_a_user_that_does_not_exist_is_a_config_error(tmp_path, monkeypatch):
+    with pytest.raises(ConfigError, match="for a user that does not exist"):
+        load_config(Path("~no-such-user-5150/config.toml"))
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", "~no-such-user-5150/config.toml")
+    with pytest.raises(ConfigError, match=r"\$FLIGHTDECK_CONFIG starts with ~ for a user that does not exist"):
+        load_config()
+

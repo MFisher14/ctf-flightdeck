@@ -107,7 +107,7 @@ def _load_config(config: Path | None) -> Config | ConfigError:
 
     try:
         path = config.expanduser() if config is not None else default_config_path()
-    except RuntimeError:  # ~user for a user that does not exist, or no home directory at all
+    except (RuntimeError, ConfigError):  # ~user for a user that does not exist, or no home directory at all
         if config is not None:
             return ConfigError(f"{untrusted(str(config), one_line=True)}: starts with ~ for a home directory that cannot be found")
         return ConfigError(
