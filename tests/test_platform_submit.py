@@ -385,6 +385,22 @@ def test_a_tries_remaining_answer_switches_the_challenge_to_confirm_for_the_rest
     deck.report(lane.id, TurnReport(flag="t{c}"))  # a new claimed flag waits too
     assert [p.detail for p in lane.waiting] == ["submit t{c} (2 tries left)"] and submitter.flags() == ["t{a}"]
     assert events(deck, EventKind.SUBMIT)[-1].data["tries_left"] == 2
+    (warning,) = events(deck, EventKind.WARNING)  # the switch is said, once
+    assert warning.text == ("the platform counts the tries at the flag of Chall 0 (2 tries left): from now on its flags "
+                            "wait for you, under submit auto too")
+    assert (warning.challenge, warning.data) == ("c0", {"tries_left": 2})
+    deck.apply(iv.Approve(lane.id))
+    deck.platform_verdict(lane.id, "t{b}", False, "Incorrect. You have 1 try remaining.", tries_left=1)
+    assert ch.tries_left == 1 and len(events(deck, EventKind.WARNING)) == 1
+
+
+def test_under_confirm_a_tries_remaining_answer_is_no_warning():
+    deck, _, _ = platform_deck(submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.apply(iv.Approve(lane.id))
+    deck.platform_verdict(lane.id, "t{a}", False, "Incorrect. You have 2 tries remaining.", tries_left=2)
+    assert deck.challenges["c0"].tries_left == 2 and events(deck, EventKind.WARNING) == []  # every flag waits anyway
 
 
 def test_flightdeck_never_spends_the_last_try_on_its_own_and_the_approval_says_it_is_the_last():

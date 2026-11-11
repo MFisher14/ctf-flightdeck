@@ -20,7 +20,7 @@ Rules the deck enforces:
 - when that platform counts the tries at a challenge's flag (Challenge.limited: the board
   says so, or the platform did), a flag for it waits for the player under "auto" too, so
   flightdeck never spends one of those tries on its own; each approval says how many are
-  left;
+  left, and a platform's answer that first says so is a warning under "auto";
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
 - team mode: a challenge a teammate solved or claimed is not worked; a teammate's
@@ -1296,8 +1296,14 @@ class Deck:
 
     def _tries(self, ch: Challenge, left: int) -> None:
         """The platform said how many tries are left on `ch`: its flags wait for the player from
-        now on (Challenge.limited), and every approval waiting for one says how many."""
+        now on (Challenge.limited), and every approval waiting for one says how many. Under
+        auto, the first time, a warning says that its flags no longer go out on their own."""
+        counted = ch.limited
         ch.tries_left = max(0, left)
+        if not counted and self.config.submit == "auto":
+            self._emit(EventKind.WARNING, f"the platform counts the tries at the flag of {ch.name} ({_tries_text(ch)}): "
+                                          "from now on its flags wait for you, under submit auto too",
+                       challenge=ch.id, data={"tries_left": ch.tries_left})
         for lane in self.lanes_on(ch.id):
             for pending in [lane.pending, *lane.waiting]:
                 if pending is not None and pending.kind is PendingKind.SUBMIT and pending.flag is not None:
