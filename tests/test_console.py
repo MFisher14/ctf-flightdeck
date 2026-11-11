@@ -1794,7 +1794,8 @@ def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh():
     lane's why line again on every refresh, twice a second, and the focus view its open diff:
     what was taken out is kept, so fifty refreshes of a lane whose last step printed a
     megabyte of keys into its output and a file stay well inside the deadline, the first
-    included, and none of them shows a key."""
+    included, and none of them shows a key. A one-line cell holds no more of a text than a
+    terminal could show, so it is not a megabyte of text to lay out on every refresh."""
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
     deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
     (lane,) = deck.lanes_on("c")
@@ -1807,6 +1808,7 @@ def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh():
             cells, why = views.lane_cells(deck, lane), views.lane_why(deck, lane)
             diff = views.diff_view(deck, lane, lane.files["env.txt"])
     assert why.plain.startswith(f"▌{lane.id} plan: -\n  last: env; env > env.txt → OPENROUTER_API_KEY=[redacted] ⏎ OPENROUTER")
+    assert len(why.plain) < 4 * views.LINE_CHARS  # a line's worth, with each newline shown as " ⏎ "
     assert "5f" * 32 not in why.plain + cells["last"].plain + diff.code
     assert diff.code.count("OPENROUTER_API_KEY=[redacted]\n") == keys.count("\n")
 
