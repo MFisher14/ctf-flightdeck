@@ -128,8 +128,8 @@ class FlightdeckApp(App[None]):
             return
         await self._quit_now()
 
-    def _quit_answered(self, quit: bool | None) -> None:
-        if quit:
+    def _quit_answered(self, yes: bool | None) -> None:
+        if yes:
             self.call_later(self._quit_now)
 
     async def _quit_now(self, why: str = "") -> None:

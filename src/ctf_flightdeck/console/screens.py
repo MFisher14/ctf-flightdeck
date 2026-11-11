@@ -151,8 +151,8 @@ class QuitPrompt(ModalScreen[bool]):
     def _pressed(self, event: Button.Pressed) -> None:
         self.action_choose(event.button.id == "quit")
 
-    def action_choose(self, quit: bool) -> None:
-        self.dismiss(quit)
+    def action_choose(self, yes: bool) -> None:
+        self.dismiss(yes)
 
 
 class TakeOverScreen(ModalScreen[None]):
@@ -297,7 +297,10 @@ MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
 )
-MOCK_KEY_HELP = {"t": "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)"}
+MOCK_KEY_HELP = {
+    "t": "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)",
+    "q": "Quit (the mock has nothing to stop, so it never asks)",
+}
 ALERT_HELP = (
     (AlertKind.EFFORT, "Turns or tokens are high for a low-point challenge with many solves"),
     (AlertKind.HINT, "The description hints at something the lane is not doing"),

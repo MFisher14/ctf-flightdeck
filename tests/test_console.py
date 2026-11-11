@@ -705,6 +705,7 @@ def test_in_a_run_help_and_the_command_menu_say_what_take_over_and_decline_do_an
                 "and the lane hears what you changed") in text
         assert ("Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; "
                 "refusing more budget stops the lane") in text
+        assert "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)" in text
         await press(pilot, "escape")
         for typed, shown in (("/take", "/takeover a shell in the lane's workspace; exit it to hand the lane back"),
                              ("/decl", "/decline say no: not submitted, or off the box (the lane carries on); no more budget (it stops)")):
@@ -718,12 +719,14 @@ def test_in_a_run_help_and_the_command_menu_say_what_take_over_and_decline_do_an
     drive(app, script)
 
 
-def test_in_the_mock_help_says_take_over_is_a_placeholder_there():
+def test_in_the_mock_help_says_take_over_is_a_placeholder_there_and_quitting_does_not_ask():
     world, app = make("sstv")
 
     async def script(pilot):
         await press(pilot, "question_mark")
-        assert "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)" in prompt_text(app)
+        text = prompt_text(app)
+        assert "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)" in text
+        assert "Quit (the mock has nothing to stop, so it never asks)" in text and "asks first" not in text
 
     drive(app, script)
 
