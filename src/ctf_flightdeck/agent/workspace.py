@@ -10,7 +10,14 @@ Everything in a workspace is untrusted: the handout comes from the challenge and
 lane's commands are steered by it. So flightdeck's own reads and writes there never follow
 a symlink (a container can plant /work/x -> /etc/passwd, which on this machine points at
 the host's file), never block on a FIFO, and never land outside the root. Commands get an
-environment built fresh from an allowlist, so no API key or token reaches them.
+environment built fresh from an allowlist, so no API key or token is handed to them. In
+the host runtime that is not a wall: a command runs as the player and can read whatever
+the player's account can, flightdeck's own environment and so the API key included (see
+HostWorkspace). A docker lane sees none of that.
+
+One deliberate difference from the M1 contract: the host take-over shell gets the player's
+own TERM, not the allowlist's TERM=dumb, so editors and pagers work in it. The lane's own
+commands still get TERM=dumb.
 """
 
 from __future__ import annotations
@@ -413,10 +420,16 @@ _ALLOWED_ENV = ("PATH", "LANG", "LC_ALL")
 class HostWorkspace:
     """Runs a lane's commands with bash on this machine, in root (containerized = false, D9).
 
-    Meant for players on a disposable VM: a command can do whatever the player's account
-    can, except read the player's environment (it gets the allowlist in _env). Each command
-    runs in its own process group. A timeout kills the group; close() kills every group the
-    lane left running, such as a server it started in the background.
+    Meant for players on a disposable VM. A command runs as the player's own account and can
+    do whatever that account can: read and change the player's files, and read the
+    environment of the player's other processes (`ps eww`, /proc/<pid>/environ), flightdeck's
+    own among them, so the API key flightdeck was started with too. The allowlist in _env
+    only keeps keys and tokens out of the command's own environment; it is not a boundary,
+    and nothing here can make it one. The docker runtime is what keeps a lane from all this:
+    a container sees neither this machine's processes nor its files outside the workspace.
+
+    Each command runs in its own process group. A timeout kills the group; close() kills
+    every group the lane left running, such as a server it started in the background.
     """
 
     def __init__(self, root: Path, handout: Path, *, shell: str = "bash") -> None:

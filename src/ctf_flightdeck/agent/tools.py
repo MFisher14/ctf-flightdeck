@@ -5,6 +5,10 @@ text: arguments are checked, paths are fenced to the workspace, http goes only t
 challenge's own instance, and each mistake comes back as an error result the model can
 correct, never an exception. Output is cut to what a context can afford, and the full text
 goes to a file the model can read on purpose (context size drives cost: ARCHITECTURE.md).
+
+One deliberate difference from the M1 contract: a plan over 500 characters is cut, and
+set_plan then answers "Plan noted (cut to 500 characters)." rather than "Plan noted.", so
+the model knows the player sees only the start of it.
 """
 
 from __future__ import annotations
