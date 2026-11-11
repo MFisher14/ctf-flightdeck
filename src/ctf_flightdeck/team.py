@@ -50,6 +50,7 @@ import secrets
 import shlex
 import stat
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -314,8 +315,14 @@ class TeamWatcher:
     - our own marks follow the deck: a claim of ours in the folder for a challenge the
       watcher sees on the deck for the first time is taken back (Claim, as the player made it
       before a restart); after that, a claim the deck holds is renewed before it goes stale
-      (and written again if it went missing) and one it does not hold is released; a box
-      hold is renewed while a lane of ours is on that challenge, and freed once none is;
+      (and written again if it went missing) and one it does not hold is released;
+    - a solve of this run that the folder lacks (its write failed, or the file was lost) is
+      written again, and our claim on that challenge stays until the solve is recorded, so
+      teammates never see a challenge we solved as neither claimed nor solved;
+    - a box hold of ours is kept (written if it is missing, renewed before it goes stale)
+      while a lane of ours that the player allowed on that live box is at work (mirror()
+      records each approval), and freed when none is: a hold left by an earlier run, or by
+      a free that failed, is not kept alive by a lane that was never allowed on the box;
     - problems (ignored files, failed writes) -> report(), each once while it lasts; with no
       `report`, each becomes a WARNING event on the deck (the console shows it, the run log
       keeps it).
@@ -427,6 +434,7 @@ class TeamWatcher:
         deck, channel = self.deck, self.channel
         me, now = channel.me, channel.clock()
         renew_after = channel.stale_after / 2
+        unrecorded = self._record_solves(state, messages)
         ours = {cid: mark for cid, mark in state.claims.items() if mark.who == me}
         for cid, mark in ours.items():
             ch = deck.challenges.get(cid)
@@ -436,6 +444,8 @@ class TeamWatcher:
                 outcome = self._do(messages, f"take back our claim on {cid}", deck.apply, Claim(cid))
                 if outcome is not _FAILED and outcome.ok:  # type: ignore[union-attr]
                     continue
+            if cid in unrecorded:
+                continue  # our solve is not in the folder yet: until it is, the claim keeps teammates off it
             if ch.closed or ch.claimed_by != ME:
                 self._do(messages, f"release our old claim on {cid}", channel.release, cid)
             elif now - mark.at > renew_after:
@@ -446,13 +456,34 @@ class TeamWatcher:
             won = self._do(messages, f"write our claim on {ch.id}", channel.claim, ch.id)
             if won is False:
                 messages.append(f"team: {_holder(channel, 'claims', ch.id)} claimed {ch.id} in the team folder; ours is only on this deck")
-        for cid, mark in state.boxes.items():
-            if mark.who != me:
+        self._follow_boxes(state, messages, now - renew_after)
+
+    def _record_solves(self, state: TeamState, messages: list[str]) -> set[str]:
+        """Write each solve of this run (a lane of this deck solved it) that the folder lacks.
+        Returns the ids still not recorded."""
+        deck, unrecorded = self.deck, set()
+        for ch in deck.challenges.values():
+            if ch.status is not ChallengeStatus.SOLVED or ch.solved_by not in deck.lanes or ch.id in state.solves:
                 continue
-            if not deck.lanes_on(cid):
+            what = f"write our solve of {ch.id} to the team folder (it is tried again at each poll)"
+            if self._do(messages, what, self.channel.solved, ch.id, note=ch.solved_by) is _FAILED:
+                unrecorded.add(ch.id)
+        return unrecorded
+
+    def _follow_boxes(self, state: TeamState, messages: list[str], renew_before: float) -> None:
+        deck, channel, me = self.deck, self.channel, self.channel.me
+        using = _boxes_in_use(deck)
+        for cid, mark in state.boxes.items():
+            if mark.who == me and cid not in using:  # no lane of ours allowed on that box is at work
                 self._do(messages, f"free our hold on the live box of {cid}", channel.free_box, cid)
-            elif now - mark.at > renew_after:
-                self._do(messages, f"renew our hold on the live box of {cid}", channel.hold_box, cid, note=mark.note)
+        for cid, lane_id in using.items():
+            mark = state.boxes.get(cid)
+            if mark is not None and mark.who != me:
+                messages.append(f"team: {mark.who} holds the live box of {cid}, which {lane_id} was allowed on")
+            elif mark is None or mark.at < renew_before:  # missing (its write failed, or it went stale), or due
+                held = self._do(messages, f"hold the live box of {cid} for {lane_id}", channel.hold_box, cid, note=lane_id)
+                if held is False:
+                    messages.append(f"team: {_holder(channel, 'boxes', cid)} holds the live box of {cid}, which {lane_id} was allowed on")
 
     # ------------------------------------------------------------------ helpers
 
@@ -494,7 +525,9 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | 
     - a claim or release the deck accepted (OUTCOME, ok) -> claim() or release();
     - a correct flag (SUBMIT, correct) -> solved(), noted with the lane, never the flag;
     - a live-box approval the deck accepted -> hold_box(); freed when that lane ends (and
-      no other lane of ours on the challenge was allowed on the box).
+      no other lane of ours on the challenge was allowed on the box). The approval is
+      remembered for the deck's watcher even when the write fails, and the watcher writes
+      the hold then (and a solve whose write failed).
     It writes on the deck's thread, inside the event, and never raises into the deck: a
     failed write or a clash with a teammate goes to `report`, or with no `report` becomes a
     WARNING event on the deck. Returns the unsubscribe function."""
@@ -502,7 +535,7 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | 
     if report is None:
         report = _deck_warnings(deck)
     approving: dict[str, PendingKind | None] = {}  # lane id -> what an approval in progress approves
-    on_box: dict[str, str] = {}  # lane id -> challenge id: our lanes allowed on a live box
+    on_box = _box_lanes(deck)  # lane id -> challenge id: our lanes allowed on a live box (shared with the watcher)
 
     def attempt(what: str, fn: Callable[..., object], *args: object, **kwargs: object) -> object:
         try:
@@ -523,10 +556,9 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | 
         if lane is None:
             return
         cid = lane.challenge_id
+        on_box[lane_id] = cid  # first: a hold that fails to write now is the watcher's to write later
         held = attempt(f"hold the live box of {cid}", channel.hold_box, cid, note=lane_id)
-        if held is True:
-            on_box[lane_id] = cid
-        elif held is False:
+        if held is False:
             who = _holder(channel, "boxes", cid)
             report(f"team: {who} holds the live box of {cid}; {lane_id} was allowed on it all the same: ask {who}, or tell {lane_id} to stay off it")
 
@@ -550,7 +582,7 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | 
                 attempt(f"record the solve of {event.challenge}", channel.solved, event.challenge, note=event.lane or "")
         elif event.kind is EventKind.LANE_END and event.lane in on_box:
             cid = on_box.pop(event.lane)
-            if cid not in on_box.values():
+            if cid not in _boxes_in_use(deck):
                 attempt(f"free the live box of {cid}", channel.free_box, cid)
 
     return deck.subscribe(listener)
@@ -788,6 +820,28 @@ def _holder(channel: TeamChannel, kind: str, challenge_id: str) -> str:
     except TeamError:
         mark = None
     return mark.who if mark is not None else "a teammate"
+
+
+_BOX_LANES: weakref.WeakKeyDictionary[Deck, dict[str, str]] = weakref.WeakKeyDictionary()
+
+
+def _box_lanes(deck: Deck) -> dict[str, str]:
+    """Our lanes on `deck` that the player allowed on a live box, lane id -> challenge id.
+    mirror() records each approval here before it writes the hold, so a hold whose write
+    failed is not forgotten; the watcher keeps the holds these lanes need and frees the
+    others (lane ids in a hold's note cannot tell: they start again at L01 each run). Kept
+    per deck, so mirror() and watch() share it however they are called."""
+    return _BOX_LANES.setdefault(deck, {})
+
+
+def _boxes_in_use(deck: Deck) -> dict[str, str]:
+    """Challenge id -> the first lane of ours allowed on its live box that is still at work."""
+    using: dict[str, str] = {}
+    for lane_id, cid in _box_lanes(deck).items():
+        lane = deck.lanes.get(lane_id)
+        if lane is not None and not lane.finished:
+            using.setdefault(cid, lane_id)
+    return using
 
 
 def _deck_warnings(deck: Deck) -> Callable[[str], None]:

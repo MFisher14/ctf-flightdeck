@@ -897,21 +897,110 @@ def test_our_claims_follow_the_deck(folder, wall):
     assert reports == []
 
 
-def test_our_box_holds_follow_our_lanes(folder, wall):
-    deck, _ = make_deck(max_lanes=1)
+LIVE_BOX = Pending(PendingKind.LIVE_BOX, "use the live box")
+
+
+def test_our_box_holds_follow_our_lanes_allowed_on_the_box(folder, wall):
+    deck, _ = make_deck(max_lanes=2)  # c0 and c1 run, c2 waits
     w, reports = watcher(folder, deck, wall)
     alpha = w.channel
-    alpha.hold_box("c0", note="L01")  # c0 has our lane L01
+    mirror(alpha, deck, report=reports.append)
     alpha.hold_box("c2", note="L09")  # left over from an earlier run: no lane of ours on it
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+    assert deck.apply(iv.Approve(lane.id)).ok
     w.poll()
     assert alpha.current("boxes", "c2") is None
+    assert alpha.current("boxes", "c0") == Mark("alpha", T0, lane.id)
     wall.t += STALE_AFTER / 2 + 1
     w.poll()
-    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, "L01")
-    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))
+    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, lane.id)  # renewed before it goes stale
+    (folder / "boxes" / "c0.json").unlink()  # lost, say by a sync tool
+    wall.t += 60
     w.poll()
-    assert alpha.current("boxes", "c0") is None
+    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, lane.id)  # written again
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
+    assert alpha.current("boxes", "c0") is None  # freed by the mirror as the lane ended
+    alpha.hold_box("c0", note=lane.id)  # as if that free had failed
+    w.poll()
+    assert alpha.current("boxes", "c0") is None  # no lane allowed on that box is at work any more
     assert reports == []
+
+
+def test_a_hold_left_by_an_earlier_run_is_freed_though_our_lane_works_the_challenge(folder, wall):
+    TeamChannel(folder, "alpha", clock=wall).hold_box("c0", note="L03")  # our flightdeck before a restart
+    deck, _ = make_deck(("c0",), max_lanes=1)
+    w, reports = watcher(folder, deck, wall)
+    mirror(w.channel, deck, report=reports.append)
+    lane = lane_on(deck, "c0")  # this run's L01 works c0 ...
+    deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+    assert deck.apply(iv.Decline(lane.id)).ok  # ... but the player keeps it off the live box
+    w.poll()
+    assert w.channel.current("boxes", "c0") is None
+    bravo = TeamChannel(folder, "bravo", clock=wall)
+    assert bravo.hold_box("c0") is True
+    for _ in range(3):
+        wall.t += STALE_AFTER / 2 + 1
+        w.poll()
+        assert bravo.current("boxes", "c0").who == "bravo" and bravo.hold_box("c0")
+    assert lane.state is LaneState.RUNNING and reports == []
+
+
+def test_a_box_hold_whose_write_failed_is_written_by_the_watcher_while_the_lane_works(folder, wall):
+    deck, _ = make_deck(("c0",), max_lanes=1)
+    w, reports = watcher(folder, deck, wall)
+    alpha, bravo = w.channel, TeamChannel(folder, "bravo", clock=wall)
+    mirror(alpha, deck, report=reports.append)
+    (folder / "boxes" / "c0.json").mkdir()  # something squats on the hold's name: its write fails
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert alpha.current("boxes", "c0") is None
+    (report,) = reports
+    assert report.startswith("team: could not hold the live box of c0: ") and report.endswith("cannot write it (Is a directory)")
+    (folder / "boxes" / "c0.json").rmdir()
+    assert bravo.hold_box("c0", note="theirs")  # bravo takes the box before our watcher polls
+    w.poll()
+    w.poll()
+    assert bravo.current("boxes", "c0") == Mark("bravo", T0, "theirs")  # theirs is never overwritten
+    assert reports[1:] == [f"team: bravo holds the live box of c0, which {lane.id} was allowed on"]
+    bravo.free_box("c0")
+    wall.t += 60
+    w.poll()
+    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, lane.id)  # our approved lane is still on the box
+    assert bravo.hold_box("c0") is False
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
+    assert alpha.current("boxes", "c0") is None and len(reports) == 2
+
+
+def test_a_solve_whose_write_failed_is_written_by_the_watcher_and_our_claim_waits_for_it(folder, wall):
+    deck, _ = make_deck(max_lanes=1)
+    w, reports = watcher(folder, deck, wall)
+    alpha, bravo = w.channel, TeamChannel(folder, "bravo", clock=wall)
+    mirror(alpha, deck, report=reports.append)
+    assert deck.apply(iv.Claim("c0")).ok
+    (folder / "solves" / "c0.json").mkdir()  # something squats on the solve's name: its write fails
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="cat flag", flag="t{c0}"))
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert deck.challenges["c0"].status is ChallengeStatus.SOLVED
+    w.poll()
+    w.poll()
+    assert bravo.current("solves", "c0") is None
+    assert bravo.current("claims", "c0").who == "alpha"  # until the solve is recorded, our claim keeps teammates off c0
+    (folder / "solves" / "c0.json").rmdir()
+    wall.t += 60
+    w.poll()
+    assert bravo.current("solves", "c0") == Mark("alpha", wall.t, lane.id)
+    assert bravo.current("claims", "c0") is None  # released once the solve is in the folder
+    assert all(b"t{" not in data for data in tree(folder).values() if data)
+    assert [r.split(": ")[1] for r in reports] == [
+        "could not record the solve of c0",
+        "solves/c0.json",  # the folder in its place is reported as ignored
+        "could not write our solve of c0 to the team folder (it is tried again at each poll)",
+    ]
+    w.poll()
+    assert len(reports) == 3
 
 
 def test_problems_are_reported_once_while_they_last_and_again_if_they_return(folder):
