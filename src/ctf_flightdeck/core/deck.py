@@ -1297,10 +1297,11 @@ class Deck:
     def _tries(self, ch: Challenge, left: int) -> None:
         """The platform said how many tries are left on `ch`: its flags wait for the player from
         now on (Challenge.limited), and every approval waiting for one says how many. Under
-        auto, the first time, a warning says that its flags no longer go out on their own."""
+        auto, the first time, a warning says that its flags no longer go out on their own
+        (none for a challenge solved meanwhile: no flag of it goes out any more anyway)."""
         counted = ch.limited
         ch.tries_left = max(0, left)
-        if not counted and self.config.submit == "auto":
+        if not counted and self.config.submit == "auto" and not ch.closed:
             self._emit(EventKind.WARNING, f"the platform counts the tries at the flag of {ch.name} ({_tries_text(ch)}): "
                                           "from now on its flags wait for you, under submit auto too",
                        challenge=ch.id, data={"tries_left": ch.tries_left})

@@ -403,6 +403,15 @@ def test_under_confirm_a_tries_remaining_answer_is_no_warning():
     assert deck.challenges["c0"].tries_left == 2 and events(deck, EventKind.WARNING) == []  # every flag waits anyway
 
 
+def test_a_count_of_tries_that_comes_after_the_challenge_was_solved_is_no_warning():
+    deck, _, _ = platform_deck(team=True)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{late}"))
+    deck.teammate_solved("c0", "bravo")
+    deck.platform_verdict(lane.id, "t{late}", False, "Incorrect. You have 2 tries remaining.", tries_left=2)
+    assert deck.challenges["c0"].tries_left == 2 and events(deck, EventKind.WARNING) == []  # no flag of it goes out anyway
+
+
 def test_flightdeck_never_spends_the_last_try_on_its_own_and_the_approval_says_it_is_the_last():
     deck, _, submitter = platform_deck(chall("c0", max_attempts=3))
     lane = lane_on(deck, "c0")
