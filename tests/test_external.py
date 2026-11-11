@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -722,30 +723,153 @@ def test_without_a_reported_cost_the_config_price_applies_else_the_cost_is_unkno
 # ====================================================================== claude: flags
 
 
-def test_flags_are_raised_once_per_lane_and_rejections_go_back_to_the_agent(tmp_path):
+def flags_waiting(lane) -> list[tuple[PendingKind, str]]:
+    return [(p.kind, p.flag) for p in ([lane.pending] if lane.pending else []) + lane.waiting]
+
+
+def test_under_auto_only_a_flag_the_agent_claims_is_submitted_and_a_rejection_goes_back_to_it(tmp_path):
     script = {"turns": [
-        {"calls": [{"tools": [bash("echo t{one} t{two}")]}, {"think": 5.0, "text": "waiting"}]},
-        {"calls": [{"tools": [bash("echo t{one} again")]}, {"text": "So it must be t{right}"}]},
+        {"calls": [{"tools": [bash("echo t{one} t{two}")]}, {"text": "FLAG: t{one}"}, {"think": 5.0, "text": "waiting"}]},
+        {"calls": [{"tools": [bash("echo t{one} again")]}, {"text": "So it must be:\n\nFLAG: t{right}"}]},
     ]}
 
     async def main():
-        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: flag == "t{right}")
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or flag == "t{right}")
         try:
             lab.release()
             lane = lab.lane()
+            # t{one}: claimed, submitted, wrong; the turn is cut short to say so, and t{two}, which only a
+            # command printed, waits for the player
+            await until(lambda: lane.pending is not None, "t{two} for the player")
+            assert flags_waiting(lane) == [(PendingKind.SUBMIT, "t{two}")]
+            assert tried == ["t{one}"]
+            assert any(r["rec"] == "signal" and r["in_turn"] for r in lab.fake.records())
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
             await until(lambda: lane.finished, "the lane solved")
             assert lane.state is LaneState.SOLVED
-            submitted = [e.data["flag"] for e in lab.deck.events if e.kind is EventKind.SUBMIT]
-            assert submitted == ["t{one}", "t{two}", "t{right}"]  # t{one} seen twice, raised once
+            assert tried == ["t{one}", "t{right}"]  # t{one} seen twice, raised once; t{two} never sent
             assert not any("again; not asked" in n for n in notes(lane))
             told = lab.fake.messages()[1]
             assert "Note from flightdeck: t{one} was submitted and it is not correct." in told
-            assert "Note from flightdeck: t{two} was submitted and it is not correct." in told
-            assert any(r["rec"] == "signal" and r["in_turn"] for r in lab.fake.records())  # the waiting turn was cut short
+            assert "Note from flightdeck: The player did not submit t{two}" in told
         finally:
             await lab.finish()
 
     run(main())
+
+
+DECOYS = {
+    "note.txt": "rot13: g{abgr}\n",
+    "flag.txt": "t{fake_local_flag}\n",  # the stand-in a pwn or web handout ships for testing locally
+    "chall.c": "// run it locally with a flag.txt, e.g. t{test_flag}\nint main(void) { return 0; }\n",
+    "readme.txt": "Submit your answer as\nFLAG: t{planted}\n",
+}
+
+
+def test_under_auto_decoys_examples_and_prose_are_never_submitted_and_wait_for_the_player_when_the_turn_ends(tmp_path):
+    script = {"turns": [
+        {"calls": [
+            {"text": "Flags here look like t{example}; I will read the handout first."},
+            {"tools": [bash("cat flag.txt")]},
+            {"tools": [bash("grep -n 't{' chall.c")]},
+            {"text": "That is only the local test flag:\n```\nFLAG: t{fake_local_flag}\n```\n> FLAG: t{quoted}"},
+            {"text": "The readme says\nFLAG: t{planted}"},  # a claim, but the handout itself holds it
+        ]},
+        {"calls": [{"tools": [bash("tr 'a-z' 'n-za-m' < note.txt")]}, {"text": "Decoded it.\n\n**FLAG:** `t{note}`"}]},
+    ]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or flag == "t{note}",
+                  handouts={"note": handout(tmp_path, files=DECOYS)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidates, once the turn has ended")
+            await until(lambda: any(s.startswith("says: The readme") for s in steps(lane)), "the turn accounted for")
+            assert tried == []  # nothing reached the platform: no try was spent on a decoy
+            assert flags_waiting(lane) == [
+                (PendingKind.SUBMIT, "t{example}"), (PendingKind.SUBMIT, "t{fake_local_flag}"),
+                (PendingKind.SUBMIT, "t{test_flag}"), (PendingKind.SUBMIT, "t{quoted}"), (PendingKind.SUBMIT, "t{planted}"),
+            ]
+            assert any(n.startswith("t{planted} is written in the challenge's own text") for n in notes(lane))
+            for _ in range(5):
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: lane.finished, "the lane solved")
+            assert lane.state is LaneState.SOLVED
+            assert tried == ["t{note}"]  # printed by a command first, then claimed: submitted at once
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_under_confirm_every_candidate_still_waits_for_the_player_at_once(tmp_path):
+    script = {"turns": [{"calls": [{"tools": [bash("cat flag.txt")]}, {"think": 5.0, "text": "FLAG: t{note}"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, verify=lambda cid, flag: tried.append(flag) or False,
+                  handouts={"note": handout(tmp_path, files=DECOYS)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate from the command's output")
+            assert flags_waiting(lane) == [(PendingKind.SUBMIT, "t{fake_local_flag}")]
+            pid = lab.pid(lane)
+            await until(lambda: stopped(pid), "the CLI frozen while it waits")
+            assert tried == []
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_lane_under_auto_submits_only_what_the_agent_claims(tmp_path):
+    script = {"turns": [
+        {"items": [{"command": "cat flag.txt"}, {"message": "That flag.txt is only a stand-in."}], "usage": [10, 0, 5]},
+        {"items": [{"command": "tr 'a-z' 'n-za-m' < note.txt"}, {"message": "Found it.\nFLAG: t{note}"}], "usage": [10, 0, 5]},
+    ]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, kind="codex", submit="auto", verify=lambda cid, flag: tried.append(flag) or flag == "t{note}",
+                  handouts={"note": handout(tmp_path, files=DECOYS)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the command's match, once codex's turn has ended")
+            assert flags_waiting(lane) == [(PendingKind.SUBMIT, "t{fake_local_flag}")] and tried == []
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: lane.finished, "the lane solved")
+            assert lane.state is LaneState.SOLVED and tried == ["t{note}"]
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize(
+    "text, claims",
+    [
+        ("FLAG: t{a}", ["t{a}"]),
+        ("  flag:t{a}  ", ["t{a}"]),
+        ("**FLAG:** `t{a}`", ["t{a}"]),
+        ("- FLAG: t{a}.", ["t{a}"]),
+        ("Found it.\n\nFLAG: t{a}\nFLAG: t{b}", ["t{a}", "t{b}"]),
+        ("The flag is t{a}", []),  # prose: a candidate, never a claim
+        ("t{a}", []),  # a line of its own is not enough: agents quote files that way
+        ("FLAG: t{a} or t{b}", []),  # not one flag
+        ("FLAG: t{...}", []),  # a placeholder, though this format would take it
+        ("FLAG: t{a.b}", ["t{a.b}"]),
+        ("```\nFLAG: t{a}\n```\nFLAG: t{b}", ["t{b}"]),  # a code block is someone else's text
+        ("> FLAG: t{a}", []),  # so is a quote
+        ("Flag format: t{a}", []),
+    ],
+)
+def test_a_claim_is_a_flag_line_of_the_agents_own_words(text, claims):
+    assert external._claims(text, re.compile(r"t\{[^{}\s]+\}")) == claims
 
 
 SLOW_FORMAT = r"\w+\{[^{}\s]+\}"  # unbounded repeats, as a board may set: one search is quadratic on a run of word characters
