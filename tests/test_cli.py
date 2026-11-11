@@ -293,12 +293,22 @@ def test_team_and_docker_switch_a_solo_scenario_to_team(opened):
 PLAY_TOKEN_VAR = "FLIGHTDECK_TEST_CTFD_TOKEN"
 
 
-def ctfd_event(tmp_path: Path, url: str, *, pull: str = "auto") -> list[str]:
+@pytest.fixture
+def model_api():
+    """A model API that serves the play configs' ladder (play asks it before anything starts);
+    no lane calls it here, the console being replaced."""
+    from fake_model import FakeModelServer
+
+    with FakeModelServer(models=["fake/small"]) as server:
+        yield server.base_url
+
+
+def ctfd_event(tmp_path: Path, url: str, *, pull: str = "auto", api: str = "http://127.0.0.1:9/v1") -> list[str]:
     """`play` arguments for a CTFd event on the fake CTFd at `url`: lanes on this machine,
-    the board pulled into tmp_path/board."""
+    the board pulled into tmp_path/board, the model API at `api`."""
     cfg = tmp_path / "config.toml"
     cfg.write_text(
-        '[api]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = ""\n[models]\nladder = ["fake/small"]\n'
+        f'[api]\nbase_url = "{api}"\nkey_env = ""\n[models]\nladder = ["fake/small"]\n'
         '[prices."fake/small"]\ninput = 1.0\noutput = 2.0\n'
         f'[lanes]\nmax_lanes = 2\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
     )
@@ -320,11 +330,11 @@ def test_play_help_shows_the_event_and_team_options():
     assert "--team --solo <bool> Team or solo mode (default: the event profile's, else solo)." in out
 
 
-def test_play_asks_before_it_pulls_under_pull_confirm_and_no_starts_nothing(tmp_path, monkeypatch, opened):
+def test_play_asks_before_it_pulls_under_pull_confirm_and_no_starts_nothing(tmp_path, monkeypatch, opened, model_api):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
     with FakeCTFd(sample()) as fake:
-        args = ctfd_event(tmp_path, fake.base_url, pull="confirm")
+        args = ctfd_event(tmp_path, fake.base_url, pull="confirm", api=model_api)
         no = runner.invoke(cli.app, args, input="n\n")
         assert fake.requests == []
         yes = runner.invoke(cli.app, args, input="y\n")
@@ -337,23 +347,35 @@ def test_play_asks_before_it_pulls_under_pull_confirm_and_no_starts_nothing(tmp_
     assert TOKEN not in no.output and TOKEN not in yes.output
 
 
-def test_play_not_at_a_terminal_cannot_ask_before_a_pull_and_says_what_to_do(tmp_path, monkeypatch, opened):
+def test_play_not_at_a_terminal_cannot_ask_before_a_pull_and_says_what_to_do(tmp_path, monkeypatch, opened, model_api):
     monkeypatch.setattr(cli, "_at_terminal", lambda: False)
     monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
     with FakeCTFd(sample()) as fake:
-        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, pull="confirm"))
+        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, pull="confirm", api=model_api))
         assert fake.requests == []
     assert result.exit_code == 2 and opened == []
     assert 'cannot ask here (not at a terminal): start play at a terminal, or set pull = "auto"' in result.stderr
 
 
-def test_play_with_a_token_ctfd_refuses_says_why_and_never_shows_it(tmp_path, monkeypatch, opened):
+def test_play_with_a_token_ctfd_refuses_says_why_and_never_shows_it(tmp_path, monkeypatch, opened, model_api):
     monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
     with FakeCTFd(sample(), token="the-token-this-ctfd-wants") as fake:
-        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url))
+        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, api=model_api))
     assert result.exit_code == 2 and opened == []
     assert "flightdeck: could not pull the board from CTFd: " in result.stderr
     assert "refused the API token (HTTP 401)" in result.stderr and TOKEN not in result.output
+
+
+def test_play_with_a_model_the_api_does_not_serve_says_so_and_neither_pulls_nor_opens_anything(tmp_path, monkeypatch, opened):
+    from fake_model import FakeModelServer
+
+    monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
+    with FakeCTFd(sample()) as fake, FakeModelServer(models=["fake/smol"]) as server:
+        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, api=server.base_url))
+        assert fake.requests == []  # asked before the pull
+    assert result.exit_code == 2 and opened == []
+    assert result.stderr.startswith(f"flightdeck: the model API at {server.base_url} does not serve fake/small (closest it "
+                                    "lists: fake/smol)")
 
 
 def test_play_with_neither_a_board_nor_an_event_says_what_to_give(tmp_path, monkeypatch, opened):

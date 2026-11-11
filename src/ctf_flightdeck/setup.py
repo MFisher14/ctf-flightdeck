@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__
+from .apicheck import LOCAL_HOSTS
 from .pricing import Price
 
 PROVIDERS = {
@@ -33,7 +34,6 @@ PROVIDERS = {
 PROVIDER_CHOICES = ("openrouter", "anthropic", "openai", "local", "mlx", "custom")
 PROVIDER_ALIASES = {"ollama": "local"}  # the local provider is Ollama's endpoint
 LOCAL_PROVIDERS = ("local", "mlx")  # nothing to spend: no dollar cap
-LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 RUNTIMES = ("docker", "host")
 
 # `init --provider anthropic`: the Anthropic Messages API (config [api] provider = "anthropic").
@@ -304,10 +304,10 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
                                  keys_file_checked=bool(config.api.key_env))
     if config is not None:
         if config.api.provider == "openai":
-            checks += _local_server_check(config.api.base_url)
+            checks += _local_server_check(config.api.base_url, config.models, source=config.source)
         spare = config.fallback
         if spare is not None and spare.provider == "openai":
-            checks += _local_server_check(spare.base_url, name="fallback server")
+            checks += _local_server_check(spare.base_url, spare.ladder, name="fallback server", source=config.source)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
     found = False
@@ -405,12 +405,16 @@ def _key_check(name: str, variable: str, environ: Mapping[str, str], none_needed
     return checks
 
 
-def _local_server_check(base_url: str, *, name: str = "model server") -> list[Check]:
+def _local_server_check(base_url: str, ladder: Sequence[str], *, name: str = "model server",
+                        source: Path | None = None) -> list[Check]:
     """For an OpenAI-compatible API on this machine (Ollama, an MLX server), check that it
-    answers. A remote API is never contacted here."""
+    answers and, when it lists its models, that it serves the ladder's. A remote API is never
+    contacted here: `flightdeck play` asks it, with the key, before the console starts."""
     from urllib.parse import urlsplit
 
     import httpx
+
+    from .apicheck import listed_models, missing, not_listed
 
     host = urlsplit(base_url).hostname or ""
     if host not in LOCAL_HOSTS:
@@ -425,8 +429,22 @@ def _local_server_check(base_url: str, *, name: str = "model server") -> list[Ch
                       f"start your local model server (it must speak the OpenAI API with tool calling), "
                       f"or check {table} base_url")]
     ok = answer.status_code < 400
-    return [Check(name, ok, f"{shown} answered {answer.status_code}",
-                  f"check the server's address and port in {table} base_url")]
+    listed = None
+    if answer.is_success:
+        try:
+            listed = listed_models(answer.json())
+        except (ValueError, RecursionError):
+            listed = None
+    if listed is None:
+        return [Check(name, ok, f"{shown} answered {answer.status_code}",
+                      f"check the server's address and port in {table} base_url")]
+    gone = missing(ladder, listed)
+    if gone:
+        key = "models.ladder" if table == "[api]" else "fallback.ladder"
+        where = f" in {source}" if source is not None else ""
+        return [Check(name, False, f"{_shown(base_url)} does not serve {not_listed(gone, listed)}",
+                      f"pull the model into the server (for Ollama: ollama pull NAME), or change {key}{where} to ids it serves")]
+    return [Check(name, True, f"{shown} serves {', '.join(ladder)}")]
 
 
 def _shown(url: str) -> str:

@@ -1002,6 +1002,12 @@ async def pull_board(client: CTFdClient, dest: Path, *, event: str | None = None
     return result.board
 
 
+def check_site(base_url: str, token: str) -> None:
+    """ValueError, saying why, when the CTFd URL or the token cannot be used (a token no HTTP
+    header can carry); its message never shows the token. Nothing is sent."""
+    _Site(base_url, token)
+
+
 def load_ids(dest: Path) -> dict[str, int]:
     """The board id -> CTFd id mapping a pull wrote into the board folder `dest`."""
     root = Path(dest).expanduser().resolve()

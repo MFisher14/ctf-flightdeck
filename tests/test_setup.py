@@ -245,6 +245,21 @@ def test_doctor_checks_a_local_model_server_answers_and_never_contacts_a_remote_
     assert "model server" not in {c.name for c in doctor(remote, environ={})}
 
 
+def test_doctor_compares_the_ladder_with_the_models_a_local_server_lists(tmp_path):
+    from fake_model import FakeModelServer
+
+    with FakeModelServer(models=["qwen2.5-coder:7b", "llama3:latest"]) as server:
+        bad = write_config(Answers(server.base_url, "", ("llama3", "qwen2.5-coder-7b"), "host"), tmp_path / "bad.toml")
+        failing = {c.name: c for c in doctor(bad, environ={})}["model server"]
+        good = write_config(Answers(server.base_url, "", ("llama3", "qwen2.5-coder:7b"), "host"), tmp_path / "good.toml")
+        passing = {c.name: c for c in doctor(good, environ={})}["model server"]
+    assert not failing.ok and failing.essential and report([failing])[1] == 1
+    assert failing.detail == f"{server.base_url} does not serve qwen2.5-coder-7b (closest it lists: qwen2.5-coder:7b)"
+    assert failing.fix == (f"pull the model into the server (for Ollama: ollama pull NAME), or change models.ladder in {bad} "
+                           "to ids it serves")
+    assert passing.ok and passing.detail == f"{server.base_url}/models serves llama3, qwen2.5-coder:7b"  # llama3 is :latest
+
+
 # ---------------------------------------------------------------------- the Anthropic provider and its fallback
 
 CLAUDE_LADDER = ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5")

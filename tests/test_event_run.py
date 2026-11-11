@@ -68,8 +68,24 @@ def folder_board(tmp_path: Path, names: tuple[str, ...] = ("note",), *, urls: tu
     return root
 
 
-def config(where: Path, base_url: str = "http://127.0.0.1:9/v1", *, max_lanes: int = 4) -> Path:
-    """A config for lanes on this machine, priced models (no note about prices) and no key."""
+LADDER = ("fake/small", "fake/big")
+IDLE_API: list[str] = []  # the base URL of the module's idle model API (model_api below)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def model_api():
+    """A model API that serves the configs' ladder, for the runs whose lanes never call a model:
+    a run asks the API for its models before anything starts."""
+    with FakeModelServer(models=LADDER, responder=lambda record: tool_call_reply("shell", {"command": "ls"})) as server:
+        IDLE_API.append(server.base_url)
+        yield server
+        IDLE_API.clear()
+
+
+def config(where: Path, base_url: str | None = None, *, max_lanes: int = 4) -> Path:
+    """A config for lanes on this machine, priced models (no note about prices) and no key;
+    its API is the module's idle one unless `base_url` names another."""
+    base_url = base_url or IDLE_API[-1]
     where.mkdir(parents=True, exist_ok=True)
     path = where / "config.toml"
     path.write_text(
@@ -259,7 +275,7 @@ def test_under_instance_confirm_a_lane_asks_before_its_first_model_call(tmp_path
         async def body(run):
             (lane,) = run.deck.lanes.values()
             await wait_for(lambda: lane.pending is not None, "the live-box question")
-            assert lane.pending.kind is PendingKind.LIVE_BOX and server.requests == []
+            assert lane.pending.kind is PendingKind.LIVE_BOX and server.chats() == []
 
         play(run, body)
 

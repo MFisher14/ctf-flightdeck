@@ -4,11 +4,12 @@ team channel too.
 
 `prepare_run()` checks everything that would stop a run before anything starts, and says
 which: the config, the event profile (any refusal from preflight.check() stops the run), the
-board, the API key, Docker and its image (never pulled), the team folder and the CTFd token.
-Only then does it pull a CTFd board (under the pull policy "confirm", after the player says
-yes). Then the console starts, and the board is released on the console's event loop, so
-lanes run there (the deck's single-thread rule); so do the run's background tasks (CTFd
-waves and solves, the team watcher), which shutdown() stops.
+board, the API key, Docker and its image (never pulled), the team folder, the CTFd token,
+and then the model APIs themselves, asked once whether they take the key and serve the
+ladder's models (apicheck.py). Only then does it pull a CTFd board (under the pull policy
+"confirm", after the player says yes). Then the console starts, and the board is released
+on the console's event loop, so lanes run there (the deck's single-thread rule); so do the
+run's background tasks (CTFd waves and solves, the team watcher), which shutdown() stops.
 
 An event profile's policies, stage by stage (preflight.py):
 - agents: auto or confirm start lanes as usual (starting play is the player's yes); manual
@@ -61,7 +62,7 @@ from .config import Config, ConfigError, api_key, fallback_key, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
-from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, load_ids, pull
+from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
     USES_PLATFORM,
@@ -469,9 +470,13 @@ def prepare_run(options: RunOptions) -> Run:
     team = _team_channel(options, plan)
     profile = plan.profile
     first = token = None
-    if plan.ctfd:  # the last check, then the first thing done: the pull
+    if plan.ctfd:
         assert profile is not None
         token = _ctfd_token(profile)
+    if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
+        _check_apis(config, key, spare_key, plan.notes)
+    if plan.ctfd:  # the last check, then the first thing done: the pull
+        assert token is not None
         first = _pull_first(options, plan, token)
         board = first.board
     assert board is not None
@@ -569,6 +574,23 @@ def prepare_run(options: RunOptions) -> Run:
     if isinstance(verify, _OnCTFd):
         verify.solved = run._apply_solves
     return run
+
+
+def _check_apis(config: Config, key: str | None, spare_key: str | None, notes: list[str]) -> None:
+    """Ask the model APIs the lanes will call, before anything starts (apicheck.py): a key
+    one refuses, a model it does not serve, or nothing answering stops the run here, instead
+    of ending every lane at its first call. What could not be checked is a note."""
+    from .apicheck import Api, CheckFailed, check
+
+    apis = [Api("api", config.api.provider, config.api.base_url, key, config.api.key_env, config.models)]
+    spare = config.fallback
+    if spare is not None:
+        apis.append(Api("fallback", spare.provider, spare.base_url, spare_key, spare.key_env, spare.ladder))
+    for api in apis:
+        try:
+            notes += check(api, source=config.source)
+        except CheckFailed as exc:
+            raise RunError(str(exc)) from None
 
 
 def _check_options(options: RunOptions) -> None:
@@ -831,6 +853,11 @@ def _ctfd_token(profile: EventProfile) -> str:
             f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
             "keys file or export it (CTFd: Settings, Access Tokens), then start play again"
         )
+    assert profile.url is not None  # check() refuses a CTFd profile without one
+    try:
+        check_site(profile.url, value)
+    except ValueError as exc:  # a token no header can carry; the message never shows it
+        raise RunError(f"{exc} ({name}, the variable event.token_env names)") from None
     return value
 
 

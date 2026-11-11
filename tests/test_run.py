@@ -21,6 +21,7 @@ from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
 from fake_model import FakeModelServer, tool_call_reply
 
 FLAG = "t{note}"
+LADDER = ("fake/small", "fake/big")  # the test config's
 
 
 def board(tmp_path: Path, *, urls: tuple[str, ...] = ()) -> Path:
@@ -94,8 +95,9 @@ def test_a_run_plays_a_lane_from_the_board_to_a_solve_through_the_console(tmp_pa
             assert (head["lane"], head["challenge"], head["state"]) == (lane.id, "note", "solved")
             cat = next(x for x in steps if x["text"] == "$ cat note.txt")
             assert cat["kind"] == "step" and f"the flag is {FLAG}" in cat["output"]
-            first = server.requests[0]["json"]
-            assert first["model"] == "fake/small" and "authorization" not in server.requests[0]["headers"]
+            chat = server.chats()[0]
+            assert chat["json"]["model"] == "fake/small" and "authorization" not in chat["headers"]
+            assert server.requests[0]["path"] == "/v1/models"  # asked before anything started
 
     asyncio.run(main())
 
@@ -215,38 +217,112 @@ def test_the_image_dockerfile_command_prints_it():
     assert result.exit_code == 0 and result.output == dockerfile()
 
 
+def anthropic_config(tmp_path: Path, claude_url: str, router_url: str, *, spare: str = "anthropic/claude-haiku-5.5") -> Path:
+    """Lanes on the Anthropic API (the fake at `claude_url`), with an OpenAI-style fallback at `router_url`."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'[api]\nprovider = "anthropic"\nbase_url = "{claude_url}"\nkey_env = "FD_TEST_CLAUDE_KEY"\n'
+        '[models]\nladder = ["claude-haiku-5-5"]\n[prices."claude-haiku-5-5"]\ninput = 0.1\noutput = 0.5\n'
+        f'[fallback]\nbase_url = "{router_url}"\nkey_env = "FD_TEST_ROUTER_KEY"\nladder = ["{spare}"]\n'
+        f'[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+    )
+    return path
+
+
 def test_a_run_on_anthropic_with_a_fallback_needs_both_keys_and_says_where_a_failing_lane_goes(tmp_path, monkeypatch):
     from ctf_flightdeck.agent.anthropic_client import AnthropicClient
     from ctf_flightdeck.agent.client import ModelClient
     from ctf_flightdeck.agent.fallback import FallbackClient
+    from fake_anthropic import FakeAnthropicServer
 
-    path = tmp_path / "config.toml"
-    path.write_text(
-        '[api]\nprovider = "anthropic"\nkey_env = "FD_TEST_CLAUDE_KEY"\n[models]\nladder = ["claude-haiku-5-5"]\n'
-        '[prices."claude-haiku-5-5"]\ninput = 0.1\noutput = 0.5\n'
-        '[fallback]\nkey_env = "FD_TEST_ROUTER_KEY"\nladder = ["anthropic/claude-haiku-5.5"]\n'
-        f'[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
-    )
     monkeypatch.setenv("FD_TEST_CLAUDE_KEY", "fake-claude-key-NOT-SHOWN")
     monkeypatch.delenv("FD_TEST_ROUTER_KEY", raising=False)
-    with pytest.raises(RunError, match="fallback.key_env names the variable FD_TEST_ROUTER_KEY, which is not set"):
-        prepare_run(RunOptions(board=board(tmp_path), config=path))
-    monkeypatch.setenv("FD_TEST_ROUTER_KEY", "fake-router-key-NOT-SHOWN")
-    run = prepare_run(RunOptions(board=tmp_path / "board", config=path))
-    run.close()
+    with FakeAnthropicServer(models=["claude-haiku-5-5"], key="fake-claude-key-NOT-SHOWN") as claude, \
+            FakeModelServer(models=["anthropic/claude-haiku-5.5"], key="fake-router-key-NOT-SHOWN") as router:
+        path = anthropic_config(tmp_path, claude.base_url, router.base_url)
+        with pytest.raises(RunError, match="fallback.key_env names the variable FD_TEST_ROUTER_KEY, which is not set"):
+            prepare_run(RunOptions(board=board(tmp_path), config=path))
+        monkeypatch.setenv("FD_TEST_ROUTER_KEY", "fake-router-key-NOT-SHOWN")
+        run = prepare_run(RunOptions(board=tmp_path / "board", config=path))
+        run.close()
     try:
         client = run.client
         assert isinstance(client, FallbackClient) and run.driver.client is client
         assert isinstance(client.primary, AnthropicClient) and isinstance(client.fallback, ModelClient)
         assert client.models == {"claude-haiku-5-5": "anthropic/claude-haiku-5.5"}
-        assert "a lane whose calls to Anthropic keep failing moves to OpenRouter for the rest of its context" in run.notes()
+        primary, spare = client.primary_name, client.fallback_name
+        assert f"a lane whose calls to {primary} keep failing moves to {spare} for the rest of its context" in run.notes()
         assert "NOT-SHOWN" not in repr(client)
     finally:
         asyncio.run(client.aclose())
+    # both APIs were asked, with their own keys, before anything started
+    assert [r["path"].split("?")[0] for r in claude.requests] == ["/v1/models"]
+    assert [r["path"] for r in router.requests] == ["/v1/models"]
+
+
+# ---------------------------------------------------------------------- the model APIs, asked before anything starts
+
+
+def test_a_model_the_api_does_not_serve_stops_the_run_before_anything_starts(tmp_path):
+    with FakeModelServer(models=["fake/small", "fake/bigger"]) as server:
+        with pytest.raises(RunError) as caught:
+            prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+    said = str(caught.value)
+    assert said.startswith(f"the model API at {server.base_url} does not serve fake/big (closest it lists: fake/bigger, "
+                           "fake/small), so every lane on it would fail at its first call")
+    assert f"change models.ladder in {tmp_path / 'config.toml'} to ids it serves" in said
+    assert server.chats() == [] and not (tmp_path / "runs").exists()
+
+
+def test_a_key_the_api_refuses_stops_the_run_before_anything_starts_and_is_never_shown(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_TEST_KEY", "player-key-NOT-SHOWN-ANYWHERE")
+    with FakeModelServer(models=LADDER, key="the-key-this-api-takes") as server:
+        with pytest.raises(RunError) as caught:
+            prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url, key_env="MY_TEST_KEY")))
+    said = str(caught.value)
+    assert said.startswith(f"the model API at {server.base_url} refused the key in MY_TEST_KEY (HTTP 401")
+    assert "NOT-SHOWN" not in said and not (tmp_path / "runs").exists()
+
+
+def test_a_model_server_that_is_not_up_stops_the_run_before_anything_starts(tmp_path):
+    with pytest.raises(RunError, match=r"nothing answers at http://127\.0\.0\.1:9/v1 \(ConnectError.*start your local model server"):
+        prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, "http://127.0.0.1:9/v1")))
+    assert not (tmp_path / "runs").exists()
+
+
+def test_a_fallback_model_its_api_does_not_serve_stops_the_run_too(tmp_path, monkeypatch):
+    from fake_anthropic import FakeAnthropicServer
+
+    monkeypatch.setenv("FD_TEST_CLAUDE_KEY", "fake-claude-key")
+    monkeypatch.setenv("FD_TEST_ROUTER_KEY", "fake-router-key")
+    with FakeAnthropicServer(models=["claude-haiku-5-5"]) as claude, FakeModelServer(models=["anthropic/claude-haiku-5.5"]) as router:
+        path = anthropic_config(tmp_path, claude.base_url, router.base_url, spare="anthropic/claude-haiku-5-5")
+        with pytest.raises(RunError) as caught:
+            prepare_run(RunOptions(board=board(tmp_path), config=path))
+    assert str(caught.value).startswith(
+        f"the [fallback] API at {router.base_url} does not serve anthropic/claude-haiku-5-5 (closest it lists: "
+        "anthropic/claude-haiku-5.5)"
+    )
+    assert f"change fallback.ladder in {path}" in str(caught.value)
+
+
+def test_an_api_that_does_not_list_its_models_is_a_note_before_the_console(tmp_path):
+    with FakeModelServer() as server:  # answers GET /v1/models with 404
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+        run.close()
+    assert any(note.startswith(f"the model API at {server.base_url} does not list its models (GET /models answered HTTP "
+                               "404), so flightdeck could not check models.ladder against it") for note in run.notes())
+
+
+def test_coding_agent_lanes_never_ask_the_api_they_do_not_use(tmp_path, fake_claude):
+    run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, "http://127.0.0.1:9/v1"),
+                                 agent="claude", runtime="host"))
+    run.close()
+    assert run.client is None
 
 
 def test_a_run_notes_models_with_no_known_price_when_the_api_may_not_report_one(tmp_path):
-    with FakeModelServer() as server:
+    with FakeModelServer(models=LADDER) as server:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
         run.close()
     (note,) = run.notes()
@@ -311,7 +387,7 @@ def test_a_run_with_an_l1_pack_runs_its_engines_before_any_model_call(tmp_path):
 
         asyncio.run(main())
         run.close()
-        assert server.requests == []
+        assert server.chats() == []
     l1 = [json.loads(line) for line in run.log.path.read_text().splitlines() if '"kind": "l1"' in line]
     assert [(e["data"]["engine"], e["data"]["status"]) for e in l1] == [("reader", "solved")]
 
