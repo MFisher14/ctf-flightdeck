@@ -72,26 +72,45 @@ def board(tmp_path) -> Path:
     return folder
 
 
+@pytest.fixture
+def listing_reversed(monkeypatch) -> list[Path]:
+    """Directories list their entries in reverse name order, whatever order this file system
+    uses, so a test of the loader's sorting cannot pass by the file system's luck. Returns the
+    directories listed, so a test can check its listing really came through here."""
+    listed: list[Path] = []
+    real_iterdir = Path.iterdir
+
+    def iterdir(self):
+        listed.append(self)
+        return iter(sorted(real_iterdir(self), key=lambda entry: entry.name, reverse=True))
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    return listed
+
+
 # ---------------------------------------------------------------------- the board
 
 
-def test_each_subdirectory_with_a_challenge_json_is_a_challenge_sorted_by_directory_name(board):
-    challenge(board, "zeta-two", spec(name="Sample Two"))
-    challenge(board, "alpha-one", spec())
-    challenge(board, "notes", files={"todo.txt": "later"})
-    challenge(board, "Loose Files", files={"a.txt": "x"})
+def test_each_subdirectory_with_a_challenge_json_is_a_challenge_sorted_by_directory_name(board, listing_reversed):
+    for cid in ["mango", "zeta-two", "0-start", "kilo", "alpha-one", "x", "delta-9", "a.b", "echo_5", "beta"]:
+        challenge(board, cid, spec(name=f"Sample {cid}"))
+    for name in ["notes", "_drafts", "Loose Files", "Zed"]:
+        challenge(board, name, files={"todo.txt": "later"})
     put(board / "README.md", "not a challenge")
     loaded = load_board(board)
-    assert [item.challenge.id for item in loaded.challenges] == ["alpha-one", "zeta-two"]
-    assert [item.handout for item in loaded.challenges] == [board.resolve() / "alpha-one", board.resolve() / "zeta-two"]
-    assert loaded.skipped == ("Loose Files", "notes")
+    assert board.resolve() in listing_reversed
+    ids = ["0-start", "a.b", "alpha-one", "beta", "delta-9", "echo_5", "kilo", "mango", "x", "zeta-two"]
+    assert [item.challenge.id for item in loaded.challenges] == ids
+    assert [item.handout for item in loaded.challenges] == [board.resolve() / cid for cid in ids]
+    assert loaded.skipped == ("Loose Files", "Zed", "_drafts", "notes")
     assert (loaded.event, loaded.flag_format, loaded.answers) == ("Practice Range", None, None)
 
 
-def test_a_minimal_challenge_json_gets_the_documented_defaults(board):
+def test_a_minimal_challenge_json_gets_the_documented_defaults(board, listing_reversed):
     files = {"b.txt": "b", "a.bin": b"\x00\x01", ".notes": "n", "sub/inner.txt": "deeper"}
-    challenge(board, "sample-one", spec(), files)
+    directory = challenge(board, "sample-one", spec(), files)
     (item,) = load_board(board).challenges
+    assert directory.resolve() in listing_reversed
     assert item.challenge == Challenge(
         id="sample-one",
         name="Sample One",
