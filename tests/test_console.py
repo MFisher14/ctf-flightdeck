@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import html
+import io
 import os
 import re
 import signal
 
 import pytest
+import rich.console
 from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
@@ -1786,6 +1788,31 @@ def test_what_a_lane_did_is_shown_without_its_credentials_and_the_deck_keeps_it_
     ]
     assert lane.plan == f"log in with GITHUB_TOKEN={GITHUB}" and lane.files["env.txt"].diff == diff
     assert lane.alerts[0].reason == reason
+
+
+def test_a_lanes_result_and_an_alert_that_needs_no_answer_are_shown_without_credentials():
+    """The why line and the needs-you card show a lane's result once it has ended, and an alert
+    that needs no answer, as the lane's transcript keeps them: each credential's name, not its
+    value."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("c", "C", "misc", 50), Challenge("d", "D", "misc", 50)], [QueueEntry("c", "glm"), QueueEntry("d", "glm")])
+    (ended,), (told,) = deck.lanes_on("c"), deck.lanes_on("d")
+    deck.report(ended.id, TurnReport(action="ls", gave_up=f"the server wants OPENROUTER_API_KEY={OPENROUTER}"))
+    deck.report(told.id, TurnReport(alerts=(Alert(AlertKind.TEAMMATE, f"the box is in use, logged in with API_TOKEN={GITHUB}"),)))
+    console = rich.console.Console(width=300, record=True, color_system=None, file=io.StringIO())
+    console.print(views.now_card(deck, told))
+    assert "Teammate solved / box in use  the box is in use, logged in with API_TOKEN=[redacted]" in console.export_text()
+    assert views.lane_why(deck, told).plain == (
+        f"▌{told.id} ▲ Teammate solved / box in use: the box is in use, logged in with API_TOKEN=[redacted]\n"
+        "  nothing to do   enter open"
+    )
+    assert views.lane_why(deck, ended).plain == (
+        f"▌{ended.id} gave up: the server wants OPENROUTER_API_KEY=[redacted]\n  enter opens its transcript"
+    )
+    assert views.now_card(deck, ended).plain == (
+        "gave up: the server wants OPENROUTER_API_KEY=[redacted]   this lane has ended; esc goes back to the fleet"
+    )
+    assert ended.result == f"the server wants OPENROUTER_API_KEY={OPENROUTER}"  # the deck's own, as it was
 
 
 def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh():
