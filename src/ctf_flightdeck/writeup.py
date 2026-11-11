@@ -20,6 +20,10 @@ multi-line one with its lines back), each output in another, cut to 20 lines. A 
 stated is not a step: it is in the approach (a turn that set the plan and also submitted a
 flag stays a step).
 
+The files: those with something to show (an added text file under 200 lines, a diff that
+short) are shown whole, at most 10, files a step ran first; every other file is listed with
+one line on what it is.
+
 What the transcript cannot tell. A lane's plan change shows up only when it was the first
 thing the lane did in that turn and nothing else acted (a "plan: ..." step); otherwise only
 its last plan, in the transcript's header, is known, and the draft says so. A turn with
@@ -73,7 +77,7 @@ WINDOW = 5  # steps shown before the one that mattered
 OUTPUT_LINES = 20  # lines of a step's output shown
 LINE_CHARS = 500  # characters of one output line shown
 FILE_LINES = 200  # a file the lane added is shown whole when it has fewer lines than this
-WHOLE_FILES = 10  # files shown whole at most; the rest are listed by name
+WHOLE_FILES = 10  # files shown whole at most; the rest are listed, one line each
 REDACTED = "<flag>"
 
 PLAN = "plan: "  # agent/tools.py: a turn that only set the plan
@@ -318,6 +322,19 @@ def added_content(diff: str) -> str | None:
     if not content:
         return ""
     return "\n".join(content) + ("\n" if newline else "")
+
+
+def _showable(change: FileLine) -> tuple[str, str] | None:
+    """What a draft shows of a file the lane wrote, and the language of its block: an added
+    text file under FILE_LINES lines, whole; a modified file's diff, when that short. None when
+    it has nothing to show: a binary file, an empty one, one too long."""
+    if change.status == "added":
+        content = added_content(change.diff)
+        if content and _line_count(content) < FILE_LINES:
+            return content, _language(change.file)
+    elif change.status == "modified" and change.diff.startswith("--- ") and _line_count(change.diff) < FILE_LINES:
+        return change.diff, "diff"
+    return None
 
 
 def _line_count(text: str) -> int:
@@ -625,44 +642,48 @@ class _Writer:
         paths = [f.file for f in written]
         ran = {path for step in steps if (path := _ran(step, paths)) is not None}
         written.sort(key=lambda f: (f.file not in ran, f.turn, f.file))
-        for change in written[:WHOLE_FILES]:
-            self._file(change, lane)
-        rest = written[WHOLE_FILES:]
+        shown: list[tuple[FileLine, tuple[str, str]]] = []
+        rest: list[FileLine] = []
+        for change in written:  # only a file with something to show takes one of the WHOLE_FILES places
+            whole = _showable(change) if len(shown) < WHOLE_FILES else None
+            if whole is None:
+                rest.append(change)
+            else:
+                shown.append((change, whole))
+        for change, (text, lang) in shown:
+            self._file(change, text, lang)
         if rest:
-            where = self.t(f"lanes/{lane.lane}.jsonl")
-            self.out(f"{len(rest)} more, not shown here (their diffs are in {where}):", "")
-            self.out(*(f"- {self.t(f.file)}, {self.t(f.status)} in turn {f.turn}" for f in rest), "")
+            more = "more " if shown else ""
+            self.out(f"{len(rest)} {more}file{'s' if len(rest) != 1 else ''}, not shown here "
+                     f"(see {self.t(f'lanes/{lane.lane}.jsonl')}):", "")
+            self.out(*(f"- {self.t(f.file)}, {self.t(f.status)} in turn {f.turn}: {self._about(f)}" for f in rest), "")
         if deleted:
             self.out("Deleted: " + ", ".join(self.t(f.file) for f in deleted) + ".", "")
 
-    def _file(self, change: FileLine, lane: LaneRecord) -> None:
+    def _file(self, change: FileLine, text: str, lang: str) -> None:
         heading = f"### {self.t(change.file)}, {self.t(change.status)} in turn {change.turn}"
-        description = change.diff.split("\n", 1)[0]
+        if change.status == "added":
+            count = _line_count(text)
+            self.out(f"{heading}, {count} line{'s' if count != 1 else ''}", "")
+        else:
+            self.out(heading, "", "Its last change, as the transcript keeps it:", "")
+        self.block(text, lang)
+
+    def _about(self, change: FileLine) -> str:
+        """One line on a file the draft does not show."""
         if change.status == "added":
             content = added_content(change.diff)
-            if content is None:
-                self.out(heading, "", f"Not shown: {self.t(description)}.", "")
-                return
-            count = _line_count(content)
-            if count == 0:
-                self.out(heading, "", "An empty file.", "")
-            elif count < FILE_LINES:
-                self.out(f"{heading}, {count} line{'s' if count != 1 else ''}", "")
-                self.block(content, _language(change.file))
-            else:
-                self.out(f"{heading}, {count} lines", "",
-                         f"Too long to show here (a draft shows files under {FILE_LINES} lines); its diff is in "
-                         f"{self.t(f'lanes/{lane.lane}.jsonl')}.", "")
-            return
-        if change.diff.startswith("--- "):
+            if content is not None:
+                count = _line_count(content)
+                if count == 0:
+                    return "an empty file"
+                lines = f"{count} line{'s' if count != 1 else ''}"
+                return f"{lines}, too long to show here (a draft shows files under {FILE_LINES} lines)" if count >= FILE_LINES else lines
+        elif change.diff.startswith("--- "):
             count = _line_count(change.diff)
-            if count < FILE_LINES:
-                self.out(heading, "", "Its last change, as the transcript keeps it:", "")
-                self.block(change.diff, "diff")
-            else:
-                self.out(heading, "", f"Its last change is a diff of {count} lines, too long to show here.", "")
-            return
-        self.out(heading, "", f"Not shown: {self.t(description) if description else 'no diff recorded'}.", "")
+            return f"a diff of {count} lines" + (", too long to show here" if count >= FILE_LINES else "")
+        description = change.diff.split("\n", 1)[0]
+        return self.t(description) if description else "no diff recorded"
 
     def _interventions(self, lane: LaneRecord) -> None:
         self.out("## Your interventions", "")

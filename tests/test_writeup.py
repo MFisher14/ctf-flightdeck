@@ -466,18 +466,19 @@ def test_a_file_is_shown_whole_under_200_lines_and_named_at_200(tmp_path):
     text = run_with_files(tmp_path, [("short.txt", short), ("long.txt", long)])
     section = "\n".join(lines_of(text, "## Files the lane wrote"))
     assert "### `short.txt`, added in turn 1, 199 lines\n\n```text\n" + short + "```" in section
-    assert ("### `long.txt`, added in turn 2, 200 lines\n\nToo long to show here (a draft shows files under 200 lines); "
-            "its diff is in `lanes/L01.jsonl`.") in section
+    assert ("1 more file, not shown here (see `lanes/L01.jsonl`):\n\n- `long.txt`, added in turn 2: 200 lines, too "
+            "long to show here (a draft shows files under 200 lines)") in section
     assert "\n199\n" not in section
 
 
 def test_modified_binary_and_deleted_files_are_described_not_dumped(tmp_path):
     text = run_with_files(tmp_path, [("keep.txt", "v1\n"), ("keep.txt", "v2\n"), ("blob.bin", b"\x00\xff" * 8),
-                                     ("gone.txt", "x\n"), ("gone.txt", None)])
+                                     ("empty.txt", ""), ("gone.txt", "x\n"), ("gone.txt", None)])
     section = "\n".join(lines_of(text, "## Files the lane wrote"))
     assert ("### `keep.txt`, modified in turn 2\n\nIts last change, as the transcript keeps it:\n\n```diff\n"
             "--- a/keep.txt\n+++ b/keep.txt\n@@ -1 +1 @@\n-v1\n+v2\n```") in section
-    assert "### `blob.bin`, added in turn 3\n\nNot shown: binary file, 16 bytes." in section
+    assert ("2 more files, not shown here (see `lanes/L01.jsonl`):\n\n- `blob.bin`, added in turn 3: binary file, 16 bytes\n"
+            "- `empty.txt`, added in turn 4: an empty file") in section
     assert section.rstrip().endswith("Deleted: `gone.txt`.")
 
 
@@ -487,10 +488,31 @@ def test_files_a_step_ran_come_first_and_only_ten_are_shown_whole(tmp_path):
     headings = [line for line in section if line.startswith("### ")]
     assert headings[0] == "### `solve.py`, added in turn 13, 1 line"  # the one a step ran, though written last
     assert len(headings) == writeup.WHOLE_FILES
-    assert "3 more, not shown here (their diffs are in `lanes/L01.jsonl`):" in section
+    assert "3 more files, not shown here (see `lanes/L01.jsonl`):" in section
     assert [line for line in section if line.startswith("- ")] == [
-        "- `out09.txt`, added in turn 10", "- `out10.txt`, added in turn 11", "- `out11.txt`, added in turn 12",
+        "- `out09.txt`, added in turn 10: 1 line", "- `out10.txt`, added in turn 11: 1 line",
+        "- `out11.txt`, added in turn 12: 1 line",
     ]
+
+
+def test_files_with_nothing_to_show_never_push_one_that_has_out(tmp_path):
+    """Twelve binary files unpacked first, then a solver run in a way no step shows
+    (`python3 < solve.py`): the solver is shown whole, the binaries listed one line each."""
+    run = Run(tmp_path / "run", [Challenge("f", "Files", "misc", 10)], answers={"f": "t{f}"})
+    f = run.lane("f")
+    for k in range(12):
+        run.step(f, "$ unzip -o handout.zip", files=(change(tmp_path / "work", f"dist/part{k:02d}.bin", bytes([0, k, 255]) * 8),))
+    run.step(f, "$ cat > solve.py <<'EOF'", files=(change(tmp_path / "work", "solve.py", SOLVE),))
+    run.step(f, "$ python3 < solve.py", "decoded the note")
+    run.step(f, "submit t{f}", flag="t{f}")
+    run.apply(iv.Approve(f))
+    section = lines_of(writeup.draft(run.close(), "f"), "## Files the lane wrote")
+    assert [line for line in section if line.startswith("### ")] == ["### `solve.py`, added in turn 13, 3 lines"]
+    assert "12 more files, not shown here (see `lanes/L01.jsonl`):" in section
+    assert [line for line in section if line.startswith("- ")] == [
+        f"- `dist/part{k:02d}.bin`, added in turn {k + 1}: binary file, 24 bytes" for k in range(12)
+    ]
+    assert not any(line.startswith("Not shown") for line in section)
 
 
 # ---------------------------------------------------------------------- forks, escalations, take-overs
