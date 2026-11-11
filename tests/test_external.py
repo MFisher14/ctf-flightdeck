@@ -468,8 +468,14 @@ def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name
         return done.stdout
 
     async def state(pid: str) -> str:
+        """The process's state letter in the container (T: stopped), "" when it is not there.
+        While the container is being removed, `docker exec` can answer with a blank line or
+        a message of its own instead of the file: that is "?...", and is asked again."""
         stat = await in_container("cat", f"/proc/{pid}/stat")
-        return stat.rsplit(")", 1)[-1].split()[0] if stat else ""
+        if not stat:
+            return ""
+        fields = stat.rsplit(")", 1)[-1].split()
+        return fields[0] if ")" in stat and fields else f"?{stat[:80]!r}"
 
     async def main():
         driver = ExternalDriver(
@@ -480,14 +486,16 @@ def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name
         deck.release([Challenge("note", "Note", "misc", 50)], [QueueEntry("note", "small")])
         (lane,) = deck.lanes.values()
         try:
-            await until(lambda: lane.pending is not None or lane.finished, "the candidate from the container", timeout=60)
+            await until(lambda: lane.pending is not None or lane.finished, "the candidate from the container", timeout=DOCKER_WAIT)
             assert lane.pending is not None, lane.result
             assert lane.pending.flag == "t{note}" and steps(lane) == ["$ cat note.txt"]
             assert fake.starts() == []  # it ran in the container, never on this machine
             records = root / ".flightdeck"
             pid = (await written(records / "fake-pid.txt", "the CLI's pid")).strip()
             child = (await written(records / "fake-child.txt", "the pid of what it started")).strip()
-            assert driver.runs[lane.id].proc.inner.result() == int(pid)
+            inner = driver.runs[lane.id].proc.inner  # set when the CLI's pid line is read from its stderr
+            await until(inner.done, "the CLI's pid in its container, as the driver read it", timeout=DOCKER_WAIT)
+            assert inner.result() == int(pid)
             env = await written(records / "fake-env.txt", "the CLI's environment")
             seen = dict(line.split("=", 1) for line in env.splitlines() if "=" in line)
             assert seen["ANTHROPIC_API_KEY"] == KEY and seen["HOME"] == "/work/.flightdeck/home"
@@ -516,7 +524,10 @@ def lab_apply(deck, intervention) -> bool:
     return deck.apply(intervention).ok
 
 
-async def until_async(probe, want: str, what: str, timeout: float = 20.0) -> None:
+DOCKER_WAIT = 90.0  # seconds a state in a container may take to show: each `docker exec` can take seconds on a loaded machine
+
+
+async def until_async(probe, want: str, what: str, timeout: float = DOCKER_WAIT) -> None:
     end = time.monotonic() + timeout
     got = None
     while time.monotonic() < end:
