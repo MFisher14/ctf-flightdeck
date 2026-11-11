@@ -541,18 +541,21 @@ def test_a_case_test_past_its_timeout_is_stopped_with_its_engine_and_whatever_it
     solver.write_text(  # an engine that hangs (its own timeout is 60 s)
         "import time\nfrom ctf_flightdeck.l1.result import SolverResult\n\n"
         f"def solve(challenge_dir):\n    open({str(marks / 'engine-started')!r}, 'w').close()\n"
-        f"    time.sleep(4)\n    open({str(marks / 'engine-finished')!r}, 'w').close()\n"
+        f"    time.sleep(5)\n    open({str(marks / 'engine-finished')!r}, 'w').close()\n"
         "    return SolverResult('none')\n"
     )
     (pack / "tests" / "conftest.py").write_text(  # and test code that leaves a process behind, deaf to SIGINT
         "import subprocess\n"
-        f"subprocess.Popen(['sh', '-c', \"trap '' INT; sleep 4; touch {marks / 'leftover'}\"])\n"
+        f"subprocess.Popen(['sh', '-c', \"trap '' INT; sleep 5; touch {marks / 'leftover'}\"])\n"
     )
     begun = time.monotonic()
-    [result] = check(pack, timeout=3)
-    assert time.monotonic() - begun < 3 + 5 + 2  # the timeout, the grace before a kill, and slack
-    assert (result.passed, result.detail) == (False, "timed out after 3s; pytest was stopped")
-    time.sleep(3)  # past the moment the engine and the leftover process would have written their marks
+    [result] = check(pack, timeout=4)
+    assert time.monotonic() - begun < 4 + 5 + 3  # the timeout, the grace before a kill, and slack
+    assert (result.passed, result.detail) == (False, "timed out after 4s; pytest was stopped")
+    started = marks / "engine-started"
+    assert started.exists()  # the engine was running when the time ran out
+    # the leftover process started before the engine: once the engine's 5 s are over, both would have written
+    time.sleep(max(0.0, started.stat().st_mtime + 5.5 - time.time()))
     assert sorted(p.name for p in marks.iterdir()) == ["engine-started"]
 
 
