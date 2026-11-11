@@ -53,11 +53,11 @@ def _events_file(path: Path) -> Path:
     if path.is_dir():
         log = path / EVENTS_FILE
         if not log.is_file():
-            _fail(f"{_show(path)}: no {EVENTS_FILE} here, so it is not a run folder (runs go to the run_dir in your config)")
+            _fail(f"{path}: no {EVENTS_FILE} here, so it is not a run folder (runs go to the run_dir in your config)")
         return log
     if path.is_file():
         return path
-    _fail(f"{_show(path)}: no such run folder or event log")
+    _fail(f"{path}: no such run folder or event log")
 
 
 def _practice_board() -> Path:
@@ -70,9 +70,7 @@ def _practice_board() -> Path:
 
 
 def _fail(message: str) -> NoReturn:
-    typer.echo(f"flightdeck: {message}", err=True)
+    """The reason on stderr as one safe line, whoever made the message, and exit 2."""
+    typer.echo(f"flightdeck: {untrusted(message, one_line=True)}", err=True)
     raise typer.Exit(2)
 
-
-def _show(path: Path) -> str:
-    return untrusted(str(path), one_line=True)

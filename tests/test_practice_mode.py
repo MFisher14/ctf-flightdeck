@@ -737,21 +737,42 @@ def test_a_log_that_is_missing_a_directory_or_binary_is_an_error(tmp_path):
         score(binary, board)
 
 
-def test_untrusted_ids_in_a_log_error_cannot_reach_the_terminal_raw(tmp_path):
+NASTY = "zulu\x1b]0;owned\x07\x1b[2J\nforged: solved 99 of 99"  # sets the window title, clears the screen, forges a line
+HOSTILE_EVENTS = {
+    "an id": {"kind": "release", "at": 0, "data": {"challenges": [NASTY]}},
+    "a kind, with no at": {"kind": NASTY},
+    "a kind, with a bad at": {"kind": NASTY, "at": -1},
+    "a kind, with bad data": {"kind": NASTY, "at": 1, "data": "x"},
+}
+
+
+def hostile_log(folder: Path, case: str) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "events.jsonl"
+    path.write_text('{"kind": "run-start"}\n' + json.dumps(HOSTILE_EVENTS[case]) + "\n", encoding="ascii")
+    return path
+
+
+@pytest.mark.parametrize("case", list(HOSTILE_EVENTS))
+def test_untrusted_text_in_a_log_error_cannot_reach_the_terminal_raw(tmp_path, case):
     board = load_board(make_board(tmp_path / "archive"))
-    path = tmp_path / "events.jsonl"
-    bad = "zulu\x1b]0;owned\x07\nforged"
-    path.write_text(
-        '{"kind": "run-start"}\n'
-        + json.dumps({"kind": "release", "at": 0, "data": {"challenges": [bad]}})
-        + "\n",
-        encoding="ascii",
-    )
+    path = hostile_log(tmp_path / "run", case)
     with pytest.raises(ScoreError) as caught:
         score(path, board)
     message = str(caught.value)
     assert "\x1b" not in message and "\x07" not in message and "\n" not in message
-    assert "zulu^[]0;owned^G" in message
+    assert message.startswith(f"{path}: ") and "zulu^[]0;owned^G^[[2J ⏎ forged" in message
+
+
+def test_a_kind_flightdeck_writes_is_named_plainly_in_an_error(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    path = tmp_path / "events.jsonl"
+    path.write_text('{"kind": "run-start"}\n{"kind": "lane.start", "at": 1}\n', encoding="ascii")
+    with pytest.raises(ScoreError, match=r"line 2: the lane\.start event has no lane \(a lane id\)$"):
+        score(path, board)
+    path.write_text('{"kind": "run-start"}\n{"kind": "lane.starts", "at": 1, "data": []}\n', encoding="ascii")
+    with pytest.raises(ScoreError, match=r'line 2: the "lane\.starts" event\'s data must be an object$'):
+        score(path, board)
 
 
 # ---------------------------------------------------------------------- the scorecard
@@ -938,6 +959,29 @@ def test_score_with_a_board_that_does_not_load_fails_with_the_reason(played, tmp
     path = played.close()
     result = invoke("score", str(path.parent), "--board", str(tmp_path / "no-board-here"))
     assert result.exit_code == 2 and "no such directory" in result.stderr
+
+
+@pytest.mark.parametrize("case", list(HOSTILE_EVENTS))
+def test_score_of_a_hostile_log_prints_its_reason_as_one_safe_line(tmp_path, case):
+    board = make_board(tmp_path / "archive")
+    log = hostile_log(tmp_path / "run", case)
+    result = invoke("score", str(log.parent), "--board", str(board))
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "\x1b" not in result.stderr and "\x07" not in result.stderr and result.stderr.count("\n") == 1
+    assert result.stderr.startswith(f"flightdeck: {log}: ") and "zulu^[]0;owned^G^[[2J ⏎ forged" in result.stderr
+
+
+def test_score_folds_a_reason_whoever_wrote_it(played, monkeypatch):
+    path = played.close()
+
+    def missing():
+        raise FileNotFoundError(f"the practice set is missing from this installation (looked in /x/{NASTY})")
+
+    monkeypatch.setattr(practice_set, "practice_dir", missing)
+    result = invoke("score", str(path.parent))
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "\x1b" not in result.stderr and "\x07" not in result.stderr and result.stderr.count("\n") == 1
+    assert "(looked in /x/zulu^[]0;owned^G^[[2J ⏎ forged: solved 99 of 99); name the board" in result.stderr
 
 
 def test_score_is_listed_in_the_help_with_its_arguments():

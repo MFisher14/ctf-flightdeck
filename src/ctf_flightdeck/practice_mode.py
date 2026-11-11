@@ -41,7 +41,7 @@ from rich.cells import cell_len, set_cell_size
 
 from . import fmt
 from .core.deck import Deck, QueueEntry
-from .core.model import ME
+from .core.model import ME, EventKind
 from .platform.manual import AnswerVerifier, Board
 from .text import untrusted
 
@@ -601,14 +601,19 @@ def _read_log(path: Path) -> tuple[list[tuple[int, dict]], list[str]]:
     return records, notes
 
 
+_KINDS = frozenset({"run-start", "run-end", *(kind.value for kind in EventKind)})
+
+
 class _Fields:
     """Checked access to one event's fields; a missing or malformed one is a ScoreError naming the line."""
 
     def __init__(self, where: str, line: int, kind: str, record: dict) -> None:
-        self.where, self.line, self.kind, self.record = where, line, kind, record
+        # a kind flightdeck does not write is untrusted text: quoted, folded and cut like any other
+        self.where, self.line, self.record = where, line, record
+        self.kind = kind if kind in _KINDS else _quote(kind)
         data = record.get("data", {})
         if not isinstance(data, dict):
-            raise ScoreError(f"{where}: line {line}: the {kind} event's data must be an object")
+            raise ScoreError(f"{where}: line {line}: the {self.kind} event's data must be an object")
         self._data = data
 
     def top(self, name: str, check: Callable[[object], bool], what: str):
