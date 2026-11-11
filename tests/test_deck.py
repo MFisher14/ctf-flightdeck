@@ -789,6 +789,23 @@ def test_a_turn_that_auto_submits_the_right_flag_still_emits_its_turn_event():
 CLOSING = "The run is closing: its lanes are stopping, so nothing more can be done on them"
 
 
+def test_closing_stops_the_work_of_every_open_lane_at_once_and_ends_none():
+    """close() tells each open lane's driver to stop (LaneDriver.stop, as at a lane's end) before
+    it returns, so before anything else can run: a driver reports no step of a lane it stopped,
+    so no step lands on the closing deck to be dropped whole with its tokens. The lanes stay
+    open, as quitting leaves them, and nothing is logged. A lane that ended is not stopped
+    again, and a second close() stops nothing."""
+    deck, driver, _ = make_deck(n=3, max_lanes=3)
+    ended = lane_on(deck, "c2")
+    assert deck.apply(iv.Kill(ended.id, requeue=False)).ok
+    lanes = [lane_on(deck, "c0"), lane_on(deck, "c1")]
+    mark, calls = len(deck.events), len(driver.calls)
+    deck.close()
+    deck.close()
+    assert driver.calls[calls:] == [("stop", lane.id) for lane in lanes]
+    assert [lane.state for lane in lanes] == [LaneState.RUNNING] * 2 and deck.events[mark:] == []
+
+
 def test_once_the_run_is_closing_a_cost_past_the_caps_counts_but_raises_no_alert_and_asks_nothing():
     """Quitting stops every lane without ending it, and a coding-agent CLI reports what the turn
     it was cut in cost as it stops: that counts on the lane, the run and the log, past both

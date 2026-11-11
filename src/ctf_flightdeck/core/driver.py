@@ -122,5 +122,7 @@ class LaneDriver(Protocol):
         ...
 
     def stop(self, lane: Lane) -> None:
-        """The lane has finished (solved, killed, stopped or gave up); release it."""
+        """The lane has finished (solved, killed, stopped or gave up), or the run is closing
+        (Deck.close: the lane stays open on the deck); release it. From then on report at most
+        its spend (spend_only), never a step."""
         ...

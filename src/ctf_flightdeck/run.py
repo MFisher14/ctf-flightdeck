@@ -272,11 +272,12 @@ class Run:
             self._tasks.append(asyncio.create_task(watching, name="flightdeck team watcher"))
 
     async def shutdown(self) -> None:
-        """Close the deck first (Deck.close: the lanes stop without ending, and nothing raises
-        an alert, asks the player or starts a lane while they do, yet what they report as they
-        stop counts, a coding-agent CLI's cost of the turn quitting cut among it). Then stop
-        the background tasks and every lane, close the workspaces and the API clients, and
-        free our live-box holds in the team folder."""
+        """Close the deck first (Deck.close: each lane's work stops at once, before anything
+        here awaits, and without ending the lane; nothing raises an alert, asks the player or
+        starts a lane from then on, yet what the lanes report as they stop counts, a
+        coding-agent CLI's cost of the turn quitting cut among it). Then stop the background
+        tasks, wait for every lane's driver to finish stopping, close the workspaces and the
+        API clients, and free our live-box holds in the team folder."""
         self.deck.close()
         if self._team_stop is not None:
             self._team_stop.set()

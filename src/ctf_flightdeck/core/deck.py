@@ -30,9 +30,10 @@ Rules the deck enforces:
   no hint, new plan or escalation (no driver gives it another turn);
 - team mode: a challenge a teammate solved or claimed is not worked; a teammate's
   solve stops every lane on it;
-- once the run is closing (close(): the player quit), its lanes stop without ending, nothing
-  raises an alert, asks the player or starts a lane, and what a lane reports counts its spend
-  only, as after a lane's end.
+- once the run is closing (close(): the player quit), its lanes stop at once without ending
+  (each driver is told to stop its lane before close() returns), nothing raises an alert,
+  asks the player or starts a lane, and what a lane reports counts its spend only, as after
+  a lane's end.
 
 Call the deck only from the thread that created it (see core/driver.py).
 """
@@ -933,15 +934,24 @@ class Deck:
                              f"{len(self.queue)} queued")
 
     def close(self) -> None:
-        """The run is closing (the player quit, or a signal stopped it): call before its lanes
-        stop. They stop without ending, so the run log and the transcripts keep each as it was.
+        """The run is closing (the player quit, or a signal stopped it). Every open lane stops
+        here, without ending, so the run log and the transcripts keep each as it was: its
+        driver is told to stop it (LaneDriver.stop, as at a lane's end) before this returns,
+        so before anything else can run (the run's shutdown awaits its background tasks
+        next). A driver reports no step of a lane it stopped, so no step lands on the closing
+        deck to be dropped whole: what a step under way spent comes with the driver's report
+        of spend (a coding-agent CLI's cost of the turn quitting cut, that step's tokens in it).
         From now on nothing raises an alert, asks the player, notes a lane or starts one, and an
         intervention is refused. What a lane reports counts as after a lane's end: its spend
-        only (the cost of a turn that quitting cut, which a coding-agent CLI reports as it
-        stops), on the lane and so the run, with its spend event, so the totals, the
-        transcripts and the scorecard have every token and dollar."""
+        only, on the lane and so the run, with its spend event, so the totals, the transcripts
+        and the scorecard have every token and dollar reported. Once: a second call does nothing."""
         self._on_thread("close")
+        if self.closing:
+            return
         self.closing = True
+        for lane in list(self.lanes.values()):
+            if not lane.finished:
+                self.driver.stop(lane)
 
     def _fill(self) -> None:
         """Start queued lanes while there are free slots (none while the queue is held, or the
