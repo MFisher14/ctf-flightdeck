@@ -144,6 +144,14 @@ def _verb_and_args(words: list[str]) -> tuple[str, list[str]]:
 # ---------------------------------------------------------------------- effort vs value
 
 
+CACHED_WEIGHT = 0.1  # a cached prompt token, against a fresh one (roughly what providers charge)
+
+
+def effort_tokens(lane: Lane) -> int:
+    """The lane's tokens with cached prompt tokens weighed as a tenth."""
+    return int(lane.tokens - lane.cached_tokens * (1 - CACHED_WEIGHT))
+
+
 class EffortDetector:
     kind = AlertKind.EFFORT
 
@@ -155,7 +163,10 @@ class EffortDetector:
         points, solves = challenge.points, challenge.solves
         budget_tokens = cfg.effort_tokens(points, solves)
         budget_turns = cfg.effort_turns(points, solves)
-        over_tokens = lane.tokens >= budget_tokens
+        # A cached prompt token costs about a tenth of a fresh one, and a coding-agent CLI resends a
+        # large cached prefix every turn: weigh cached tokens as a tenth, so effort means spend.
+        weighed = effort_tokens(lane)
+        over_tokens = weighed >= budget_tokens
         over_turns = lane.turns >= budget_turns
         if not (over_tokens or over_turns):
             return None
@@ -163,7 +174,8 @@ class EffortDetector:
         if over_turns:
             hit.append(f"{lane.turns} turns (budget {budget_turns})")
         if over_tokens:
-            hit.append(f"{fmt.tokens(lane.tokens)} tokens (budget {fmt.tokens(budget_tokens)})")
+            cached = f", cached ones counted as a tenth" if lane.cached_tokens else ""
+            hit.append(f"{fmt.tokens(weighed)} tokens{cached} (budget {fmt.tokens(budget_tokens)})")
         reason = (
             f"{' and '.join(hit)} on a {points}-point challenge with {solves} solves. "
             "The budget shrinks as points fall and solves rise; this is past it, so the work "

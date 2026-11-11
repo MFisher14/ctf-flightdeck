@@ -511,3 +511,17 @@ def test_stall_counts_a_new_file_as_progress():
     assert det.check(lane, fx.challenge(), 0.0) is None  # idle only 4
     old = fx.lane(turns=14, files=(fx.file_change("x.py", turn=4),), number=2)  # another lane: file at turn 4
     assert det.check(old, fx.challenge(), 0.0) is not None
+
+
+def test_cached_tokens_weigh_a_tenth_in_the_effort_budget():
+    from ctf_flightdeck.detect.detectors import EffortDetector, effort_tokens
+    from ctf_flightdeck.detect.base import DetectConfig
+    from ctf_flightdeck.core.model import Challenge, Lane
+
+    challenge = Challenge("c", "C", "crypto", 50, solves=120)  # a small budget: 50 points, many solves
+    budget = DetectConfig().effort_tokens(50, 120)
+    lane = Lane(1, "c", "sonnet", turns=3, tokens=budget + 5_000, cached_tokens=budget)  # a CLI's big cached prefix
+    assert effort_tokens(lane) < budget
+    assert EffortDetector(DetectConfig()).check(lane, challenge, 0.0) is None
+    lane.cached_tokens = 0  # the same tokens, none cached: that is real spend
+    assert EffortDetector(DetectConfig()).check(lane, challenge, 0.0) is not None
