@@ -735,10 +735,14 @@ def test_the_readme_says_how_to_play_and_that_honest_practice_uses_docker():
     assert "tests/test_practice.py" in readme  # where the spoilers are
 
 
-def test_the_readme_says_docker_isolates_the_filesystem_but_not_the_network():
-    """A docker lane has network (DockerWorkspace's default is docker's bridge network, and the
-    lane config has no network key), and the repository holds every reference solver, so the
-    README must not promise that a docker lane can reach nothing but its own copy."""
+def test_the_readmes_no_network_promise_matches_what_runs_do():
+    """The README promises a docker practice lane no network. That holds only while runs give a
+    lane without urls the "none" network and no practice challenge lists urls: check both, so
+    the promise and the code cannot drift apart."""
+    from ctf_flightdeck.run import lane_network
+
     readme = " ".join((PRACTICE / "README.md").read_text(encoding="utf-8").split())  # line breaks do not matter
-    assert "Docker isolates the filesystem only." in readme
-    assert "until lanes run without network, a lane can download this repository" in readme
+    assert "a docker lane gets no network when its challenge lists no `urls`" in readme.lower()
+    assert lane_network(()) == "none"
+    for spec in (PRACTICE).glob("*/challenge.json"):
+        assert not json.loads(spec.read_text(encoding="utf-8")).get("urls"), spec.parent.name

@@ -213,3 +213,21 @@ def test_a_run_notes_models_with_no_known_price_when_the_api_may_not_report_one(
     (note,) = run.notes()
     assert "fake/big" in note and "fake/small" not in note  # fake/small has a price in the test config
     assert "asks you once" in note
+
+
+def test_the_practice_set_ships_with_flightdeck_and_loads_as_a_board():
+    from ctf_flightdeck.platform.manual import AnswerVerifier, load_board
+    from ctf_flightdeck.practice_set import practice_dir
+
+    folder = practice_dir()
+    board = load_board(folder)
+    assert board.event == "Practice Range" and len(board.challenges) == 14
+    assert board.answers is not None
+    assert AnswerVerifier(board.answers).ids == {b.challenge.id for b in board.challenges}
+
+
+def test_practice_without_a_config_says_how_to_make_one(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "none.toml"))
+    result = CliRunner().invoke(cli.app, ["practice"])
+    assert result.exit_code == 2
+    assert "none.toml" in result.output and "config" in result.output

@@ -16,7 +16,7 @@ Bring what you have: an API key, an OpenRouter account, a coding-agent CLI, a fo
 
 A board is a folder of challenge folders, each with a `challenge.json` and its handout files
 (format in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). The repo ships a synthetic practice set
-in [`practice/`](practice/README.md).
+in [`src/ctf_flightdeck/practice/`](src/ctf_flightdeck/practice/README.md) (`flightdeck practice` plays it).
 
 ```sh
 uv run flightdeck init            # a few questions; writes ~/.config/ctf-flightdeck/config.toml

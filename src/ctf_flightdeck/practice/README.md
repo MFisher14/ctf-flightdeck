@@ -46,15 +46,13 @@ challenge (`tests/test_practice.py`). In the docker runtime (`runtime = "docker"
 commands run in a container whose filesystem holds only its own copy of the challenge, mounted at
 `/work`.
 
-Docker isolates the filesystem only. A docker lane still has network (docker's default bridge
-network), so until lanes run without network, a lane can download this repository, reference
-solutions included. No challenge here needs a network, and flightdeck is to run a lane with no
-network when its challenge lists no `urls`, but that is not built yet. Until it is, a lane that
-fetches anything from the internet while you practise is not playing fair: stop it.
+A docker lane gets no network when its challenge lists no `urls`, and no challenge here does, so a
+practice lane in docker can read nothing but its own copy and reach nothing at all: it cannot
+download this repository's solutions.
 
-The lane's python tool runs `python3` inside the container. The default image,
-`debian:bookworm-slim`, has bash, coreutils and perl but no `python3`, `file`, `xxd`, `unzip` or
-`strings`, so practise with an image that adds them.
+The lane's python tool runs `python3` inside the container. Build the lane image once with
+`flightdeck image build` (it adds `python3`, `file`, `xxd`, `unzip`, `strings` and other common
+tools to Debian); `flightdeck init` sets it as the image.
 
 ## Checking a flag by hand
 
