@@ -73,6 +73,7 @@ DESCRIPTION_CHARS = 800  # of a description, in a judge's prompt
 STEP_CHARS = 100  # of each step, in a judge's prompt
 MAX_STEPS = 6  # steps a judge reads: the lane's last
 SHOWN = 160  # characters of a reply kept for display
+MAX_ANSWER = 200  # characters a reply that names one option can have, wrapping included
 
 # Output token caps per job. An OpenAI-compatible model that answers directly stops after a
 # word; the cap leaves room for a short reasoning preamble. Claude thinks adaptively, and its
@@ -164,6 +165,8 @@ def words(text: str) -> str:
 def strict_choice(text: str, choices: Sequence[Choice]) -> str | None:
     """The option the whole of `text` names, or None. Quotes, backticks, asterisks and a final
     full stop around it are allowed; anything more is not ("sstv, I think" names nothing)."""
+    if len(text) > MAX_ANSWER:
+        return None  # an option is a few words: a long reply is no answer, and is not matched at all
     match = _ANSWER.fullmatch(text.lower())
     if match is None:
         return None

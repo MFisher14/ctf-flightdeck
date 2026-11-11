@@ -80,6 +80,12 @@ def test_only_the_whole_answer_names_an_option(said, meant):
     assert L.strict_choice(said, CHOICES) == meant
 
 
+def test_a_long_reply_is_no_answer_however_it_is_padded():
+    assert L.strict_choice(" " * 160 + "sstv" + " " * 40, CHOICES) is None  # 204 characters
+    assert L.strict_choice(" " * 100 + "sstv", CHOICES) == "sstv"
+    assert L.strict_choice("a " * 5000 + "?", CHOICES) is None  # no slow match on a long reply
+
+
 def test_a_leading_reasoning_block_is_set_aside_and_an_unclosed_one_is_no_answer():
     assert L.without_thinking("<think>\nIt mentions slow scan.\n</think>\nsstv") == "\nsstv"
     assert L.without_thinking("<think>still thinking") is None

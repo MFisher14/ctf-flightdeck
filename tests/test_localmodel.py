@@ -711,6 +711,15 @@ def test_cli_fails_when_most_jobs_are_declined_and_says_why_a_local_model_helps(
     assert "an open-weight model on your own machine does not" in result.output
 
 
+def test_cli_makes_one_call_per_case_and_never_retries(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "slow scan"), hint_case("xor", "repeating key"))
+    with FakeModelServer([error_reply(503, "busy"), text_reply("sstv"), text_reply("xor")]) as server:
+        result = invoke(server.base_url, cases)
+        assert len(server.requests) == 2  # the 503 was that case's one try
+    assert result.exit_code == 0, result.output
+    assert table(result.output)["failed"] == ["-", "1/2 50%"]
+
+
 def test_cli_prices_jobs_with_price(tmp_path):
     cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "slow scan"))
     with FakeModelServer([text_reply("sstv", prompt_tokens=1_000_000, completion_tokens=0)]) as server:

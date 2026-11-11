@@ -389,6 +389,33 @@ def test_an_open_alert_is_checked_again_when_its_verdict_runs_out():
     run(main())
 
 
+def test_a_verdict_that_lands_while_the_lane_is_paused_applies_at_its_next_turn():
+    def slow_yes(record):
+        time.sleep(0.3)
+        return text_reply("yes")
+
+    async def main():
+        with FakeModelServer(responder=slow_yes) as server:
+            async with ModelClient(server.base_url, KEY, max_retries=0, backoff=0.0) as client:
+                deck, watch = gate(light(client))
+                lane = deck.lanes["L01"]
+                for i in range(1, 6):
+                    turn(deck, i)
+                assert lane.alert(AlertKind.HINT) is not None  # up at once; the judge is thinking
+                from ctf_flightdeck.core import interventions as iv
+
+                assert deck.apply(iv.Pause("L01")).ok
+                await watch.drain()  # "yes" lands while the lane is paused
+                assert deck.apply(iv.Resume("L01")).ok
+                turn(deck, 6)
+                await watch.drain()
+                assert lane.alert(AlertKind.HINT) is None  # the verdict applied at the next turn
+                assert any("hint alert withdrawn" in a.text for a in lane.actions)
+                assert asked(server) == 1
+
+    run(main())
+
+
 def test_a_judge_that_cannot_answer_never_hides_the_alert_and_the_run_says_so_once():
     server = FakeModelServer([error_reply(500, "fake model server: down")] * 2)
 
