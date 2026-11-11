@@ -1426,6 +1426,7 @@ class QuietDriver:
     def escalate(self, lane, model, summary): ...
     def approved(self, lane, pending): ...
     def rejected(self, lane, flag): ...
+    def declined(self, lane, pending): ...
     def stop(self, lane): ...
 
 
@@ -2043,5 +2044,143 @@ def test_a_board_card_opens_any_of_its_lanes_by_number():
         assert isinstance(app.screen, ChallengeCard)
         await press(pilot, "2")
         assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == second
+
+    drive(app, script)
+
+
+# ---------------------------------------------------------------------- M1: decline and quick answers
+
+
+def _flag_lane(world: FakeWorld):
+    return next(x for x in world.deck.active_lanes() if x.pending is not None and x.pending.kind is PendingKind.SUBMIT)
+
+
+def test_the_why_line_numbers_the_answers_and_1_approves_a_flag():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        lane = _flag_lane(world)
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        answers = region_text(app, "#why").splitlines()[1]
+        assert f" 1  submit {lane.pending.flag}" in answers and " 0  do not submit" in answers
+        await press(pilot, "1")
+        assert lane.state is LaneState.SOLVED
+        assert deck.challenges[lane.challenge_id].status is ChallengeStatus.SOLVED
+
+    drive(app, script)
+
+
+@pytest.mark.parametrize("how", ["0", "d", "/decline"])
+def test_0_d_or_slash_decline_leave_a_flag_unsubmitted_and_the_lane_running(how):
+    world, app = make("default")
+
+    async def script(pilot):
+        lane = _flag_lane(world)
+        flag = lane.pending.flag
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        n_submits = len([e for e in world.deck.events if e.kind is EventKind.SUBMIT])
+        if how.startswith("/"):
+            bar(app).start(how)
+        await press(pilot, "enter" if how.startswith("/") else how)
+        assert lane.state is LaneState.RUNNING and lane.pending is None
+        assert len([e for e in world.deck.events if e.kind is EventKind.SUBMIT]) == n_submits
+        assert f"Not submitted: {flag}" in status_line(app)
+
+    drive(app, script)
+
+
+def test_a_number_takes_the_suggested_answer_of_a_course_alert_at_once():
+    world, app = make("sstv")
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.alert(AlertKind.HINT) is not None, "off-hint alert")
+        suggestions = [s for s in lane.alert(AlertKind.HINT).suggestions if s.key]
+        assert [s.key for s in suggestions][:2] == ["r", "h"]
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        answers = region_text(app, "#why").splitlines()[1]
+        assert " 1  redirect" in answers and " 2  hint" in answers
+        await press(pilot, "1")
+        assert lane.plan == suggestions[0].text  # redirected with the suggested plan, no prompt
+        assert isinstance(app.screen, FleetScreen) and lane.alert(AlertKind.HINT) is None
+
+    drive(app, script)
+
+
+def test_a_number_with_no_answer_warns():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        lane = world.deck.lanes[app.fleet.selected_lane]
+        assert not lane.needs_you
+        before = snapshot(app)
+        await press(pilot, "5")
+        assert_warning(app, f"{lane.id} has no answer 5")
+        assert snapshot(app) == before
+
+    drive(app, script)
+
+
+def test_the_kill_answer_opens_the_kill_prompt_rather_than_killing():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm", "big")))
+    deck.release([Challenge("a", "A", "misc", 50)], [QueueEntry("a", "glm")])
+    (lane,) = deck.lanes_on("a")
+    deck.report(lane.id, TurnReport(alerts=(Alert(AlertKind.LOOP, "again", (Suggestion("h", "Hint", "stop"), Suggestion("k", "Kill"))),)))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        assert [(a.number, a.key) for a in views.quick_answers(lane)] == [("1", "h"), ("2", "k")]
+        await press(pilot, "2")
+        assert isinstance(app.screen, KillPrompt) and not lane.finished
+        await press(pilot, "escape")
+        assert not lane.finished
+
+    drive(app, script)
+
+
+def test_in_the_focus_view_a_digit_answers_only_while_the_chat_box_is_empty():
+    world, app = make("default")
+
+    async def script(pilot):
+        lane = _flag_lane(world)
+        focus = await open_focus(pilot, app, lane.id)
+        chat = focus.query_one("#chat", CommandBar)
+        card = region_text(app, "#now")
+        assert " 1  /approve   submit it" in card and " 0  /decline   do not submit" in card
+        await press(pilot, "t", "r", "y", "space", "0")  # a message that has a digit in it
+        assert chat.field.value == "try 0" and lane.pending is not None
+        chat.clear()
+        await press(pilot, "7")  # no answer 7: it is just typed
+        assert chat.field.value == "7" and lane.pending is not None
+        chat.clear()
+        await press(pilot, "0")
+        assert lane.pending is None and lane.state is LaneState.RUNNING and chat.field.value == ""
+
+    drive(app, script)
+
+
+def test_a_suggested_hint_that_starts_like_a_lane_id_goes_to_the_lane_it_was_suggested_for():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm", "big")))
+    deck.release([Challenge("a", "A", "misc", 50), Challenge("b", "B", "misc", 50)], [QueueEntry("a", "glm"), QueueEntry("b", "glm")])
+    first, second = deck.lanes_on("a")[0], deck.lanes_on("b")[0]
+    deck.report(first.id, TurnReport(alerts=(Alert(AlertKind.LOOP, "again", (Suggestion("h", "Hint", f"{second.id} is a decoy"),)),)))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, first.id)
+        chat = focus.query_one("#chat", CommandBar)
+        await press(pilot, "slash")
+        suggested = [c.text for c in chat.completions if c.suggested]
+        assert suggested == [f"/hint {first.id} {second.id} is a decoy"]  # the lane named: no misreading
+        await press(pilot, "escape", "escape")
+        await open_focus(pilot, app, first.id)
+        await press(pilot, "1")
+        assert first.hints == [f"{second.id} is a decoy"] and second.hints == []
 
     drive(app, script)

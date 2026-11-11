@@ -245,6 +245,8 @@ KEY_HELP = (
     ("e", "Escalate: hand a compact summary to the next stronger model"),
     ("t", "Take over: a shell in the lane's workspace (placeholder in M0)"),
     ("a", "Approve what the lane waits for: submit, more budget, live-box access"),
+    ("d", "Decline it: do not submit, stay off the box, no more budget (the lane stops)"),
+    ("1-9, 0", "Quick answers, no enter: the numbers in the why line and the needs-you card (0 says no)"),
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
     ("s", "Change the lane sort: attention, idle, cost, turns, lane"),

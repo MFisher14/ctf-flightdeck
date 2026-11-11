@@ -6,8 +6,10 @@ drawn through text.untrusted() like everything else from a lane.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -19,6 +21,21 @@ from textual.widgets.option_list import Option
 from ..text import untrusted
 from . import theme
 from .commands import BY_NAME, Completion, complete
+
+
+class BarInput(Input):
+    """The bar's text field. While it is empty, a digit can answer the lane instead."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.quick: Callable[[str], bool] | None = None
+
+    async def _on_key(self, event: events.Key) -> None:
+        if not self.value and event.character and event.character.isdigit() and self.quick and self.quick(event.character):
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
 
 
 class CommandBar(Vertical):
@@ -59,14 +76,14 @@ class CommandBar(Vertical):
 
     def compose(self) -> ComposeResult:
         yield OptionList(id="menu")
-        yield Input(placeholder=self.bar_placeholder, id="bar-input", select_on_focus=False)
+        yield BarInput(placeholder=self.bar_placeholder, id="bar-input", select_on_focus=False)
 
     def on_mount(self) -> None:
         self.field.cursor_blink = False  # a steady cursor keeps screenshots deterministic
 
     @property
-    def field(self) -> Input:
-        return self.query_one("#bar-input", Input)
+    def field(self) -> BarInput:
+        return self.query_one("#bar-input", BarInput)
 
     @property
     def menu(self) -> OptionList:

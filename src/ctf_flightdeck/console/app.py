@@ -237,7 +237,7 @@ class FlightdeckApp(App[None]):
             out.append(("/approve" + (f" {lane.id}" if with_lane else ""), untrusted(lane.pending.detail, one_line=True)))
         for alert in sorted(lane.alerts, key=lambda a: views.ALERT_URGENCY[a.kind]):
             for s in alert.suggestions:
-                command = views.suggestion_command(s.key, s.text, lane.id if with_lane else None)
+                command = views.suggestion_command(s.key, s.text, lane.id, show_lane=with_lane)
                 if command:
                     command = untrusted(command, one_line=True)
                 if command and all(command != c for c, _ in out):
@@ -257,8 +257,36 @@ class FlightdeckApp(App[None]):
             self.take_over(lane)
         elif verb == "approve":
             self.apply(iv.Approve(lane.id))
+        elif verb == "decline":
+            self.apply(iv.Decline(lane.id))
         else:
             raise ValueError(f"unknown lane verb {verb!r}")
+
+    def answer(self, lane: Lane, number: str) -> bool:
+        """Apply the lane's quick answer `number` at once. False if it has none."""
+        answer = next((a for a in views.quick_answers(lane) if a.number == number), None)
+        if answer is None:
+            return False
+        key, text = answer.key, answer.text
+        if key == "h" and text:
+            self.apply(iv.Hint(lane.id, text))
+        elif key == "r" and text:
+            self.apply(iv.Redirect(lane.id, text))
+        elif key == "f" and text:
+            self.apply(iv.Fork(lane.id, approach=text))
+        elif key in ("h", "r"):  # nothing suggested to send: open the command for typing
+            self.start_command(f"/{views.KEY_COMMAND[key]} " + (f"{lane.id} " if self.screen is self._fleet else ""))
+        else:
+            self.lane_verb(lane, views.KEY_COMMAND[key])  # kill and a bare fork open their prompts
+        return True
+
+    def start_command(self, text: str) -> None:
+        """Open the current screen's command bar with `text` in it."""
+        screen = self.screen
+        if isinstance(screen, FleetScreen):
+            screen.start_command(text)
+        elif isinstance(screen, FocusScreen):
+            screen.query_one("#chat").start(text)
 
     def _title(self, verb: str, lane: Lane) -> Text:
         name = untrusted(self.deck.challenges[lane.challenge_id].name, one_line=True)
@@ -372,6 +400,8 @@ class FlightdeckApp(App[None]):
             self.apply(iv.Kill(lane.id, requeue=arg.lower() != "park"))
         elif name == "approve":
             self.apply(iv.Approve(lane.id))
+        elif name == "decline":
+            self.apply(iv.Decline(lane.id))
         elif name == "escalate":
             self.apply(iv.Escalate(lane.id))
         elif name == "pause":

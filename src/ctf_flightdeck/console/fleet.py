@@ -55,6 +55,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("e", "lane('escalate')", "escalate"),
         Binding("t", "lane('takeover')", "take over"),
         Binding("a", "lane('approve')", "approve"),
+        Binding("d", "lane('decline')", "decline"),
         Binding("c", "claim", "claim"),
         Binding("slash", "command", "commands", key_display="/"),
         Binding("s", "sort", "sort"),
@@ -64,6 +65,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("escape", "escape", "back", show=False),
         Binding("space", "app.toggle_clock", "freeze clock", show=False),
         Binding("full_stop", "app.step_clock", "step clock", show=False),
+        *(Binding(str(n), f"quick('{n}')", f"answer {n}", show=False) for n in range(10)),
     ]
 
     def __init__(self) -> None:
@@ -386,6 +388,12 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = self.target_lane()
         if lane is not None:
             self.fd.open_lane(lane.id)
+
+    def action_quick(self, number: str) -> None:
+        """A number answers what the lane needs (the why line numbers the answers)."""
+        lane = self.target_lane()
+        if lane is not None and not self.fd.answer(lane, number):
+            self.fd.warn(f"{lane.id} has no answer {number}")
 
     def action_claim(self) -> None:
         deck = self.fd.deck

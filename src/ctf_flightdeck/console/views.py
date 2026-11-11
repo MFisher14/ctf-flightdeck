@@ -9,6 +9,8 @@ literally and cannot steer the console.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from rich import box
 from rich.console import Group, RenderableType
 from rich.panel import Panel
@@ -35,7 +37,7 @@ from ..core.model import (
 )
 from ..text import untrusted
 from . import theme
-from .commands import KEY_COMMAND
+from .commands import KEY_COMMAND, lane_id
 
 CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 
@@ -60,7 +62,19 @@ BOARD_MARK = {
     ChallengeStatus.PARKED: ("‖", theme.YELLOW),
 }
 
-PENDING_TAG = {PendingKind.SUBMIT: "submit", PendingKind.BUDGET: "budget", PendingKind.LIVE_BOX: "box"}
+PENDING_TAG = {
+    PendingKind.SUBMIT: "submit",
+    PendingKind.CONFIRM: "confirm",
+    PendingKind.BUDGET: "budget",
+    PendingKind.LIVE_BOX: "box",
+}
+# (approve, decline) in words, for each kind of approval
+PENDING_ANSWERS = {
+    PendingKind.SUBMIT: ("submit it", "do not submit"),
+    PendingKind.CONFIRM: ("accepted", "rejected"),
+    PendingKind.BUDGET: ("more budget", "stop the lane"),
+    PendingKind.LIVE_BOX: ("use the live box", "stay off it"),
+}
 
 
 def safe(value: object, style: str | Style = "", *, justify: str | None = None) -> Text:
@@ -77,6 +91,37 @@ def alert_style(kind: AlertKind | None) -> str:
 def top_answerable(lane: Lane) -> Alert | None:
     answer = [a for a in lane.alerts if a.kind not in INFORMATIONAL_ALERTS]
     return min(answer, key=lambda a: ALERT_URGENCY[a.kind]) if answer else None
+
+
+@dataclass(frozen=True)
+class QuickAnswer:
+    """One numbered answer to what the lane needs: press its number, no enter."""
+
+    number: str  # "1".."9", or "0" for no
+    key: str  # the intervention, as its fleet key: a, d, h, r, f, k, e, p, t
+    text: str  # the suggested text (a hint, a plan, an approach), "" if none
+    label: str  # what it does, in words
+
+
+def quick_answers(lane: Lane) -> list[QuickAnswer]:
+    """The answers the why line and the "needs you now" card number. An approval waiting
+    comes first: 1 approves, 0 declines. Otherwise the most urgent alert's suggestions,
+    numbered from 1."""
+    if lane.finished:
+        return []
+    if lane.pending is not None:
+        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        if lane.pending.kind is PendingKind.SUBMIT:
+            yes = lane.pending.detail
+        return [QuickAnswer("1", "a", "", yes), QuickAnswer("0", "d", "", no)]
+    top = top_answerable(lane)
+    if top is None:
+        return []
+    out: list[QuickAnswer] = []
+    for s in top.suggestions:
+        if s.key in KEY_COMMAND and len(out) < 9:
+            out.append(QuickAnswer(str(len(out) + 1), s.key, s.text, s.label))
+    return out
 
 
 # ---------------------------------------------------------------------- header
@@ -312,16 +357,16 @@ def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = 
 # ---------------------------------------------------------------------- fleet: the "why" line
 
 
-def _answers(alert: Alert) -> Text:
+def _answers(lane: Lane, alert: Alert | None) -> Text:
+    """The numbered quick answers, then any suggestion that has no key (advice only)."""
     out = Text()
-    for s in alert.suggestions:
-        label = untrusted(s.label, one_line=True)
-        if not s.key:
-            out.append(f"  {label}", theme.MUTED)
-            continue
+    for answer in quick_answers(lane):
         out.append("  ")
-        out.append_text(theme.key_chip(untrusted(s.key, one_line=True)))
-        out.append(f" {label.lower()}", theme.MUTED)
+        out.append_text(theme.key_chip(answer.number))
+        out.append(f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED)
+    for s in (alert.suggestions if alert is not None and lane.pending is None else ()):
+        if s.key not in KEY_COMMAND:
+            out.append(f"  {untrusted(s.label, one_line=True)}", theme.MUTED)
     return out
 
 
@@ -340,20 +385,15 @@ def lane_why(deck: Deck, lane: Lane) -> Text:
         out.append(f"▲ {top.kind.label}: ", alert_style(top.kind))
         out.append(untrusted(top.reason, one_line=True))
         out.append("\n")
-        if lane.pending is not None:
-            out.append("  ")
-            out.append_text(theme.key_chip("a"))
-            out.append(f" {untrusted(lane.pending.detail, one_line=True)}", theme.MUTED)
-        else:
-            out.append_text(_answers(top))
+        out.append_text(_answers(lane, top))
         out.append("   enter open", theme.MUTED)
         return out
     if lane.pending is not None:
         out.append("◆ waiting for you: ", f"bold {theme.PURPLE}")
         out.append(untrusted(lane.pending.detail, one_line=True))
-        out.append("\n  ")
-        out.append_text(theme.key_chip("a"))
-        out.append(" approve   enter open", theme.MUTED)
+        out.append("\n")
+        out.append_text(_answers(lane, None))
+        out.append("   enter open", theme.MUTED)
         return out
     if lane.alerts:
         out.append(f"▲ {lane.alerts[0].kind.label}: ", alert_style(lane.alerts[0].kind))
@@ -433,12 +473,16 @@ def transcript_lines(action: Action) -> list[Text]:
     return [Text.assemble(("· flightdeck  ", f"bold {theme.BLUE}"), (text, theme.MUTED))]
 
 
-def suggestion_command(key: str, text: str, lane_id: str | None = None) -> str | None:
-    """The command an alert's suggested key stands for, e.g. /redirect <text>."""
+def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lane: bool = True) -> str | None:
+    """The command an alert's suggested key stands for, e.g. /redirect <text>. The lane id
+    is left out when `show_lane` is False, unless the text starts with a word that would
+    read as a lane id (a hint "L02 is a decoy" must not go to L02)."""
     name = KEY_COMMAND.get(key)
     if name is None:
         return None
-    return " ".join([f"/{name}"] + ([lane_id] if lane_id else []) + ([text] if text else []))
+    first = text.split(" ", 1)[0] if text else ""
+    named = lane if lane and (show_lane or lane_id(first) is not None) else None
+    return " ".join([f"/{name}"] + ([named] if named else []) + ([text] if text else []))
 
 
 def now_card(deck: Deck, lane: Lane) -> RenderableType:
@@ -451,6 +495,8 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
         )
     rows: list[RenderableType] = []
     border = ""
+    numbered = {(answer.key, answer.text): answer.number for answer in quick_answers(lane)}
+    top = top_answerable(lane)
     for alert in sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind]):
         label = Text.assemble(("▲ ", alert_style(alert.kind)), (alert.kind.label, alert_style(alert.kind)), ("  ", ""))
         if alert.kind in INFORMATIONAL_ALERTS:
@@ -461,10 +507,12 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
         label.append(untrusted(alert.reason, one_line=True), theme.TEXT)
         rows.append(label)
         for s in alert.suggestions:
-            if s.key == "a" and lane.pending is not None:
-                continue  # the approval line below says it
-            command = suggestion_command(s.key, s.text)
+            if s.key in ("a", "d") and lane.pending is not None:
+                continue  # the approval lines below say it
+            command = suggestion_command(s.key, s.text, lane.id, show_lane=False)
+            number = numbered.get((s.key, s.text)) if alert is top else None
             line = Text("   ")
+            line.append_text(_number(number))
             label = untrusted(s.label, one_line=True)
             if command:
                 line.append(untrusted(command, one_line=True), f"bold {theme.ACCENT}")
@@ -474,8 +522,10 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
             rows.append(line)
     if lane.pending is not None:
         border = border or theme.PURPLE
+        yes, no = PENDING_ANSWERS[lane.pending.kind]
         rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane.pending.detail, one_line=True), theme.TEXT)))
-        rows.append(Text.assemble(("   /approve", f"bold {theme.ACCENT}"), ("   approve it", theme.MUTED)))
+        rows.append(Text.assemble(("   ", ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED)))
+        rows.append(Text.assemble(("   ", ""), _number("0"), ("/decline", f"bold {theme.ACCENT}"), (f"   {no}", theme.MUTED)))
         for later in lane.waiting:
             rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
     for hint in lane.hints:
@@ -483,8 +533,17 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
     if not rows:
         return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
     if border:
-        rows.append(Text("type / to pick one of these, or write your own message", theme.MUTED))
+        rows.append(Text("press a number to answer (chat box empty), / to pick a command, or write a message", theme.MUTED))
     return Panel(Group(*rows), box=box.ROUNDED, border_style=border or theme.BORDER, padding=(0, 1), title=Text("needs you now", "bold"), title_align="left")
+
+
+def _number(number: str | None) -> Text:
+    """A quick answer's number as a chip and a space, or the same width blank."""
+    if number is None:
+        return Text("    ")
+    chip = theme.key_chip(number)
+    chip.append(" ")
+    return chip
 
 
 def file_label(change: FileChange) -> Text:

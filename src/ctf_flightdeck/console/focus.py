@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 def _key_line() -> Text:
     out = Text(no_wrap=True, overflow="ellipsis")
     for i, (key, label) in enumerate(
-        (("esc", "fleet"), ("enter", "send"), ("/", "commands"), ("ctrl+n", "next lane needing you"), ("tab", "files"), ("pgup pgdn", "scroll"))
+        (("esc", "fleet"), ("enter", "send"), ("/", "commands"), ("1-9 0", "answer"), ("ctrl+n", "next lane needing you"), ("tab", "files"), ("pgup pgdn", "scroll"))
     ):
         out.append("  " if i else "")
         out.append(key, f"bold {theme.ACCENT}")
@@ -103,6 +103,7 @@ class FocusScreen(Screen, inherit_bindings=False):
 
     def on_mount(self) -> None:
         self._ready = True
+        self.query_one("#chat", CommandBar).field.quick = self._quick
         # pgup/pgdn scroll the transcript from anywhere, so tab goes chat -> files -> diff
         self.query_one("#transcript", RichLog).can_focus = False
         self.show_lane(self.lane_id, self._first_file)
@@ -200,6 +201,10 @@ class FocusScreen(Screen, inherit_bindings=False):
             event.stop()
             event.prevent_default()
             chat.start(chat.field.value + event.character)
+
+    def _quick(self, number: str) -> bool:
+        """A digit typed into the empty chat box answers the lane, if it has that answer."""
+        return self.fd.answer(self.lane, number)
 
     def action_back(self) -> None:
         self.fd.show_fleet(select=self.lane_id)

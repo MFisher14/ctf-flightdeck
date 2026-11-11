@@ -27,6 +27,7 @@ COMMANDS = (
     Command("fork", "[approach]", "a sibling lane on another model"),
     Command("kill", "[park]", "end the lane: re-queue it fresh, or park it"),
     Command("approve", "", "approve what the lane waits for"),
+    Command("decline", "", "say no: do not submit, stay off the box, no more budget"),
     Command("escalate", "", "hand a summary to a stronger model"),
     Command("pause", "", "pause or resume the lane"),
     Command("takeover", "", "take the lane's shell (placeholder until M1)"),
@@ -50,6 +51,7 @@ KEY_COMMAND = {
     "k": "kill",
     "e": "escalate",
     "a": "approve",
+    "d": "decline",
     "p": "pause",
     "t": "takeover",
 }
