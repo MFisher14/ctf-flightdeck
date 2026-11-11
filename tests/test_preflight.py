@@ -1,9 +1,9 @@
 """Pre-flight: event profiles, the stage policies the rules allow, and the checks before a run.
 
 Profiles are real files in tmp_path. check() and describe() get their environment as a plain
-mapping, so the player's own variables never reach a test (or leave one). The deck in the
-submit tests is the real one, with a recording driver and verifier standing in for lanes and
-the platform.
+mapping, so the player's own variables never reach a test (or leave one); the CLI tests set
+and clear variables with monkeypatch. The deck in the submit tests is the real one, with a
+recording driver and verifier standing in for lanes and the platform.
 """
 
 from __future__ import annotations
@@ -13,7 +13,10 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import typer
+from typer.testing import CliRunner
 
+from ctf_flightdeck import preflight_cli
 from ctf_flightdeck.config import Config, ConfigError, load_config
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -31,6 +34,7 @@ from ctf_flightdeck.preflight import (
     deck_submit,
     defaults,
     describe,
+    example_profile,
     lane_network,
     load_profile,
     looser,
@@ -752,3 +756,139 @@ def test_describe_draws_a_hostile_profile_safely(tmp_path):
     text = "\n".join(describe(event, policies(), environ={}))
     assert "\x1b" not in text and "\x07" not in text and "\u202e" not in text
     assert "Night^[[2J^[]52;c;cGFzdGU=^GShift\ufffd" in text
+
+
+# ---------------------------------------------------------------------- the command line
+
+runner = CliRunner()
+CONFIG = '[api]\nkey_env = "TEST_MODEL_KEY"\n[models]\nladder = ["fake/small"]\n[lanes]\nmax_lanes = {lanes}\nruntime = "{runtime}"\n'
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path):
+    """The token and the API key set to known fakes; no config from the player's shell."""
+    monkeypatch.setenv(TOKEN_ENV, FAKE_TOKEN)
+    monkeypatch.setenv("TEST_MODEL_KEY", FAKE_KEY)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "no-config-here.toml"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+
+def config_file(tmp_path: Path, *, lanes: int = 4, runtime: str = "docker") -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG.format(lanes=lanes, runtime=runtime), encoding="utf-8")
+    return path
+
+
+def invoke(*args: str):
+    return runner.invoke(preflight_cli.app, list(args))
+
+
+def flat(output: str) -> str:
+    """CLI output without Rich's box lines, whitespace collapsed: a wrapped message reads as one line."""
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", output).split())
+
+
+def test_preflight_prints_the_event_and_every_stage_and_exits_0(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "max_lanes": "8"}))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 0, result.output
+    out = result.stdout.splitlines()
+    assert out[0] == f"profile   {path}"
+    assert "event     Harbour Lights CTF · ctfd at https://ctf.example.org · team" in out
+    for stage, policy in [("pull", "auto"), ("l1", "auto"), ("agents", "auto"), ("submit", "confirm"), ("instance", "auto")]:
+        assert any(line.startswith(f"{stage:<10}{policy:<9}") for line in out), stage
+    assert f"lanes     4 at a time · runtime docker · config {tmp_path / 'config.toml'}" in out
+    assert out[-1] == "preflight: ok"
+    assert result.stderr == ""
+
+
+def test_preflight_prints_warnings_and_still_exits_0(tmp_path, env, monkeypatch):
+    monkeypatch.delenv(TOKEN_ENV)
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 0
+    assert f"warn: the CTFd token variable {TOKEN_ENV} (event.token_env) is not set or is empty" in result.stdout
+    assert result.stdout.splitlines()[-1] == "preflight: ok (1 warning)"
+
+
+def test_preflight_exits_2_when_a_policy_breaks_a_rule(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "ai_allowed": "false"}, {"agents": '"auto"'}))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 2
+    assert 'refuse: the agents policy "auto" is looser than the rules allow (rules.ai_allowed = false)' in result.stdout
+    assert result.stdout.splitlines()[-1] == "preflight: refused (1 refusal): a run with this profile must not start"
+
+
+def test_preflight_checks_lanes_and_runtime_from_the_config_and_the_options(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "live_targets": '"off"', "max_lanes": "8"}))
+    config = str(config_file(tmp_path, lanes=12, runtime="host"))
+    result = invoke(str(path), "--config", config)
+    assert result.exit_code == 2
+    assert "refuse: 12 lanes at once is more than the rules allow (rules.max_lanes = 8)" in result.stdout
+    assert 'refuse: rules.live_targets = "off", but lanes would run on this machine (runtime host)' in result.stdout
+    assert "preflight: refused (2 refusals)" in result.stdout
+    result = invoke(str(path), "--config", config, "--max-lanes", "8", "--docker")
+    assert result.exit_code == 0, result.stdout
+    assert "lanes     8 at a time · runtime docker" in result.stdout
+
+
+def test_preflight_warns_when_agents_are_on_and_no_config_can_be_loaded(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
+    result = invoke(str(path))  # FLIGHTDECK_CONFIG names a file that does not exist
+    assert result.exit_code == 0
+    assert f'warn: the agents policy is "auto", but no model config could be loaded: {tmp_path / "no-config-here.toml"}: no config file' in result.stdout
+    assert "lanes     how many at a time is not known (no config, no --max-lanes)" in result.stdout
+    no_ai = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "ai_allowed": "false"}), "no-ai.toml")
+    result = invoke(str(no_ai))
+    assert result.exit_code == 0 and "warn:" not in result.stdout
+    assert "lanes     none (agents off)" in result.stdout
+
+
+def test_preflight_never_prints_the_token_or_the_api_key(tmp_path, env):
+    for text in (toml(EVENT_CTFD, RULES_OPEN), toml(EVENT_CTFD, {**RULES_OPEN, "ai_allowed": "false"}, {"agents": '"auto"'})):
+        path = write(tmp_path, text)
+        result = invoke(str(path), "--config", str(config_file(tmp_path)))
+        assert FAKE_TOKEN not in result.output and FAKE_KEY not in result.output
+        assert f"${TOKEN_ENV} (set)" in result.stdout
+
+
+def test_preflight_with_a_profile_it_cannot_read_exits_2_with_the_reason(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "live_targets": '"sometimes"'}))
+    result = invoke(str(path))
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith(f'flightdeck: {path}: rules.live_targets must be "allowed", "confirm" or "off"')
+
+
+def test_preflight_without_a_profile_is_a_usage_error(env):
+    result = invoke()
+    assert result.exit_code == 2
+    assert "name the event profile to check, or use --example to print one" in flat(result.output)
+
+
+def test_the_example_profile_loads_and_passes_but_for_the_unset_token(tmp_path, env, monkeypatch):
+    result = invoke("--example")
+    assert result.exit_code == 0 and result.stdout == example_profile()
+    loaded, chosen = load_profile(write(tmp_path, result.stdout))
+    assert (loaded.name, loaded.platform, loaded.token_env) == ("Example CTF", "ctfd", "CTFD_TOKEN")
+    assert re.fullmatch(loaded.flag_format, "example{x}")
+    assert as_tuple(chosen) == ("auto", "auto", "auto", "confirm", "confirm")
+    assert check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN}) == []
+    assert len(check(loaded, chosen, max_lanes=4, environ={})) == 1
+
+
+def test_preflight_mounts_as_one_command_with_options_after_the_profile(tmp_path, env):
+    root = typer.Typer()
+
+    @root.callback()
+    def main() -> None:
+        """flightdeck"""
+
+    root.add_typer(preflight_cli.app, name="preflight")  # the integrator's one line
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
+    result = runner.invoke(root, ["preflight", str(path), "--config", str(config_file(tmp_path)), "--max-lanes", "2"])
+    assert result.exit_code == 0, result.output
+    assert "lanes     2 at a time · runtime docker" in result.stdout
+    usage = runner.invoke(root, ["preflight", "--help"])
+    assert "Usage: root preflight [OPTIONS] [EVENT.toml]" in " ".join(usage.stdout.split())
+    assert "COMMAND" not in usage.stdout
