@@ -1,0 +1,322 @@
+# The "ignores the hint" lexicon.
+#
+# Each [[technique]] is one technique a challenge description can hint at.
+#   id          lower-case words joined by '-' (stable; used in configs and the judge)
+#   name        for the player, e.g. "SSTV (slow-scan TV)"
+#   advice      what to do instead, used in the redirect suggestion text
+#   description cues: words/phrases a description uses when it points at this technique
+#   actions     cues a lane's commands, tools, libraries or file names show when it follows it
+#
+# Cues are matched as whole words after normalisation (accents dropped, lower case, runs of
+# other characters collapsed to one space). Keep description cues to plain English a setter
+# would write; keep action cues to tool and library names and command words, so a lane that
+# merely mentions a technique in prose does not count as doing it. Challenge text is data:
+# nothing here is a payload or an instruction, only words to match.
+
+[[technique]]
+id = "sstv"
+name = "SSTV (slow-scan TV)"
+advice = "Decode the audio as SSTV (slow-scan TV, e.g. Robot 36 or Martin M1) and read the picture."
+description = ["sstv", "slow scan", "slow-scan", "scan it slowly", "scan slowly", "robot 36", "martin m1", "amateur radio picture"]
+actions = ["sstv", "qsstv", "pysstv", "rx-sstv", "robot36", "slowrx"]
+
+[[technique]]
+id = "morse"
+name = "Morse code"
+advice = "Decode the signal as Morse code (dots and dashes) to letters."
+description = ["morse", "dots and dashes", "dot dash", "cw signal", "telegraph", "di dah"]
+actions = ["morse", "morse-decoder", "cw", "morsedecoder", "from_morse"]
+
+[[technique]]
+id = "dtmf"
+name = "DTMF tones"
+advice = "Decode the audio as DTMF touch-tones into the dialled digits."
+description = ["dtmf", "touch tone", "touch-tone", "dial tone", "phone keypad", "dialled"]
+actions = ["dtmf", "multimon", "multimon-ng", "dtmf-decode", "goertzel"]
+
+[[technique]]
+id = "spectrogram"
+name = "Spectrogram text"
+advice = "Open the audio's spectrogram (Audacity or sox) and read the text drawn in the frequencies."
+description = ["spectrogram", "spectrum", "frequencies", "waterfall", "look at the picture in the sound", "see the sound"]
+actions = ["spectrogram", "sox", "specgram", "audacity", "librosa.stft", "melspectrogram"]
+
+[[technique]]
+id = "lsb-steg"
+name = "LSB steganography"
+advice = "Extract the least-significant bits of the image or audio samples."
+description = ["least significant", "lsb", "hidden in the pixels", "hidden in the image", "look closer at the bits"]
+actions = ["lsb", "stegsolve", "zsteg", "stegano", "lsb_extract", "getLSB"]
+
+[[technique]]
+id = "steghide"
+name = "steghide / embedded data"
+advice = "Try steghide (and a passphrase from the description) to pull the embedded file out."
+description = ["steghide", "embedded", "hidden file inside", "passphrase is", "something is still in there", "carrier"]
+actions = ["steghide", "stegseek", "outguess", "steg_extract"]
+
+[[technique]]
+id = "exif"
+name = "EXIF / image metadata"
+advice = "Read the image metadata (EXIF, XMP, comment fields) with exiftool."
+description = ["metadata", "exif", "where was this photo taken", "gps", "camera details", "when was it taken"]
+actions = ["exif", "exiftool", "exifread", "identify -verbose", "pil.*_getexif", "image.info"]
+
+[[technique]]
+id = "png-chunk"
+name = "PNG chunks"
+advice = "Walk the PNG chunks (pngcheck); the data hides in an extra or malformed chunk."
+description = ["png", "chunk", "appended after the image", "extra data", "corrupt image", "truncated height"]
+actions = ["pngcheck", "pngchunk", "pngtools", "zlib.decompress", "idat", "iend"]
+
+[[technique]]
+id = "png-text"
+name = "PNG text chunks (tEXt/zTXt)"
+advice = "Read the PNG text chunks (tEXt, zTXt, iTXt), decompressing the zTXt ones."
+description = ["text chunk", "comment in the image", "ztxt", "itxt", "png comment", "author field"]
+actions = ["ztxt", "itxt", "tEXt", "pnginfo", "exiftool -png", "zlib.decompress"]
+
+[[technique]]
+id = "qr"
+name = "QR / barcode"
+advice = "Decode the QR code or barcode in the image (zbarimg, or rebuild it from the modules)."
+description = ["qr code", "qr-code", "barcode", "scan the code", "square code", "data matrix", "aztec code"]
+actions = ["zbarimg", "zbar", "pyzbar", "qrdecode", "qreader", "quirc"]
+
+[[technique]]
+id = "xor"
+name = "XOR cipher"
+advice = "XOR the bytes against a repeating or single-byte key (try a crib or frequency analysis)."
+description = ["xor", "exclusive or", "repeating key", "single byte key", "key is one byte"]
+actions = ["xortool", "xor_key", "cyclic xor", "bytes ^", "brute_xor", "from pwn import xor"]
+
+[[technique]]
+id = "base64"
+name = "base64"
+advice = "base64-decode the blob (it may be wrapped in another layer or a data URL)."
+description = ["base64", "base 64", "b64", "looks like gibberish letters", "ends with ==", "data url"]
+actions = ["base64", "b64decode", "base64 -d", "atob", "from base64"]
+
+[[technique]]
+id = "base32"
+name = "base32"
+advice = "base32-decode the blob (upper-case letters A-Z and 2-7, '=' padding)."
+description = ["base32", "base 32", "a to z and 2 to 7", "upper case letters and digits"]
+actions = ["base32", "b32decode", "base32 -d"]
+
+[[technique]]
+id = "base85"
+name = "base85 / ascii85"
+advice = "base85-decode the blob (ascii85 or z85)."
+description = ["base85", "ascii85", "a85", "z85", "between angle brackets"]
+actions = ["base85", "b85decode", "a85decode", "ascii85", "basE91"]
+
+[[technique]]
+id = "rot13"
+name = "ROT13 / Caesar shift"
+advice = "Try ROT13, then every Caesar shift (two shifts compose to one shift)."
+description = ["rot13", "rot-13", "caesar", "shift cipher", "shift by", "rotate the letters", "twice the shifts"]
+actions = ["rot13", "caesar", "tr a-z", "codecs.*rot_13", "shift_cipher", "rot_n"]
+
+[[technique]]
+id = "vigenere"
+name = "Vigenere cipher"
+advice = "Break the Vigenere cipher: find the key length (Kasiski or index of coincidence), then each column."
+description = ["vigenere", "vigenre", "polyalphabetic", "keyword cipher", "tableau", "repeating keyword"]
+actions = ["vigenere", "kasiski", "index of coincidence", "break_vigenere", "friedman"]
+
+[[technique]]
+id = "substitution"
+name = "Substitution cipher"
+advice = "Solve the monoalphabetic substitution with frequency analysis or a hill-climb solver."
+description = ["substitution cipher", "each letter stands for another", "cryptogram", "monoalphabetic", "letter swap"]
+actions = ["quipqiup", "subbreaker", "simulated annealing", "substitution_solver", "hill_climb"]
+
+[[technique]]
+id = "railfence"
+name = "Transposition / rail fence"
+advice = "Undo the transposition: try the rail-fence and columnar orderings."
+description = ["rail fence", "railfence", "zigzag", "transposition", "columnar", "the letters are rearranged", "anagram of the flag"]
+actions = ["railfence", "rail_fence", "columnar", "transposition", "zigzag"]
+
+[[technique]]
+id = "rsa"
+name = "RSA"
+advice = "Attack the RSA parameters: factor a small or shared modulus, or use a small exponent."
+description = ["rsa", "public key", "modulus", "the exponent is", "e = 3", "e = 7", "two primes", "common modulus"]
+actions = ["rsactftool", "factordb", "sympy.factorint", "gmpy2", "pow(c, d, n", "crt ", "wiener"]
+
+[[technique]]
+id = "ecdsa-nonce"
+name = "ECDSA biased/repeated nonce"
+advice = "Attack the ECDSA signatures: a repeated or biased nonce leaks the private key (lattice / HNP)."
+description = ["ecdsa", "signature", "nonce", "signs every", "look a little too alike", "k value", "hidden number problem"]
+actions = ["lattice", "hnp", "lll", "fpylll", "recover_nonce", "sage.*lattice"]
+
+[[technique]]
+id = "hash-crack"
+name = "Password / hash cracking"
+advice = "Crack the hash with a wordlist (hashcat or john) rather than brute force."
+description = ["hash", "md5", "sha1", "ntlm", "bcrypt", "crack the password", "wordlist", "rockyou"]
+actions = ["hashcat", "john", "rockyou", "hashid", "crackstation", "--wordlist"]
+
+[[technique]]
+id = "jwt"
+name = "JWT tampering"
+advice = "Attack the JWT: try alg=none, confused algorithms, or a weak HMAC secret."
+description = ["jwt", "json web token", "bearer token", "three parts separated by dots", "alg", "hs256", "rs256"]
+actions = ["jwt", "jwt_tool", "jwt.decode", "pyjwt", "jwt-cracker", "alg none"]
+
+[[technique]]
+id = "cookie-tamper"
+name = "Signed cookie / session tampering"
+advice = "Look at how the session cookie is signed and whether you can forge or decode it."
+description = ["session cookie", "logging out only logs out the browser", "remember me", "signed cookie", "flask session"]
+actions = ["flask-unsign", "flask_unsign", "itsdangerous", "cookie-monster", "secret_key", "decode_cookie"]
+
+[[technique]]
+id = "sqli"
+name = "SQL injection"
+advice = "Test the input for SQL injection (a quote that breaks the query), then extract with UNION or blind queries."
+description = ["sql", "database query", "login form", "search box", "query is built from", "single quote"]
+actions = ["sqlmap", "union select", "' or ", "information_schema", "blind sqli", "--batch"]
+
+[[technique]]
+id = "ssti"
+name = "Server-side template injection"
+advice = "Test the reflected input for server-side template injection (a template expression that is evaluated)."
+description = ["template", "mail merge", "renders your input", "jinja", "twig", "fill in the template", "name is shown back"]
+actions = ["ssti", "jinja2", "{{7*7}}", "tplmap", "__class__", "render_template_string"]
+
+[[technique]]
+id = "xss"
+name = "Cross-site scripting"
+advice = "Find where your input is reflected into the page unescaped; a support bot that reads tickets is the sink."
+description = ["renders markdown", "safe html", "a bot will read", "very eager to help", "admin reviews", "comment is shown"]
+actions = ["xss", "onerror=", "document.cookie", "<script", "img src=x", "beef "]
+
+[[technique]]
+id = "lfi"
+name = "Path traversal / local file include"
+advice = "Try path traversal on the file parameter (../ out of the export directory) to read arbitrary files."
+description = ["download", "export", "picks its file", "filename parameter", "read the report", "include", "view file"]
+actions = ["..%2f", "path traversal", "lfi", "/etc/passwd", "php://filter", "dotdot"]
+
+[[technique]]
+id = "ssrf"
+name = "Server-side request forgery"
+advice = "Make the server fetch a URL you choose (SSRF) to reach an internal service or metadata endpoint."
+description = ["fetches the url", "server will request", "preview the link", "internal service", "webhook", "url you give it"]
+actions = ["ssrf", "169.254.169.254", "gopher://", "localhost admin", "internal_url"]
+
+[[technique]]
+id = "deserialization"
+name = "Insecure deserialization"
+advice = "Look at what untrusted data is deserialized (pickle, PHP, Java); a crafted object runs code."
+description = ["serialized", "pickle", "unserialize", "deserialize", "object is restored", "marshal"]
+actions = ["pickle", "__reduce__", "ysoserial", "phpggc", "yaml.load", "marshal.loads"]
+
+[[technique]]
+id = "zip-crack"
+name = "ZIP password / known-plaintext"
+advice = "Crack the ZIP password (john/zip2john), or use a known-plaintext attack if a file inside is known."
+description = ["zip", "password protected archive", "encrypted zip", "locked archive", "the password is weak"]
+actions = ["zip2john", "fcrackzip", "bkcrack", "pkcrack", "unzip -P", "7z x -p"]
+
+[[technique]]
+id = "nested-archive"
+name = "Nested / recursive archive"
+advice = "Keep unpacking: the archive holds another archive; automate the recursion."
+description = ["archive inside an archive", "nested", "matryoshka", "russian dolls", "unpack again and again", "many layers"]
+actions = ["binwalk -e", "recursive unzip", "while unzip", "7z x", "unpack_all", "7z l"]
+
+[[technique]]
+id = "file-carving"
+name = "File carving"
+advice = "Carve embedded files out of the blob by their magic bytes (binwalk, foremost, scalpel)."
+description = ["appended", "embedded file", "more than one file", "hidden after the end", "polyglot", "carve"]
+actions = ["binwalk", "foremost", "scalpel", "photorec", "carve", "dd skip="]
+
+[[technique]]
+id = "disk-forensics"
+name = "Disk image forensics"
+advice = "Walk the file system of the disk image (the sleuth kit, autopsy) and look in deleted or slack space."
+description = ["disk image", "partition", "file system", "the disk remembers", "imaged the", "deleted files", "slack space"]
+actions = ["sleuthkit", "tsk_recover", "fls ", "mmls", "autopsy", " fls", "icat ", "testdisk"]
+
+[[technique]]
+id = "memory-forensics"
+name = "Memory forensics"
+advice = "Analyse the memory dump with Volatility: list processes, then pull the artefact you need."
+description = ["memory dump", "ram capture", "vmem", "what was running", "process list", "crash dump"]
+actions = ["volatility", "vol.py", "volatility3", "rekall", "pslist", "memdump"]
+
+[[technique]]
+id = "pcap"
+name = "Network capture analysis"
+advice = "Follow the streams in the capture (Wireshark / tshark); the flag is in a reassembled transfer."
+description = ["pcap", "packet capture", "network traffic", "wireshark", "follow the stream", "sniffed", "capture file"]
+actions = ["wireshark", "tshark", "scapy", "follow tcp", "pyshark", "rdpcap", "tcpflow"]
+
+[[technique]]
+id = "usb-hid"
+name = "USB HID keystroke decode"
+advice = "Decode the USB HID keyboard or mouse capture into the keys that were typed."
+description = ["usb", "keyboard", "hid", "keystrokes", "what was typed", "mouse movements", "capture of the usb"]
+actions = ["usb.capdata", "hid", "usbhid", "keystroke", "ducky", "map_hid"]
+
+[[technique]]
+id = "git-leak"
+name = "Exposed .git / VCS history"
+advice = "Pull the exposed .git directory and read deleted or earlier versions of the files."
+description = [".git", "version history", "source control", "repository is exposed", "earlier commit", "git log"]
+actions = ["git-dumper", "gitdumper", "git log", "git show", "git checkout", "gittools"]
+
+[[technique]]
+id = "angr-symbolic"
+name = "Symbolic execution"
+advice = "Let a symbolic-execution engine (angr) or an SMT solver find the input that passes the check."
+description = ["checker", "right input", "passphrase check", "serial key", "license check", "lines them all up"]
+actions = ["angr", "z3", "claripy", "symbolic", "simgr.explore", "boolector", "SimProcedure"]
+
+[[technique]]
+id = "ret2libc"
+name = "Buffer overflow / ret2libc"
+advice = "Find the stack overflow, leak libc, and build a ROP chain (pwntools)."
+description = ["buffer", "stack", "overflow", "exactly as many", "room for", "no canary", "gets(", "fixed-size buffer"]
+actions = ["pwntools", "from pwn import", "ropgadget", "ret2libc", "cyclic", "rop chain", "one_gadget", "checksec"]
+
+[[technique]]
+id = "format-string"
+name = "Format string"
+advice = "Exploit the format-string bug: a user-controlled format argument leaks or writes memory."
+description = ["printf", "reads your", "format", "prints your name back", "logging your input", "format specifier"]
+actions = ["fmtstr_payload", "fmtstr", "format string", "format-string", "%7$s", "pwntools fmt"]
+
+[[technique]]
+id = "python-jail"
+name = "Python sandbox escape"
+advice = "Escape the Python jail: reach a dangerous builtin through allowed objects' attributes."
+description = ["python jail", "sandbox", "only lets you", "pyjail", "eval", "restricted shell", "escape"]
+actions = ["__builtins__", "__subclasses__", "pyjail", "__globals__", "getattr(", "breakout"]
+
+[[technique]]
+id = "padding-oracle"
+name = "Padding oracle"
+advice = "Use the padding oracle to decrypt the CBC ciphertext a byte at a time."
+description = ["padding", "oracle", "cbc", "tells you whether", "answers eventually", "block cipher", "valid padding"]
+actions = ["padbuster", "padding_oracle", "padding-oracle", "bit flip", "poracle"]
+
+[[technique]]
+id = "hash-extension"
+name = "Hash length extension"
+advice = "Forge the MAC with a hash length-extension attack (hashpump) against the MD-construction hash."
+description = ["mac", "secret is prepended", "sha256(secret", "md5(secret", "signature appended", "length extension"]
+actions = ["hashpump", "hash_extender", "length_extension", "hlextend", "hashpumpy"]
+
+[[technique]]
+id = "lattice-knapsack"
+name = "Knapsack / lattice reduction"
+advice = "Break the knapsack (Merkle-Hellman) with lattice reduction (LLL)."
+description = ["knapsack", "merkle hellman", "subset sum", "superincreasing", "sums to"]
+actions = ["lll", "sage", "fpylll", "knapsack", "lattice reduction", "merkle_hellman"]
