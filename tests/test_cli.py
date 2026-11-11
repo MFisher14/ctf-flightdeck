@@ -543,6 +543,7 @@ MOUNTED = {
     ("writeups",): "writeup",
     ("score",): "Score",
     ("eval-local",): "",
+    ("gaps",): "L1",
 }
 
 
@@ -557,5 +558,5 @@ def test_the_root_help_groups_the_commands():
     out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
     for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run"):
         assert panel in out
-    for name in ("preflight", "ctfd", "team", "l1", "report", "writeups", "score", "eval-local"):
+    for name in ("preflight", "ctfd", "team", "l1", "report", "writeups", "score", "eval-local", "gaps"):
         assert f" {name} " in out

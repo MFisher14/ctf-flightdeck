@@ -712,7 +712,7 @@ def test_the_json_keeps_hostile_ids_and_names_exact_and_is_ascii(tmp_path):
     assert "\n" not in data["gaps"][1]["reason"] and "\x1b" not in data["gaps"][1]["reason"]  # folded, made visible
 
 
-def test_a_lone_surrogate_becomes_a_visible_mark_so_the_report_can_be_written(tmp_path):
+def test_a_lone_surrogate_becomes_visible_so_the_report_can_be_written(tmp_path):
     run = Script(tmp_path / "run")
     run.release([Challenge("x", "bad \ud800 name", "misc", 10)], ["x"])
     run.l1("x", "eng\udc80", "none", notes="odd \udfff note")
@@ -720,7 +720,9 @@ def test_a_lone_surrogate_becomes_a_visible_mark_so_the_report_can_be_written(tm
     text = gaps_markdown(gap_report(record))
     text.encode("utf-8")  # would raise on a lone surrogate
     assert f"### bad {MARK} name (misc, 10 pts): not solved" in text.splitlines()
-    assert f"- Why L1 did not solve it: routed: eng{MARK} none (odd {MARK} note)" in text.splitlines()
+    # an engine's notes go through text.untrusted() first, which shows a lone surrogate as an escape
+    # (here Markdown-escaped: the report shows eng\x80)
+    assert "- Why L1 did not solve it: routed: eng\\\\x80 none (odd \\\\udfff note)" in text.splitlines()
     result = runner.invoke(mounted(), ["gaps", str(record.dir)])
     assert result.exit_code == 0, result.output
     assert json.loads((record.dir / "gaps.json").read_text())["gaps"][0]["name"] == "bad \ud800 name"

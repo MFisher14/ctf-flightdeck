@@ -339,7 +339,7 @@ def config_command(
 
 
 def _mount() -> None:
-    from . import localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
+    from . import gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
     from .l1 import cli as l1_cli
     from .platform import ctfd_cli
 
@@ -351,6 +351,7 @@ def _mount() -> None:
     app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
+    app.command("gaps", rich_help_panel=SOLVERS)(gaps_cli.gaps_command)
     app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)
 
 
