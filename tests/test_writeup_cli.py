@@ -236,6 +236,31 @@ def test_polish_sends_the_key_only_in_the_authorization_header(tmp_path, monkeyp
     assert key not in (record.dir / "writeups" / "a.md").read_text(encoding="utf-8")
 
 
+def test_polish_on_an_anthropic_config_goes_through_the_messages_api(tmp_path, monkeypatch):
+    from fake_anthropic import FakeAnthropicServer, text_message
+
+    record = alpha_run(tmp_path)
+    key = "fake-claude-polish-key-for-tests"
+    monkeypatch.setenv("FLIGHTDECK_TEST_CLAUDE_KEY", key)
+
+    def polished(request: dict) -> dict:
+        frozen = request["json"]["messages"][0]["content"][0]["text"]  # the draft is the user turn
+        return text_message(frozen.replace("## Approach", "## How it went"), model="claude-haiku-5-5")
+
+    with FakeAnthropicServer(responder=polished) as server:
+        path = tmp_path / "config.toml"
+        path.write_text(f'[api]\nprovider = "anthropic"\nbase_url = "{server.base_url}"\nkey_env = "FLIGHTDECK_TEST_CLAUDE_KEY"\n'
+                        '[models]\nladder = ["claude-haiku-5-5"]\n')
+        result = invoke(record.dir, "--polish", "claude-haiku-5-5", "--config", path)
+    assert result.exit_code == 0, result.output
+    assert (record.dir / "writeups" / "a.md").read_text(encoding="utf-8") == writeup.draft(record, "a").replace(
+        "## Approach", "## How it went")
+    (request,) = server.requests
+    assert request["path"] == "/v1/messages" and request["headers"]["authorization"] == f"Bearer {key}"
+    assert request["json"]["system"][0]["text"] == writeup.POLISH_INSTRUCTIONS
+    assert key not in result.output
+
+
 def test_the_main_cli_can_mount_it_at_the_top_level():
     import typer
 
