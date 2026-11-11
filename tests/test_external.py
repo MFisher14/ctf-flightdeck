@@ -390,6 +390,113 @@ def test_a_docker_lane_whose_image_has_no_claude_gives_up_naming_the_missing_cli
     run(main())
 
 
+DOCKER_FAKE = r"""#!/bin/sh
+# A fake claude inside the lane's container (POSIX sh: the image has no python). It records
+# what it got, reports one tool step whose output is a flag, and works on (sleep). SIGINT
+# ends its turn with a result, then it reads the next message, as tests/fake_agent_cli.py does.
+RESULT='{"type":"result","subtype":"error_during_execution","is_error":true,"result":"interrupted","total_cost_usd":0.001}'
+trap 'echo "$RESULT"' INT
+IFS= read -r line
+printf '%s\n' "$line" > /work/.flightdeck/fake-stdin.txt
+env > /work/.flightdeck/fake-env.txt
+echo "$$" > /work/.flightdeck/fake-pid.txt
+echo '{"type":"system","subtype":"init","session_id":"s1","model":"small","tools":["Bash"],"apiKeySource":"ANTHROPIC_API_KEY"}'
+echo '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cat note.txt"}}],"usage":{"input_tokens":10,"output_tokens":5}}}'
+echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"t{note}"}]}}'
+sleep 600 &
+echo "$!" > /work/.flightdeck/fake-child.txt
+wait
+IFS= read -r line
+printf '%s\n' "$line" > /work/.flightdeck/fake-stdin-2.txt
+wait
+"""
+
+
+class ImageWithFakeClaude(DockerWorkspace):
+    """The lane's container, with the fake claude put where the image's own CLI would be."""
+
+    async def prepare(self) -> None:
+        await super().prepare()
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "-i", self.name, "sh", "-c", "cat > /usr/local/bin/claude && chmod 755 /usr/local/bin/claude",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.communicate(DOCKER_FAKE.encode())
+        assert proc.returncode == 0
+
+
+def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name_and_freezes_it_there(tmp_path, monkeypatch):
+    missing = _docker_image_missing()
+    if missing:
+        pytest.skip(f"needs docker and {DOCKER_IMAGE}: {missing}")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "player-secret-openrouter-value")
+    fake = Fake(tmp_path, {})
+    agent = find_agent("claude", "small", environ={"PATH": str(fake.bin), "ANTHROPIC_API_KEY": KEY})
+    work = handout(tmp_path)
+    root = tmp_path / "w"
+    name = f"flightdeck-test-external-run-{os.getpid()}"
+
+    async def in_container(*command: str) -> str:
+        done = await asyncio.to_thread(subprocess.run, ["docker", "exec", name, *command], capture_output=True, text=True, check=False)
+        return done.stdout
+
+    async def state(pid: str) -> str:
+        stat = await in_container("cat", f"/proc/{pid}/stat")
+        return stat.rsplit(")", 1)[-1].split()[0] if stat else ""
+
+    async def main():
+        driver = ExternalDriver(
+            agent, lambda lane, ch: ImageWithFakeClaude(root, work, image=DOCKER_IMAGE, name=name, network="bridge"),
+            run_id="r", stop_grace=0.3,
+        )
+        deck = Deck(DeckConfig(event="t", flag_format=FLAG, models=MODELS), driver, RunClock(), lambda c, f: None)
+        deck.release([Challenge("note", "Note", "misc", 50)], [QueueEntry("note", "small")])
+        (lane,) = deck.lanes.values()
+        try:
+            await until(lambda: lane.pending is not None or lane.finished, "the candidate from the container", timeout=60)
+            assert lane.pending is not None, lane.result
+            assert lane.pending.flag == "t{note}" and steps(lane) == ["$ cat note.txt"]
+            assert fake.starts() == []  # it ran in the container, never on this machine
+            pid = (root / ".flightdeck" / "fake-pid.txt").read_text().strip()
+            child = (root / ".flightdeck" / "fake-child.txt").read_text().strip()
+            assert driver.runs[lane.id].proc.inner.result() == int(pid)
+            seen = dict(line.split("=", 1) for line in (root / ".flightdeck" / "fake-env.txt").read_text().splitlines() if "=" in line)
+            assert seen["ANTHROPIC_API_KEY"] == KEY and seen["HOME"] == "/work/.flightdeck/home"
+            assert "OPENROUTER_API_KEY" not in seen
+            first = json.loads((root / ".flightdeck" / "fake-stdin.txt").read_text())
+            assert first["type"] == "user" and "Challenge: Note" in first["message"]["content"]
+            await until_async(lambda: state(pid), "T", "the CLI frozen in its container while the flag waits")
+            await until_async(lambda: state(child), "T", "what it started frozen too")
+            assert lab_apply(deck, iv.Decline(lane.id))
+            told = root / ".flightdeck" / "fake-stdin-2.txt"
+            await until(told.exists, "the answer passed on in the container")
+            assert json.loads(told.read_text())["message"]["content"].startswith("Note from flightdeck: The player did not submit t{note}")
+            assert await state(pid) == "S" and await state(child) == "S"  # running again (sleeping in wait)
+            assert lab_apply(deck, iv.Kill(lane.id, requeue=False))
+            await until_async(lambda: state(child), "", "what it started gone")
+        finally:
+            await driver.shutdown()
+        inspect = await asyncio.to_thread(subprocess.run, ["docker", "container", "inspect", name], capture_output=True, check=False)
+        assert inspect.returncode != 0  # the container was removed
+
+    run(main())
+
+
+def lab_apply(deck, intervention) -> bool:
+    return deck.apply(intervention).ok
+
+
+async def until_async(probe, want: str, what: str, timeout: float = 20.0) -> None:
+    end = time.monotonic() + timeout
+    got = None
+    while time.monotonic() < end:
+        got = await probe()
+        if got == want:
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"timed out waiting for {what} (last seen {got!r}, wanted {want!r})")
+
+
 # ====================================================================== claude: a lane from start to flag
 
 
@@ -725,6 +832,33 @@ def test_escalation_restarts_the_cli_on_the_stronger_model_with_the_brief_and_th
             assert "Another model worked on this challenge before you" in fresh and "echo small" in fresh
             turns = [e.data for e in lab.deck.events if e.kind is EventKind.TURN]
             assert [t["model"] for t in turns] == ["small", "big"]
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_hint_the_old_model_had_not_finished_a_turn_on_goes_to_the_stronger_model_too(tmp_path):
+    script = {"turns": [
+        {"calls": [{"tools": [bash("echo small")]}, {"think": 30.0}]},
+        {"calls": [{"think": 30.0}]},  # the old model, still thinking about the hint when it is escalated
+        {"calls": [{"tools": [bash("echo big")]}]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo small" in steps(lane), "the small model's step")
+            assert lab.deck.apply(iv.Hint(lane.id, "look at the date")).ok
+            await until(lambda: len(lab.fake.messages()) == 2, "the hint written to the old model")
+            assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            await until(lambda: "$ echo big" in steps(lane), "the stronger model's step")
+            _, second = lab.fake.starts()
+            fresh = lab.fake.messages(second["pid"])[0]
+            assert "Another model worked on this challenge before you" in fresh
+            assert fresh.endswith("Message from the player: look at the date")
         finally:
             await lab.finish()
 

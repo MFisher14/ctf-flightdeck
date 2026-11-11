@@ -666,6 +666,7 @@ class _Proc:
         self.thread: str | None = None  # codex: the thread this turn ran in
         self.completed = False  # codex: turn.completed seen
         self.failed: str | None = None  # codex: turn.failed's message
+        self.sent = ""  # the player's messages and flightdeck's notes it was given, until a turn of its ends
         self.problems = 0
         self.seen: set[int] = set()  # host: processes the CLI started, collected while it lived
         self._order = asyncio.Lock()
@@ -807,6 +808,7 @@ class _Run:
         self.pending_cached = 0
         self.turn_tokens = [0, 0, 0]  # prompt, completion, cached since the turn began (a priced cost)
         self.tasks: set[asyncio.Future[Any]] = set()
+        self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
         self._delivering = False
 
     # ------------------------------------------------------------------ the deck's view
@@ -939,11 +941,13 @@ class _Run:
         raise NotImplementedError
 
     def compose(self, hints: Sequence[str]) -> str:
-        """The player's messages and flightdeck's notes as one user message ("" if none);
-        what is composed is taken."""
+        """The player's messages and flightdeck's notes as one user message ("" if none),
+        after what an escalated CLI never finished a turn on; what is composed is taken."""
         notes = self.notes + self.later
         self.notes, self.later = [], []
-        return prompts.player_message(hints, notes)
+        parts = (self.carry, prompts.player_message(hints, notes))
+        self.carry = ""
+        return "\n".join(part for part in parts if part)
 
     # ------------------------------------------------------------------ the deck -> the agent
 
@@ -1107,12 +1111,12 @@ class _Run:
         self.in_flight.clear()
         proc.stderr = asyncio.ensure_future(self.read_stderr(proc))
         self.track(proc.stderr)
-        if self.over() or generation != self.generation:  # stopped or escalated while it started
+        if self.over():  # stopped while it started
             await proc.end(self.driver.stop_grace, self.driver.errors)
-            if self.proc is proc:
-                self.proc = None
-            self.update_idle()
+            await self.finished(proc)
             return None
+        if generation != self.generation:  # escalated while it started: this one is already old
+            proc.end(self.driver.stop_grace, self.driver.errors)
         self.update_idle()
         lane = self.lane()
         if lane is not None and lane.state is not LaneState.RUNNING:
@@ -1367,10 +1371,13 @@ class _ClaudeRun(_Run):
             proc = await self.spawn(claude_argv(self.cli, self.model, rules), generation)
             if proc is None:
                 return
+            if proc.ending is not None:  # escalated while it started: start over, messages kept
+                await self.finished(proc)
+                continue
             self.usage_seen = {}
             hints = list(lane.hints)
             extra = self.compose(hints)
-            self.write(proc, self.opening() + (f"\n\n{extra}" if extra else ""))
+            self.write(proc, self.opening() + (f"\n\n{extra}" if extra else ""), extra)
             if hints:
                 self.report(TurnReport(turn=False, hints_taken=len(hints)))
             await self.pump(proc)
@@ -1379,16 +1386,20 @@ class _ClaudeRun(_Run):
             if self.over():
                 return
             if generation != self.generation:
+                self.carry = proc.sent  # what it was told mid-turn goes to the stronger model too
                 continue  # escalated: start again on the stronger model
             self.report(TurnReport(turn=False, gave_up=self.exit_reason(code)))
             return
 
-    def write(self, proc: _Proc, text: str) -> None:
+    def write(self, proc: _Proc, text: str, sent: str) -> None:
+        """One user message; `sent` is the part of it that is the player's messages and
+        flightdeck's notes."""
         stdin = proc.process.stdin
-        if stdin is None or stdin.is_closing() or not proc.alive:
-            return
+        if stdin is None or stdin.is_closing() or not proc.alive or proc.ending is not None:
+            return  # never a message for a CLI that is being stopped: it would start a turn
         line = json.dumps({"type": "user", "message": {"role": "user", "content": text}, "parent_tool_use_id": None})
         stdin.write(line.encode("utf-8") + b"\n")
+        proc.sent = sent
         self.busy = True
 
     def deliver(self) -> None:
@@ -1402,7 +1413,8 @@ class _ClaudeRun(_Run):
                 proc.send(signal.SIGINT, tree=False)  # claude ends the turn; the message goes when it has
             return
         hints = list(lane.hints)
-        self.write(proc, self.compose(hints) or NUDGE)
+        extra = self.compose(hints)
+        self.write(proc, extra or NUDGE, extra)
         if hints:
             self.report(TurnReport(turn=False, hints_taken=len(hints)))
 
@@ -1498,11 +1510,14 @@ class _ClaudeRun(_Run):
             return
         interrupted, proc.interrupted = proc.interrupted, False
         self.busy = False
+        proc.sent = ""  # the turn that took them has ended
         subtype = _str(event.get("subtype"))
         failed = not interrupted and (event.get("is_error") is True or subtype != "success")
         said = _first_line(text)
         self._delivering = True  # nothing goes to claude before this turn is accounted for
         try:
+            if not failed and not interrupted:
+                self.text(text, show=False)  # its last words, should they hold a flag its text blocks did not
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
                                    action=f"says: {_one_line(said, 200)}" if said and not failed else ""))
             if failed:
@@ -1548,8 +1563,7 @@ class _CodexRun(_Run):
             if generation != self.generation or lane.state is not LaneState.RUNNING:
                 continue
             hints = list(lane.hints)
-            extra = "\n".join(part for part in (self.carry, self.compose(hints)) if part)
-            self.carry = ""
+            extra = self.compose(hints)
             if self.thread is None:
                 rules = lane_rules(self.driver.deck.config.flag_format)
                 text = f"{rules}\n\n{self.opening()}" + (f"\n\n{extra}" if extra else "")
@@ -1559,9 +1573,17 @@ class _CodexRun(_Run):
             proc = await self.spawn(argv, generation)
             if proc is None:
                 return
+            if proc.ending is not None:  # escalated while it started: start over, messages kept
+                self.carry = extra
+                if hints:
+                    self.report(TurnReport(turn=False, hints_taken=len(hints)))  # they are in carry now
+                await self.finished(proc)
+                continue
             stdin = proc.process.stdin
-            if stdin is not None:
+            if stdin is not None and proc.ending is None:
                 stdin.write(text.encode("utf-8", "replace"))
+                proc.sent = extra
+            if stdin is not None and not stdin.is_closing():
                 stdin.close()  # codex reads its prompt to the end of stdin
             if hints:
                 self.report(TurnReport(turn=False, hints_taken=len(hints)))
@@ -1570,6 +1592,8 @@ class _CodexRun(_Run):
             if self.over():
                 return
             if generation != self.generation:
+                if not proc.completed:
+                    self.carry = proc.sent  # its turn was cut short: the stronger model hears them too
                 continue  # escalated: a fresh thread on the stronger model
             if proc.failed is not None:
                 self.report(TurnReport(turn=False, gave_up=f"codex's turn failed: {proc.failed}"))
