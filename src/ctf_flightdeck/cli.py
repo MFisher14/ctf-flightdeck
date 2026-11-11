@@ -22,6 +22,8 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="markdown",
     help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
+    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. "
+    "No setup at all: `flightdeck mock`.",
 )
 
 
@@ -214,6 +216,79 @@ def image_dockerfile() -> None:
     typer.echo(dockerfile(), nl=False)
 
 
+@app.command()
+def init(
+    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, openai, local (no key) or custom.")] = None,
+    base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
+    key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
+    models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
+    host: Annotated[bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker.")] = None,
+    max_lanes: Annotated[int, typer.Option("--max-lanes", min=1, help="Lanes at a time.")] = 4,
+    path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Replace an existing config.")] = False,
+) -> None:
+    """Write a config by answering a few questions (or give them all as options)."""
+    from .agent.workspace import docker_unavailable
+    from .config import ConfigError, default_config_path
+    from .setup import PROVIDERS, Answers, write_config
+
+    interactive = _at_terminal()
+
+    def need(value, question: str, default=None):
+        if value is not None:
+            return value
+        if not interactive:
+            typer.echo(f"flightdeck: {question} (give it as an option when not at a terminal)", err=True)
+            raise typer.Exit(2)
+        return typer.prompt(question, default=default) if default is not None else typer.prompt(question)
+
+    provider = need(provider, "Provider: openrouter, openai, local or custom", "openrouter").strip().lower()
+    if provider in PROVIDERS:
+        url, env = PROVIDERS[provider]
+        base_url = base_url or url
+        key_env = env if key_env is None else key_env
+    elif provider == "custom":
+        base_url = need(base_url, "API base URL (OpenAI-compatible, ending in /v1 usually)")
+        key_env = need(key_env, "Environment variable for the key (empty if none)", "")
+    else:
+        typer.echo(f"flightdeck: provider must be openrouter, openai, local or custom, not {provider!r}", err=True)
+        raise typer.Exit(2)
+    if models is None and interactive and provider == "openrouter":
+        typer.echo("Model ids look like vendor/model; see https://openrouter.ai/models")
+    ladder = tuple(m.strip() for m in need(models, "Models, weakest first, comma-separated").split(",") if m.strip())
+    if host is None:
+        docker_reason = docker_unavailable()
+        default = "docker" if docker_reason is None else "host"
+        runtime = need(None, "Runtime: docker or host" + ("" if docker_reason is None else f" (docker: {docker_reason})"), default)
+    else:
+        runtime = "host" if host else "docker"
+    target = (path or default_config_path()).expanduser()
+    try:
+        written = write_config(Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes), target, force=force)
+    except (ConfigError, FileExistsError) as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"wrote {written}")
+    if key_env:
+        typer.echo(f"next: export {key_env}=<your key>  (flightdeck never stores it)")
+    if runtime.strip().lower() == "docker":
+        typer.echo("next: flightdeck image build   (builds the lane image once)")
+    typer.echo("then: flightdeck doctor, and flightdeck practice")
+
+
+@app.command()
+def doctor(
+    config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="The config file to check.")] = None,
+) -> None:
+    """Check Python, the config, the API key variable, Docker and the lane image, with fixes."""
+    from .setup import doctor as run_checks
+    from .setup import report
+
+    text, status = report(run_checks(config))
+    typer.echo(text, nl=False)
+    raise typer.Exit(status)
+
+
 @app.command("config")
 def config_command(
     example: Annotated[bool, typer.Option("--example", help="Print a commented example config and exit.")] = False,
@@ -243,6 +318,13 @@ def config_command(
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))
     typer.echo(f"caps per lane: {lanes.token_cap or 'no'} tokens, ${lanes.dollar_cap if lanes.dollar_cap else 'no cap'}; submit {lanes.submit}")
     typer.echo(f"runs go to: {loaded.run_dir}")
+
+
+def _at_terminal() -> bool:
+    """Whether init may ask questions (stdin is a terminal)."""
+    import sys
+
+    return sys.stdin.isatty()
 
 
 def main() -> None:
