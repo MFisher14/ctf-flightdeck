@@ -81,7 +81,7 @@ import httpx
 
 from .. import __version__
 from ..text import MARK, untrusted
-from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board
+from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board, tcp_service
 from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
 from .manual import _settings as _board_json  # board.json's event and flag format, read as the board loader reads them
 
@@ -1063,6 +1063,43 @@ def origins_in(text: str | None) -> tuple[str, ...]:
     return tuple(found)
 
 
+_TCP_COMMAND = re.compile(r"\b(?:nc|ncat|netcat|telnet)\b(?P<args>[^\n;|&`$()<>]*)", re.IGNORECASE)
+_TCP_ADDRESS = re.compile(
+    r"(?:\b(?:tcp[46]?|openssl|ssl)[:=]|-connect\s+)(?P<host>\[[0-9a-f:.]+\]|[a-z0-9_.-]+):(?P<port>[0-9]{1,5})\b",
+    re.IGNORECASE,
+)
+_HOST_PORT = re.compile(r"(?<![\w.:/@-])(?P<host>[a-z0-9_-]+(?:\.[a-z0-9_-]+)+|localhost):(?P<port>[0-9]{1,5})\b", re.IGNORECASE)
+_PORT = re.compile(r"[0-9]{1,5}")
+
+
+def services_in(text: str | None) -> tuple[str, ...]:
+    """The TCP services, tcp://host:port, that connection info like `nc HOST PORT`, `ncat
+    --ssl HOST PORT`, `telnet HOST PORT`, `socat - TCP:HOST:PORT`, `openssl s_client -connect
+    HOST:PORT` or a bare `HOST:PORT` names, in order, each once. Only what a board's
+    challenge.json takes is kept (manual.tcp_service); a URL's host and port are an origin,
+    not a service (origins_in)."""
+    if not text:
+        return ()
+    found: list[str] = []
+
+    def add(host: str, port: str) -> None:
+        service = tcp_service(f"tcp://{host}:{port}")
+        if service is not None and service not in found:
+            found.append(service)
+
+    plain = _URL.sub(" ", text)  # http(s) URLs are origins
+    for match in _TCP_COMMAND.finditer(plain):
+        words = match.group("args").split()
+        for host, port in zip(words, words[1:]):  # the first HOST PORT pair after the options
+            if not host.startswith("-") and _PORT.fullmatch(port) and (re.search(r"[a-z]", host, re.IGNORECASE) or host.count(".") == 3):
+                add(host, port)
+                break
+    for pattern in (_TCP_ADDRESS, _HOST_PORT):
+        for match in pattern.finditer(plain):
+            add(match.group("host"), match.group("port"))
+    return tuple(found)
+
+
 def slugify(name: str) -> str:
     """A board id made from a challenge's name: lower-case ASCII letters and digits joined
     by "-", at most SLUG_MAX characters; "" when nothing is left."""
@@ -1207,8 +1244,8 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
     extra: list[str] = []  # what the folder board has no field for, after CTFd's description
     connection = connection.strip()
     if connection and connection not in description:
-        extra.append(f"Connection info: {connection}")  # `nc host port` must still reach the lane
-    urls = origins_in(connection)
+        extra.append(f"Connection info: {connection}")  # the lane reads how to connect, as the player would
+    urls = origins_in(connection) + services_in(connection)  # web origins, and TCP services (`nc host port`)
     platform = [origin for origin in urls if _on_ctfd(origin, ctfd)]
     if platform:
         # an instancer page on CTFd, a link to the scoreboard: a lane's instance is the one place its

@@ -61,7 +61,9 @@ with an agent loop per lane behind the same `LaneDriver` protocol.
 
 Board format: a folder; each subfolder with a `challenge.json` is a challenge:
 `{"name", "category", "points", "solves"?, "description"?, "files"?, "urls"?, "id"?}` (unknown keys
-are an error). Optional `board.json`: `{"event", "flag_format"}`. Optional `answers.sha256.json`:
+are an error; `urls` are the live instances: http(s) origins, the http tool's, and `tcp://host:port`
+services, which the shell reaches with nc; a CTFd pull reads both from the connection info).
+Optional `board.json`: `{"event", "flag_format"}`. Optional `answers.sha256.json`:
 `{"<challenge id>": "<sha256 of the flag>"}`, outside the challenge folders.
 
 What keeps challenge text from steering the harness is the harness, not the prompt: tools are fenced

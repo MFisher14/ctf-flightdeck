@@ -70,7 +70,8 @@ challenge, ignores what the description hints at, heads the wrong way on web, lo
 `t` takes over a lane's shell (exit it to hand the lane back), `e` escalates it to a stronger
 model with a summary of what it did, `f` forks it, `?` shows every key.
 
-Docker lanes get no network unless their challenge has a live instance. `--host` runs lane
+Docker lanes get no network unless their challenge has a live instance (a web origin, or a TCP
+service like `nc host port`: `tcp://host:port` in a challenge's `urls`). `--host` runs lane
 commands as you, on this machine, where a lane can read your files and your API key: use Docker,
 a disposable VM, or a separate low-limit key. Every run writes an append-only `events.jsonl` and
 each lane's transcript; a board with answers (like the practice set) ends with a scorecard.

@@ -166,6 +166,9 @@ def _image_present(image: str) -> bool:
         (("http://127.0.0.1:8080",), "auto", "bridge"),
         (("http://127.0.0.1:8080",), "confirm", "none"),  # connected when the player allows it
         (("http://127.0.0.1:8080",), "off", "none"),
+        (("tcp://127.0.0.1:1337",), "auto", "bridge"),  # what `nc host port` reaches is an instance too
+        (("tcp://127.0.0.1:1337",), "confirm", "none"),
+        (("tcp://127.0.0.1:1337",), "off", "none"),
     ],
 )
 def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, network):
@@ -366,6 +369,41 @@ async def wait_for(cond, what: str, seconds: float = 20.0) -> None:
             return
         await asyncio.sleep(0.01)
     raise AssertionError(f"timed out waiting for {what}")
+
+
+def http_at_the_service() -> dict:
+    return tool_call_reply("http", {"method": "GET", "url": "http://127.0.0.1:1337/"})
+
+
+def last_tool_result(request: dict) -> str:
+    return [m for m in request["json"]["messages"] if m["role"] == "tool"][-1]["content"]
+
+
+@pytest.mark.parametrize("instance", ["auto", "confirm"])
+def test_a_lane_on_a_tcp_service_is_told_of_it_and_reaches_it_from_the_shell_not_http(tmp_path, instance):
+    from ctf_flightdeck.core import interventions as iv
+    from ctf_flightdeck.core.model import PendingKind
+
+    with FakeModelServer(models=LADDER, responder=lambda record: http_at_the_service()) as server:
+        run = prepare_run(RunOptions(board=board(tmp_path, urls=("tcp://127.0.0.1:1337",)), config=config(tmp_path, server.base_url),
+                                     instance=instance))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            if instance == "confirm":
+                await wait_for(lambda: lane.pending is not None, "the live-box question")
+                assert lane.pending.kind is PendingKind.LIVE_BOX and server.chats() == []
+                assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: len(server.chats()) >= 2, "two model calls")
+            assert not lane.finished
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    first, second = server.chats()[:2]
+    assert "Live instance: tcp://127.0.0.1:1337" in first["json"]["messages"][1]["content"]
+    assert "this challenge's instance is not a web server (tcp://127.0.0.1:1337): reach it from the shell" in last_tool_result(second)
 
 
 def test_a_run_with_an_l1_pack_runs_its_engines_before_any_model_call(tmp_path):
