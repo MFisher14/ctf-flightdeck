@@ -52,7 +52,7 @@ import re
 import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -65,7 +65,7 @@ from .text import untrusted
 
 if TYPE_CHECKING:
     from .agent.client import ChatClient, Reply
-    from .config import LightConfig
+    from .config import Config, LightConfig
     from .detect.hints import Lexicon, Technique
 
 RULES, OPENAI, ANTHROPIC, CACTUS, DECIDER = ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
@@ -920,14 +920,14 @@ def _shorten(about: str, step: dict, room: int) -> dict | None:
     """`step`, alone after the description, shortened to fit `room`: its output first, then its
     command. None when even both empty do not fit."""
     step = dict(step)
-    for field in ("output", "command"):
-        while step[field]:
+    for part in ("output", "command"):
+        while step[part]:
             over = _size({"description": about, "steps": [step]}) - room
             if over <= 0:
                 return step
             # A byte JSON escapes (a quote, a backslash, a newline) shows as two: cutting half the
             # excess at a time keeps what fits, and every round cuts at least 4 bytes.
-            step[field] = _cut(step[field], len(step[field].encode("utf-8")) - max(over // 2, 1) - 3)
+            step[part] = _cut(step[part], len(step[part].encode("utf-8")) - max(over // 2, 1) - 3)
     return step if _size({"description": about, "steps": [step]}) <= room else None
 
 
@@ -1008,6 +1008,61 @@ def _detail(response: httpx.Response) -> str:
 
 
 # ---------------------------------------------------------------------- making an engine
+
+
+@dataclass
+class Lights:
+    """The light engines of a run (build_all): one per distinct engine spec, shared by the
+    jobs that use it. A job whose engine is the rules has none here (the rules answer it
+    alone), nor does one whose engine could not be made (`off` says why). Close it once, after
+    everything that uses its engines has stopped."""
+
+    engines: dict[str, Light] = field(default_factory=dict)  # job -> its light engine
+    off: dict[str, str] = field(default_factory=dict)  # job -> why its light model is off for this run
+    notes: list[str] = field(default_factory=list)  # one line for each spec that could not be made
+
+    def get(self, job: str) -> Light | None:
+        return self.engines.get(job)
+
+    async def aclose(self) -> None:
+        """Close each engine once, however many jobs share it."""
+        engines = list({id(engine): engine for engine in self.engines.values()}.values())
+        self.engines.clear()
+        for engine in engines:
+            await engine.aclose()
+
+
+def build_all(config: Config, *, jobs: Sequence[str] | None = None, cactus: ModuleType | None = None) -> Lights:
+    """The light engines for `jobs` (default: [light] jobs), each the engine light_for() gives
+    it, made once per distinct spec and shared by the jobs that use it. A spec that cannot be
+    made (a key not set, Cactus not installed) leaves its jobs off with one note naming them, as
+    the hint judge's engine always has: the light role never stops a run."""
+    from .config import ConfigError, light_key, light_specs
+
+    wanted = config.light_jobs if jobs is None else tuple(job for job in config.light_jobs if job in jobs)
+    lights = Lights()
+    for spec in light_specs(config):
+        named = [job for job in spec.jobs if job in wanted]
+        if not named or spec.config.engine == RULES:
+            continue
+        try:
+            engine = build(spec.config, light_key(config, named[0]), cactus=cactus)
+        except (ConfigError, LightError) as exc:
+            if named == [JUDGE]:
+                note = f"the light model is off for this run, the rules answer alone: {exc}"
+            else:
+                note = (f"the light model for {_and(named)} is off for this run, and those jobs go on as they do "
+                        f"without one: {exc}")
+            lights.notes.append(note)
+            lights.off.update(dict.fromkeys(named, note))
+            continue
+        lights.engines.update(dict.fromkeys(named, engine))
+    return lights
+
+
+def _and(words: Sequence[str]) -> str:
+    words = list(words)
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def build(config: LightConfig, key: str | None, *, cactus: ModuleType | None = None) -> Light:

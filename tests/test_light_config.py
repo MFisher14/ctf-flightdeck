@@ -6,6 +6,7 @@ the player's environment or keys file (conftest points FLIGHTDECK_KEYS at a miss
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import date
 from pathlib import Path
@@ -13,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from ctf_flightdeck.agent import fastmode
+from ctf_flightdeck.light import Lights, build_all
 from ctf_flightdeck.config import (
     DEFAULT_JOBS,
     LIGHT_TIMEOUT,
@@ -315,6 +317,73 @@ def test_light_for_refuses_a_job_that_does_not_exist(tmp_path):
     config = load_config(write(tmp_path, LADDER))
     with pytest.raises(ValueError, match="unknown light job 'triage'"):
         light_for(config, "triage")
+
+
+# ---------------------------------------------------------------------- the engines a run makes (light.build_all)
+
+
+def test_one_engine_is_made_per_distinct_spec_and_shared_between_its_jobs(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_TEST_FLAGCHECK_KEY", FAKE_KEY)
+    text = OLLAMA + 'jobs = ["judge", "route", "recon", "flagcheck"]\n' + claude_for("recon") + claude_for("flagcheck")
+    lights = build_all(load_config(write(tmp_path, LADDER + text)))
+    try:
+        assert lights.get("judge") is lights.get("route") and lights.get("judge").label == "openai local-model"
+        assert lights.get("recon") is lights.get("flagcheck") and lights.get("recon").label == "anthropic claude-haiku-5-5"
+        assert lights.notes == [] and lights.off == {}
+    finally:
+        asyncio.run(lights.aclose())
+
+
+def test_a_spec_that_cannot_be_built_leaves_its_jobs_off_and_the_run_going(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLIGHTDECK_TEST_FLAGCHECK_KEY", raising=False)
+    text = OLLAMA + 'jobs = ["judge", "route", "recon", "flagcheck"]\n' + claude_for("recon") + claude_for("flagcheck")
+    lights = build_all(load_config(write(tmp_path, LADDER + text)))  # never raises
+    try:
+        assert lights.get("judge") is lights.get("route") is not None  # the spec that could be made is made
+        assert lights.get("recon") is None and lights.get("flagcheck") is None
+        (note,) = lights.notes  # one note for the one spec recon and flagcheck share
+        assert note.startswith("the light model for recon and flagcheck is off for this run, and those jobs go on as "
+                               "they do without one: ")
+        assert "light.recon.key_env names the variable FLIGHTDECK_TEST_FLAGCHECK_KEY, which is not set" in note
+        assert lights.off == {"recon": note, "flagcheck": note}
+    finally:
+        asyncio.run(lights.aclose())
+    # the judge alone, as before jobs: the same words as ever
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    alone = build_all(load_config(write(tmp_path, LADDER + '[light]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\n')))
+    assert alone.engines == {} and alone.notes == [
+        alone.off["judge"]] and alone.off["judge"].startswith("the light model is off for this run, the rules answer alone: ")
+
+
+def test_the_rules_and_jobs_left_out_get_no_engine(tmp_path):
+    lights = build_all(load_config(write(tmp_path, LADDER + '[light]\njobs = ["judge", "route"]\n')))
+    assert lights.engines == {} and lights.notes == []  # the rules answer alone
+    config = load_config(write(tmp_path, LADDER + OLLAMA + 'jobs = ["judge", "route"]\n'))
+    only = build_all(config, jobs=("judge",))
+    try:
+        assert set(only.engines) == {"judge"}
+    finally:
+        asyncio.run(only.aclose())
+
+
+class Counted:
+    """An engine that counts how often it is closed (only Lights.aclose is under test)."""
+
+    engine, model, label = "openai", "m", "openai m"
+
+    def __init__(self) -> None:
+        self.closed = 0
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
+def test_the_run_closes_each_shared_engine_once():
+    shared, other = Counted(), Counted()
+    lights = Lights(engines={"judge": shared, "route": shared, "flagcheck": other})
+    asyncio.run(lights.aclose())
+    asyncio.run(lights.aclose())  # again: nothing is closed twice
+    assert shared.closed == 1 and other.closed == 1
 
 
 # ---------------------------------------------------------------------- [api] fast

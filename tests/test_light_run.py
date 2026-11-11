@@ -136,6 +136,23 @@ def test_without_a_light_table_a_run_has_no_judge(tmp_path):
         run.close()
 
 
+def test_a_judge_table_whose_engine_cannot_be_made_leaves_the_judge_off_and_the_run_going(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLIGHTDECK_LIGHT_TEST_KEY", raising=False)
+    with FakeModelServer(responder=lane_loops) as lanes:
+        light = (light_table("http://127.0.0.1:9/v1") + 'jobs = ["judge", "flagcheck"]\n'
+                 '[light.judge]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\nkey_env = "FLIGHTDECK_LIGHT_TEST_KEY"\n')
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, light)))
+        assert run.watch.judge is None and run.lights.engines == {}
+        notes = [n for n in run.notes() if "light model" in n or "[light]" in n]
+        assert len(notes) == 2, notes
+        assert notes[0].startswith("the light model is off for this run, the rules answer alone: ")
+        assert "light.judge.key_env names the variable FLIGHTDECK_LIGHT_TEST_KEY" in notes[0]
+        assert notes[1] == ("[light] jobs lists flagcheck, which this build of flightdeck does not run yet: no light "
+                            "model is asked for them")
+        asyncio.run(run.shutdown())
+        run.close()
+
+
 def test_a_light_model_that_cannot_be_made_does_not_stop_the_run(tmp_path, monkeypatch):
     monkeypatch.delenv("FLIGHTDECK_LIGHT_TEST_KEY", raising=False)
     with FakeModelServer(responder=lane_loops) as lanes:

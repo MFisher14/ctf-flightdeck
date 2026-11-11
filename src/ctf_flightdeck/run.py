@@ -203,6 +203,7 @@ class Run:
     _errors: list[str] = field(default_factory=list, repr=False)
     _submits: _Submits | None = field(default=None, repr=False)  # the deck's submitter, with the verifier
     processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
+    lights: object = None  # light.Lights: the light engines its jobs share (closed after the watch)
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -294,7 +295,9 @@ class Run:
         if self.client is not None:
             await self.client.aclose()
         if self.watch is not None:
-            await self.watch.aclose()  # the hint judge's light model, if any
+            await self.watch.aclose()  # the hint judge, if any
+        if self.lights is not None:
+            await self.lights.aclose()  # the light models, each once
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
 
@@ -646,12 +649,13 @@ def prepare_run(options: RunOptions) -> Run:
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
-    watch = _watch(deck, config, plan.notes)
+    lights = _lights(config, plan.notes)
+    watch = _watch(deck, config, plan.notes, lights)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
-        processes=processes,
+        processes=processes, lights=lights,
     )
     if submits is not None:
         submits.solved = run._apply_solves
@@ -1164,13 +1168,36 @@ def _l1_manifests(pack: Path | None) -> list | None:
     return manifests
 
 
-def _watch(deck: Deck, config: Config | None = None, notes: list[str] | None = None):
+# The [light] jobs a run of this build gives the light model. The config takes route, recon and
+# flagcheck too (config.RUN_JOBS); until a run wires one in, it is named in a note and its engine
+# is not made.
+RUN_LIGHT_JOBS = ("judge",)
+
+
+def _lights(config: Config, notes: list[str]):
+    """The run's light engines (light.build_all), one per distinct spec, for the [light] jobs a
+    run wires in; a spec that cannot be made leaves its jobs off, said in `notes`, as is a job
+    [light] jobs lists that this build does not run yet."""
+    from .light import build_all
+
+    lights = build_all(config, jobs=RUN_LIGHT_JOBS)
+    notes.extend(lights.notes)
+    waiting = [job for job in config.light_jobs if job not in RUN_LIGHT_JOBS]
+    if waiting:
+        listed = waiting[0] if len(waiting) == 1 else ", ".join(waiting[:-1]) + " and " + waiting[-1]
+        notes.append(f"[light] jobs lists {listed}, which this build of flightdeck does not run yet: no light model "
+                     "is asked for them")
+    return lights
+
+
+def _watch(deck: Deck, config: Config | None = None, notes: list[str] | None = None, lights=None):
     """The course detectors (M3), raising and clearing alerts after every turn; with a light
-    model in [light], the hint judge too (its line for the player goes in `notes`)."""
+    model for the judge ([light] jobs), the hint judge too (its line for the player goes in
+    `notes`). `lights`: the run's light engines (_lights), which the judge shares."""
     from .detect import Watch, default_detectors
     from .detect.judge import from_config
 
-    judge, note = from_config(config) if config is not None else (None, "")
+    judge, note = from_config(config, lights=lights) if config is not None else (None, "")
     if note and notes is not None:
         notes.append(note)
     watch = Watch(deck, default_detectors(), judge=judge)

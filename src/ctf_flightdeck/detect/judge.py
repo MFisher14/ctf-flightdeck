@@ -1,4 +1,6 @@
-"""The hint judge: the light model's check on an "ignores the hint" alert (on when [light] names one).
+"""The hint judge: the light model's check on an "ignores the hint" alert (on when the judge's
+engine, [light.judge] or else [light], names one, and [light] jobs, by default the judge alone,
+lists it).
 
 Rules come first (HintDetector). With a judge, the Watch raises a rules HINT signal at once,
 as the rules have it, and asks the judge in the background whether the lane is in fact using
@@ -42,6 +44,7 @@ from .hints import Technique
 
 if TYPE_CHECKING:
     from ..config import Config
+    from ..light import Lights
 
 FENCE_OPEN = prompts.FENCE_OPEN
 FENCE_CLOSE = prompts.FENCE_CLOSE
@@ -75,11 +78,13 @@ class Judgement:
 
 
 class HintJudge:
-    """The light model, judging whether a lane follows the technique its description hints at."""
+    """The light model, judging whether a lane follows the technique its description hints at.
+    `owns`: whether aclose() closes the light model (False when the run's Lights share it)."""
 
-    def __init__(self, light: Light, config: DetectConfig | None = None) -> None:
+    def __init__(self, light: Light, config: DetectConfig | None = None, *, owns: bool = True) -> None:
         self.light = light
         self.config = config or DetectConfig()
+        self.owns = owns
         self._last: dict[str, tuple[int, Judgement]] = {}  # lane id -> (turn asked, its verdict or failure)
         self._warned: set[str] = set()  # kinds of failure the player has been told about
 
@@ -129,7 +134,8 @@ class HintJudge:
         self._last.pop(lane_id, None)
 
     async def aclose(self) -> None:
-        await self.light.aclose()
+        if self.owns:
+            await self.light.aclose()
 
     def _warn(self, deck: Deck, lane: Lane, failure: str, reason: str) -> None:
         if failure in self._warned:
@@ -145,22 +151,32 @@ class HintJudge:
         )
 
 
-def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
+def from_config(config: Config, *, cactus=None, lights: Lights | None = None) -> tuple[HintJudge | None, str]:
     """The hint judge for a run, and a line for the player about it ("" for none): None when
-    [light] is absent or rules. A light model that cannot be made (a key not set, Cactus not
-    installed) leaves the judge off and says why: the light role never stops a run."""
+    [light] jobs leaves the judge out or the judge's engine (config.light_for) is the rules. A
+    light model that cannot be made (a key not set, Cactus not installed) leaves the judge off
+    and says why: the light role never stops a run. With `lights` (the run's engines,
+    light.build_all), the judge uses the engine made there, which `lights` closes; one that
+    could not be made is off, and its line is in lights.notes already, so none comes here."""
     from urllib.parse import urlsplit
 
-    from ..config import ConfigError, light_key, light_thinking
-    from ..light import LightError, build, on_this_machine
+    from ..config import ConfigError, light_for, light_key, light_thinking
+    from ..light import JUDGE, LightError, build, on_this_machine
 
-    light = config.light
+    if JUDGE not in config.light_jobs:
+        return None, ""
+    light = light_for(config, JUDGE)
     if light.engine == "rules":
         return None, ""
-    try:
-        engine = build(light, light_key(config), cactus=cactus)
-    except (ConfigError, LightError) as exc:
-        return None, f"the light model is off for this run, the rules answer alone: {exc}"
+    if lights is not None:
+        engine = lights.get(JUDGE)
+        if engine is None:
+            return None, ""
+    else:
+        try:
+            engine = build(light, light_key(config, JUDGE), cactus=cactus)
+        except (ConfigError, LightError) as exc:
+            return None, f"the light model is off for this run, the rules answer alone: {exc}"
     note = (
         f"light model: {engine.label} judges each 'ignores the hint' alert (the alert shows at once; it comes down "
         "if the light model says the lane follows the hint; when it fails or refuses, the rules' answer stands)"
@@ -181,4 +197,4 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
         note += unpriced + " unless the API reports their cost: a dollar-capped lane may ask you once"
     if light.engine == "openai" and not light_thinking(light):
         note += "; thinking off: each request asks it to answer without reasoning first ([light] thinking)"
-    return HintJudge(engine), note
+    return HintJudge(engine, owns=lights is None), note
