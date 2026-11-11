@@ -9,10 +9,9 @@
 - where lanes stalled: each alert about a lane's course or budget, when it fired (at the
   turn its line in the lane's transcript has), how it was answered and whether the lane
   then solved within 10 turns (flag-found and teammate alerts are not stalls; they are in
-  the timeline). An approve or decline answers a budget
-  alert only when it answered the budget request (or approved more budget with nothing
-  waiting), not a flag's verdict or the live box: the lane's current approval is replayed
-  from its pending events;
+  the timeline). An approve or decline answers a budget alert only when it answered the
+  budget request (or approved more budget with nothing waiting), not a flag's verdict or
+  the live box: the lane's current approval is replayed from its pending events;
 - the hints, redirects, forks and escalations that helped (a lane solved that challenge
   within 10 turns or 15 minutes, with a flag it proposed after the step) and those with no
   effect seen (a step taken while the solving flag already waited did not help);
@@ -645,7 +644,7 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
         solved_turns = None
         if facts.state == "solved":
             if facts.end is not None:
-                solved_turns = facts.turn_before(facts.end) - turn if facts.end > index else None
+                solved_turns = max(0, facts.turn_before(facts.end) - turn) if facts.end > index else None
             else:  # the log lost its lane.end line; the transcript has its final turn count
                 solved_turns = max(0, facts.turns - turn)
         out.append(Stall(
@@ -707,7 +706,9 @@ def _steps_before(head: LaneRecord | None, line: int | None, alert: EventLine) -
     return tuple(a.text for a in before if a.kind == ActionKind.STEP.value)[-STEPS_SHOWN:]
 
 
-def _proposed(record: RunRecord, asked: Mapping[tuple[str, str], int]) -> dict[tuple[str, str], tuple[int | None, float | None]]:
+def _proposed(
+    record: RunRecord, asked: Mapping[tuple[str, str], int],
+) -> dict[tuple[str, str], tuple[int | None, float | None]]:
     """When each lane first proposed each flag, by (lane, flag): the index of the first
     pending event asking about it, and the earliest time known. The transcript's "candidate
     flag" note is written as the lane proposes it, so it is earlier than the pending event of
