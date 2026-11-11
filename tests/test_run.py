@@ -157,15 +157,24 @@ def _image_present(image: str) -> bool:
     return subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0
 
 
-@pytest.mark.parametrize("urls, network", [((), "none"), (("http://127.0.0.1:8080",), "bridge")])
-def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, network):
+@pytest.mark.parametrize(
+    "urls, instance, network",
+    [
+        ((), "auto", "none"),
+        (("http://127.0.0.1:8080",), "auto", "bridge"),
+        (("http://127.0.0.1:8080",), "confirm", "none"),  # connected when the player allows it
+        (("http://127.0.0.1:8080",), "off", "none"),
+    ],
+)
+def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, network):
     reason = docker_unavailable()
     if reason:
         pytest.skip(f"not run: {reason}")
     if not _image_present("debian:bookworm-slim"):
         pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
     with FakeModelServer() as server:
-        run = prepare_run(RunOptions(board=board(tmp_path, urls=urls), config=config(tmp_path, server.base_url, runtime="docker")))
+        cfg = config(tmp_path, server.base_url, runtime="docker")
+        run = prepare_run(RunOptions(board=board(tmp_path, urls=urls), config=cfg, instance=instance))
         run.close()
     bc = run.board.challenges[0]
     lane = type("L", (), {"id": "L01"})()

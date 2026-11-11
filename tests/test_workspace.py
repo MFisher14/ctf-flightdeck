@@ -914,3 +914,16 @@ def test_close_removes_the_container_only_after_a_docker_run_it_interrupted_has_
     run(main())
     calls = log.read_text().splitlines()
     assert "rm" in calls and calls.index("run done") < calls.index("rm")
+
+
+def test_a_lane_container_started_with_no_network_can_be_connected_once_allowed(tmp_path, handout, container_name):
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name, network="none")
+    run(ws.prepare())
+    try:
+        before = docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container_name).stdout
+        assert "bridge" not in before
+        run(ws.connect_network("bridge"))
+        after = docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container_name).stdout
+        assert "bridge" in after
+    finally:
+        run(ws.close())

@@ -54,7 +54,7 @@ class Lab:
 
     def __init__(self, tmp_path: Path, server: FakeModelServer, *, verify=None, max_lanes: int = 2,
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
-                 max_retries: int = 0, backoff: float = 0.0, l1=None) -> None:
+                 max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto") -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -66,6 +66,8 @@ class Lab:
             files={cid: sorted(p.name for p in path.iterdir()) if path.is_dir() else [] for cid, path in self.handouts.items()},
             prices=prices or {},
             l1=l1,
+            urls=urls,
+            instance=instance,
         )
         config = DeckConfig(event="t", flag_format=FLAG, models=MODELS, max_lanes=max_lanes)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
@@ -1049,6 +1051,70 @@ def test_a_challenge_no_engine_routes_to_goes_straight_to_the_model_and_says_so(
             await until(lambda: lane.pending is not None, "the model's candidate")
             assert [m["role"] for m in server.requests[0]["json"]["messages"]] == ["system", "user"]
             assert any("no engine in the pack routes to this challenge" in a.text for a in lane.actions)
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- the live instance policy
+
+
+def instance_reply(origin: str):
+    """The model's first move: a GET to the instance. Then it waits on a candidate."""
+    def responder(record):
+        if calls_to(server_of[0]) == 1:
+            return tool_call_reply("http", {"method": "GET", "url": origin + "/"})
+        return tool_call_reply("submit_flag", {"flag": "t{note}"})
+    server_of: list = []
+    return responder, server_of
+
+
+@pytest.mark.parametrize("answer", ["approve", "decline"])
+def test_under_confirm_a_lane_asks_before_it_may_reach_the_live_instance(tmp_path, answer):
+    with FakeModelServer() as instance:  # anything that answers HTTP stands in for the challenge's instance
+        origin = instance.base_url.rsplit("/v1", 1)[0]
+        responder, holder = instance_reply(origin)
+        server = FakeModelServer(responder=responder)
+        holder.append(server)
+
+        async def main():
+            with server:
+                lab = Lab(tmp_path, server, urls={"note": (origin,)}, instance="confirm")
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: lane.pending is not None, "the lane asking for the instance")
+                assert lane.pending.kind is PendingKind.LIVE_BOX and origin in lane.pending.detail
+                await asyncio.sleep(0.2)
+                assert server.requests == []  # nothing asked of the model before the player answers
+                assert lab.deck.apply(iv.Approve(lane.id) if answer == "approve" else iv.Decline(lane.id)).ok
+                await until(lambda: len(server.requests) >= 2, "the call after the http step")
+                (result,) = tool_messages(server.requests[1])
+                if answer == "approve":
+                    assert result["content"].startswith("HTTP/1.1 404") and "nothing at GET /" in result["content"]  # it reached the instance
+                    assert "The player allowed you to use the live instance now." in last_user(server.requests[0])
+                else:
+                    assert "http is off: the player said no to the live instance" in result["content"]
+                    assert "work from the handout only" in last_user(server.requests[0])
+                await lab.finish()
+
+        run(main())
+
+
+def test_under_off_a_lane_is_never_asked_and_its_http_tool_stays_off(tmp_path):
+    origin = "http://127.0.0.1:9"
+    responder, holder = instance_reply(origin)
+    server = FakeModelServer(responder=responder)
+    holder.append(server)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, urls={"note": (origin,)}, instance="off")
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(server.requests) >= 2, "the call after the http step")
+            (result,) = tool_messages(server.requests[1])
+            assert "http is off: the event's rules keep lanes off the live instance" in result["content"]
+            assert lane.pending is None or lane.pending.kind is not PendingKind.LIVE_BOX
             await lab.finish()
 
     run(main())

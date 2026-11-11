@@ -45,6 +45,7 @@ class RunOptions:
     model: str | None = None  # the model lanes start on; default: the weakest in the ladder
     run_dir: Path | None = None  # where run folders go; default: the config's
     pack: Path | None = None  # the L1 pack; default: the config's [l1] pack, if any
+    instance: str = "auto"  # may lanes reach a live instance: auto, confirm (each lane asks first), off
 
 
 @dataclass
@@ -153,7 +154,7 @@ def prepare_run(options: RunOptions) -> Run:
                 handouts[challenge.id],
                 image=config.lanes.image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
-                network=lane_network(urls[challenge.id]),
+                network=lane_network(urls[challenge.id]) if options.instance == "auto" else "none",
             )
         return HostWorkspace(root, handouts[challenge.id])
 
@@ -165,6 +166,7 @@ def prepare_run(options: RunOptions) -> Run:
         urls=urls,
         prices=config.prices,
         l1=l1,
+        instance=options.instance,
     )
     deck = Deck(deck_config, driver, RunClock(), verify)
     log.attach(deck)

@@ -746,6 +746,21 @@ class DockerWorkspace:
             raise WorkspaceError(f"docker rm -f {self.name} failed: {_first_line(out)}")
         self._started = False
 
+    async def connect_network(self, network: str = "bridge") -> None:
+        """Attach the running container to `network` (a lane the player allowed onto the live
+        instance: it started with none). WorkspaceError when docker refuses."""
+        _require(bool(_NETWORK.fullmatch(network)), f"network {network!r} is not a valid network name")
+        if self._closed or not self._ready:
+            raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
+        if self.network == "none":  # docker joins no other network while a container is on none
+            code, out = await _docker("network", "disconnect", "none", self.name)
+            if code != 0:
+                raise WorkspaceError(f"docker network disconnect none {self.name} failed: {_first_line(out)}")
+        code, out = await _docker("network", "connect", network, self.name)
+        if code != 0 and "already exists" not in out:
+            raise WorkspaceError(f"docker network connect {network} {self.name} failed: {_first_line(out)}")
+        self.network = network
+
     def interactive_shell(self) -> ShellSpec:
         if self._closed or not self._ready:
             raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")

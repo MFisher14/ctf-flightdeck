@@ -55,6 +55,7 @@ COMPACT_AT = 50_000  # prompt tokens: past this, a lane continues in a fresh con
 HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (its HISTFILE)
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
+INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, as lanes see it (manual is off)
 
 
 def _set_event() -> asyncio.Event:
@@ -87,6 +88,7 @@ class _Run:
     ready: bool = False  # the workspace is prepared
     stopped: bool = False
     closed: bool = False
+    instance: str = ""  # the live instance under the confirm policy: asked, allowed, open, declined, failed
     escalations: int = 0
     generation: int = 0  # bumped at escalation and take-over: a reply asked for before must not run
 
@@ -171,6 +173,7 @@ class AgentDriver:
         max_tokens: int | None = None,
         compact_at: int | None = COMPACT_AT,
         l1: L1Stage | None = None,
+        instance: str = "auto",
     ) -> None:
         self.client = client
         self.workspaces = workspaces
@@ -181,6 +184,9 @@ class AgentDriver:
         self.max_tokens = max_tokens
         self.compact_at = compact_at  # None: never refresh a lane's context
         self.l1 = l1  # the player's no-model solvers, run before a lane's first model call; None: none
+        if instance not in INSTANCE_POLICIES:
+            raise ValueError(f"instance must be one of {', '.join(INSTANCE_POLICIES)}, got {instance!r}")
+        self.instance = instance  # may lanes reach a challenge's live instance: auto, confirm (ask first), off
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.deck = None
@@ -197,11 +203,17 @@ class AgentDriver:
             raise RuntimeError("agent lanes start from the console's event loop, and none is running") from None
         workspace = self.workspaces(lane, challenge)
         urls = self.urls.get(challenge.id, ())
+        if urls and self.instance == "confirm":
+            toolbox = Toolbox(workspace, http_off="the player has not allowed the live instance yet")
+        elif urls and self.instance == "off":
+            toolbox = Toolbox(workspace, http_off="the event's rules keep lanes off the live instance")
+        else:
+            toolbox = Toolbox(workspace, http_allow=urls)
         run = _Run(
             lane_id=lane.id,
             challenge=challenge,
             workspace=workspace,
-            toolbox=Toolbox(workspace, http_allow=urls),
+            toolbox=toolbox,
             model=lane.model,
             session=self._session(lane.id, 0),
         )
@@ -242,6 +254,9 @@ class AgentDriver:
 
     def approved(self, lane: Lane, pending: Pending) -> None:
         if pending.kind is PendingKind.LIVE_BOX:
+            run = self.runs.get(lane.id)
+            if run is not None and run.instance == "asked":
+                run.instance = "allowed"  # opened before the lane's next model call
             self._note(lane, "The player allowed you to use the live instance now.")
         elif pending.kind is PendingKind.BUDGET:
             self._note(lane, "The player approved more budget. Carry on, and keep it lean.")
@@ -256,6 +271,10 @@ class AgentDriver:
             flag = prompts.one(pending.flag or "", 200)
             self._note(lane, f"The player did not submit {flag}: they think it is not the flag. Keep going.")
         elif pending.kind is PendingKind.LIVE_BOX:
+            run = self.runs.get(lane.id)
+            if run is not None and run.instance == "asked":
+                run.instance = "declined"
+                run.toolbox.http_off = "the player said no to the live instance"
             self._note(lane, "The player said no to the live instance: work from the handout only.")
         else:
             self._note(lane, f"The player declined: {prompts.one(pending.detail, 200)}.")
@@ -304,7 +323,14 @@ class AgentDriver:
         run.ready = True
         if self.l1 is not None:
             await self._l1_stage(run)
+        urls = self.urls.get(run.challenge.id, ())
+        if urls and self.instance == "confirm" and not self._over(run):
+            run.instance = "asked"
+            self._report(run, TurnReport(turn=False, pending=Pending(
+                PendingKind.LIVE_BOX, f"let {run.lane_id} reach the live instance: {', '.join(urls)}")))
         while await self._until_running(run):
+            if run.instance == "allowed":
+                await self._open_instance(run, urls)
             lane = self._lane(run)
             assert lane is not None
             hints = list(lane.hints)
@@ -373,6 +399,21 @@ class AgentDriver:
                     self._report(run, TurnReport(turn=False, flag=flag))
         if not self._over(run):
             run.messages.append({"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])})
+
+    async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:
+        """The player allowed the live instance: connect a docker lane's container to the
+        network (it started with none) and let the http tool reach the instance."""
+        connect = getattr(run.workspace, "connect_network", None)
+        try:
+            if connect is not None:
+                await connect("bridge")
+        except WorkspaceError as exc:
+            run.instance = "failed"
+            self.deck.note(run.lane_id, f"could not open the network to the live instance: {exc}")
+            run.notes.append(f"flightdeck could not open the network to the live instance ({exc}): work from the handout.")
+            return
+        run.toolbox.allow(urls)
+        run.instance = "open"
 
     async def _until_running(self, run: _Run, generation: int | None = None) -> bool:
         """Wait while the lane is paused, taken over or waiting for the player. False once it

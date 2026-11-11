@@ -24,7 +24,7 @@ import re
 import shlex
 import stat
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,7 +145,8 @@ class Toolbox:
     """Runs a lane's tool calls in its workspace.
 
     http_allow lists the origins the http tool may reach (the challenge's own instance, like
-    "http://127.0.0.1:8080"); with none, http is off.
+    "http://127.0.0.1:8080"); with none, http is off, and http_off says why. allow() adds
+    origins later (the player allowed the live instance).
     """
 
     def __init__(
@@ -156,6 +157,7 @@ class Toolbox:
         default_timeout: float = 60.0,
         max_timeout: float = 300.0,
         http_allow: tuple[str, ...] = (),
+        http_off: str = "this challenge has no instance to reach",
     ) -> None:
         if max_chars < MIN_CHARS:
             raise ValueError(f"max_chars must be at least {MIN_CHARS}, got {max_chars}")
@@ -166,6 +168,7 @@ class Toolbox:
         self.default_timeout = default_timeout
         self.max_timeout = max_timeout
         self.http_allow: dict[Origin, str] = {_allowed_origin(o): o for o in http_allow}
+        self.http_off = http_off
         self._tools: dict[str, Callable[[dict[str, Any], int, int], Awaitable[ToolResult]]] = {
             "shell": self._shell,
             "read_file": self._read_file,
@@ -174,6 +177,12 @@ class Toolbox:
             "submit_flag": self._submit_flag,
             "set_plan": self._set_plan,
         }
+
+    def allow(self, origins: Sequence[str]) -> None:
+        """Let the http tool reach these origins from now on (ValueError for one that is not
+        an origin)."""
+        for origin in origins:
+            self.http_allow[_allowed_origin(origin)] = origin
 
     async def call(self, name: str, arguments: str, *, turn: int, index: int) -> ToolResult:
         """Run one tool call; `turn` and `index` name its overflow files.
@@ -426,7 +435,7 @@ class Toolbox:
         ):
             raise _Mistake("headers must be an object of strings", action)
         if not self.http_allow:
-            raise _Mistake("http is off: this challenge has no instance to reach", action)
+            raise _Mistake(f"http is off: {self.http_off}", action)
         _sendable(url, "url", action)
         _sendable(body or "", "body", action)
         _sendable("".join(f"{k}{v}" for k, v in (headers or {}).items()), "headers", action)
