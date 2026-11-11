@@ -25,6 +25,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli
+from ctf_flightdeck.console.screens import QuitPrompt
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState, PendingKind
 from ctf_flightdeck.platform.ctfd import CTFdVerifier
@@ -718,6 +719,10 @@ def test_the_console_starts_the_event_tasks_and_quitting_stops_them(tmp_path, to
                 fake.add(FakeChallenge(5, "Second Wave", value=150))
                 await wait_for(lambda: "second-wave" in run.deck.challenges, "the wave, released by the console's task")
                 await pilot.press("q")
+                await pilot.pause()
+                assert isinstance(app.screen, QuitPrompt)  # a lane is at work: quitting asks first
+                assert str(run.dir) in app.screen.quit_summary.plain  # and says where the run's log stays
+                await pilot.press("y")
                 await wait_for(lambda: not app.is_running, "the console to quit")
             return [t.get_name() for t in asyncio.all_tasks() if t.get_name().startswith("flightdeck ")]
 

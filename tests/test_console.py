@@ -30,7 +30,7 @@ from ctf_flightdeck.console import theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
-from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, TakeOverScreen
+from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
 from ctf_flightdeck.console.widgets import CommandBar
 from ctf_flightdeck.core import interventions as iv
@@ -2213,7 +2213,7 @@ def test_on_start_runs_once_on_the_consoles_running_event_loop():
     drive(app, script)
 
 
-@pytest.mark.parametrize("how", ["q", "/quit"])
+@pytest.mark.parametrize("how", ["q", "/quit", "ctrl+q"])
 def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
     world = FakeWorld(scenarios.get("sstv"))
     calls = []
@@ -2226,11 +2226,13 @@ def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
     app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
 
     async def script(pilot):
-        if how == "q":
-            await pilot.press("q")
-        else:
+        if how == "/quit":
             bar(app).start(how)
-            await pilot.press("enter")
+            await press(pilot, "enter")
+        else:
+            await press(pilot, how)
+        assert isinstance(app.screen, QuitPrompt) and calls == []  # its lanes are at work: it asks first
+        await pilot.press("y")
         for _ in range(50):
             if not app.is_running:
                 break
@@ -2239,6 +2241,120 @@ def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
         assert not app.is_running
 
     drive(app, script)
+
+
+def open_run(*, queued: int = 0) -> tuple[Deck, list]:
+    """A run's deck with three lanes at work: L01 waits for the player with a flag, L02 is
+    paused, L03 runs; `queued` more challenges wait in the queue."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=3, flag_format=r"t\{[a-z]+\}"))
+    names = ["alpha", "bravo", "charlie"] + [f"extra{n}" for n in range(queued)]
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    first, second, _ = (deck.lanes_on(n)[0] for n in names[:3])
+    deck.report(first.id, TurnReport(flag="t{alpha}"))
+    assert deck.apply(iv.Pause(second.id)).ok
+    calls: list[str] = []
+    return deck, calls
+
+
+def prompt_text(app: FlightdeckApp) -> str:
+    """What the open prompt says, as one line: its border, buttons' edges and line breaks left out."""
+    return " ".join(re.sub(r"[│╭╮╰╯─▔▁]", " ", region_text(app, "Vertical")).split())
+
+
+@pytest.mark.parametrize("size", [SIZE, (80, 24)], ids=["160x46", "80x24"])
+def test_quitting_while_lanes_are_open_asks_first_says_what_quitting_does_and_esc_or_n_stays(size):
+    deck, calls = open_run(queued=2)
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit, run_dir="/runs/20261111-093000")
+
+    async def script(pilot):
+        for answer in ("escape", "n"):
+            await press(pilot, "q")
+            assert isinstance(app.screen, QuitPrompt)
+            text = prompt_text(app)
+            assert "3 lanes still open: 1 waiting for you, 1 paused, 1 running" in text
+            assert "L01 Alpha submit t{alpha}" in text  # what waits for the player, named
+            assert "2 challenges queued, not started" in text
+            assert "Quitting stops every lane and closes its workspace, and a run cannot be resumed" in text
+            assert "Nothing that waits for you is submitted or approved" in text
+            assert "The run's log and transcripts stay in /runs/20261111-093000" in text
+            assert "Stay (esc) Quit (y)" in text
+            await press(pilot, answer)
+            assert isinstance(app.screen, FleetScreen) and app.is_running
+        assert calls == [] and not any(lane.finished for lane in deck.lanes.values())
+        assert deck.lanes["L01"].pending is not None
+
+    drive(app, script, size)
+
+
+def test_a_second_q_or_one_meant_for_help_or_a_card_does_not_quit_a_run():
+    """q also closes help and queues from a challenge card: a double tap must not end the run."""
+    deck, calls = open_run()
+    deck.release([Challenge("delta", "Delta", "misc", 50)], [])  # on the board, with no lane
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        await press(pilot, "q", "q")
+        assert isinstance(app.screen, QuitPrompt)  # the second q is not an answer
+        await press(pilot, "escape", "question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        await press(pilot, "q", "q")  # closes help, then asks
+        assert isinstance(app.screen, QuitPrompt)
+        await press(pilot, "escape")
+        app.fleet.select_challenge("delta")
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ChallengeCard)
+        await press(pilot, "q", "q")  # queues delta, then asks
+        assert isinstance(app.screen, QuitPrompt)
+        await press(pilot, "ctrl+q")  # ctrl+q on the prompt is not an answer either, nor a second prompt
+        assert [type(s) for s in app.screen_stack].count(QuitPrompt) == 1
+        await press(pilot, "escape")
+        assert app.is_running and calls == []
+
+    drive(app, script)
+
+
+def test_quitting_does_not_ask_once_every_lane_has_finished_nor_in_the_mock():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("alpha", "Alpha", "misc", 50)], [QueueEntry("alpha", "glm")])
+    (lane,) = deck.lanes.values()
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
+    calls = []
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def finished(pilot):
+        await press(pilot, "q")
+        for _ in range(50):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["stopped"] and not app.is_running
+
+    drive(app, finished)
+
+    world, mock = make("sstv")  # fake lanes at work, nothing to stop: no question
+    assert any(not lane.finished for lane in world.deck.lanes.values())
+
+    async def in_the_mock(pilot):
+        await press(pilot, "q")
+        for _ in range(50):
+            if not mock.is_running:
+                break
+            await pilot.pause(0.01)
+        assert not mock.is_running
+
+    drive(mock, in_the_mock)
 
 
 @pytest.fixture

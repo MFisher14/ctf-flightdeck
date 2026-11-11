@@ -34,7 +34,7 @@ from . import theme, views
 from .commands import CommandError, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
-from .screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, TakeOverScreen
+from .screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from .terminal import STOP_SIGNALS, TerminalDriver
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
@@ -67,15 +67,18 @@ class FlightdeckApp(App[None]):
         refresh_seconds: float | None = 0.5,
         on_start: Callable[[], None] | None = None,
         on_exit: Callable[[], Awaitable[None]] | None = None,
+        run_dir: str = "",
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
-        (a real run stops its lanes and closes their workspaces), also on SIGHUP or SIGTERM."""
+        (a real run stops its lanes and closes their workspaces), also on SIGHUP or SIGTERM.
+        `run_dir` is where the run's log goes (the quit prompt says it stays there)."""
         super().__init__()
         self.deck = deck
         self.mock = mock
         self._on_start = on_start
         self._on_exit = on_exit
+        self._run_dir = run_dir
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
         self._signals: list[int] = []  # the signals this console catches while it runs
@@ -115,8 +118,19 @@ class FlightdeckApp(App[None]):
             self._on_start()
 
     async def action_quit(self) -> None:
-        """Stop the run's lanes (on_exit) before the console exits."""
+        """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
+        While lanes are still open, ask first: quitting stops them all, and a run cannot be
+        resumed. (A signal does not ask: see _on_signal.)"""
+        if self._exiting or isinstance(self.screen, QuitPrompt):
+            return
+        if self._on_exit is not None and any(not lane.finished for lane in self.deck.lanes.values()):
+            self.push_screen(QuitPrompt(views.quit_summary(self.deck, self._run_dir)), self._quit_answered)
+            return
         await self._quit_now()
+
+    def _quit_answered(self, quit: bool | None) -> None:
+        if quit:
+            self.call_later(self._quit_now)
 
     async def _quit_now(self, why: str = "") -> None:
         if self._exiting:

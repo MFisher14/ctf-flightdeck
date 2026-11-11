@@ -39,7 +39,7 @@ COMMANDS = (
     Command("sort", "[mode]", "sort lanes: attention, idle, cost, turns, lane", lane=False),
     Command("back", "", "back to the fleet", lane=False),
     Command("help", "", "keys and commands", lane=False),
-    Command("quit", "", "quit flightdeck", lane=False),
+    Command("quit", "", "quit flightdeck (asks first while lanes are open)", lane=False),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
 

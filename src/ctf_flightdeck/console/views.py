@@ -330,6 +330,50 @@ def finished_cells(lanes: list[Lane], expanded: bool) -> dict[str, Text]:
     }
 
 
+OPEN_STATE_WORDS = {
+    LaneState.RUNNING: "running",
+    LaneState.WAITING: "waiting for you",
+    LaneState.PAUSED: "paused",
+    LaneState.TAKEOVER: "taken over",
+}
+QUIT_SHOWN = 5  # lanes waiting for the player that the quit prompt names; the rest are counted
+
+
+def quit_summary(deck: Deck, run_dir: str = "") -> Text:
+    """What quitting would stop: the open lanes, what waits for the player, the queue; and
+    what quitting does."""
+    live = sorted((lane for lane in deck.lanes.values() if not lane.finished), key=lambda lane: lane.number)
+    counts: dict[str, int] = {}
+    for lane in live:
+        word = OPEN_STATE_WORDS[lane.state]
+        counts[word] = counts.get(word, 0) + 1
+    out = Text()
+    out.append(f"{len(live)} lane{'' if len(live) == 1 else 's'} still open", "bold")
+    out.append(": " + ", ".join(f"{n} {word}" for word, n in counts.items()))
+    waiting = [lane for lane in live if lane.pending is not None]
+    for lane in waiting[:QUIT_SHOWN]:
+        assert lane.pending is not None
+        out.append(f"\n  {lane.id} ", "bold")
+        out.append(untrusted(deck.challenges[lane.challenge_id].name, one_line=True), "bold")
+        out.append("  ")
+        out.append(untrusted(lane.pending.detail, one_line=True), theme.PURPLE)
+        if lane.waiting:
+            out.append(f"  (then {len(lane.waiting)} more)", theme.MUTED)
+    if len(waiting) > QUIT_SHOWN:
+        out.append(f"\n  and {len(waiting) - QUIT_SHOWN} more lanes waiting for you", theme.MUTED)
+    if deck.queue:
+        out.append(f"\n{len(deck.queue)} challenge{'' if len(deck.queue) == 1 else 's'} queued, not started")
+    out.append(
+        "\n\nQuitting stops every lane and closes its workspace, and a run cannot be resumed. "
+        "Nothing that waits for you is submitted or approved."
+    )
+    if run_dir:
+        out.append(" The run's log and transcripts stay in ")
+        out.append(untrusted(run_dir, one_line=True), "bold")
+        out.append(".")
+    return out
+
+
 def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
     if not query:
         return True

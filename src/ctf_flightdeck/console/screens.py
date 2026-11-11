@@ -1,4 +1,5 @@
-"""Modal screens: fork and kill prompts, the take-over placeholder, a challenge card and help."""
+"""Modal screens: fork, kill and quit prompts, the take-over placeholder, a challenge card and
+help."""
 
 from __future__ import annotations
 
@@ -117,6 +118,41 @@ class KillPrompt(ModalScreen[str | None]):
 
     def action_choose(self, choice: str) -> None:
         self.dismiss(choice or None)
+
+
+class QuitPrompt(ModalScreen[bool]):
+    """Quit while lanes are still open: y quits (every lane stops); n, esc, or enter on Stay
+    keep the run going. q is not an answer: it closes help and queues from a card, so a
+    double tap must not quit."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="QuitPrompt")
+    BINDINGS = [
+        Binding("y", "choose(True)", "quit"),
+        Binding("n", "choose(False)", "stay"),
+        Binding("escape", "choose(False)", "stay"),
+    ]
+
+    def __init__(self, summary: Text) -> None:
+        super().__init__()
+        self.quit_summary = summary
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Quit flightdeck and stop the run?", "bold"))
+            yield Static(self.quit_summary)
+            with Horizontal():
+                yield Button("Stay (esc)", id="stay")
+                yield Button("Quit (y)", id="quit", variant="error")
+
+    def on_mount(self) -> None:
+        self.query_one("#stay", Button).focus()
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        self.action_choose(event.button.id == "quit")
+
+    def action_choose(self, quit: bool) -> None:
+        self.dismiss(quit)
 
 
 class TakeOverScreen(ModalScreen[None]):
@@ -255,7 +291,7 @@ KEY_HELP = (
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
     ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
-    ("q", "Quit"),
+    ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
 )
 MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
