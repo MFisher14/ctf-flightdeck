@@ -150,6 +150,7 @@ class HeaderFacts:
     unpriced: bool  # some spend has no price
     clock: float  # seconds since the event started
     mock: str = ""  # the mock's tag; "" in a run
+    later: bool = False  # a lane's coding-agent CLI turn is under way (an ended lane's too): its cost is still to come
 
 
 def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
@@ -158,6 +159,7 @@ def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
     return HeaderFacts(
         cfg.event, cfg.team, cfg.containerized, len(deck.active_lanes()), cfg.max_lanes, len(deck.queue),
         len(deck.needing()), deck.held, tokens, dollars, unpriced, deck.now, mock,
+        later=any(lane.dollars_later for lane in deck.lanes.values()),
     )
 
 
@@ -190,9 +192,10 @@ def header_pieces(facts: HeaderFacts) -> list[tuple[str, int, tuple[str, str, st
         out.append(("need", 0, ("all clear", theme.MUTED, theme.SEGMENT, False)))
     if facts.held:
         out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
+    dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
     out += [
         ("tokens", 4, (f"tok {fmt.tokens(facts.tokens)}", theme.TEXT, theme.SEGMENT, False)),
-        ("dollars", 4, (f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else ""), theme.TEXT, theme.SEGMENT, False)),
+        ("dollars", 4, (dollars, theme.TEXT, theme.SEGMENT, False)),
         ("clock", 3, (fmt.clock(facts.clock), theme.TEXT, theme.SEGMENT, False)),
     ]
     return out

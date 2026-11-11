@@ -1409,6 +1409,37 @@ def test_spend_a_cli_reports_after_its_lane_ended_shows_in_the_lanes_row_and_the
     drive(app, script)
 
 
+def test_the_headers_dollars_are_not_a_settled_total_while_any_lanes_cli_turn_is_under_way():
+    """The header's total ends in "…", as the lane's cost cell does, while a coding-agent CLI's
+    turn is under way on any lane, one that ended mid-turn too: its cost comes when the turn
+    ends. Once every such turn has its cost, the total is settled again."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=2))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo")], [QueueEntry(n, "glm") for n in ("alpha", "bravo")])
+    alpha, bravo = deck.lanes_on("alpha")[0], deck.lanes_on("bravo")[0]
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        async def header() -> str:
+            app.refresh_view()
+            await pilot.pause()
+            return region_text(app, "#header")
+
+        deck.report(alpha.id, TurnReport(action="ls", tokens=100, dollars=0.25))  # a turn with its cost
+        assert "$0.25 " in await header() and views.LATER not in await header()
+        deck.report(bravo.id, TurnReport(action="claude: $ ls", tokens=300, dollars_later=True))  # a CLI turn under way
+        assert f"$0.25{views.LATER} " in await header()
+        assert cell(app, "lanes", bravo.id, "cost") == f"${fmt.dollars(0.0, short=True)}{views.LATER}"  # as its lane says
+        assert deck.apply(iv.Kill(bravo.id, requeue=False)).ok  # it ended mid-turn: that turn's cost is still to come
+        assert f"$0.25{views.LATER} " in await header()
+        deck.report(bravo.id, TurnReport(turn=False, tokens=50, dollars=0.5, turn_end=True, why="cut"))  # its CLI's report
+        assert "$0.75 " in await header() and views.LATER not in await header()
+        deck.report(alpha.id, TurnReport(action="cat x", tokens=10, dollars=None))  # some spend with no price
+        deck.report(alpha.id, TurnReport(action="claude: $ cat", dollars_later=True))
+        assert f"$0.75+{views.LATER} " in await header()  # both marks, in the lane cell's order
+
+    drive(app, script)
+
+
 def test_challenge_text_is_shown_literally_and_cannot_steer_the_console():
     evil = Spec("evil", "web", "[b]X[/b]", 100, "Click [@click=app.quit]x[/] now \x1b[2J done", ("evil.zip",))
     scenario = Scenario(name="evil", summary="", specs=(evil,), timeline=((0, ReleaseAt(("evil",), "Board")),))
