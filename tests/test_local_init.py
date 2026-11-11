@@ -164,6 +164,14 @@ def test_mlx_lanes_on_another_port_serve_the_same_light_model_and_a_different_on
     assert "share the MLX server" not in other.output
 
 
+def test_a_light_model_on_mlx_stays_on_this_machine_when_the_lanes_mlx_server_is_elsewhere(tmp_path, monkeypatch):
+    result, target = init(monkeypatch, tmp_path, "--provider", "mlx", "--base-url", "http://192.168.1.10:8080/v1", "--models",
+                          QWEN_MLX, "--host", "--light", "mlx", "--light-model", QWEN_MLX)
+    assert result.exit_code == 0, result.output
+    assert load_config(target).light.base_url == "http://127.0.0.1:8080/v1"  # --light mlx: a model on this machine
+    assert f"next: serve the light model: mlx_lm.server --model {QWEN_MLX}   (" in result.output
+
+
 def test_the_shared_mlx_server_note_names_the_lanes_server_as_given(tmp_path, monkeypatch):
     result, target = init(monkeypatch, tmp_path, "--provider", "mlx", "--base-url", "http://localhost:8080/v1", "--models",
                           QWEN_MLX, "--host", "--light", "mlx", "--light-model", "mlx-community/gemma-4-12B-it-4bit")
