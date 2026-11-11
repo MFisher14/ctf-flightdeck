@@ -1363,6 +1363,48 @@ def test_narrow_terminal_keeps_idle_and_last_action_and_drops_the_model():
     drive(app, script, size=NARROW)
 
 
+SHOWN_KEYS = {f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show}
+
+
+def check_key_line(app: FlightdeckApp, width: int) -> list[str]:
+    """The fleet's key line fits, shows only whole keys, and keeps the ones a player must find."""
+    line = footer_line(app).strip()
+    pairs = line.split("  ")
+    assert cell_len(line) <= width - 2 and "…" not in line, line
+    assert set(pairs) <= SHOWN_KEYS, line  # nothing cut in half
+    for needed in ("? help", "a approve", "d decline", "/ commands", "q quit"):
+        assert needed in pairs, (needed, line)
+    return pairs
+
+
+@pytest.mark.parametrize("scenario", ["sstv", "team"])
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40), SIZE], ids=["80x24", "100x30", "120x40", "160x46"])
+def test_the_key_line_always_shows_help_quit_and_the_answers_and_only_whole_keys(scenario, size):
+    world, app = make(scenario)
+
+    async def script(pilot):
+        pairs = check_key_line(app, size[0])
+        if size == SIZE:
+            assert len(pairs) == len(SHOWN_KEYS) - (0 if world.deck.config.team else 1)  # all of them (claim: team only)
+
+    drive(app, script, size)
+
+
+def test_the_key_line_fits_again_when_the_terminal_is_resized():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        everything = check_key_line(app, SIZE[0])
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+        assert len(check_key_line(app, 80)) < len(everything)
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause()
+        assert check_key_line(app, SIZE[0]) == everything
+
+    drive(app, script)
+
+
 def test_header_counts_the_lanes_that_need_you():
     world, app = make("default")
     deck = world.deck

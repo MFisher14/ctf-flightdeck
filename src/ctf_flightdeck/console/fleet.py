@@ -3,7 +3,8 @@
 Keys act on the selected lane. `enter` or `o` opens it in the focus view; `/` opens the
 command bar. A line under the lane list says why the selected lane is flagged and what
 to do about it. The command bar acts on the same lane the keys do. Under 100 columns the
-board hides so the lane list keeps its columns.
+board hides so the lane list keeps its columns. The key line at the bottom always shows
+`? help` and `q quit`; on a narrow terminal the keys needed least are left out of it first.
 """
 
 from __future__ import annotations
@@ -29,6 +30,16 @@ if TYPE_CHECKING:
     from .app import FlightdeckApp
 
 BOARD_MIN_WIDTH = 100  # narrower than this, the board hides and the lanes get the room
+# The key line on a narrow terminal: the highest rank is left out first (the later key, on a tie).
+# Help and quit always stay: help lists every key.
+KEY_RANK = {
+    "question_mark": 0, "q": 0,
+    "a": 1, "d": 1, "slash": 1,
+    "o": 2, "k": 2,
+    "p": 3, "h": 3, "r": 3, "c": 3,
+    "f": 4, "e": 4, "t": 4,
+    "s": 5, "tab": 5,
+}
 
 
 class FleetScreen(Screen, inherit_bindings=False):
@@ -101,15 +112,19 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def on_mount(self) -> None:
         self._ready = True
-        self.query_one("#keys", Static).update(self.key_line())
+        self._show_keys(self.size.width)
         self._fit_board(self.size.width)
         self._set_columns()
         self.refresh_view()
         self.query_one("#lanes", DataTable).focus()
 
     def on_resize(self, event: events.Resize) -> None:
+        self._show_keys(event.size.width)
         self._fit_board(event.size.width)
         self.call_after_refresh(self._set_columns)
+
+    def _show_keys(self, width: int) -> None:
+        self.query_one("#keys", Static).update(self.key_line(width - 2))  # the line has a margin of 1 each side
 
     @property
     def board_hidden(self) -> bool:
@@ -466,13 +481,24 @@ class FleetScreen(Screen, inherit_bindings=False):
             return self.fd.deck.config.team  # hidden in solo mode
         return True
 
-    def key_line(self) -> Text:
-        """Every shown key this screen allows (claim only in team mode), each clickable.
+    def key_line(self, width: int | None = None) -> Text:
+        """Every shown key this screen allows (claim only in team mode), each clickable. When
+        they do not all fit in `width` cells, the keys needed least are left out (KEY_RANK);
+        help and quit always stay.
 
         One Text drawn with the screen, so it is complete on the first frame (Textual's
         Footer fills in after a later refresh, which made screenshots and tests flaky)."""
+        shown = [b for b in self.BINDINGS if b.show and self._allowed(b.action)]
+        out = self._keys_text(shown)
+        while width is not None and out.cell_len > width and any(KEY_RANK.get(b.key, 9) for b in shown):
+            shown.pop(max(range(len(shown)), key=lambda i: (KEY_RANK.get(shown[i].key, 9), i)))
+            out = self._keys_text(shown)
+        return out
+
+    @staticmethod
+    def _keys_text(bindings: list[Binding]) -> Text:
         out = Text(no_wrap=True, overflow="ellipsis")
-        for i, binding in enumerate(b for b in self.BINDINGS if b.show and self._allowed(b.action)):
+        for i, binding in enumerate(bindings):
             action = binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
             click = {"@click": action}
             out.append("  " if i else "")
