@@ -165,7 +165,8 @@ def on_the_board_at_open(scenario: scenarios.Scenario) -> frozenset[str]:
 def test_version_names_the_program_it_runs_as(prog):
     result = invoke("--version", prog=prog)
     assert result.exit_code == 0
-    assert result.stdout == f"{prog} 0.0.0\n"
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    assert result.stdout == f"{prog} {declared}\n"
 
 
 def test_version_is_the_one_pyproject_declares():
