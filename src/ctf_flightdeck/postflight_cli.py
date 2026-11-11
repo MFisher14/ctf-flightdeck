@@ -1,14 +1,15 @@
 """`flightdeck report RUN_DIR [--board PATH]`: the post-flight report for a run folder.
 
-The integrator mounts this app on the main one with `app.add_typer(postflight_cli.app)`
-(no name), which adds the `report` command as it is.
+cli.py mounts `report_command` as `flightdeck report`; `app` holds it too, for a mount of
+its own. A run folder or board that cannot be read fails with the reason (exit 2), never a
+traceback.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
@@ -41,8 +42,11 @@ def report_command(
     try:
         record = load_run(run_dir)
     except RunFolderError as exc:
-        typer.echo(f"flightdeck: {untrusted(str(exc), one_line=True)}", err=True)
-        raise typer.Exit(2) from None
+        _fail(str(exc))
+    except OSError as exc:  # a file in it that cannot be read (permissions, say)
+        _fail(f"cannot read {exc.filename or run_dir}: {exc.strerror or exc}")
+    except (ValueError, OverflowError) as exc:  # a transcript's count is NaN, Infinity or 1e400: runrecord's int() refuses it
+        _fail(f"cannot read the run in {run_dir}: a number in it is not finite ({exc})")
     loaded = None
     if board is not None:
         try:
@@ -50,6 +54,8 @@ def report_command(
         except BoardError as exc:
             typer.echo(f"flightdeck: --board: {exc}", err=True)  # BoardError messages are already made safe
             raise typer.Exit(2) from None
+        except OSError as exc:  # one load_board does not turn into a BoardError (a folder it cannot search)
+            _fail(f"--board: cannot read {exc.filename or board}: {exc.strerror or exc}")
     try:
         written = write_report(run_dir, report(record, board=loaded))
     except OSError as exc:
@@ -58,6 +64,14 @@ def report_command(
         raise typer.Exit(1) from None
     typer.echo(summary(record, board=loaded), nl=False)
     typer.echo(f"report: {untrusted(str(written), one_line=True)}")
+
+
+def _fail(message: str) -> NoReturn:
+    """Say why on stderr, folded onto one line (paths and messages come from the run), and exit 2."""
+    from .text import untrusted
+
+    typer.echo(f"flightdeck: {untrusted(message, one_line=True)}", err=True)
+    raise typer.Exit(2) from None
 
 
 def write_report(run_dir: Path, text: str) -> Path:
