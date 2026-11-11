@@ -38,10 +38,12 @@ from ctf_flightdeck.platform.ctfd import (
     Pull,
     PullIncomplete,
     PullStopped,
+    Solves,
     load_ids,
     origins_in,
     pull,
     pull_board,
+    services_in,
     slugify,
 )
 from ctf_flightdeck.platform.manual import BoardError, load_board
@@ -588,6 +590,24 @@ def test_solved_ids_with_a_refused_token_does_not_fall_back():
     assert error.status == 401
 
 
+def test_solves_in_teams_mode_say_which_are_the_users_own():
+    with FakeCTFd(sample()) as fake:
+        fake.solved, fake.user_solved = {1, 2}, {1}  # 2 was a teammate's
+        assert call(fake, lambda c: c.solves()) == Solves(frozenset({1, 2}), frozenset({1}), shared=True)
+        fake.script("GET", "/api/v1/users/me/solves", Reply(500, {"message": "broken"}))
+        broken = call(fake, lambda c: c.solves(), max_retries=0)
+    assert broken == Solves(frozenset({1, 2}), None, shared=True)  # CTFd did not say whose: not a failed read
+
+
+def test_solves_in_users_mode_and_for_a_player_on_no_team_are_the_users_own():
+    with FakeCTFd(sample(), team_mode=False) as fake:
+        fake.solved = {3}
+        assert call(fake, lambda c: c.solves()) == Solves(frozenset({3}), frozenset({3}), shared=False)
+    with FakeCTFd(sample()) as fake:
+        fake.no_team, fake.solved = True, {1}
+        assert call(fake, lambda c: c.solves()) == Solves(frozenset(), frozenset(), shared=False)
+
+
 # ---------------------------------------------------------------------- pulling a board
 
 
@@ -619,7 +639,7 @@ def test_connection_info_gives_the_live_origins_and_joins_the_description(tmp_pa
     web, pwn = found["login-portal"], found["echo-service"]
     assert web.urls == ("http://web.example.org:8080",) and web.challenge.live
     assert web.challenge.description == "Log in as admin.\n\nConnection info: http://web.example.org:8080/login"
-    assert pwn.urls == () and not pwn.challenge.live  # nc is not a URL: no origin, but the lane still reads it
+    assert pwn.urls == ("tcp://pwn.example.org:1337",) and pwn.challenge.live  # nc reaches a TCP service: an instance too
     assert pwn.challenge.description == "It echoes.\n\nConnection info: nc pwn.example.org 1337"
     assert found["warmup"].urls == () and found["warmup"].challenge.description == "Say hello."
 
@@ -670,8 +690,39 @@ def test_a_connection_url_the_board_would_refuse_is_left_in_the_text_not_in_the_
     with FakeCTFd(board) as fake:
         result = pulled(fake, tmp_path / "board")
     (item,) = result.board.challenges
-    assert result.problems == () and item.urls == ()
+    assert result.problems == () and item.urls == ("tcp://127.0.0.1:9001",)  # the nc service; the disguised URL is not kept
     assert item.challenge.description == "Connection info: Instance: http://127.1:8080/ (or nc 127.0.0.1 9001)"
+
+
+def test_tcp_services_are_taken_from_the_ways_connection_info_names_them():
+    assert services_in(None) == () and services_in("") == () and services_in("http://web.example.org:8080/") == ()
+    said = {
+        "nc pwn.example.org 1337": "tcp://pwn.example.org:1337",
+        "Connect: `nc -v -w 3 10.0.0.5 31337`": "tcp://10.0.0.5:31337",
+        "ncat --ssl Chal.Example.org 443": "tcp://chal.example.org:443",
+        "telnet localhost 23": "tcp://localhost:23",
+        "socat - TCP:pwn.example.org:9999": "tcp://pwn.example.org:9999",
+        "openssl s_client -connect secure.example.org:4433": "tcp://secure.example.org:4433",
+        "pwn.example.org:4000": "tcp://pwn.example.org:4000",
+    }
+    for text, service in said.items():
+        assert services_in(text) == (service,), text
+    assert services_in("nc a.example.org 1 or nc a.example.org 1, then b.example.org:2") == (
+        "tcp://a.example.org:1", "tcp://b.example.org:2")
+    # what is not a service: a time, a version, a port out of range, a disguised address, a URL's own port
+    for text in ("Starts at 12:30", "needs v1.2:3", "nc pwn.example.org 70000", "nc 127.1 9000", "http://w.example.org:81/x"):
+        assert services_in(text) == (), text
+
+
+def test_a_tcp_service_on_ctfds_own_host_and_port_is_never_a_lanes_instance(tmp_path):
+    with FakeCTFd([]) as fake:
+        port = int(fake.base_url.rsplit(":", 1)[1])
+        fake.add(FakeChallenge(1, "Same Port", connection_info=f"nc 127.0.0.1 {port}"),
+                 FakeChallenge(2, "Other Port", connection_info="nc 127.0.0.1 31337"))
+        found = {item.challenge.id: item for item in pulled(fake, tmp_path / "board").board.challenges}
+    assert found["same-port"].urls == () and not found["same-port"].challenge.live
+    assert "points at CTFd itself (tcp://127.0.0.1:" in found["same-port"].challenge.description
+    assert found["other-port"].urls == ("tcp://127.0.0.1:31337",)
 
 
 def test_a_description_too_long_for_challenge_json_is_cut_short_and_kept_whole_in_a_file(tmp_path):

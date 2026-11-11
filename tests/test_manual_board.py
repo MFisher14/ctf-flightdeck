@@ -211,6 +211,31 @@ def test_urls_become_origins_in_one_form(board, given, origin):
     assert load_board(board).challenges[0].urls == (origin,)
 
 
+@pytest.mark.parametrize(
+    "given, service",
+    [
+        ("tcp://127.0.0.1:1337", "tcp://127.0.0.1:1337"),
+        ("TCP://Pwn.Example.org:31337/", "tcp://pwn.example.org:31337"),
+        ("tcp://[::1]:9000", "tcp://[::1]:9000"),
+    ],
+)
+def test_a_tcp_service_is_a_live_instance_too(board, given, service):
+    challenge(board, "sample-one", spec(urls=["http://127.0.0.1:8080", given]))
+    (item,) = load_board(board).challenges
+    assert item.urls == ("http://127.0.0.1:8080", service) and item.challenge.live
+
+
+@pytest.mark.parametrize(
+    "given",
+    ["tcp://127.0.0.1", "tcp://127.0.0.1:0", "tcp://127.0.0.1:1337/shell", "tcp://user@127.0.0.1:1337", "tcp://127.1:1337",
+     "tcp://127.0.0.1:1337?x=1", "nc://127.0.0.1:1337", "127.0.0.1:1337", "tcp://127.0.0.1:1337\n"],
+)
+def test_a_tcp_service_needs_a_port_and_nothing_but_a_host(board, given):
+    challenge(board, "sample-one", spec(urls=[given]))
+    with pytest.raises(BoardError, match=r'"urls"\[0\] must be an http:// or https:// origin, .* or a TCP service, tcp://host:port'):
+        load_board(board)
+
+
 def test_board_json_names_the_event_and_the_flag_format(board):
     challenge(board, "sample-one", spec())
     put(board / "board.json", json.dumps({"event": "Sample Event", "flag_format": r"practice\{[a-z0-9_]+\}"}))

@@ -15,6 +15,12 @@ top_k (removed on these models), a forced tool_choice, an OpenAI-style tool, or 
 without their beta header. A test that means to send such a request turns it off with
 check=False.
 
+With `models`, it also answers the Models API: GET /v1/models lists the models that are not
+retired, and GET /v1/models/{id} gives one, by its id or an alias in `aliases`, or 404
+not_found_error. A model is an id (active), or a dict with its id and lifecycle. With `key`,
+a request without that key (in x-api-key, or as the Bearer token the SDK sends) gets 401
+authentication_error.
+
 Nothing here is a real key, a real model answer or a real event: replies are scripted.
 """
 
@@ -29,6 +35,7 @@ from urllib.parse import urlsplit
 from fake_model import STOP_WAIT, FakeReply, _Server
 
 MESSAGES_PATH = "/v1/messages"
+MODELS_PATH = "/v1/models"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 _ids = itertools.count(1)
 
@@ -51,11 +58,17 @@ class FakeAnthropicServer:
         *,
         responder: Callable[[dict], dict | FakeReply] | None = None,
         check: bool = True,
+        models: Iterable[str | dict] | None = None,
+        aliases: dict[str, str] | None = None,
+        key: str | None = None,
     ) -> None:
         self.requests: list[dict] = []  # each {"path": str, "headers": {lower-case name: value}, "json": dict | None}
         self._replies: deque[dict | FakeReply] = deque(replies)
         self._responder = responder
         self._check = check
+        self.models = None if models is None else [_model(m) for m in models]  # None: no Models API (404)
+        self.aliases = dict(aliases or {})  # alias -> model id, as GET /v1/models/{alias} resolves it
+        self.key = key  # the x-api-key every request must carry; None: any
         self._lock = threading.Lock()
         self._httpd = _Server(self)
         self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
@@ -82,7 +95,12 @@ class FakeAnthropicServer:
         record = {"path": path, "headers": headers, "json": body}
         with self._lock:
             self.requests.append(record)
-            if method != "POST" or urlsplit(path).path != MESSAGES_PATH:
+            if self.key is not None and self.key not in (headers.get("x-api-key"), headers.get("authorization", "").removeprefix("Bearer ")):
+                return error(401, "authentication_error", "invalid x-api-key")
+            route = urlsplit(path).path
+            if method == "GET" and self.models is not None and route.startswith(MODELS_PATH):
+                return self._models(route)
+            if method != "POST" or route != MESSAGES_PATH:
                 return error(404, "not_found_error", f"fake Anthropic server: nothing at {method} {path}")
             problem = contract(record) if self._check else None
             if problem is not None:
@@ -96,6 +114,27 @@ class FakeAnthropicServer:
             return _as_reply(responder(record))
         except Exception as exc:  # a bug in the test's responder: tell the client instead of hanging
             return error(500, "api_error", f"fake Anthropic server: the responder raised {type(exc).__name__}: {exc}")
+
+    def _models(self, route: str) -> FakeReply:
+        """The Models API: the list (retired models only when asked for), or one model."""
+        assert self.models is not None
+        if route == MODELS_PATH:
+            shown = [m for m in self.models if m["lifecycle"] != "retired"]
+            return FakeReply(200, {"data": shown, "has_more": False, "first_id": shown[0]["id"] if shown else None,
+                                   "last_id": shown[-1]["id"] if shown else None})
+        wanted = route[len(MODELS_PATH) + 1:]
+        wanted = self.aliases.get(wanted, wanted)
+        for model in self.models:
+            if model["id"] == wanted:
+                return FakeReply(200, model)
+        return error(404, "not_found_error", f"model: {wanted}")
+
+
+def _model(spec: str | dict) -> dict:
+    """A model object as the Models API sends it."""
+    fields = {"id": spec} if isinstance(spec, str) else dict(spec)
+    return {"type": "model", "display_name": fields["id"], "created_at": "2026-01-01T00:00:00Z", "lifecycle": "active",
+            **fields}
 
 
 # ---------------------------------------------------------------------- the rules a request must keep

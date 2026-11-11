@@ -73,6 +73,12 @@ EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, 
 }
 
 
+def web_origins(urls: Sequence[str]) -> tuple[str, ...]:
+    """The http(s) origins among a challenge's instances: the http tool's. A TCP service
+    (tcp://host:port, what `nc host port` reaches) is the shell's."""
+    return tuple(url for url in urls if url.startswith(("http://", "https://")))
+
+
 def _set_event() -> asyncio.Event:
     event = asyncio.Event()
     event.set()
@@ -226,8 +232,11 @@ class AgentDriver:
             toolbox = Toolbox(workspace, http_off="the player has not allowed the live instance yet")
         elif urls and self.instance == "off":
             toolbox = Toolbox(workspace, http_off="the event's rules keep lanes off the live instance")
+        elif urls and not web_origins(urls):  # a TCP service (`nc host port`): the shell reaches it, not http
+            toolbox = Toolbox(workspace, http_off=f"this challenge's instance is not a web server ({', '.join(urls)}): "
+                                                  "reach it from the shell, for example with nc")
         else:
-            toolbox = Toolbox(workspace, http_allow=urls)
+            toolbox = Toolbox(workspace, http_allow=web_origins(urls))
         run = _Run(
             lane_id=lane.id,
             challenge=challenge,
@@ -438,7 +447,10 @@ class AgentDriver:
             self.deck.note(run.lane_id, f"could not open the network to the live instance: {exc}")
             run.notes.append(f"flightdeck could not open the network to the live instance ({exc}): work from the handout.")
             return
-        run.toolbox.allow(urls)
+        if web_origins(urls):
+            run.toolbox.allow(web_origins(urls))  # a TCP service is the shell's, through the network just opened
+        else:
+            run.toolbox.http_off = f"this challenge's instance is not a web server ({', '.join(urls)}): reach it from the shell"
         run.instance = "open"
 
     async def _until_running(self, run: _Run, generation: int | None = None) -> bool:

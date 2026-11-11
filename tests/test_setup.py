@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli
+from ctf_flightdeck.agent.workspace import docker_unavailable
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.lane import IMAGE
 from ctf_flightdeck.setup import Answers, Check, doctor, render, report, write_config
 
 ANSWERS = Answers("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", ("vendor/small", "vendor/big"), "docker")
+FAKE_PASTED_KEY = "fake_key_0123456789abcdef0123456789abcdef"  # synthetic: a key pasted where its variable's name goes
 
 
 def test_init_writes_a_config_that_loads_with_the_answers(tmp_path):
@@ -65,11 +68,113 @@ def test_init_asks_at_a_terminal(tmp_path, monkeypatch):
     assert config.lanes.dollar_cap is None  # nothing to spend: no cap to ask about
 
 
-def test_init_away_from_a_terminal_names_the_missing_answer(tmp_path, monkeypatch):
+def test_init_away_from_a_terminal_names_every_missing_option_at_once(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_at_terminal", lambda: False)
     result = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--path", str(tmp_path / "c.toml")])
-    assert result.exit_code == 2 and "Models" in result.output
+    assert result.exit_code == 2 and not (tmp_path / "c.toml").exists()
+    assert result.output.strip() == (
+        "flightdeck: init is not at a terminal, so it cannot ask: give --models ID,ID (weakest first) and --host or "
+        "--docker (see `flightdeck init --help`)"
+    )
+    nothing = CliRunner().invoke(cli.app, ["init", "--path", str(tmp_path / "c.toml")])
+    assert nothing.exit_code == 2
+    assert "give --provider (openrouter, anthropic, openai, local, mlx or custom), --models ID,ID (weakest first) and " \
+           "--host or --docker" in nothing.output
+    custom = CliRunner().invoke(cli.app, ["init", "--provider", "custom", "--models", "m", "--runtime", "host",
+                                          "--path", str(tmp_path / "c.toml")])
+    assert custom.exit_code == 2
+    assert "give --base-url URL and --key-env VAR (--key-env '' for a server that needs no key)" in custom.output
+
+
+def test_init_at_a_terminal_asks_again_after_an_answer_it_cannot_use(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    target = tmp_path / "config.toml"
+    # "ollama" is the local provider; an empty ladder, a repeated model and "dock" are each asked again
+    answers = "ollama\n , \nlocal/a,local/a\nlocal/a,local/b\ndock\nhost\n"
+    result = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input=answers)
+    assert result.exit_code == 0, result.output
+    config = load_config(target)
+    assert (config.api.base_url, config.models, config.lanes.runtime) == ("http://127.0.0.1:11434/v1", ("local/a", "local/b"), "host")
+    assert "Error: give at least one model id, weakest first, comma-separated" in result.output
+    assert "Error: model id 2 repeats model id 1; give each model once" in result.output
+    assert "Error: give docker (a container per lane) or host (lanes on this machine)" in result.output
+    assert result.output.count("Runtime: docker or host") == 2
+
+
+def test_init_at_a_terminal_asks_again_for_a_custom_api_and_never_shows_a_key_typed_as_its_variable(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    key = FAKE_PASTED_KEY
+    target = tmp_path / "config.toml"
+    answers = f"custom\nftp://models.example.test\nhttp://127.0.0.1:8000/v1\n{key}\nMY_MODEL_KEY\nm1\nhost\n"
+    result = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input=answers)
+    assert result.exit_code == 0, result.output
+    config = load_config(target)
+    assert (config.api.base_url, config.api.key_env) == ("http://127.0.0.1:8000/v1", "MY_MODEL_KEY")
+    assert "Error: give the API's address: http:// or https://" in result.output
+    assert "Error: give the name of an environment variable, like OPENROUTER_API_KEY" in result.output
+    assert result.output.count(key) == 1  # only the terminal's echo of the typing; no message repeats it
+    assert key not in target.read_text()
+
+
+def test_init_says_a_config_exists_before_asking_anything(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    target = tmp_path / "config.toml"
+    target.write_text("# mine\n")
+    result = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input="openrouter\na/b\nhost\n")
+    assert result.exit_code == 2 and "Provider" not in result.output
+    assert result.output.strip() == (
+        f"flightdeck: {target} exists; `flightdeck init --force` replaces it, or `--path FILE` writes another"
+    )
+    assert target.read_text() == "# mine\n"
+
+
+@pytest.mark.parametrize(
+    "args, expected",
+    [
+        (["--provider", "openrouter", "--models", "a/b", "--host", "--key-env", FAKE_PASTED_KEY],
+         "flightdeck: --key-env: give the name of an environment variable, like OPENROUTER_API_KEY"),
+        (["--provider", "openrouter", "--models", " , ", "--host"], "flightdeck: --models: give at least one model id"),
+        (["--provider", "olama", "--models", "a/b", "--host"],
+         "flightdeck: --provider: choose one of openrouter, anthropic, openai, local (Ollama), mlx or custom"),
+        (["--provider", "openrouter", "--models", "a/b", "--runtime", "dock"],
+         "flightdeck: --runtime: give docker (a container per lane) or host"),
+        (["--provider", "openrouter", "--models", "a/b", "--runtime", "host", "--docker"],
+         "flightdeck: --runtime host and --docker disagree: give one of them"),
+        (["--provider", "custom", "--models", "a/b", "--host", "--key-env", "", "--base-url", "https://user:pass@models.example.test/v1"],
+         "flightdeck: --base-url: give the address without a user name or password"),
+    ],
+)
+def test_init_names_the_option_whose_value_it_cannot_use_and_never_a_temporary_file(tmp_path, monkeypatch, args, expected):
+    import tempfile
+
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    result = CliRunner().invoke(cli.app, ["init", *args, "--path", str(tmp_path / "c.toml")])
+    assert result.exit_code == 2 and result.output.startswith(expected), result.output
+    assert tempfile.gettempdir() not in result.output and "0123456789abcdef" not in result.output
     assert not (tmp_path / "c.toml").exists()
+
+
+def test_init_takes_ollama_and_runtime_as_options_too(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    target = tmp_path / "c.toml"
+    result = CliRunner().invoke(cli.app, ["init", "--provider", "Ollama", "--models", "qwen2.5-coder:7b", "--runtime", "docker",
+                                          "--path", str(target)])
+    assert result.exit_code == 0, result.output
+    config = load_config(target)
+    assert (config.api.base_url, config.lanes.runtime, config.models) == ("http://127.0.0.1:11434/v1", "docker", ("qwen2.5-coder:7b",))
+
+
+def test_a_config_error_names_the_file_asked_for_and_nothing_is_written(tmp_path):
+    target = tmp_path / "cfg" / "config.toml"
+    with pytest.raises(ConfigError) as caught:
+        write_config(Answers("https://x.example/v1", "OPENROUTER_API_KEY", (), "docker"), target)
+    assert str(caught.value).startswith(f"{target}: models.ladder is empty")
+    assert not target.parent.exists()
+
+
+def test_a_model_id_with_a_quote_cannot_break_the_config_it_is_written_into(tmp_path):
+    answers = Answers("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", ('vendor/a"b', "vendor/c\\d"), "host")
+    assert load_config(write_config(answers, tmp_path / "c.toml")).models == ('vendor/a"b', "vendor/c\\d")
 
 
 def test_doctor_checks_the_key_variable_without_ever_showing_it(tmp_path, monkeypatch):
@@ -138,6 +243,21 @@ def test_doctor_checks_a_local_model_server_answers_and_never_contacts_a_remote_
     assert not check.ok and "nothing answers at http://127.0.0.1:9/v1" in check.detail
     remote = write_config(Answers("https://api.example.test/v1", "", ("m",), "host"), tmp_path / "remote.toml")
     assert "model server" not in {c.name for c in doctor(remote, environ={})}
+
+
+def test_doctor_compares_the_ladder_with_the_models_a_local_server_lists(tmp_path):
+    from fake_model import FakeModelServer
+
+    with FakeModelServer(models=["qwen2.5-coder:7b", "llama3:latest"]) as server:
+        bad = write_config(Answers(server.base_url, "", ("llama3", "qwen2.5-coder-7b"), "host"), tmp_path / "bad.toml")
+        failing = {c.name: c for c in doctor(bad, environ={})}["model server"]
+        good = write_config(Answers(server.base_url, "", ("llama3", "qwen2.5-coder:7b"), "host"), tmp_path / "good.toml")
+        passing = {c.name: c for c in doctor(good, environ={})}["model server"]
+    assert not failing.ok and failing.essential and report([failing])[1] == 1
+    assert failing.detail == f"{server.base_url} does not serve qwen2.5-coder-7b (closest it lists: qwen2.5-coder:7b)"
+    assert failing.fix == (f"pull the model into the server (for Ollama: ollama pull NAME), or change models.ladder in {bad} "
+                           "to ids it serves")
+    assert passing.ok and passing.detail == f"{server.base_url}/models serves llama3, qwen2.5-coder:7b"  # llama3 is :latest
 
 
 # ---------------------------------------------------------------------- the Anthropic provider and its fallback
@@ -297,6 +417,64 @@ def test_doctor_never_prints_a_credential_carried_in_the_base_url(tmp_path):
     check = {c.name: c for c in doctor(path, environ={})}["model server"]
     assert not check.ok and "http://127.0.0.1:9/v1" in check.detail
     assert secret not in check.detail and secret not in report([check])[0]
+
+
+@pytest.fixture
+def fake_claude_bin(tmp_path, monkeypatch):
+    """A `claude` that does nothing, first on PATH, and no folder holding a real one."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "claude"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    return {"CLAUDE_CODE_OAUTH_TOKEN": "fake-oauth-token-for-doctor-tests", "PATH": os.environ["PATH"]}
+
+
+def test_doctor_for_agent_lanes_only_warns_about_the_api_key_they_never_use(tmp_path, fake_claude_bin):
+    cfg = write_config(Answers("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", ("a/b",), "host"), tmp_path / "c.toml")
+    checks = doctor(cfg, environ=fake_claude_bin, agent="claude")
+    key = {c.name: c for c in checks}["api key"]
+    assert not key.ok and not key.essential
+    assert key.detail == ("OPENROUTER_API_KEY is not set (only flightdeck's own lanes use it; claude lanes use claude's "
+                          "own credential and models)")
+    text, status = report(checks, agent="claude")
+    assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice --agent claude`.")
+    assert "fake-oauth-token-for-doctor-tests" not in text
+    own = doctor(cfg, environ=fake_claude_bin)  # flightdeck's own lanes do need the key
+    assert {c.name: c for c in own}["api key"].essential and report(own)[1] == 1
+
+
+def test_doctor_for_docker_agent_lanes_runs_plays_probe_of_the_lane_image(tmp_path, fake_claude_bin):
+    reason = docker_unavailable()
+    if reason:
+        pytest.skip(f"not run: {reason}")
+    if subprocess.run(["docker", "image", "inspect", "debian:bookworm-slim"], capture_output=True).returncode != 0:
+        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+    path = tmp_path / "c.toml"
+    path.write_text('[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "docker"\nimage = "debian:bookworm-slim"\n')
+    checks = doctor(path, environ=fake_claude_bin, agent="claude")
+    image = {c.name: c for c in checks}["agent image"]
+    assert not image.ok and image.essential
+    assert image.detail == "the lane image debian:bookworm-slim has no claude CLI, so claude lanes cannot run in Docker"
+    assert image.fix.startswith("play with --host (lanes on this machine), or build an image FROM debian:bookworm-slim")
+    assert report(checks, agent="claude")[1] == 1  # play --agent claude would refuse this config
+
+
+def test_doctor_on_a_host_config_does_not_ask_for_docker_or_its_image_and_names_no_missing_option(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker here
+    host_cfg = write_config(Answers("https://openrouter.ai/api/v1", "", ("a/b",), "host"), tmp_path / "host.toml")
+    checks = {c.name: c for c in doctor(host_cfg, environ={})}
+    docker = checks["docker"]
+    assert not docker.ok and not docker.essential and docker.fix == ""
+    assert docker.detail.endswith("your config runs lanes on this machine, so only `play --docker` needs Docker")
+    assert "lane image" not in checks
+    docker_cfg = write_config(ANSWERS, tmp_path / "docker.toml")
+    fix = {c.name: c for c in doctor(docker_cfg, environ={"OPENROUTER_API_KEY": "x"})}["docker"].fix
+    assert fix == (f'install or start Docker, or run lanes on this machine: set runtime = "host" under [lanes] in '
+                   f"{docker_cfg}, or pass --host to play or practice")
 
 
 def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):

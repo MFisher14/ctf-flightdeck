@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
@@ -346,6 +346,7 @@ def init(
     key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
     models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
     host: Annotated[bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker.")] = None,
+    runtime: Annotated[str | None, typer.Option("--runtime", metavar="docker|host", help="The same as --docker or --host.")] = None,
     max_lanes: Annotated[int, typer.Option("--max-lanes", min=1, help="Lanes at a time.")] = 4,
     fallback: Annotated[bool | None, typer.Option(
         "--fallback/--no-fallback",
@@ -364,20 +365,40 @@ def init(
         ANTHROPIC_PRICES,
         LOCAL_PROVIDERS,
         PROVIDERS,
+        AnswerError,
         Answers,
         anthropic_fallback,
+        base_url_answer,
+        key_env_answer,
+        models_answer,
+        provider_answer,
+        runtime_answer,
         write_config,
     )
 
     interactive = _at_terminal()
 
-    def need(value, question: str, default=None):
-        if value is not None:
-            return value
-        if not interactive:
-            typer.echo(f"flightdeck: {question} (give it as an option when not at a terminal)", err=True)
-            raise typer.Exit(2)
-        return typer.prompt(question, default=default) if default is not None else typer.prompt(question)
+    def fail(text: str) -> NoReturn:
+        typer.echo(f"flightdeck: {text}", err=True)
+        raise typer.Exit(2)
+
+    def given(value: str, option: str, check):
+        """An answer given as an option, checked; a bad one names the option."""
+        try:
+            return check(value)
+        except AnswerError as exc:
+            fail(f"{option}: {exc}")
+
+    def ask(question: str, check, default: str | None = None):
+        """An answer asked at the terminal, checked as it is typed: a bad one is asked again."""
+
+        def proc(value: str):
+            try:
+                return check(value)
+            except AnswerError as exc:
+                raise typer.BadParameter(str(exc)) from None
+
+        return typer.prompt(question, default=default, value_proc=proc)
 
     def known(variable: str) -> bool:
         """Whether the player has this key, in the environment or the keys file (never its value)."""
@@ -386,39 +407,71 @@ def init(
         except KeysError:
             return False  # doctor reports the keys file
 
-    provider = need(provider, "Provider: openrouter, anthropic, openai, local (Ollama), mlx or custom", "openrouter").strip().lower()
-    dialect = "openai"
+    target = _path(path or default_config_path())
+    if target.exists() and not force:  # said before any question, so no answer is lost
+        fail(f"{target} exists; `flightdeck init --force` replaces it, or `--path FILE` writes another")
+    if runtime is not None:
+        chosen = given(runtime, "--runtime", runtime_answer)
+        if host is not None and host != (chosen == "host"):
+            fail(f"--runtime {chosen} and --{'host' if host else 'docker'} disagree: give one of them")
+        host = chosen == "host"
+    if provider is not None:
+        provider = given(provider, "--provider", provider_answer)
+    if not interactive:
+        missing = []
+        if provider is None:
+            missing.append("--provider (openrouter, anthropic, openai, local, mlx or custom)")
+        if provider == "custom" and base_url is None:
+            missing.append("--base-url URL")
+        if provider == "custom" and key_env is None:
+            missing.append("--key-env VAR (--key-env '' for a server that needs no key)")
+        if models is None and provider != "anthropic":
+            missing.append("--models ID,ID (weakest first)")
+        if host is None:
+            missing.append("--host or --docker")
+        if missing:
+            fail(
+                "init is not at a terminal, so it cannot ask: give " + ", ".join(missing[:-1])
+                + (" and " if len(missing) > 1 else "") + missing[-1] + " (see `flightdeck init --help`)"
+            )
+    if provider is None:
+        provider = ask("Provider: openrouter, anthropic, openai, local (Ollama), mlx or custom", provider_answer, "openrouter")
+    dialect = "anthropic" if provider == "anthropic" else "openai"
+    if base_url is not None:
+        base_url = given(base_url, "--base-url", lambda text: base_url_answer(text, anthropic=dialect == "anthropic"))
+    if key_env is not None:
+        key_env = given(key_env, "--key-env", lambda text: key_env_answer(text, empty=dialect != "anthropic"))
     if provider == "anthropic":
-        dialect = "anthropic"
         base_url = base_url or ANTHROPIC[0]
         key_env = ANTHROPIC[1] if key_env is None else key_env
     elif provider in PROVIDERS:
         url, env = PROVIDERS[provider]
         base_url = base_url or url
         key_env = env if key_env is None else key_env
-    elif provider == "custom":
-        base_url = need(base_url, "API base URL (OpenAI-compatible, ending in /v1 usually)")
-        key_env = need(key_env, "Environment variable for the key (empty if none)", "")
-    else:
-        typer.echo(f"flightdeck: provider must be openrouter, anthropic, openai, local, mlx or custom, not {provider!r}", err=True)
-        raise typer.Exit(2)
+    else:  # custom
+        if base_url is None:
+            base_url = ask("API base URL (OpenAI-compatible, ending in /v1 usually)", base_url_answer)
+        if key_env is None:
+            key_env = ask("Environment variable for the key (empty if none)", key_env_answer, "")
     if fallback is not None and dialect != "anthropic":
-        typer.echo("flightdeck: --fallback is for --provider anthropic (write [fallback] in the config for others)", err=True)
-        raise typer.Exit(2)
-    if models is None and interactive and provider == "openrouter":
-        typer.echo("Model ids look like vendor/model; see https://openrouter.ai/models")
-    if models is None and dialect == "anthropic":
+        fail("--fallback is for --provider anthropic (write [fallback] in the config for others)")
+    question = "Models, weakest first, comma-separated"
+    if models is not None:
+        ladder = given(models, "--models", models_answer)
+    elif dialect == "anthropic":
         default_ladder = ",".join(ANTHROPIC_LADDER)
-        models = typer.prompt("Models, weakest first, comma-separated", default=default_ladder) if interactive else default_ladder
-    ladder = tuple(m.strip() for m in need(models, "Models, weakest first, comma-separated").split(",") if m.strip())
+        ladder = ask(question, models_answer, default_ladder) if interactive else models_answer(default_ladder)
+    else:
+        if provider == "openrouter":
+            typer.echo("Model ids look like vendor/model; see https://openrouter.ai/models")
+        ladder = ask(question, models_answer)
     prices = {m: ANTHROPIC_PRICES[m] for m in ladder if m in ANTHROPIC_PRICES} if dialect == "anthropic" else {}
     spare, offer = None, ""
     if dialect == "anthropic":
         candidate = anthropic_fallback(ladder)
         if candidate is None and fallback:
-            typer.echo("flightdeck: --fallback: OpenRouter's name is not known here for every model in the ladder; "
-                       "write [fallback] in the config yourself (see `flightdeck config --example`)", err=True)
-            raise typer.Exit(2)
+            fail("--fallback: OpenRouter's name is not known here for every model in the ladder; "
+                 "write [fallback] in the config yourself (see `flightdeck config --example`)")
         if candidate is not None and fallback is None and known(candidate.key_env):
             if interactive:
                 fallback = typer.confirm(
@@ -431,20 +484,21 @@ def init(
     if host is None:
         docker_reason = docker_unavailable()
         default = "docker" if docker_reason is None else "host"
-        runtime = need(None, "Runtime: docker or host" + ("" if docker_reason is None else f" (docker: {docker_reason})"), default)
+        lanes_at = ask("Runtime: docker or host" + ("" if docker_reason is None else f" (docker: {docker_reason})"),
+                       runtime_answer, default)
     else:
-        runtime = "host" if host else "docker"
-    target = _path(path or default_config_path())
+        lanes_at = "host" if host else "docker"
     # A local model costs nothing and reports no cost: a dollar cap would only make every lane
     # stop once to ask whether to carry on without it.
     dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
+    answers = Answers(base_url, key_env or "", ladder, lanes_at, max_lanes, dollar_cap=dollar_cap,
+                      provider=dialect, prices=prices, fallback=spare)
     try:
-        answers = Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes, dollar_cap=dollar_cap,
-                          provider=dialect, prices=prices, fallback=spare)
         written = write_config(answers, target, force=force)
     except (ConfigError, FileExistsError) as exc:
-        typer.echo(f"flightdeck: {exc}", err=True)
-        raise typer.Exit(2) from None
+        fail(str(exc))
+    except OSError as exc:
+        fail(f"cannot write {target}: {exc.strerror or type(exc).__name__}")
     typer.echo(f"wrote {written}")
     if spare is not None:
         typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
@@ -458,7 +512,7 @@ def init(
                        "(flightdeck never stores it)")
     if offer:
         typer.echo(offer)
-    if runtime.strip().lower() == "docker":
+    if lanes_at == "docker":
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo("then: flightdeck doctor, and flightdeck practice")
 
@@ -472,7 +526,8 @@ def doctor(
     from .setup import doctor as run_checks
     from .setup import report
 
-    text, status = report(run_checks(_path(config) if config else None, agent=agent.value if agent else None))
+    kind = agent.value if agent else None
+    text, status = report(run_checks(_path(config) if config else None, agent=kind), agent=kind)
     typer.echo(text, nl=False)
     raise typer.Exit(status)
 

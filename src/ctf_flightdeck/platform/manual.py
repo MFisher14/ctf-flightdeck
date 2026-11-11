@@ -69,7 +69,7 @@ _MISSING = object()
 class BoardChallenge:
     challenge: Challenge  # built from challenge.json (status NEW)
     handout: Path  # the challenge directory
-    urls: tuple[str, ...]  # its live instance(s), as origins: scheme://host[:port]
+    urls: tuple[str, ...]  # its live instance(s): web origins, scheme://host[:port], or TCP services, tcp://host:port
 
 
 @dataclass(frozen=True)
@@ -310,15 +310,19 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
     if value is _MISSING:
         return ()
     if not isinstance(value, list):
-        raise BoardError(f'{_show(path)}: "urls" must be a list of origins, like ["http://127.0.0.1:8080"]')
+        raise BoardError(
+            f'{_show(path)}: "urls" must be a list of origins and services, like ["http://127.0.0.1:8080"] or '
+            '["tcp://127.0.0.1:1337"]'
+        )
     urls: list[str] = []
     for i, item in enumerate(value):
-        url = _origin(item)
+        url = _origin(item) or tcp_service(item)
         if url is None:
             raise BoardError(
-                f'{_show(path)}: "urls"[{i}] must be an http:// or https:// origin: scheme://host[:port], '
-                "in printable ASCII with no spaces, and with no path, query or user name; a host that ends "
-                "in a number must be an IPv4 address, four numbers from 0 to 255"
+                f'{_show(path)}: "urls"[{i}] must be an http:// or https:// origin, scheme://host[:port], or a TCP '
+                "service, tcp://host:port (what `nc host port` reaches): in printable ASCII with no spaces, and with "
+                "no path, query or user name; a host that ends in a number must be an IPv4 address, four numbers "
+                "from 0 to 255"
             )
         if url in urls:
             raise BoardError(f'{_show(path)}: "urls" lists {url} twice')
@@ -326,20 +330,27 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
     return tuple(urls)
 
 
-def _origin(value: object) -> str | None:
+def tcp_service(value: object) -> str | None:
+    """`value` as a TCP service, tcp://host:port with a lower-case host, or None if it is not
+    one: the port is required, and the host follows the same rule as an origin's."""
+    return _origin(value, schemes=("tcp",), port=True)
+
+
+def _origin(value: object, *, schemes: tuple[str, ...] = ("http", "https"), port: bool = False) -> str | None:
     """`value` as an origin with a lower-case scheme and host and no trailing "/", or None if
-    it is not an http(s) origin. The tools compare origins, so they must be in one form."""
+    it is not an http(s) origin (one of `schemes`; `port`: one that names its port). The tools
+    compare origins, so they must be in one form."""
     if not isinstance(value, str) or not _printable_ascii(value):
         # urlsplit quietly drops a tab or newline anywhere and spaces and control characters in
         # front, and lower-cases a Kelvin sign to k: the origin would not be the one written
         return None
     try:
         url = urlsplit(value)
-        port = url.port
+        number = url.port
     except ValueError:
         return None
     host = url.hostname  # lower-cased by urlsplit
-    if url.scheme not in ("http", "https") or not host:
+    if url.scheme not in schemes or not host or (port and not number):
         return None
     if url.username is not None or url.password is not None:
         return None
@@ -358,7 +369,7 @@ def _origin(value: object) -> str | None:
         # tools refuse 10.0.0.256 (it would fail only when a lane starts), and 127.1 or
         # 2130706433 is 127.0.0.1 in disguise
         return None
-    return f"{url.scheme}://{host}" + ("" if port is None else f":{port}")
+    return f"{url.scheme}://{host}" + ("" if number is None else f":{number}")
 
 
 def _ipv4(host: str) -> bool:

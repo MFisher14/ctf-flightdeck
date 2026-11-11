@@ -10,6 +10,12 @@ client sent.
 The server listens on the loopback interface only, in a background thread. The responder
 runs on the server's request threads, possibly several at once: keep it quick and
 thread-safe, unless a test means it to be slow (to make the client time out).
+
+With `models`, GET /v1/models lists those ids as an OpenAI-compatible server does, or gives
+that FakeReply (without, it answers 404, as a server that lists none). With `key`, every
+request without `Authorization: Bearer <key>` gets 401, and GET /v1/key answers 200 to one
+with it (OpenRouter's key check); `public_models` lets GET /v1/models through without the
+key, as OpenRouter does.
 """
 
 from __future__ import annotations
@@ -28,6 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 CHAT_PATH = "/v1/chat/completions"
+MODELS_PATH = "/v1/models"
+KEY_PATH = "/v1/key"  # OpenRouter's: what the key in the request is
 STOP_WAIT = 5.0  # seconds leaving the context waits for request threads (a slow responder) in all
 
 _completion_ids = itertools.count(1)
@@ -56,10 +64,17 @@ class FakeModelServer:
         replies: Iterable[dict | FakeReply] = (),
         *,
         responder: Callable[[dict], dict | FakeReply] | None = None,
+        models: Iterable[str] | FakeReply | None = None,
+        key: str | None = None,
+        public_models: bool = False,
     ) -> None:
         self.requests: list[dict] = []  # each {"path": str, "headers": {lower-case name: value}, "json": dict | None}
         self._replies: deque[dict | FakeReply] = deque(replies)
         self._responder = responder
+        # what GET /v1/models lists (or answers); None: 404
+        self.models = models if models is None or isinstance(models, FakeReply) else list(models)
+        self.key = key  # the key every request must carry; None: none needed
+        self.public_models = public_models  # GET /v1/models needs no key
         self._lock = threading.Lock()
         self._httpd = _Server(self)
         self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}/v1"
@@ -83,11 +98,27 @@ class FakeModelServer:
             self._thread.join()
         self._httpd.close(wait=STOP_WAIT)
 
+    def chats(self) -> list[dict]:
+        """The requests made to the chat endpoint (the model calls), in order."""
+        with self._lock:
+            return [r for r in self.requests if urlsplit(r["path"]).path == CHAT_PATH]
+
     def _answer(self, method: str, path: str, headers: dict[str, str], body: object) -> FakeReply:
         record = {"path": path, "headers": headers, "json": body}
         with self._lock:
             self.requests.append(record)
-            if method != "POST" or urlsplit(path).path != CHAT_PATH:
+            route = urlsplit(path).path
+            listing = method == "GET" and route == MODELS_PATH
+            if self.key is not None and headers.get("authorization") != f"Bearer {self.key}" and not (listing and self.public_models):
+                return FakeReply(401, {"error": {"message": "fake model server: no valid key in the request", "code": 401}})
+            if listing and isinstance(self.models, FakeReply):
+                return self.models
+            if listing and self.models is not None:
+                listed = [{"id": model, "object": "model", "created": 0, "owned_by": "fake"} for model in self.models]
+                return FakeReply(200, {"object": "list", "data": listed})
+            if method == "GET" and route == KEY_PATH and self.key is not None:
+                return FakeReply(200, {"data": {"label": "fake key", "usage": 0, "limit": None}})
+            if method != "POST" or route != CHAT_PATH:
                 return FakeReply(404, _error(f"fake model server: nothing at {method} {path}; chat is POST {CHAT_PATH}"))
             if self._replies:
                 return _as_reply(self._replies.popleft())

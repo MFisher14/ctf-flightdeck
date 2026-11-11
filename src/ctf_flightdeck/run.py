@@ -4,11 +4,12 @@ team channel too.
 
 `prepare_run()` checks everything that would stop a run before anything starts, and says
 which: the config, the event profile (any refusal from preflight.check() stops the run), the
-board, the API key, Docker and its image (never pulled), the team folder and the CTFd token.
-Only then does it pull a CTFd board (under the pull policy "confirm", after the player says
-yes). Then the console starts, and the board is released on the console's event loop, so
-lanes run there (the deck's single-thread rule); so do the run's background tasks (CTFd
-waves and solves, the team watcher), which shutdown() stops.
+board, the API key, Docker and its image (never pulled), the team folder, the CTFd token,
+and then the model APIs themselves, asked once whether they take the key and serve the
+ladder's models (apicheck.py). Only then does it pull a CTFd board (under the pull policy
+"confirm", after the player says yes). Then the console starts, and the board is released
+on the console's event loop, so lanes run there (the deck's single-thread rule); so do the
+run's background tasks (CTFd waves and solves, the team watcher), which shutdown() stops.
 
 An event profile's policies, stage by stage (preflight.py):
 - agents: auto or confirm start lanes as usual (starting play is the player's yes); manual
@@ -24,11 +25,13 @@ The profile's flag format overrides the board's, its max_lanes caps the lanes (c
 refuses more), and its team = true asks for the team folder.
 
 A CTFd run also reads the platform's solves (at the start, then every solves_seconds): a
-challenge CTFd lists as solved that this run did not solve is not queued, and in team mode
-it is closed as solved by "your team" (its lanes stop); solo mode cannot close it, so the
-player is warned. The CTFd token is read from the variable event.token_env names and lives
-only in the CTFd client and verifier: it is never printed, logged, or put in a note or an
-error.
+challenge CTFd lists as solved that this run did not solve is not queued, and is closed,
+solo or team mode, as solved by whom CTFd says: "you" (this user's own solve: by hand, or
+in an earlier run), "your team" (a teammate's, in CTFd's teams mode), or "you or your team"
+when CTFd did not say. Its lanes stop, and the solve is a platform event the reports count
+(Deck.platform_solved). The CTFd token is read from the variable event.token_env names and
+lives only in the CTFd client and verifier: it is never printed, logged, or put in a note or
+an error.
 
 The team channel (team.py): mirror() writes our claims, solves and live-box holds to the
 team folder as the deck makes them, and the team watcher applies the teammates' marks. A
@@ -61,7 +64,7 @@ from .config import Config, ConfigError, api_key, fallback_key, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
-from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, load_ids, pull
+from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, Solves, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
     USES_PLATFORM,
@@ -82,9 +85,11 @@ from .transcript import TranscriptLog
 
 WAVE_SECONDS = 120.0  # a CTFd board under the pull policy "auto" is pulled again this often (a new wave)
 SOLVES_SECONDS = 60.0  # a CTFd run reads the platform's solves this often
-YOUR_TEAM = "your team"  # who solved a challenge that CTFd lists as solved and this run did not solve
+# Who solved a challenge that CTFd lists as solved and this run did not solve, as CTFd says:
+YOU = "you"  # this user (CTFd's users mode, or the user's own solve in teams mode)
+YOUR_TEAM = "your team"  # a teammate, in CTFd's teams mode
+YOU_OR_YOUR_TEAM = "you or your team"  # the account, when CTFd did not say whose solve it is
 INSTANCE_POLICIES = ("auto", "confirm", "off")
-SHOWN_NAMES = 5  # challenge names one warning lists; the rest are counted
 
 
 class RunError(Exception):
@@ -125,9 +130,11 @@ class CTFdLink:
     flag_format: str | None
     ids: dict[str, int]  # board id -> CTFd id
     waves: bool  # pull "auto": the board is pulled again every wave_seconds
-    solved: set[int]  # the CTFd ids CTFd last listed as solved for this account
+    solved: set[int]  # the CTFd ids CTFd last listed as solved for this account, and those it answered "already solved"
     wave: int = 1  # the board as first pulled is wave 1
-    warned: set[str] = field(default_factory=set)  # solved on CTFd and told to the player (solo mode)
+    listed: frozenset[int] = frozenset()  # the CTFd ids in CTFd's last list of the account's solves
+    mine: frozenset[int] | None = None  # of those, this user's own as CTFd last said; None: it did not say
+    shared: bool = True  # the account is a team (CTFd's teams mode), as CTFd last said
     answered: set[str] = field(default_factory=set)  # CTFd answered a flag for it "already solved": solved, whatever a lane waits for
     reported: set[str] = field(default_factory=set)  # pull problems told to the player
     problems: dict[str, str] = field(default_factory=dict)  # what failed (a poll, or using its answer) -> the failure shown last
@@ -135,6 +142,20 @@ class CTFdLink:
     def solved_board_ids(self) -> list[str]:
         """The board ids of the challenges CTFd lists as solved."""
         return [cid for cid, number in sorted(self.ids.items()) if number in self.solved]
+
+    def read(self, solves: Solves) -> None:
+        """CTFd's latest list of the account's solves."""
+        self.solved = set(solves.ids)
+        self.listed, self.mine, self.shared = solves.ids, solves.mine, solves.shared
+
+    def who(self, cid: str) -> str:
+        """Who solved a challenge CTFd lists as solved, as far as CTFd says."""
+        number = self.ids.get(cid)
+        if not self.shared:
+            return YOU  # every solve of a user's account is the user's
+        if self.mine is None or number not in self.listed:
+            return YOU_OR_YOUR_TEAM  # CTFd did not say whose (or only answered a flag "already solved")
+        return YOU if number in self.mine else YOUR_TEAM
 
 
 @dataclass
@@ -218,7 +239,7 @@ class Run:
         if state is not None:
             self._watcher.apply(state)
         if self.ctfd is not None:
-            self._apply_solves()
+            self._apply_solves(before_run=True)  # what CTFd listed before the run started
             if self.ctfd.waves:
                 self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
             self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
@@ -290,30 +311,21 @@ class Run:
             held |= {cid for cid, mark in state.claims.items() if mark.who != self.team.me}
         return held
 
-    def _apply_solves(self) -> None:
-        """Close what CTFd lists as solved and this run did not solve: in team mode as solved
-        by "your team" (its lanes stop); solo mode cannot, so the player is told, once. A
-        challenge whose flag the player is submitting by hand waits for their answer."""
+    def _apply_solves(self, *, before_run: bool = False) -> None:
+        """Close what CTFd lists as solved and this run did not solve, solo or team mode, as
+        solved by whom CTFd says (CTFdLink.who): its lanes stop, it leaves the queue, and a
+        platform event records it for the reports. `before_run`: CTFd listed it before the
+        run started. A challenge whose flag the player is submitting by hand waits for their
+        answer (it is then the lane's solve)."""
         link = self.ctfd
         assert link is not None
-        found: list[Challenge] = []
         for cid in link.solved_board_ids():
             ch = self.deck.challenges.get(cid)
-            if ch is None or ch.closed or cid in link.warned:
+            if ch is None or ch.closed:
                 continue
             if self._confirming(cid) and cid not in link.answered:
                 continue
-            if self.deck.config.team:
-                self.deck.teammate_solved(cid, YOUR_TEAM)
-            else:
-                link.warned.add(cid)
-                found.append(ch)
-        if found:
-            self.deck.warn(
-                _solved_in_solo(found),
-                challenge=found[0].id if len(found) == 1 else None,
-                data={"source": "ctfd", "solved": [ch.id for ch in found]},
-            )
+            self.deck.platform_solved(cid, link.who(cid), before_run=before_run)
 
     def _confirming(self, cid: str) -> bool:
         """Whether a lane on it waits for the player to say if a flag they submitted by hand
@@ -384,14 +396,14 @@ class Run:
         while True:
             await asyncio.sleep(every)
             try:
-                solved = await link.client.solved_ids()
+                solves = await link.client.solves()
             except Exception as exc:  # CTFdError, or a bug: say so, and try again later
                 self._ctfd_problem(
                     "solves", f"could not read the solves from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
                 )
                 continue
             link.problems.pop("solves", None)
-            link.solved = solved
+            link.read(solves)
             try:
                 self._apply_solves()
             except Exception as exc:  # a bug: say so, and keep reading
@@ -476,9 +488,13 @@ def prepare_run(options: RunOptions) -> Run:
     team = _team_channel(options, plan)
     profile = plan.profile
     first = token = None
-    if plan.ctfd:  # the last check, then the first thing done: the pull
+    if plan.ctfd:
         assert profile is not None
         token = _ctfd_token(profile)
+    if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
+        _check_apis(config, key, spare_key, plan.notes)
+    if plan.ctfd:  # the last check, then the first thing done: the pull
+        assert token is not None
         first = _pull_first(options, plan, token)
         board = first.board
     assert board is not None
@@ -518,9 +534,11 @@ def prepare_run(options: RunOptions) -> Run:
             profile.flag_format,
             dict(first.ids),
             waves=plan.policies.pull is Policy.AUTO,
-            solved=set(first.solved),
+            solved=set(),
             reported=set(first.problems),
         )
+        if first.solves is not None:
+            link.read(first.solves)
         if plan.platform:
             verifier = CTFdVerifier(profile.url, token, first.ids)
     if verifier is not None:
@@ -580,6 +598,23 @@ def prepare_run(options: RunOptions) -> Run:
     if isinstance(verify, _OnCTFd):
         verify.solved = run._apply_solves
     return run
+
+
+def _check_apis(config: Config, key: str | None, spare_key: str | None, notes: list[str]) -> None:
+    """Ask the model APIs the lanes will call, before anything starts (apicheck.py): a key
+    one refuses, a model it does not serve, or nothing answering stops the run here, instead
+    of ending every lane at its first call. What could not be checked is a note."""
+    from .apicheck import Api, CheckFailed, check
+
+    apis = [Api("api", config.api.provider, config.api.base_url, key, config.api.key_env, config.models)]
+    spare = config.fallback
+    if spare is not None:
+        apis.append(Api("fallback", spare.provider, spare.base_url, spare_key, spare.key_env, spare.ladder))
+    for api in apis:
+        try:
+            notes += check(api, source=config.source)
+        except CheckFailed as exc:
+            raise RunError(str(exc)) from None
 
 
 def _check_options(options: RunOptions) -> None:
@@ -823,7 +858,7 @@ class _FirstPull:
     board: Board
     folder: Path
     ids: Mapping[str, int]  # board id -> CTFd id
-    solved: frozenset[int]  # CTFd ids CTFd lists as solved for the account (empty if they could not be read)
+    solves: Solves | None  # what CTFd lists as solved for the account, and whose; None if it could not be read
     problems: tuple[str, ...]  # the challenges left out, and why
 
 
@@ -842,6 +877,11 @@ def _ctfd_token(profile: EventProfile) -> str:
             f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
             "keys file or export it (CTFd: Settings, Access Tokens), then start play again"
         )
+    assert profile.url is not None  # check() refuses a CTFd profile without one
+    try:
+        check_site(profile.url, value)
+    except ValueError as exc:  # a token no header can carry; the message never shows it
+        raise RunError(f"{exc} ({name}, the variable event.token_env names)") from None
     return value
 
 
@@ -867,7 +907,7 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
         if not options.confirm(f"Pull the board from {url} into {where}?"):
             raise RunError("you said no to the pull, so nothing was pulled and the run did not start")
     try:
-        result, solved, unread = _sync(_pull_and_solves(client, folder, profile.name, profile.flag_format))
+        result, solves, unread = _sync(_pull_and_solves(client, folder, profile.name, profile.flag_format))
     except (CTFdError, BoardError) as exc:
         raise RunError(f"could not pull the board from CTFd: {exc}") from None
     except OSError as exc:
@@ -895,20 +935,20 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
             'pull is "confirm" in the event profile: flightdeck pulled the board once, after you said yes, and pulls no '
             "later waves; start play again to pull new challenges"
         )
-    return _FirstPull(result.board, folder, ids, frozenset(solved), tuple(result.problems))
+    return _FirstPull(result.board, folder, ids, solves, tuple(result.problems))
 
 
 async def _pull_and_solves(
     client: CTFdClient, folder: Path, event: str, flag_format: str | None
-) -> tuple[Pull, set[int], str | None]:
-    """Pull the board, then read the solves (the reason they could not be read, or None).
+) -> tuple[Pull, Solves | None, str | None]:
+    """Pull the board, then read the solves (None, and the reason they could not be read).
     The client is closed at the end: it is used on this loop only."""
     async with client:
         result = await pull(client, folder, event=event, flag_format=flag_format)
         try:
-            return result, await client.solved_ids(), None
+            return result, await client.solves(), None
         except CTFdError as exc:
-            return result, set(), str(exc)
+            return result, None, str(exc)
 
 
 def _sync(coro: Coroutine[Any, Any, Any]) -> Any:
@@ -929,16 +969,6 @@ def _reason(exc: BaseException) -> str:
     if isinstance(exc, OSError):
         return f"cannot write the board ({exc.strerror or type(exc).__name__})"
     return f"{type(exc).__name__}: {exc}"
-
-
-def _solved_in_solo(challenges: Sequence[Challenge]) -> str:
-    names = [untrusted(ch.name, one_line=True) for ch in challenges]
-    shown = ", ".join(names[:SHOWN_NAMES]) + (f" and {len(names) - SHOWN_NAMES} more" if len(names) > SHOWN_NAMES else "")
-    it = "it" if len(names) == 1 else "them"
-    return (
-        f"CTFd lists {shown} as solved for your account (by you or your team), and this run did not solve {it}: "
-        f"solo mode leaves {it} open and unqueued, so kill any lane on {it} (k); team mode (--team) stops such lanes itself"
-    )
 
 
 def _show(value: object) -> str:
@@ -1016,6 +1046,18 @@ def _environment() -> dict[str, str]:
 
 def _check_image_has(image: str, program: str) -> None:
     """A docker lane runs the agent's CLI inside its container, so the lane image must have it."""
+    problem = image_lacks(image, program)
+    if problem is not None:
+        raise RunError(
+            f"{problem}: run them on this machine with --host, or build an image that has {program} and set "
+            "[lanes] image in your config"
+        )
+
+
+def image_lacks(image: str, program: str) -> str | None:
+    """Why `program` cannot run in the lane image `image` (it is not on its PATH, or docker did
+    not say), or None when it is there. play --agent and doctor --agent ask the same way: a
+    throwaway container of the image, never pulled, with no network."""
     docker = shutil.which("docker") or "docker"
     try:
         probe = subprocess.run(
@@ -1023,12 +1065,10 @@ def _check_image_has(image: str, program: str) -> None:
             capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:
-        raise RunError(f"docker did not answer whether the lane image {image} has {program} (within 120 s)") from None
+        return f"docker did not answer whether the lane image {image} has {program} (within 120 s), so {program} lanes cannot run in Docker"
     if probe.returncode != 0:
-        raise RunError(
-            f"the lane image {image} has no {program} CLI, so {program} lanes cannot run in Docker: run them on this "
-            f"machine with --host, or build an image that has {program} and set [lanes] image in your config"
-        )
+        return f"the lane image {image} has no {program} CLI, so {program} lanes cannot run in Docker"
+    return None
 
 
 def _check_docker(image: str) -> None:

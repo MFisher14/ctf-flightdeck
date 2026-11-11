@@ -3,20 +3,26 @@
 Both exist so a new player gets from install to a running console without reading the
 architecture (the v0.1.0 requirement). Neither ever asks for, reads out or stores the API
 key itself: the config names the environment variable that holds it.
+
+init checks each answer as it is given (the *_answer functions: a bad one is asked again
+at a terminal, and named by its option away from one), then checks the whole config in
+memory before writing it, so an error names the file asked for and nothing half-made is
+ever written. No message shows an answer: one may be a key typed in the wrong place.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__
+from .apicheck import LOCAL_HOSTS
 from .pricing import Price
 
 PROVIDERS = {
@@ -25,8 +31,10 @@ PROVIDERS = {
     "local": ("http://127.0.0.1:11434/v1", ""),  # Ollama's OpenAI-compatible endpoint; no key
     "mlx": ("http://127.0.0.1:8080/v1", ""),  # an MLX server on this Mac (mlx_lm.server's default port); no key
 }
+PROVIDER_CHOICES = ("openrouter", "anthropic", "openai", "local", "mlx", "custom")
+PROVIDER_ALIASES = {"ollama": "local"}  # the local provider is Ollama's endpoint
 LOCAL_PROVIDERS = ("local", "mlx")  # nothing to spend: no dollar cap
-LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+RUNTIMES = ("docker", "host")
 
 # `init --provider anthropic`: the Anthropic Messages API (config [api] provider = "anthropic").
 ANTHROPIC = ("https://api.anthropic.com", "ANTHROPIC_API_KEY")
@@ -77,7 +85,7 @@ class Answers:
 
 def render(answers: Answers) -> str:
     """The config file for `answers`, with comments a player can follow."""
-    models = ", ".join(f'"{m}"' for m in answers.models)
+    models = ", ".join(_toml(m) for m in answers.models)
     token_cap = str(answers.token_cap) if answers.token_cap else "false"
     dollar_cap = f"{answers.dollar_cap:g}" if answers.dollar_cap else "false"
     provider = (
@@ -88,8 +96,8 @@ def render(answers: Answers) -> str:
         "\n"
         "[api]\n"
         + provider
-        + f'base_url = "{answers.base_url}"\n'
-        f'key_env = "{answers.key_env}"   # the environment variable holding your key (never the key)\n'
+        + f"base_url = {_toml(answers.base_url)}\n"
+        f"key_env = {_toml(answers.key_env)}   # the environment variable holding your key (never the key)\n"
         "\n"
         "[models]\n"
         f"ladder = [{models}]   # weakest first; escalation moves right\n"
@@ -98,7 +106,7 @@ def render(answers: Answers) -> str:
         + _fallback(answers.fallback)
         + "[lanes]\n"
         f"max_lanes = {answers.max_lanes}\n"
-        f'runtime = "{answers.runtime}"\n'
+        f"runtime = {_toml(answers.runtime)}\n"
         + (f'image = "{_lane_image()}"   # build it with `flightdeck image build`\n' if answers.runtime == "docker" else "")
         +
         f"token_cap = {token_cap}\n"
@@ -107,12 +115,17 @@ def render(answers: Answers) -> str:
     )
 
 
+def _toml(text: str) -> str:
+    """`text` as a TOML basic string: a quote or backslash in it cannot end the string early."""
+    return json.dumps(text, ensure_ascii=False)
+
+
 def _prices(prices: Mapping[str, Price]) -> str:
     if not prices:
         return ""
     out = "# Dollars per million tokens: input, output, and cached_input for cache reads (a cache write counts as input).\n"
     for model, price in prices.items():
-        out += f'[prices."{model}"]\ninput = {price.input:g}\noutput = {price.output:g}\n'
+        out += f"[prices.{_toml(model)}]\ninput = {price.input:g}\noutput = {price.output:g}\n"
         if price.cached_input is not None:
             out += f"cached_input = {price.cached_input:g}\n"
         out += "\n"
@@ -122,16 +135,85 @@ def _prices(prices: Mapping[str, Price]) -> str:
 def _fallback(spare: FallbackAnswers | None) -> str:
     if spare is None:
         return ""
-    ladder = ", ".join(f'"{m}"' for m in spare.ladder)
+    ladder = ", ".join(_toml(m) for m in spare.ladder)
     return (
         "[fallback]\n"
         + (f"# {spare.comment}\n" if spare.comment else "")
-        + f'provider = "{spare.provider}"\n'
-        f'base_url = "{spare.base_url}"\n'
-        f'key_env = "{spare.key_env}"\n'
+        + f"provider = {_toml(spare.provider)}\n"
+        f"base_url = {_toml(spare.base_url)}\n"
+        f"key_env = {_toml(spare.key_env)}\n"
         f"ladder = [{ladder}]   # one per [models] ladder entry, in order\n"
         "\n"
     )
+
+
+# ---------------------------------------------------------------------- init's answers, one at a time
+
+
+class AnswerError(ValueError):
+    """An answer init cannot use. The message says what is wanted and never shows the answer."""
+
+
+def provider_answer(text: str) -> str:
+    """The provider asked for: one of PROVIDER_CHOICES ("ollama" is the local provider)."""
+    name = text.strip().lower()
+    name = PROVIDER_ALIASES.get(name, name)
+    if name not in PROVIDER_CHOICES:
+        raise AnswerError("choose one of openrouter, anthropic, openai, local (Ollama), mlx or custom")
+    return name
+
+
+def models_answer(text: str) -> tuple[str, ...]:
+    """Model ids, weakest first, comma-separated: at least one, each once, none with spaces."""
+    from .config import _plain
+
+    ladder = tuple(part.strip() for part in text.split(",") if part.strip())
+    if not ladder:
+        raise AnswerError("give at least one model id, weakest first, comma-separated (like vendor/small,vendor/big)")
+    for n, model in enumerate(ladder, 1):
+        if not _plain(model):
+            raise AnswerError(f"model id {n} has a space or a control character in it; a model id has none")
+        if model in ladder[: n - 1]:
+            raise AnswerError(f"model id {n} repeats model id {ladder.index(model) + 1}; give each model once")
+    return ladder
+
+
+def runtime_answer(text: str) -> str:
+    """Where lanes run: docker or host."""
+    runtime = text.strip().lower()
+    if runtime not in RUNTIMES:
+        raise AnswerError("give docker (a container per lane) or host (lanes on this machine)")
+    return runtime
+
+
+def key_env_answer(text: str, *, empty: bool = True) -> str:
+    """The name of the variable that will hold the key ("" for none, when `empty`), never the key."""
+    from .config import _is_env_name
+
+    name = text.strip()
+    if not name and empty:
+        return ""
+    if not _is_env_name(name):
+        raise AnswerError(
+            "give the name of an environment variable, like OPENROUTER_API_KEY (upper-case letters, digits and _), "
+            "not the key itself" + (", or leave it empty for a server that needs no key" if empty else "")
+        )
+    return name
+
+
+def base_url_answer(text: str, *, anthropic: bool = False) -> str:
+    """An API's base URL: http(s), a host, no user name or password, no spaces."""
+    from .config import _plain, _split_url
+
+    url = text.strip()
+    parts = _split_url(url) if url and _plain(url) else None
+    if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+        raise AnswerError("give the API's address: http:// or https://, a host, and its path (often ending in /v1)")
+    if parts.username is not None or parts.password is not None:
+        raise AnswerError("give the address without a user name or password: the key goes in its environment variable")
+    if anthropic and parts.path.rstrip("/").endswith("/v1"):
+        raise AnswerError("leave /v1 off: the Anthropic SDK adds /v1/messages itself")
+    return url
 
 
 def anthropic_fallback(models: Sequence[str]) -> FallbackAnswers | None:
@@ -154,14 +236,14 @@ def _lane_image() -> str:
 
 
 def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
-    """Validate the config by loading it, then write it. Refuses to overwrite unless force."""
-    from .config import load_config
+    """Check the config in memory, then write it. Refuses to overwrite unless force.
+
+    A ConfigError names `path` and what is wrong; nothing is written before the check, so
+    a key typed in the wrong place never reaches a file."""
+    from .config import parse_config
 
     text = render(answers)
-    with tempfile.TemporaryDirectory() as tmp:
-        trial = Path(tmp) / "config.toml"
-        trial.write_text(text, encoding="utf-8")
-        load_config(trial)  # ConfigError says what is wrong before anything is written
+    parse_config(text, path)
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,10 +260,25 @@ class Check:
     essential: bool = True  # a failing essential check makes doctor exit 1
 
 
+API_CHECKS = ("api key", "fallback key", "model server", "fallback server")  # what only flightdeck's own lanes use
+
+
 def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ,
            agent: str | None = None) -> list[Check]:
     """Every check, in order. Never prints or returns the API key. `agent` ("claude" or
-    "codex") also checks that coding-agent CLI and its credential (play --agent)."""
+    "codex") also checks that coding-agent CLI and its credential, and in the docker runtime
+    that the lane image has it, as play --agent does; the [api] checks are then warnings,
+    since that CLI's lanes never use the [api] key or server."""
+    from dataclasses import replace
+
+    checks = _checks(config_path, environ, agent)
+    if agent is None:
+        return checks
+    why = f" (only flightdeck's own lanes use it; {agent} lanes use {agent}'s own credential and models)"
+    return [replace(c, essential=False, detail=c.detail + ("" if c.ok else why)) if c.name in API_CHECKS else c for c in checks]
+
+
+def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | None) -> list[Check]:
     from .config import ConfigError, default_config_path, load_config
 
     checks: list[Check] = []
@@ -207,16 +304,22 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
                                  keys_file_checked=bool(config.api.key_env))
     if config is not None:
         if config.api.provider == "openai":
-            checks += _local_server_check(config.api.base_url)
+            checks += _local_server_check(config.api.base_url, config.models, source=config.source)
         spare = config.fallback
         if spare is not None and spare.provider == "openai":
-            checks += _local_server_check(spare.base_url, name="fallback server")
+            checks += _local_server_check(spare.base_url, spare.ladder, name="fallback server", source=config.source)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
+    found = False
     if agent is not None:
-        checks += _agent_checks(agent, config, environ)
-    runtime = config.lanes.runtime if config is not None else "docker"
-    checks += _docker_checks(config.lanes.image if config is not None else None, essential=runtime == "docker")
+        agent_checks = _agent_checks(agent, config, environ)
+        found = any(c.name == "agent" and c.ok for c in agent_checks)
+        checks += agent_checks
+    docker = _docker_checks(config)
+    checks += docker
+    image_there = any(c.name == "lane image" and c.ok for c in docker)
+    if agent is not None and found and image_there and config is not None and config.lanes.runtime == "docker":
+        checks.append(_agent_image_check(agent, config))  # play --agent runs the CLI inside that image
     try:
         columns, lines = os.get_terminal_size()
     except OSError:
@@ -250,6 +353,22 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
     checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
     return checks
+
+
+def _agent_image_check(kind: str, config) -> Check:
+    """A docker lane runs the agent's CLI inside the lane image: the probe play runs (it starts
+    a throwaway container of the image, with no network)."""
+    from .run import image_lacks
+
+    image = config.lanes.image
+    problem = image_lacks(image, kind)
+    if problem is None:
+        return Check("agent image", True, f"{image} has {kind}")
+    return Check(
+        "agent image", False, problem,
+        f"play with --host (lanes on this machine), or build an image FROM {image} that installs {kind}, and set "
+        f"[lanes] image in {config.source} to it",
+    )
 
 
 def _l1_check(pack: Path) -> Check:
@@ -286,12 +405,16 @@ def _key_check(name: str, variable: str, environ: Mapping[str, str], none_needed
     return checks
 
 
-def _local_server_check(base_url: str, *, name: str = "model server") -> list[Check]:
+def _local_server_check(base_url: str, ladder: Sequence[str], *, name: str = "model server",
+                        source: Path | None = None) -> list[Check]:
     """For an OpenAI-compatible API on this machine (Ollama, an MLX server), check that it
-    answers. A remote API is never contacted here."""
+    answers and, when it lists its models, that it serves the ladder's. A remote API is never
+    contacted here: `flightdeck play` asks it, with the key, before the console starts."""
     from urllib.parse import urlsplit
 
     import httpx
+
+    from .apicheck import listed_models, missing, not_listed
 
     host = urlsplit(base_url).hostname or ""
     if host not in LOCAL_HOSTS:
@@ -306,8 +429,22 @@ def _local_server_check(base_url: str, *, name: str = "model server") -> list[Ch
                       f"start your local model server (it must speak the OpenAI API with tool calling), "
                       f"or check {table} base_url")]
     ok = answer.status_code < 400
-    return [Check(name, ok, f"{shown} answered {answer.status_code}",
-                  f"check the server's address and port in {table} base_url")]
+    listed = None
+    if answer.is_success:
+        try:
+            listed = listed_models(answer.json())
+        except (ValueError, RecursionError):
+            listed = None
+    if listed is None:
+        return [Check(name, ok, f"{shown} answered {answer.status_code}",
+                      f"check the server's address and port in {table} base_url")]
+    gone = missing(ladder, listed)
+    if gone:
+        key = "models.ladder" if table == "[api]" else "fallback.ladder"
+        where = f" in {source}" if source is not None else ""
+        return [Check(name, False, f"{_shown(base_url)} does not serve {not_listed(gone, listed)}",
+                      f"pull the model into the server (for Ollama: ollama pull NAME), or change {key}{where} to ids it serves")]
+    return [Check(name, True, f"{shown} serves {', '.join(ladder)}")]
 
 
 def _shown(url: str) -> str:
@@ -320,24 +457,37 @@ def _shown(url: str) -> str:
         return "(the [api] base_url)"
 
 
-def _docker_checks(image: str | None, *, essential: bool) -> list[Check]:
+def _docker_checks(config) -> list[Check]:
+    """Docker and the lane image, for a config whose lanes run in Docker. For one whose lanes
+    run on this machine, Docker is only a warning and the image is not looked at: only
+    `play --docker` would need them."""
     from .agent.workspace import docker_unavailable
     from .lane import IMAGE
 
+    where = f"in {config.source}" if config is not None and config.source is not None else "in your config"
     reason = docker_unavailable()
+    if config is not None and config.lanes.runtime == "host":
+        if reason:
+            return [Check("docker", False, f"{reason}; your config runs lanes on this machine, so only `play --docker` "
+                                           "needs Docker", essential=False)]
+        return [Check("docker", True, "running (your config runs lanes on this machine; `play --docker` would use it)")]
     if reason:
-        return [Check("docker", False, reason, "start Docker, or use the host runtime (--host)", essential)]
+        return [Check("docker", False, reason, f'install or start Docker, or run lanes on this machine: set runtime = "host" '
+                                               f"under [lanes] {where}, or pass --host to play or practice")]
     out = [Check("docker", True, "running")]
-    if image is not None:
+    if config is not None:
+        image = config.lanes.image
         docker = shutil.which("docker") or "docker"
         found = subprocess.run([docker, "image", "inspect", image], capture_output=True).returncode == 0
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
-        out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`", essential))
+        out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
     return out
 
 
-def report(checks: Sequence[Check]) -> tuple[str, int]:
-    """The checks as lines for the terminal, and the exit status (1 if an essential check failed)."""
+def report(checks: Sequence[Check], *, agent: str | None = None) -> tuple[str, int]:
+    """The checks as lines for the terminal, and the exit status (1 if an essential check
+    failed). `agent`: what was checked was for that coding-agent CLI's lanes, so the next
+    step is practice with it."""
     lines = []
     for check in checks:
         mark = "ok  " if check.ok else ("FAIL" if check.essential else "warn")
@@ -345,5 +495,6 @@ def report(checks: Sequence[Check]) -> tuple[str, int]:
         if not check.ok and check.fix:
             lines.append(f"     fix: {check.fix}")
     failed = any(not c.ok and c.essential for c in checks)
-    lines.append("" if failed else "Ready. Try `flightdeck practice`.")
+    practice = "flightdeck practice" + (f" --agent {agent}" if agent else "")
+    lines.append("" if failed else f"Ready. Try `{practice}`.")
     return "\n".join(lines).rstrip() + "\n", 1 if failed else 0
