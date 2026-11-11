@@ -288,6 +288,7 @@ class ChallengeScore:
     interventions: int
     wrong_submissions: int
     teammate: str | None = None  # team mode: the teammate who solved it
+    overruled: bool = False  # the run took a flag for it, and the answers file rejects every one it took
 
     @property
     def solved(self) -> bool:
@@ -488,7 +489,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
         first: _Submit | None = None
         checked: str | None = None
         wrong = 0
+        took = False  # the run took a flag for it (accepted, by the platform or the player)
         for sub in submits.get(ch.id, []):
+            took = took or sub.correct
             verdict, how = sub.correct, sub.by
             if verifier is not None:
                 expected = verifier(ch.id, sub.flag)
@@ -521,6 +524,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             interventions=iv_by_challenge[ch.id],
             wrong_submissions=wrong,
             teammate=teammates.get(ch.id) if first is None else None,
+            overruled=took and first is None,
         )
     solved = tuple(sorted(firsts, key=lambda cid: (firsts[cid].at, firsts[cid].line)))  # log order on a time tie
     unpriced = tuple(lane for lane, acc in lanes.items() if acc.dollars is None)
@@ -739,6 +743,8 @@ def _result(row: ChallengeScore, lanes: Mapping[str, LaneScore]) -> str:
         return f"solved {who}" + (f" {mark}" if mark else "")
     if row.teammate:
         return f"teammate {_one(row.teammate)}"
+    if row.overruled:  # whatever state its lanes ended in: the run thought it was solved
+        return "tried (flag rejected by answers)"
     if row.lanes:
         last = lanes[row.lanes[-1]].state if row.lanes[-1] in lanes else None
         return f"tried ({_one(last) if last else 'open'})"

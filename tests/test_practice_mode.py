@@ -557,12 +557,16 @@ def test_scoring_reads_only_the_log_so_a_later_score_is_the_same(played):
     assert score(copy, load_board(played.folder)) == first
 
 
-def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path):
+@pytest.mark.parametrize("fork", [False, True], ids=["one lane", "a fork after it"])
+def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path, fork):
     """Played on a board with no answers (the player confirms each hand submit), then scored
     against the archive's answers: a flag the player wrongly accepted does not count, and a
-    right one they rejected does, each with a note."""
+    right one they rejected does, each with a note. The card's row says the solve was
+    overruled, whichever state the lanes on it ended in (solved, or stopped by the solve)."""
     played = Played(tmp_path, answers=None)
     deck = played.at(0).deck
+    if fork:
+        deck.apply(iv.Fork("L01", "try the other cipher"))  # L03, on alpha: stopped when L01 "solves" it
     deck.report("L01", TurnReport(action="guess", flag=WRONG))
     deck.apply(iv.Approve("L01"))  # submit by hand...
     played.at(50)
@@ -576,6 +580,7 @@ def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path):
     as_run = score(path, played.board)  # the same board, with no answers: the run's verdicts stand
     assert as_run.solved == ("alpha",) and as_run.per_challenge["alpha"].checked == "player"
     assert as_run.per_challenge["bravo"].wrong_submissions == 1
+    assert not any(row.overruled for row in as_run.per_challenge.values())
 
     (played.folder / "answers.sha256.json").write_text(json.dumps({cid: sha(flag) for cid, flag in FLAGS.items()}))
     judged = score(path, load_board(played.folder))
@@ -584,6 +589,12 @@ def test_the_answers_file_is_the_judge_when_the_board_has_one(tmp_path):
     assert judged.per_challenge["alpha"].wrong_submissions == 1 and judged.wrong_submissions == 1
     assert "The answers file rejects a flag the run took for Alpha Gate, so it is not counted." in judged.notes
     assert "The answers file accepts a flag the run was told was wrong for Bravo Box, so it is counted." in judged.notes
+    alpha = judged.per_challenge["alpha"]
+    assert (alpha.overruled, judged.per_challenge["bravo"].overruled) == (True, False)
+    assert alpha.lanes == (("L01", "L03") if fork else ("L01",))
+    assert [judged.lanes[lane].state for lane in alpha.lanes] == (["solved", "stopped"] if fork else ["solved"])
+    rows = {cells[0]: cells[3] for cells in table(scorecard(judged))}
+    assert rows["Alpha Gate"] == "tried (flag rejected by answers)" and rows["Bravo Box"] == "solved L02"
 
 
 def test_a_verdict_for_a_challenge_the_answers_file_does_not_cover_stands(tmp_path):
