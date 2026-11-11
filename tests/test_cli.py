@@ -33,6 +33,7 @@ from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.core.model import COURSE_ALERTS
 from ctf_flightdeck.mock import scenarios, screenshots
 from ctf_flightdeck.mock.scenarios import ReleaseAt
+from fake_ctfd import FLAG_FORMAT, TOKEN, FakeCTFd, sample
 
 ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
@@ -293,6 +294,82 @@ def test_team_and_docker_switch_a_solo_scenario_to_team(opened):
     result = invoke("mock", "--scenario", "wave", "--team", "--docker")
     assert result.exit_code == 0, result.output
     assert [(c.team, c.containerized) for c in opened] == [(True, True)]
+
+
+# ---------------------------------------------------------------------- play: an event (the fake CTFd, no lanes start)
+
+PLAY_TOKEN_VAR = "FLIGHTDECK_TEST_CTFD_TOKEN"
+
+
+def ctfd_event(tmp_path: Path, url: str, *, pull: str = "auto") -> list[str]:
+    """`play` arguments for a CTFd event on the fake CTFd at `url`: lanes on this machine,
+    the board pulled into tmp_path/board."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[api]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = ""\n[models]\nladder = ["fake/small"]\n'
+        '[prices."fake/small"]\ninput = 1.0\noutput = 2.0\n'
+        f'[lanes]\nmax_lanes = 2\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+    )
+    profile = tmp_path / "event.toml"
+    profile.write_text(
+        f'[event]\nname = "Fake CTF"\nplatform = "ctfd"\nurl = "{url}"\ntoken_env = "{PLAY_TOKEN_VAR}"\n'
+        f"flag_format = '{FLAG_FORMAT}'\n"
+        '[rules]\nai_allowed = true\nplatform_automation = true\nlive_targets = "allowed"\n'
+        f'[policies]\npull = "{pull}"\n'
+    )
+    return ["play", str(tmp_path / "board"), "--event", str(profile), "--config", str(cfg)]
+
+
+def test_play_help_shows_the_event_and_team_options():
+    out = flat(invoke("play", "--help").output)
+    assert "--event EVENT.toml The event profile: play by the event's rules and policies (flightdeck preflight checks it)." in out
+    assert "--team-dir FOLDER Team mode through the folder your teammates share (flightdeck team init makes it)." in out
+    assert "--handle NAME Your name in the team folder (default: your login name)." in out
+    assert "--team --solo <bool> Team or solo mode (default: the event profile's, else solo)." in out
+
+
+def test_play_asks_before_it_pulls_under_pull_confirm_and_no_starts_nothing(tmp_path, monkeypatch, opened):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
+    with FakeCTFd(sample()) as fake:
+        args = ctfd_event(tmp_path, fake.base_url, pull="confirm")
+        no = runner.invoke(cli.app, args, input="n\n")
+        assert fake.requests == []
+        yes = runner.invoke(cli.app, args, input="y\n")
+    question = f"Pull the board from {fake.base_url} into {tmp_path / 'board'}? [y/N]:"
+    assert no.exit_code == 2 and question in no.output
+    assert "flightdeck: you said no to the pull, so nothing was pulled and the run did not start" in no.stderr
+    assert yes.exit_code == 0, yes.output
+    assert question in yes.output and "flightdeck: board: 4 challenges from CTFd at" in yes.stderr
+    assert "run log: " in yes.stdout and len(opened) == 1  # the console opened once, after the yes
+    assert TOKEN not in no.output and TOKEN not in yes.output
+
+
+def test_play_not_at_a_terminal_cannot_ask_before_a_pull_and_says_what_to_do(tmp_path, monkeypatch, opened):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
+    with FakeCTFd(sample()) as fake:
+        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, pull="confirm"))
+        assert fake.requests == []
+    assert result.exit_code == 2 and opened == []
+    assert 'cannot ask here (not at a terminal): start play at a terminal, or set pull = "auto"' in result.stderr
+
+
+def test_play_with_a_token_ctfd_refuses_says_why_and_never_shows_it(tmp_path, monkeypatch, opened):
+    monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
+    with FakeCTFd(sample(), token="the-token-this-ctfd-wants") as fake:
+        result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url))
+    assert result.exit_code == 2 and opened == []
+    assert "flightdeck: could not pull the board from CTFd: " in result.stderr
+    assert "refused the API token (HTTP 401)" in result.stderr and TOKEN not in result.output
+
+
+def test_play_with_neither_a_board_nor_an_event_says_what_to_give(tmp_path, monkeypatch, opened):
+    ctfd_event(tmp_path, "http://127.0.0.1:9")  # writes the config
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "config.toml"))
+    result = invoke("play")
+    assert result.exit_code == 2 and opened == []
+    assert "name the board: `flightdeck play BOARD` (a folder of challenge folders), or give an event profile" in result.stderr
 
 
 # ---------------------------------------------------------------------- packaging
