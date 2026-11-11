@@ -5,8 +5,11 @@ A lane runs the player's own coding-agent CLI in the lane's workspace and turns 
 event stream (one JSON object per line on stdout) into the deck's reports: each tool call
 and its result is a step, the CLI's token counts and cost are the lane's, and anything in
 the agent's text or in a tool's output that matches the flag format is a candidate flag,
-which the player approves as with any lane. The player's messages and flightdeck's notes
-go to the CLI as user messages. Same LaneDriver protocol as AgentDriver (agent/driver.py).
+which the player approves as with any lane. The flag search runs off the event loop (it
+also runs the console and every other lane), in windows (l1.runner.scan), for at most
+SCAN_SECONDS per output: no flag format and no output can hold the console up. The
+player's messages and flightdeck's notes go to the CLI as user messages. Same LaneDriver
+protocol as AgentDriver (agent/driver.py).
 
 Claude Code runs as one process per lane (`--input-format stream-json`: one JSON line per
 user message on stdin). Codex runs one `codex exec` process per turn: the prompt on stdin,
@@ -84,6 +87,7 @@ from ..core.model import (
     Pending,
     PendingKind,
 )
+from ..l1.runner import scan
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
@@ -123,6 +127,7 @@ MAX_IDLE_TURNS = 3  # turns in a row that did nothing before the lane gives up
 MAX_FILES_PER_STEP = 50
 MAX_NEW_FLAGS = 10  # new candidates raised from one step; a decoy list must not flood the player
 FLAG_SCAN = 1024 * 1024  # characters of one output scanned for flags
+SCAN_SECONDS = 5.0  # the flag search over one output (off the event loop) stops after this long, with a note
 MAX_PROBLEMS = 20  # unreadable-line notes per process
 HOLD_ENTRIES = 5000
 HOLD_DEPTH = 64
@@ -1311,12 +1316,36 @@ class _Run:
         self.pending_tokens = self.pending_cached = 0
         return tokens, cached
 
-    def flags_in(self, text: str) -> list[str]:
+    async def search(self, text: str) -> list[str]:
+        """Every match of the flag format in `text`, in order. The search runs in a thread
+        and in windows (l1.runner.scan): one search over a long line with a format like
+        \\w+\\{...\\} takes time that grows with the square of the line, and the event loop
+        it would hold also runs the console and every other lane. It stops after
+        SCAN_SECONDS; what was not searched is said on the lane."""
+        if not text.strip():
+            return []
+        size = len(text)
+        if size > FLAG_SCAN:
+            text = text[:FLAG_SCAN]
+            self.note(f"an output of {size:,} characters: only its first {FLAG_SCAN:,} were searched for flags")
+        found: dict[str, None] = {}
+        done = await asyncio.to_thread(scan, text, self.driver.flag_re, time.monotonic() + SCAN_SECONDS, found)
+        if not done:
+            self.note(
+                f"the flag search over one output stopped after {SCAN_SECONDS:g} s, before its end: the flag format is "
+                "slow on it (an unbounded repeat such as \\w+ is; bound it, like \\w{1,64})"
+            )
+        return list(found)
+
+    async def flags_in(self, text: str) -> list[str]:
         """New candidates in `text`: matches of the flag format this lane has not raised."""
+        return self.new_flags(await self.search(text))
+
+    def new_flags(self, matches: Sequence[str]) -> list[str]:
+        """The matches this lane has not raised, at most MAX_NEW_FLAGS; they count as raised now."""
         found: list[str] = []
         skipped = 0
-        for match in self.driver.flag_re.finditer(text[:FLAG_SCAN]):
-            flag = match.group(0)
+        for flag in matches:
             if not flag or flag in self.flags or flag in found:
                 continue
             if len(found) >= MAX_NEW_FLAGS:
@@ -1335,7 +1364,7 @@ class _Run:
         if files:
             known = {change.path for change in changed}
             changed += tuple(change for change in files if change.path not in known)
-        flags = self.flags_in(text)
+        flags = await self.flags_in(text)
         output = _clip(prefix + untrusted(text).strip(), OUTPUT_CHARS)
         self.steps += 1
         tokens, cached = self.take_tokens()
@@ -1344,11 +1373,13 @@ class _Run:
         for flag in flags[1:]:  # more candidates in one output: each is its own approval
             self.report(TurnReport(turn=False, flag=flag))
 
-    def text(self, text: str, *, show: bool) -> None:
+    async def text(self, text: str, *, show: bool) -> None:
         """What the agent wrote: candidates in it, and (show) its first line on the lane."""
         if text.strip():
             self.said = text
-        flags = self.flags_in(text)
+        self.report_text(text, await self.flags_in(text), show=show)
+
+    def report_text(self, text: str, flags: list[str], *, show: bool) -> None:
         if flags:
             self.steps += 1  # a turn that found a candidate did something
         first = _first_line(text) if show else ""
@@ -1462,7 +1493,7 @@ class _ClaudeRun(_Run):
                 return
             for block in _blocks(message.get("content")):
                 if block.get("type") == "text":
-                    self.text(_str(block.get("text")), show=False)
+                    await self.text(_str(block.get("text")), show=False)
                 elif block.get("type") == "tool_use":
                     args = block.get("input")
                     self.in_flight[_str(block.get("id"))] = self.action(_str(block.get("name")), args if isinstance(args, dict) else {})
@@ -1476,7 +1507,7 @@ class _ClaudeRun(_Run):
                     error = block.get("is_error") is True
                     await self.step(action, _result_text(block.get("content")), prefix="error: " if error else "")
         elif kind == "result":
-            self.result(proc, event, current)
+            await self.result(proc, event, current)
         elif kind == "system":
             if event.get("subtype") == "init" and current:
                 self.init(event)
@@ -1523,8 +1554,17 @@ class _ClaudeRun(_Run):
             text += f"; it offers tools flightdeck did not ask for: {', '.join(_one_line(t, 60) for t in extra[:10])}"
         self.note(text)
 
-    def result(self, proc: _Proc, event: dict, current: bool) -> None:
+    async def result(self, proc: _Proc, event: dict, current: bool) -> None:
         """A turn ended: its cost, and what the lane does next."""
+        text = _str(event.get("result"))
+        subtype = _str(event.get("subtype"))
+        interrupted = proc.interrupted
+        failed = not interrupted and (event.get("is_error") is True or subtype != "success")
+        last: list[str] = []
+        if current and not failed and not interrupted:
+            last = await self.search(text)  # its last words, should they hold a flag its text blocks did not
+            current = self.current(proc)  # stopped or escalated while they were searched
+        # from here on nothing waits: the turn is accounted for before anything goes to claude
         total = _dollars(event.get("total_cost_usd"))
         if total is None:
             price = self.driver.prices.get(proc.model)
@@ -1534,21 +1574,20 @@ class _ClaudeRun(_Run):
             dollars = total - proc.cost if total >= proc.cost else total
             proc.cost = total
         self.turn_tokens = [0, 0, 0]
-        text = _str(event.get("result"))
         tokens, cached = self.take_tokens()
         if not current:  # an old model's last turn, or one being stopped: only its cost counts
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars))
             return
-        interrupted, proc.interrupted = proc.interrupted, False
+        proc.interrupted = False
         self.busy = False
         proc.sent = ""  # the turn that took them has ended
-        subtype = _str(event.get("subtype"))
-        failed = not interrupted and (event.get("is_error") is True or subtype != "success")
         said = _first_line(text)
         self._delivering = True  # nothing goes to claude before this turn is accounted for
         try:
             if not failed and not interrupted:
-                self.text(text, show=False)  # its last words, should they hold a flag its text blocks did not
+                if text.strip():
+                    self.said = text
+                self.report_text(text, self.new_flags(last), show=False)
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
                                    action=f"says: {_one_line(said, 200)}" if said and not failed else ""))
             if failed:
@@ -1712,7 +1751,7 @@ class _CodexRun(_Run):
             names = ", ".join(change.path for change in listed) or "files"
             await self.step(f"edit {names}", "", files=listed)
         elif itype == "agent_message" and kind == "item.completed":
-            self.text(_str(item.get("text")), show=True)
+            await self.text(_str(item.get("text")), show=True)
         elif itype == "todo_list":
             self.todo(item.get("items"))
         elif itype == "error" and kind == "item.completed":

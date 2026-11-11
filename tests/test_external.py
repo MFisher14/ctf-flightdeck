@@ -166,7 +166,8 @@ class Lab:
 
     def __init__(self, tmp_path: Path, script: dict, *, kind: str = "claude", submit: str = "confirm", verify=None,
                  handouts: dict[str, Path] | None = None, environ: dict[str, str] | None = None,
-                 prices: dict[str, Price] | None = None, token_cap: int | None = None, takeover_wait: float = 10.0) -> None:
+                 prices: dict[str, Price] | None = None, token_cap: int | None = None, takeover_wait: float = 10.0,
+                 flag_format: str = FLAG) -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -184,7 +185,7 @@ class Lab:
             stop_grace=0.3,
             takeover_wait=takeover_wait,
         )
-        config = DeckConfig(event="t", flag_format=FLAG, models=MODELS, max_lanes=2, submit=submit)
+        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=2, submit=submit)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
         self.token_cap = token_cap
 
@@ -741,6 +742,62 @@ def test_flags_are_raised_once_per_lane_and_rejections_go_back_to_the_agent(tmp_
             assert "Note from flightdeck: t{one} was submitted and it is not correct." in told
             assert "Note from flightdeck: t{two} was submitted and it is not correct." in told
             assert any(r["rec"] == "signal" and r["in_turn"] for r in lab.fake.records())  # the waiting turn was cut short
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+SLOW_FORMAT = r"\w+\{[^{}\s]+\}"  # unbounded repeats, as a board may set: one search is quadratic on a run of word characters
+LONG_WORD_LINE = "head -c {size} /dev/zero | tr '\\0' a; echo; echo t{{found_at_last}}"
+
+
+def test_the_flag_search_over_a_long_output_never_holds_up_the_event_loop(tmp_path):
+    # one line of 60,000 word characters: one search of it with SLOW_FORMAT holds the loop for seconds
+    script = {"turns": [{"items": [{"command": LONG_WORD_LINE.format(size=60_000)}, {"sleep": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", flag_format=SLOW_FORMAT)
+        gaps: list[float] = []
+        done = asyncio.Event()
+
+        async def tick():
+            last = time.monotonic()
+            while not done.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        ticker = asyncio.create_task(tick())
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the flag after the long line", timeout=30)
+            assert lane.pending.flag == "t{found_at_last}"  # searched to the end
+            assert not any("flag search" in n for n in notes(lane))
+        finally:
+            done.set()
+            await ticker
+            await lab.finish()
+        assert max(gaps) < 0.5, f"the event loop stood still for {max(gaps):.2f}s"
+
+    run(main())
+
+
+def test_a_flag_search_that_runs_out_of_time_stops_and_says_so_on_the_lane(tmp_path, monkeypatch):
+    monkeypatch.setattr(external, "SCAN_SECONDS", 0.05)
+    script = {"turns": [{"items": [{"command": LONG_WORD_LINE.format(size=400_000)}, {"sleep": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", flag_format=SLOW_FORMAT)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: any("flag search" in n for n in notes(lane)), "the note", timeout=30)
+            (said,) = [n for n in notes(lane) if "flag search" in n]
+            assert said.startswith("the flag search over one output stopped after 0.05 s, before its end")
+            assert lane.pending is None  # what was not searched raised nothing
         finally:
             await lab.finish()
 
