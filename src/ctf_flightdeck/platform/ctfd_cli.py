@@ -61,11 +61,14 @@ def pull(
     """
     import asyncio
 
+    from ..flagformat import problem as flag_format_problem
     from ..text import untrusted
     from .ctfd import CTFdClient, CTFdError, PullStopped
     from .ctfd import pull as pull_board
     from .manual import BoardError
 
+    if flag_format is not None and (broken := flag_format_problem(flag_format)) is not None:
+        _fail(f"--flag-format {broken}")
     if not _ENV_NAME.fullmatch(token_env):
         _fail("--token-env must be the NAME of an environment variable (letters, digits and _), never the token itself")
     token = os.environ.get(token_env, "").strip()

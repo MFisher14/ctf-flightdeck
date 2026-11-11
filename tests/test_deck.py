@@ -1750,7 +1750,7 @@ def test_deck_config_validation():
     with pytest.raises(ValueError, match="manual"):
         DeckConfig(event="t", submit="manual")
     assert {DeckConfig(event="t", submit=policy).submit for policy in ("auto", "confirm")} == {"auto", "confirm"}
-    with pytest.raises(re.error):
+    with pytest.raises(ValueError, match=r"the deck's flag_format does not compile as a regular expression \(missing \)"):
         DeckConfig(event="t", flag_format="t{(")
 
 

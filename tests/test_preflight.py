@@ -687,7 +687,7 @@ BAD_VALUES = [
     ("event", "team", '"true"', "event.team must be true or false (got a string)"),
     ("event", "name", '""', "event.name must not be empty"),
     ("event", "name", "[1]", "event.name must be a string (got a list)"),
-    ("event", "flag_format", "'hl\\{('", "event.flag_format is not a valid regular expression (missing ), unterminated subpattern at position 4)"),
+    ("event", "flag_format", "'hl\\{('", 'event.flag_format does not compile as a regular expression (missing ), unterminated subpattern at position 4): "hl\\{("'),
     ("event", "url", '"ftp://ctf.example.org"', "event.url must start with https:// (or http://) and name a host"),
     ("event", "url", '"https://"', "event.url must start with https:// (or http://) and name a host"),
     ("event", "url", '"https://ctf.example.org:99999"', "event.url must start with https:// (or http://) and name a host"),
@@ -859,13 +859,17 @@ def test_a_toml_error_that_quotes_a_key_shows_it_safely(tmp_path):
     assert filler not in message
 
 
-@pytest.mark.parametrize("char, shown", [("\\u001b", "^["), ("\\u009b", "\N{REPLACEMENT CHARACTER}")])
-def test_a_bad_flag_format_is_shown_safely(tmp_path, env, char, shown):
-    # The regular expression engine puts the character after "(?" into its message as it is.
+@pytest.mark.parametrize("char, code, shown", [("\\u001b", "U+001B", "^["), ("\\u009b", "U+009B", "\N{REPLACEMENT CHARACTER}")])
+def test_a_bad_flag_format_is_shown_safely(tmp_path, env, char, code, shown):
+    # The regular expression engine would put the character after "(?" into its message as it
+    # is: a control character is refused before it compiles, and shown made visible.
     event = {"name": '"Practice"', "platform": '"manual"', "board": '"board"', "flag_format": f'"(?{char})"'}
     path = write(tmp_path, toml(event, RULES_OPEN))
     message = load_error(path)
-    assert message == f"{path}: event.flag_format is not a valid regular expression (unknown extension ?{shown} at position 1)"
+    assert message == (
+        f"{path}: event.flag_format must have no control, invisible or bidirectional character, but it has {code} "
+        f'at position 2: "(?{shown})"'
+    )
     result = invoke(str(path))
     assert result.exit_code == 2 and result.stderr == f"flightdeck: {message}\n"
     assert "\x1b" not in result.stderr and "\x9b" not in result.stderr
