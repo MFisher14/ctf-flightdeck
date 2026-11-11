@@ -107,10 +107,21 @@ def test_each_subdirectory_with_a_challenge_json_is_a_challenge_sorted_by_direct
 
 
 def test_a_minimal_challenge_json_gets_the_documented_defaults(board, listing_reversed):
-    files = {"b.txt": "b", "a.bin": b"\x00\x01", ".notes": "n", "sub/inner.txt": "deeper"}
+    files = {
+        "b.txt": "b",
+        "a.bin": b"\x00\x01",
+        ".notes": "n",
+        "sub/inner.txt": "deeper",
+        "sub/deeper/z.txt": "deepest",
+        "sub/challenge.json": "{}",  # only the challenge's own challenge.json is left out
+        "Z-last/a.txt": "a",
+        ".DS_Store": b"\x00\x00\x00\x01Bud1",  # Finder's, at any depth: not part of the handout
+        "sub/.DS_Store": b"\x00\x00\x00\x01Bud1",
+    }
     directory = challenge(board, "sample-one", spec(), files)
+    (directory / "empty").mkdir()
     (item,) = load_board(board).challenges
-    assert directory.resolve() in listing_reversed
+    assert {directory.resolve(), directory.resolve() / "sub"} <= set(listing_reversed)
     assert item.challenge == Challenge(
         id="sample-one",
         name="Sample One",
@@ -118,7 +129,8 @@ def test_a_minimal_challenge_json_gets_the_documented_defaults(board, listing_re
         points=100,
         solves=0,
         description="",
-        files=(".notes", "a.bin", "b.txt"),  # regular files directly in the directory, sorted
+        # every regular file under the directory, subfolders too, as relative posix paths, sorted
+        files=(".notes", "Z-last/a.txt", "a.bin", "b.txt", "sub/challenge.json", "sub/deeper/z.txt", "sub/inner.txt"),
         live=False,
     )
     assert item.challenge.status is ChallengeStatus.NEW
@@ -407,12 +419,33 @@ def test_untrusted_names_in_errors_cannot_reach_the_terminal_raw(board):
 # ---------------------------------------------------------------------- symlinks are never followed
 
 
-def test_default_files_leave_out_symlinks(board, tmp_path):
+def test_default_files_neither_list_nor_enter_symlinks(board, tmp_path):
     secret = put(tmp_path / "outside" / "secret.txt", "not for lanes")
-    directory = challenge(board, "sample-one", spec(), {"a.txt": "a"})
+    directory = challenge(board, "sample-one", spec(), {"a.txt": "a", "real/b.txt": "b"})
     (directory / "peek.txt").symlink_to(secret)
     (directory / "peek-dir").symlink_to(secret.parent, target_is_directory=True)
-    assert load_board(board).challenges[0].challenge.files == ("a.txt",)
+    (directory / "real" / "peek.txt").symlink_to(secret)
+    (directory / "alias").symlink_to(directory / "real", target_is_directory=True)
+    assert load_board(board).challenges[0].challenge.files == ("a.txt", "real/b.txt")
+
+
+def test_an_explicit_files_list_is_kept_as_given(board):
+    files = {"z.txt": "z", ".DS_Store": b"\x00", "sub/a.txt": "a", "sub/b.txt": "not listed"}
+    challenge(board, "sample-one", spec(files=["z.txt", ".DS_Store", "sub/a.txt"]), files)
+    assert load_board(board).challenges[0].challenge.files == ("z.txt", ".DS_Store", "sub/a.txt")
+
+
+def test_a_subfolder_that_cannot_be_listed_is_an_error_naming_it(board):
+    if os.geteuid() == 0:
+        pytest.skip("root lists every folder, so a permission error cannot be made")
+    directory = challenge(board, "sample-one", spec(), {"a.txt": "a", "locked/b.txt": "b"})
+    locked = (directory / "locked").resolve()
+    locked.chmod(0)
+    try:
+        message = board_error(board)
+    finally:
+        locked.chmod(0o755)
+    assert message.startswith(f"{locked}: cannot list it")
 
 
 def test_a_listed_file_that_is_a_symlink_is_refused(board, tmp_path):

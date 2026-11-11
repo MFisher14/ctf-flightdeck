@@ -35,6 +35,7 @@ from ..text import untrusted
 CHALLENGE_FILE = "challenge.json"
 BOARD_FILE = "board.json"
 ANSWERS_FILE = "answers.sha256.json"
+DS_STORE = ".DS_Store"  # Finder's folder settings: litter, left out of the default files list
 MAX_JSON_BYTES = 1_000_000  # a challenge.json, board.json or answers file bigger than this is refused
 MAX_ID = 64  # ids name folders and containers
 ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
@@ -240,11 +241,10 @@ def _challenge(directory: Path) -> BoardChallenge:
 
 
 def _files(directory: Path, path: Path, value: object) -> tuple[str, ...]:
-    """The handout files: as listed (each checked), or every regular file directly in the
-    challenge directory except challenge.json, sorted."""
+    """The handout files: as listed (each checked, and kept as given), or by default every
+    regular file under the challenge directory (see _default_files)."""
     if value is _MISSING:
-        names = (p.name for p in directory.iterdir() if p.name != CHALLENGE_FILE and not p.is_symlink() and p.is_file())
-        return tuple(sorted(names))
+        return _default_files(directory)
     if not isinstance(value, list):
         raise BoardError(f'{_show(path)}: "files" must be a list of paths inside the challenge directory')
     files: list[str] = []
@@ -254,6 +254,29 @@ def _files(directory: Path, path: Path, value: object) -> tuple[str, ...]:
             raise BoardError(f'{_show(path)}: "files" lists {_quote(rel)} twice')
         files.append(rel)
     return tuple(files)
+
+
+def _default_files(directory: Path) -> tuple[str, ...]:
+    """Every regular file under the challenge directory, in subfolders too, as relative posix
+    paths, sorted, so a lane's brief names what its copy of the handout holds. Left out:
+    challenge.json itself, Finder's .DS_Store files, and symlinks, which are never entered
+    either (one could point anywhere on this machine)."""
+    found: list[str] = []
+    pending: list[tuple[Path, str]] = [(directory, "")]
+    while pending:  # iterative, so a deeply nested handout cannot hit the recursion limit
+        current, prefix = pending.pop()
+        try:
+            for entry in current.iterdir():
+                rel = prefix + entry.name
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    pending.append((entry, rel + "/"))
+                elif entry.is_file() and rel != CHALLENGE_FILE and entry.name != DS_STORE:
+                    found.append(rel)
+        except OSError as exc:
+            raise BoardError(f"{_show(current)}: cannot list it ({exc.strerror})") from None
+    return tuple(sorted(found))
 
 
 def _handout_file(directory: Path, where: str, item: object) -> str:
