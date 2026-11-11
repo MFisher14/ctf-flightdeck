@@ -421,8 +421,9 @@ class AgentDriver:
         """Remember the flag-format matches in the challenge's own text, its description and
         the handout as it came (the workspace before anything ran in it): a decoy flag.txt, an
         example in a readme. A flag the model submits that is one of them is not claimed, so
-        it waits for the player under auto too, as agent/external.py does for its agents."""
-        found, done = await asyncio.to_thread(
+        it waits for the player under auto too, as agent/external.py does for its agents.
+        What the search did not cover (cut short, or parts of a big handout) is said on the lane."""
+        found, done, left = await asyncio.to_thread(
             _own_flags, run.workspace.root, run.challenge.description, self._flag_re(), time.monotonic() + PLANT_SECONDS
         )
         run.planted = frozenset(found)
@@ -430,6 +431,9 @@ class AgentDriver:
             self.deck.note(run.lane_id, f"the search of the handout for flags stopped after {PLANT_SECONDS:g} s; a flag "
                                         "the model submits that is written in the rest of it may be submitted without you "
                                         "under submit auto")
+        elif left:
+            self.deck.note(run.lane_id, f"the search of the handout for flags left out {'; '.join(left)}; a flag the model "
+                                        "submits that is written there may be submitted without you under submit auto")
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
@@ -784,33 +788,61 @@ class AgentDriver:
             await self._close(run)
 
 
-def _own_flags(root: Path, description: str, pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool]:
+def _own_flags(root: Path, description: str, pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool, list[str]]:
     """The flag-format matches in a challenge's own text: its description, and every file of
     the workspace (the handout, before anything ran in it), a text file as the snapshot keeps
     it and any other read from root, at most PLANT_FILE_BYTES of each and PLANT_BYTES in all,
-    as Latin-1 (a flag in a binary's strings shows). False when the search stopped at
-    `deadline`. In a thread: it can take a while."""
+    as Latin-1 (a flag in a binary's strings shows). Then False when the search stopped at
+    `deadline`, and what else it left out, said for the player (the rest of a file past
+    PLANT_FILE_BYTES, files past PLANT_BYTES in all, a file it could not read, files past the
+    snapshot's cap). In a thread: it can take a while."""
     found: dict[str, None] = {}
     if not scan(description, pattern, deadline, found):
-        return set(found), False
+        return set(found), False, []
     snapshot = take_snapshot(root)
     budget = PLANT_BYTES
+    cut = over = unread = 0
     for path, (size, _, _) in snapshot.files.items():
         text = snapshot.texts.get(path)
         if text is None:
             if budget <= 0:
+                over += 1
                 continue
+            limit = min(PLANT_FILE_BYTES, budget)
             try:
                 fd = open_inside(root, path.split("/"))
                 with os.fdopen(fd, "rb") as file:
-                    data = file.read(min(size, PLANT_FILE_BYTES, budget))
-            except OSError:  # gone or unreadable: left out
+                    data = file.read(min(size, limit))
+            except OSError:  # gone or unreadable
+                unread += 1
                 continue
             budget -= len(data)
+            if len(data) < size:
+                if limit < PLANT_FILE_BYTES:  # the bytes in all ran out in it
+                    over += 1
+                else:
+                    cut += 1
             text = data.decode("latin-1")
         if not scan(text, pattern, deadline, found):
-            return set(found), False
-    return set(found), True
+            return set(found), False, []
+    left = []
+    if cut:
+        left.append(f"the rest of {_files(cut)} past {'its' if cut == 1 else 'their'} first {_size(PLANT_FILE_BYTES)}")
+    if over:
+        left.append(f"{_files(over)} past the first {_size(PLANT_BYTES)} in all")
+    if unread:
+        left.append(f"{_files(unread)} it could not read")
+    if snapshot.truncated:
+        left.append(f"the files past the first {len(snapshot.files)}")
+    return set(found), True, left
+
+
+def _files(n: int) -> str:
+    return f"{n} file" + ("" if n == 1 else "s")
+
+
+def _size(n: int) -> str:
+    return f"{n // (1024 * 1024)} MB" if n % (1024 * 1024) == 0 else f"{n} bytes"
 
 
 def _step(results: list[ToolResult], reply: Reply) -> tuple[str, str]:

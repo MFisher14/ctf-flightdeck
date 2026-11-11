@@ -8,6 +8,7 @@ the deck to reach a state (bounded, ~10 s at most).
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import socket
 import threading
@@ -521,6 +522,60 @@ def test_a_search_of_the_handout_cut_short_is_said_on_the_lane(tmp_path, monkeyp
             await lab.finish()
 
     run(main())
+
+
+def test_what_the_search_of_a_big_handout_left_out_is_said_on_the_lane(tmp_path):
+    folder = tmp_path / "board" / "note"
+    folder.mkdir(parents=True)
+    tail = b"\x00" * (1536 * 1024) + b"t{in_tail}\x00"  # past the first 1 MB of the file: not searched
+    (folder / "firmware.bin").write_bytes(b"\x7fELF" + tail)
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{in_tail}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), handouts={"note": folder})
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: tried, "the flag submitted")
+            assert tried == ["t{in_tail}"]  # not known to be the handout's, so it went out: as the note warns
+            assert ("the search of the handout for flags left out the rest of 1 file past its first 1 MB; a flag the "
+                    "model submits that is written there may be submitted without you under submit auto"
+                    ) in [a.text for a in lane.actions]
+            await lab.finish()
+
+    run(main())
+
+
+def test_the_search_of_the_challenges_own_text_names_every_part_it_left_out(tmp_path, monkeypatch):
+    from ctf_flightdeck.agent import driver as agent_driver
+    from ctf_flightdeck.agent import workspace as agent_workspace
+
+    monkeypatch.setattr(agent_driver, "PLANT_FILE_BYTES", 64)
+    monkeypatch.setattr(agent_driver, "PLANT_BYTES", 120)
+    monkeypatch.setattr(agent_workspace, "SNAPSHOT_FILES", 5)
+    (tmp_path / "a-cut.bin").write_bytes(b"\x00t{a}" + b"\x00" * 100 + b"t{a_tail}")  # read up to byte 64 only
+    locked = tmp_path / "b-locked.txt"
+    locked.write_text("t{locked}\n")
+    (tmp_path / "c-whole.bin").write_bytes(b"\x00t{c}\x00")
+    (tmp_path / "d-fill.bin").write_bytes(b"\x00" * 100 + b"t{d}")  # the 120 bytes in all run out at its byte 50
+    (tmp_path / "e-over.bin").write_bytes(b"\x00t{e}\x00")
+    for name in ("f.txt", "g.txt"):  # past the snapshot's 5 files: not listed
+        (tmp_path / name).write_text("t{late}\n")
+    locked.chmod(0)
+    try:
+        try:
+            locked.read_bytes()
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
+        found, done, left = agent_driver._own_flags(tmp_path, "see t{desc}", re.compile(FLAG), time.monotonic() + 30)
+    finally:
+        locked.chmod(0o644)
+    assert (found, done) == ({"t{desc}", "t{a}", "t{c}"}, True)
+    assert left == ["the rest of 1 file past its first 64 bytes", "2 files past the first 120 bytes in all",
+                    "1 file it could not read", "the files past the first 5"]
 
 
 # ---------------------------------------------------------------------- a flag on its way to the platform
