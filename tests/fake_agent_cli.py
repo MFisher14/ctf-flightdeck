@@ -61,7 +61,8 @@ Script (JSON): {"turns": [TURN, ...]}, one TURN per claude user message or per c
 process, in order across processes. When the turns run out, the fake answers nothing more
 (claude reads on; codex waits until it is signalled).
 - claude TURN: {"calls": [CALL, ...], "cost": dollars for the turn (null: no total_cost_usd),
-  "result": text, "subtype": "success", "is_error": false}. CALL: {"think": seconds,
+  "result": text, "subtype": "success", "is_error": false, "linger": seconds it takes, once
+  SIGINT cuts the turn, before it reports it (a slow wrap-up)}. CALL: {"think": seconds,
   "raw": [lines], "stderr": line, "spawn": [{"cmd": [...], "session": bool}], "exit": status,
   "ignore": ["INT", "TERM"] (from then on those signals are ignored: a hung CLI),
   "text": text, "tools": [{"bash": cmd} | {"read": path} | {"write": [path, text]} |
@@ -347,6 +348,9 @@ def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[st
                 event["total_cost_usd"] = round(state["cost"], 6)
             emit(event)
         except Interrupt:
+            state["in_turn"] = False  # another SIGINT while it wraps up does nothing
+            if turn.get("linger"):
+                time.sleep(float(turn["linger"]))
             emit({
                 "type": "result", "subtype": "error_during_execution", "is_error": True, "duration_ms": 1000,
                 "duration_api_ms": 800, "num_turns": calls, "result": "[Request interrupted by user]",

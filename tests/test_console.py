@@ -1409,6 +1409,37 @@ def test_spend_a_cli_reports_after_its_lane_ended_shows_in_the_lanes_row_and_the
     drive(app, script)
 
 
+def test_the_headers_dollars_are_not_a_settled_total_while_any_lanes_cli_turn_is_under_way():
+    """The header's total ends in "…", as the lane's cost cell does, while a coding-agent CLI's
+    turn is under way on any lane, one that ended mid-turn too: its cost comes when the turn
+    ends. Once every such turn has its cost, the total is settled again."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=2))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo")], [QueueEntry(n, "glm") for n in ("alpha", "bravo")])
+    alpha, bravo = deck.lanes_on("alpha")[0], deck.lanes_on("bravo")[0]
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        async def header() -> str:
+            app.refresh_view()
+            await pilot.pause()
+            return region_text(app, "#header")
+
+        deck.report(alpha.id, TurnReport(action="ls", tokens=100, dollars=0.25))  # a turn with its cost
+        assert "$0.25 " in await header() and views.LATER not in await header()
+        deck.report(bravo.id, TurnReport(action="claude: $ ls", tokens=300, dollars_later=True))  # a CLI turn under way
+        assert f"$0.25{views.LATER} " in await header()
+        assert cell(app, "lanes", bravo.id, "cost") == f"${fmt.dollars(0.0, short=True)}{views.LATER}"  # as its lane says
+        assert deck.apply(iv.Kill(bravo.id, requeue=False)).ok  # it ended mid-turn: that turn's cost is still to come
+        assert f"$0.25{views.LATER} " in await header()
+        deck.report(bravo.id, TurnReport(turn=False, tokens=50, dollars=0.5, turn_end=True, why="cut"))  # its CLI's report
+        assert "$0.75 " in await header() and views.LATER not in await header()
+        deck.report(alpha.id, TurnReport(action="cat x", tokens=10, dollars=None))  # some spend with no price
+        deck.report(alpha.id, TurnReport(action="claude: $ cat", dollars_later=True))
+        assert f"$0.75+{views.LATER} " in await header()  # both marks, in the lane cell's order
+
+    drive(app, script)
+
+
 def test_challenge_text_is_shown_literally_and_cannot_steer_the_console():
     evil = Spec("evil", "web", "[b]X[/b]", 100, "Click [@click=app.quit]x[/] now \x1b[2J done", ("evil.zip",))
     scenario = Scenario(name="evil", summary="", specs=(evil,), timeline=((0, ReleaseAt(("evil",), "Board")),))
@@ -2495,6 +2526,99 @@ def test_a_second_q_or_one_meant_for_help_or_a_card_does_not_quit_a_run():
     drive(app, script)
 
 
+def platform_run(names: tuple[str, ...] = ("alpha", "bravo", "charlie"), max_lanes: int = 3) -> Deck:
+    """A run's deck whose flags go to a platform over the network (a submitter that only takes
+    them: no answer comes back unless a test gives one), under submit confirm."""
+    config = DeckConfig(event="ev", models=("glm",), max_lanes=max_lanes, flag_format=r"t\{[a-z]+\}", submit="confirm")
+    deck = Deck(config, QuietDriver(), ManualClock(1000.0), wrong_flag, submitter=lambda lane, challenge, flag: None)
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    return deck
+
+
+def send_flag(deck: Deck, lane_id: str, flag: str) -> None:
+    """The lane finds `flag` and the player approves it: it goes to the platform (or waits its turn)."""
+    deck.report(lane_id, TurnReport(flag=flag))
+    assert deck.apply(iv.Approve(lane_id)).ok
+
+
+@pytest.mark.parametrize("size", [SIZE, (80, 24)], ids=["160x46", "80x24"])
+def test_the_quit_prompt_names_each_flag_on_its_way_to_the_platform_and_says_quitting_leaves_its_answer_unknown(size):
+    deck = platform_run(("alpha", "bravo", "charlie", "delta"))  # three lanes at work, one challenge queued
+    alpha, bravo, charlie = (deck.lanes_on(n)[0] for n in ("alpha", "bravo", "charlie"))
+    send_flag(deck, alpha.id, "t{one}")  # handed to the platform
+    send_flag(deck, alpha.id, "t{two}")  # waits its turn behind it: one flag at a time per challenge
+    send_flag(deck, bravo.id, "t{three}")
+    deck.report(charlie.id, TurnReport(flag="t{four}"))  # waits for the player: not on its way
+    calls = []
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit, run_dir="/runs/20261111-093000")
+
+    async def script(pilot):
+        await press(pilot, "q")
+        assert isinstance(app.screen, QuitPrompt)
+        text = prompt_text(app)
+        assert "3 lanes still open: 2 running, 1 waiting for you" in text and "L03 Charlie submit t{four}" in text
+        assert "3 flags on their way to the platform: quitting leaves their answers unknown" in text
+        assert "L01 Alpha t{one} L01 Alpha t{two} (waiting its turn: never sent if you quit) L02 Bravo t{three}" in text
+        assert "1 challenge queued, not started" in text and "Stay (esc) Quit (y)" in text
+        await press(pilot, "escape")
+        assert calls == [] and deck.submitting("alpha") == ((alpha.id, "t{one}"), (alpha.id, "t{two}"))
+
+    drive(app, script, size)
+    plain = views.quit_summary(deck).plain
+    assert "\n  L01 Alpha  t{one}\n  L01 Alpha  t{two}  (waiting its turn: never sent if you quit)\n  L02 Bravo  t{three}\n" in plain
+    deck.platform_verdict(alpha.id, "t{one}", False, "Incorrect")  # its answer is in: t{two} goes out in its place
+    assert "2 flags on their way to the platform" in views.quit_summary(deck).plain
+    assert "L01 Alpha  t{two}\n" in views.quit_summary(deck).plain and "t{one}" not in views.quit_summary(deck).plain
+
+
+def test_the_quit_prompt_names_five_flags_on_their_way_and_counts_the_rest():
+    names = tuple(f"chal{letter}" for letter in "abcdefg")  # letters only: the flag format is t\{[a-z]+\}
+    deck = platform_run(names, max_lanes=len(names))
+    for name in names:
+        send_flag(deck, deck.lanes_on(name)[0].id, f"t{{{name}}}")
+    text = views.quit_summary(deck).plain
+    assert "7 flags on their way to the platform" in text
+    assert [f"t{{{name}}}" in text for name in names] == [True] * 5 + [False] * 2  # in board order: the first five
+    assert "\n  and 2 more on their way\n" in text
+
+
+def test_quitting_asks_first_while_a_flag_is_on_its_way_though_every_lane_has_ended():
+    """A lane killed after it sent a flag: the platform's answer would still count for it, so
+    quitting asks first and names the flag; once its answer is in, it quits at once."""
+    deck = platform_run(("alpha",))
+    (lane,) = deck.lanes.values()
+    send_flag(deck, lane.id, "t{one}")
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
+    calls = []
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        await press(pilot, "q")
+        assert isinstance(app.screen, QuitPrompt)
+        text = prompt_text(app)
+        assert "No lane is still open" in text and "lanes still open" not in text
+        assert "1 flag on its way to the platform: quitting leaves its answer unknown L01 Alpha t{one}" in text
+        await press(pilot, "escape")
+        assert calls == [] and app.is_running
+        deck.platform_verdict(lane.id, "t{one}", False, "Incorrect")
+        await press(pilot, "q")  # nothing is left to lose: no question
+        for _ in range(50):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["stopped"] and not app.is_running
+
+    drive(app, script)
+
+
 def test_quitting_does_not_ask_once_every_lane_has_finished_nor_in_the_mock():
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
     deck.release([Challenge("alpha", "Alpha", "misc", 50)], [QueueEntry("alpha", "glm")])
@@ -2932,3 +3056,20 @@ def test_doctor_measures_team_modes_key_line_with_claim_as_the_console_draws_it(
         assert (left == []) is (columns >= team) and team == solo + len("  c claim")
 
     drive(app, script, size=(columns, 30))
+
+
+@pytest.mark.parametrize("lanes, docker", [(1, False), (2, False), (4, True), (8, True)])
+def test_doctors_size_has_room_for_the_dollars_of_a_coding_agent_run_whose_cli_turn_is_under_way(lanes, docker):
+    """While a coding-agent CLI's turn is under way the header's dollars end in …: at the size
+    doctor says leaves nothing out, with an event name as long as it says fits, the header
+    still shows every piece then, and with one character more it does not."""
+    from dataclasses import replace
+
+    fit = room.room(200, 50, max_lanes=lanes, containerized=docker)
+    busy = room.busy_header(max_lanes=lanes, containerized=docker)
+    width = fit.columns - room.HEADER_MARGIN
+    for later in (False, True):
+        _, left = views.fit_header(replace(busy, event="E" * fit.event, later=later), width)
+        assert left == [], (later, left)
+    _, left = views.fit_header(replace(busy, event="E" * (fit.event + 1), later=True), width)
+    assert left != []

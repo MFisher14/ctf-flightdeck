@@ -847,12 +847,13 @@ def test_escalating_a_claude_lane_that_gave_up_while_its_flag_is_with_the_platfo
             lane = lab.lane()
             await until(lambda: lane.gave_up_later, "the lane to give up")
             pid = lab.pid(lane)
-            assert deck.apply(iv.Escalate(lane.id)).ok
-            await until(lambda: gone(pid), "the small model's CLI ended")
+            out = deck.apply(iv.Escalate(lane.id))  # refused: the lane takes no more turns, on any model
+            assert not out.ok and out.message.startswith(f"{lane.id} gave up and takes no more turns") and lane.model == "small"
             await asyncio.sleep(1.0)
-            assert len(lab.fake.starts()) == 1  # no CLI on the stronger model: the lane gave up
+            assert len(lab.fake.starts()) == 1 and not gone(pid)  # no CLI on the stronger model; the frozen one is left be
             deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
             assert lane.state is LaneState.GAVE_UP
+            await until(lambda: gone(pid), "the CLI ended with the lane")
             await asyncio.sleep(0.5)
             assert len(lab.fake.starts()) == 1 and not (lab.work(lane) / "resumed.txt").exists()
         finally:

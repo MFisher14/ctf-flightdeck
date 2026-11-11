@@ -22,11 +22,12 @@ HEADER_MIN = 40  # cells: the views never fit the header to fewer
 def busy_header(*, max_lanes: int, containerized: bool, team: bool = False) -> views.HeaderFacts:
     """A busy run's header, to measure a terminal by: an event name of SAMPLE_EVENT characters,
     every lane needing the player, a queue in two figures, millions of tokens, a spend in two
-    figures with some of it unpriced, and hours on the clock."""
+    figures with some of it unpriced and some still to come (a coding-agent CLI's turn under
+    way: the dollars end in …), and hours on the clock."""
     return views.HeaderFacts(
         event="E" * SAMPLE_EVENT, team=team, containerized=containerized, lanes=max_lanes, max_lanes=max_lanes,
         queue=40, need=max_lanes, held="", tokens=12_300_000, dollars=12.34, unpriced=True,
-        clock=12 * 3600 + 34 * 60 + 56,
+        clock=12 * 3600 + 34 * 60 + 56, later=True,
     )
 
 

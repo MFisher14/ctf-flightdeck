@@ -540,7 +540,7 @@ def test_doctor_says_what_a_100x30_terminal_leaves_out_of_the_console_and_from_w
         "warn terminal: 100x30: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
         "tab focus, s sort, t take over, e escalate and f fork on the fleet view's key line (? lists every key); "
         "pgup pgdn scroll on the focus view's key line",
-        "     fix: from 147x18 it leaves none of this out, with an event name of up to 41 characters (a column more for "
+        "     fix: from 147x18 it leaves none of this out, with an event name of up to 40 characters (a column more for "
         "each character more); team mode's key line, with c claim, needs 156 columns; the console still works smaller",
     ]
     assert terminal_check(tmp_path, monkeypatch, (146, 18))[0] == (
@@ -563,7 +563,7 @@ def test_doctor_measures_the_terminal_with_your_lanes_and_runtime(tmp_path, monk
         "the board (it shows from 100 columns); 1 of the lane list's 7 rows (6 lanes and the finished row): it has room "
         "for 6 and scrolls to the rest; tab focus, s sort, t take over, e escalate, f fork and r redirect on the fleet "
         "view's key line (? lists every key); pgup pgdn scroll on the focus view's key line",
-        "     fix: from 147x20 it leaves none of this out, with an event name of up to 43 characters (a column more for "
+        "     fix: from 147x20 it leaves none of this out, with an event name of up to 42 characters (a column more for "
         "each character more); team mode's key line, with c claim, needs 156 columns; the console still works smaller",
     ]  # host is two cells narrower than docker in the header: room for two more characters of the event's name
     one = Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host", max_lanes=1)
