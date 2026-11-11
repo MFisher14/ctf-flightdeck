@@ -331,8 +331,18 @@ def init(
              "At a terminal you are asked when that key is set.")] = None,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Replace an existing config.")] = False,
+    light: Annotated[str, typer.Option("--light", help="The light model for small jobs: rules (none, the default); ollama or "
+                                       "mlx (an open-weight model on this machine: recommended, with --light-model); anthropic; cactus.")] = "rules",
+    light_model: Annotated[str | None, typer.Option("--light-model", help="The light model's id (anthropic: claude-haiku-5-5 by default).")] = None,
 ) -> None:
     """Write a config by answering a few questions (or give them all as options)."""
+    from .setup import light_answers, light_line
+
+    try:
+        light_table = light_answers(light.strip().lower(), light_model)
+    except ValueError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
     from .agent.workspace import docker_unavailable
     from .config import ConfigError, default_config_path
     from .keys import KeysError, keys_path, source
@@ -418,7 +428,7 @@ def init(
     dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
     try:
         answers = Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes, dollar_cap=dollar_cap,
-                          provider=dialect, prices=prices, fallback=spare)
+                          provider=dialect, prices=prices, fallback=spare, light=light_table)
         written = write_config(answers, target, force=force)
     except (ConfigError, FileExistsError) as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
@@ -438,6 +448,7 @@ def init(
         typer.echo(offer)
     if runtime.strip().lower() == "docker":
         typer.echo("next: flightdeck image build   (builds the lane image once)")
+    typer.echo(light_line(light_table))
     typer.echo("then: flightdeck doctor, and flightdeck practice")
 
 

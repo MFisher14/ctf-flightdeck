@@ -7,13 +7,14 @@ key itself: the config names the environment variable that holds it.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import __version__
@@ -48,6 +49,66 @@ OPENROUTER_NAMES = {
 }
 
 
+LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus")  # `init --light`
+LIGHT_EXAMPLES = "Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B or Phi-4-mini"  # to measure, not endorsements
+LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
+
+
+@dataclass(frozen=True)
+class LightAnswers:
+    """[light] as `init` writes it (None in Answers: the rules alone)."""
+
+    engine: str  # openai | anthropic | cactus
+    model: str = ""
+    base_url: str = ""
+    key_env: str = ""
+    price: Price | None = None
+
+
+def light_answers(choice: str, model: str | None) -> LightAnswers | None:
+    """[light] for `init --light CHOICE [--light-model MODEL]`: None for rules. ValueError says
+    what is missing. ollama and mlx are an open-weight model served on this machine: the
+    recommended light model, measured first with eval-local."""
+    if choice == "rules":
+        if model:
+            raise ValueError("--light-model needs --light ollama, mlx or anthropic")
+        return None
+    if choice in ("ollama", "mlx"):
+        url = PROVIDERS["local" if choice == "ollama" else "mlx"][0]
+        if not model:
+            raise ValueError(
+                f"--light {choice} needs --light-model, the name your server gives the model (examples to measure: "
+                f"{LIGHT_EXAMPLES}); measure it first: flightdeck eval-local --engine openai --base-url {url} --model <model>"
+            )
+        return LightAnswers("openai", model, url, "")
+    if choice == "anthropic":
+        model = model or LIGHT_ANTHROPIC
+        return LightAnswers("anthropic", model, ANTHROPIC[0], ANTHROPIC[1], ANTHROPIC_PRICES.get(model))
+    if choice == "cactus":
+        if model:
+            raise ValueError("--light-model is not for cactus: Cactus Needle is its one model")
+        return LightAnswers("cactus")
+    raise ValueError(f"--light must be one of {', '.join(LIGHT_CHOICES)}, not {choice!r}")
+
+
+def light_line(light: LightAnswers | None) -> str:
+    """What `init` says about the light model it wrote."""
+    if light is None:
+        return ("light model: none, the rules alone. Recommended when you want one: an open-weight model on this "
+                "machine (`flightdeck init --light ollama --light-model <model>`), measured first with `flightdeck eval-local`")
+    if light.engine == "openai":
+        return (f"light model: {light.model} on this machine; measure it against the rules: flightdeck eval-local "
+                f"--engine openai --base-url {light.base_url} --model {light.model}")
+    if light.engine == "anthropic":
+        return (f"light model: {light.model} (Anthropic): a refusal leaves the rules' answer; an open-weight model on "
+                "this machine never refuses security work. Measure it: flightdeck eval-local --engine anthropic "
+                f"--model {light.model}")
+    return f'light model: Cactus Needle ({EXTRA_CACTUS}); measure it: flightdeck eval-local --engine cactus'
+
+
+EXTRA_CACTUS = 'pip install "ctf-flightdeck[cactus]"'
+
+
 @dataclass(frozen=True)
 class FallbackAnswers:
     """[fallback] as `init` writes it."""
@@ -73,6 +134,7 @@ class Answers:
     provider: str = "openai"  # [api] provider: openai | anthropic
     prices: Mapping[str, Price] = field(default_factory=dict)  # [prices], per model in the ladder
     fallback: FallbackAnswers | None = None
+    light: LightAnswers | None = None  # [light]; None: the rules alone
 
 
 def render(answers: Answers) -> str:
@@ -96,6 +158,7 @@ def render(answers: Answers) -> str:
         "\n"
         + _prices(answers.prices)
         + _fallback(answers.fallback)
+        + _light(answers.light)
         + "[lanes]\n"
         f"max_lanes = {answers.max_lanes}\n"
         f'runtime = "{answers.runtime}"\n'
@@ -132,6 +195,28 @@ def _fallback(spare: FallbackAnswers | None) -> str:
         f"ladder = [{ladder}]   # one per [models] ladder entry, in order\n"
         "\n"
     )
+
+
+def _light(light: LightAnswers | None) -> str:
+    head = "[light]\n"
+    if light is None:
+        return (
+            head + "# The light model for small jobs (the hint judge); \"rules\" uses none. Recommended: an open-weight\n"
+            "# model on this machine (Ollama: http://127.0.0.1:11434/v1, an MLX server: http://127.0.0.1:8080/v1),\n"
+            "# measured first with `flightdeck eval-local`. `flightdeck config --example` shows every key.\n"
+            'engine = "rules"\n\n'
+        )
+    out = head + f"engine = {json.dumps(light.engine)}\n"
+    if light.engine == "cactus":
+        return out + "\n"
+    out += f"model = {json.dumps(light.model)}\nbase_url = {json.dumps(light.base_url)}\n"
+    out += f"key_env = {json.dumps(light.key_env)}" + ("   # a server on this machine needs no key\n" if not light.key_env else "\n")
+    if light.price is not None:
+        parts = [f"input = {light.price.input:g}", f"output = {light.price.output:g}"]
+        if light.price.cached_input is not None:
+            parts.append(f"cached_input = {light.price.cached_input:g}")
+        out += "price = { " + ", ".join(parts) + " }   # dollars per million tokens\n"
+    return out + "\n"
 
 
 def anthropic_fallback(models: Sequence[str]) -> FallbackAnswers | None:
@@ -211,6 +296,7 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         spare = config.fallback
         if spare is not None and spare.provider == "openai":
             checks += _local_server_check(spare.base_url, name="fallback server")
+        checks += _light_checks(config, environ)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
     if agent is not None:
@@ -249,6 +335,40 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
         return [Check("agent", False, str(exc), f"install {kind}, then log in or set its key variable")]
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
     checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
+    return checks
+
+
+def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
+    """[light], checked like the API: the key is there, the server on this machine answers,
+    Cactus is installed. None of it is essential: a light model that cannot be used leaves the
+    rules alone, and the run says so."""
+    import importlib.util
+
+    light = config.light
+    if light.engine == "rules":
+        return [Check("light model", True, "none, the rules alone (optional: an open-weight model on this machine, "
+                      "e.g. served by Ollama at http://127.0.0.1:11434/v1; see [light] in `flightdeck config --example`, "
+                      "and measure one first with `flightdeck eval-local`)", essential=False)]
+    if light.engine == "cactus":
+        found = importlib.util.find_spec("cactus") is not None
+        detail = "Cactus Needle, " + ("installed" if found else "not installed")
+        return [Check("light model", found, detail + "; measure it: flightdeck eval-local --engine cactus",
+                      f'{EXTRA_CACTUS}, or set [light] engine = "rules"', essential=False)]
+    shown = _shown(light.base_url)
+    measure = f"flightdeck eval-local --engine {light.engine} --model {light.model}"
+    if light.engine == "openai":
+        measure += f" --base-url {shown}"
+    detail = f"{light.engine} {light.model} at {shown}; measure it against the rules: {measure}"
+    if light.engine == "anthropic":
+        detail += (" (a provider's classifier can decline security work: a refusal leaves the rules' answer, and an "
+                   "open-weight model on this machine is recommended)")
+    checks = [Check("light model", True, detail, essential=False)]
+    if light.key_env:
+        reported = bool(config.api.key_env) or bool(config.fallback is not None and config.fallback.key_env)
+        checks += [replace(c, essential=False) for c in
+                   _key_check("light key", light.key_env, environ, "", keys_file_checked=reported)]
+    if light.engine == "openai":
+        checks += [replace(c, essential=False) for c in _local_server_check(light.base_url, name="light server")]
     return checks
 
 
@@ -298,7 +418,7 @@ def _local_server_check(base_url: str, *, name: str = "model server") -> list[Ch
         return []
     url = base_url.rstrip("/") + "/models"
     shown = _shown(url)  # never a credential the URL might carry (user:password@, ?api_key=)
-    table = "[fallback]" if name == "fallback server" else "[api]"
+    table = {"fallback server": "[fallback]", "light server": "[light]"}.get(name, "[api]")
     try:
         answer = httpx.get(url, timeout=2.0, follow_redirects=False)
     except httpx.HTTPError as exc:
