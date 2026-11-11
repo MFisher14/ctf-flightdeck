@@ -167,14 +167,25 @@ def _local_server_check(base_url: str) -> list[Check]:
     if host not in LOCAL_HOSTS:
         return []
     url = base_url.rstrip("/") + "/models"
+    shown = _shown(url)  # never a credential the URL might carry (user:password@, ?api_key=)
     try:
         answer = httpx.get(url, timeout=2.0, follow_redirects=False)
     except httpx.HTTPError as exc:
-        return [Check("model server", False, f"nothing answers at {base_url} ({type(exc).__name__})",
+        return [Check("model server", False, f"nothing answers at {_shown(base_url)} ({type(exc).__name__})",
                       "start your local model server (it must speak the OpenAI API with tool calling)")]
     ok = answer.status_code < 400
-    return [Check("model server", ok, f"{url} answered {answer.status_code}",
+    return [Check("model server", ok, f"{shown} answered {answer.status_code}",
                   "check the server's address and port in [api] base_url")]
+
+
+def _shown(url: str) -> str:
+    """The URL without user info, query or fragment, safe to print."""
+    import httpx
+
+    try:
+        return str(httpx.URL(url).copy_with(userinfo=b"", query=None, fragment=None))
+    except (httpx.InvalidURL, ValueError, TypeError):
+        return "(the [api] base_url)"
 
 
 def _docker_checks(image: str | None, *, essential: bool) -> list[Check]:

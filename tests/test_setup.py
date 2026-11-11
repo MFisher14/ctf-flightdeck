@@ -153,3 +153,13 @@ def test_doctor_checks_the_l1_pack_when_the_config_names_one(tmp_path):
     path = tmp_path / "none.toml"
     path.write_text(base)
     assert not [c for c in doctor(path, environ={}) if c.name == "l1 pack"]  # no pack: nothing to check
+
+
+def test_doctor_never_prints_a_credential_carried_in_the_base_url(tmp_path):
+    secret = "query-secret-value-5150"
+    path = tmp_path / "q.toml"
+    path.write_text(f'[api]\nbase_url = "http://127.0.0.1:9/v1?api_key={secret}"\nkey_env = ""\n'
+                    '[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n')
+    check = {c.name: c for c in doctor(path, environ={})}["model server"]
+    assert not check.ok and "http://127.0.0.1:9/v1" in check.detail
+    assert secret not in check.detail and secret not in report([check])[0]
