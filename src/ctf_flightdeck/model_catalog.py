@@ -35,8 +35,8 @@ guess. MLX runs on Apple Silicon only.
 
 Each build (a model on one runtime) carries what was found serving it: the arguments its MLX
 server was measured with (server_args, printed in the command that serves it), the roles it
-should not serve and why (not_for: it is never offered for them; the catalog marks so a build
-that measured badly, such as a light-role score below the rules'), and its measured results
+should not serve and why (not_for: it is never offered for them; a build that measured badly for
+a role, such as a light-role score below the rules', is not for it), and its measured results
 (measured, from docs/MODELS.md). A model's results and settings differ by runtime: thinking can
 be turned off at an MLX server, and not by anything flightdeck sends to Ollama. A model is
 offered for the roles at least one of its builds serves (LocalModel.offered_for).

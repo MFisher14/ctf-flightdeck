@@ -479,7 +479,7 @@ def entry_json(choice: LocalModel | ApiChoice, machine: Machine | None) -> dict:
         })
     return {
         "id": choice.id, "name": choice.name, "family": choice.family, "parameters": choice.parameters,
-        "license": choice.license, "roles": list(choice.offered_for),  # each build's not_for says why a role is not
+        "license": choice.license, "roles": list(choice.offered_for),  # a build's not_for says why not the others
         "measured_results": MODELS_DOC, "builds": builds, "local_models": {"where": plan.where, "memory_bytes": plan.bytes},
         "changes_config": False,
     }
