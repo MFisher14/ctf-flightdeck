@@ -392,6 +392,36 @@ def test_no_verdict_on_a_flag_two_lanes_at_work_sent_asks_on_each_and_one_answer
     assert driver.named("rejected") == [(lane.id, "t{x}"), (sibling.id, "t{x}")]  # each hears it, once
 
 
+def test_a_lane_that_gave_up_stays_open_while_another_flag_of_it_still_waits_its_turn():
+    deck, _, submitter = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(lane.id, TurnReport(flag="t{x}"))  # on its way
+    deck.report(lane.id, TurnReport(flag="t{y}"))  # waits its turn
+    deck.report(sibling.id, TurnReport(flag="t{y}"))  # joins it
+    deck.report(sibling.id, TurnReport(flag="t{z}", claimed=False))
+    assert deck.apply(iv.Approve(sibling.id)).ok  # t{z}: the player's yes; it waits its turn behind t{y}
+    deck.report(sibling.id, TurnReport(turn=False, gave_up="the model gave up"))
+    deck.platform_verdict(lane.id, "t{x}", False, "Incorrect. You have 4 tries remaining.", tries_left=4)
+    assert asked(lane) == [(PendingKind.SUBMIT, "t{y}")]  # not said yes to: back to the player, on the lane at work
+    assert not sibling.finished and submitter.calls[-1] == (sibling.id, "c0", "t{z}")  # said yes to: it goes out
+    deck.platform_verdict(sibling.id, "t{z}", False, "Incorrect. You have 3 tries remaining.", tries_left=3)
+    assert (sibling.state, sibling.result) == (LaneState.GAVE_UP, "the model gave up")
+
+
+def test_the_players_yes_on_another_lane_counts_for_a_flag_already_waiting_its_turn():
+    deck, _, submitter = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(sibling.id, TurnReport(flag="t{y}", claimed=False))  # scraped: it waits for the player
+    deck.report(lane.id, TurnReport(flag="t{x}"))  # on its way
+    deck.report(lane.id, TurnReport(flag="t{y}"))  # claimed: waits its turn, sent on its own
+    out = deck.apply(iv.Approve(sibling.id))
+    assert out.message == "t{y} is already on its way to the platform for Chall 0"
+    deck.platform_verdict(lane.id, "t{x}", False, "Incorrect. You have 4 tries remaining.", tries_left=4)
+    assert submitter.flags() == ["t{x}", "t{y}"] and lane.pending is None and sibling.pending is None
+
+
 @pytest.mark.parametrize("answer", HANDED_BACK)
 def test_a_flag_the_player_declined_while_it_waited_its_turn_is_never_asked_again(answer):
     deck, driver, submitter = platform_deck()

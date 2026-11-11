@@ -1255,11 +1255,10 @@ class Deck:
         not go to the platform. Returns the lanes it waits on (none when they have all ended)."""
         lanes = [self.lanes[lane_id] for lane_id in item.lanes if not self.lanes[lane_id].finished]
         holders = [lane for lane in lanes if not lane.gave_up_later] or lanes[:1]
-        for lane in holders:
+        for lane in holders:  # none holds it already: a lane that sent it was asked nothing for it (_candidate)
             if why:
                 self._note(lane, f"back to you: {item.flag} did not go to the platform ({why})")
-            if not any(p.flag == item.flag for p in ([lane.pending] if lane.pending else []) + lane.waiting):
-                self._ask(lane, pending)
+            self._ask(lane, pending)
         ids = ", ".join(lane.id for lane in holders)
         for lane in lanes:
             if lane not in holders:
