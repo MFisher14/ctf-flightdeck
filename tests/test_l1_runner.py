@@ -392,13 +392,14 @@ def test_the_flag_search_never_holds_up_the_event_loop(pack, handout, tmp_path):
 
 
 def test_a_flag_search_that_runs_out_of_time_stops_and_is_never_none(pack, handout, tmp_path):
+    # the engine prints 6 MB in a fraction of its 2 s; searching it takes far longer than 2 s
     slow = cli_engine(pack, "dump", LONG_LINES.format(size=6_000_000))
-    r = run(run_engine(load(slow), handout, workdir=tmp_path / "w1", flag_format=DEFAULT_FORMAT, timeout=1))
+    r = run(run_engine(load(slow), handout, workdir=tmp_path / "w1", flag_format=DEFAULT_FORMAT, timeout=2))
     assert (r.status, r.flags) == ("unsure", ())
-    assert r.notes == "flag search stopped after 1s, before the end of its output"
+    assert r.notes == "flag search stopped after 2s, before the end of its output"
     early = cli_engine(pack, "dump_early", "echo t{first_line}\n" + LONG_LINES.format(size=6_000_000))
-    r = run(run_engine(load(early), handout, workdir=tmp_path / "w2", flag_format=DEFAULT_FORMAT, timeout=1))
-    assert (r.status, r.flags, r.notes) == ("candidate", ("t{first_line}",), "flag search stopped after 1s, before the end of its output")
+    r = run(run_engine(load(early), handout, workdir=tmp_path / "w2", flag_format=DEFAULT_FORMAT, timeout=2))
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{first_line}",), "flag search stopped after 2s, before the end of its output")
 
 
 # ---------------------------------------------------------------- cli engines
