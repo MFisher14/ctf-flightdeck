@@ -887,6 +887,22 @@ def test_the_part_inside_the_braces_is_a_copy_of_the_flag(tmp_path):
     assert body not in redacted and "```text\nkey found: <flag>\n```" in redacted
 
 
+def test_the_part_inside_the_braces_cut_short_is_a_copy_too(tmp_path):
+    body = "s3cr3t_x0r_k3y_found"
+    shell = tool(tmp_path, "shell", {"command": "python3 xor.py"}, f"key: {'A' * 280} {body}\n".encode())
+    assert shell.output.endswith(" s3cr3t_x0r_k3…")  # the Toolbox cut the key short
+    run = Run(tmp_path / "run", [Challenge("k", "Key", "cry", 50)], answers={"k": f"t{{{body}}}"})
+    lane = run.lane("k")
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, f"submit t{{{body}}}", flag=f"t{{{body}}}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    section = lines_of(writeup.draft(record, "k"), "## Steps that mattered")
+    assert section[1] == "The part inside the flag's braces first shows in the output of turn 1."
+    redacted = writeup.draft(record, "k", redact=True)
+    assert "s3cr3t" not in redacted and f"key: {'A' * 280} <flag>…" in redacted
+
+
 def test_a_cut_that_keeps_only_the_flag_format_is_not_redacted(tmp_path):
     flag = "picoCTF{s3cr3t_x0r}"
     run = Run(tmp_path / "run", [Challenge("p", "Pico", "for", 50)], answers={"p": flag},
