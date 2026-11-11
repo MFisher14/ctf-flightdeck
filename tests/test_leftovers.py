@@ -140,7 +140,7 @@ def test_a_docker_run_labels_its_lanes_and_l1_engines_with_the_run_and_the_fligh
     me = leftovers.process(os.getpid())
     assert me is not None
     expected = {"flightdeck.run": run.dir.name, "flightdeck.host": host_id(), "flightdeck.uid": str(os.getuid()),
-                "flightdeck.pid": str(os.getpid()), "flightdeck.started": me.started}
+                "flightdeck.pid": str(os.getpid()), "flightdeck.started": me.started, "flightdeck.state": leftovers.state_id()}
     assert labels(run.dir.name) == expected
     lane = type("L", (), {"id": "L01"})()
     workspace = run.driver.workspaces(lane, run.board.challenges[0].challenge)
@@ -174,8 +174,11 @@ def test_a_run_records_its_flightdeck_and_the_record_goes_when_the_run_ends_clea
         assert me is not None
         assert data == {"flightdeck": 1, "run": run.dir.name, "docker": False, "groups": [],
                         "owner": {"host": host_id(), "uid": os.getuid(), "pid": os.getpid(), "started": me.started}}
+        (note,) = leftovers.open_runs().iterdir()  # what finds the run wherever its folder is
+        assert json.loads(note.read_text()) == {"flightdeck": 1, "folder": os.path.realpath(run.dir)}
         run.close()
     assert not (run.dir / RECORD).exists() and run.errors == []
+    assert list(leftovers.open_runs().iterdir()) == []  # the note goes with the record
 
 
 def test_a_record_that_cannot_be_kept_current_never_stops_the_run_and_is_said_when_it_ends(tmp_path):
@@ -207,6 +210,19 @@ def test_a_run_whose_record_cannot_be_written_does_not_start(tmp_path, monkeypat
         prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
     (run_dir,) = (tmp_path / "runs").iterdir()
     assert str(caught.value) == f"cannot write {run_dir / RECORD}: Input/output error"
+
+
+def test_a_run_whose_note_cannot_be_written_does_not_start_and_leaves_no_record(tmp_path, monkeypatch):
+    from ctf_flightdeck.run import RunError
+
+    blocked = tmp_path / "state"
+    blocked.write_text("")  # a file where the state folder would be: nothing can go in it
+    monkeypatch.setenv("XDG_STATE_HOME", str(blocked))
+    with FakeModelServer() as server, pytest.raises(RunError) as caught:
+        prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+    assert str(caught.value) == f"cannot write {blocked / 'ctf-flightdeck' / 'open-runs'}: Not a directory"
+    (run_dir,) = (tmp_path / "runs").iterdir()
+    assert not (run_dir / RECORD).exists()  # a record no note names is not left behind
 
 
 def test_a_host_lanes_command_is_in_the_record_while_it_may_run_with_what_it_left_running(tmp_path):
@@ -395,7 +411,40 @@ def test_doctor_names_a_killed_runs_process_group_and_removes_it_only_with_clean
             f"it left running: its process group {proc.pid} (a lane command in l01/work)\n") in result.output
     assert killed(proc) and not (record.run_dir / RECORD).exists()
     again = {c.name: c for c in doctor(cfg, environ={})}["leftovers"]
-    assert again.ok and again.detail == f"no run left anything running (runs in {tmp_path / 'runs'})"
+    assert again.ok and again.detail == (f"no run left anything running (runs in {tmp_path / 'runs'}, and those noted in "
+                                         f"{leftovers.open_runs()})")
+
+
+def test_doctor_says_clean_removes_only_what_clean_removes(tmp_path):
+    """A group the sweep leaves alone is named with what to do about it, never with a fix that
+    says `--clean` removes it."""
+    record = killed_run(tmp_path / "runs")
+    left = lane_command(record)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    moved = start(["sh", "-c", f"cd {elsewhere} && exec sleep 300"], record.run_dir / "l02" / "work")
+    wait_until(lambda: leftovers.working_folder(moved.pid) == os.path.realpath(elsewhere), "the command to move out")
+    record.add(moved.pid, record.run_dir / "l02" / "work", "a lane command")
+    cfg = config(tmp_path, "http://127.0.0.1:9/v1")
+    found = (f"warn leftovers: run {RUN} did not shut down (its flightdeck was killed, or the machine stopped) and left "
+             f"running: its process group {left.pid} (a lane command in l01/work)")
+    alone = (f"warn leftovers: run {RUN}: process group {moved.pid} (a lane command in l02/work) was left alone: the "
+             f"processes flightdeck recorded in it (pid {moved.pid}) run on, but no longer work in a folder under the run's "
+             f"folder; if it is a leftover, stop it yourself (kill -KILL -- -{moved.pid})")
+    lines = CliRunner().invoke(cli.app, ["doctor", "--config", str(cfg)]).output.splitlines()
+    assert fix_after(lines, found) == "`flightdeck doctor --clean` removes them (play and practice also do when they start)"
+    assert fix_after(lines, alone) is None
+    lines = CliRunner().invoke(cli.app, ["doctor", "--config", str(cfg), "--clean"]).output.splitlines()
+    assert fix_after(lines, alone) is None
+    assert killed(left)
+    time.sleep(0.2)
+    assert moved.poll() is None  # --clean left it alone, as the line says
+
+
+def fix_after(lines: list[str], line: str) -> str | None:
+    """The fix doctor printed under this line (which must be there), or None."""
+    after = lines[lines.index(line) + 1:][:1]
+    return after[0].removeprefix("     fix: ") if after and after[0].startswith("     fix: ") else None
 
 
 def test_play_removes_what_a_killed_run_left_running_and_says_what(tmp_path):
@@ -409,6 +458,51 @@ def test_play_removes_what_a_killed_run_left_running_and_says_what(tmp_path):
     assert killed(proc) and not (record.run_dir / RECORD).exists()
 
 
+def test_a_killed_runs_note_goes_with_its_record_and_a_note_whose_record_has_gone_goes_unsaid(tmp_path):
+    """Each run is found once, whether through the runs folder swept or the note naming its
+    folder; a run found only through its note is named by its folder's path. A clean sweep
+    removes a killed run's note with its record, and a note whose record is gone (its run
+    ended as its flightdeck was killed, or its folder was deleted) without a word."""
+    runs = tmp_path / "runs"
+    here = killed_run(runs)
+    here_cmd = lane_command(here)
+    there = killed_run(tmp_path / "event" / "runs")  # play --run-dir put it outside the runs folder swept
+    there_cmd = lane_command(there)
+    ended = killed_run(tmp_path / "old" / "runs")
+    ended.path.unlink()  # its flightdeck was killed between removing its record and its note
+    notes = sorted(leftovers.open_runs().iterdir())
+    assert len(notes) == 3
+    where = os.path.realpath(there.run_dir)
+    found = sweep(runs, docker=None, clean=False)
+    assert found == leftovers.Swept(found=(
+        f"run {where} did not shut down (its flightdeck was killed, or the machine stopped) and left running: its process "
+        f"group {there_cmd.pid} (a lane command in l01/work)",
+        f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped) and left running: its process "
+        f"group {here_cmd.pid} (a lane command in l01/work)",
+    ))
+    assert sorted(leftovers.open_runs().iterdir()) == notes  # without clean nothing changes
+    swept = sweep(runs, docker=None, clean=True)
+    assert swept == leftovers.Swept(done=(
+        f"run {where} did not shut down (its flightdeck was killed, or the machine stopped); removed what it left running: "
+        f"its process group {there_cmd.pid} (a lane command in l01/work)",
+        f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped); removed what it left running: "
+        f"its process group {here_cmd.pid} (a lane command in l01/work)",
+    ))
+    assert killed(here_cmd) and killed(there_cmd)
+    assert not here.path.exists() and not there.path.exists() and list(leftovers.open_runs().iterdir()) == []
+
+
+def test_a_note_that_cannot_be_read_is_named_and_kept(tmp_path):
+    notes = leftovers.open_runs()
+    notes.mkdir(parents=True)
+    (notes / "20261111-120000-0a1b2c3d4e5f.json").write_text('{"flightdeck": 1, "folder": "relative/folder"}')
+    swept = sweep(tmp_path / "runs", docker=None, clean=True)
+    assert swept == leftovers.Swept(alone=(
+        f"a note in {notes} cannot be read (it is not a note this flightdeck wrote), so the run it names cannot be found; "
+        f"remove {notes / '20261111-120000-0a1b2c3d4e5f.json'}",))
+    assert (notes / "20261111-120000-0a1b2c3d4e5f.json").exists()
+
+
 def test_a_group_number_now_held_by_processes_flightdeck_did_not_record_is_never_signalled(tmp_path):
     """The pid was given out again: the recorded start time is not the live process's."""
     runs = tmp_path / "runs"
@@ -420,11 +514,11 @@ def test_a_group_number_now_held_by_processes_flightdeck_did_not_record_is_never
                                     "processes": [[proc.pid, "darwin:1.000002" if sys.platform == "darwin" else "linux:x:2"]]}
     record._write()
     found = sweep(runs, docker=None, clean=False)
-    assert found.found == (f"run {RUN}: process group {inside.pid} (a lane command in l01/work) was left alone: none of the "
+    assert found.found == () and found.alone == (f"run {RUN}: process group {inside.pid} (a lane command in l01/work) was left alone: none of the "
                            "processes flightdeck recorded in it is left, and processes it did not record that work in the "
                            f"run's folder are in a group of that number now (pid {inside.pid})",)
     swept = sweep(runs, docker=None, clean=True)
-    assert swept.done == () and swept.found == found.found
+    assert swept.done == () and swept.alone == found.alone
     assert (record.run_dir / RECORD).exists()  # the next sweep looks again
     time.sleep(0.2)
     assert elsewhere.poll() is None and inside.poll() is None  # neither was signalled
@@ -443,12 +537,28 @@ def test_a_recorded_process_that_no_longer_works_under_the_runs_folder_is_left_a
     wait_until(lambda: leftovers.working_folder(proc.pid) == os.path.realpath(elsewhere), "the command to move out")
     record.add(proc.pid, work, "a lane command")
     swept = sweep(runs, docker=None, clean=True)
-    assert swept.done == ()
-    assert swept.found == (f"run {RUN}: process group {proc.pid} (a lane command in l01/work) was left alone: the processes "
+    assert swept.done == () and swept.found == ()
+    assert swept.alone == (f"run {RUN}: process group {proc.pid} (a lane command in l01/work) was left alone: the processes "
                            f"flightdeck recorded in it (pid {proc.pid}) run on, but no longer work in a folder under the "
                            f"run's folder; if it is a leftover, stop it yourself (kill -KILL -- -{proc.pid})",)
     time.sleep(0.2)
     assert proc.poll() is None and (record.run_dir / RECORD).exists()
+
+
+def test_a_runs_folder_named_in_another_case_than_on_disk_is_still_that_folder(tmp_path):
+    """Where the file system does not tell upper from lower case (macOS's default), [run] dir
+    or --run-dir may spell the runs folder otherwise than the folder on disk, which is how the
+    kernel names a process's working folder: what the run left still works under its folder."""
+    (tmp_path / "CaseRuns").mkdir()
+    runs = tmp_path / "caseruns"
+    if not runs.is_dir():
+        pytest.skip("not run: this file system tells upper from lower case, so a folder has one spelling")
+    record = killed_run(runs)
+    proc = lane_command(record)
+    swept = sweep(runs, docker=None, clean=True)
+    assert swept.done == (f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped); removed what "
+                          f"it left running: its process group {proc.pid} (a lane command in l01/work)",)
+    assert killed(proc)
 
 
 def test_a_run_whose_flightdeck_still_runs_is_never_touched(tmp_path, monkeypatch):
@@ -518,21 +628,38 @@ def test_only_containers_with_flightdecks_labels_whose_flightdeck_has_gone_are_r
         ps_line(left, f"flightdeck-{RUN}-l01", RUN, gone)
         + ps_line(live, "flightdeck-now-l01", "now", me)  # a run that still runs
         + ps_line(unsure, "flightdeck-old-l01", "old", Owner(gone.host, gone.uid, gone.pid, ""))  # when it started: unknown
-        + f"{'d' * 64}\tnot-ours\t{RUN}\t\t\t\t\n"  # without the rest of flightdeck's labels
+        + f"{'d' * 64}\tnot-ours\t{RUN}\t\t\t\t\t\n"  # without the rest of flightdeck's labels
         + "garbage line\n"
     )
     found = sweep(None, docker=True, clean=False)
-    assert found.found == (
-        f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped) and left running: its container "
-        f"flightdeck-{RUN}-l01",
-        "run old: its container flightdeck-old-l01 was left alone: its labels do not say when its flightdeck started",
-    )
+    assert found.found == (f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped) and left "
+                           f"running: its container flightdeck-{RUN}-l01",)
+    assert found.alone == ("run old: its container flightdeck-old-l01 was left alone: its labels do not say when its "
+                           "flightdeck started",)
     assert not (fake_bin / "rm.log").exists()
     swept = sweep(None, docker=True, clean=True)
     assert swept.done == (f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped); removed what it "
                           f"left running: its container flightdeck-{RUN}-l01",)
     assert (fake_bin / "rm.log").read_text().splitlines() == [f"rm -f {left}"]
     assert "label=flightdeck.run" in (fake_bin / "ps.log").read_text()
+
+
+def test_a_container_of_a_flightdeck_that_keeps_its_notes_elsewhere_is_never_removed(tmp_path, monkeypatch):
+    """Containers started by a flightdeck with another state folder (another setup, or another
+    test suite on this machine) are that setup's: only a sweep with the same state folder
+    removes them."""
+    fake_bin = install_fake_docker(tmp_path, monkeypatch).parent
+    gone = killed_flightdeck()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "theirs"))
+    (fake_bin / "ps.txt").write_text(ps_line("a" * 64, f"flightdeck-{RUN}-l01", RUN, gone))  # labelled by that flightdeck
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "ours"))
+    assert sweep(None, docker=True, clean=True) == leftovers.Swept()
+    assert not (fake_bin / "rm.log").exists()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "theirs"))
+    assert sweep(None, docker=True, clean=True).done == (
+        f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped); removed what it left running: "
+        f"its container flightdeck-{RUN}-l01",)
+    assert (fake_bin / "rm.log").read_text().splitlines() == [f"rm -f {'a' * 64}"]
 
 
 def test_docker_is_asked_only_when_lanes_run_there_or_a_killed_run_used_it(tmp_path, monkeypatch):
@@ -549,17 +676,36 @@ def test_docker_is_asked_only_when_lanes_run_there_or_a_killed_run_used_it(tmp_p
     assert not (in_docker.run_dir / RECORD).exists()
 
 
+def test_a_killed_docker_run_found_through_its_note_has_its_containers_removed_with_it(tmp_path, monkeypatch):
+    """A docker run started with --run-dir elsewhere: a sweep from a host-runtime config finds
+    it through its note, asks Docker because its record says it used it, and names its
+    container with it."""
+    fake_bin = install_fake_docker(tmp_path, monkeypatch).parent
+    owner = killed_flightdeck()
+    there = killed_run(tmp_path / "event" / "runs", docker=True, owner=owner)
+    (fake_bin / "ps.txt").write_text(ps_line("e" * 64, f"flightdeck-{RUN}-l01", RUN, owner)
+                                     + ps_line("f" * 64, f"flightdeck-{RUN}-l02", RUN, killed_flightdeck()))  # another run of that name
+    swept = sweep(tmp_path / "runs", docker=None, clean=True)
+    assert swept.done == (
+        f"run {os.path.realpath(there.run_dir)} did not shut down (its flightdeck was killed, or the machine stopped); removed "
+        f"what it left running: its container flightdeck-{RUN}-l01",
+        f"run {RUN} did not shut down (its flightdeck was killed, or the machine stopped); removed what it left running: its "
+        f"container flightdeck-{RUN}-l02",
+    )
+    assert not there.path.exists() and list(leftovers.open_runs().iterdir()) == []
+
+
 def test_without_docker_a_killed_docker_runs_containers_are_not_looked_for_and_its_record_stays(tmp_path, monkeypatch):
     fake_bin = install_fake_docker(tmp_path, monkeypatch).parent
     runs = tmp_path / "runs"
     record = killed_run(runs, docker=True)
     swept = sweep(runs, docker=False, clean=True)
-    assert swept.found == (f"run {RUN}: it ran lanes in Docker, which is not available now, so its containers were not "
+    assert swept.alone == (f"run {RUN}: it ran lanes in Docker, which is not available now, so its containers were not "
                            "looked for",)
     assert (record.run_dir / RECORD).exists() and not (fake_bin / "ps.log").exists()
     (fake_bin / "ps.fail").write_text("Cannot connect to the Docker daemon\n")
     swept = sweep(runs, docker=True, clean=True)
-    assert swept.found == ("the containers of runs that did not shut down could not be looked for (Cannot connect to the "
+    assert swept.alone == ("the containers of runs that did not shut down could not be looked for (Cannot connect to the "
                            "Docker daemon); once Docker runs, `flightdeck doctor --clean` removes them",)
     assert (record.run_dir / RECORD).exists()  # kept until its containers can be looked for
 
@@ -569,7 +715,7 @@ def test_a_record_that_cannot_be_read_is_named_and_kept(tmp_path):
     (runs / RUN).mkdir(parents=True)
     (runs / RUN / RECORD).write_text('{"flightdeck": 1, "owner": ')
     swept = sweep(runs, docker=None, clean=True)
-    (line,) = swept.found
+    (line,) = swept.alone
     assert line.startswith(f"run {RUN}: its {RECORD} cannot be read (JSONDecodeError: ") and line.endswith(
         f"so what it left cannot be checked; remove {runs / RUN / RECORD} once no flightdeck runs from that folder")
     assert (runs / RUN / RECORD).exists()
@@ -580,7 +726,7 @@ def test_where_start_times_cannot_be_read_nothing_is_removed_and_the_sweep_says_
     proc = lane_command(killed_run(runs))
     monkeypatch.setattr(sys, "platform", "sunos5")
     swept = sweep(runs, docker=None, clean=True)
-    assert swept == leftovers.Swept(found=("what an earlier run left running cannot be checked here: flightdeck reads "
+    assert swept == leftovers.Swept(alone=("what an earlier run left running cannot be checked here: flightdeck reads "
                                            "process start times on Linux and macOS only, not on sunos5",))
     monkeypatch.undo()
     time.sleep(0.2)
@@ -638,31 +784,48 @@ def test_on_linux_start_times_groups_and_folders_come_from_proc(tmp_path, monkey
 # ---------------------------------------------------------------- after flightdeck itself is killed
 
 
-def test_after_flightdeck_is_killed_doctor_names_its_lanes_command_and_the_next_play_stops_it(tmp_path):
-    from test_play_signals import QUIET, Terminal, env_for, gone, group_alive, lane_pid_file, make_board, make_config, wait_for
+def pid_file_in(runs: Path) -> Path | None:
+    """The lane's command's pid file in a run folder under `runs`, once written."""
+    found = sorted(runs.glob("*/**/lane-pid.txt"))
+    return found[0] if found and found[0].read_text().strip() else None
 
+
+@pytest.mark.parametrize("where", ["in the config's runs folder", "in a folder play was given with --run-dir"])
+def test_after_flightdeck_is_killed_doctor_names_its_lanes_command_and_the_next_play_stops_it(tmp_path, where):
+    """Wherever the killed run's folder is, the next plain `doctor` names what it left and the
+    next plain `play` stops it (a run outside the runs folder looked at is named by its path)."""
+    from test_play_signals import QUIET, Terminal, env_for, gone, group_alive, make_board, make_config, wait_for
+
+    elsewhere = where.endswith("--run-dir")
+    runs = tmp_path / "event" / "runs" if elsewhere else tmp_path / "runs"  # the config's [run] dir is tmp_path/runs
     with FakeModelServer([tool_call_reply("shell", {"command": QUIET, "timeout_seconds": 300})]) as server:
         cfg = make_config(tmp_path, server.base_url)
         played = make_board(tmp_path)
-        term = Terminal(["play", str(played), "--config", str(cfg)], env_for(tmp_path), tmp_path)
+        argv = ["play", str(played), "--config", str(cfg), *(["--run-dir", str(runs)] if elsewhere else [])]
+        term = Terminal(argv, env_for(tmp_path, XDG_STATE_HOME=os.environ["XDG_STATE_HOME"]), tmp_path)
         pgid = None
         try:
-            pgid = int(wait_for(lambda: lane_pid_file(tmp_path), "the lane's command", term).read_text())
-            (run_dir,) = (tmp_path / "runs").iterdir()
-            assert [(g["pgid"], g["what"]) for g in record_of(run_dir)["groups"]] == [(pgid, "a lane command")]
+            pgid = int(wait_for(lambda: pid_file_in(runs), "the lane's command", term).read_text())
+            (run_dir,) = runs.iterdir()
+            # the command may write its pid file before flightdeck's loop has put its group in the record
+            recorded = wait_for(lambda: [(g["pgid"], g["what"]) for g in record_of(run_dir)["groups"]],
+                                "the lane's command in the run's record", term)
+            assert recorded == [(pgid, "a lane command")]
             os.kill(term.proc.pid, signal.SIGKILL)  # no handler runs: the lane's command is left running
             term.proc.wait(timeout=60)
             time.sleep(0.5)
             assert group_alive(pgid)
+            name = os.path.realpath(run_dir) if elsewhere else run_dir.name
             report = CliRunner().invoke(cli.app, ["doctor", "--config", str(cfg)]).output
-            assert (f"warn leftovers: run {run_dir.name} did not shut down (its flightdeck was killed, or the machine "
+            assert (f"warn leftovers: run {name} did not shut down (its flightdeck was killed, or the machine "
                     f"stopped) and left running: its process group {pgid} (a lane command in l01/work)") in report
             assert group_alive(pgid)
             run = prepare_run(RunOptions(board=played, config=cfg))
             run.close()
-            assert (f"run {run_dir.name} did not shut down (its flightdeck was killed, or the machine stopped); removed "
+            assert (f"run {name} did not shut down (its flightdeck was killed, or the machine stopped); removed "
                     f"what it left running: its process group {pgid} (a lane command in l01/work)") in run.notes()
             assert gone(lambda: group_alive(pgid)), "the killed run's lane command is still running"
+            assert not (run_dir / RECORD).exists() and list(leftovers.open_runs().iterdir()) == []  # and its note
         finally:
             term.close()
             if pgid is not None and group_alive(pgid):
@@ -689,7 +852,9 @@ def test_after_flightdeck_is_killed_its_lanes_container_is_removed_by_the_next_p
     with FakeModelServer([tool_call_reply("shell", {"command": QUIET, "timeout_seconds": 300})]) as server:
         cfg = make_config(tmp_path, server.base_url, runtime="docker")
         played = make_board(tmp_path)
-        term = Terminal(["play", str(played), "--config", str(cfg)], env_for(tmp_path), tmp_path)
+        # the same state folder as the sweeps below: a sweep removes only its own setup's containers
+        term = Terminal(["play", str(played), "--config", str(cfg)], env_for(tmp_path, XDG_STATE_HOME=os.environ["XDG_STATE_HOME"]),
+                        tmp_path)
         name = None
         try:
             wait_for(lambda: lane_pid_file(tmp_path), "the lane's command in its container", term, timeout=180)

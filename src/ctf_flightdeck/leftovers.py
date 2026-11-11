@@ -8,20 +8,26 @@ coding-agent CLIs can outlive it. A run therefore marks what it starts:
 - every container it starts (a lane's, an L1 engine's; a coding-agent docker lane runs in
   its lane's container) carries labels (labels()): flightdeck.run, the run folder's name,
   and the flightdeck that started it: this machine (a hash of the machine's id, never the
-  id itself), the user id, the process id and the process's start time;
+  id itself), the user id, the process id, the process's start time, and the folder it
+  keeps its notes in (state_folder(), as a hash), so that two flightdeck setups, or two
+  test suites, on one machine never remove each other's containers;
 - its run folder holds processes.json (ProcessRecord): the same flightdeck, whether the run
   used Docker, and every process group the run started on this machine that may still be
   running (host lanes' commands, L1 engines on the host, coding-agent CLIs on the host),
   each with the processes seen in it and their start times, its leader first. The file is
   written atomically (a new file, synced, then renamed over the old one) whenever a group
-  comes or goes or what runs in it changes, and removed when the run ends cleanly.
+  comes or goes or what runs in it changes, and removed when the run ends cleanly;
+- while that record is there, a note in the state folder's open-runs/ names the run folder,
+  so the run is found wherever its folder is: `play --run-dir` puts it outside the
+  config's runs folder, and a later doctor or play may be given another one.
 
 A run's flightdeck is gone when no live process has its pid, or the one that has it
-started at another time (the pid was reused). sweep() finds what such runs left, and with
-clean=True removes it:
+started at another time (the pid was reused). sweep() finds what such runs left (the run
+folders in the runs folder it is given, and those the notes name), and with clean=True
+removes it:
 
-- their containers: only those with all of flightdeck's labels, of this machine and this
-  user;
+- their containers: only those with all of flightdeck's labels, of this machine, this
+  user and this state folder;
 - their process groups: each only when a process recorded in it is still in it (the same
   pid with the same start time) and works in a folder under that run's folder. A process
   group's number is not given out again while any process of the group lives, so the group
@@ -33,15 +39,18 @@ clean=True removes it:
   ever signalled.
 
 `play` and `practice` sweep at their start and say what they removed; `flightdeck doctor`
-reports, and removes with --clean.
+reports, and removes with --clean. What a sweep leaves alone (Swept.alone) says why, and
+what to do about it when the player can.
 
 Start times and working folders come from /proc on Linux and from the kernel (sysctl and
 proc_pidinfo) on macOS. Elsewhere nothing can be checked, so nothing is removed, and the
-sweep says why.
+sweep says why. A run's folder is compared with a working folder as the kernel names both
+(_kernel_path()): on macOS in the case and Unicode form stored on disk, whatever spelling
+the config or --run-dir used.
 
-Everything read back here (a record, a container's labels, a run folder's name) may have
-been written by something else running as the player, a host lane included: it is parsed
-strictly and shown only through untrusted().
+Everything read back here (a record, a note, a container's labels, a run folder's name) may
+have been written by something else running as the player, a host lane included: it is
+parsed strictly and shown only through untrusted().
 """
 
 from __future__ import annotations
@@ -50,6 +59,7 @@ import contextlib
 import ctypes
 import ctypes.util
 import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -58,6 +68,7 @@ import secrets
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -76,9 +87,13 @@ LABEL_HOST = "flightdeck.host"
 LABEL_UID = "flightdeck.uid"
 LABEL_PID = "flightdeck.pid"
 LABEL_STARTED = "flightdeck.started"
-LABELS = (LABEL_RUN, LABEL_HOST, LABEL_UID, LABEL_PID, LABEL_STARTED)
+LABEL_STATE = "flightdeck.state"
+LABELS = (LABEL_RUN, LABEL_HOST, LABEL_UID, LABEL_PID, LABEL_STARTED, LABEL_STATE)
+STATE_ENV = "XDG_STATE_HOME"
+OPEN_RUNS = "open-runs"  # in the state folder: a note per run whose record is still in its run folder
 MAX_PROCESSES = 16  # processes recorded per group: one of them still there is enough to know the group
 RECORD_MAX = 1024 * 1024  # a record bigger than this is not read
+NOTE_MAX = 16 * 1024  # a note bigger than this is not read
 DOCKER_TIMEOUT = 60.0  # seconds for one docker call
 SHOWN_PIDS = 5  # pids named in a line about processes left alone
 _CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
@@ -164,6 +179,27 @@ def working_folder(pid: int) -> str | None:
     return None
 
 
+def _kernel_path(path: str | Path) -> str:
+    """A folder's path as the kernel names it, the way working_folder() has a process's: no
+    symlinks, and on macOS in the case and Unicode form stored on disk (the kernel's name
+    for the open folder, F_GETPATH), where the config may spell ~/CTF/runs as ~/ctf/runs.
+    Its real path when the folder cannot be opened (it has gone: nothing works in it)."""
+    real = os.path.realpath(path)
+    if sys.platform != "darwin":
+        return real
+    try:
+        fd = os.open(real, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return real
+    try:
+        named = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(_MAXPATHLEN))
+    except OSError:
+        return real
+    finally:
+        os.close(fd)
+    return os.fsdecode(named.split(b"\0", 1)[0]) or real
+
+
 @cache
 def host_id() -> str:
     """This machine, as a hash of its id (never the id itself): containers and records of
@@ -186,6 +222,36 @@ def host_id() -> str:
     if not raw:  # no machine id to be had: the host name is the next best name for this machine
         raw = b"hostname:" + socket.gethostname().encode("utf-8", "replace")
     return hashlib.sha256(b"ctf-flightdeck host\0" + raw).hexdigest()[:16]
+
+
+def state_folder() -> Path:
+    """The folder flightdeck keeps notes of its own in: $XDG_STATE_HOME/ctf-flightdeck when
+    that is an absolute path (the XDG rule: anything else is ignored), else
+    ~/.local/state/ctf-flightdeck. OSError when there is no home folder to put it in."""
+    base = os.environ.get(STATE_ENV, "")
+    if os.path.isabs(base):
+        return Path(base) / "ctf-flightdeck"
+    try:
+        home = Path.home()
+    except RuntimeError:
+        home = Path()
+    if not home.is_absolute():
+        raise OSError(errno.ENOENT, f"there is no home folder for flightdeck's notes; set {STATE_ENV} to a folder")
+    return home / ".local" / "state" / "ctf-flightdeck"
+
+
+def open_runs() -> Path:
+    """The folder of notes naming the run folders whose record is still there (OSError as
+    state_folder())."""
+    return state_folder() / OPEN_RUNS
+
+
+def state_id() -> str:
+    """The state folder as a hash (never its path): the label that tells this setup's
+    containers from those of a flightdeck that keeps its notes elsewhere. OSError as
+    state_folder()."""
+    folder = os.path.realpath(state_folder())
+    return hashlib.sha256(b"ctf-flightdeck state\0" + os.fsencode(folder)).hexdigest()[:16]
 
 
 # Linux: /proc/<pid>/stat, whose fields after the command's name are: state, ppid, pgrp, ...,
@@ -359,7 +425,8 @@ def _this(pid: int) -> Owner:
 
 
 def labels(run: str, owner: Owner | None = None) -> dict[str, str]:
-    """The labels every container of the run carries: the run folder's name and its owner."""
+    """The labels every container of the run carries: the run folder's name, its owner, and
+    the state folder its owner keeps its notes in (state_id()). OSError as state_folder()."""
     owner = owner or Owner.this()
     return {
         LABEL_RUN: run,
@@ -367,6 +434,7 @@ def labels(run: str, owner: Owner | None = None) -> dict[str, str]:
         LABEL_UID: str(owner.uid),
         LABEL_PID: str(owner.pid),
         LABEL_STARTED: owner.started,
+        LABEL_STATE: state_id(),
     }
 
 
@@ -401,13 +469,16 @@ class ProcessRecord:
 
     Writing the file never raises: the first failure is kept in `problem` for the run to
     report, since a run whose record cannot be written still runs (only the backstop is
-    lost). start() writes it the first time, and raises OSError when it cannot."""
+    lost). start() writes it the first time, then the run's note in open_runs() (`note`),
+    and raises OSError naming the file it could not write (its filename) when it cannot
+    write either: then neither is left."""
 
     def __init__(self, run_dir: Path, *, docker: bool, owner: Owner | None = None) -> None:
         self.run_dir = Path(run_dir)
         self.path = self.run_dir / RECORD
         self.docker = docker
         self.owner = owner or Owner.this()
+        self.note: Path | None = None  # the run's note in open_runs(), once start() has written it
         self.problem: str | None = None
         self._groups: dict[int, dict] = {}
         self._lock = threading.Lock()
@@ -416,7 +487,16 @@ class ProcessRecord:
     def start(cls, run_dir: Path, *, docker: bool, owner: Owner | None = None) -> ProcessRecord:
         record = cls(run_dir, docker=docker, owner=owner)
         with record._lock:
-            record._write()
+            try:
+                record._write()
+            except OSError as exc:
+                raise OSError(exc.errno, exc.strerror or str(exc), str(record.path)) from None
+            try:  # the record first: a note always names a folder whose record is there, or was
+                record.note = _note(record.run_dir)
+            except OSError:
+                with contextlib.suppress(OSError):
+                    record.path.unlink()
+                raise
         return record
 
     def groups(self) -> dict[int, list[list]]:
@@ -474,8 +554,8 @@ class ProcessRecord:
                 self._save()
 
     def finish(self) -> None:
-        """The run ended cleanly: the record goes, unless a group is still in it (then the
-        next sweep, once this flightdeck has exited, deals with it)."""
+        """The run ended cleanly: the record goes, then its note, unless a group is still in
+        it (then the next sweep, once this flightdeck has exited, deals with it)."""
         with self._lock:
             if self._groups:
                 self._save()
@@ -484,6 +564,10 @@ class ProcessRecord:
                 self.path.unlink(missing_ok=True)
             except OSError as exc:
                 self._failed(exc)
+                return
+            if self.note is not None:
+                with contextlib.suppress(OSError):  # one left naming a folder with no record: the next sweep removes it
+                    self.note.unlink(missing_ok=True)
 
     def _save(self) -> None:
         try:
@@ -515,6 +599,65 @@ def _seen(pgid: int) -> list[list]:
         return [[p.pid, p.started] for p in group(pgid)[:MAX_PROCESSES]]
     except Unsupported:
         return []
+
+
+def _note(run_dir: Path) -> Path:
+    """Write the note in open_runs() that names this run folder (its real path); the note's
+    path. OSError naming the file or folder that could not be written (its filename; none
+    when there is no state folder at all)."""
+    folder = open_runs()
+    try:
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(exc.errno, exc.strerror or str(exc), str(folder)) from None
+    stem = re.sub(r"[^A-Za-z0-9_-]", "_", run_dir.name)[:64] or "run"
+    path = folder / f"{stem}-{secrets.token_hex(6)}.json"
+    data = {"flightdeck": SCHEMA, "folder": os.path.realpath(run_dir)}
+    try:
+        _write_atomically(path, (json.dumps(data) + "\n").encode("utf-8"))
+    except OSError as exc:
+        raise OSError(exc.errno, exc.strerror or str(exc), str(path)) from None
+    return path
+
+
+def _notes() -> tuple[list[tuple[Path, Path]], list[str]]:
+    """[(a note in open_runs(), the run folder it names)], and a line for each note (or the
+    folder of notes) that cannot be read: such a note is kept, and named."""
+    why = "runs whose folder is not in the runs folder looked at cannot be found"
+    try:
+        folder = open_runs()
+        entries = sorted(os.scandir(folder), key=lambda e: e.name)
+    except FileNotFoundError:
+        return [], []  # no run has noted itself yet
+    except OSError as exc:
+        return [], [f"{why}: {_show(str(exc.strerror or exc))}" + (f" ({_show(exc.filename)})" if exc.filename else "")]
+    found: list[tuple[Path, Path]] = []
+    problems: list[str] = []
+    for entry in entries:
+        if entry.name.startswith("."):  # a note being written, or one whose writer was killed: never a whole note
+            continue
+        named, problem = _read_note(entry)
+        if named is None:
+            problems.append(f"a note in {_show(str(folder))} cannot be read ({_show(problem)}), so the run it names cannot "
+                            f"be found; remove {_show(entry.path)}")
+        else:
+            found.append((Path(entry.path), named))
+    return found, problems
+
+
+def _read_note(entry: os.DirEntry) -> tuple[Path | None, str]:
+    """(the run folder a note names, "") or (None, why it cannot be read). Strict, as
+    read_record()."""
+    try:
+        if not entry.is_file(follow_symlinks=False) or entry.stat(follow_symlinks=False).st_size > NOTE_MAX:
+            return None, "it is not a file, or is too big"
+        data = json.loads(Path(entry.path).read_bytes().decode("utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    folder = data.get("folder") if isinstance(data, dict) and data.get("flightdeck") == SCHEMA else None
+    if not (isinstance(folder, str) and os.path.isabs(folder) and "\0" not in folder):
+        return None, "it is not a note this flightdeck wrote"
+    return Path(folder), ""
 
 
 @dataclass(frozen=True)
@@ -587,11 +730,21 @@ class Swept:
     """What a sweep did and found, as lines for the player."""
 
     done: tuple[str, ...] = ()  # what it removed: a line per run
-    found: tuple[str, ...] = ()  # what is still there (found only, left alone, could not go) or could not be checked
+    found: tuple[str, ...] = ()  # what is still there that a sweep with clean removes (none after one)
+    alone: tuple[str, ...] = ()  # what it leaves alone, could not remove or could not check, each with why: clean does not change it
 
     @property
     def lines(self) -> tuple[str, ...]:
-        return self.done + self.found
+        return self.done + self.found + self.alone
+
+
+@dataclass
+class _Run:
+    """A run folder with a record, as a sweep found it."""
+
+    record: Path  # its processes.json
+    name: str  # how lines name it: its folder's name, or its folder's path when that is not in the runs folder looked at
+    notes: list[Path] = field(default_factory=list)  # the notes in open_runs() that name its folder
 
 
 @dataclass
@@ -603,44 +756,52 @@ class _Leftovers:
     groups: list[tuple[_Group, str]] = field(default_factory=list)  # (group, the run folder, as the kernel names it)
     alone: list[str] = field(default_factory=list)  # left alone, each with why
     record: Path | None = None
+    notes: list[Path] = field(default_factory=list)  # they go with the record
     keep: bool = False  # its record stays: its containers could not be looked for
 
 
 def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
     """Find what runs whose flightdeck is gone left, in the run folders under `runs` and
-    (with `docker`) in Docker, and with `clean` remove it (see the module docstring).
-    docker: True looks for containers, False does not, None only when such a run's record
-    says it used Docker. Never raises for what it finds: every problem is a line."""
+    those the notes in open_runs() name, and (with `docker`) in Docker, and with `clean`
+    remove it (see the module docstring). docker: True looks for containers, False does
+    not, None only when such a run's record says it used Docker. Never raises for what it
+    finds: every problem is a line."""
     reason = supported()
     if reason is not None:
-        return Swept(found=(f"what an earlier run left running cannot be checked here: {reason}",))
-    lines: list[str] = []
-    gone: list[tuple[str, Path, _Record]] = []
-    for path in _record_paths(runs):
-        run = path.parent.name
-        record, problem = read_record(path)
+        return Swept(alone=(f"what an earlier run left running cannot be checked here: {reason}",))
+    found_runs, stale, alone = _runs_with_records(runs)
+    gone: list[tuple[_Run, _Record]] = []
+    for run in found_runs:
+        record, problem = read_record(run.record)
         if record is None:
-            lines.append(f"run {_show(run)}: its {RECORD} cannot be read ({_show(problem)}), so what it left cannot be "
-                         f"checked; remove {_show(str(path))} once no flightdeck runs from that folder")
+            alone.append(f"run {_show(run.name)}: its {RECORD} cannot be read ({_show(problem)}), so what it left cannot be "
+                         f"checked; remove {_show(str(run.record))} once no flightdeck runs from that folder")
             continue
         if not record.owner.here():
             continue  # another machine's or another user's run
         state = record.owner.state()
         if state == _UNKNOWN:
-            lines.append(f"run {_show(run)}: whether its flightdeck still runs cannot be told (its record has no start "
+            alone.append(f"run {_show(run.name)}: whether its flightdeck still runs cannot be told (its record has no start "
                          "time), so what it left was not touched")
         elif state == _GONE:
-            gone.append((run, path, record))
+            gone.append((run, record))
+    if clean:
+        for note in stale:  # its run ended, or its folder is gone: nothing is left to find from it
+            with contextlib.suppress(OSError):
+                note.unlink()
     try:  # every group of every such run, in one look at this machine's processes
-        live = processes_in(item.pgid for _, _, record in gone for item in record.groups)
+        live = processes_in(item.pgid for _, record in gone for item in record.groups)
     except Unsupported as exc:
-        return Swept(found=(*lines, f"what an earlier run left running cannot be checked here: {exc}"))
+        return Swept(alone=(*alone, f"what an earlier run left running cannot be checked here: {exc}"))
     found: dict[str, _Leftovers] = {}
+    named: dict[tuple[str, Owner], str] = {}  # (a gone run's folder name, its flightdeck): its entry, for its containers
     look = docker is True
-    for run, path, record in gone:
-        entry = found.setdefault(run, _Leftovers(run))
-        entry.record = path
-        folder = os.path.realpath(path.parent)
+    for run, record in gone:
+        entry = found.setdefault(run.name, _Leftovers(run.name))
+        entry.record = run.record
+        entry.notes += run.notes
+        named[(run.record.parent.name, record.owner)] = run.name
+        folder = _kernel_path(run.record.parent)
         for item in record.groups:
             verdict = _judge(item, folder, live.get(item.pgid, []))
             if verdict == "":
@@ -654,55 +815,98 @@ def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
             else:
                 look = True
     if look:
-        boxes, problem = _containers()
+        mine, boxes, problem = "", [], ""
+        try:
+            mine = state_id()
+        except OSError as exc:  # no state folder: whose containers are this setup's cannot be told
+            problem = (f"the containers of runs that did not shut down were not looked for: "
+                       f"{_show(str(exc.strerror or exc))}")
+        else:
+            boxes, problem = _containers()
+            if problem:
+                problem = (f"the containers of runs that did not shut down could not be looked for ({problem}); once Docker "
+                           "runs, `flightdeck doctor --clean` removes them")
         if problem:
-            lines.append(f"the containers of runs that did not shut down could not be looked for ({problem}); once Docker "
-                         "runs, `flightdeck doctor --clean` removes them")
+            alone.append(problem)
             for entry in found.values():
                 if entry.record is not None and _says_docker(entry.record):
                     entry.keep = True
         for box_id, name, box_labels in boxes:
             owner = _owner(box_labels.get(LABEL_HOST), box_labels.get(LABEL_UID), box_labels.get(LABEL_PID),
                            box_labels.get(LABEL_STARTED))
-            if owner is None or not owner.here():
-                continue  # not all of flightdeck's labels, or another machine's or user's
+            if owner is None or not owner.here() or box_labels.get(LABEL_STATE) != mine:
+                continue  # not all of flightdeck's labels, or another machine's, user's or setup's (state folder's)
             state = owner.state()
             if state == _RUNNING:
                 continue
-            entry = found.setdefault(box_labels[LABEL_RUN], _Leftovers(box_labels[LABEL_RUN]))
+            run_name = named.get((box_labels[LABEL_RUN], owner), box_labels[LABEL_RUN])
+            entry = found.setdefault(run_name, _Leftovers(run_name))
             if state == _UNKNOWN:
                 entry.alone.append(f"its container {_show(name)} was left alone: its labels do not say when its "
                                    "flightdeck started")
                 continue
             entry.containers.append((box_id, name))
     done_lines: list[str] = []
-    for run in sorted(found):
-        entry = found[run]
+    found_lines: list[str] = []
+    for run_name in sorted(found):
+        entry = found[run_name]
         if clean:
             done, failed = _remove(entry)
             if done:
-                done_lines.append(f"run {_show(run)} {NOT_SHUT_DOWN}; removed what it left running: {'; '.join(done)}")
+                done_lines.append(f"run {_show(run_name)} {NOT_SHUT_DOWN}; removed what it left running: {'; '.join(done)}")
         else:
             failed, items = [], _items(entry)
             if items:
-                lines.append(f"run {_show(run)} {NOT_SHUT_DOWN} and left running: {'; '.join(items)}")
-        lines += [f"run {_show(run)}: {text}" for text in [*failed, *entry.alone]]
+                found_lines.append(f"run {_show(run_name)} {NOT_SHUT_DOWN} and left running: {'; '.join(items)}")
+        alone += [f"run {_show(run_name)}: {text}" for text in [*failed, *entry.alone]]
         if clean and entry.record is not None and not (entry.keep or failed or entry.alone):  # else the next sweep looks again
             with contextlib.suppress(OSError):
                 entry.record.unlink()
-    return Swept(tuple(done_lines), tuple(lines))
+                for note in entry.notes:
+                    note.unlink(missing_ok=True)
+    return Swept(tuple(done_lines), tuple(found_lines), tuple(alone))
 
 
-def _record_paths(runs: Path | None) -> list[Path]:
-    """runs/<run folder>/processes.json for each run folder that has one."""
+def _runs_with_records(runs: Path | None) -> tuple[list[_Run], list[Path], list[str]]:
+    """The run folders with a record: those in `runs`, in name order, then those elsewhere
+    that the notes in open_runs() name (each folder once, by its identity, whatever path
+    led to it); the notes whose folder has no record (its run ended, or the folder is
+    gone); and lines for what could not be read."""
+    found: dict[tuple[int, int], _Run] = {}
+    for folder in _run_folders(runs):
+        key = _folder_id(folder)
+        if key is not None and key not in found:
+            found[key] = _Run(folder / RECORD, folder.name)
+    notes, problems = _notes()
+    stale: list[Path] = []
+    for note, folder in notes:
+        key = _folder_id(folder) if os.path.isfile(folder / RECORD) else None
+        if key is None:
+            stale.append(note)
+            continue
+        found.setdefault(key, _Run(folder / RECORD, str(folder))).notes.append(note)
+    return list(found.values()), stale, problems
+
+
+def _run_folders(runs: Path | None) -> list[Path]:
+    """runs/<run folder> for each run folder that has a record."""
     if runs is None:
         return []
     try:
         folders = sorted(os.scandir(runs), key=lambda e: e.name)
     except OSError:
         return []
-    return [Path(f.path) / RECORD for f in folders
-            if f.is_dir(follow_symlinks=False) and os.path.isfile(os.path.join(f.path, RECORD))]
+    return [Path(f.path) for f in folders if f.is_dir(follow_symlinks=False) and os.path.isfile(os.path.join(f.path, RECORD))]
+
+
+def _folder_id(folder: Path) -> tuple[int, int] | None:
+    """A folder's identity (device, inode), the same whatever path names it; None when it is
+    not a folder (a symlink is not one)."""
+    try:
+        info = os.lstat(folder)
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino) if stat.S_ISDIR(info.st_mode) else None
 
 
 def _says_docker(path: Path) -> bool:
@@ -747,7 +951,7 @@ def _under(path: str | None, folder: str) -> bool:
 def _describe(item: _Group, folder: str) -> str:
     where = item.folder
     if os.path.isabs(where):
-        real = os.path.realpath(where)
+        real = _kernel_path(where)
         if _under(real, folder):
             where = os.path.relpath(real, folder)
     return f"process group {item.pgid} ({_show(item.what)} in {_show(where)})"

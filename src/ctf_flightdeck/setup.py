@@ -337,16 +337,18 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
 def _leftover_checks(config_path: Path | None, *, docker: bool, clean: bool) -> list[Check]:
     """What runs whose flightdeck was killed (SIGKILL, a power loss) left running: their
     containers and their process groups on this machine (leftovers.sweep), for the runs in
-    the config's runs folder and, when Docker runs, in Docker: every container of such a
-    run for a config whose lanes run in Docker, else those of the runs whose record says
-    they used it.
+    the config's runs folder and those elsewhere that flightdeck's notes name (play
+    --run-dir), and, when Docker runs, in Docker: every container of such a run for a
+    config whose lanes run in Docker, else those of the runs whose record says they used it.
 
     doctor only reports them unless `clean`: it is what a player runs to look at a setup,
     often just after something went wrong, so it changes nothing unasked; a container a
     killed run left may be what the player wants to look into (docker logs, docker exec).
-    play and practice remove them at their start, since their lanes would compete with them."""
+    play and practice remove them at their start, since their lanes would compete with them.
+    Only what --clean removes gets the fix that says so; a line for what it leaves alone
+    says why, and what to do when the player can."""
     from .config import DEFAULT_RUN_DIR, ConfigError, load_config
-    from .leftovers import sweep
+    from .leftovers import open_runs, sweep
 
     runtime = None
     try:
@@ -360,11 +362,12 @@ def _leftover_checks(config_path: Path | None, *, docker: bool, clean: bool) -> 
             runs = None
     look = (True if runtime == "docker" else None) if docker else False
     swept = sweep(runs, docker=look, clean=clean)
-    if not swept.lines:
-        return [Check("leftovers", True, f"no run left anything running (runs in {runs})")]
-    fix = "" if clean else "`flightdeck doctor --clean` removes them (play and practice also do when they start)"
+    if not swept.lines:  # the notes' folder could be found, or the sweep would have said why not
+        return [Check("leftovers", True, f"no run left anything running (runs in {runs}, and those noted in {open_runs()})")]
+    fix = "`flightdeck doctor --clean` removes them (play and practice also do when they start)"
     return ([Check("leftovers", True, line) for line in swept.done]
-            + [Check("leftovers", False, line, fix, essential=False) for line in swept.found])
+            + [Check("leftovers", False, line, fix, essential=False) for line in swept.found]
+            + [Check("leftovers", False, line, essential=False) for line in swept.alone])
 
 
 def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
