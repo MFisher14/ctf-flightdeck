@@ -38,7 +38,7 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   dollar cap holds on what is known, and only spend with no price asks you to drop the cap.
 - `[prices."<model>"]` may name a model of an `[agents]` ladder, so codex lanes, which report
   tokens but no cost, get dollars; `play` names the codex models with no price, and
-  `flightdeck config` lists their prices. claude keeps its own figure.
+  `flightdeck config` lists the priced ones among its prices. claude keeps its own figure.
 - A budget alert for spend with no price names the model that spent it ("No price for ..."): an
   escalated lane's earlier model, or a CLI's model, rather than the lane's model at the time.
 - A cancelled engine run (a lane killed, a quit) removes its copy of the challenge.
