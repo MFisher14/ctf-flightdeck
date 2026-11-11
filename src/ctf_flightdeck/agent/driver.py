@@ -510,8 +510,8 @@ class AgentDriver:
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
         for flag in flags:
-            if not self._flag_re().fullmatch(flag):
-                notes.append(f"{prompts.one(flag, 200)} does not match the flag format {self.deck.config.flag_format}; it was not submitted.")
+            if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
+                notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
         skipped = len(reply.tool_calls) - len(results)
         if same:
             messages.append(reply.message)
@@ -564,10 +564,11 @@ class AgentDriver:
         never the model's plan."""
         challenge = run.challenge
         messages = [
-            {"role": "system", "content": prompts.system_prompt(self.deck.config.flag_format)},
+            {"role": "system", "content": prompts.system_prompt()},
             {
                 "role": "user",
-                "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()), approach),
+                "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
+                                         approach, flag_format=self.deck.config.flag_format),
             },
         ]
         if run.l1_message is not None:

@@ -260,7 +260,7 @@ def test_a_lane_on_anthropic_reads_the_handout_and_hands_over_a_flag(tmp_path):
             await until(lambda: lane.pending is not None or lane.finished, "the candidate flag")
             assert lane.pending is not None, lane.result
             first, second = (r["json"] for r in claude.requests)
-            assert first["system"] == [{"type": "text", "text": system_prompt(FLAG), "cache_control": {"type": "ephemeral"}}]
+            assert first["system"] == [{"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}]
             assert [m["role"] for m in first["messages"]] == ["user"]
             assert "Challenge: Note (misc, 50 points, 10 solves)" in first["messages"][0]["content"][0]["text"]
             assistant, results = second["messages"][1], second["messages"][2]
