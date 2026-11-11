@@ -56,7 +56,7 @@ def test_a_config_with_only_the_ladder_has_the_documented_defaults(tmp_path):
     assert config.models == ("vendor/small", "vendor/big")
     assert (config.api.base_url, config.api.key_env) == ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY")
     lanes = config.lanes
-    assert (lanes.max_lanes, lanes.runtime, lanes.image) == (4, "docker", "debian:bookworm-slim")
+    assert (lanes.max_lanes, lanes.runtime, lanes.image) == (4, "docker", "ctf-flightdeck-lane:1")
     assert (lanes.token_cap, lanes.dollar_cap, lanes.submit) == (400_000, 2.0, "confirm")
     assert config.prices == {}
     assert config.run_dir == tmp_path / "home" / ".local/share/ctf-flightdeck/runs"
@@ -457,3 +457,10 @@ def test_the_example_price_block_loads_once_uncommented(tmp_path):
     config = load_config(write(tmp_path, text))
     price = config.prices["vendor/small-model"]
     assert (price.input, price.output, price.cached_input) == (0.10, 0.40, 0.02)
+
+
+
+def test_the_default_lane_image_is_the_one_flightdeck_builds():
+    from ctf_flightdeck.lane import IMAGE
+
+    assert LaneConfig().image == IMAGE

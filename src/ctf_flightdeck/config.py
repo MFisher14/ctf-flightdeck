@@ -51,7 +51,7 @@ class ApiConfig:
 class LaneConfig:
     max_lanes: int = 4
     runtime: str = "docker"  # docker | host
-    image: str = "debian:bookworm-slim"
+    image: str = "ctf-flightdeck-lane:1"  # lane.IMAGE: built by `flightdeck image build`
     token_cap: int | None = 400_000  # None: no cap
     dollar_cap: float | None = 2.0  # None: no cap
     submit: str = "confirm"  # confirm | auto
@@ -148,7 +148,7 @@ ladder = []
 [lanes]
 max_lanes = 4                   # lanes at once; the rest wait in the queue
 runtime = "docker"              # "docker": a container per lane; "host": on this machine
-image = "debian:bookworm-slim"  # the lanes' docker image; never pulled, so pull it yourself first
+image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image build` makes it (never pulled)
 token_cap = 400000              # per lane; false for no cap
 dollar_cap = 2.0                # per lane; false for no cap
 submit = "confirm"              # "confirm": you approve each flag; "auto": submitted at once

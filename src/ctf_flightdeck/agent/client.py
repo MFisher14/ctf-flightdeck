@@ -32,7 +32,6 @@ import re
 import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import NoReturn
 
 import httpx
 
@@ -337,6 +336,9 @@ def _parse(data: dict) -> Reply:
     history = {**message, "role": "assistant"}
     if entries is not None:
         history["tool_calls"] = entries
+    if not _finite(history):
+        # it goes back into the history, and the next request's body could not encode it
+        raise _Malformed("the model API sent a message holding a number JSON cannot carry (NaN or infinity)")
     return Reply(
         message=history,
         content=_content(message.get("content")),
@@ -444,28 +446,29 @@ def _text(value: object) -> str:
 
 
 def _json(response: httpx.Response) -> object:
-    """The parsed body, or _NOT_JSON when it is not strict JSON.
+    """The parsed body, or _NOT_JSON when it cannot be parsed.
 
-    Python's parser also takes NaN and Infinity, and reads a number such as 1e400 as
-    infinity. JSON has neither, and a reply message holding one could never be sent back
-    in the history: `_request_body` refuses it. A body nested deeper than the parser can
-    follow raises RecursionError, not ValueError, and is refused the same way.
-    """
+    A body nested deeper than the parser can follow raises RecursionError, not
+    ValueError, and is refused the same way. NaN, Infinity and numbers such as 1e400
+    (read as infinity) parse here; only the message that goes back into the history must
+    be free of them, and `_parse` checks that (a non-finite cost is just unknown)."""
     try:
-        return response.json(parse_constant=_refuse_constant, parse_float=_finite_float)
+        return response.json()
     except (ValueError, RecursionError):  # ValueError covers UnicodeDecodeError too
         return _NOT_JSON
 
 
-def _refuse_constant(name: str) -> NoReturn:
-    raise ValueError(f"{name} is not JSON")
-
-
-def _finite_float(text: str) -> float:
-    value = float(text)
-    if not math.isfinite(value):
-        raise ValueError("a number too big for a float")
-    return value
+def _finite(value: object, depth: int = 0) -> bool:
+    """No NaN or infinity anywhere in `value` (JSON cannot carry one back)."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if depth > 64:
+        return False
+    if isinstance(value, dict):
+        return all(_finite(v, depth + 1) for v in value.values())
+    if isinstance(value, list):
+        return all(_finite(v, depth + 1) for v in value)
+    return True
 
 
 def _error_message(data: object) -> str:

@@ -44,11 +44,17 @@ def system_prompt(flag_format: str) -> str:
     )
 
 
+MAX_BRIEF_FILES = 40  # a handout with vendored code or a .git folder must not flood the brief
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "") -> str:
     """The first user message: the challenge as the lane should see it."""
+    shown = ", ".join(files[:MAX_BRIEF_FILES])
+    if len(files) > MAX_BRIEF_FILES:
+        shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
     lines = [
         f"Challenge: {challenge.name} ({challenge.category}, {challenge.points} points, {challenge.solves} solves)",
-        "Files in the workspace: " + (", ".join(files) if files else "none"),
+        "Files in the workspace: " + (shown if files else "none"),
         "Live instance: " + (", ".join(urls) if urls else "none"),
         "Description:",
         FENCE_OPEN,

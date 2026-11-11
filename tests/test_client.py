@@ -527,8 +527,31 @@ def test_a_reply_holding_a_number_json_cannot_carry_is_refused_before_it_reaches
     with FakeModelServer([FakeReply(200, raw), text_reply("never sent")]) as server:
         err = fails(server.base_url)
         assert len(server.requests) == 1
-    assert "not JSON" in str(err)
+    assert "NaN or infinity" in str(err)
     assert err.status == 200 and err.retryable is False
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_a_number_json_cannot_carry_outside_the_message_does_not_end_the_call(number):
+    # only the message goes back into the history: a NaN cost or logprob elsewhere is harmless
+    raw = ('{"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop", '
+           '"logprobs": {"content": [{"logprob": %s}]}}], "model": "fake/model", '
+           '"usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": %s}}' % (number, number))
+    with FakeModelServer([FakeReply(200, raw)]) as server:
+        reply = asyncio.run(_one_reply(server.base_url))
+    assert reply.content == "ok" and reply.usage.cost is None  # a non-finite cost is unknown
+
+
+def test_an_error_body_holding_nan_still_reports_the_servers_message():
+    raw = '{"error": {"message": "context too long", "metadata": {"score": NaN}}}'
+    with FakeModelServer([FakeReply(400, raw)]) as server:
+        err = fails(server.base_url)
+    assert err.status == 400 and "context too long" in str(err)
+
+
+async def _one_reply(base_url):
+    async with ModelClient(base_url, None, max_retries=0, backoff=0.0) as client:
+        return await client.chat("m", [{"role": "user", "content": "hi"}], [], session_id="s")
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 422])
