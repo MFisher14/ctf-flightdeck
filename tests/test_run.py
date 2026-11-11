@@ -281,6 +281,32 @@ def test_play_says_nothing_of_a_hold_the_player_lifted(tmp_path, monkeypatch):
     assert "held" not in result.stderr and "run folder: " in result.stdout
 
 
+def test_practice_ends_as_play_does_with_a_held_queue_the_run_folder_and_the_commands_that_read_it(tmp_path, monkeypatch):
+    """practice plays the set that ships with flightdeck. Every model call is refused (HTTP
+    401): its two lanes end, the queue is held with twelve challenges in it, and the player
+    quits. On the way out it says why the queue was held, then the run folder and the commands,
+    score among them (the set has answers), each of which works as printed."""
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: app.deck.held and all(lane.finished for lane in app.deck.lanes.values()), "the hold")
+        await pilot.press("q")
+
+    headless(monkeypatch, player)
+    refused = FakeReply(401, {"error": {"message": "No auth credentials found"}})
+    with FakeModelServer(responder=lambda record: refused) as server:
+        result = CliRunner().invoke(cli.app, ["practice", "--config", str(config(tmp_path, server.base_url))])
+    assert result.exit_code == 0, result.output
+    held = "flightdeck: the queue was held when the run ended (12 challenges queued, not started): "
+    assert held in result.stderr and "(check the API key)" in result.stderr, result.stderr
+    out = result.output
+    assert out.index("Practice Range: solved 0 of 14") < out.index(held) < out.index("run log: ")
+    folder, commands = next_steps(result.stdout)
+    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "score")]
+    for command in commands:
+        ran = CliRunner().invoke(cli.app, shlex.split(command)[1:])
+        assert ran.exit_code == 0, (command, ran.output)
+    assert "Flags checked against answers.sha256.json" in ran.stdout  # score, last: against the set's answers
+
+
 def test_the_event_log_and_the_lane_workspaces_go_in_a_new_folder_per_run(tmp_path):
     with FakeModelServer() as server:
         cfg = config(tmp_path, server.base_url)

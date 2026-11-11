@@ -2764,9 +2764,24 @@ def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_fo
     }
 
 
-def test_the_board_reads_each_event_once_as_the_deck_grows():
+def test_the_board_reads_each_event_once_as_the_deck_grows(monkeypatch):
+    """The board asks owner() of every row on every redraw: the deck's events are read once
+    each, in order, however often it asks, and events added later are read when it next asks."""
+    from ctf_flightdeck.runrecord import Credit
+
+    seen: list[int] = []
+
+    class Counted(Credit):
+        def see(self, index, event):
+            seen.append(index)
+            super().see(index, event)
+
+    monkeypatch.setattr(views, "Credit", Counted)
     deck = solving_deck()
-    assert views.owner(deck, deck.challenges["alpha"]) == ("L1·reader", "l1")
+    for _ in range(3):
+        assert views.owner(deck, deck.challenges["alpha"]) == ("L1·reader", "l1")
+        assert views.owner(deck, deck.challenges["charlie"]) == ("L1·strings", "l1")
+    assert seen == list(range(len(deck.events)))
     deck.release([Challenge("delta", "Delta", "misc", 50)], [QueueEntry("delta", "glm")])
     (delta,) = deck.lanes_on("delta")
     deck.record_l1("delta", "rot", "solved", flags=["t{delta}"], lane_id=delta.id)  # after the first read
@@ -2774,6 +2789,7 @@ def test_the_board_reads_each_event_once_as_the_deck_grows():
     assert deck.apply(iv.Approve(delta.id)).ok
     assert views.owner(deck, deck.challenges["delta"]) == ("L1·rot", "l1")
     assert views.owner(deck, deck.challenges["bravo"]) == ("L02", "lane")
+    assert seen == list(range(len(deck.events)))
 
 
 # ---------------------------------------------------------------------- what doctor says a terminal leaves out
