@@ -34,8 +34,9 @@ FORMAT = 2
 """What a log of this version holds, beyond format 1: spend outside a turn as `spend` events,
 and each release's event name and its challenges' names, categories and points (core/deck.py).
 A coding-agent CLI's steps are turns whose dollars are null with dollars_later true: the CLI
-reports their cost when its turn ends, as a `spend` event with turn_end true. A log without
-the field in its run-start line is format 1."""
+reports their cost when its turn ends, as a `spend` event with turn_end true (unreported true
+too, dollars null, for a turn whose cost never came: the CLI was stopped in it, or exited). A
+log without the field in its run-start line is format 1."""
 
 
 class EventLog:

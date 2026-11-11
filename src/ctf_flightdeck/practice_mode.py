@@ -371,6 +371,7 @@ class _Lane:
     unpriced_spend: int = 0  # the tokens they spent
     unpriced_turn_ends: int = 0  # its CLI's reports of a turn's own cost (turn_end) with no price
     unpriced_turn_end: int = 0  # the tokens they counted
+    unreported_turns: int = 0  # its CLI's turns whose cost never came (unreported): no price could give it
     cost_due: bool = False  # its coding-agent CLI's last turn (dollars_later steps) has no turn_end spend event yet
 
 
@@ -477,6 +478,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
             marked = get.data("turn_end", _is_bool, "turn_end: true or false", default=False)
             at_turn_end = marked or turn_end(rec.get("data", {}))  # a log from before the mark says so by its why
+            unreported = get.data("unreported", _is_bool, "unreported: true or false", default=False)
             acc = lanes.setdefault(lane, _Lane(cid))
             if at_turn_end:
                 acc.cost_due = False  # the CLI's cost of the turn its steps were in
@@ -484,7 +486,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
             acc.spends += 1
             if dollars is None:
                 acc.dollars = None
-                if at_turn_end:
+                if at_turn_end and unreported:
+                    acc.unreported_turns += 1
+                elif at_turn_end:
                     acc.unpriced_turn_ends += 1
                     acc.unpriced_turn_end += tokens
                 else:
@@ -613,6 +617,11 @@ def score(events_jsonl: Path, board: Board) -> Score:
             )
         if acc.unpriced_turn_ends:
             notes.append(_turn_end_note(lane, acc.unpriced_turn_ends, acc.unpriced_turn_end))
+        if acc.unreported_turns:
+            n = acc.unreported_turns
+            which, them = ("1 of its turns", "it") if n == 1 else (f"{n} of its turns", "them")
+            notes.append(f"{lane}'s coding-agent CLI never reported what {which} cost (it was stopped in {them}, or "
+                         "exited), so its cost is not fully known: the dollars count only what is known.")
     notes += spent_outside
     known_dollars = sum(acc.known for acc in lanes.values())
     kinds = Counter(iv.name for iv in done)

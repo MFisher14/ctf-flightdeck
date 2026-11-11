@@ -788,11 +788,29 @@ def test_a_cli_turn_that_ended_with_no_cost_reported_or_counted_is_noted_as_one_
     played = Played(tmp_path)
     deck = played.at(0).deck
     deck.report("L01", TurnReport(action="ls", dollars_later=True))
-    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True))  # codex stopped mid-turn: nothing counted
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True))  # a turn's report with no cost, and no price
     result = score(played.close(), played.board)
     assert result.notes == (
         "L01: its coding-agent CLI's own cost of 1 turn, reported when it ended, had no price, so its cost is not fully "
         "known: the dollars count only what had a price ([prices] in your config can price its model).",
+    )
+
+
+def test_a_cli_turn_whose_cost_never_came_is_noted_as_such_and_no_price_is_said_to_be_missing(tmp_path):
+    # codex stopped mid-turn (killed, escalated) never reports that turn: no price could give its cost
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True, unreported=True))
+    deck.report("L01", TurnReport(action="cat note", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=300, dollars=0.02, turn_end=True))
+    deck.report("L01", TurnReport(action="cat flag", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True, unreported=True))
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].dollars is None and result.unpriced == ("L01",) and result.known_dollars == pytest.approx(0.02)
+    assert result.notes == (
+        "L01's coding-agent CLI never reported what 2 of its turns cost (it was stopped in them, or exited), so its cost "
+        "is not fully known: the dollars count only what is known.",
     )
 
 
