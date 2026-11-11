@@ -332,6 +332,10 @@ class Flight:
         """Dollars known, and how many lanes had a turn with no price."""
         return _known_dollars(self.lanes.values())
 
+    @property
+    def priced_turns(self) -> int:
+        return sum(spend.turns - spend.unpriced for spend in self.models)
+
     def solved_by(self, by: str) -> int:
         return sum(1 for solve in self.solves.values() if solve.by == by)
 
@@ -710,12 +714,25 @@ def _outside(lanes: Mapping[str, LaneFacts]) -> tuple[int, int, float | None]:
 
 
 def _money(amount: float, unpriced: int, total: int, what: str) -> str:
-    """Dollars, or "unknown" with the known part when some of `total` had no price."""
+    """Dollars; or "unknown" when some of `total` ("lanes" or "turns") had no price, with the
+    known part as a floor whenever it is above zero. A lane is unpriced when any turn of it
+    had no price, though its other turns' dollars are known: every lane can be unpriced while
+    most turns had a price."""
     if not unpriced:
         return f"${fmt.dollars(amount)}"
-    if unpriced >= total:
+    if amount <= 0:
         return "unknown"
+    if what == "lanes":
+        which = "the lane" if total == 1 else "every lane" if unpriced >= total else f"{unpriced} of {total} lanes"
+        return f"unknown (at least ${fmt.dollars(amount)}; {which} had a turn with no price)"
     return f"unknown (at least ${fmt.dollars(amount)}; {unpriced} of {total} {what} had no price)"
+
+
+def _spent(flight: Flight) -> str:
+    """The run's dollars, for the glance and the summary."""
+    dollars, unpriced = flight.dollars
+    money = _money(dollars, unpriced, len(flight.lanes), "lanes")
+    return money + " (no turn had a price)" if money == "unknown" and not flight.priced_turns else money
 
 
 def _share(part: int, whole: int) -> str:
@@ -798,7 +815,7 @@ def _glance(flight: Flight) -> list[str]:
         f"- L1: {_plural(flight.l1_runs, 'engine run')}",
         f"- Lanes: {len(flight.lanes)}, {_plural(flight.turns, 'turn')}",
         f"- Tokens: {fmt.tokens(flight.tokens)} ({flight.tokens:,}), {_share(flight.cached, flight.tokens)} cached",
-        f"- Dollars: {_money(dollars, unpriced, len(flight.lanes), 'lanes')}",
+        f"- Dollars: {_spent(flight)}",
         f"- Cost per solve: {per}",
         "",
     ]
@@ -1117,10 +1134,8 @@ def summary(record: RunRecord, *, board: Board | None = None) -> str:
         money = f"${fmt.dollars(dollars)}"
         if lane_solves:
             money += f", ${fmt.dollars(dollars / lane_solves)} per lane solve"
-    elif unpriced < len(flight.lanes):
-        money = f"dollars unknown (at least ${fmt.dollars(dollars)}; {unpriced} of {len(flight.lanes)} lanes had no price)"
     else:
-        money = "dollars unknown (no price)"
+        money = "dollars " + _spent(flight)
     lines = [
         f"Post-flight: {title}, run {_plain(_run_name(record))}",
         f"{fmt.duration(record.duration)}, {_plural(len(flight.challenges), 'challenge')}, {len(flight.solves)} solved "

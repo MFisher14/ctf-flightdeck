@@ -426,9 +426,11 @@ def test_dollars_are_unknown_when_no_turn_had_a_price(tmp_path):
     run.turn(run.lane("y"), "look", tokens=3000, dollars=None)
     run.turn(run.lane("x"), "solve", tokens=1000, dollars=None, flag="t{x}")
     run.do(iv.Approve(run.lane("x")))
-    text = report(run.close())
+    record = run.close()
+    text = report(record)
     glance = items(sections(text)["At a glance"])
-    assert "Dollars: unknown" in glance
+    assert "Dollars: unknown (no turn had a price)" in glance
+    assert "Spend: 4k tokens (12% cached), dollars unknown (no turn had a price)" in summary(record).splitlines()
     assert "Cost per solve: unknown in dollars; 4k tokens per lane solve" in glance  # 4,000 tokens, 1 lane solve
     spend = sections(text, "### ")
     assert "Ranked by tokens, since 2 lanes have no price." in spend["The 2 most expensive lanes"]
@@ -444,11 +446,43 @@ def test_dollars_known_for_only_some_lanes_say_unknown_and_give_what_is_known(tm
     run.turn(run.lane("y"), "look again", dollars=None)  # L02's priced turn still counts toward what is known
     record = run.close()
     text = report(record)
-    assert "- Dollars: unknown (at least $0.75; 1 of 2 lanes had no price)" in text.splitlines()
+    assert "- Dollars: unknown (at least $0.75; 1 of 2 lanes had a turn with no price)" in text.splitlines()
     assert "- Cost per solve: unknown (at least $0.75 per lane solve); 3k tokens per lane solve" in text.splitlines()
     small = next(row for row in table_rows(text) if row[0] == "small")
     assert small == ["small", "3", "3,000", "25%", "unknown (at least $0.75; 1 of 3 turns had no price)"]
-    assert "Spend: 3k tokens (25% cached), dollars unknown (at least $0.75; 1 of 2 lanes had no price)" in summary(record)
+    assert "Spend: 3k tokens (25% cached), dollars unknown (at least $0.75; 1 of 2 lanes had a turn with no price)" in summary(record)
+
+
+def test_dollars_unknown_in_every_lane_still_give_what_is_known(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "misc", 20)])
+    x, y = run.lane("x"), run.lane("y")
+    run.turn(x, "look", dollars=0.50)
+    run.turn(y, "look", dollars=0.90)
+    run.turn(x, "look again", dollars=None)  # escalated to a model with no price, say
+    run.turn(y, "look again", dollars=None)
+    run.turn(x, "solve", dollars=None, flag="t{x}")
+    run.do(iv.Approve(x))
+    record = run.close()
+    text = report(record)
+    glance = items(sections(text)["At a glance"])
+    assert "Dollars: unknown (at least $1.40; every lane had a turn with no price)" in glance
+    assert "Cost per solve: unknown (at least $1.40 per lane solve); 5k tokens per lane solve" in glance
+    x_line = sections(text, "### ")["X (misc, 10 pts): solved by lane L01"][0]
+    assert x_line == "1 lane (L01), 3 turns, 3k tokens, dollars unknown (at least $0.50; the lane had a turn with no price)"
+    assert ["small", "5", "5,000", "25%", "unknown (at least $1.40; 3 of 5 turns had no price)"] in table_rows(text)
+    spend = "Spend: 5k tokens (25% cached), dollars unknown (at least $1.40; every lane had a turn with no price)"
+    assert spend in summary(record).splitlines()
+
+
+def test_a_turn_priced_at_nothing_had_a_price(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    run.turn(run.lane("x"), "look", dollars=0.0)  # a local model costs nothing
+    run.turn(run.lane("x"), "look again", dollars=None)
+    record = run.close()
+    assert "- Dollars: unknown" in report(record).splitlines()  # not "no turn had a price"
+    assert "Spend: 2k tokens (25% cached), dollars unknown" in summary(record).splitlines()
 
 
 # ---------------------------------------------------------------------- the timeline
