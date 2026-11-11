@@ -21,8 +21,9 @@ Each such field is folded onto one line (text.untrusted with one_line=True) and 
 shortened, so no value can start a line of its own: the lines and their labels are
 flightdeck's. A flag is also shown as a JSON string (in double quotes, with its own quotes
 and backslashes escaped), so where it ends is plain and no flag text can pass for a
-verdict. A model gets the summary inside agent/prompts.fenced(), which marks all of it
-as data and removes anything that reads as a fence marker.
+verdict. Hand it to a model inside agent/prompts.fenced(), as the escalation prompt does
+with the thin summary: the fence marks all of it as data and removes anything that reads
+as a fence marker.
 
 The whole summary stays within max_chars: the oldest steps go first, down to the newest
 KEEP_STEPS; if the lines are still too long, the longest of them are cut to fair shares.
