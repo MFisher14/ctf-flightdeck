@@ -49,7 +49,8 @@ def gaps_command(
         ),
     ] = None,
 ) -> None:
-    """Write the gap report to RUN_DIR/gaps.md and RUN_DIR/gaps.json, and print a short summary."""
+    """The challenges no L1 engine solved, and why: written to RUN_DIR/gaps.md (for you) and
+    RUN_DIR/gaps.json (for build mode), with a short summary printed."""
     from .gaps import JSON_FILE, MARKDOWN_FILE, GapError, gap_report, gaps_json, gaps_markdown, summary
     from .l1.manifest import ManifestError
     from .platform.manual import BoardError, load_board
