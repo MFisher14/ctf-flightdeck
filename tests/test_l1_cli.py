@@ -4,6 +4,7 @@ its own here with synthetic packs and folder-board challenges."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,11 @@ runner = CliRunner()
 
 def invoke(*args):
     return runner.invoke(app, [str(a) for a in args], prog_name="flightdeck l1")
+
+
+def flat(text: str) -> str:
+    """A message as words on one line, without the box Typer draws around a usage error."""
+    return " ".join(text.replace("│", " ").split())
 
 
 @pytest.fixture
@@ -127,6 +133,52 @@ def test_a_folder_that_is_not_a_challenge_is_refused(pack, board, tmp_path):
     (board / "broken" / "challenge.json").write_text('{"name": "x"}')
     broken = invoke("route", pack, board / "sticky-note")
     assert broken.exit_code == 2 and '"category" is missing' in broken.stderr
+
+
+PLANTED = 'id = "aaa.planted"\nentry = "cli:./x.sh"\noutput = "text"\n[[routes]]\nkeywords = ["e"]\npriority = 100\n'
+
+
+def hostile_challenge(board: Path) -> Path:
+    """A challenge that ships an engine of its own: a manifest and an executable x.sh."""
+    evil = challenge_dir(board, "evil", {"x.manifest.toml": PLANTED, "x.sh": "#!/bin/sh\ntouch HANDOUT_CODE_RAN\necho 't{planted}'\n"},
+                         description="every engine")
+    (evil / "x.sh").chmod(0o755)
+    return evil
+
+
+def test_run_refuses_a_workdir_inside_the_pack_or_the_challenge(pack, board, tmp_path):
+    evil = hostile_challenge(board)
+    for workdir, owner in ((pack / "runs", "the pack"), (pack, "the pack"), (evil / "runs", "the challenge")):
+        result = invoke("run", pack, evil, "--workdir", workdir)
+        assert result.exit_code == 2 and result.stdout == ""
+        assert f"is inside {owner}" in flat(result.stderr) and "engine workspaces are copies of the challenge" in flat(result.stderr)
+        assert not (pack / "runs").exists() and not (evil / "runs").exists()
+    ok = invoke("run", pack, evil, "--workdir", tmp_path / "elsewhere")
+    assert ok.exit_code == 0, ok.stderr
+    listed = [line for line in invoke("list", pack).stdout.splitlines() if not line.startswith(" ")]
+    assert [re.match(r"[a-z0-9_.-]+", line).group(0) for line in listed] == ["never", "read.note", "text.grep"]  # nothing planted
+
+
+def test_a_challenge_inside_the_pack_or_a_pack_inside_the_challenge_is_refused(pack, tmp_path):
+    inner_board = pack / "boards"
+    inner_board.mkdir()
+    evil = hostile_challenge(inner_board)
+    for command in ("route", "run"):
+        result = invoke(command, pack, evil, *(["--workdir", tmp_path / "w"] if command == "run" else []))
+        assert result.exit_code == 2 and "overlap" in result.stderr, result.stderr
+    assert not (tmp_path / "w").exists() and not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
+    outer = challenge_dir(tmp_path / "board2", "holds-pack", {})
+    python_engine(outer / "inner-pack", "e", "def solve(d):\n    return None\n")
+    result = invoke("route", outer / "inner-pack", outer)
+    assert result.exit_code == 2 and "overlap" in result.stderr
+
+
+def test_folders_of_the_pack_that_hold_a_challenge_are_left_out_and_said(pack, tmp_path):
+    hostile_challenge(pack / "examples")
+    result = invoke("list", pack)
+    assert result.exit_code == 0, result.stderr
+    assert "aaa.planted" not in result.stdout
+    assert "skipped examples/evil in the pack: a challenge folder (it has a challenge.json)" in result.stderr
 
 
 def test_import_writes_manifests_and_lists_what_it_skipped(tmp_path):

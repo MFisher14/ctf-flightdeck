@@ -22,8 +22,12 @@ a .py file with no main block (a module, or a script whose code runs when it is 
 write a manifest for it), or a #! script without an executable bit.
 
 Hidden files and directories and .flightdeck/ are not searched, and symlinks are not
-followed. Re-running the import rewrites only files under .flightdeck/generated/:
-manifests for scripts that are gone, or that now have a manifest of their own, are removed.
+followed. Nor is a folder that holds a challenge's files (a challenge folder, a board
+folder, a flightdeck workspace: manifest.challenge_files): its scripts are the challenge's,
+never the player's, and it is listed as skipped. A folder that is itself one of those is
+not imported at all. Re-running the import rewrites only files under
+.flightdeck/generated/: manifests for scripts that are gone, or that now have a manifest of
+their own, are removed.
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ from pathlib import Path, PurePosixPath
 from ..agent.workspace import PRIVATE
 from ..platform.manual import CATEGORY_CODES
 from ..text import untrusted
-from .manifest import GENERATED, MAX_ID, SUFFIX, Manifest, ManifestError, load, manifest_files, pack_file
+from .manifest import GENERATED, MAX_ID, SUFFIX, Manifest, ManifestError, challenge_files, load, manifest_files, pack_file
 
 PRIORITY = 20
 TAG = "imported"
@@ -80,6 +84,9 @@ def import_scripts(folder: Path) -> ImportReport:
     root = Path(folder).expanduser().absolute()
     if not root.is_dir():
         raise ImporterError(f"{_show(root)}: {'is not a folder' if root.exists() else 'no such folder'}")
+    held = challenge_files(root)
+    if held:
+        raise ImporterError(f"{_show(root)} is {held}: its scripts are the challenge's, never engines of yours")
     out = root / PRIVATE / GENERATED
     for directory in (root / PRIVATE, out):
         if directory.is_symlink():
@@ -155,7 +162,11 @@ def _scripts(root: Path) -> tuple[list[_Script], list[tuple[Path, str]]]:
                     skipped.append((path, "a symlink; only regular files are imported"))
                 continue
             if entry.is_dir(follow_symlinks=False):
-                pending.append((path, rel + "/"))
+                held = challenge_files(path)
+                if held:
+                    skipped.append((path, f"{held}: its scripts are the challenge's, never engines; not searched"))
+                else:
+                    pending.append((path, rel + "/"))
                 continue
             if not entry.is_file(follow_symlinks=False) or entry.name.endswith(SUFFIX):
                 continue

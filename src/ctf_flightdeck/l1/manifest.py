@@ -32,6 +32,14 @@ discover() walks a pack for manifests, skipping hidden files and directories and
 `.flightdeck/`, except `.flightdeck/generated/`. It never follows a symlinked directory.
 Every problem is a ManifestError naming the file and the key: an unknown key is an error,
 so a typo fails loudly instead of quietly never matching.
+
+A pack is the player's own code, so the walk never goes into a folder that holds a
+challenge's files: a challenge folder (it has a challenge.json), a board folder (it has a
+board.json) or a flightdeck workspace, a copy of a challenge (it has .flightdeck/
+prepare.log). A challenge that ships `x.manifest.toml` and an `x.sh` would otherwise
+become one of the player's engines, run on every later challenge it routes to.
+read_pack() says which folders it left out, and why; a pack that is itself such a folder
+is an error.
 """
 
 from __future__ import annotations
@@ -45,10 +53,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from ..agent.workspace import PRIVATE
-from ..platform.manual import category_code
+from ..platform.manual import BOARD_FILE, CHALLENGE_FILE, category_code
 from ..text import untrusted
 
 SUFFIX = ".manifest.toml"
+WORKSPACE_LOG = "prepare.log"  # <workspace>/.flightdeck/prepare.log: every workspace has one once prepared
 GENERATED = "generated"  # <folder>/.flightdeck/generated/: the importer's manifests
 MAX_BYTES = 256 * 1024
 MAX_ID = 100
@@ -166,28 +175,71 @@ def load(path: Path) -> Manifest:
     return Manifest(engine_id, entry, tags, needs, timeout, output, routes, path)
 
 
+@dataclass(frozen=True)
+class Pack:
+    manifests: list[Manifest]  # every engine, sorted by id
+    skipped: list[tuple[Path, str]]  # folders not searched (a challenge, a board, a workspace), with why, by path
+
+
 def discover(pack: Path) -> list[Manifest]:
     """Every engine in the pack, sorted by id. Two manifests with one id is an error."""
+    return read_pack(pack).manifests
+
+
+def read_pack(pack: Path) -> Pack:
+    """Every engine in the pack, and the folders left out because they hold a challenge's files."""
     root = Path(pack).expanduser().absolute()
     if not root.is_dir():
         raise ManifestError(root, None, "is not a folder" if root.exists() else "no such pack folder")
-    manifests = [load(path) for path in manifest_files(root)]
+    held = challenge_files(root)
+    if held:
+        raise ManifestError(root, None, f"is {held}, not a pack of engines: point at the folder of your own solvers")
+    paths, skipped = walk_pack(root)
+    manifests = [load(path) for path in paths]
     seen: dict[str, Path] = {}
     for manifest in manifests:
         if manifest.id in seen:
             raise ManifestError(manifest.path, "id", f"{manifest.id} is also the id in {_show(seen[manifest.id])}")
         seen[manifest.id] = manifest.path
-    return sorted(manifests, key=lambda m: m.id)
+    return Pack(sorted(manifests, key=lambda m: m.id), skipped)
 
 
 def manifest_files(pack: Path, *, generated: bool = True) -> list[Path]:
     """Every *.manifest.toml under pack, sorted by path. Skips hidden files and directories
-    and `.flightdeck/`, except `.flightdeck/generated/` when generated=True; never follows a
-    symlinked directory."""
-    return sorted(_walk(Path(pack).absolute(), generated))
+    and `.flightdeck/`, except `.flightdeck/generated/` when generated=True, and folders that
+    hold a challenge's files (challenge_files); never follows a symlinked directory."""
+    return walk_pack(pack, generated=generated)[0]
 
 
-def _walk(root: Path, generated: bool) -> Iterator[Path]:
+def walk_pack(pack: Path, *, generated: bool = True) -> tuple[list[Path], list[tuple[Path, str]]]:
+    """(manifest_files(pack), the folders left out because they hold a challenge's files,
+    with why), both sorted by path."""
+    found: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
+    for path, why in _walk(Path(pack).absolute(), generated):
+        if why is None:
+            found.append(path)
+        else:
+            skipped.append((path, why))
+    return sorted(found), sorted(skipped)
+
+
+def challenge_files(directory: Path) -> str | None:
+    """What `directory` is when it holds a challenge's files, never the player's engines: "a
+    challenge folder (...)", "a board folder (...)" or "a flightdeck workspace (...)"; None
+    for any other folder. Anything at those names counts, a dangling symlink too."""
+    directory = Path(directory)
+    if os.path.lexists(directory / CHALLENGE_FILE):
+        return f"a challenge folder (it has a {CHALLENGE_FILE})"
+    if os.path.lexists(directory / BOARD_FILE):
+        return f"a board folder (it has a {BOARD_FILE})"
+    if os.path.lexists(directory / PRIVATE / WORKSPACE_LOG):
+        return f"a flightdeck workspace, a copy of a challenge (it has {PRIVATE}/{WORKSPACE_LOG})"
+    return None
+
+
+def _walk(root: Path, generated: bool) -> Iterator[tuple[Path, str | None]]:
+    """(manifest path, None) for each manifest, (folder, why) for each folder left out."""
     pending: list[tuple[Path, bool]] = [(root, False)]  # (directory, inside .flightdeck)
     while pending:
         directory, private = pending.pop()
@@ -204,10 +256,14 @@ def _walk(root: Path, generated: bool) -> Iterator[Path]:
                 elif entry.name == PRIVATE:
                     pending.append((Path(entry.path), True))
                 elif not entry.name.startswith("."):
-                    pending.append((Path(entry.path), False))
+                    held = challenge_files(Path(entry.path))
+                    if held:
+                        yield Path(entry.path), held
+                    else:
+                        pending.append((Path(entry.path), False))
             elif not private and entry.name.endswith(SUFFIX) and not entry.name.startswith("."):
                 if entry.is_file():  # a symlinked manifest is the player's to follow
-                    yield Path(entry.path)
+                    yield Path(entry.path), None
 
 
 # ---------------------------------------------------------------- parts of a manifest

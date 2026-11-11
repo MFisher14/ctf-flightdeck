@@ -253,6 +253,32 @@ def test_a_symlinked_folder_inside_generated_is_never_written_through(tmp_path):
     assert tree(folder / "crypto") == before
 
 
+def test_scripts_in_a_challenge_or_a_workspace_inside_the_folder_are_never_wrapped(tmp_path):
+    folder = tmp_path / "s"
+    script(folder, "crypto/rsa_tool.py", MAIN)
+    challenge = folder / "boards" / "evil"
+    script(challenge, "chall.py", 'if __name__ == "__main__":\n    print("t{planted_chall}")\n')
+    script(challenge, "challenge.json", '{"name": "Evil", "category": "crypto", "points": 1}')
+    workspace = folder / "runs" / "20261111-000000" / "grep"
+    script(workspace, "crypto/chall.py", MAIN)
+    script(workspace, ".flightdeck/prepare.log", "copied 1 files\n")
+    report = import_scripts(folder)
+    assert [p.relative_to(folder / GEN).as_posix() for p in report.written] == ["crypto/rsa_tool.py.manifest.toml"]
+    reasons = dict(report.skipped)
+    assert reasons[challenge].startswith("a challenge folder (it has a challenge.json)")
+    assert reasons[workspace].startswith("a flightdeck workspace, a copy of a challenge")
+    assert set(reasons) == {challenge, workspace}
+
+
+def test_a_folder_that_is_a_challenge_is_not_imported(tmp_path):
+    folder = tmp_path / "chal"
+    script(folder, "crypto/chall.py", MAIN)
+    script(folder, "challenge.json", "{}")
+    with pytest.raises(ImporterError, match="is a challenge folder"):
+        import_scripts(folder)
+    assert not (folder / ".flightdeck").exists()
+
+
 def test_a_broken_manifest_of_the_players_stops_the_import(tmp_path):
     folder = tmp_path / "s"
     script(folder, "crypto/rsa.py", MAIN)

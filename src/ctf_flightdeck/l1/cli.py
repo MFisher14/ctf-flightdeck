@@ -9,6 +9,12 @@ CHALLENGE_DIR is a folder-board challenge (a folder with a challenge.json); its 
 read as the board, so the board's flag format and id rules apply. `run` prints each
 engine's SolverResult as one line of JSON on stdout, best engine first; everything meant
 for the player goes to stderr. Heavy modules are imported inside the commands.
+
+A pack is the player's own code and a challenge is untrusted, so the two never overlap:
+`route` and `run` refuse a challenge inside the pack (or a pack inside the challenge), and
+`run` refuses a --workdir inside either (engine workspaces are copies of the challenge).
+Folders of the pack that hold a challenge's files are never searched for engines; the
+commands say which ones they left out.
 """
 
 from __future__ import annotations
@@ -65,6 +71,7 @@ def route_command(pack: PackArg, challenge_dir: ChallengeArg) -> None:
 
     manifests = _discover(pack)
     item, _ = _challenge(challenge_dir)
+    _apart(pack, item.handout)
     hits = route(manifests, item.challenge, item.handout)
     if not hits:
         typer.echo(f"flightdeck: no engine in {_show(pack)} routes {item.challenge.id}", err=True)
@@ -99,6 +106,11 @@ def run_command(
 
     manifests = _discover(pack)
     item, board = _challenge(challenge_dir)
+    _apart(pack, item.handout)
+    if workdir is not None:
+        _not_inside(workdir.expanduser(), pack, item.handout, "--workdir")
+    else:
+        _not_inside(Path(tempfile.gettempdir()), pack, item.handout, "--workdir", default=True)
     if flag_format is not None:
         try:
             re.compile(flag_format)
@@ -157,12 +169,44 @@ def import_command(
 
 
 def _discover(pack: Path):
-    from .manifest import ManifestError, discover
+    """The pack's engines; the folders it left out (they hold a challenge's files) said on stderr."""
+    from .manifest import ManifestError, read_pack
 
     try:
-        return discover(pack)
+        found = read_pack(pack)
     except ManifestError as exc:
         _fail(str(exc))
+    root = pack.expanduser().absolute()
+    for folder, why in found.skipped:
+        typer.echo(f"flightdeck: skipped {_show(_relative(folder, root))} in the pack: {_show(why)}; nothing in it is an engine", err=True)
+    return found.manifests
+
+
+def _apart(pack: Path, handout: Path) -> None:
+    """Fail unless the pack and the challenge are apart: neither inside the other."""
+    pack_dir, challenge = pack.expanduser().resolve(), handout.resolve()
+    if _within(challenge, pack_dir) or _within(pack_dir, challenge):
+        _fail(
+            f"the challenge {_show(challenge)} and the pack {_show(pack_dir)} overlap: a pack holds your own engines "
+            "and must never hold a challenge's files (or sit inside one). Keep the board and the pack in separate folders"
+        )
+
+
+def _not_inside(folder: Path, pack: Path, handout: Path, option: str, *, default: bool = False) -> None:
+    """Fail when the folder engine workspaces go in is inside the pack or the challenge."""
+    where = folder.resolve()
+    for owner, what in ((pack.expanduser().resolve(), "the pack"), (handout.resolve(), "the challenge")):
+        if _within(where, owner):
+            which = f"the default temporary folder {_show(where)}" if default else f"{_show(where)}"
+            raise typer.BadParameter(
+                f"{which} is inside {what} {_show(owner)}: engine workspaces are copies of the challenge, and "
+                f"neither the pack nor the challenge may hold one. Pass {option} with a folder outside both",
+                param_hint=option,
+            )
+
+
+def _within(path: Path, folder: Path) -> bool:
+    return path == folder or path.is_relative_to(folder)
 
 
 def _challenge(challenge_dir: Path):

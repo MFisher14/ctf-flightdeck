@@ -19,6 +19,7 @@ from ctf_flightdeck.l1.manifest import (
     load,
     manifest_files,
     pack_file,
+    read_pack,
 )
 
 from l1_kit import write_manifest
@@ -234,6 +235,57 @@ def test_discover_finds_every_manifest_sorted_by_id_and_skips_hidden_and_private
     assert [m.id for m in discover(pack)] == ["alpha", "generated", "generated-sub", "zeta"]
     assert "generated" not in [load(p).id for p in manifest_files(pack, generated=False)]
     assert [m.id for m in discover(pack / "nested")] == ["alpha"]
+
+
+PLANTED = 'id = "aaa.planted"\nentry = "cli:./x.sh"\noutput = "text"\n[[routes]]\nkeywords = ["e"]\npriority = 100\n'
+
+
+def plant(folder: Path) -> None:
+    """What a hostile handout ships: a manifest and an executable script for it."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "x.manifest.toml").write_text(PLANTED)
+    (folder / "x.sh").write_text("#!/bin/sh\necho t{planted}\n")
+    (folder / "x.sh").chmod(0o755)
+
+
+def test_folders_that_hold_a_challenges_files_are_never_searched_and_are_reported(pack):
+    write_manifest(pack, "mine", 'id = "mine"\nentry = "decode_layers.py:solve"\n' + ROUTE)
+    challenge = pack / "examples" / "evil"
+    plant(challenge)
+    (challenge / "challenge.json").write_text('{"name": "Evil", "category": "misc", "points": 1}')
+    board = pack / "boards" / "event"
+    plant(board / "loose")
+    (board / "board.json").write_text('{"event": "x"}')
+    workspace = pack / "runs" / "20261111-000000" / "grep"  # an engine's copy of a challenge, its challenge.json gone
+    plant(workspace)
+    (workspace / ".flightdeck").mkdir()
+    (workspace / ".flightdeck" / "prepare.log").write_text("copied 2 files\n")
+    write_manifest(challenge, "broken", 'id = "broken"\n')  # a challenge's broken manifest breaks nothing
+    found = read_pack(pack)
+    assert [m.id for m in found.manifests] == ["mine"] and discover(pack) == found.manifests
+    assert found.skipped == [
+        (board, "a board folder (it has a board.json)"),
+        (challenge, "a challenge folder (it has a challenge.json)"),
+        (workspace, "a flightdeck workspace, a copy of a challenge (it has .flightdeck/prepare.log)"),
+    ]
+    assert manifest_files(pack) == [pack / "mine.manifest.toml"]
+
+
+def test_a_dangling_symlink_named_challenge_json_still_marks_a_challenge(pack, tmp_path):
+    plant(pack / "c")
+    os.symlink(tmp_path / "nowhere", pack / "c" / "challenge.json")
+    assert discover(pack) == [] and read_pack(pack).skipped[0][0] == pack / "c"
+
+
+def test_a_pack_that_is_itself_a_challenge_board_or_workspace_is_an_error(tmp_path):
+    for name, marker in (("chal", "challenge.json"), ("board", "board.json"), ("ws", ".flightdeck/prepare.log")):
+        folder = tmp_path / name
+        plant(folder)
+        (folder / marker).parent.mkdir(parents=True, exist_ok=True)
+        (folder / marker).write_text("{}")
+        with pytest.raises(ManifestError, match="not a pack of engines") as caught:
+            discover(folder)
+        assert caught.value.path == folder
 
 
 def test_two_manifests_with_one_id_name_both_files(pack):
