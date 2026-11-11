@@ -309,6 +309,39 @@ def test_read_file_never_hangs_on_a_fifo(box, lane):
     assert (result.error, result.content) == (True, "error: fifo is not a regular file")
 
 
+def test_a_path_too_long_to_exist_is_refused_at_once_and_one_at_the_limit_is_read(box):
+    started = time.monotonic()
+    refused = call(box, "read_file", {"path": "a/" * 10_000 + "x"})  # 20,001 characters
+    assert time.monotonic() - started < 1
+    assert (refused.error, refused.content) == (True, "error: the path is 20001 characters; a path can be at most 4096")
+    at_limit = "./" * 2043 + "/notes.txt"
+    assert len(at_limit) == 4096
+    assert call(box, "read_file", {"path": at_limit, "max_lines": 1}).content.startswith("line 1\n")
+
+
+def test_a_path_that_grows_too_long_through_a_symlink_is_refused(box, lane):
+    os.symlink("y/" * 500, lane.root / "grow")  # 1,000 characters more once it is followed
+    result = call(box, "read_file", {"path": "grow/" + "z/" * 1600 + "end"})  # 3,208 characters as sent
+    assert result.error
+    assert result.content.endswith(" is too long once its symlinks are followed (over 4096 characters)")
+
+
+def test_read_file_looks_the_path_up_off_the_event_loop(box, lane, monkeypatch):
+    lookups: list[int] = []  # the thread of each lookup of a path in the workspace
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if str(path).startswith(f"{lane.root}/"):
+            lookups.append(threading.get_ident())
+        return real_lstat(path, *args, **kwargs)
+
+    os.symlink("notes.txt", lane.root / "alias")
+    monkeypatch.setattr(os, "lstat", lstat)
+    assert call(box, "read_file", {"path": "alias", "max_lines": 1}).content.startswith("line 1\n")
+    assert lookups, "the fence looked nothing up"
+    assert threading.get_ident() not in lookups  # asyncio.run() runs the event loop in this thread
+
+
 # ---------------------------------------------------------------- the model's mistakes
 
 

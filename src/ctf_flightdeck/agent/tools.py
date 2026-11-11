@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import stat
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,7 @@ COMMAND_BYTES = 100_000  # the longest shell command: it is one argument (bash -
 HTTP_TIMEOUT = 30.0
 HTTP_HEADERS = 30  # response headers shown at most
 SYMLINK_HOPS = 40
+PATH_CHARS = 4096  # the longest path read_file looks up, in characters (Linux's PATH_MAX)
 SUBMITTED = "Sent to the player for approval. Carry on until you hear it was correct."
 
 
@@ -267,60 +269,78 @@ class Toolbox:
             raise _Mistake("start_line counts from 1", action)
         if count < 1:
             raise _Mistake("max_lines must be at least 1", action)
-        parts = self._fence(path, action)
-        return await asyncio.to_thread(self._read, parts, path, action, start, count)
+        # The fence looks the path up on disk too, so it runs off the event loop with the read.
+        return await asyncio.to_thread(self._fence_and_read, path, action, start, count)
+
+    def _fence_and_read(self, path: str, action: str, start: int, count: int) -> ToolResult:
+        return self._read(self._fence(path, action), path, action, start, count)
 
     def _fence(self, path: str, action: str) -> list[str]:
         """The file the model means, as components under root, following symlinks the way the
         lane's commands would see them (in docker, /work/... is root). Anything that leaves root
         is refused. The components found are opened later without following any symlink, so a
-        swap after this check cannot lead outside either."""
+        swap after this check cannot lead outside either.
+
+        Each component costs one lookup, and the work is bounded: a path over PATH_CHARS is
+        refused before any lookup, and so is one that grows past that through its symlinks
+        (no such path can be opened anyway)."""
+        if len(path) > PATH_CHARS:
+            raise _Mistake(f"the path is {len(path)} characters; a path can be at most {PATH_CHARS}", action)
         if not path.strip():
             raise _Mistake("path is empty", action)
         if "\0" in path:
             raise _Mistake("path contains a NUL character", action)
         _sendable(path, "path", action)
-        root = Path(self.workspace.root)
+        base = str(Path(self.workspace.root))
         prefixes = _prefixes(self.workspace)
         if path.startswith("/"):
-            pending = _below(path, prefixes)
-            if pending is None:
+            below = _below(path, prefixes)
+            if below is None:
                 raise _Mistake(f"{path} is outside the workspace", action)
+            pending = deque(below)
         else:
-            pending = path.split("/")
+            pending = deque(path.split("/"))
         parts: list[str] = []
+        here = base  # root/parts as one path, grown a component at a time
+        ends: list[int] = []  # len(here) before each part was added, to step back on ".."
         hops = 0
         while pending:
-            name = pending.pop(0)
+            name = pending.popleft()
             if name in ("", "."):
                 continue
             if name == "..":
                 if not parts:
                     raise _Mistake(f"{path} is outside the workspace", action)
                 parts.pop()
+                here = here[: ends.pop()]
                 continue
-            here = root.joinpath(*parts, name)
+            step = f"{here}/{name}"
+            if len(step) - len(base) > PATH_CHARS:
+                raise _Mistake(f"{path} is too long once its symlinks are followed (over {PATH_CHARS} characters)", action)
             try:
-                link = stat.S_ISLNK(os.lstat(here).st_mode)
+                link = stat.S_ISLNK(os.lstat(step).st_mode)
             except OSError:
                 link = False  # missing, or under a file: opening it says which
             if not link:
                 parts.append(name)
+                ends.append(len(here))
+                here = step
                 continue
             hops += 1
             if hops > SYMLINK_HOPS:
                 raise _Mistake(f"{path}: too many levels of symlinks", action)
             try:
-                target = os.readlink(here)
+                target = os.readlink(step)
             except OSError:
                 raise _Mistake(f"{path} changed while it was being looked up; try again", action) from None
             if target.startswith("/"):
                 rest = _below(target, prefixes)
                 if rest is None:
                     raise _Mistake(f"{path} leads outside the workspace (a symlink to {target})", action)
-                parts, pending = [], rest + pending
+                parts, ends, here = [], [], base
+                pending.extendleft(reversed(rest))
             else:
-                pending = target.split("/") + pending
+                pending.extendleft(reversed(target.split("/")))
         return parts
 
     def _read(self, parts: list[str], path: str, action: str, start: int, count: int) -> ToolResult:
