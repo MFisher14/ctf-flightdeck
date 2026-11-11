@@ -39,6 +39,11 @@ TAKEN_OUT = {  # text -> what it becomes
     "PASSWD=$'two words'": "PASSWD='[redacted]'",
     'SECRET="cut short by a tool…': 'SECRET="[redacted]"',  # no closing quote: still taken out
     "it was SECRET=hunter2.": "it was SECRET=[redacted].",  # the sentence's full stop is no part of it
+    "export OPENROUTER_API_KEY := hunter2hunter2": "export OPENROUTER_API_KEY := [redacted]",  # a Makefile's
+    "API_KEY:=hunter2": "API_KEY:=[redacted]",
+    "API_KEY ::= hunter2": "API_KEY ::= [redacted]",
+    "API_KEY ?= hunter2": "API_KEY ?= [redacted]",
+    "API_KEY += hunter2": "API_KEY += [redacted]",
     "X-API-KEY: hunter2hunter2": "X-API-KEY: [redacted]",
     f"curl -H 'Authorization: Bearer {JWT}' http://127.0.0.1:8080/admin": (
         "curl -H 'Authorization: Bearer [redacted]' http://127.0.0.1:8080/admin"
@@ -76,6 +81,7 @@ STAYS = [  # ordinary CTF content: no credential's name in front of it, no crede
     'document.cookie = "admin=true"',
     "curl -b 'session=abc123' --cookie 'a=b' http://127.0.0.1:8080/",
     "if KEY == 3: print(KEY)",
+    "assert TOKEN != other and KEY <= 3 and AUTH >= 1",  # comparisons, not assignments
     "std::KEY::value",
     "os.environ['ANTHROPIC_API_KEY']",  # names the variable, holds no value
     "ANTHROPIC_API_KEY=",

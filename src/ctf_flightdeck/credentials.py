@@ -10,9 +10,10 @@ anything shaped like a credential, with or without writeup --redact:
 
 - NAME=value and NAME: value, where NAME is an upper-case variable name (letters, digits and
   _) that holds KEY, TOKEN, SECRET, PASSWORD, PASSWD, COOKIE or AUTH, as the environment, a
-  keys file or a config writes one (ANTHROPIC_API_KEY=..., CTFD_TOKEN: ...). Lower-case
-  names are left alone on purpose: key, password and token are everyday CTF content (an XOR
-  key, a password the lane found, a JWT it forged);
+  keys file or a config writes one (ANTHROPIC_API_KEY=..., CTFD_TOKEN: ...), and a
+  Makefile's :=, ::=, ?= and += too. Lower-case names are left alone on purpose: key,
+  password and token are everyday CTF content (an XOR key, a password the lane found, a JWT
+  it forged);
 - the value of an Authorization, Proxy-Authorization or Cookie header, in any case (HTTP
   header names are), to the end of the line or the closing quote. An Authorization scheme
   (Bearer, Basic, Token...) stays in front of it. A token a lane forged and sent in one of
@@ -60,7 +61,8 @@ _HEADER = re.compile(
 )
 _ASSIGNED = re.compile(
     rf"(?<![A-Za-z0-9_])(?P<name>[A-Z0-9_]{{0,64}}(?:{'|'.join(WORDS)})[A-Z0-9_]{{0,64}})"
-    r"(?P<sep>[\"']?[ \t]*+(?:=(?!=)|:(?!:))[ \t]*+)"
+    # =, or a Makefile's :=, ::=, ?= or +=, but never == or !=; or a colon, but never :: or :=
+    r"(?P<sep>[\"']?[ \t]*+(?:(?:::?|[?+])?=(?!=)|:(?![:=]))[ \t]*+)"
     # a quoted value cut short has no closing quote; an unquoted one never ends with the
     # punctuation of the sentence around it ("...was TOKEN=abc.", "submitted t{TOKEN=x}: correct")
     r"(?P<value>\"[^\"\r\n]*\"?|\$?'[^'\r\n]*'?|[^\s\"'`;&|<>(),]*[^\s\"'`;&|<>(),:.!?])"
