@@ -428,9 +428,10 @@ env > /work/.flightdeck/fake-env.txt
 echo "$$" > /work/.flightdeck/fake-pid.txt
 echo '{"type":"system","subtype":"init","session_id":"s1","model":"small","tools":["Bash"],"apiKeySource":"ANTHROPIC_API_KEY"}'
 echo '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cat note.txt"}}],"usage":{"input_tokens":10,"output_tokens":5}}}'
-echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"t{note}"}]}}'
 sleep 600 &
 echo "$!" > /work/.flightdeck/fake-child.txt
+# the flag last: the lane freezes this script as soon as it reads it, so what the test reads is written first
+echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"t{note}"}]}}'
 wait
 IFS= read -r line
 printf '%s\n' "$line" > /work/.flightdeck/fake-stdin-2.txt
