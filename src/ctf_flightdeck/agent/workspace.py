@@ -169,8 +169,13 @@ def restore_private(root: Path) -> None:
     """Make root/.flightdeck and its home/ and tmp/ real directories again, for a lane that
     deleted them or put something else there (by extracting an archive, say). .flightdeck is
     flightdeck's own name, so a file, a symlink or a FIFO there is unlinked, never followed,
-    and the directory made anew. OSError when that cannot be done."""
-    top = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    and the directory made anew. OSError when that cannot be done. WorkspaceError when root
+    itself cannot be opened (it is gone, say): that is a broken workspace, not a broken
+    .flightdeck."""
+    try:
+        top = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise WorkspaceError(f"workspace {root} cannot be opened: {exc.strerror or exc}") from None
     try:
         _own_dir(top, PRIVATE)
         private = os.open(PRIVATE, _DIR, dir_fd=top)

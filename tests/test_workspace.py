@@ -262,6 +262,14 @@ def test_the_take_over_shell_opens_after_the_lane_broke_flightdeck(lane, tmp_pat
     assert list(elsewhere.iterdir()) == []
 
 
+def test_a_workspace_whose_root_is_gone_fails_loudly(lane):
+    shutil.rmtree(lane.root)  # a broken workspace, not a broken .flightdeck: no command can repair it
+    with pytest.raises(WorkspaceError, match="workspace .*/lane cannot be opened: No such file or directory"):
+        run(lane.run("true", timeout=5))
+    with pytest.raises(WorkspaceError, match="cannot be opened"):
+        lane.interactive_shell()
+
+
 def test_flightdeck_that_cannot_be_repaired_gives_an_error_result_and_the_take_over_still_opens(lane):
     if os.geteuid() == 0:
         pytest.skip("root ignores directory permissions, so this cannot make the repair fail")

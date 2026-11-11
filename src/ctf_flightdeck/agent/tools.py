@@ -540,8 +540,9 @@ def _optional(args: dict[str, Any], key: str) -> str | None:
 
 
 def _number(args: dict[str, Any], key: str) -> float | None:
-    """A JSON number, or None when absent. An integer can be far too big for a float (JSON
-    allows 4000 digits), so it is never turned into one here: callers compare and clamp it."""
+    """A JSON number, or None when absent. An integer can be far too big for a float
+    (json.loads takes up to 4300 digits), so it is never turned into one here: callers
+    compare and clamp it."""
     value = args.get(key)
     if value is None:
         return None
