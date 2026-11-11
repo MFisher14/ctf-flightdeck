@@ -676,6 +676,28 @@ def test_shutdown_stops_the_polls_and_closes_the_ctfd_clients(tmp_path, token):
             run.verifier("warmup", "test{hello}")
 
 
+def test_the_console_starts_the_event_tasks_and_quitting_stops_them(tmp_path, token):
+    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model()) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url),
+                                     config=config(tmp_path, server.base_url, max_lanes=1),
+                                     wave_seconds=0.05, solves_seconds=0.05))
+
+        async def main() -> list[str]:
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                fake.add(FakeChallenge(5, "Second Wave", value=150))
+                await wait_for(lambda: "second-wave" in run.deck.challenges, "the wave, released by the console's task")
+                await pilot.press("q")
+                await wait_for(lambda: not app.is_running, "the console to quit")
+            return [t.get_name() for t in asyncio.all_tasks() if t.get_name().startswith("flightdeck ")]
+
+        left = asyncio.run(main())
+        run.close()
+    assert left == []  # quitting ran shutdown(): no wave, solves or lane task outlives the console
+    assert [e["data"]["label"] for e in log(run) if e["kind"] == "release"] == ["Board", "Wave 2"]
+
+
 # ---------------------------------------------------------------------- the team channel
 
 
