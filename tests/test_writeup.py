@@ -39,6 +39,7 @@ from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.runrecord import RunRecord, load_run
 from ctf_flightdeck.text import NEWLINE, untrusted
 from ctf_flightdeck.transcript import TranscriptLog
+from deadline import within
 from fake_model import FakeModelServer, error_reply, text_reply
 
 FLAG_FORMAT = r"t\{[^{}\s]+\}"
@@ -1070,6 +1071,33 @@ def test_a_flag_an_l1_engine_reported_is_no_credential_either(tmp_path):
     run.apply(iv.Approve(d))
     text = writeup.draft(run.close(), "d")
     assert f"- Flags it reported: `{flag}`, `{other}`" in text
+
+
+def test_files_of_blank_header_values_are_drafted_at_once(tmp_path):
+    """A draft takes credentials out of every file it shows, whole: files of a header's name and
+    a colon followed by tens of thousands of blanks (from a handout, or a page the lane saved)
+    cost time in proportion to their text, when the run ends and when it is drafted."""
+    blanks = {
+        "cookie.txt": "Cookie:" + " " * 60_000 + "\n",
+        "auth.txt": "Authorization:" + "\t" * 60_000 + "\n",
+        "quoted.txt": "cookie:" + " " * 60_000 + '"\n',
+    }
+    run = Run(tmp_path / "run", [Challenge("h", "Headers", "web", 10)], answers={"h": "t{h}"})
+    h = run.lane("h")
+    for name, content in blanks.items():
+        run.step(h, f"$ cat > {name} <<'EOF'", files=(change(tmp_path / "work", name, content),))
+    run.step(h, "$ cat cookie.txt", blanks["cookie.txt"] + "t{h}")
+    run.step(h, "submit t{h}", flag="t{h}")
+    with within(5, "approving the flag, which writes the lane's transcript"):
+        run.apply(iv.Approve(h))
+    record = run.close()
+    with within(5, "drafting the writeup"):
+        text = writeup.draft(record, "h")
+    section = lines_of(text, "## Files the lane wrote")
+    assert [line for line in section if line.startswith("### ")] == [
+        "### `cookie.txt`, added in turn 1, 1 line", "### `auth.txt`, added in turn 2, 1 line",
+        "### `quoted.txt`, added in turn 3, 1 line"]
+    assert "Cookie:" + " " * 60_000 in section
 
 
 # ---------------------------------------------------------------------- hostile text

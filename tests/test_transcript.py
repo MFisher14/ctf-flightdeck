@@ -10,6 +10,7 @@ from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, DeckConfig, FileChange
 from ctf_flightdeck.mock.world import ManualClock
 from ctf_flightdeck.transcript import TranscriptLog
+from deadline import within
 
 
 class Quiet:
@@ -99,3 +100,29 @@ def test_a_transcript_takes_out_what_is_shaped_like_a_credential_but_never_a_fla
     said = [x["text"] for x in lines if x.get("kind") == "note"]
     assert f"candidate flag {flag}" in said and f"submitted {flag}: correct" in said
     assert any(note.startswith(f"L1 reader: flag found: {l1_flag}") for note in said)
+
+
+def test_files_of_blank_header_values_never_hold_up_the_approval_that_ends_the_lane(tmp_path):
+    """A handout, or a page a lane saved, can hold a header's name and a colon followed by tens
+    of thousands of blanks. The lane's transcript is written while the deck handles the
+    approval that ended the lane (the console waits for it), with credentials taken out of each
+    file's diff: that costs time in proportion to the text. It took half a minute a file when
+    the blanks were given back one at a time, each time scanning the rest of the line again."""
+    deck = deck_with_two_lanes()
+    log = TranscriptLog(tmp_path / "lanes")
+    log.attach(deck)
+    a = deck.lanes_on("a")[0]
+    blanks = {  # each a line of a text file under 64 KB, whose diff a lane's transcript keeps whole
+        "cookie.txt": "Cookie:" + " " * 60_000,
+        "auth.txt": "Authorization:" + "\t" * 60_000,
+        "quoted.txt": "cookie:" + " " * 60_000 + '"',
+    }
+    diffs = {name: f"+++ b/{name}\n+{line}\n" for name, line in blanks.items()}
+    deck.report(a.id, TurnReport(action="$ tar xf handout.tar && cat cookie.txt", output=blanks["cookie.txt"], tokens=10,
+                                 files=tuple(FileChange(name, diff, "added") for name, diff in diffs.items())))
+    deck.report(a.id, TurnReport(action="submit t{a}", flag="t{a}", tokens=10))
+    with within(5, "approving the flag, which writes the lane's transcript"):
+        assert deck.apply(iv.Approve(a.id)).ok
+    lines = read(tmp_path / "lanes" / f"{a.id}.jsonl")
+    assert {x["file"]: x["diff"] for x in lines if "file" in x} == diffs  # no value in them to take out
+    assert lines[1]["output"] == blanks["cookie.txt"]

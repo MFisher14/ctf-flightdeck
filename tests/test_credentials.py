@@ -6,11 +6,10 @@ like a real key (the commit guard, .githooks/secret_scan.py, would rightly refus
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from ctf_flightdeck.credentials import REDACTED, redact
+from deadline import within
 
 OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
 ANTHROPIC = "sk-" + "ant-api03-" + "Qx7-" * 20
@@ -48,6 +47,8 @@ TAKEN_OUT = {  # text -> what it becomes
     "Proxy-Authorization: Basic " + "cGxheWVyOmh1bnRlcjI=": "Proxy-Authorization: Basic [redacted]",  # player:hunter2
     f"AUTHORIZATION: {OPENROUTER}": "AUTHORIZATION: [redacted]",
     "Cookie: session=abc123; theme=dark": "Cookie: [redacted]",
+    "Cookie: \t session=abc123 \t ": "Cookie: \t [redacted] \t ",  # the blanks around a value stay
+    f"authorization:\t\tBearer\t\t{JWT}": "authorization:\t\tBearer\t\t[redacted]",
     'requests.get(url, headers={"Cookie": "session=abc123"})': 'requests.get(url, headers={"Cookie": "[redacted]"})',
     f"the key is {ANTHROPIC}, see": "the key is sk-ant-[redacted], see",
     f"router {OPENROUTER}": "router sk-or-[redacted]",
@@ -82,6 +83,10 @@ STAYS = [  # ordinary CTF content: no credential's name in front of it, no crede
     "Authorization: Bearer [OPENROUTER_API_KEY]",
     "API_KEY=[redacted]",
     "sk-learn, task-or-other, ghp_x, AKIA1234, ctfd_cli.py",  # too short, or no prefix at all
+    "Cookie:" + " " * 40,  # a header's name with nothing after it but blanks
+    "Authorization:\t\t\t\nnext line",
+    "cookie:   '",
+    "KEY: \t \t",
 ]
 
 
@@ -127,9 +132,33 @@ def test_a_kept_string_never_shields_a_credential_it_is_only_part_of():
     assert redact(f"key {OPENROUTER}", keep=["5f"]) == "key sk-or-[redacted]"
 
 
-def test_long_runs_of_text_cost_linear_time():
-    # each of these is a megabyte that a quadratic pattern would take minutes over
-    for text in ("A" * 1_000_000, "KEY_" * 250_000, "a=" * 500_000, "sk-or-" * 170_000, "Authorization: " + "x" * 1_000_000):
-        began = time.monotonic()
+LONG_RUNS = {  # shape -> (before, unit, after): the unit repeated to a megabyte between the two
+    "one letter": ("", "A", ""),
+    "a name's letters": ("", "KEY_", ""),
+    "assignments": ("", "a=", ""),
+    "prefixes": ("", "sk-or-", ""),
+    "a header's value": ("Authorization: ", "x", ""),
+    "a value of dots": ("KEY=", ".", ""),
+    # a name and its colon (or =), then nothing but blanks to the end of the line: no value
+    # to take out, and a pattern that gave the blanks back one at a time, each time scanning
+    # the rest of the line again for a value, took hours over a megabyte
+    "Cookie: then spaces": ("Cookie:", " ", ""),
+    "Authorization: then tabs and a newline": ("Authorization:", "\t", "\nx"),
+    "a scheme then spaces": ("Authorization: Bearer", " ", ""),
+    "a colon, spaces and a quote": ("cookie:", " ", '"'),
+    "a colon, a quote and spaces": ("Cookie: '", " ", ""),
+    "a header's name and spaces, no colon": ("Cookie", " ", "x"),
+    "KEY: then spaces": ("KEY:", " ", ""),
+    "KEY := then tabs": ("API_KEY :=", "\t", "\n"),
+}
+
+
+@pytest.mark.parametrize("shape", list(LONG_RUNS))
+def test_long_runs_of_text_cost_linear_time(shape):
+    """Hostile text reaches redact whole: a 64 KB file's diff in a lane's transcript, which is
+    written while the deck handles the approval that ended the lane, and every file a draft
+    shows. A megabyte of each shape is taken in well under the deadline."""
+    before, unit, after = LONG_RUNS[shape]
+    text = before + unit * (1_000_000 // len(unit)) + after
+    with within(10, f"taking credentials out of a megabyte of {shape}"):
         redact(text, keep=["t{x}"])
-        assert time.monotonic() - began < 10, text[:20]

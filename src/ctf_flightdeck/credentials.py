@@ -47,15 +47,20 @@ PREFIXES = ("sk-ant-", "sk-or-", "sk-proj-", "ghp_", "github_pat_", "xoxb-", "xo
 SCHEMES = ("Basic", "Bearer", "Digest", "DPoP", "Negotiate", "NTLM", "Token")  # Authorization schemes, kept in front
 
 _FOLD = re.escape(NEWLINE.strip())  # where a one-line action folded a newline (agent/tools.py, text.untrusted)
+# A run of spaces or tabs is taken whole (possessive: *+ and ++) and never given back. Given
+# back one blank at a time, each blank started the value again, which scanned the rest of the
+# line once more: time quadratic in a run of blanks with no value after it ("Cookie:" and
+# 60,000 spaces took half a minute). What matches is the same: a value needs something other
+# than a blank before the line (or the quote) ends, and blanks given back add nothing of that.
 _HEADER = re.compile(
-    r"(?<![\w-])(?P<name>proxy-authorization|authorization|cookie)(?P<sep>[\"']?[ \t]*:[ \t]*[\"']?)"
-    rf"(?P<scheme>(?:{'|'.join(SCHEMES)})[ \t]+)?"
+    r"(?<![\w-])(?P<name>proxy-authorization|authorization|cookie)(?P<sep>[\"']?[ \t]*+:[ \t]*+[\"']?)"
+    rf"(?P<scheme>(?:{'|'.join(SCHEMES)})[ \t]++)?"
     rf"(?P<value>[^\r\n\"'{_FOLD}]*[^\s\"'{_FOLD}])",
     re.IGNORECASE,
 )
 _ASSIGNED = re.compile(
     rf"(?<![A-Za-z0-9_])(?P<name>[A-Z0-9_]{{0,64}}(?:{'|'.join(WORDS)})[A-Z0-9_]{{0,64}})"
-    r"(?P<sep>[\"']?[ \t]*(?:=(?!=)|:(?!:))[ \t]*)"
+    r"(?P<sep>[\"']?[ \t]*+(?:=(?!=)|:(?!:))[ \t]*+)"
     # a quoted value cut short has no closing quote; an unquoted one never ends with the
     # punctuation of the sentence around it ("...was TOKEN=abc.", "submitted t{TOKEN=x}: correct")
     r"(?P<value>\"[^\"\r\n]*\"?|\$?'[^'\r\n]*'?|[^\s\"'`;&|<>(),]*[^\s\"'`;&|<>(),:.!?])"
