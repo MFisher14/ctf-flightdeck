@@ -21,7 +21,8 @@ CTFd's API (v1), as this module uses it:
   403, sent before CTFd looks at the flag (the last real try is "incorrect" with 200): this
   module calls that "locked_out", since the flag was not checked and may be right.
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
-  403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead.
+  403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead. In teams
+  mode /api/v1/users/me/solves says which of the team's solves are this user's own.
 
 Retries: a GET that gets 429 or 5xx, or no answer at all, is tried again with backoff (a
 Retry-After in seconds or as an HTTP date is honoured, capped at max_wait). A flag attempt is
@@ -148,6 +149,15 @@ class Attempt:
 
     status: str  # correct | incorrect | already_solved | paused | ratelimited | partial | locked_out
     message: str
+
+
+@dataclass(frozen=True)
+class Solves:
+    """The solves CTFd lists for an account (CTFdClient.solves())."""
+
+    ids: frozenset[int]  # every challenge the account solved: the team's, in teams mode
+    mine: frozenset[int] | None  # of those, this user's own; None when CTFd did not say
+    shared: bool  # the account is a team: a teammate's solve is the account's too
 
 
 @dataclass(frozen=True)
@@ -354,9 +364,27 @@ class CTFdClient:
         team = await self._exchange("GET", path)
         if team.status in (403, 404):  # users mode answers 404; a user not on a team yet, 403
             path = "/users/me/solves"
-            items = await self._all(path)
-        else:
-            items = await self._all(path, first=team)
+            return self._solved(path, await self._all(path))
+        return self._solved(path, await self._all(path, first=team))
+
+    async def solves(self) -> Solves:
+        """The account's solves and, as far as CTFd says, whose they are. In teams mode the
+        team's (GET /teams/me/solves), of which this user's own are GET /users/me/solves;
+        when that second list cannot be read, `mine` is None (CTFd did not say). In users
+        mode (404 there), or for a user on no team yet (403), every solve is the user's own."""
+        path = "/teams/me/solves"
+        team = await self._exchange("GET", path)
+        if team.status in (403, 404):
+            own = frozenset(self._solved("/users/me/solves", await self._all("/users/me/solves")))
+            return Solves(own, own, shared=False)
+        ids = frozenset(self._solved(path, await self._all(path, first=team)))
+        try:
+            mine: frozenset[int] | None = frozenset(self._solved("/users/me/solves", await self._all("/users/me/solves")))
+        except CTFdError:
+            mine = None
+        return Solves(ids, mine, shared=True)
+
+    def _solved(self, path: str, items: list) -> set[int]:
         solved: set[int] = set()
         for item in items:
             number = item.get("challenge_id") if isinstance(item, dict) else None

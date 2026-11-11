@@ -29,7 +29,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState, PendingKind
 from ctf_flightdeck.platform.ctfd import CTFdVerifier
 from ctf_flightdeck.platform.manual import cannot_check
-from ctf_flightdeck.run import YOUR_TEAM, RunError, RunOptions, prepare_run
+from ctf_flightdeck.run import YOU, YOU_OR_YOUR_TEAM, YOUR_TEAM, RunError, RunOptions, prepare_run
 from ctf_flightdeck.team import TeamChannel, init_folder
 
 from fake_ctfd import FLAG_FORMAT, TOKEN, FakeChallenge, FakeCTFd, Reply, sample
@@ -372,7 +372,8 @@ def test_a_ctfd_event_pulls_the_board_before_anything_starts(tmp_path, token):
         routes = [r.route for r in fake.requests]
     assert {b.challenge.id for b in run.board.challenges} == {"warmup", "baby-rsa", "echo-service"}
     assert (folder / "warmup" / "hello.txt").read_text() == "hello\n"
-    assert routes[0] == "/api/v1/challenges" and routes[-1] == "/api/v1/teams/me/solves"  # the solves, read once pulled
+    # the solves, read once pulled: the team's, and which are this user's own
+    assert routes[0] == "/api/v1/challenges" and routes[-2:] == ["/api/v1/teams/me/solves", "/api/v1/users/me/solves"]
     assert isinstance(run.verifier, CTFdVerifier)  # the flags test below shows the deck submits through it
     assert run.verifier.ids == {"warmup": 1, "baby-rsa": 2, "echo-service": 4} == run.ctfd.ids
     assert (run.deck.config.event, run.deck.config.flag_format) == ("Fake CTF", FLAG_FORMAT)
@@ -526,8 +527,14 @@ def test_a_flag_ctfd_does_not_judge_says_why_and_waits_for_the_player(tmp_path, 
     )
 
 
+def platform_solves(run) -> list[tuple[str, str, bool]]:
+    """(challenge, who, before_run) of each solve the platform listed, in the run log."""
+    return [(e["challenge"], e["data"]["who"], e["data"]["before_run"]) for e in log(run)
+            if e["kind"] == "teammate" and e["data"].get("source") == "platform"]
+
+
 @pytest.mark.parametrize("team", [True, False])
-def test_already_solved_from_ctfd_closes_the_challenge_at_once_in_team_mode(tmp_path, token, team):
+def test_already_solved_from_ctfd_closes_the_challenge_at_once_in_solo_and_team_mode(tmp_path, token, team):
     with FakeCTFd(three()) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{maybe}")]})) as server:
         run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), team=team,
                                      config=config(tmp_path, server.base_url, max_lanes=1),
@@ -536,23 +543,16 @@ def test_already_solved_from_ctfd_closes_the_challenge_at_once_in_team_mode(tmp_
         async def body(run):
             lane = run.deck.lanes["L01"]
             await wait_for(lambda: lane.pending is not None, "the flag")
-            fake.solved.add(1)  # a teammate solved Warmup on the website meanwhile
+            fake.solved.add(1)  # Warmup was solved on the website meanwhile
             assert run.deck.apply(iv.Approve(lane.id)).ok
-            if team:
-                await wait_for(lambda: lane.finished, "the lane to stop")
-            else:
-                await asyncio.sleep(0.05)
-                assert lane.pending.kind is PendingKind.CONFIRM  # solo: the player says how it went
+            await wait_for(lambda: lane.finished, "the lane to stop")
 
         play(run, body)
     assert [r.json for r in fake.to("/api/v1/challenges/attempt")] == [{"challenge_id": 1, "submission": "test{maybe}"}]
-    if team:
-        warmup = run.deck.challenges["warmup"]
-        assert warmup.status is ChallengeStatus.TEAMMATE and warmup.solved_by == YOUR_TEAM
-        assert run.deck.lanes["L01"].state is LaneState.STOPPED and ctfd_warnings(run) == []
-    else:
-        (warning,) = ctfd_warnings(run)
-        assert warning["data"]["solved"] == ["warmup"] and warning["text"].startswith("CTFd lists Warmup as solved")
+    warmup = run.deck.challenges["warmup"]
+    assert warmup.status is ChallengeStatus.TEAMMATE and warmup.solved_by == YOU_OR_YOUR_TEAM  # "already solved" says not by whom
+    assert run.deck.lanes["L01"].state is LaneState.STOPPED and ctfd_warnings(run) == []
+    assert platform_solves(run) == [("warmup", YOU_OR_YOUR_TEAM, False)]
 
 
 def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
@@ -563,6 +563,7 @@ def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
         async def body(run):
             lane = run.deck.lanes["L01"]
             await wait_for(lambda: lane.turns > 0, "the lane at work")
+            fake.user_solved = set()
             fake.solved.add(1)  # a teammate solved Warmup on the website
             await wait_for(lambda: lane.finished, "the lane to stop")
 
@@ -570,7 +571,10 @@ def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
     warmup = run.deck.challenges["warmup"]
     assert run.deck.lanes["L01"].state is LaneState.STOPPED
     assert warmup.status is ChallengeStatus.TEAMMATE and warmup.solved_by == YOUR_TEAM
-    assert [e["text"] for e in log(run) if e["kind"] == "teammate"] == [f"{YOUR_TEAM} solved Warmup · stopped L01"]
+    assert [e["text"] for e in log(run) if e["kind"] == "teammate"] == [
+        f"the platform lists Warmup as solved ({YOUR_TEAM}) · stopped L01"
+    ]
+    assert platform_solves(run) == [("warmup", YOUR_TEAM, False)]
     assert run.deck.lanes["L02"].challenge_id == "baby-rsa"  # the slot went to the next challenge
     assert any(n.startswith("team mode with no team folder: your claims stay on this deck, and CTFd's solves") for n in run.notes())
 
@@ -595,30 +599,28 @@ def test_a_flag_the_player_is_submitting_by_hand_is_not_taken_for_a_teammates_so
     assert run.deck.challenges["warmup"].solved_by == "L01" and fake.to("/api/v1/challenges/attempt") == []
 
 
-def test_in_solo_mode_a_solve_on_ctfd_is_one_warning_and_the_lane_goes_on(tmp_path, token):
-    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model()) as server:
+def test_in_solo_mode_a_solve_on_ctfd_stops_the_lane_too_and_in_users_mode_it_is_yours(tmp_path, token):
+    with FakeCTFd(three(), team_mode=False) as fake, FakeModelServer(responder=Model()) as server:
         run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url),
                                      config=config(tmp_path, server.base_url, max_lanes=1), solves_seconds=0.05))
 
         async def body(run):
             lane = run.deck.lanes["L01"]
             await wait_for(lambda: lane.turns > 0, "the lane at work")
-            fake.solved.add(1)
-            await wait_for(lambda: any(e.kind is EventKind.WARNING for e in run.deck.events), "the warning")
-            polls = len(fake.to("/api/v1/teams/me/solves"))
-            await wait_for(lambda: len(fake.to("/api/v1/teams/me/solves")) >= polls + 3, "more polls")
-            assert not lane.finished and run.deck.challenges["warmup"].status is ChallengeStatus.RUNNING
+            fake.solved.add(1)  # the player solved Warmup by hand on the website
+            await wait_for(lambda: lane.finished, "the lane to stop")
 
         play(run, body)
-    (warning,) = ctfd_warnings(run)
-    assert warning["challenge"] == "warmup" and warning["data"]["solved"] == ["warmup"]
-    assert warning["text"].startswith("CTFd lists Warmup as solved for your account (by you or your team)")
+    warmup = run.deck.challenges["warmup"]
+    assert run.deck.lanes["L01"].state is LaneState.STOPPED and not run.deck.config.team
+    assert warmup.status is ChallengeStatus.TEAMMATE and warmup.solved_by == YOU
+    assert platform_solves(run) == [("warmup", YOU, False)] and ctfd_warnings(run) == []
 
 
 @pytest.mark.parametrize("team", [False, True])
-def test_challenges_already_solved_on_ctfd_get_no_lane(tmp_path, token, team):
+def test_challenges_already_solved_on_ctfd_get_no_lane_and_are_credited_as_ctfd_says(tmp_path, token, team):
     with FakeCTFd(three()) as fake, FakeModelServer(responder=Model()) as server:
-        fake.solved = {1, 2}  # Warmup and Baby RSA, before the run
+        fake.solved, fake.user_solved = {1, 2}, {1}  # before the run: Warmup by this user, Baby RSA by a teammate
         run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), team=team,
                                      config=config(tmp_path, server.base_url, max_lanes=3)))
 
@@ -627,13 +629,10 @@ def test_challenges_already_solved_on_ctfd_get_no_lane(tmp_path, token, team):
 
         play(run, body)
     status = {cid: ch.status for cid, ch in run.deck.challenges.items()}
-    if team:
-        assert status == {"baby-rsa": ChallengeStatus.TEAMMATE, "echo-service": ChallengeStatus.RUNNING, "warmup": ChallengeStatus.TEAMMATE}
-        assert ctfd_warnings(run) == []
-    else:
-        assert status["warmup"] is ChallengeStatus.NEW and status["baby-rsa"] is ChallengeStatus.NEW
-        (warning,) = ctfd_warnings(run)
-        assert warning["data"]["solved"] == ["baby-rsa", "warmup"] and "CTFd lists Baby RSA, Warmup as solved" in warning["text"]
+    assert status == {"baby-rsa": ChallengeStatus.TEAMMATE, "echo-service": ChallengeStatus.RUNNING, "warmup": ChallengeStatus.TEAMMATE}
+    assert {cid: run.deck.challenges[cid].solved_by for cid in ("warmup", "baby-rsa")} == {"warmup": YOU, "baby-rsa": YOUR_TEAM}
+    assert sorted(platform_solves(run)) == [("baby-rsa", YOUR_TEAM, True), ("warmup", YOU, True)]
+    assert ctfd_warnings(run) == []
 
 
 def test_a_failed_poll_is_one_warning_while_it_lasts_and_the_run_goes_on(tmp_path, token):
@@ -649,7 +648,8 @@ def test_a_failed_poll_is_one_warning_while_it_lasts_and_the_run_goes_on(tmp_pat
             # one request each before the run, three broken ones, then answers again
             await wait_for(lambda: len(fake.to("/api/v1/challenges")) >= 6 and len(fake.to("/api/v1/teams/me/solves")) >= 6,
                            "the polls to fail and recover")
-            fake.solved.add(1)
+            fake.user_solved = set()
+            fake.solved.add(1)  # a teammate's solve
             await wait_for(lambda: run.deck.challenges["warmup"].closed, "a solve after the failures")
 
         play(run, body)

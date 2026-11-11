@@ -38,6 +38,7 @@ from ctf_flightdeck.platform.ctfd import (
     Pull,
     PullIncomplete,
     PullStopped,
+    Solves,
     load_ids,
     origins_in,
     pull,
@@ -586,6 +587,24 @@ def test_solved_ids_with_a_refused_token_does_not_fall_back():
         error = failure(fake, lambda c: c.solved_ids(), token="not-the-right-token")
         assert len(fake.requests) == 1
     assert error.status == 401
+
+
+def test_solves_in_teams_mode_say_which_are_the_users_own():
+    with FakeCTFd(sample()) as fake:
+        fake.solved, fake.user_solved = {1, 2}, {1}  # 2 was a teammate's
+        assert call(fake, lambda c: c.solves()) == Solves(frozenset({1, 2}), frozenset({1}), shared=True)
+        fake.script("GET", "/api/v1/users/me/solves", Reply(500, {"message": "broken"}))
+        broken = call(fake, lambda c: c.solves(), max_retries=0)
+    assert broken == Solves(frozenset({1, 2}), None, shared=True)  # CTFd did not say whose: not a failed read
+
+
+def test_solves_in_users_mode_and_for_a_player_on_no_team_are_the_users_own():
+    with FakeCTFd(sample(), team_mode=False) as fake:
+        fake.solved = {3}
+        assert call(fake, lambda c: c.solves()) == Solves(frozenset({3}), frozenset({3}), shared=False)
+    with FakeCTFd(sample()) as fake:
+        fake.no_team, fake.solved = True, {1}
+        assert call(fake, lambda c: c.solves()) == Solves(frozenset(), frozenset(), shared=False)
 
 
 # ---------------------------------------------------------------------- pulling a board
