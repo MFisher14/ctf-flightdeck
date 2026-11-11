@@ -55,8 +55,9 @@ def pull(
 
     Exit status 1 when some challenges could not be pulled (each is named, with the reason;
     pull again to retry them). 2 when the pull could not start or finish (a refused token,
-    CTFd not answering, nothing to pull): what was written stays, each challenge left out
-    so far is named, and pulling again goes on from there.
+    CTFd not answering, nothing to pull, a flag format other than the board's): what was
+    written stays, each challenge left out so far is named, and pulling again goes on from
+    there.
     """
     import asyncio
 

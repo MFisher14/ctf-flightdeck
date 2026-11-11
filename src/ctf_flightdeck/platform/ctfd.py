@@ -100,7 +100,7 @@ MAX_ATTEMPT_BYTES = 64 * 1024  # the verifier's limit for an answer to a flag (C
 MAX_FILE_BYTES = 1 << 30  # a handout file bigger than this is refused (1 GiB); fetch it by hand
 MAX_STATE_BYTES = 1_000_000  # a ctfd.json bigger than this is refused
 MAX_PAGES = 500  # pages of one listing; more means a server that never stops
-MAX_REDIRECTS = 3  # same-origin redirects a download follows
+MAX_REDIRECTS = 3  # redirects a download follows, on the CTFd's origin and to a file host in all
 MAX_SHOWN = 200  # characters of the server's own words kept in a message
 MAX_ID = 2**53  # CTFd ids are database ids; anything bigger is not one
 SLUG_MAX = 40  # characters of a name kept in its slug; room for "-<id>-<n>" within 64
@@ -732,7 +732,6 @@ class CTFdVerifier:
         late = self._site.error(
             f"no complete answer from CTFd at {self._site.root} to {endpoint} within {self.timeout:g} s{unknown}",
             endpoint=endpoint,
-            retryable=True,
         )
         box: list[_Answer | _Failure | CTFdError | BaseException] = []
 
