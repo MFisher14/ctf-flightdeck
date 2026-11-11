@@ -8,7 +8,9 @@ goes to a file the model can read on purpose (context size drives cost: ARCHITEC
 
 One deliberate difference from the M1 contract: a plan over 500 characters is cut, and
 set_plan then answers "Plan noted (cut to 500 characters)." rather than "Plan noted.", so
-the model knows the player sees only the start of it.
+the model knows the player sees only the start of it. And one addition to it: in a docker
+lane whose image has no python3, the python tool answers an error saying so, and how to
+get the lane image that has it (DockerWorkspace.python_missing), instead of exit 127.
 """
 
 from __future__ import annotations
@@ -210,6 +212,9 @@ class Toolbox:
         code = _required(args, "code", "python")
         first = next((line.strip() for line in code.splitlines() if line.strip()), "")
         action = f"python: {first}"
+        missing = getattr(self.workspace, "python_missing", None)  # a docker lane whose image has no python3
+        if missing:
+            raise _Mistake(missing, action)
         if not first:
             raise _Mistake("code is empty", action)
         timeout = self._timeout(args)

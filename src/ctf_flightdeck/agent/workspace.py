@@ -234,6 +234,16 @@ def copy_handout(handout: Path, root: Path) -> None:
         raise WorkspaceError(f"could not copy handout {handout} into {root}: {exc}") from None
 
 
+def add_to_log(root: Path, line: str) -> None:
+    """Add a line to root/.flightdeck/prepare.log, never through a symlink. For prepare()
+    only: no command of the lane's has run yet, so nothing else is writing there."""
+    log = f"{PRIVATE}/prepare.log"
+    fd = open_inside(root, log.split("/"))
+    with open(fd, "rb") as f:
+        old = f.read()
+    write_inside(root, log, old + line.encode("utf-8") + b"\n")
+
+
 def _copy_tree(source: Path, target: Path, notes: list[tuple[str, str]]) -> tuple[int, int]:
     """(files, bytes) copied. Iterative, so a deeply nested handout cannot hit the recursion limit."""
     files = size = 0
@@ -597,6 +607,10 @@ class DockerWorkspace:
     backstop that kills the docker client if docker itself hangs. close() removes the
     container. The docker client inherits flightdeck's environment, but docker passes none
     of it into the container.
+
+    prepare() refuses an image without bash or timeout, which every command needs. An image
+    without python3 (debian:bookworm-slim, say) is fine for the shell, so it only sets
+    python_missing, for the python tool to answer, and says so in prepare.log.
     """
 
     def __init__(
@@ -627,6 +641,7 @@ class DockerWorkspace:
         self.cpus = cpus
         self.pids_limit = pids_limit
         self.workdir = CONTAINER_ROOT  # root as the lane's commands see it
+        self.python_missing: str | None = None  # set by prepare() when the image has no python3: why the python tool cannot run
         self._started = False  # our container exists: close() must remove it
         self._ready = False
         self._closed = False
@@ -659,6 +674,15 @@ class DockerWorkspace:
         if code != 0:
             await self.close()
             raise WorkspaceError(f"image {self.image} has no bash or no timeout (coreutils); lane commands need both")
+        code, _ = await _docker("exec", self.name, "bash", "-c", "command -v python3")
+        if code != 0:  # remembered: the python tool answers this instead of failing with exit 127
+            self.python_missing = (
+                f"python3 is not installed in this lane's container (image {self.image}), so the python tool "
+                "cannot run here; use shell instead. The lane image has python3: the player can build it "
+                "with `flightdeck image build`."
+            )
+            add_to_log(self.root, f"python3 is not in image {self.image}: the python tool will not work in this lane "
+                                  "(`flightdeck image build` builds the lane image, which has it)")
         self._ready = True
 
     async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:

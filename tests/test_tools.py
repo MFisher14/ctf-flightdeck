@@ -717,6 +717,14 @@ def test_tools_in_a_docker_lane_run_in_the_container_and_read_through_work(docke
     assert call(box, "read_file", {"path": "/work/alias", "max_lines": 1}).content.startswith("line 1\n")
     leak = call(box, "read_file", {"path": "leak"})
     assert leak.error and "outside the workspace" in leak.content
-    missing = call(box, "python", {"code": "print(1)"}, turn=2, index=0)
-    assert missing.content.startswith("exit 127\n") and "python3" in missing.content  # the image has none, and says so
-    assert (docker_lane.root / ".flightdeck" / "py" / "turn2-0.py").read_text() == "print(1)"
+
+
+def test_in_a_lane_whose_image_has_no_python3_the_python_tool_says_so(docker_lane):
+    # debian:bookworm-slim has no python3; the lane image (`flightdeck image build`) has it.
+    result = call(Toolbox(docker_lane), "python", {"code": "print(1)"}, turn=2, index=0)
+    assert result.error
+    assert result.content.startswith("error: python3 is not installed in this lane's container (image debian:bookworm-slim)")
+    assert "use shell instead" in result.content and "`flightdeck image build`" in result.content
+    assert result.action == "python: print(1)"
+    assert not (docker_lane.root / ".flightdeck" / "py" / "turn2-0.py").exists()
+    assert call(Toolbox(docker_lane), "shell", {"command": "echo still fine"}).content == "exit 0\nstill fine\n"

@@ -622,16 +622,26 @@ esac
 """
 
 
-def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(tmp_path, handout, monkeypatch):
-    """The real DockerWorkspace against a fake docker that never returns from a lane's command:
-    the client is killed DOCKER_BACKSTOP seconds after the command's own timeout."""
+FAKE_IMAGE = "flightdeck-test-fake-image:1"  # a made-up name: only the fake docker ever sees it
+
+
+@pytest.fixture
+def fake_docker(tmp_path, monkeypatch) -> Path:
+    """FAKE_DOCKER first on PATH, so DockerWorkspace runs against it and no docker is needed:
+    no container is started. Returns the directory it is in."""
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     (fake_bin / "docker").write_text(FAKE_DOCKER)
     (fake_bin / "docker").chmod(0o755)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return fake_bin
+
+
+def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(fake_docker, tmp_path, handout, monkeypatch):
+    """The real DockerWorkspace against a fake docker that never returns from a lane's command:
+    the client is killed DOCKER_BACKSTOP seconds after the command's own timeout."""
     monkeypatch.setattr(workspace_module, "DOCKER_BACKSTOP", 1.0)
-    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name="flightdeck-test-fake-docker")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
 
     async def scenario():
         await ws.prepare()
@@ -644,7 +654,16 @@ def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(tmp_path, han
     result, took = run(scenario())
     assert result == RunResult(None, b"", timed_out=True)
     assert took < 5
-    assert_dies(int((fake_bin / "exec.pid").read_text()), within=2)
+    assert_dies(int((fake_docker / "exec.pid").read_text()), within=2)
+
+
+def test_an_image_with_python3_leaves_the_python_tool_on(fake_docker, tmp_path, handout):
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+    run(ws.prepare())  # the fake answers `command -v python3` with a path, as the lane image does
+    run(ws.close())
+    assert ws.python_missing is None
+    log = (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()
+    assert log[0].startswith("copied 5 files") and not any(line.startswith("python3 is not") for line in log)
 
 
 @pytest.mark.parametrize(
@@ -774,6 +793,19 @@ def test_a_container_removed_outside_flightdeck_fails_loudly(box):
     docker("rm", "-f", box.name)
     with pytest.raises(WorkspaceError, match="not running"):
         run(box.run("true", timeout=30))
+
+
+def test_an_image_without_python3_is_noted_for_the_python_tool_and_in_prepare_log(box):
+    # debian:bookworm-slim has no python3; the lane image (`flightdeck image build`) has it.
+    assert box.python_missing is not None
+    assert box.python_missing.startswith("python3 is not installed in this lane's container (image debian:bookworm-slim)")
+    assert "`flightdeck image build`" in box.python_missing
+    last = (box.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1]
+    assert last == (
+        "python3 is not in image debian:bookworm-slim: the python tool will not work in this lane "
+        "(`flightdeck image build` builds the lane image, which has it)"
+    )
+    assert run(box.run("echo the shell works", timeout=30)) == RunResult(0, b"the shell works\n")
 
 
 def test_the_docker_take_over_shell_is_docker_exec_in_work(box):
