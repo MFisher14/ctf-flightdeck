@@ -127,6 +127,8 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
                                 f"export {name}=<your key> in the shell you run flightdeck from"))
     if config is not None:
         checks += _local_server_check(config.api.base_url)
+    if config is not None and config.l1.pack is not None:
+        checks.append(_l1_check(config.l1.pack))
     runtime = config.lanes.runtime if config is not None else "docker"
     checks += _docker_checks(config.lanes.image if config is not None else None, essential=runtime == "docker")
     try:
@@ -138,6 +140,20 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         checks.append(Check("terminal", big, f"{columns}x{lines}",
                             "the console is easiest at 100x30 or more (it works smaller)", essential=False))
     return checks
+
+
+def _l1_check(pack: Path) -> Check:
+    """The [l1] pack loads and holds engines (a run refuses to start otherwise)."""
+    from .l1.manifest import ManifestError, discover
+
+    try:
+        engines = discover(pack)
+    except ManifestError as exc:
+        return Check("l1 pack", False, str(exc), "fix the manifest it names, or remove [l1] pack from the config")
+    if not engines:
+        return Check("l1 pack", False, f"{pack} has no engines (no .manifest.toml files)",
+                     "`flightdeck l1 import` writes manifests for a folder of scripts")
+    return Check("l1 pack", True, f"{pack}: {len(engines)} engine(s)")
 
 
 def _local_server_check(base_url: str) -> list[Check]:

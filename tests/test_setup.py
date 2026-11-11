@@ -136,3 +136,20 @@ def test_doctor_checks_a_local_model_server_answers_and_never_contacts_a_remote_
     assert not check.ok and "nothing answers at http://127.0.0.1:9/v1" in check.detail
     remote = write_config(Answers("https://api.example.test/v1", "", ("m",), "host"), tmp_path / "remote.toml")
     assert "model server" not in {c.name for c in doctor(remote, environ={})}
+
+
+def test_doctor_checks_the_l1_pack_when_the_config_names_one(tmp_path):
+    from l1_kit import python_engine
+
+    base = '[api]\nkey_env = ""\n[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n'
+    good, empty = tmp_path / "pack", tmp_path / "empty"
+    python_engine(good, "reader", "def solve(d):\n    pass\n")
+    empty.mkdir()
+    for pack, ok, detail in [(good, True, "1 engine(s)"), (empty, False, "has no engines"), (tmp_path / "gone", False, "no such pack folder")]:
+        path = tmp_path / f"{pack.name}.toml"
+        path.write_text(base + f'[l1]\npack = "{pack}"\n')
+        (check,) = [c for c in doctor(path, environ={}) if c.name == "l1 pack"]
+        assert check.ok is ok and detail in check.detail
+    path = tmp_path / "none.toml"
+    path.write_text(base)
+    assert not [c for c in doctor(path, environ={}) if c.name == "l1 pack"]  # no pack: nothing to check
