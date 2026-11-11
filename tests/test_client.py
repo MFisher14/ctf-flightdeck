@@ -12,6 +12,7 @@ import asyncio
 import itertools
 import json
 import socket
+import struct
 import threading
 import time
 from collections.abc import Callable
@@ -652,6 +653,27 @@ def test_a_refused_connection_is_tried_again_after_the_same_waits_then_fails_as_
     assert ended - transport.times[-1] < 0.5
     assert err.status is None and err.retryable is True
     assert "no answer from the model API" in str(err) and "3 tries" in str(err)
+
+
+def hang_up(conn: socket.socket, number: int) -> None:
+    """Answer nothing: the request was read, so closing sends a plain FIN."""
+
+
+def reset(conn: socket.socket, number: int) -> None:
+    """Answer nothing, and make closing send a TCP reset instead of a FIN."""
+    conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+
+
+@pytest.mark.parametrize(
+    "drop, error", [(hang_up, "RemoteProtocolError"), (reset, "ReadError")], ids=["hang-up", "reset"]
+)
+def test_a_connection_dropped_before_the_answer_is_tried_again_then_fails_as_retryable(drop, error):
+    with RawServer(drop) as server:
+        err = fails(server.base_url, key=KEY, max_retries=2)
+    assert server.connections == 3
+    assert err.status is None and err.retryable is True
+    assert error in str(err) and "3 tries" in str(err)
+    assert KEY not in str(err)
 
 
 def test_the_wait_doubles_from_the_backoff_and_stops_at_30_seconds():
