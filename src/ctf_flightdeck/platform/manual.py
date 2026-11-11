@@ -3,7 +3,10 @@
 This is how flightdeck plays a board without a platform API (M1, and the practice set).
 Every immediate subdirectory of the board folder that holds a challenge.json is a
 challenge, and the rest of that directory is its handout. An optional board.json names
-the event and its flag format; an optional answers file holds the sha256 of each flag.
+the event and its flag format; an optional answers file holds the sha256 of each flag. A
+challenge.json may say how many tries the platform allows at the flag ("max_attempts", as a
+CTFd pull writes it): a flag for such a challenge never goes to the platform without the
+player, under the auto submit policy too (core/deck.py).
 
 Everything in a board folder is untrusted data, challenge.json included. It is checked
 field by field and an unknown key is an error, so a typo fails loudly. No path in it may
@@ -42,7 +45,7 @@ ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 ID_RULE = "lower-case letters, digits and _ . - (not first), at most 64 characters"
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
-CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id")
+CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts")
 BOARD_KEYS = ("event", "flag_format")
 
 CATEGORY_CODES = {
@@ -222,6 +225,10 @@ def _challenge(directory: Path) -> BoardChallenge:
     points = _field(path, data, "points", _count, "a whole number, 0 or more")
     solves = _field(path, data, "solves", _count, "a whole number, 0 or more", default=0)
     description = _field(path, data, "description", _string, "a string", default="")
+    max_attempts = _field(
+        path, data, "max_attempts", _count, "a whole number, 0 or more: the tries the platform allows at the flag (0: any number)",
+        default=0,
+    )
     if "id" in data:
         cid = _field(path, data, "id", _valid_id, f"a challenge id ({ID_RULE})")
     else:
@@ -242,6 +249,7 @@ def _challenge(directory: Path) -> BoardChallenge:
         description=description,
         files=files,
         live=bool(urls),
+        max_attempts=max_attempts,
     )
     return BoardChallenge(challenge=challenge, handout=directory, urls=urls)
 

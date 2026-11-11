@@ -47,10 +47,17 @@ class Challenge:
     claimed_by: str | None = None  # team mode: ME or a teammate handle
     solved_by: str | None = None  # a lane id, ME or a teammate handle
     note: str = ""  # why it is blocked or parked
+    max_attempts: int = 0  # the tries the platform allows at its flag (the board says); 0: any number
+    tries_left: int | None = None  # the tries left, as the platform last said; None: it has not said
 
     @property
     def closed(self) -> bool:
         return self.status in CLOSED
+
+    @property
+    def limited(self) -> bool:
+        """The platform counts the tries at its flag: the board says so, or the platform did."""
+        return self.max_attempts > 0 or self.tries_left is not None
 
 
 class LaneState(StrEnum):

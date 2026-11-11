@@ -278,7 +278,9 @@ def fit_columns(
     return [(key, label, width if key != stretch else stretch_min + max(0, spare)) for key, label, width, _ in kept]
 
 
-def attention_cell(lane: Lane) -> Text:
+def attention_cell(lane: Lane, sending: bool = False) -> Text:
+    """The lane's most urgent alert or approval; else, when `sending`, that a flag of it is on
+    its way to the platform (nothing to answer: its answer comes back on its own)."""
     if lane.finished:
         return Text("")
     top = top_answerable(lane)
@@ -290,6 +292,8 @@ def attention_cell(lane: Lane) -> Text:
         return cell
     if lane.pending is not None:
         return theme.chip(PENDING_TAG[lane.pending.kind], *theme.PENDING_COLORS)
+    if sending:
+        return theme.chip("sending", theme.WHITE, theme.BLUE)
     if lane.alerts:
         return theme.chip(lane.alerts[0].kind.tag, *theme.alert_colors(lane.alerts[0].kind))
     return Text("")
@@ -305,7 +309,7 @@ def lane_cells(deck: Deck, lane: Lane, selected: bool = False) -> dict[str, Text
         cost = f"${fmt.dollars(lane.known_dollars, short=True)}+" if lane.known_dollars else "-"
     return {
         "bar": Text("▌", style=theme.ACCENT) if selected else Text(" "),
-        "!": attention_cell(lane),
+        "!": attention_cell(lane, bool(deck.sending(lane.id))),
         "lane": Text(lane.id, style=theme.MUTED if lane.finished else "bold"),
         "chall": safe(ch.name, dim),
         "model": safe(lane.model, dim or theme.CYAN),

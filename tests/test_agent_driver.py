@@ -8,6 +8,7 @@ the deck to reach a state (bounded, ~10 s at most).
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import socket
 import threading
@@ -57,7 +58,8 @@ class Lab:
     def __init__(self, tmp_path: Path, server: FakeModelServer, *, verify=None, max_lanes: int = 2,
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
                  max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
-                 submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG) -> None:
+                 submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG,
+                 submitter=None) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -74,7 +76,7 @@ class Lab:
             compact_at=compact_at,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit)
-        self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
+        self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"), submitter=submitter)
 
     def release(self, *ids: str) -> None:
         ids = ids or tuple(self.handouts)
@@ -375,6 +377,242 @@ def test_two_flags_in_one_reply_wait_as_two_approvals(tmp_path):
             await until(lambda: lane.pending is not None, "the candidate flags")
             assert lane.pending.flag == "t{one}" and [p.flag for p in lane.waiting] == ["t{two}"]
             assert lane.turns == 1
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- a flag the challenge itself hands out
+
+OWN_TEXT = "is written in the challenge's own text (its description or a handout file)"
+
+
+def recording(tried: list[str]):
+    """A verifier that answers at once and notes each flag it was asked about: t{real} is right."""
+
+    def verify(cid: str, flag: str) -> bool:
+        tried.append(flag)
+        return flag == "t{real}"
+
+    return verify
+
+
+def test_under_auto_a_submitted_flag_the_handout_holds_waits_for_the_player_and_the_lane_hears_why(tmp_path):
+    """agent/external.py's rule for its agents, for the model's submit_flag too: a flag written
+    in the challenge's own text (here the handout's note.txt) is often a decoy, so it never goes
+    to the platform without the player, under auto too."""
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"}), text_reply("ok")])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, "t{note}", [])
+            assert f"t{{note}} {OWN_TEXT}, so it waits for you, though the lane submitted it" in [a.text for a in lane.actions]
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: len(server.requests) >= 2, "the next model call")
+            told = last_user(server.requests[1])
+            assert f"Note from flightdeck: t{{note}} {OWN_TEXT}, so it is not submitted on its own: it waits for the player." in told
+            assert tried == []
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_flag_from_the_handout_the_player_declined_is_not_said_to_wait_for_them_when_submitted_again(tmp_path):
+    server = FakeModelServer([
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),  # again, after the player said no
+        text_reply("ok"),
+    ])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording([]))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: len(server.requests) >= 3, "the call after the second submission")
+            told = last_user(server.requests[2])
+            assert "Note from flightdeck: The player did not submit t{note}: they think it is not the flag." in told
+            assert "it waits for the player" not in told  # nothing waits: the deck has said why not
+            assert lane.pending is None
+            said = [a.text for a in lane.actions]
+            assert said[-1] != f"t{{note}} {OWN_TEXT}, so it waits for you, though the lane submitted it"
+            assert said.count(f"t{{note}} {OWN_TEXT}, so it waits for you, though the lane submitted it") == 1
+            assert "candidate t{note} again; not asked: the player declined to submit it" in said
+            await lab.finish()
+
+    run(main())
+
+
+def test_under_auto_a_flag_from_the_description_or_any_handout_file_waits_for_the_player(tmp_path):
+    """The description, a binary (searched as Latin-1, as `strings` would show it) and a text
+    file too big to keep in a snapshot (read from the workspace) all count as the challenge's
+    own text."""
+    folder = tmp_path / "board" / "note"
+    folder.mkdir(parents=True)
+    (folder / "chall.bin").write_bytes(b"\x7fELF\x02\x01\x00\x00" + bytes(range(256)) + b"\x00t{inbin}\x00\xff\xfe")
+    (folder / "big.txt").write_text("filler line\n" * 8000 + "t{inbig}\n")  # past the snapshot's 64 KB of text
+    server = FakeModelServer([tool_calls_reply([
+        ("submit_flag", {"flag": "t{example}"}), ("submit_flag", {"flag": "t{inbin}"}), ("submit_flag", {"flag": "t{inbig}"}),
+    ])])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), handouts={"note": folder})
+            ch = Challenge("note", "Note", "misc", 50, solves=10, description="Flags look like t{example}.")
+            lab.deck.release([ch], [QueueEntry("note", "small")])
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None and len(lane.waiting) == 2, "the three candidates")
+            queued = [lane.pending, *lane.waiting]
+            assert [(p.kind, p.flag) for p in queued] == [
+                (PendingKind.SUBMIT, "t{example}"), (PendingKind.SUBMIT, "t{inbin}"), (PendingKind.SUBMIT, "t{inbig}")]
+            assert tried == []
+            await lab.finish()
+
+    run(main())
+
+
+def test_under_auto_a_flag_the_lane_wrote_itself_still_goes_out_at_once(tmp_path):
+    """Only what the challenge came with counts: a file the lane writes during the run does
+    not make its flag the challenge's own. One reply's flags are each judged on their own."""
+    server = FakeModelServer([
+        tool_call_reply("shell", {"command": "echo 't{made}' > out.txt"}),
+        tool_calls_reply([("submit_flag", {"flag": "t{made}"}), ("submit_flag", {"flag": "t{note}"})]),
+    ])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the flag from the handout")
+            assert tried == ["t{made}"]  # submitted at once (and wrong)
+            assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}") and lane.waiting == []
+            assert (lab.work(lane) / "out.txt").read_text() == "t{made}\n"
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_search_of_the_handout_cut_short_is_said_on_the_lane(tmp_path, monkeypatch):
+    from ctf_flightdeck.agent import driver as agent_driver
+
+    monkeypatch.setattr(agent_driver, "PLANT_SECONDS", -1.0)  # out of time before it starts
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=lambda cid, flag: tried.append(flag) or False)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: tried, "the flag submitted")
+            assert tried == ["t{note}"]  # not known to be the handout's, so it went out: as the note warns
+            assert any(a.text.startswith("the search of the handout for flags stopped after -1 s; a flag the model "
+                                         "submits that is written in the rest of it may be submitted without you")
+                       for a in lane.actions)
+            await lab.finish()
+
+    run(main())
+
+
+def test_what_the_search_of_a_big_handout_left_out_is_said_on_the_lane(tmp_path):
+    folder = tmp_path / "board" / "note"
+    folder.mkdir(parents=True)
+    tail = b"\x00" * (1536 * 1024) + b"t{in_tail}\x00"  # past the first 1 MB of the file: not searched
+    (folder / "firmware.bin").write_bytes(b"\x7fELF" + tail)
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{in_tail}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), handouts={"note": folder})
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: tried, "the flag submitted")
+            assert tried == ["t{in_tail}"]  # not known to be the handout's, so it went out: as the note warns
+            assert ("the search of the handout for flags left out the rest of 1 file past its first 1 MB; a flag the "
+                    "model submits that is written there may be submitted without you under submit auto"
+                    ) in [a.text for a in lane.actions]
+            await lab.finish()
+
+    run(main())
+
+
+def test_the_search_of_the_challenges_own_text_names_every_part_it_left_out(tmp_path, monkeypatch):
+    from ctf_flightdeck.agent import driver as agent_driver
+    from ctf_flightdeck.agent import workspace as agent_workspace
+
+    monkeypatch.setattr(agent_driver, "PLANT_FILE_BYTES", 64)
+    monkeypatch.setattr(agent_driver, "PLANT_BYTES", 120)
+    monkeypatch.setattr(agent_workspace, "SNAPSHOT_FILES", 5)
+    (tmp_path / "a-cut.bin").write_bytes(b"\x00t{a}" + b"\x00" * 100 + b"t{a_tail}")  # read up to byte 64 only
+    locked = tmp_path / "b-locked.txt"
+    locked.write_text("t{locked}\n")
+    (tmp_path / "c-whole.bin").write_bytes(b"\x00t{c}\x00")
+    (tmp_path / "d-fill.bin").write_bytes(b"\x00" * 100 + b"t{d}")  # the 120 bytes in all run out at its byte 50
+    (tmp_path / "e-over.bin").write_bytes(b"\x00t{e}\x00")
+    for name in ("f.txt", "g.txt"):  # past the snapshot's 5 files: not listed
+        (tmp_path / name).write_text("t{late}\n")
+    locked.chmod(0)
+    try:
+        try:
+            locked.read_bytes()
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
+        found, done, left = agent_driver._own_flags(tmp_path, "see t{desc}", re.compile(FLAG), time.monotonic() + 30)
+    finally:
+        locked.chmod(0o644)
+    assert (found, done) == ({"t{desc}", "t{a}", "t{c}"}, True)
+    assert left == ["the rest of 1 file past its first 64 bytes", "2 files past the first 120 bytes in all",
+                    "1 file it could not read", "the files past the first 5"]
+
+
+# ---------------------------------------------------------------------- a flag on its way to the platform
+
+
+@pytest.mark.parametrize("ok, state", [(False, LaneState.GAVE_UP), (True, LaneState.SOLVED)], ids=["wrong", "right"])
+def test_a_lane_that_gives_up_while_its_flag_is_with_the_platform_calls_the_model_no_more(tmp_path, ok, state):
+    """With a platform over the network the lane carries on while its flag is on its way (the
+    deck's submitter only queues it). A model that then answers three times without a tool
+    gives up: the lane stays open for the platform's answer, without another model call, and
+    ends as that answer says."""
+    sent: list[tuple[str, str, str]] = []
+
+    def responder(record):
+        if calls_to(server) == 1:
+            return tool_call_reply("submit_flag", {"flag": "t{real}"})
+        return text_reply("Submitted; waiting to hear back.")
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", submitter=lambda *item: sent.append(item),
+                      handouts={"note": handout(tmp_path, files={"note.txt": "no flag in here\n"})})
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.gave_up_later, "the lane to give up")
+            assert sent == [(lane.id, "note", "t{real}")] and lab.deck.sending(lane.id) == ("t{real}",)
+            await asyncio.sleep(0.3)
+            assert calls_to(server) == 4 and lane.state is LaneState.RUNNING  # its flag's answer is not in yet
+            assert ("gave up (the model answered 3 times in a row without calling a tool; it last said: Submitted; waiting "
+                    "to hear back.), but its flag is on its way to the platform: it ends once the answer is in"
+                    ) in [a.text for a in lane.actions]
+            lab.deck.platform_verdict(lane.id, "t{real}", ok, "Correct" if ok else "Incorrect")
+            assert lane.state is state and lab.deck.sending(lane.id) == ()
+            await asyncio.sleep(0.2)
+            assert calls_to(server) == 4
             await lab.finish()
 
     run(main())

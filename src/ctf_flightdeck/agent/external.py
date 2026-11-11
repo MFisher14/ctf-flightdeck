@@ -34,7 +34,9 @@ How the player's controls reach the CLI:
   command the agent is running finish (as AgentDriver does), then freezes the CLI.
 - a lane that waits for the player (a flag to approve, a budget cap) is frozen the same
   way: the CLI decides by itself when to call its model, so freezing it is how the deck's
-  rule "a waiting lane spends nothing" holds.
+  rule "a waiting lane spends nothing" holds. So is a lane that gave up while a flag of it
+  still waits (for the player, or for the platform's answer): it gets no more messages and
+  no new CLI, and ends when the deck ends it.
 - a hint, a new plan, a verdict on a flag or a hand-back while the agent works: SIGINT
   ends the agent's turn (Claude Code ends the turn and waits for input; Codex exits), and
   the message goes in as the next turn. Notes that can wait (budget approved) go with the
@@ -1050,13 +1052,14 @@ class _Run:
         future.add_done_callback(self.tasks.discard)
 
     async def until_running(self) -> bool:
-        """Wait while the lane is paused, taken over or waiting for the player. False once
-        it has ended."""
+        """Wait while the lane is paused, taken over or waiting for the player, and for good
+        once it gave up (the deck keeps it open only for its flags' answers). False once it
+        has ended."""
         while not self.stopped:
             lane = self.lane()
             if lane is None or lane.finished:
                 return False
-            if lane.state is LaneState.RUNNING:
+            if lane.state is LaneState.RUNNING and not lane.gave_up_later:
                 return True
             self.wake.clear()
             await self.wake.wait()
@@ -1065,12 +1068,14 @@ class _Run:
     # ------------------------------------------------------------------ the deck's state -> the CLI
 
     def sync(self) -> None:
-        """Make the CLI match the lane's state: running, or frozen."""
+        """Make the CLI match the lane's state: running, or frozen. A lane that gave up is
+        frozen while the deck keeps it open for its flags' answers (gave_up_later): nothing
+        more goes to the agent, so it takes no more turns."""
         lane = self.lane()
         if lane is None or lane.finished or self.stopped:
             return
         self.wake.set()
-        if lane.state is LaneState.RUNNING:
+        if lane.state is LaneState.RUNNING and not lane.gave_up_later:
             self.cancel_timer()
             self.thaw()
             if not self._delivering:
@@ -1081,7 +1086,7 @@ class _Run:
                     self._delivering = False
         elif lane.state is LaneState.TAKEOVER:
             self.takeover_freeze()
-        else:  # waiting for the player, or paused
+        else:  # waiting for the player, paused, or gave up
             self.freeze()
 
     def freeze(self) -> None:

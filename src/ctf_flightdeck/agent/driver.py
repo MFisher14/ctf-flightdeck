@@ -11,7 +11,13 @@ Each lane starts with a fresh context: the fixed system prompt, then the challen
 once its L1 engines have run, what they found). Escalation starts a fresh context too, on the
 stronger model, with the deck's summary; so does the refresh of a context grown too long.
 
-A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call. A model call that
+A flag the model submits that the challenge's own text holds (its description, or a handout
+file as it came: often a decoy) is not claimed: under submit auto too it waits for the
+player, and the model hears why, as agent/external.py's lanes do.
+
+A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call, and then calls the
+model no more, also while the deck keeps it open for a flag that still waits (for the player,
+or for the platform's answer). A model call that
 fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
 queue before the lane ends, so the next challenges are not started only to fail the same way.
 
@@ -27,12 +33,15 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from ..core.driver import TakeoverRefused, TurnReport
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..core.summary import lane_summary
+from ..l1.runner import scan
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
@@ -64,6 +73,9 @@ INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, 
 MAX_IDLE_TURNS = 3  # replies in a row without a tool call before the lane gives up (as agent/external.py's lanes do)
 MAX_SAID_FLAGS = 3  # candidates taken from one reply's text, at most
 SAID_SCAN = 20_000  # characters of a reply's text searched for flags
+PLANT_SECONDS = 5.0  # the search of the challenge's own text for flags (off the loop) stops after this long, with a note
+PLANT_FILE_BYTES = 1024 * 1024  # of each handout file searched
+PLANT_BYTES = 16 * 1024 * 1024  # of all of them
 EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, and what the player should check
     401: "check the API key",
     402: "check the account's credits",
@@ -115,6 +127,7 @@ class _Run:
     generation: int = 0  # bumped at escalation and take-over: a reply asked for before must not run
     idle_turns: int = 0  # replies in a row with no tool call (and no new flag in their text) since the player last spoke
     said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
+    planted: frozenset[str] = frozenset()  # flag-format matches in the challenge's own text: never claimed when submitted
 
 
 @dataclass
@@ -350,6 +363,7 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         run.ready = True
+        await self._plant(run)
         if self.l1 is not None:
             await self._l1_stage(run)
         urls = self.urls.get(run.challenge.id, ())
@@ -397,9 +411,29 @@ class AgentDriver:
                 # count what it cost.
                 self._overtaken(run, messages, hints, notes, reply, model)
                 continue
-            await self._turn(run, reply, len(hints), generation, model, messages)
+            if await self._turn(run, reply, len(hints), generation, model, messages):
+                await self._until_over(run)  # it gave up: no more model calls, though a flag of it may still wait
+                return
             if run.messages is messages:  # not escalated during the turn
                 self._refresh_if_long(run, reply.usage.prompt_tokens)
+
+    async def _plant(self, run: _Run) -> None:
+        """Remember the flag-format matches in the challenge's own text, its description and
+        the handout as it came (the workspace before anything ran in it): a decoy flag.txt, an
+        example in a readme. A flag the model submits that is one of them is not claimed, so
+        it waits for the player under auto too, as agent/external.py does for its agents.
+        What the search did not cover (cut short, or parts of a big handout) is said on the lane."""
+        found, done, left = await asyncio.to_thread(
+            _own_flags, run.workspace.root, run.challenge.description, self._flag_re(), time.monotonic() + PLANT_SECONDS
+        )
+        run.planted = frozenset(found)
+        if not done:
+            self.deck.note(run.lane_id, f"the search of the handout for flags stopped after {PLANT_SECONDS:g} s; a flag "
+                                        "the model submits that is written in the rest of it may be submitted without you "
+                                        "under submit auto")
+        elif left:
+            self.deck.note(run.lane_id, f"the search of the handout for flags left out {'; '.join(left)}; a flag the model "
+                                        "submits that is written there may be submitted without you under submit auto")
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
@@ -541,7 +575,8 @@ class AgentDriver:
         )
 
     async def _turn(self, run: _Run, reply: Reply, hints_taken: int, generation: int, model: str,
-                    messages: list[dict]) -> None:
+                    messages: list[dict]) -> bool:
+        """Run the reply's tool calls and report the turn. True when the lane gave up with it."""
         lane = self._lane(run)
         assert lane is not None
         turn = lane.turns + 1
@@ -553,7 +588,7 @@ class AgentDriver:
             for index, call in enumerate(reply.tool_calls):
                 if not await self._until_running(run, generation):  # paused: wait; escalated or taken over: stop
                     if self._over(run):
-                        return
+                        return False
                     break
                 results.append(await run.toolbox.call(call.name, call.arguments, turn=turn, index=index))
             after = await asyncio.to_thread(take_snapshot, root)
@@ -561,7 +596,7 @@ class AgentDriver:
         finally:
             run.idle.set()
         if self._over(run):
-            return
+            return False
         same = run.messages is messages  # else escalated during the turn: none of it goes into the new context
         notes: list[str] = []
         files = tuple(changes[:MAX_FILES_PER_TURN])
@@ -569,9 +604,16 @@ class AgentDriver:
             notes.append(f"That turn changed {len(changes)} files; the console lists the first {MAX_FILES_PER_TURN}.")
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
+        # the challenge hands these out: often decoys, so the player decides; not one known not to be
+        # the flag already (declined, rejected): the deck tells the model that instead
+        planted = {flag for flag in flags if flag in run.planted and self.deck.not_flag(run.challenge.id, flag) is None}
         for flag in flags:
             if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
                 notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
+            elif flag in planted:
+                notes.append(f"{prompts.one(flag, 200)} is written in the challenge's own text (its description or a handout "
+                             "file), so it is not submitted on its own: it waits for the player. A flag a challenge hands "
+                             "out is often a decoy; keep going until you hear it was correct.")
         skipped = len(reply.tool_calls) - len(results)
         said: list[str] = []  # flags the model wrote in a reply with no tool call: candidates it did not submit
         idle = False  # the last of MAX_IDLE_TURNS replies in a row that did nothing: the lane gives up
@@ -607,12 +649,16 @@ class AgentDriver:
                 plan=plans[-1] if plans else None,
                 files=files,
                 flag=flags[0] if flags else None,
+                claimed=not flags or flags[0] not in run.planted,
                 hints_taken=hints_taken if same else 0,
                 model=model,
             ),
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
-            self._report(run, TurnReport(turn=False, flag=flag))
+            self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in run.planted))
+        for flag in dict.fromkeys(flag for flag in flags if flag in planted):
+            self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a handout "
+                                        "file), so it waits for you, though the lane submitted it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
             self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
         if idle:
@@ -621,6 +667,16 @@ class AgentDriver:
             self._report(run, TurnReport(
                 turn=False, gave_up=f"the model answered {MAX_IDLE_TURNS} times in a row without calling a tool; it last said: {last}",
             ))
+        return idle
+
+    async def _until_over(self, run: _Run) -> None:
+        """After the lane gave up: call the model no more, and wait until the deck ends the lane.
+        It does at once, or once no flag of the lane waits any more, for the player or for the
+        platform's answer; while its flag is with the platform the lane stays RUNNING, so the
+        loop must not go on."""
+        while not self._over(run):
+            run.wake.clear()
+            await run.wake.wait()
 
     def _flags_said(self, run: _Run, text: str) -> list[str]:
         """Matches of the flag format in what the model wrote, new to this lane, at most
@@ -730,6 +786,63 @@ class AgentDriver:
             await asyncio.gather(*tasks, return_exceptions=True)
         for run in self.runs.values():
             await self._close(run)
+
+
+def _own_flags(root: Path, description: str, pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool, list[str]]:
+    """The flag-format matches in a challenge's own text: its description, and every file of
+    the workspace (the handout, before anything ran in it), a text file as the snapshot keeps
+    it and any other read from root, at most PLANT_FILE_BYTES of each and PLANT_BYTES in all,
+    as Latin-1 (a flag in a binary's strings shows). Then False when the search stopped at
+    `deadline`, and what else it left out, said for the player (the rest of a file past
+    PLANT_FILE_BYTES, files past PLANT_BYTES in all, a file it could not read, files past the
+    snapshot's cap). In a thread: it can take a while."""
+    found: dict[str, None] = {}
+    if not scan(description, pattern, deadline, found):
+        return set(found), False, []
+    snapshot = take_snapshot(root)
+    budget = PLANT_BYTES
+    cut = over = unread = 0
+    for path, (size, _, _) in snapshot.files.items():
+        text = snapshot.texts.get(path)
+        if text is None:
+            if budget <= 0:
+                over += 1
+                continue
+            limit = min(PLANT_FILE_BYTES, budget)
+            try:
+                fd = open_inside(root, path.split("/"))
+                with os.fdopen(fd, "rb") as file:
+                    data = file.read(min(size, limit))
+            except OSError:  # gone or unreadable
+                unread += 1
+                continue
+            budget -= len(data)
+            if len(data) < size:
+                if limit < PLANT_FILE_BYTES:  # the bytes in all ran out in it
+                    over += 1
+                else:
+                    cut += 1
+            text = data.decode("latin-1")
+        if not scan(text, pattern, deadline, found):
+            return set(found), False, []
+    left = []
+    if cut:
+        left.append(f"the rest of {_files(cut)} past {'its' if cut == 1 else 'their'} first {_size(PLANT_FILE_BYTES)}")
+    if over:
+        left.append(f"{_files(over)} past the first {_size(PLANT_BYTES)} in all")
+    if unread:
+        left.append(f"{_files(unread)} it could not read")
+    if snapshot.truncated:
+        left.append(f"the files past the first {len(snapshot.files)}")
+    return set(found), True, left
+
+
+def _files(n: int) -> str:
+    return f"{n} file" + ("" if n == 1 else "s")
+
+
+def _size(n: int) -> str:
+    return f"{n // (1024 * 1024)} MB" if n % (1024 * 1024) == 0 else f"{n} bytes"
 
 
 def _step(results: list[ToolResult], reply: Reply) -> tuple[str, str]:

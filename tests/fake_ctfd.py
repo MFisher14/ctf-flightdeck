@@ -23,6 +23,8 @@ fake behaves as CTFd 3.x does:
 
 Tests script replies ahead of these for one method and path (errors, 429 with Retry-After,
 redirects, bodies that are not JSON, a hang-up), and read back every request in `requests`.
+A reply can be held until the test lets it go (Reply.hold; hold_attempts for every answer to
+a flag, judged when it arrives as CTFd would): a CTFd slow to answer.
 
 With `tls` (from make_tls(), which needs the openssl command) it answers https instead, with
 a certificate for 127.0.0.1 from a throwaway authority: a client trusts it through
@@ -53,6 +55,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token has this shape
 FLAG_FORMAT = r"test\{\w+\}"  # the flags of the invented challenges below
 STOP_WAIT = 5.0  # seconds leaving the context waits for request threads in all
+HOLD_WAIT = 30.0  # seconds a held reply waits for its test at most
 
 
 @dataclass
@@ -101,6 +104,7 @@ class Reply:
     until_close: bool = False  # no Content-Length: the body ends when the connection closes
     drip: float = 0.0  # seconds between the bytes of the body, sent one at a time (a server that stalls)
     drip_head: bool = False  # with drip: the status line and headers too
+    hold: threading.Event | None = None  # answer only once it is set (a CTFd slow to answer), at most HOLD_WAIT s
 
 
 HANG_UP = Reply(hang_up=True)
@@ -204,6 +208,7 @@ class FakeCTFd:
         self.solved: set[int] = set()  # solved by this account: the team in team mode
         self.user_solved: set[int] | None = None  # this user's own solves in team mode (None: the same)
         self.fails: dict[int, int] = {}
+        self.hold_attempts: threading.Event | None = None  # set: answers to flags wait for it (a slow CTFd)
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
         self._lock = threading.Lock()
@@ -281,7 +286,9 @@ class FakeCTFd:
         if method == "GET" and found:
             return self._detail(int(found.group(1)))
         if method == "POST" and route == "/api/v1/challenges/attempt":
-            return self._attempt(body)
+            reply = self._attempt(body)  # judged now, as CTFd does: a hold delays only the answer
+            reply.hold = self.hold_attempts
+            return reply
         if method == "GET" and route == "/api/v1/teams/me/solves":
             if not self.team_mode:
                 return not_found()  # CTFd's require_team_mode
@@ -521,6 +528,8 @@ class _Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length) if length > 0 else b""
 
     def _send(self, reply: Reply) -> None:
+        if reply.hold is not None:
+            reply.hold.wait(HOLD_WAIT)  # in this request's thread: the fake answers others meanwhile
         if reply.hang_up:
             self.close_connection = True
             return

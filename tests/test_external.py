@@ -756,6 +756,74 @@ def test_an_agent_that_does_nothing_is_nudged_and_gives_up_after_three_idle_turn
     run(main())
 
 
+class ToThePlatform(Deck):
+    """A deck whose flags go to a platform over the network (CTFd): its submitter only notes
+    each flag, and the test gives the platform's answer with platform_verdict()."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.sent: list[str] = []
+        super().__init__(*args, submitter=lambda lane_id, challenge_id, flag: self.sent.append(flag), **kwargs)
+
+
+IDLE = {"calls": [{"text": "Nothing more to try."}]}
+RESUMED = {"calls": [{"tools": [bash("echo resumed-after-giving-up > resumed.txt")]}]}  # never runs
+
+
+def test_a_claude_lane_that_gave_up_while_its_flags_are_with_the_platform_takes_no_more_turns(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}]}, {"calls": [{"text": "FLAG: t{y}"}]}, IDLE, IDLE, IDLE, RESUMED]}
+
+    async def main():
+        lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+        deck = lab.deck
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.gave_up_later, "the lane to give up")
+            assert deck.sent == ["t{x}"] and deck.sending(lane.id) == ("t{x}", "t{y}")  # t{y} waits its turn
+            assert lane.state is LaneState.RUNNING  # held open for its flags' answers
+            told = lab.fake.messages()
+            assert told[1:] == [NUDGE] * 4
+            deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
+            assert deck.sent == ["t{x}", "t{y}"] and not lane.finished  # t{y}'s answer is not in yet
+            await asyncio.sleep(1.0)
+            assert lab.fake.messages() == told  # neither the answer nor a nudge: the agent gave up
+            pid = lab.pid(lane)
+            await until(lambda: stopped(pid), "the CLI frozen while the lane waits for its flags' answers")
+            deck.platform_verdict(lane.id, "t{y}", False, "Incorrect")
+            assert lane.state is LaneState.GAVE_UP and lane.result.startswith("the agent ended 3 turns in a row")
+            await until(lambda: gone(pid), "the CLI ended with the lane")
+            assert lab.fake.messages() == told and not (lab.work(lane) / "resumed.txt").exists()
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_escalating_a_claude_lane_that_gave_up_while_its_flag_is_with_the_platform_starts_no_cli(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}]}, IDLE, IDLE, IDLE, RESUMED]}
+
+    async def main():
+        lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+        deck = lab.deck
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.gave_up_later, "the lane to give up")
+            pid = lab.pid(lane)
+            assert deck.apply(iv.Escalate(lane.id)).ok
+            await until(lambda: gone(pid), "the small model's CLI ended")
+            await asyncio.sleep(1.0)
+            assert len(lab.fake.starts()) == 1  # no CLI on the stronger model: the lane gave up
+            deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
+            assert lane.state is LaneState.GAVE_UP
+            await asyncio.sleep(0.5)
+            assert len(lab.fake.starts()) == 1 and not (lab.work(lane) / "resumed.txt").exists()
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_each_turn_costs_what_claudes_running_total_grew_by(tmp_path):
     script = {"turns": [
         {"calls": [{"tools": [bash("true")]}], "cost": 0.01},
