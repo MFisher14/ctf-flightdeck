@@ -650,6 +650,33 @@ def test_a_long_reason_phrase_is_clipped_and_the_body_still_shows(lane, instance
     assert result.output.endswith("…, 2 bytes")
 
 
+def test_an_instance_that_never_answers_is_given_up_on_after_the_timeout(lane, silent):
+    url = f"http://127.0.0.1:{port(silent)}"  # it connects (the backlog takes it), and the request is never read
+    box = Toolbox(lane, http_allow=(url,))
+    started = time.monotonic()
+    result = within(10, lambda: call(box, "http", {"method": "GET", "url": url + "/"}))
+    assert (result.error, result.content) == (True, "error: no complete answer within 2 s")
+    assert time.monotonic() - started < 6
+
+
+def test_an_instance_that_answers_too_slowly_is_given_up_on_after_the_timeout(lane, instance, monkeypatch):
+    monkeypatch.setattr(tools, "HTTP_TIMEOUT", 2.0)
+
+    def drip(conn, stop):  # a byte every 0.2 s: no single read ever waits long, the whole never ends
+        conn.recv(65536)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        while not stop.is_set():
+            conn.sendall(b"x")
+            time.sleep(0.2)
+
+    url = instance(drip)
+    box = Toolbox(lane, http_allow=(url,))
+    started = time.monotonic()
+    result = within(10, lambda: call(box, "http", {"method": "GET", "url": url + "/"}))
+    assert (result.error, result.content) == (True, "error: no complete answer within 2 s")
+    assert time.monotonic() - started < 6
+
+
 def test_an_unreachable_instance_is_an_error_the_model_can_read(lane, silent):
     closed = port(silent)
     silent.close()  # nothing listens there now
