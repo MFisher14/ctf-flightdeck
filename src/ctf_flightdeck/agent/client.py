@@ -19,7 +19,8 @@ it is used, because a server may echo the key back.
 Untrusted data. Everything in an answer came from a model or a server. Error text is passed
 through `text.untrusted()` and shortened. The reply's message is handed back as data for
 the history, with its role pinned to "assistant" so an answer cannot smuggle a system or
-tool message into the conversation.
+tool message into the conversation. Only strict JSON is accepted, so whatever the message
+holds can be sent back on the next turn.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
+from typing import NoReturn
 
 import httpx
 
@@ -455,7 +457,7 @@ def _json(response: httpx.Response) -> object:
         return _NOT_JSON
 
 
-def _refuse_constant(name: str) -> float:
+def _refuse_constant(name: str) -> NoReturn:
     raise ValueError(f"{name} is not JSON")
 
 

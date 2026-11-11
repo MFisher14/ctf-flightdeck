@@ -1,9 +1,11 @@
 """The model API client, over real HTTP to the fake model server.
 
 Nothing is mocked: each test starts a FakeModelServer on 127.0.0.1, scripts its replies and
-reads back what the client sent. pytest has no async support here, so each call runs on a
-fresh event loop with asyncio.run(). Backoffs are a millisecond so the retries stay fast; the
-tests about waiting use waits that are short but long enough to measure.
+reads back what the client sent. A few start a RawServer instead, for what an HTTP server
+will not do on its own: hang up or reset a connection, or trickle in an answer a byte at a
+time. pytest has no async support here, so each call runs on a fresh event loop with
+asyncio.run(). Backoffs are a millisecond so the retries stay fast; the tests about waiting
+use waits that are short but long enough to measure.
 """
 
 from __future__ import annotations
