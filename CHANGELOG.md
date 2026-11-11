@@ -17,6 +17,7 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   every workspace, as quitting does (before, lane commands, containers and paused agent CLIs
   kept running); `play` exits with 128 plus the signal's number.
 - `q` while lanes are open asks first and says what quitting stops; `y` quits, `n` or `esc` stays.
+  On the way out, `play` names any flag that was still waiting for your approval.
 - The key line always shows `? help` and `q quit`, and keeps approve, decline and the commands on
   a narrow terminal.
 - Help and the `/` menu say what take-over and decline do in a run; `flightdeck config` says "no
