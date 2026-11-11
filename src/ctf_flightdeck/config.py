@@ -14,11 +14,17 @@ same length as [models] ladder: position i is used for a lane on ladder[i]. With
 Anthropic API, [api] fast lists the ladder models a lane calls in fast mode; only a model
 agent/fastmode.py lists for fast mode is accepted.
 
+[api] and [fallback] also take timeout (seconds one try of a lane's call may take) and
+max_tokens (the most tokens a lane's reply may hold). Unset, max_tokens is LOCAL_MAX_TOKENS
+for an OpenAI-compatible server on this machine and is not sent to any other: see
+lane_max_tokens().
+
 The optional [light] table names the light model for flightdeck's small jobs (light.py):
 engine "rules" (the default: no model), "openai" (an OpenAI-compatible server; recommended:
 an open-weight model on this machine), "anthropic", "cactus" or "decider" (a Strands Decider
 server: a decision model, with a confidence threshold and no key). Its key, like the API's, is
-read from the variable its key_env names, by light_key().
+read from the variable its key_env names, by light_key(). With the openai engine, thinking
+says whether the model may reason before it answers: see light_thinking().
 
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
@@ -50,8 +56,8 @@ RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
 _TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
-_API_KEYS = ("provider", "base_url", "key_env", "fast")
-_FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder")
+_API_KEYS = ("provider", "base_url", "key_env", "fast", "timeout", "max_tokens")
+_FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens")
 API_PROVIDERS = ("openai", "anthropic")
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"  # the Anthropic SDK's default (it adds /v1/messages itself)
 PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves them out
@@ -61,7 +67,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
-_LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold")
+_LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
 LIGHT_TIMEOUT = 30.0  # seconds a light job may take, all its tries; then the rules' answer stands
 DECIDER_URL = "http://127.0.0.1:8000"  # `strands-decider serve MODEL --port 8000`, its README's example
 # The decider's confidence below which its answer is "unsure" and the rules' answer stands. 0.9 is
@@ -71,6 +77,12 @@ DECIDER_URL = "http://127.0.0.1:8000"  # `strands-decider serve MODEL --port 800
 DECIDER_THRESHOLD = 0.9
 OLLAMA_URL = "http://127.0.0.1:11434/v1"  # Ollama's OpenAI-compatible endpoint on this machine
 MLX_URL = "http://127.0.0.1:8080/v1"  # an MLX server's (mlx_lm.server's default port)
+# A lane's reply cap for an OpenAI-compatible server on this machine when [api] max_tokens is not
+# set: mlx_lm.server's own default is 512, and a model that reasons first runs out mid-thought.
+LOCAL_MAX_TOKENS = 8192
+MAX_REPLY_TOKENS = 1_000_000  # the largest max_tokens accepted: more than any model writes in one reply
+MAX_TRY_SECONDS = 3600.0  # the longest [api] timeout accepted: an hour for one try
+LOCAL_TIMEOUT = 600  # the [api] timeout `flightdeck init` writes for a server on this machine
 _PRICE_KEYS = ("input", "output", "cached_input")
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 _MAX_ENV_NAME = 64
@@ -83,6 +95,8 @@ class ApiConfig:
     key_env: str = "OPENROUTER_API_KEY"  # "" for a local server that needs no key (openai provider only)
     provider: str = "openai"  # openai | anthropic: the API's dialect
     fast: tuple[str, ...] = ()  # ladder models a lane calls in fast mode (anthropic only; agent/fastmode.py)
+    timeout: float | None = None  # seconds per try of a lane's call; None: the client's own (180, Anthropic 600)
+    max_tokens: int | None = None  # a lane's reply cap as set; None: lane_max_tokens() decides
 
 
 @dataclass(frozen=True)
@@ -93,6 +107,8 @@ class FallbackConfig:
     base_url: str
     key_env: str  # "" for a local server that needs no key (openai provider only)
     ladder: tuple[str, ...]  # ladder[i] is the fallback for models.ladder[i]
+    timeout: float | None = None  # as ApiConfig's
+    max_tokens: int | None = None  # as ApiConfig's
 
 
 @dataclass(frozen=True)
@@ -106,6 +122,7 @@ class LightConfig:
     timeout: float = LIGHT_TIMEOUT  # seconds a job may take, all its tries
     price: Price | None = None  # dollars per million tokens, for an API that reports no cost
     threshold: float = DECIDER_THRESHOLD  # decider: the confidence below which an answer is unsure
+    thinking: bool | None = None  # openai only, as set; None: light_thinking() decides
 
 
 @dataclass(frozen=True)
@@ -218,6 +235,31 @@ def light_key(config: Config) -> str | None:
     return _read_key(config, "light", light.key_env, 'or set [light] engine = "rules"')
 
 
+def lane_max_tokens(provider: str, base_url: str, max_tokens: int | None) -> int | None:
+    """What a lane's calls to one API ([api] or [fallback]) send as max_tokens: the table's
+    max_tokens when it sets one; else LOCAL_MAX_TOKENS to an OpenAI-compatible server on this
+    machine, and None to any other API: nothing is sent to another OpenAI-compatible one
+    (OpenAI's own refuses max_tokens on its reasoning models), and the Anthropic client sends
+    its own default."""
+    if max_tokens is not None:
+        return max_tokens
+    from .light import on_this_machine
+
+    return LOCAL_MAX_TOKENS if provider == "openai" and on_this_machine(base_url) else None
+
+
+def light_thinking(light: LightConfig) -> bool:
+    """Whether the light model may reason before it answers: [light] thinking when the table
+    sets it; else False for the openai engine on a server on this machine (each request then
+    asks for thinking off: light.THINKING_OFF), and True for any other (a remote API may refuse
+    fields it does not know, so nothing is added unless the player sets thinking = false)."""
+    if light.thinking is not None:
+        return light.thinking
+    from .light import on_this_machine
+
+    return not (light.engine == "openai" and on_this_machine(light.base_url))
+
+
 def _read_key(config: Config, table: str, name: str, otherwise: str) -> str | None:
     where = f"{config.source}: " if config.source is not None else ""
     if not name:
@@ -261,13 +303,24 @@ key_env = "OPENROUTER_API_KEY"
 # standard price). Fast mode has its own rate limit; on a 429 the lane goes on at standard
 # speed for the rest of its context and says so.
 # fast = ["claude-opus-5-5"]
+# Seconds one try of a lane's model call may take; a reply not complete by then is given up and
+# tried again (the retries and their waits stay as they are). Default 180, or 600 with provider
+# "anthropic". A model on this machine can need minutes for one reply: `flightdeck init` writes
+# 600 for a server on this machine.
+# timeout = 180
+# The most tokens a lane's reply may hold, sent as max_tokens. Default: 8192 for a server on this
+# machine (127.0.0.1, localhost or ::1; mlx_lm.server's own default is 512, too few for a model
+# that reasons first), and none sent to any other OpenAI-compatible API: OpenAI's own API
+# refuses max_tokens on its reasoning models, so leave it unset there. The Anthropic API always
+# gets one: 16000 unless set here.
+# max_tokens = 8192
 
 # [fallback]
 # Optional: a second API a lane moves to when [api] keeps failing (rate limits, overload,
 # outages: still failing after every retry). The lane stays there for the rest of its context;
 # escalating, or the long-context refresh, tries [api] again. A refusal or a bad request never
-# moves a lane. Same keys as [api], and a ladder: one model id per [models] ladder entry, in
-# the same order, in the fallback API's own naming.
+# moves a lane. provider, base_url, key_env, timeout and max_tokens as in [api], and a ladder:
+# one model id per [models] ladder entry, in the same order, in the fallback API's own naming.
 # provider = "openai"
 # base_url = "https://openrouter.ai/api/v1"
 # key_env = "OPENROUTER_API_KEY"
@@ -322,6 +375,13 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 #   model = "<model>"                         # the name your server gives the model
 #   base_url = "http://127.0.0.1:11434/v1"    # required (no default)
 #   key_env = ""                              # required: "" for a server on this machine
+#   thinking = false                          # see below
+# thinking (openai only): false asks the model to answer without reasoning first, with each
+# request ("reasoning_effort": "none", which Ollama reads, and "chat_template_kwargs":
+# {"enable_thinking": false}, which mlx_lm.server reads); true sends neither. Default: false for a
+# server on this machine, where a model that reasons first otherwise spends a job's few hundred
+# tokens reasoning and answers nothing; true for any other, which may refuse fields it does not
+# know. eval-local measures with the same setting (--thinking on|off overrides it).
 # With engine = "anthropic": model = "claude-haiku-5-5", say; base_url and key_env default to
 # "https://api.anthropic.com" and "ANTHROPIC_API_KEY". For either:
 #   price = { input = 0.10, output = 0.50 }   # optional: dollars per million tokens, for an API that reports no cost
@@ -401,7 +461,31 @@ def expand(path: Path) -> Path:
 def _api(path: Path, table: dict, ladder: tuple[str, ...]) -> ApiConfig:
     _known(path, ("api",), table, _API_KEYS)
     provider, base_url, key_env = _endpoint(path, "api", table)
-    return ApiConfig(base_url=base_url, key_env=key_env, provider=provider, fast=_fast(path, table, provider, ladder))
+    return ApiConfig(base_url=base_url, key_env=key_env, provider=provider, fast=_fast(path, table, provider, ladder),
+                     timeout=_try_timeout(path, "api", table), max_tokens=_max_tokens(path, "api", table))
+
+
+def _try_timeout(path: Path, name: str, table: dict) -> float | None:
+    """[api] or [fallback] timeout: seconds one try of a lane's call may take; None when absent.
+    The bounds also refuse nan and infinity (neither compares in range)."""
+    if "timeout" not in table:
+        return None
+    value = table["timeout"]
+    if not _is_number(value) or not 0 < value <= MAX_TRY_SECONDS:
+        raise _error(path, (name, "timeout"), f"must be a number of seconds above 0 and at most {MAX_TRY_SECONDS:g}: how "
+                                              f"long one try of a lane's model call may take{_got(value)}")
+    return float(value)
+
+
+def _max_tokens(path: Path, name: str, table: dict) -> int | None:
+    """[api] or [fallback] max_tokens: the most tokens a lane's reply may hold; None when absent."""
+    if "max_tokens" not in table:
+        return None
+    value = table["max_tokens"]
+    if not _is_int(value) or not 1 <= value <= MAX_REPLY_TOKENS:
+        raise _error(path, (name, "max_tokens"), f"must be a whole number of tokens from 1 to {MAX_REPLY_TOKENS}: the "
+                                                 f"most a lane's reply may hold{_got(value)}")
+    return value
 
 
 def _fast(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tuple[str, ...]:
@@ -445,6 +529,11 @@ def _light(path: Path, table: dict) -> LightConfig:
     timeout = table.get("timeout", LIGHT_TIMEOUT)
     if not _is_number(timeout) or not math.isfinite(timeout) or timeout <= 0:
         raise _error(path, ("light", "timeout"), f"must be a positive number of seconds{_got(timeout)}")
+    thinking = table.get("thinking")
+    if "thinking" in table and engine != "openai":
+        raise _error(path, ("light", "thinking"), f'is for the openai engine (a model on an OpenAI-compatible server), not "{engine}"')
+    if "thinking" in table and not isinstance(thinking, bool):
+        raise _error(path, ("light", "thinking"), f"must be true or false: whether the model may reason before it answers{_got(thinking)}")
     if "threshold" in table and engine != "decider":
         raise _error(path, ("light", "threshold"), f'is for the decider engine, not "{engine}"')
     if engine == "decider":
@@ -477,7 +566,8 @@ def _light(path: Path, table: dict) -> LightConfig:
         if not isinstance(entry, dict):
             raise _error(path, ("light", "price"), f"must be a table of dollars per million tokens (input, output){_got(entry)}")
         price = _price(path, ("light", "price"), entry)
-    return LightConfig(engine=engine, model=model, base_url=base_url, key_env=key_env, timeout=float(timeout), price=price)
+    return LightConfig(engine=engine, model=model, base_url=base_url, key_env=key_env, timeout=float(timeout), price=price,
+                       thinking=thinking)
 
 
 def _decider(path: Path, table: dict, timeout: float) -> LightConfig:
@@ -518,7 +608,8 @@ def _decider(path: Path, table: dict, timeout: float) -> LightConfig:
 
 
 def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfig:
-    """[fallback]: provider, base_url and key_env as in [api], and a ladder like [models]'s."""
+    """[fallback]: provider, base_url, key_env, timeout and max_tokens as in [api], and a
+    ladder like [models]'s."""
     _known(path, ("fallback",), table, _FALLBACK_KEYS)
     provider, base_url, key_env = _endpoint(path, "fallback", table)
     one_each = "one for each model in models.ladder, in the same order"
@@ -538,7 +629,8 @@ def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfi
             f"has {len(models)} model(s) but models.ladder has {len(ladder)}: "
             "fallback.ladder[i] is the fallback for models.ladder[i]",
         )
-    return FallbackConfig(provider=provider, base_url=base_url, key_env=key_env, ladder=tuple(models))
+    return FallbackConfig(provider=provider, base_url=base_url, key_env=key_env, ladder=tuple(models),
+                          timeout=_try_timeout(path, "fallback", table), max_tokens=_max_tokens(path, "fallback", table))
 
 
 def _endpoint(path: Path, name: str, table: dict) -> tuple[str, str, str]:

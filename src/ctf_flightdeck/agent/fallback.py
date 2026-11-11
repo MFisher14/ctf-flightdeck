@@ -152,28 +152,38 @@ def _again(error: ModelError, message: str) -> ModelError:
     return ModelError(message, status=error.status, retryable=error.retryable, declined=error.declined, usage=error.usage)
 
 
-def client_for(provider: str, base_url: str, key: str | None, *, fast: Sequence[str] = ()) -> ChatClient:
+def client_for(provider: str, base_url: str, key: str | None, *, fast: Sequence[str] = (),
+               timeout: float | None = None, max_tokens: int | None = None) -> ChatClient:
     """The client for one API: AnthropicClient for "anthropic" (calling the models in `fast`
-    in fast mode), else ModelClient."""
+    in fast mode), else ModelClient. `timeout` (seconds per try) and `max_tokens` (sent with
+    each call that gives none) are the client's own defaults when None."""
+    own = {"timeout": timeout} if timeout is not None else {}
     if provider == "anthropic":
         from .anthropic_client import AnthropicClient
 
-        return AnthropicClient(base_url, key, fast=fast)
+        return AnthropicClient(base_url, key, fast=fast, max_tokens=max_tokens, **own)
     if provider != "openai":
         raise ValueError(f"unknown API provider {provider!r}: openai or anthropic")
     if fast:
         raise ValueError("fast mode is a feature of the Anthropic Messages API, not of an OpenAI-compatible one")
-    return ModelClient(base_url, key)
+    return ModelClient(base_url, key, max_tokens=max_tokens, **own)
 
 
 def build_client(config: Config, key: str | None, fallback_key: str | None) -> ChatClient:
     """The lanes' client for `config`: the [api] one, behind a FallbackClient when the config
-    has a [fallback]. The keys are read by the caller (config.api_key(), fallback_key())."""
-    spare = config.fallback
+    has a [fallback]. The keys are read by the caller (config.api_key(), fallback_key()). Each
+    API's timeout and max_tokens come from its own table (config.lane_max_tokens())."""
+    from ..config import lane_max_tokens
+
+    api, spare = config.api, config.fallback
     # the fallback first: a client that is never used has opened no connection, so the one
     # left behind when the other raises (a key no header can carry) holds nothing open
-    fallback = client_for(spare.provider, spare.base_url, fallback_key) if spare is not None else None
-    primary = client_for(config.api.provider, config.api.base_url, key, fast=config.api.fast)
+    fallback = None
+    if spare is not None:
+        fallback = client_for(spare.provider, spare.base_url, fallback_key, timeout=spare.timeout,
+                              max_tokens=lane_max_tokens(spare.provider, spare.base_url, spare.max_tokens))
+    primary = client_for(api.provider, api.base_url, key, fast=api.fast, timeout=api.timeout,
+                         max_tokens=lane_max_tokens(api.provider, api.base_url, api.max_tokens))
     if spare is None or fallback is None:
         return primary
     return FallbackClient(
