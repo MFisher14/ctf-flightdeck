@@ -74,8 +74,10 @@ Not done in M3: Needle is an adapter only (one job: which of a few named options
 wired into runs, because the spike found it no better than keyword rules; the hint judge is built
 but not switched on in runs (it would spend tokens); MLX lanes are untested against a real MLX
 server (init and doctor support it). Since M3, the light role (`[light]`, P15) runs the hint judge
-in a run once a light model is set, on any of five engines, Cactus Needle among them; the rules
-stay the default.
+in a run once a light model is set, on any of its four model engines (`openai`, `anthropic`,
+`cactus` for Cactus Needle, or `decider`); `rules`, the default, sets no model, and with it there
+is no judge. MLX lanes have since run on a real MLX server, in the benchmark behind the local
+models `flightdeck init` suggests.
 
 ## M4: post-flight and build (built)
 
