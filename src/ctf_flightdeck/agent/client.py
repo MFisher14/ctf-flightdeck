@@ -77,7 +77,8 @@ class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0  # of the prompt tokens, how many the API served from its cache
-    cost: float | None = None  # dollars charged, when the API reports it (OpenRouter does)
+    cost: float | None = None  # dollars charged, when the API reports it (OpenRouter does), or a fast call's at the fast rate
+    speed: str = ""  # "fast" or "standard" when the API says which speed the call ran at (Anthropic), else ""
 
     @property
     def total(self) -> int:

@@ -30,7 +30,17 @@ refusal fallback (beta server-side-fallback-2026-07-01, fallbacks "default"): a 
 classifiers decline runs again, inside the same call, on the model Anthropic recommends for
 that category. A final stop_reason "refusal" means the whole chain declined: a ModelError,
 declined and never retried, naming the category. Claude Haiku 5.5 has no server-side
-fallback, so its requests carry none.
+fallback, so its requests carry none. A client made with server_fallback=False sends none at
+all (the light role: a refusal stays a refusal, and the player sees it).
+
+Fast mode (`fast`, from [api] fast; agent/fastmode.py has the facts). A model listed there is
+called with `speed: "fast"`, plus the beta flag fast-mode-2026-02-01 for a research-preview
+model. Fast mode has its own rate limit: a 429 on a fast request is not waited out but tried
+again at once at standard speed, and that lane session stays at standard speed (switching
+speed invalidates the prompt cache, so it does not switch back and forth); the reply carries
+a notice saying so. A fast call is priced here, at the fast rate, unless the API says it ran
+at standard speed (usage.speed): its Usage.cost is set, so the config's standard price is not
+used for it. `effort` (the light role's "low") goes out as output_config.effort.
 
 Retries are this client's own, as in ModelClient: the SDK's are off (max_retries=0), so the
 driver's before_retry gate holds a paused lane between tries. A status is retried as the
@@ -49,12 +59,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass, replace
 
 import anthropic
 import httpx2
 
+from ..pricing import cost
 from ..text import untrusted
 from .client import (
     _KEY_CHARS,
@@ -69,6 +80,7 @@ from .client import (
     _phrase,
     retry_delay,
 )
+from .fastmode import FAST_BETA, FAST_MODES, fast_problem
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"  # the SDK's own default; it adds /v1/messages
 DEFAULT_TIMEOUT = 600.0  # seconds per try: the SDK's default request timeout (10 minutes)
@@ -80,6 +92,15 @@ SERVER_FALLBACK_MODELS = frozenset(
 )
 """The models whose requests carry the server-side refusal fallback by default (claude-api
 skill). Claude Haiku 5.5 is not one: it has none, and a fallbacks list is a 400 there."""
+
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EFFORT_MODELS = frozenset({
+    "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
+    "claude-mythos-5-2", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+    "claude-opus-4-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5-5",
+})
+"""The models that take output_config.effort (claude-api skill, its thinking table); it is an
+error on Claude Haiku 4.5 and Sonnet 4.5, so it goes only to these."""
 
 TRANSIENT = (httpx2.TimeoutException, httpx2.NetworkError, httpx2.RemoteProtocolError, httpx2.ProxyError)
 """Transport errors a retry can fix, as the SDK's APIConnectionError carries them."""
@@ -129,6 +150,9 @@ class AnthropicClient:
         timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = 4,
         backoff: float = 1.0,
+        fast: Iterable[str] = (),
+        server_fallback: bool = True,
+        effort: str | None = None,
     ) -> None:
         where = _base_url(base_url)
         if not isinstance(api_key, str) or not _KEY_CHARS.fullmatch(api_key):
@@ -142,9 +166,20 @@ class AnthropicClient:
             raise ValueError(f"max_retries must not be negative, got {max_retries}")
         if not backoff >= 0:
             raise ValueError(f"backoff must not be negative, got {backoff}")
+        fast = frozenset(fast)
+        for model in sorted(fast):
+            problem = fast_problem(model)
+            if problem is not None:
+                raise ValueError(f"fast mode cannot be used: {problem}")
+        if effort is not None and effort not in EFFORTS:
+            raise ValueError(f"effort must be one of {', '.join(EFFORTS)}, got {effort!r}")
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff = backoff
+        self.fast = fast  # models called in fast mode
+        self.server_fallback = server_fallback
+        self.effort = effort
+        self._standard: set[str] = set()  # lane sessions whose fast mode hit its rate limit: standard speed from then on
         self._key = api_key
         self._where = where
         limit = anthropic.Timeout(timeout, connect=min(timeout, CONNECT_TIMEOUT))
@@ -184,32 +219,57 @@ class AnthropicClient:
     ) -> Reply:
         """The model's next message. Raises ModelError when the call fails for good.
 
-        session_id is not sent: the Messages API caches by content, not by session. Giving a
+        session_id is not sent: the Messages API caches by content, not by session; it is what
+        keeps a lane at standard speed once its fast mode hit the rate limit. Giving a
         temperature is a ValueError: these models reject it, and flightdeck does not drop a
         setting quietly. before_retry is awaited before each retry, after the backoff, as in
-        ModelClient; whatever it raises comes out of chat() as it is."""
+        ModelClient (and before the standard-speed try after a fast-mode 429); whatever it
+        raises comes out of chat() as it is."""
         if temperature is not None:
             raise ValueError(
                 "the Anthropic client sends no temperature: Claude's current models reject it; "
                 "leave temperature unset for this provider"
             )
-        params = request(model, messages, tools, max_tokens)
+        fast = model in self.fast and session_id not in self._standard
+        params = self._params(model, messages, tools, max_tokens, fast=fast)
         if self._closed:
             raise RuntimeError("the model client is closed")
         tries = self.max_retries + 1
+        made = 0
+        notice = ""
         failure = _Failure("no try was made", None, False)
-        for attempt in range(tries):
+        while True:
             outcome = await self._try(params)
             if not isinstance(outcome, _Failure):
-                return self._reply(outcome)
+                return self._reply(outcome, fast=model if fast else None, notice=notice)
             failure = outcome
-            if not failure.retryable:
-                raise self._error(failure.text, status=failure.status)
-            if attempt + 1 < tries:
-                await asyncio.sleep(retry_delay(attempt, self.backoff, failure.retry_after))
+            if fast and failure.status == 429:
+                # Fast mode's own rate limit: go on at standard speed now, and stay there for this
+                # session, since every switch of speed invalidates the prompt cache.
+                fast = False
+                self._standard.add(session_id)
+                params = self._params(model, messages, tools, max_tokens, fast=False)
+                notice = (
+                    f"fast mode's own rate limit was reached (HTTP 429): {model} goes on at standard speed for "
+                    "this lane's session (switching speed starts the prompt cache again)"
+                )
                 if before_retry is not None:
                     await before_retry()
+                continue
+            made += 1
+            if not failure.retryable:
+                raise self._error(failure.text, status=failure.status)
+            if made >= tries:
+                break
+            await asyncio.sleep(retry_delay(made - 1, self.backoff, failure.retry_after))
+            if before_retry is not None:
+                await before_retry()
         raise self._error(f"{failure.text}; gave up after {tries} tries", status=failure.status, retryable=True)
+
+    def _params(self, model: str, messages: Sequence[dict], tools: Sequence[dict], max_tokens: int | None, *,
+                fast: bool) -> dict:
+        effort = self.effort if self.effort is not None and model in EFFORT_MODELS else None
+        return request(model, messages, tools, max_tokens, fast=fast, effort=effort, server_fallback=self.server_fallback)
 
     async def _try(self, params: dict) -> dict | _Failure:
         """One try: the message as a dict, or what went wrong.
@@ -250,15 +310,21 @@ class AnthropicClient:
         headers = exc.response.headers
         return _Failure(text, status, _retryable(status, headers.get("x-should-retry")), headers.get("retry-after"))
 
-    def _reply(self, data: dict) -> Reply:
+    def _reply(self, data: dict, *, fast: str | None = None, notice: str = "") -> Reply:
+        """The reply, its usage priced at the fast rate when `fast` names the model of a fast
+        request, and `notice` in front of its own."""
         outcome = parse(data)
         if isinstance(outcome, Reply):
-            return outcome
+            reply = outcome if fast is None else replace(outcome, usage=fast_priced(outcome.usage, fast))
+            if notice:
+                reply = replace(reply, notice="; ".join(n for n in (notice, reply.notice) if n))
+            return reply
         if isinstance(outcome, _Declined):
             text = f"the model declined ({self._short(outcome.category) if outcome.category else 'no category given'})"
             if outcome.explanation:
                 text += f": {self._short(outcome.explanation)}"
-            raise self._error(text, status=200, declined=True, usage=outcome.usage)
+            usage = outcome.usage if fast is None else fast_priced(outcome.usage, fast)
+            raise self._error(text, status=200, declined=True, usage=usage)
         text = f"{outcome.what} (HTTP 200)" + (f": {self._short(outcome.detail)}" if outcome.detail else "")
         raise self._error(text, status=200)
 
@@ -279,8 +345,13 @@ class AnthropicClient:
 # ---------------------------------------------------------------------- the request
 
 
-def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tokens: int | None) -> dict:
-    """The keyword arguments for the SDK's beta messages.create(): the same every try."""
+def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tokens: int | None, *,
+            fast: bool = False, effort: str | None = None, server_fallback: bool = True) -> dict:
+    """The keyword arguments for the SDK's beta messages.create(): the same every try.
+
+    fast: `speed: "fast"` (and the fast-mode beta for a research-preview model); the model
+    must be one agent/fastmode.py lists. effort: output_config.effort. server_fallback=False
+    leaves the server-side refusal fallback out even for a model that has one."""
     if not isinstance(model, str) or not model:
         raise ValueError("model must be a non-empty string")
     if max_tokens is not None and (not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1):
@@ -298,10 +369,31 @@ def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tok
         params["system"] = blocks
     if tools:
         params["tools"] = [_tool(tool) for tool in tools]
-    if model in SERVER_FALLBACK_MODELS:
-        params["betas"] = [FALLBACK_BETA]
+    betas: list[str] = []
+    if server_fallback and model in SERVER_FALLBACK_MODELS:
+        betas.append(FALLBACK_BETA)
         params["fallbacks"] = "default"
+    if fast:
+        problem = fast_problem(model)
+        if problem is not None:
+            raise ValueError(f"fast mode cannot be used: {problem}")
+        params["speed"] = "fast"
+        if FAST_MODES[model].beta:
+            betas.append(FAST_BETA)
+    if effort is not None:
+        params["output_config"] = {"effort": effort}
+    if betas:
+        params["betas"] = betas
     return params
+
+
+def fast_priced(usage: Usage, model: str) -> Usage:
+    """`usage` of a fast request to `model`, priced at its fast rate (cached tokens at the fast
+    input rate: the skill gives no other), unless the API says it ran at standard speed."""
+    if usage.speed == "standard":
+        return usage
+    dollars = cost(FAST_MODES[model].price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
+    return replace(usage, cost=dollars)
 
 
 def _split_system(messages: Sequence[dict]) -> tuple[list[str], list[dict]]:
@@ -470,12 +562,15 @@ def parse(data: dict) -> Reply | _Malformed | _Declined:
 
 
 def _usage(raw: object) -> Usage:
-    """prompt tokens = input + cache read + cache write; cached = cache read; cost unknown."""
+    """prompt tokens = input + cache read + cache write; cached = cache read; cost unknown; the
+    speed the API says the request ran at ("fast" or "standard"), "" when it says neither."""
     if not isinstance(raw, dict):
         return Usage()
     read = _count(raw.get("cache_read_input_tokens"))
     prompt = _count(raw.get("input_tokens")) + read + _count(raw.get("cache_creation_input_tokens"))
-    return Usage(prompt_tokens=prompt, completion_tokens=_count(raw.get("output_tokens")), cached_tokens=read, cost=None)
+    speed = raw.get("speed")
+    return Usage(prompt_tokens=prompt, completion_tokens=_count(raw.get("output_tokens")), cached_tokens=read, cost=None,
+                 speed=speed if speed in ("fast", "standard") else "")
 
 
 def _fallback_notice(block: dict) -> str:
