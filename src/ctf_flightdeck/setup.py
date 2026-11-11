@@ -264,14 +264,17 @@ API_CHECKS = ("api key", "fallback key", "model server", "fallback server")  # w
 
 
 def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ,
-           agent: str | None = None) -> list[Check]:
+           agent: str | None = None, clean: bool = False) -> list[Check]:
     """Every check, in order. Never prints or returns the API key. `agent` ("claude" or
     "codex") also checks that coding-agent CLI and its credential, and in the docker runtime
     that the lane image has it, as play --agent does; the [api] checks are then warnings,
-    since that CLI's lanes never use the [api] key or server."""
+    since that CLI's lanes never use the [api] key or server. The last checks are what runs
+    left running because flightdeck itself was killed (_leftover_checks): reported, and
+    removed only with `clean`."""
     from dataclasses import replace
 
     checks = _checks(config_path, environ, agent)
+    checks += _leftover_checks(config_path, docker=any(c.name == "docker" and c.ok for c in checks), clean=clean)
     if agent is None:
         return checks
     why = f" (only flightdeck's own lanes use it; {agent} lanes use {agent}'s own credential and models)"
@@ -329,6 +332,39 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
         checks.append(Check("terminal", big, f"{columns}x{lines}",
                             "the console is easiest at 100x30 or more (it works smaller)", essential=False))
     return checks
+
+
+def _leftover_checks(config_path: Path | None, *, docker: bool, clean: bool) -> list[Check]:
+    """What runs whose flightdeck was killed (SIGKILL, a power loss) left running: their
+    containers and their process groups on this machine (leftovers.sweep), for the runs in
+    the config's runs folder and, when Docker runs, in Docker: every container of such a
+    run for a config whose lanes run in Docker, else those of the runs whose record says
+    they used it.
+
+    doctor only reports them unless `clean`: it is what a player runs to look at a setup,
+    often just after something went wrong, so it changes nothing unasked; a container a
+    killed run left may be what the player wants to look into (docker logs, docker exec).
+    play and practice remove them at their start, since their lanes would compete with them."""
+    from .config import DEFAULT_RUN_DIR, ConfigError, load_config
+    from .leftovers import sweep
+
+    runtime = None
+    try:
+        config = load_config(config_path)
+        runs: Path | None = config.run_dir
+        runtime = config.lanes.runtime
+    except ConfigError:  # the config check says what is wrong with it; runs go to the default folder then
+        try:
+            runs = Path(DEFAULT_RUN_DIR).expanduser()
+        except RuntimeError:  # no home folder to expand ~ with
+            runs = None
+    look = (True if runtime == "docker" else None) if docker else False
+    swept = sweep(runs, docker=look, clean=clean)
+    if not swept.lines:
+        return [Check("leftovers", True, f"no run left anything running (runs in {runs})")]
+    fix = "" if clean else "`flightdeck doctor --clean` removes them (play and practice also do when they start)"
+    return ([Check("leftovers", True, line) for line in swept.done]
+            + [Check("leftovers", False, line, fix, essential=False) for line in swept.found])
 
 
 def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:

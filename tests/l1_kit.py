@@ -104,13 +104,19 @@ DOCKER_IMAGE = "debian:bookworm-slim"  # the only image tests use, and only when
 
 FAKE_DOCKER = r"""#!/bin/bash
 # A stand-in for the docker CLI: it records each `docker run`, answers what an engine's
-# container asks while it prepares (from this machine's bash), and runs no engine.
+# container asks while it prepares (from this machine's bash), and runs no engine. Each
+# `docker ps` is written to ps.log and lists what ps.txt next to it holds (nothing when there
+# is none), or fails saying what ps.fail holds; each `docker rm` is written to rm.log.
 case "$1" in
   version) echo 99.0.0-fake ;;
   image) echo sha256:fake ;;
   container) echo "Error: No such container" >&2; exit 1 ;;
   run) printf '%s\n' "$*" >> "$(dirname "$0")/runs.log"; echo fake-container-id ;;
-  rm) exit 0 ;;
+  ps)
+    printf '%s\n' "$*" >> "$(dirname "$0")/ps.log"
+    if [ -f "$(dirname "$0")/ps.fail" ]; then cat "$(dirname "$0")/ps.fail" >&2; exit 1; fi
+    cat "$(dirname "$0")/ps.txt" 2>/dev/null; exit 0 ;;
+  rm) printf '%s\n' "$*" >> "$(dirname "$0")/rm.log"; exit 0 ;;
   exec)
     shift
     while [ "${1#-}" != "$1" ]; do case "$1" in -w|-e|-u) shift 2 ;; *) shift ;; esac; done

@@ -521,13 +521,18 @@ def init(
 def doctor(
     config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="The config file to check.")] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help="Also check this coding-agent CLI and its credential (play --agent).")] = None,
+    clean: Annotated[
+        bool,
+        typer.Option("--clean", help="Remove what runs left running when flightdeck itself was killed (play and practice do this when they start)."),
+    ] = False,
 ) -> None:
-    """Check Python, the config, the API key variable, Docker and the lane image, with fixes."""
+    """Check Python, the config, the API key variable, Docker and the lane image, with fixes;
+    and what runs left running when flightdeck itself was killed."""
     from .setup import doctor as run_checks
     from .setup import report
 
     kind = agent.value if agent else None
-    text, status = report(run_checks(_path(config) if config else None, agent=kind), agent=kind)
+    text, status = report(run_checks(_path(config) if config else None, agent=kind, clean=clean), agent=kind)
     typer.echo(text, nl=False)
     raise typer.Exit(status)
 

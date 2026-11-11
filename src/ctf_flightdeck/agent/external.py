@@ -1367,6 +1367,9 @@ class _Run:
             self.report(TurnReport(turn=False, action=f"start {self.kind}", output=str(exc),
                                    gave_up=f"could not start {self.kind}: {exc.strerror or exc}"))
             return None
+        adopt = getattr(self.workspace, "adopt", None)
+        if container is None and callable(adopt):  # on this machine: in the run's record while it may run
+            adopt(process.pid, f"the {self.kind} CLI")
         proc = _Proc(process, generation, self.model, container)
         self.proc = proc
         self.procs.append(proc)
