@@ -2,32 +2,48 @@
 
 `report()` turns a RunRecord (runrecord.load_run) into Markdown, in six sections:
 
-- the run at a glance: event, duration, challenges, solves by lanes, L1, teammates and you,
-  points, tokens and the cached share, dollars (or "unknown") and the cost per solve;
+- the run at a glance: event, duration, challenges, solves by lanes, L1, teammates and you
+  (and your team, for a solve the platform lists), points, tokens and the cached share,
+  dollars (or "unknown", with the part known) and the cost per solve;
 - a timeline per challenge: release, L1 runs, lanes starting and ending with their models,
-  alerts, interventions and what came of them, flags submitted right or wrong, the solve;
+  alerts, warnings, interventions and what came of them, flags submitted right or wrong,
+  spend outside a turn, the solve; then the warnings that belong to no challenge (a failed
+  poll, a held queue), as the console showed them;
 - where lanes stalled: each alert about a lane's course or budget, when it fired (at the
   turn its line in the lane's transcript has), how it was answered and whether the lane
   then solved within 10 turns (flag-found and teammate alerts are not stalls; they are in
   the timeline). An approve or decline answers a budget alert only when it answered the
   budget request (or approved more budget with nothing waiting), not a flag's verdict or
   the live box: the lane's current approval is replayed from its pending events;
-- the hints, redirects, forks and escalations that helped (a lane solved that challenge
-  within 10 turns or 15 minutes, with a flag it proposed after the step) and those with no
-  effect seen (a step taken while the solving flag already waited did not help);
+- the hints, redirects, forks and escalations that helped and those with no effect seen. A
+  step helped when the lane it went to solved that challenge within 10 turns or 15 minutes
+  of it, with a flag it proposed after the step. The lane it went to: a hint's or redirect's
+  own lane; for a fork, the lane the fork started; for an escalation, its lane and any lane
+  re-queued from it afterwards (a kill and re-queue starts a fresh lane on the lane's model,
+  the stronger one). A solve by any other lane is no effect seen: a fresh lane or a fork never
+  gets the parent's hints or plan. Nor is a step taken while the solving flag already waited;
 - spend by model and the five most expensive lanes;
 - the lanes that gave up, were killed or were stopped, with their reasons.
 
 `summary()` is the same run in a few plain lines for the terminal.
 
-Who solved a challenge is the first solve in the log: a flag accepted (a submit event with
-`correct` true: the platform checked it, or the player said it accepted it), a teammate's
-solve, or the player's own (a solve recorded for "me"). An accepted flag is L1's when an
-earlier `l1` event on that challenge reported it, whatever that event's status and whether
-or not a lane submitted it; otherwise it is the submitting lane's (yours, with no lane).
-An L1 result alone is never a solve: "solved" there means found, and only the platform
-accepts a flag (l1/result.py). writeup.solves() credits accepted flags by the same rule.
-`solves()` gives them, one per challenge.
+Who solved a challenge is the first solve in the log, credited by the rule every report
+uses (runrecord.Credit): a flag accepted (a submit event with `correct` true: the platform
+checked it, or the player said it accepted it) is L1's when an earlier `l1` event on that
+challenge reported it, else the submitting lane's (yours, with no lane); a teammate's solve;
+the player's own (a solve recorded for "me"); and a solve the platform lists for this account
+(Deck.platform_solved): yours when it says "you", else your team's (you or a teammate: the
+platform cannot say which). An L1 result alone is never a solve: "solved" there means found,
+and only the platform accepts a flag (l1/result.py). `solves()` gives them, one per challenge.
+
+Dollars: a lane's dollars are unknown once anything it spent had no price, and the part that
+had one is still counted (the transcript's known_dollars, else its priced turns and spend
+events), so the floor the report gives is the one the console and the scorecard give. Spend
+outside a turn (a reply dropped on escalation) is a `spend` event in a format 2 log; in an
+older one it is what a lane's transcript counts beyond its turns.
+
+Names, categories and points come from the run log's releases (a format 2 log), the lane
+transcripts, then the board if one is given; the event's name from the board, else the log.
 
 A damaged run folder is reported, never trusted or crashed on: a time that is not one (not
 a number, infinite or negative; json reads NaN, Infinity and 1e400) shows as "T+?" and is
@@ -45,7 +61,6 @@ run holds is ever emitted as raw HTML.
 
 from __future__ import annotations
 
-import math
 import re
 from bisect import bisect_left, bisect_right
 from collections import Counter
@@ -55,18 +70,21 @@ from typing import TYPE_CHECKING
 
 from . import fmt
 from .core.model import FINISHED, ME, ActionKind, Actor, AlertKind, EventKind, PendingKind
-from .runrecord import EventLine, LaneRecord, RunRecord
+from .runrecord import (
+    L1, LANE, PLAYER, TEAM, TEAMMATE, YOUR_TEAM, Credit, EventLine, LaneRecord, RunRecord, Solve, finite, l1_flags, run_time,
+)
+from .runrecord import solves as _first_solves
 from .text import untrusted
 
 if TYPE_CHECKING:
     from .platform.manual import Board
 
 __all__ = [
-    "HELP_SECONDS", "HELP_TURNS", "STALL_TURNS", "TOP_LANES", "Flight", "Solve",
+    "HELP_SECONDS", "HELP_TURNS", "STALL_TURNS", "TOP_LANES", "Flight", "Outside", "Solve",
     "analyse", "md_code", "md_fence", "md_text", "report", "solves", "summary",
 ]
 
-L1 = "l1"  # an L1 engine run (M2's L1 stage): data {engine, status, flags, seconds, notes}
+# L1 (from runrecord) is the kind of an L1 engine run's event (M2's L1 stage): data {engine, status, flags, seconds, notes}
 RUN_START, RUN_END = "run-start", "run-end"
 
 HELP_TURNS = 10  # an intervention helped if a lane solved the challenge within this many turns...
@@ -158,22 +176,8 @@ def _plain(value: object, limit: int = TEXT_LIMIT) -> str:
 # ---------------------------------------------------------------------- facts read from the log
 
 
-def _num(value: object) -> float | None:
-    """A finite number as a float; None for anything else: not a number, a bool, NaN, an
-    infinity (json reads NaN, Infinity and 1e400 as floats), or an int too large for a float."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        number = float(value)
-    except OverflowError:
-        return None
-    return number if math.isfinite(number) else None
-
-
-def _time(value: object) -> float | None:
-    """A time in the run (seconds since it started, never negative), or None: unknown."""
-    number = _num(value)
-    return number if number is not None and number >= 0 else None
+_num = finite  # a finite number as a float, else None (NaN, an infinity, not a number)
+_time = run_time  # a time in the run (seconds, never negative), else None: unknown
 
 
 def _int(value: object, default: int = 0) -> int:
@@ -181,23 +185,7 @@ def _int(value: object, default: int = 0) -> int:
     return int(number) if number is not None else default
 
 
-def _flags(data: Mapping[str, object]) -> list[str]:
-    """An L1 event's flags: the non-empty strings in its list (none when it is not a list)."""
-    flags = data.get("flags")
-    return [f for f in flags if isinstance(f, str) and f] if isinstance(flags, list) else []
-
-
-@dataclass(frozen=True)
-class Solve:
-    """Who solved a challenge, and when."""
-
-    challenge: str
-    by: str  # "lane", "l1", "teammate" or "player"
-    who: str  # the lane id, the L1 engine, the teammate's handle, or "me"
-    at: float | None  # None: the log's time for it is not a time
-    index: int  # the event's position in the run log
-    flag: str | None = None
-    lane: str | None = None  # the lane that submitted the accepted flag (an L1 flag goes through one)
+_flags = l1_flags  # an L1 event's flags: the non-empty strings in its list
 
 
 @dataclass
@@ -234,10 +222,25 @@ class LaneFacts:
     turn_cached: int = 0
     turn_dollars: float = 0.0
     turn_unpriced: int = 0
+    spends: int = 0  # spend events: what it spent outside a turn (a format 2 log has one for each)
+    spend_tokens: int = 0
+    spend_cached: int = 0
+    spend_dollars: float = 0.0
+    spend_unpriced: int = 0
 
     @property
     def finished(self) -> bool:
         return self.end is not None or self.state in FINISHED_STATES
+
+    @property
+    def known(self) -> float:
+        """Its dollars that had a price: all of them, or once something had none, the part
+        that did (the transcript counts it; without that, its priced turns and spend events)."""
+        if self.dollars is not None:
+            return self.dollars
+        if self.record is not None and self.record.known_dollars is not None:
+            return self.record.known_dollars
+        return self.turn_dollars + self.spend_dollars
 
     def turn_before(self, index: int) -> int:
         """The lane's turn count just before event `index`."""
@@ -300,6 +303,17 @@ class Judged:
     helped: bool
     waited: bool = False  # the solving flag was already proposed (waiting for you) before the step
     since: float | None = None  # when it was first proposed, when waited
+    reached: tuple[str, ...] | None = None  # the lanes the step went to, when another lane solved it
+
+
+@dataclass(frozen=True)
+class Outside:
+    """What lanes spent outside their turns (a model reply dropped on escalation, for one)."""
+
+    tokens: int
+    cached: int
+    dollars: float  # the part that had a price
+    unpriced: bool  # some of it had no price
 
 
 @dataclass(frozen=True)
@@ -325,11 +339,13 @@ class Flight:
     stalls: list[Stall]
     judged: list[Judged]
     models: list[ModelSpend]
-    outside: tuple[int, int, float | None]  # tokens, cached tokens, dollars counted outside a turn
+    outside: Outside
     l1_runs: int
     by_challenge: dict[str, list[int]]  # event indices shown on each challenge's timeline
     notes: list[str]  # problems reading the run, and things the report could not know
     duration: float = 0.0  # seconds from the first to the last deck event with a usable time
+    warnings: list[int] = field(default_factory=list)  # event indices of the warnings that belong to no challenge
+    event_from: str = ""  # where the event's name came from: "the board" or "the run log"
 
     # ------------------------------------------------------------------ totals
 
@@ -373,15 +389,13 @@ class Flight:
 
 
 def _known_dollars(lanes) -> tuple[float, int]:
-    """Dollars known over these lanes, and how many had a turn with no price. A lane with
-    an unpriced turn still counts the turns that had a price."""
+    """Dollars known over these lanes, and how many had something with no price. A lane
+    whose total is unknown still counts what had a price (LaneFacts.known)."""
     known, unpriced = 0.0, 0
     for lane in lanes:
         if lane.dollars is None:
             unpriced += 1
-            known += lane.turn_dollars
-        else:
-            known += lane.dollars
+        known += lane.known
     return known, unpriced
 
 
@@ -422,11 +436,10 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             return record.lanes[event.lane].challenge or None
         return None
 
-    for event in record.of(EventKind.RELEASE.value):  # challenges in the order they were released
-        ids = event.data.get("challenges")
-        for cid in ids if isinstance(ids, list) else ():
-            if isinstance(cid, str) and cid:
-                challenge(cid)
+    for cid, released in record.board.items():  # in the order they were released, as the releases named them
+        info = challenge(cid)
+        info.name, info.category, info.points = released.name, released.category, released.points
+    warnings: list[int] = []  # warnings that belong to no challenge
 
     for index, event in enumerate(events):
         kind, data = event.kind, event.data
@@ -483,6 +496,25 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
                 facts.turn_dollars += dollars
                 spend[3] += dollars
             continue  # turns are summed, not listed
+        elif kind == EventKind.SPEND and event.lane:  # summed, and listed: a reply dropped on escalation cost something
+            facts = lanes[event.lane]
+            dollars = _num(data.get("dollars"))
+            facts.spends += 1
+            facts.spend_tokens += _int(data.get("tokens"))
+            facts.spend_cached += _int(data.get("cached_tokens"))
+            if dollars is None:
+                facts.spend_unpriced += 1
+            else:
+                facts.spend_dollars += dollars
+        elif kind == EventKind.WARNING and not cid:
+            named = data.get("solved")  # a warning about several challenges at once (CTFd lists them as solved)
+            ids = [c for c in named if isinstance(c, str) and c] if isinstance(named, list) else []
+            for each in ids:
+                challenge(each)
+                by_challenge[each].append(index)
+            if not ids:
+                warnings.append(index)
+            continue
         elif kind == EventKind.INTERVENTION:
             name = _str(data.get("intervention")) or "intervention"
             step = Step(index, _time(event.at), name, event.lane, cid, data)
@@ -537,13 +569,14 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     for lid, facts in lanes.items():
         if facts.record is None:
             facts.turns = len(facts.turn_index)
-            facts.tokens, facts.cached = facts.turn_tokens, facts.turn_cached
-            facts.dollars = None if facts.turn_unpriced else facts.turn_dollars
+            facts.tokens, facts.cached = facts.turn_tokens + facts.spend_tokens, facts.turn_cached + facts.spend_cached
+            unpriced = facts.turn_unpriced or facts.spend_unpriced
+            facts.dollars = None if unpriced else facts.turn_dollars + facts.spend_dollars
             notes.append(f"{lid} has no transcript in lanes/ (the run did not close cleanly?): its numbers come from the event log")
 
-    event_name = None
+    event_name, event_from = record.event, "the run log"
     if board is not None:
-        event_name = board.event
+        event_name, event_from = board.event, "the board"
         on_board = {item.challenge.id: item.challenge for item in board.challenges}
         if challenges and not set(challenges) & set(on_board):
             notes.append("the board has none of this run's challenges (is it the board this run played?)")
@@ -582,38 +615,17 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
         record=record, event=event_name, challenges=challenges, lanes=lanes, solves=solved, steps=steps,
         stalls=stalls, judged=judged, models=models, outside=_outside(lanes),
         l1_runs=len(record.of(L1)), by_challenge=by_challenge, notes=notes, duration=duration,
+        warnings=warnings, event_from=event_from if event_name else "",
     )
 
 
 def solves(record: RunRecord) -> dict[str, Solve]:
-    """Who solved each solved challenge: the first solve in the log, by challenge id.
-
-    A solve is an accepted flag (a submit event with `correct` true), a teammate's solve or
-    the player's own. An accepted flag that an earlier `l1` event on the challenge reported
-    (any status) is L1's, as writeup.solves() has it; an L1 result alone is never a solve."""
-    l1_flags: dict[str, dict[str, str]] = {}  # challenge -> flag -> the first engine that reported it
-    found: dict[str, Solve] = {}
-    for index, event in enumerate(record.events):
-        cid, data = event.challenge, event.data
-        if not cid or cid in found:
-            continue
-        at = _time(event.at)
-        if event.kind == L1:
-            engine = _str(data.get("engine")) or "?"
-            for flag in _flags(data):
-                l1_flags.setdefault(cid, {}).setdefault(flag, engine)
-        elif event.kind == EventKind.SUBMIT and data.get("correct") is True:
-            flag = _str(data.get("flag"))
-            if flag and flag in l1_flags.get(cid, {}):
-                found[cid] = Solve(cid, "l1", l1_flags[cid][flag], at, index, flag, event.lane)
-            elif event.lane:
-                found[cid] = Solve(cid, "lane", event.lane, at, index, flag, event.lane)
-            else:
-                found[cid] = Solve(cid, "player", ME, at, index, flag)
-        elif event.kind == EventKind.TEAMMATE and data.get("solved") is True:
-            who = _str(data.get("who"))
-            found[cid] = Solve(cid, "player" if who == ME else "teammate", who, at, index)
-    return found
+    """Who solved each solved challenge: the first solve in the log, by challenge id, credited
+    by the rule every report uses (runrecord.Credit): an accepted flag (L1's when an earlier
+    `l1` event on the challenge reported it, else the submitting lane's or yours), a
+    teammate's solve, yours, or one the platform lists for you or your team. An L1 result
+    alone is never a solve."""
+    return _first_solves(record.events)
 
 
 def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: Sequence[Step]) -> list[Stall]:
@@ -729,17 +741,22 @@ def _judged(
     steps: Sequence[Step], lanes: Mapping[str, LaneFacts], solved: Mapping[str, Solve],
     proposed: Mapping[tuple[str, str], tuple[int | None, float | None]],
 ) -> list[Judged]:
+    reached = _reached(steps, lanes)
     out = []
     for step in steps:
         if step.name not in JUDGED or not step.ok or not step.challenge:
             continue
         solve = solved.get(step.challenge)
-        if solve is None or solve.by != "lane" or solve.index < step.index:
+        if solve is None or solve.by != LANE or solve.index < step.index:
             out.append(Judged(step, solve, None, None, False))
             continue
         index, at = proposed.get((solve.who, solve.flag or ""), (None, None))
         if (index is not None and index < step.index) or (at is not None and step.at is not None and at < step.at):
             out.append(Judged(step, solve, None, None, False, waited=True, since=at))  # its flag came before it
+            continue
+        went = reached.get(step.index, ())
+        if solve.who not in went:  # the solving lane never got this step: a fresh lane, a fork, another lane
+            out.append(Judged(step, solve, None, None, False, reached=went))
             continue
         solver = lanes.get(solve.who)
         turns = solver.turns_between(step.index, solve.index) if solver else 0
@@ -749,24 +766,70 @@ def _judged(
     return out
 
 
-def _outside(lanes: Mapping[str, LaneFacts]) -> tuple[int, int, float | None]:
-    """Tokens and dollars the transcripts count that no turn event carries (a model reply
-    dropped on escalation, for one)."""
+def _reached(steps: Sequence[Step], lanes: Mapping[str, LaneFacts]) -> dict[int, tuple[str, ...]]:
+    """The lanes each judged step went to, by the step's event index. A hint or redirect
+    reaches its own lane only (a fork or a re-queued lane starts fresh, with no hints and none
+    of its plan); a fork, the lane it started (the first fork of that lane to start after it);
+    an escalation, its lane and each lane re-queued from one it reached after it, since a kill
+    and re-queue starts the fresh lane on the killed lane's model, the stronger one."""
+    started = sorted((facts for facts in lanes.values() if facts.start is not None), key=lambda f: f.start or 0)
+    reached: dict[int, list[str]] = {}
+    forks: set[str] = set()  # fork lanes a fork step already went to
+    for step in steps:
+        if step.name not in JUDGED or not step.ok or not step.lane:
+            continue
+        if step.name == "fork":
+            fork = next(
+                (f for f in started if f.parent == step.lane and (f.start or 0) > step.index and f.id not in forks), None
+            )
+            if fork is not None:
+                forks.add(fork.id)
+            reached[step.index] = [fork.id] if fork is not None else []
+        else:
+            reached[step.index] = [step.lane]
+    for kill in steps:  # in log order, so a lane re-queued from a re-queued lane is reached too
+        if kill.name != "kill" or not kill.ok or kill.data.get("requeue") is False or not kill.lane:
+            continue
+        killed = lanes.get(kill.lane)
+        fresh = next(
+            (f for f in started if killed is not None and f.challenge == killed.challenge and f.parent is None
+             and f.attempt == killed.attempt + 1 and (f.start or 0) > kill.index),
+            None,
+        )
+        if fresh is None:
+            continue
+        for step in steps:
+            went = reached.get(step.index)
+            if step.name == "escalate" and step.index < kill.index and went is not None and kill.lane in went:
+                went.append(fresh.id)
+    return {index: tuple(ids) for index, ids in reached.items()}
+
+
+def _outside(lanes: Mapping[str, LaneFacts]) -> Outside:
+    """What lanes spent outside their turns (a model reply dropped on escalation, for one): the
+    spend events of a lane that has them (a format 2 log has one for each such spend), else
+    what its transcript counts beyond its turns (an older log), never both."""
     tokens = cached = 0
-    dollars: float | None = 0.0
+    dollars, unpriced = 0.0, False
     for facts in lanes.values():
+        if facts.spends:
+            tokens += facts.spend_tokens
+            cached += facts.spend_cached
+            dollars += facts.spend_dollars
+            unpriced = unpriced or facts.spend_unpriced > 0
+            continue
         if facts.record is None:
             continue
-        tokens += max(0, facts.tokens - facts.turn_tokens)
+        extra = max(0, facts.tokens - facts.turn_tokens)
+        tokens += extra
         cached += max(0, facts.cached - facts.turn_cached)
         if facts.dollars is None or facts.turn_unpriced:
-            if facts.tokens > facts.turn_tokens:
-                dollars = None
-        elif dollars is not None:
+            unpriced = unpriced or extra > 0  # its total has no price, so what it spent outside is not known
+        else:
             dollars += max(0.0, facts.dollars - facts.turn_dollars)
-    if dollars is not None and abs(dollars) < 1e-9:
+    if abs(dollars) < 1e-9:
         dollars = 0.0
-    return tokens, cached, dollars
+    return Outside(tokens, cached, dollars, unpriced)
 
 
 # ---------------------------------------------------------------------- rendering
@@ -822,13 +885,23 @@ def _plural(n: int, word: str, many: str | None = None) -> str:
 
 
 def _who(solve: Solve) -> str:
-    if solve.by == "lane":
+    if solve.by == LANE:
         return f"lane {md_text(solve.who)}"
-    if solve.by == "l1":
+    if solve.by == L1:
         return f"L1 engine {md_text(solve.who)}"
-    if solve.by == "teammate":
+    if solve.by == TEAMMATE:
         return f"teammate {md_text(solve.who)}"
-    return "you"
+    if solve.by == TEAM:
+        return f"{md_text(solve.who or YOUR_TEAM)} on the platform"
+    return "you on the platform" if solve.platform else "you"
+
+
+def _solve_counts(flight: Flight) -> str:
+    """Solves by kind, as the glance and the summary say them; your team's on the platform
+    only when there are some."""
+    team = flight.solved_by(TEAM)
+    return (f"lanes {flight.solved_by(LANE)}, L1 {flight.solved_by(L1)}, teammates {flight.solved_by(TEAMMATE)}, "
+            f"you {flight.solved_by(PLAYER)}" + (f", your team on the platform {team}" if team else ""))
 
 
 def _run_name(record: RunRecord) -> str:
@@ -843,6 +916,7 @@ def report(record: RunRecord, *, board: Board | None = None) -> str:
     out += [f"# Post-flight: {title}", ""]
     out += _glance(flight)
     out += _timeline(flight)
+    out += _warnings_section(flight)
     out += _stall_section(flight)
     out += _intervention_section(flight)
     out += _spend_section(flight)
@@ -860,7 +934,7 @@ def _glance(flight: Flight) -> list[str]:
     got, total, got_unknown, total_unknown = flight.points()
     dollars, unpriced = flight.dollars
     lane_solves = flight.solved_by("lane")
-    event = md_text(flight.event) + " (from the board)" if flight.event else "not in the run log (give --board to name it)"
+    event = md_text(flight.event) + f" (from {flight.event_from})" if flight.event else "not in the run log (give --board to name it)"
     ended = md_text(record.ended) if record.ended else "no run-end line (the run did not close cleanly)"
     points = f"{'at least ' if got_unknown else ''}{got} of {'at least ' if total_unknown else ''}{total}"
     if total_unknown:
@@ -879,8 +953,7 @@ def _glance(flight: Flight) -> list[str]:
         f"- Run: {md_text(_run_name(record))}, started {md_text(record.started or 'unknown')}, ended {ended}",
         f"- Duration: {fmt.duration(flight.duration)} (first to last event)",
         f"- Challenges: {len(flight.challenges)} on the board, {solved} solved, {len(flight.challenges) - solved} not solved",
-        f"- Solves: {solved} (lanes {lane_solves}, L1 {flight.solved_by('l1')}, "
-        f"teammates {flight.solved_by('teammate')}, you {flight.solved_by('player')})",
+        f"- Solves: {solved} ({_solve_counts(flight)})",
         f"- Points: {points}",
         f"- L1: {_plural(flight.l1_runs, 'engine run')}",
         f"- Lanes: {len(flight.lanes)}, {_plural(flight.turns, 'turn')}",
@@ -903,7 +976,7 @@ def _timeline(flight: Flight) -> list[str]:
         name = md_text(info.name or cid)
         category = md_text(info.category) if info.category else "category unknown"
         points = f"{info.points} pts" if info.points is not None else "points unknown"
-        outcome = f"solved by {_who(solve)}" if solve else "not solved"
+        outcome = f"solved by {_who(solve)}" + (", before this run" if solve.before_run else "") if solve else "not solved"
         out += [f"### {name} ({category}, {points}): {outcome}", ""]
         on = [lane for lane in flight.lanes.values() if lane.challenge == cid]
         if on:
@@ -989,6 +1062,8 @@ def _entry(flight: Flight, index: int, event: EventLine, solve: Solve | None, st
         if facts:
             models = " → ".join(md_text(m) for m in facts.models) or "?"
             dollars = f"${fmt.dollars(facts.dollars)}" if facts.dollars is not None else "dollars unknown"
+            if facts.dollars is None and facts.known > 0:
+                dollars += f" (at least ${fmt.dollars(facts.known)})"
             text += f" after {_plural(facts.turns, 'turn')} on {models} ({fmt.tokens(facts.tokens)} tokens, {dollars})"
         result = _str(data.get("result"))
         return text + (f": {md_text(result)}" if result else "")
@@ -1011,7 +1086,11 @@ def _entry(flight: Flight, index: int, event: EventLine, solve: Solve | None, st
         who = md_text(data.get("who") or "a teammate")
         if data.get("solved") is True:
             stopped = data.get("stopped")
-            text = f"teammate {who} solved it" if _str(data.get("who")) != ME else "you solved it"
+            credit = Credit.other(index, event)
+            if credit is not None and credit.platform:
+                text = f"the platform lists it as solved by {who}" + (", from before this run" if credit.before_run else "")
+            else:
+                text = f"teammate {who} solved it" if _str(data.get("who")) != ME else "you solved it"
             if isinstance(stopped, list) and stopped:
                 text += "; flightdeck stopped " + ", ".join(md_text(s) for s in stopped)
             return text + mark
@@ -1022,7 +1101,24 @@ def _entry(flight: Flight, index: int, event: EventLine, solve: Solve | None, st
         return f"{lane} asked for approval: {md_text(data.get('detail') or event.text)}"
     if kind == EventKind.WARNING:
         return f"warning: {md_text(event.text)}"
+    if kind == EventKind.SPEND:
+        dollars = _num(data.get("dollars"))
+        cost = f"${fmt.dollars(dollars)}" if dollars is not None else "no price"
+        why = _str(data.get("why"))
+        text = f"{lane} spent {fmt.tokens(_int(data.get('tokens')))} tokens outside a turn ({cost})"
+        return text + (f": {md_text(why)}" if why else "")
     return md_text(event.text)
+
+
+def _warnings_section(flight: Flight) -> list[str]:
+    """The warnings that belong to no challenge (a failed poll, a held queue, a team folder
+    problem), as the console showed them; nothing when there were none."""
+    if not flight.warnings:
+        return []
+    events = flight.record.events
+    out = ["## Warnings for the whole run", "", "Warnings that belong to no one challenge, as the console showed them:", ""]
+    out += [f"- {_clock(_time(events[i].at))} · {md_text(events[i].text)}" for i in flight.warnings]
+    return out + [""]
 
 
 def _alert_label(kind: str | None) -> str:
@@ -1114,8 +1210,9 @@ def _intervention_section(flight: Flight) -> list[str]:
     no_effect = [j for j in flight.judged if not j.helped]
     out += [
         f"{_plural(len(steps), 'intervention')}, {len(refused)} refused. A hint, redirect, fork or escalation "
-        f"helped when a lane solved that challenge within {HELP_TURNS} turns or {HELP_SECONDS // 60} minutes of it, "
-        "with a flag it found after it.",
+        f"helped when the lane it went to solved that challenge within {HELP_TURNS} turns or {HELP_SECONDS // 60} "
+        "minutes of it, with a flag it found after it: for a fork, the lane the fork started; for an escalation, "
+        "also a lane re-queued from it, which starts on the stronger model.",
         "",
         f"### Helped ({len(helped)})", "",
     ]
@@ -1144,6 +1241,12 @@ def _judged_line(judged: Judged, flight: Flight) -> str:
     if judged.waited:
         since = f" since {_clock(judged.since)}" if judged.since is not None else ""
         return head + f"; {md_text(solve.who)} solved it with a flag already waiting{since}"
+    if judged.reached is not None:  # another lane solved it, one this step never went to
+        if step.name == "fork":
+            fork = f"not the fork {md_text(judged.reached[0])}" if judged.reached else "and the fork never started"
+            return head + f"; {md_text(solve.who)} solved it, {fork}"
+        name = {"escalate": "escalation"}.get(step.name, step.name)
+        return head + f"; {md_text(solve.who)} solved it, a lane this {md_text(name)} never reached"
     if judged.turns is None:
         return head + f"; solved by {_who(solve)}"
     later = f" and {fmt.duration(max(0.0, judged.seconds))}" if judged.seconds is not None else ""
@@ -1160,10 +1263,15 @@ def _spend_section(flight: Flight) -> list[str]:
         out.append(
             f"| {md_text(spend.model) or '(none)'} | {spend.turns} | {spend.tokens:,} | {_share(spend.cached, spend.tokens)} | {dollars} |"
         )
-    tokens, cached, dollars = flight.outside
-    if tokens or (dollars or 0.0) > 0:
-        shown = f"${fmt.dollars(dollars)}" if dollars is not None else "unknown"
-        out.append(f"| outside a turn (a reply dropped on escalation, for one) | - | {tokens:,} | {_share(cached, tokens)} | {shown} |")
+    outside = flight.outside
+    if outside.tokens or outside.dollars > 0 or outside.unpriced:
+        shown = f"${fmt.dollars(outside.dollars)}"
+        if outside.unpriced:
+            shown = f"unknown (at least {shown})" if outside.dollars > 0 else "unknown"
+        out.append(
+            f"| outside a turn (a reply dropped on escalation, for one) | - | {outside.tokens:,} | "
+            f"{_share(outside.cached, outside.tokens)} | {shown} |"
+        )
     out.append("")
     lanes = list(flight.lanes.values())
     priced = all(lane.dollars is not None for lane in lanes)
@@ -1233,8 +1341,7 @@ def summary(record: RunRecord, *, board: Board | None = None) -> str:
     lines = [
         f"Post-flight: {title}, run {_plain(_run_name(record))}",
         f"{fmt.duration(flight.duration)}, {_plural(len(flight.challenges), 'challenge')}, {len(flight.solves)} solved "
-        f"(lanes {lane_solves}, L1 {flight.solved_by('l1')}, teammates {flight.solved_by('teammate')}, "
-        f"you {flight.solved_by('player')}), {points}",
+        f"({_solve_counts(flight)}), {points}",
         f"Spend: {fmt.tokens(flight.tokens)} tokens ({_share(flight.cached, flight.tokens)} cached), {money}",
     ]
     stalls = flight.stalls
@@ -1253,6 +1360,8 @@ def summary(record: RunRecord, *, board: Board | None = None) -> str:
         parts = [f"{states[s]} {s}" for s in order if states.get(s)]
         parts += [f"{n} {_plain(s)}" for s, n in sorted(states.items()) if s not in order]
         lines.append(f"Lanes: {len(flight.lanes)} ({', '.join(parts)})")
+    if flight.warnings:
+        lines.append(f"{_plural(len(flight.warnings), 'warning')} for the whole run: see the report")
     if record.ended is None:
         lines.append("The run did not close cleanly (no run-end line).")
     if flight.notes:

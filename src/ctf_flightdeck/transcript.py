@@ -51,7 +51,10 @@ class TranscriptLog:
             "at": a.at, "turn": a.turn, "kind": a.kind.value, "by": a.by.value, "text": a.text, "output": a.output,
             "alert": a.alert.value if a.alert else None,
         } for a in lane.actions]
-        lines += [{"file": f.path, "status": f.status, "turn": f.turn, "at": f.at, "diff": f.diff} for f in lane.files.values()]
+        lines += [
+            {"file": f.path, "status": f.status, "turn": f.turn, "at": f.at, "diff": f.diff, "by": f.by}
+            for f in lane.files.values()
+        ]
         path.write_text("".join(json.dumps(line, ensure_ascii=True) + "\n" for line in lines), encoding="ascii")
         self.written.add(lane.id)
         return path

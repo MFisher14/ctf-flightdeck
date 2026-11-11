@@ -179,7 +179,13 @@ def test_a_later_release_counts_its_own_starts():
     fresh = [Challenge("c8", "Chall 8", "web", 200), Challenge("c9", "Chall 9", "web", 300)]
     deck.release(fresh, [QueueEntry(c.id, "small") for c in fresh], "Wave 2")
     release = events(deck, EventKind.RELEASE)[-1]
-    assert dict(release.data) == {"label": "Wave 2", "challenges": ["c8", "c9"], "started": 1, "queued": 1}
+    assert dict(release.data) == {
+        "label": "Wave 2", "challenges": ["c8", "c9"], "started": 1, "queued": 1, "event": "test",
+        "board": [  # the names and points too, so the run log can name its board without it
+            {"id": "c8", "name": "Chall 8", "category": "web", "points": 200},
+            {"id": "c9", "name": "Chall 9", "category": "web", "points": 300},
+        ],
+    }
 
 
 def test_the_queue_drains_in_triage_order_and_never_runs_more_than_max_lanes():

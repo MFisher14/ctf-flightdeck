@@ -195,6 +195,7 @@ class FileChange:
     status: str = "modified"  # added | modified | deleted
     turn: int = 0  # set by the deck
     at: float = 0.0  # set by the deck
+    by: str = "lane"  # "player": the player changed it in a take-over (writeups keep it apart)
 
     @property
     def added(self) -> int:

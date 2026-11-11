@@ -49,10 +49,25 @@ def test_redact_keeps_the_flag_out_of_every_file(tmp_path):
     assert ALPHA not in text and text == writeup.draft(record, "a", redact=True)
 
 
+def test_writeups_take_the_event_log_the_run_printed_too(tmp_path):
+    record = alpha_run(tmp_path)
+    result = invoke(record.dir / "events.jsonl")
+    assert result.exit_code == 0, result.output
+    assert (record.dir / "writeups" / "a.md").read_text(encoding="utf-8") == writeup.draft(record, "a")
+    other = invoke(record.dir / "lanes" / "L01.jsonl")
+    assert other.exit_code == 2 and "give the run folder (the one holding events.jsonl) or its events.jsonl" in other.stderr
+
+
 def test_the_board_fills_in_what_the_run_log_lacks(tmp_path):
     record = l1_run(tmp_path)
     for lane in (record.dir / "lanes").iterdir():
         lane.unlink()
+    path = record.dir / "events.jsonl"  # an older log: its releases do not name the challenges
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    for line in lines:
+        if line["kind"] == "release":
+            line["data"].pop("board")
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
     board = tmp_path / "board"
     (board / "d").mkdir(parents=True)
     (board / "d" / "challenge.json").write_text(json.dumps({"name": "Delta", "category": "crypto", "points": 100}))

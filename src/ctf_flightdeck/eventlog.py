@@ -8,6 +8,9 @@ progress. Lines are
 plain ASCII (json escapes everything else), so a newline, a line separator or an escape
 sequence in a flag or a command can never split a line or reach a terminal that shows
 the file.
+
+The run-start line names the flightdeck version and the log's FORMAT, so a reader knows what
+the log holds (runrecord.RunRecord.format).
 """
 
 from __future__ import annotations
@@ -27,6 +30,10 @@ if TYPE_CHECKING:
     from .core.deck import Deck
 
 MAX_DEPTH = 32  # deeper data is written as its repr
+FORMAT = 2
+"""What a log of this version holds, beyond format 1: spend outside a turn as `spend` events,
+and each release's event name and its challenges' names, categories and points (core/deck.py).
+A log without the field in its run-start line is format 1."""
 
 
 class EventLog:
@@ -39,7 +46,7 @@ class EventLog:
         self._unsubscribe: list[Callable[[], None]] = []
         self._decks: list[Deck] = []
         try:
-            self._write({"kind": "run-start", "wall": _wall(), "version": __version__})
+            self._write({"kind": "run-start", "wall": _wall(), "version": __version__, "format": FORMAT})
         except BaseException:
             self._file.close()
             raise

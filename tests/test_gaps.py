@@ -34,7 +34,7 @@ from ctf_flightdeck.l1.manifest import ManifestError
 from ctf_flightdeck.mock.world import ManualClock
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.postflight import md_text
-from ctf_flightdeck.runrecord import load_run
+from ctf_flightdeck.runrecord import load_run, write_run_info
 from ctf_flightdeck.text import MARK, untrusted
 from ctf_flightdeck.transcript import TranscriptLog
 from l1_kit import tree
@@ -243,7 +243,7 @@ def test_every_challenge_no_l1_engine_solved_is_a_gap_with_who_solved_it_and_why
 def test_challenges_an_l1_engine_solved_are_listed_apart_not_as_gaps(played):
     _, _, record = played
     rep = gap_report(record)
-    assert rep.l1_solved == (L1Solve("bravo", "Bravo", "sqli"), L1Solve("india", "", "rsa"))
+    assert rep.l1_solved == (L1Solve("bravo", "Bravo", "sqli"), L1Solve("india", "India", "rsa"))  # named by its release
     assert rep.challenges == 9 and rep.l1_runs == 8
     assert gaps(record) == list(rep.gaps)
 
@@ -282,6 +282,21 @@ def test_the_first_solve_in_the_log_is_who_solved_it(tmp_path):
     run.tick()
     run.deck.teammate_solved("y", "wren")  # also solved, after you
     assert [(g.challenge, g.solved_by) for g in gaps(run.close())] == [("x", "lane"), ("y", "player")]
+
+
+def test_a_solve_the_platform_lists_is_yours_or_your_teams_never_a_teammates(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "web", 20)])
+    run.deck.platform_solved("x", "you")
+    run.deck.platform_solved("y", "your team", before_run=True)
+    rep = gap_report(run.close())
+    assert [(g.challenge, g.solved_by) for g in rep.gaps] == [("x", "player"), ("y", "team")]
+    text = gaps_markdown(rep)
+    assert headings(text, "h3") == ["X (misc, 10 pts): solved by you", "Y (web, 20 pts): solved by your team, as the platform lists it"]
+    assert section(text, "## At a glance")[1] == (
+        "- Gaps: 2, no L1 engine solved them: 2 solved another way (lanes 0, teammates 0, you 1, "
+        "your team on the platform 1, with an L1 candidate's flag 0), 0 not solved"
+    )
 
 
 def test_a_solved_result_counts_while_one_of_its_flags_is_not_known_wrong(tmp_path):
@@ -398,12 +413,43 @@ def test_a_run_that_did_not_close_says_so(tmp_path):
 # ---------------------------------------------------------------------- names, points and the board
 
 
-def test_names_and_points_come_from_the_transcripts_and_the_board_fills_the_rest(played):
+def older(folder: Path) -> Path:
+    """The run folder as a format 1 log has it: no format, and no event or names in its releases."""
+    path = folder / "events.jsonl"
+    lines = []
+    for raw in path.read_text().splitlines():
+        try:
+            line = json.loads(raw)
+        except ValueError:  # a torn line stays as it is
+            lines.append(raw)
+            continue
+        if line.get("kind") == "run-start":
+            line.pop("format", None)
+        elif line.get("kind") == "release":
+            line["data"] = {k: v for k, v in line["data"].items() if k not in ("event", "board")}
+        lines.append(json.dumps(line))
+    path.write_text("\n".join(lines) + "\n")
+    return folder
+
+
+def test_the_run_log_names_every_challenge_and_the_event_without_the_board(played):
+    _, _, record = played
+    rep = gap_report(record)
+    named = {g.challenge: (g.name, g.category, g.points) for g in rep.gaps}
+    assert named["alpha"] == ("Alpha", "cry", 100)
+    assert named["delta"] == ("Delta", "for", 150) and named["hotel"] == ("Hotel", "web", 100)  # no lane: their releases
+    assert rep.event == "test" and rep.notes == ()  # the deck's event, as its releases recorded it
+    assert gaps_markdown(rep).startswith("# Gaps: test\n")
+
+
+def test_names_and_points_of_an_older_log_come_from_the_transcripts_and_the_board_fills_the_rest(played):
     _, board, record = played
+    record = load_run(older(record.dir))
     without = {g.challenge: (g.name, g.category, g.points) for g in gaps(record)}
     assert without["alpha"] == ("Alpha", "cry", 100)  # its lane's transcript
     assert without["delta"] == ("", "", None) and without["hotel"] == ("", "", None)  # no lane: unknown, not zero
     assert gap_report(record).notes == ("no name or points in the run for delta, hotel, india (give --board to fill them in)",)
+    assert gap_report(record).event is None
     rep = gap_report(record, board=board)
     named = {g.challenge: (g.name, g.category, g.points) for g in rep.gaps}
     assert named["delta"] == ("Delta", "for", 150) and named["hotel"] == ("Hotel", "web", 100)
@@ -417,7 +463,8 @@ def test_a_board_without_the_runs_challenges_is_named_as_such(played, tmp_path):
     (other / "zulu").mkdir(parents=True)
     (other / "zulu" / "challenge.json").write_text(json.dumps({"name": "Zulu", "category": "misc", "points": 1}))
     notes = gap_report(record, board=load_board(other)).notes
-    assert notes[0] == "the board has none of this run's challenges (is it the board this run played?)"
+    assert notes == ("the board has none of this run's challenges (is it the board this run played?)",)
+    notes = gap_report(load_run(older(record.dir)), board=load_board(other)).notes
     assert notes[1] == "no name or points in the run for delta, hotel, india (and not on the board)"
 
 
@@ -561,9 +608,11 @@ def test_without_a_pack_there_is_no_routing_line(played):
     _, _, record = played
     text = gaps_markdown(gap_report(record))
     assert "Routed now" not in text
-    assert headings(text, "h3")[-1] == "hotel (category unknown, points unknown): solved by you"  # no name: its id
-    assert section(text, "### hotel") == ["- Id: hotel", f"- Why L1 did not solve it: {NO_ROUTE}"]
-    assert section(text, "## Solved by L1") == ["- Bravo: sqli", "- india: rsa"]
+    assert headings(text, "h3")[-1] == "Hotel (web, 100 pts): solved by you"  # no lane: named by its release
+    assert section(text, "### Hotel") == ["- Id: hotel", f"- Why L1 did not solve it: {NO_ROUTE}"]
+    assert section(text, "## Solved by L1") == ["- Bravo: sqli", "- India: rsa"]
+    older_text = gaps_markdown(gap_report(load_run(older(record.dir))))
+    assert headings(older_text, "h3")[-1] == "hotel (category unknown, points unknown): solved by you"  # no name: its id
 
 
 def test_problems_reading_the_run_are_reported(played):
@@ -571,7 +620,7 @@ def test_problems_reading_the_run_are_reported(played):
     with (record.dir / "events.jsonl").open("a") as handle:
         handle.write("{torn line\n")
     torn = len((record.dir / "events.jsonl").read_text().splitlines())
-    rep = gap_report(load_run(record.dir))
+    rep = gap_report(load_run(older(record.dir)))  # an older log: it lacks names too
     assert section(gaps_markdown(rep), "## Problems reading the run") == [
         f"- events.jsonl:{torn}: not JSON (Expecting property name enclosed in double quotes); skipped",
         "- no name or points in the run for delta, hotel, india (give --board to fill them in)",
@@ -635,6 +684,7 @@ def test_the_json_holds_every_gap_for_build_mode(played, tmp_path):
 
 def test_the_json_says_null_for_what_is_unknown_and_never_holds_a_flag(played):
     _, _, record = played
+    record = load_run(older(record.dir))  # an older log: no event, and no points for a challenge no lane worked
     text = gaps_json(gap_report(record))
     data = json.loads(text)
     hotel = next(g for g in data["gaps"] if g["challenge"] == "hotel")
@@ -679,17 +729,20 @@ def test_hostile_text_renders_as_itself_never_as_markup(tmp_path):
     assert all(t.markup.startswith("#") for t in walk(text) if t.type == "heading_open")  # no "===" heading
     assert all(t.level == 0 for t in walk(text) if t.type == "bullet_list_open")  # no list nested by a value
     assert headings(text, "h1") == ["Gaps: CTF <script>x</script> [y](http://e) # z"]
-    assert headings(text, "h2") == ["At a glance", "Gaps (4)", "Solved by L1 (0)", "Problems reading the run"]
+    assert headings(text, "h2") == ["At a glance", "Gaps (4)", "Solved by L1 (0)"]  # the run log names every challenge
     fold = untrusted(EVIL, one_line=True).strip()
     assert headings(text, "h3") == [
         f"{fold}1 (web<b>|, 10 pts): solved by a lane",
         f"{fold}2 (web<b>|, 10 pts): not solved",
         f"{fold}3 (web<b>|, 10 pts): not solved",
-        "e`<i>| \u23ce 4 (category unknown, points unknown): not solved",
+        "Four (misc, 5 pts): not solved",
     ]
     notes = fold[:119] + "\u2026"  # an engine's notes are cut to 120 characters
     items = [shown(t) for t in walk(text) if t.type == "inline"]
     assert f"Why L1 did not solve it: routed: eng<i>|`x` solved (its flag was rejected; {notes})" in items
+    assert "Id: e`<i>| \u23ce 4" in items  # a hostile id renders as itself
+    older_text = gaps_markdown(gap_report(load_run(older(tmp_path / "run")), board=load_board(board)))
+    assert headings(older_text, "h3")[-1] == "e`<i>| \u23ce 4 (category unknown, points unknown): not solved"
 
 
 def test_hostile_text_is_never_a_link_a_reader_could_not_see(tmp_path):
@@ -772,8 +825,25 @@ def test_gaps_with_a_pack_but_no_board_fails_before_writing(played, tmp_path):
     pack = write_pack(tmp_path / "pack", tmp_path / "marker")
     result = runner.invoke(mounted(), ["gaps", str(record.dir), "--pack", str(pack)])
     assert result.exit_code == 2
-    assert "flightdeck: --pack needs --board" in result.stderr
+    assert "flightdeck: --pack needs --board" in result.stderr and "(this run recorded none)" in result.stderr
     assert not (record.dir / "gaps.md").exists() and not (record.dir / "gaps.json").exists()
+
+
+def test_gaps_takes_the_event_log_the_run_printed_and_routes_against_the_board_the_run_recorded(played, tmp_path):
+    board_dir, board, record = played
+    write_run_info(record.dir, board=board_dir)  # as run.py records it when the run starts
+    pack = write_pack(tmp_path / "pack", tmp_path / "marker")
+    result = runner.invoke(mounted(), ["gaps", str(record.dir / "events.jsonl"), "--pack", str(pack)])
+    assert result.exit_code == 0, result.output
+    assert f"flightdeck: board: {board_dir.resolve()} (recorded by the run)" in result.stderr
+    rep = gap_report(load_run(record.dir), pack=pack, board=board)
+    assert (record.dir / "gaps.json").read_text(encoding="utf-8") == gaps_json(rep)
+    assert {g.challenge: g.routed for g in rep.gaps} == ROUTED_NOW
+    shutil.rmtree(board_dir)
+    gone = runner.invoke(mounted(), ["gaps", str(record.dir), "--pack", str(pack)])
+    assert gone.exit_code == 2 and "is not there any more: name it with --board" in gone.stderr
+    other = runner.invoke(mounted(), ["gaps", str(record.dir / "lanes" / "L01.jsonl")])
+    assert other.exit_code == 2 and "give the run folder (the one holding events.jsonl) or its events.jsonl" in other.stderr
 
 
 def test_gaps_with_a_broken_pack_or_board_or_no_run_fails_with_the_reason(played, tmp_path):

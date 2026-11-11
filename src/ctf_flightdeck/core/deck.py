@@ -218,7 +218,11 @@ class Deck:
         self._emit(
             EventKind.RELEASE,
             f"{label}: {len(challenges)} challenges · {started} lanes started · {len(self.queue)} queued",
-            data={"label": label, "challenges": [ch.id for ch in challenges], "started": started, "queued": len(self.queue)},
+            data={
+                "label": label, "challenges": [ch.id for ch in challenges], "started": started, "queued": len(self.queue),
+                "event": self.config.event,  # with the names and points below, a run log names its own board
+                "board": [{"id": ch.id, "name": ch.name, "category": ch.category, "points": ch.points} for ch in challenges],
+            },
         )
 
     def set_solves(self, challenge_id: str, solves: int) -> None:

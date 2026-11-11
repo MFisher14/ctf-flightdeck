@@ -23,7 +23,7 @@ import asyncio
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..core.driver import TakeoverRefused, TurnReport
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
@@ -138,8 +138,8 @@ class Takeover:
         if commands:
             told += " Their last commands, as the workspace recorded them:\n" + prompts.fenced("\n".join(commands)) + "\n"
         run.notes.append(told + " Look at the workspace again before you go on.")
-        if changes:
-            self.driver._report(run, TurnReport(turn=False, files=tuple(changes)))
+        if changes:  # the player's, not the lane's: a writeup keeps them apart
+            self.driver._report(run, TurnReport(turn=False, files=tuple(replace(c, by="player") for c in changes)))
         return note
 
     @staticmethod

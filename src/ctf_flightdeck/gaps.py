@@ -15,13 +15,19 @@ the engine showed evidence and nothing in the run says otherwise. A "candidate" 
 counts, even when its flag was the one accepted: the bar for an engine is a "solved" result
 (build mode's test asks for one).
 
-Who solved it in the end (`solved_by`) is the first solve in the log:
+Who solved it in the end (`solved_by`) is the first solve in the log, credited by the rule
+every report uses (runrecord.Credit):
 - "l1:<engine>": an accepted flag that an L1 run on that challenge reported before it was
   accepted (a candidate whose flag a lane then submitted);
 - "lane": a lane's accepted flag that no L1 run reported first;
 - "teammate": a teammate's solve (team mode);
-- "player": your own (a solve recorded for "me", or an accepted submit with no lane);
+- "player": your own (a solve recorded for "me", an accepted submit with no lane, or one the
+  platform lists for "you");
+- "team": one the platform lists for your team (you or a teammate: it cannot say which);
 - "": nobody solved it in this run.
+
+Names, categories and points come from the run log's releases (a format 2 log), the lane
+transcripts, then the board; the event's name from the board, else the log.
 
 Why L1 did not solve it (`reason`):
 - "no engine routed": the run has L1 results, none on this challenge;
@@ -54,10 +60,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .core.model import ME, EventKind, PendingKind
+from .core.model import EventKind, PendingKind
 from .l1.result import STATUSES
 from .postflight import md_text
-from .runrecord import EventLine, RunRecord
+from .runrecord import L1 as BY_L1
+from .runrecord import EventLine, RunRecord, Solve, solves
 from .text import MARK, untrusted
 
 if TYPE_CHECKING:
@@ -119,7 +126,7 @@ class Gap:
     name: str  # "" when neither the run nor the board names it
     category: str  # "" when unknown
     points: int | None  # None when unknown
-    solved_by: str  # "l1:<engine>" | "lane" | "teammate" | "player" | "" (unsolved)
+    solved_by: str  # "l1:<engine>" | "lane" | "teammate" | "player" | "team" | "" (unsolved)
     l1: tuple[tuple[str, str], ...]  # (engine, status) for every L1 run on it, in log order
     reason: str  # why L1 did not solve it (module docstring)
     routed: tuple[Routed, ...] | None = None  # with a pack: the engines that reach it now; None: not routed
@@ -245,34 +252,18 @@ def gap_report(record: RunRecord, *, pack: Path | None = None, board: Board | No
 
     flags = _Flags(record)
     runs: dict[str, list[_Run]] = {}
-    reported: dict[str, dict[str, str]] = {}  # challenge -> flag -> the engine that reported it first
-    first: dict[str, str] = {}  # challenge -> who solved it first
     l1_count = nameless = 0
-    for event in record.events:
-        cid = event.challenge
-        if event.kind == L1:
-            l1_count += 1
-            if not cid:
-                nameless += 1
-                continue
-            run = _run(event)
-            runs.setdefault(cid, []).append(run)
-            for flag in run.flags:
-                reported.setdefault(cid, {}).setdefault(flag, run.engine)
-            if cid not in first and flags.solved(cid, run):
-                first[cid] = f"l1:{run.engine}"
-        elif not cid or cid in first:
+    for event in record.of(L1):
+        l1_count += 1
+        if not event.challenge:
+            nameless += 1
             continue
-        elif event.kind == EventKind.SUBMIT and event.data.get("correct") is True:
-            flag = event.data.get("flag")
-            engine = reported.get(cid, {}).get(flag) if isinstance(flag, str) and flag else None
-            first[cid] = f"l1:{engine}" if engine is not None else ("lane" if event.lane else "player")
-        elif event.kind == EventKind.TEAMMATE and event.data.get("solved") is True:
-            first[cid] = "player" if event.data.get("who") == ME else "teammate"
+        runs.setdefault(event.challenge, []).append(_run(event))
+    first = {cid: _solved_by(solve) for cid, solve in solves(record.events).items()}  # who solved it in the end
     if nameless:
         notes.append(f"{_plural(nameless, 'L1 result names', 'L1 results name')} no challenge; left out")
 
-    event_name = None
+    event_name = record.event
     on_board = {}
     if board is not None:
         event_name = board.event
@@ -322,15 +313,17 @@ def gaps(record: RunRecord, *, pack: Path | None = None, board: Board | None = N
     return list(gap_report(record, pack=pack, board=board).gaps)
 
 
+def _solved_by(solve: Solve) -> str:
+    """A Solve as `Gap.solved_by` says it."""
+    return f"l1:{solve.who}" if solve.by == BY_L1 else solve.by
+
+
 def _facts(record: RunRecord) -> dict[str, _Facts]:
-    """The challenges of the run, in release order, with the names and points the lane
-    transcripts give."""
-    found: dict[str, _Facts] = {}
-    for event in record.of(EventKind.RELEASE.value):
-        ids = event.data.get("challenges")
-        for cid in ids if isinstance(ids, list) else ():
-            if isinstance(cid, str) and cid:
-                found.setdefault(cid, _Facts())
+    """The challenges of the run, in release order, with the names and points the releases
+    (a format 2 log) and the lane transcripts give."""
+    found: dict[str, _Facts] = {
+        cid: _Facts(released.name, released.category, released.points) for cid, released in record.board.items()
+    }
     for event in record.events:  # a log that lost its release line still names its challenges
         if event.challenge and event.kind not in SKIPPED:
             found.setdefault(event.challenge, _Facts())
@@ -440,9 +433,10 @@ def _glance(rep: GapReport) -> list[str]:
     out = ["## At a glance", ""]
     if rep.challenges is not None:
         out.append(f"- Challenges in the run: {rep.challenges}, {len(rep.l1_solved)} solved by an L1 engine")
+    team = f", your team on the platform {another['team']}" if another["team"] else ""
     out.append(
         f"- Gaps: {len(rep.gaps)}, no L1 engine solved them: {sum(another.values())} solved another way "
-        f"(lanes {another['lane']}, teammates {another['teammate']}, you {another['player']}, "
+        f"(lanes {another['lane']}, teammates {another['teammate']}, you {another['player']}{team}, "
         f"with an L1 candidate's flag {another['l1']}), {unsolved} not solved"
     )
     if rep.l1_runs is not None:
@@ -498,7 +492,10 @@ def _outcome(solved_by: str) -> str:
         return "not solved"
     if solved_by.startswith("l1:"):
         return f"solved with the flag L1 engine {_md(solved_by[3:])} found"
-    words = {"lane": "solved by a lane", "teammate": "solved by a teammate", "player": "solved by you"}
+    words = {
+        "lane": "solved by a lane", "teammate": "solved by a teammate", "player": "solved by you",
+        "team": "solved by your team, as the platform lists it",
+    }
     return words.get(solved_by) or f"solved by {_md(solved_by)}"
 
 
