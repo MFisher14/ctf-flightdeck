@@ -16,7 +16,9 @@ import threading
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from ctf_flightdeck import team_cli
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -1028,3 +1030,29 @@ def test_unsubscribing_stops_the_mirror(folder):
     unsubscribe()
     assert deck.apply(iv.Claim("c1")).ok
     assert alpha.current("claims", "c1") is None and reports == []
+
+
+# ---------------------------------------------------------------------- flightdeck team
+
+
+def test_cli_init_then_status_shows_the_folder(tmp_path):
+    runner = CliRunner()
+    folder = tmp_path / "team"
+    result = runner.invoke(team_cli.app, ["init", str(folder)])
+    assert result.exit_code == 0, result.output
+    assert (folder / MARKER).is_file()
+    bravo = TeamChannel(folder, "bravo")
+    bravo.claim("c1", note="\x1b[2Jsneaky")
+    bravo.solved("c2")
+    put(folder, "boxes", "UPPER.json", GOOD)
+    result = runner.invoke(team_cli.app, ["status", str(folder)])
+    assert result.exit_code == 0, result.output
+    assert "c1" in result.output and "bravo" in result.output and "c2" in result.output
+    assert "\x1b" not in result.output and "^[[2Jsneaky" in result.output
+    assert "boxes/UPPER.json" in result.output
+
+
+def test_cli_status_of_a_folder_that_is_not_a_team_folder_fails_with_the_reason(tmp_path):
+    result = CliRunner().invoke(team_cli.app, ["status", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "is not a team folder" in result.output and "flightdeck team init" in result.output
