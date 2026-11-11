@@ -124,11 +124,16 @@ def api_key(config: Config) -> str | None:
         return None
     if not _is_env_name(name):
         raise ConfigError(f"{where}api.key_env {_NOT_A_NAME}")
-    value = os.environ.get(name, "").strip()
+    from .keys import KeysError, environment, keys_path
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise ConfigError(str(exc)) from None
     if not value:
         raise ConfigError(
-            f"{where}api.key_env names the environment variable {name}, which is not set or is empty. "
-            f'Export your API key in it, or set api.key_env = "" for a local server that needs no key.'
+            f"{where}api.key_env names the variable {name}, which is not set: put {name}=<your key> in "
+            f'{keys_path()} (chmod 600), or export it, or set api.key_env = "" for a local server that needs no key.'
         )
     return value
 

@@ -367,8 +367,8 @@ def test_a_ctfd_event_pulls_the_board_before_anything_starts(tmp_path, token):
 @pytest.mark.parametrize(
     "value, expected",
     [
-        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: export your CTFd API token"),
-        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: export your CTFd API token"),
+        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file or export it"),
+        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file or export it"),
         (f"Token {TOKEN}", "holds characters an HTTP header cannot carry (spaces, line breaks, non-ASCII); check the "
                            f"variable it came from ({TOKEN_VAR}, the variable event.token_env names)"),
     ],

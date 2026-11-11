@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Commit guard for ctf-flightdeck: secrets, private material, oversized files.
 
-Runs as the pre-commit hook (--staged) or across the whole index (--all). It never
+Runs as the pre-commit hook (--staged), across the whole index (--all), or across every
+file version in the history (--history, before a repository goes public). --add asks for
+strings to deny (without showing them) and appends their digests to the denylist. It never
 prints a matched value: each finding names the file, the rule and, for denylist hits,
 an 8-character sha256 prefix.
 
@@ -79,9 +81,55 @@ def name_candidates(data):
     return {s.encode("utf-8") for s in out}
 
 
-def load_denylist():
+def denylist_path():
     env = os.environ.get("FLIGHTDECK_DENYLIST")
-    path = Path(env).expanduser() if env else Path.home() / ".config/ctf-flightdeck/denylist.sha256"
+    return Path(env).expanduser() if env else Path.home() / ".config/ctf-flightdeck/denylist.sha256"
+
+
+def add_to_denylist():
+    """Ask for strings to keep out of the repository, without echoing them, and append their
+    digests: as typed, and in the form names are compared in (lower case, single spaces)."""
+    import getpass
+
+    path = denylist_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Adding to {path}.")
+    print("Type each team name, handle, real name, IP or token to keep out of the repository.")
+    print("Nothing you type is shown or stored; only its sha256 digest is. Press Enter on an empty line to finish.")
+    added = 0
+    while True:
+        value = getpass.getpass("string: ").strip()
+        if not value:
+            break
+        forms = {value, " ".join(value.lower().split())}
+        with open(path, "a", encoding="utf-8") as out:
+            for form in sorted(forms):
+                out.write(hashlib.sha256(form.encode("utf-8")).hexdigest() + "\n")
+        added += 1
+    if path.exists():
+        os.chmod(path, 0o600)
+    print(f"added {added} string(s); now run: python3 .githooks/secret_scan.py --history")
+    return 0
+
+
+def history_blobs():
+    """(path, data) for every blob in every commit's tree, each blob once."""
+    listing = subprocess.run(["git", "rev-list", "--all", "--objects"], capture_output=True, check=True).stdout
+    seen = set()
+    for line in listing.decode("utf-8", "replace").splitlines():
+        sha, _, path = line.partition(" ")
+        if not path or sha in seen:
+            continue
+        kind = subprocess.run(["git", "cat-file", "-t", sha], capture_output=True, text=True).stdout.strip()
+        if kind != "blob":
+            continue
+        seen.add(sha)
+        data = subprocess.run(["git", "cat-file", "blob", sha], capture_output=True, check=True).stdout
+        yield path, data
+
+
+def load_denylist():
+    path = denylist_path()
     if not path.is_file():
         print(f"secret-scan: WARNING: no denylist at {path}; token/IP hash checks skipped "
               f"(pattern rules still ran)", file=sys.stderr)
@@ -155,15 +203,22 @@ def scan(path, data, deny):
 
 def main(argv):
     mode = argv[1] if len(argv) > 1 else "--staged"
-    if mode not in ("--staged", "--all"):
-        sys.exit("usage: secret_scan.py --staged | --all")
+    if mode not in ("--staged", "--all", "--history", "--add"):
+        sys.exit("usage: secret_scan.py --staged | --all | --history | --add")
+    if mode == "--add":
+        return add_to_denylist()
     deny = load_denylist()
-    if mode == "--staged":
+    if mode == "--history":
+        blobs = list(history_blobs())
+        paths = [path for path, _ in blobs]
+    elif mode == "--staged":
         paths = split_z(git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"))
+        blobs = iter_blobs(paths)
     else:
         paths = split_z(git("ls-files", "-z"))
+        blobs = iter_blobs(paths)
     n_block = 0
-    for path, data in iter_blobs(paths):
+    for path, data in blobs:
         blocks, warns = scan(path, data, deny)
         for rule in dict.fromkeys(blocks):
             print(f"BLOCKED {path}: {rule}", file=sys.stderr)

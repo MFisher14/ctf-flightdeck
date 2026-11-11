@@ -620,7 +620,7 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
                 f"your config says {lanes})"
             )
             lanes = most
-    problems = check(profile, policies, max_lanes=lanes, model_config=config, runtime=runtime)
+    problems = check(profile, policies, max_lanes=lanes, model_config=config, runtime=runtime, environ=_environment())
     refusals = [problem.message for problem in problems if problem.refuse]
     if refusals:
         count = len(refusals)
@@ -811,11 +811,16 @@ def _ctfd_token(profile: EventProfile) -> str:
     """The CTFd token, from the variable event.token_env names. Never shown."""
     name = profile.token_env
     assert name is not None  # check() refuses a CTFd profile without one
-    value = os.environ.get(name, "").strip()
+    from .keys import KeysError, environment
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the CTFd token variable {name} (event.token_env) is not set or is empty: export your CTFd API token in it "
-            "(CTFd: Settings, Access Tokens), then start play again"
+            f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
+            "keys file or export it (CTFd: Settings, Access Tokens), then start play again"
         )
     return value
 
@@ -974,8 +979,18 @@ def _find_agent(kind: str, model: str, auth: str | None):
     from .agent.external import AgentError, find_agent
 
     try:
-        return find_agent(kind, model, auth=auth)
+        return find_agent(kind, model, auth=auth, environ=_environment())
     except AgentError as exc:
+        raise RunError(str(exc)) from None
+
+
+def _environment() -> dict[str, str]:
+    """This process's environment plus the player's keys file (the environment wins)."""
+    from .keys import KeysError, environment
+
+    try:
+        return environment()
+    except KeysError as exc:
         raise RunError(str(exc)) from None
 
 

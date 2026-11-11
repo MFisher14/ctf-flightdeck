@@ -76,7 +76,7 @@ def test_doctor_checks_the_key_variable_without_ever_showing_it(tmp_path, monkey
     path = write_config(Answers("https://openrouter.ai/api/v1", "MY_DOCTOR_KEY", ("a/b",), "host"), tmp_path / "c.toml")
     unset = {c.name: c for c in doctor(path, environ={})}
     assert not unset["api key"].ok and "MY_DOCTOR_KEY is not set" in unset["api key"].detail
-    assert "export MY_DOCTOR_KEY" in unset["api key"].fix
+    assert "MY_DOCTOR_KEY=<your key> in" in unset["api key"].fix
     checks = doctor(path, environ={"MY_DOCTOR_KEY": "value-that-must-not-show"})
     assert {c.name: c for c in checks}["api key"].ok
     text, _ = report(checks)

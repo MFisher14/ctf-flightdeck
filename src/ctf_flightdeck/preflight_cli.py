@@ -71,7 +71,14 @@ def preflight(
     found = loaded if isinstance(loaded, Config) else None
     runtime = ("host" if host else "docker") if host is not None else (found.lanes.runtime if found else None)
     lanes = max_lanes or (found.lanes.max_lanes if found else None)
-    problems = check(profile, policies, max_lanes=lanes, model_config=loaded, runtime=runtime)
+    from .keys import KeysError, environment
+
+    try:
+        environ = environment()
+    except KeysError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
+    problems = check(profile, policies, max_lanes=lanes, model_config=loaded, runtime=runtime, environ=environ)
 
     typer.echo(f"profile   {untrusted(str(profile.source), one_line=True)}")
     for line in describe(profile, policies):

@@ -63,3 +63,46 @@ def test_token_shaped_values_still_match_exactly_as_written():
     token = "Ab3dEf6hIj9kLm2nOp5q"  # 20 characters, mixed case
     assert hits(f"key={token}".encode(), token)
     assert hits(f"key={token.lower()}".encode(), token) == []
+
+
+# ---------------------------------------------------------------------- --add and --history
+
+
+def test_add_stores_only_digests_as_typed_and_as_names_are_compared(tmp_path, monkeypatch, capsys):
+    import getpass
+    import stat
+
+    path = tmp_path / "deny" / "denylist.sha256"
+    monkeypatch.setenv("FLIGHTDECK_DENYLIST", str(path))
+    typed = iter(["Quokka  Crew", "10.20.30.40", ""])
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": next(typed))
+    assert scan_mod.main(["secret_scan.py", "--add"]) == 0
+    stored = set(path.read_text().split())
+    assert stored == {digest("Quokka  Crew"), digest("quokka crew"), digest("10.20.30.40")}
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    out = capsys.readouterr().out
+    assert "Quokka" not in out and "10.20.30.40" not in out and "added 2 string(s)" in out
+    blocks, _ = scan_mod.scan("notes.md", b"the quokka crew won", stored)
+    assert any(rule.startswith("denylisted value") for rule in blocks)
+
+
+def test_history_finds_a_name_that_only_an_old_commit_holds(tmp_path, monkeypatch):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *args: subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)  # noqa: E731
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "test")
+    (repo / "notes.md").write_text("thanks to quokka crew\n")
+    git("add", "notes.md")
+    git("commit", "-q", "-m", "one")  # a throwaway repository with no hooks
+    (repo / "notes.md").write_text("thanks to the team\n")
+    git("commit", "-q", "-am", "two")
+    deny = tmp_path / "denylist.sha256"
+    deny.write_text(digest("quokka crew") + "\n")
+    monkeypatch.setenv("FLIGHTDECK_DENYLIST", str(deny))
+    monkeypatch.chdir(repo)
+    assert scan_mod.main(["secret_scan.py", "--all"]) == 0  # the files as they are now are clean
+    assert scan_mod.main(["secret_scan.py", "--history"]) == 1  # an old version is not

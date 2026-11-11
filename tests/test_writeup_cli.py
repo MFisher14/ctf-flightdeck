@@ -219,7 +219,7 @@ def test_polish_names_a_missing_key_variable_and_never_shows_a_value(tmp_path, m
     with FakeModelServer() as server:
         result = invoke(record.dir, "--polish", "fake/model", "--config", config_file(tmp_path, server, "FLIGHTDECK_TEST_POLISH_KEY"))
     assert result.exit_code == 2
-    assert "FLIGHTDECK_TEST_POLISH_KEY, which is not set or is empty" in result.stderr
+    assert "the variable FLIGHTDECK_TEST_POLISH_KEY, which is not set: put FLIGHTDECK_TEST_POLISH_KEY=<your key> in" in result.stderr
     assert server.requests == [] and not (record.dir / "writeups").exists()
 
 

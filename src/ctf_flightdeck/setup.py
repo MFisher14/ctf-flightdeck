@@ -124,9 +124,16 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         if not name:
             checks.append(Check("api key", True, "the config's API needs no key"))
         else:
-            present = bool(environ.get(name, "").strip())
-            checks.append(Check("api key", present, f"{name} is {'set' if present else 'not set'}",
-                                f"export {name}=<your key> in the shell you run flightdeck from"))
+            from .keys import KeysError, keys_path, source
+
+            try:
+                where = source(name, environ)
+            except KeysError as exc:
+                checks.append(Check("keys file", False, str(exc), "fix the keys file, or remove it and export the key"))
+                where = None
+            detail = f"{name} is set (in your {where})" if where else f"{name} is not set"
+            checks.append(Check("api key", where is not None, detail,
+                                f"put {name}=<your key> in {keys_path()} (chmod 600), or export it"))
     if config is not None:
         checks += _local_server_check(config.api.base_url)
     if config is not None and config.l1.pack is not None:
@@ -156,7 +163,13 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
     if not ladder:
         return [Check("agent", False, f"no model ladder for {kind} lanes", f'add [agents] {kind} = ["<model>", ...] to your config')]
     try:
-        found = find_agent(kind, ladder[0], environ=environ)
+        from .keys import KeysError, environment
+
+        try:
+            merged = environment(environ)
+        except KeysError as exc:
+            return [Check("agent", False, str(exc), "fix the keys file")]
+        found = find_agent(kind, ladder[0], environ=merged)
     except AgentError as exc:
         return [Check("agent", False, str(exc), f"install {kind}, then log in or set its key variable")]
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
