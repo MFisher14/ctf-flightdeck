@@ -922,6 +922,32 @@ def test_quitting_mid_turn_counts_what_claude_reports_for_it_and_raises_asks_and
     assert card is not None and "Spent 110 tokens · $0.50" in card.splitlines(), card
 
 
+def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_claude_reports_then_is_in_them(
+        tmp_path, monkeypatch, scripted_claude):
+    """play prints what the run spent (the scorecard) only after the console's quit has stopped
+    every lane (run.shutdown): what claude reports as it stops, the cost of the turn quitting
+    cut, is in it."""
+    from ctf_flightdeck.console.screens import QuitPrompt
+
+    scripted_claude(CUT_BY_QUITTING)
+
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.turns for lane in app.deck.lanes.values()), "claude's step")
+        await pilot.press("q")
+        await pilot.pause()
+        assert isinstance(app.screen, QuitPrompt)  # its lane is open: quitting asks first
+        await pilot.press("y")
+        await until(pilot, lambda: not app.is_running, "the console to quit once its lanes have stopped")
+
+    headless(monkeypatch, player)
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url)),
+                                              "--agent", "claude", "--host"])
+    assert result.exit_code == 0, result.output
+    assert "Spent 110 tokens · $0.50" in result.stdout.splitlines(), result.stdout
+    assert "Test Event: solved 0 of 1" in result.stdout and result.stdout.index("Spent 110") < result.stdout.index("run log: ")
+
+
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude):
     with FakeModelServer() as server:
         with pytest.raises(RunError, match='the instance policy is "confirm", but a claude lane reaches whatever its CLI can reach'):
