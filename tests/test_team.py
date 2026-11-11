@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -456,6 +457,7 @@ BAD_BYTES = {
     "at-huge-int": b'{"who": "bravo", "at": ' + b"9" * 400 + b"}",
     "nested-deep": b"[" * 2000 + b"]" * 2000,
     "empty": b"",
+    "note-lone-surrogate": b'{"who": "bravo", "at": 1800000000, "note": "\\udc9b2J"}',  # valid JSON, not text
 }
 
 
@@ -497,6 +499,39 @@ def test_a_file_not_named_by_a_challenge_id_is_reported_without_reading_it(folde
     assert "\x1b" not in problem
     if "\x1b" in name:
         assert "^[" in problem  # made visible, never sent to the terminal as an escape
+
+
+def test_a_path_that_is_not_utf8_shows_its_bytes_as_escapes(tmp_path):
+    folder = tmp_path / "\udc9b2J"  # how Python spells a name holding the byte 0x9b, which is not UTF-8
+    for call in (lambda: TeamChannel(folder, "alpha"), lambda: read_state(folder), lambda: TeamChannel(tmp_path, "\udc9b")):
+        with pytest.raises(TeamError) as caught:
+            call()
+        message = str(caught.value)
+        message.encode("utf-8")  # strict: no lone surrogate is left to crash a terminal, or reach it as a raw byte
+        assert "\\x9b" in message
+    odd = tmp_path / "\x1b[2J"
+    odd.mkdir()  # a folder, but not a team folder: the message suggests `flightdeck team init <it>`
+    message = str(pytest.raises(TeamError, TeamChannel, odd, "alpha").value)
+    assert "flightdeck team init" in message and "\x1b" not in message
+
+
+def test_a_file_name_that_is_not_utf8_is_reported_with_its_bytes_escaped(folder, wall, tmp_path):
+    claims = os.fsencode(folder / "claims")
+    try:
+        with open(claims + b"/\x9b2J\x9b31mred.json", "wb"):
+            pass
+    except OSError as exc:  # APFS on macOS, for one, refuses such a name
+        pytest.skip(f"this filesystem refuses a file name that is not UTF-8 ({exc.strerror}); Linux allows one")
+    alpha, _ = pair(folder, wall)
+    (problem,) = alpha.state().problems
+    assert problem == "claims/\\x9b2J\\x9b31mred.json: is not named <challenge id>.json; ignored"
+    result = CliRunner().invoke(team_cli.app, ["status", str(folder)])
+    assert result.exit_code == 0, result.output
+    assert b"\x9b" not in result.stdout_bytes and "ignored: claims/\\x9b2J\\x9b31mred.json" in result.output
+    named = os.fsdecode(os.fsencode(tmp_path) + b"/team-\x9b")
+    result = CliRunner().invoke(team_cli.app, ["init", named])
+    assert result.exit_code == 0, result.output
+    assert b"\x9b" not in result.stdout_bytes and "team-\\x9b" in result.output
 
 
 def test_hidden_files_are_skipped_without_a_word(folder, wall):
@@ -1050,6 +1085,16 @@ def test_cli_init_then_status_shows_the_folder(tmp_path):
     assert "c1" in result.output and "bravo" in result.output and "c2" in result.output
     assert "\x1b" not in result.output and "^[[2Jsneaky" in result.output
     assert "boxes/UPPER.json" in result.output
+
+
+def test_cli_status_reports_a_note_with_a_lone_surrogate_instead_of_crashing(folder):
+    put(folder, "claims", "c1.json", b'{"who": "bravo", "at": %d, "note": "\\udc9b2J"}' % int(time.time()))
+    result = CliRunner().invoke(team_cli.app, ["status", str(folder)])
+    assert result.exit_code == 0, result.exception
+    assert result.output == (
+        "claims: none\nlive boxes: none\nsolves: none\n"
+        f'ignored: claims/c1.json: "note" is not text of at most {MAX_NOTE} characters; ignored\n'
+    )
 
 
 def test_cli_status_of_a_folder_that_is_not_a_team_folder_fails_with_the_reason(tmp_path):

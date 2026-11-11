@@ -20,8 +20,10 @@ with access to the folder may have written it. A handle must match HANDLE (and i
 "me", the deck's word for the player), an id the board's id rule, and a file that is
 malformed, too big or odd (a symlink, a FIFO, a folder) is ignored and reported in
 TeamState.problems: never followed, never run, never read past MAX_MARK_BYTES. A note is
-data, shown only through text.untrusted(). Nothing secret is written: no flags, keys or
-tokens (a solve's note names the lane that found it).
+data, and a note holding a lone surrogate is not text: that mark is ignored too. Names,
+notes and paths are shown only through printable() (text.untrusted(), plus lone surrogates
+made visible). Nothing secret is written: no flags, keys or tokens (a solve's note names the
+lane that found it).
 
 Claims and box holds are advisory and the last write wins: two flightdecks that claim one
 challenge at the same moment can each believe they hold it until the next poll shows the
@@ -82,6 +84,7 @@ drive, Syncthing, a shared mount). Put nothing else here and nothing secret: no 
 keys or tokens.
 """
 
+_SURROGATE = re.compile("[\ud800-\udfff]")  # a lone surrogate: half of a pair, never text on its own
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC  # a FIFO must not block the read
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -126,11 +129,11 @@ def init_folder(folder: Path) -> Path:
     try:
         folder.mkdir(exist_ok=True)
     except FileNotFoundError:
-        raise TeamError(f"{_show(folder)}: its parent folder does not exist (is the shared drive mounted?)") from None
+        raise TeamError(f"{printable(folder)}: its parent folder does not exist (is the shared drive mounted?)") from None
     except FileExistsError:
-        raise TeamError(f"{_show(folder)}: is not a folder") from None
+        raise TeamError(f"{printable(folder)}: is not a folder") from None
     except OSError as exc:
-        raise TeamError(f"{_show(folder)}: cannot create it ({exc.strerror})") from None
+        raise TeamError(f"{printable(folder)}: cannot create it ({exc.strerror})") from None
     marker = folder / MARKER
     try:
         with open(marker, "x", encoding="ascii") as out:
@@ -138,7 +141,7 @@ def init_folder(folder: Path) -> Path:
     except FileExistsError:
         pass
     except OSError as exc:
-        raise TeamError(f"{_show(marker)}: cannot write it ({exc.strerror})") from None
+        raise TeamError(f"{printable(marker)}: cannot write it ({exc.strerror})") from None
     _check_marker(folder)
     for kind in KINDS:
         os.close(_open_dir(folder, kind, create=True))
@@ -264,7 +267,7 @@ class TeamChannel:
         except FileNotFoundError:
             pass
         except OSError as exc:
-            raise TeamError(f"{_show(self.folder / kind / name)}: cannot remove it ({exc.strerror})") from None
+            raise TeamError(f"{printable(self.folder / kind / name)}: cannot remove it ({exc.strerror})") from None
         finally:
             os.close(dfd)
 
@@ -290,7 +293,7 @@ class TeamChannel:
         try:
             _atomic_write(dfd, name, data)
         except OSError as exc:
-            raise TeamError(f"{_show(self.folder / kind / name)}: cannot write it ({exc.strerror})") from None
+            raise TeamError(f"{printable(self.folder / kind / name)}: cannot write it ({exc.strerror})") from None
         finally:
             os.close(dfd)
 
@@ -576,15 +579,15 @@ def _check_marker(folder: Path) -> None:
     except (FileNotFoundError, NotADirectoryError):
         if not folder.is_dir():
             what = "is not a folder" if folder.exists() else "no such folder"
-            raise TeamError(f"{_show(folder)}: {what} (is the shared drive mounted?)") from None
+            raise TeamError(f"{printable(folder)}: {what} (is the shared drive mounted?)") from None
         raise TeamError(
-            f"{_show(folder)}: is not a team folder (it has no {MARKER}): check that the shared drive is "
-            f"mounted and synced, or make it one with `flightdeck team init {shlex.quote(str(folder))}`"
+            f"{printable(folder)}: is not a team folder (it has no {MARKER}): check that the shared drive is "
+            f"mounted and synced, or make it one with `flightdeck team init {printable(shlex.quote(str(folder)))}`"
         ) from None
     except OSError as exc:
-        raise TeamError(f"{_show(folder)}: cannot read it ({exc.strerror})") from None
+        raise TeamError(f"{printable(folder)}: cannot read it ({exc.strerror})") from None
     if not stat.S_ISREG(info.st_mode):
-        raise TeamError(f"{_show(marker)}: is not a regular file")
+        raise TeamError(f"{printable(marker)}: is not a regular file")
 
 
 def _check_id(challenge_id: object) -> None:
@@ -593,8 +596,14 @@ def _check_id(challenge_id: object) -> None:
 
 
 def _check_note(note: object) -> None:
-    if not isinstance(note, str) or len(note) > MAX_NOTE:
+    if not _is_note(note):
         raise TeamError(f"a note must be text of at most {MAX_NOTE} characters")
+
+
+def _is_note(value: object) -> bool:
+    """Text of at most MAX_NOTE characters. A lone surrogate is not text: JSON can carry one
+    as a \\udXXX escape, and no terminal can be sent it as it is."""
+    return isinstance(value, str) and len(value) <= MAX_NOTE and _SURROGATE.search(value) is None
 
 
 def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
@@ -614,7 +623,7 @@ def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
     except FileExistsError:
         pass
     except OSError as exc:
-        raise TeamError(f"{_show(path)}: cannot create it ({exc.strerror})") from None
+        raise TeamError(f"{printable(path)}: cannot create it ({exc.strerror})") from None
     try:
         return os.open(path, _DIR)
     except OSError as exc:
@@ -624,8 +633,8 @@ def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
 def _dir_error(path: Path, exc: OSError) -> TeamError:
     if exc.errno in (errno.ENOTDIR, errno.ELOOP):
         what = "a symlink" if path.is_symlink() else "not a folder"
-        return TeamError(f"{_show(path)}: is {what}; the team folder's claims, boxes and solves must be real folders")
-    return TeamError(f"{_show(path)}: cannot open it ({exc.strerror})")
+        return TeamError(f"{printable(path)}: is {what}; the team folder's claims, boxes and solves must be real folders")
+    return TeamError(f"{printable(path)}: cannot open it ({exc.strerror})")
 
 
 def _scan(folder: Path, kind: str, now: float, stale_after: float, problems: list[str]) -> dict[str, Mark]:
@@ -643,11 +652,11 @@ def _scan(folder: Path, kind: str, now: float, stale_after: float, problems: lis
                         break
                     names.append(entry.name)
         except OSError as exc:
-            raise TeamError(f"{_show(folder / kind)}: cannot list it ({exc.strerror})") from None
+            raise TeamError(f"{printable(folder / kind)}: cannot list it ({exc.strerror})") from None
         for name in sorted(names):
             if name.startswith("."):  # temp files, and what the OS and sync tools keep
                 continue
-            where = f"{kind}/{_show(name)}"
+            where = f"{kind}/{printable(name)}"
             cid = name.removesuffix(".json")
             if cid == name or not valid_id(cid):
                 problems.append(f"{where}: is not named <challenge id>.json; ignored")
@@ -736,7 +745,7 @@ def _parse(data: bytes) -> Mark | str:
     if not (math.isfinite(when) and when >= 0):
         return '"at" is not a time (seconds since 1970)'
     note = value.get("note", "")
-    if not isinstance(note, str) or len(note) > MAX_NOTE:
+    if not _is_note(note):
         return f'"note" is not text of at most {MAX_NOTE} characters'
     return Mark(value["who"], when, note)
 
@@ -782,10 +791,22 @@ def _need_team(deck: Deck, what: str) -> None:
         raise TeamError(f"{what} needs a deck in team mode (DeckConfig.team is False)")
 
 
-def _show(value: object) -> str:
-    return untrusted(str(value), one_line=True)
+def printable(value: object) -> str:
+    """`value` (a path, a file name, a note) as one line that is safe to print: untrusted()
+    makes control and invisible characters visible, and a lone surrogate shows as an escape.
+    Linux allows any bytes in a file name, and Python lists the ones that are not UTF-8 as
+    surrogate escapes (PEP 383). Printed as they are, they crash a strict UTF-8 terminal or
+    reach a lenient one as raw bytes (0x9b starts a control sequence), and untrusted() leaves
+    them alone, so an escaped byte shows as \\xNN and any other lone surrogate as \\uNNNN."""
+    text = str(value)
+    if _SURROGATE.search(text) is not None:
+        try:
+            text = text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+        except UnicodeEncodeError:  # a lone surrogate that is not an escaped byte
+            text = text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return untrusted(text, one_line=True)
 
 
 def _quote(value: object) -> str:
-    safe = untrusted(value if isinstance(value, str) else repr(value), one_line=True)
+    safe = printable(value if isinstance(value, str) else repr(value))
     return json.dumps(safe if len(safe) <= 60 else safe[:57] + "...", ensure_ascii=False)
