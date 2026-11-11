@@ -13,9 +13,9 @@ Rules the deck enforces:
   for the player's approval, with "auto" it is submitted at once;
 - a board's verifier answers at once (an answers file, or never: the player submits by
   hand); a platform over the network (CTFd) gets the flag through the submitter instead
-  (core/driver.py), which only queues it: the lane carries on, and the answer comes back
-  through platform_verdict(). One flag at a time goes to the platform per challenge;
-  another waits its turn;
+  (core/driver.py), which only queues it: the lane carries on (sending() names its flags on
+  their way), and the answer comes back through platform_verdict(). One flag at a time goes
+  to the platform per challenge; another waits its turn;
 - when that platform counts the tries at a challenge's flag (Challenge.limited: the board
   says so, or the platform did), a flag for it waits for the player under "auto" too, so
   flightdeck never spends one of those tries on its own; each approval says how many are
@@ -229,6 +229,14 @@ class Deck:
         answer is not in yet, as (lane id, flag): the one handed to the submitter first, then
         those waiting their turn behind it."""
         return tuple((item.lane, item.flag) for item in self._lines.get(challenge_id, ()))
+
+    def sending(self, lane_id: str) -> tuple[str, ...]:
+        """The flags of that lane on their way to the platform (also one another lane sent
+        first), whose answer is not in yet: the console marks the lane while there are any."""
+        lane = self.lanes.get(lane_id)
+        if lane is None:
+            return ()
+        return tuple(item.flag for item in self._lines.get(lane.challenge_id, ()) if lane_id in item.lanes)
 
     def fork_model(self, model: str) -> str:
         """Default model for a fork: the next stronger one, else the weakest other one, else the same."""

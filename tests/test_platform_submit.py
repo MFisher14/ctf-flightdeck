@@ -10,6 +10,7 @@ plays the same through a real run, against the fake CTFd.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 
@@ -263,6 +264,21 @@ def test_a_lane_that_gave_up_while_its_flag_was_on_its_way_ends_once_the_answer_
     assert lane.state is LaneState.GAVE_UP and lane.result == "the model gave up"
 
 
+def test_sending_names_each_lanes_flags_on_their_way_until_their_answer_is_in():
+    deck, _, _ = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    other = lane_on(deck, "c1")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.report(sibling.id, TurnReport(flag="t{a}"))  # already on its way: its answer is the sibling's too
+    deck.report(sibling.id, TurnReport(flag="t{b}"))  # waits its turn
+    assert (deck.sending(lane.id), deck.sending(sibling.id), deck.sending(other.id)) == (("t{a}",), ("t{a}", "t{b}"), ())
+    deck.platform_verdict(lane.id, "t{a}", False)
+    assert (deck.sending(lane.id), deck.sending(sibling.id)) == ((), ("t{b}",))
+    deck.platform_verdict(sibling.id, "t{b}", False)
+    assert deck.sending(sibling.id) == () and deck.sending("L99") == ()
+
+
 def test_a_lane_that_ends_takes_its_flags_waiting_their_turn_with_it():
     deck, _, submitter = platform_deck()
     lane = lane_on(deck, "c0")
@@ -434,3 +450,37 @@ def test_a_board_challenge_can_say_how_many_tries_the_platform_allows(tmp_path):
 def test_a_board_refuses_tries_that_are_not_a_whole_number(tmp_path, value):
     with pytest.raises(BoardError, match='"max_attempts" must be a whole number, 0 or more'):
         load_board(board_with(tmp_path, odd={"max_attempts": value}))
+
+
+# ---------------------------------------------------------------------- the console shows it
+
+
+def test_the_fleet_marks_a_lane_whose_flag_is_on_its_way_to_the_platform():
+    from textual.widgets import DataTable
+
+    from ctf_flightdeck.console.app import FlightdeckApp
+
+    deck, _, _ = platform_deck(submit="confirm")
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    deck.report(lane.id, TurnReport(action="solve.py", flag="t{c0}"))
+    deck.report(other.id, TurnReport(action="solve.py", flag="t{c1}"))  # waits for the player: that chip stays
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    def chips() -> tuple[str, str]:
+        lanes = app.fleet.query_one("#lanes", DataTable)
+        return tuple(str(lanes.get_cell(each.id, "!")).strip() for each in (lane, other))
+
+    async def main() -> None:
+        async with app.run_test(size=(160, 46)) as pilot:
+            await pilot.pause()
+            assert chips() == ("flag", "flag")
+            assert deck.apply(iv.Approve(lane.id)).ok  # on its way: nothing to answer, so no alert
+            app.refresh_view()
+            await pilot.pause()
+            assert chips() == ("sending", "flag")
+            deck.platform_verdict(lane.id, "t{c0}", False, "Incorrect")
+            app.refresh_view()
+            await pilot.pause()
+            assert chips() == ("", "flag")
+
+    asyncio.run(main())
