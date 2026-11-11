@@ -96,6 +96,10 @@ models `flightdeck init` suggests.
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
   in terminals that draw them; plain Unicode stays the default.
 - Batch approve (several waiting flags at once), dismissing an alert without intervening.
+- **Installs beyond PyPI.** A Homebrew tap (`brew install mfisher14/tap/ctf-flightdeck`, the
+  formula bumped by the release workflow), a `.deb` on each GitHub release that brings its own
+  Python (Debian 12 has 3.11), then a signed apt repository for `apt upgrade`. Homebrew's own
+  repository and Debian's archives once the project is notable enough for them.
 - **A host sandbox without Docker.** Strands Box (Apache-2.0: OS isolation with deny-by-default
   policies, an egress gateway and credentials injected outside the agent) could make `--host` lanes
   safe. Watch it: in November 2026 it was a preview for Apple silicon and Linux ARM64 only, with no
