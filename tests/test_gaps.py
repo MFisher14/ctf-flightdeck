@@ -287,7 +287,9 @@ def test_the_first_solve_in_the_log_is_who_solved_it(tmp_path):
 def test_a_solved_result_counts_while_one_of_its_flags_is_not_known_wrong(tmp_path):
     run = Script(tmp_path, flags={"x": "t{x}"})
     run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "misc", 10)], ["x", "y"])
-    run.l1("x", "multi", "solved", ["t{nope}", "t{x}"])
+    run.l1("x", "early", "candidate", ["t{x}"])
+    run.l1("x", "multi", "solved", ["t{nope}", "t{x}"])  # the first run that solved it names the engine
+    run.l1("x", "late", "solved", ["t{x}"])
     run.l1("y", "multi", "candidate", ["t{nope}", "t{maybe}"])
     run.submit("x", "t{nope}")  # rejected; its other flag is then accepted
     run.submit("x", "t{x}")
