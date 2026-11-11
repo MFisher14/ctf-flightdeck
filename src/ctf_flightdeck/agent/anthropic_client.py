@@ -22,7 +22,7 @@ the raw blocks under CONTENT_KEY), the text, the tool calls with their input as 
 the stop reason, the usage (prompt tokens = input + cache read + cache write, cached tokens
 = cache read, no cost: flightdeck prices it from the config) and the model that answered.
 
-What is sent, as the claude-api skill says for these models: no `thinking` (left out, they
+What is sent, as Anthropic's documentation says for these models: no `thinking` (left out, they
 think adaptively), no `temperature` (they reject it, and SDK 2 has no such argument), no
 `tool_choice` (forcing a tool is a 400; auto is the default). A model in
 SERVER_FALLBACK_MODELS (Claude Sonnet 5.5 and Opus 5.5 among them) carries the server-side
@@ -84,14 +84,14 @@ from .fastmode import FAST_BETA, FAST_MODES, fast_problem
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"  # the SDK's own default; it adds /v1/messages
 DEFAULT_TIMEOUT = 600.0  # seconds per try: the SDK's default request timeout (10 minutes)
-DEFAULT_MAX_TOKENS = 16_000  # when the caller gives none: the skill's default for a request that does not stream
+DEFAULT_MAX_TOKENS = 16_000  # when the caller gives none: Anthropic's documented default for a request that does not stream
 CONTENT_KEY = "_anthropic_content"  # the raw content blocks of a reply, on its history message
 FALLBACK_BETA = "server-side-fallback-2026-07-01"  # the beta that takes fallbacks="default"
 SERVER_FALLBACK_MODELS = frozenset(
     {"claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5-2"}
 )
-"""The models whose requests carry the server-side refusal fallback by default (claude-api
-skill). Claude Haiku 5.5 is not one: it has none, and a fallbacks list is a 400 there."""
+"""The models whose requests carry the server-side refusal fallback by default (Anthropic's
+documentation). Claude Haiku 5.5 is not one: it has none, and a fallbacks list is a 400 there."""
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 EFFORT_MODELS = frozenset({
@@ -99,7 +99,7 @@ EFFORT_MODELS = frozenset({
     "claude-mythos-5-2", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
     "claude-opus-4-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5-5",
 })
-"""The models that take output_config.effort (claude-api skill, its thinking table); it is an
+"""The models that take output_config.effort (Anthropic's documentation, its thinking table); it is an
 error on Claude Haiku 4.5 and Sonnet 4.5, so it goes only to these."""
 
 TRANSIENT = (httpx2.TimeoutException, httpx2.NetworkError, httpx2.RemoteProtocolError, httpx2.ProxyError)
@@ -389,7 +389,7 @@ def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tok
 
 def fast_priced(usage: Usage, model: str) -> Usage:
     """`usage` of a fast request to `model`, priced at its fast rate (cached tokens at the fast
-    input rate: the skill gives no other), unless the API says it ran at standard speed."""
+    input rate: the documentation gives no other), unless the API says it ran at standard speed."""
     if usage.speed == "standard":
         return usage
     dollars = cost(FAST_MODES[model].price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)

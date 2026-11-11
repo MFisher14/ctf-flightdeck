@@ -12,7 +12,7 @@ lane. One interface, Light, four engines:
   machine (Ollama at http://127.0.0.1:11434/v1, an MLX server at http://127.0.0.1:8080/v1,
   key_env ""), so no provider's safety classifier can decline security work.
 - anthropic: a Claude model through the Messages API (claude-haiku-5-5, say), at effort "low"
-  where the model takes it, with room in max_tokens for its thinking (the claude-api skill:
+  where the model takes it, with room in max_tokens for its thinking (Anthropic's documentation:
   thinking counts toward max_tokens), and without the server-side refusal fallback.
 - cactus: Cactus Needle on this machine (needle.py, the [cactus] extra), run in a thread of
   its own, off the event loop.
@@ -77,7 +77,7 @@ MAX_ANSWER = 200  # characters a reply that names one option can have, wrapping 
 
 # Output token caps per job. An OpenAI-compatible model that answers directly stops after a
 # word; the cap leaves room for a short reasoning preamble. Claude thinks adaptively, and its
-# thinking counts toward max_tokens, so its cap is larger (the claude-api skill's example for a
+# thinking counts toward max_tokens, so its cap is larger (Anthropic's documented example for a
 # one-word classification on Claude Haiku 5.5: max_tokens 1024 at effort "low").
 OPENAI_TOKENS = {HINT: 256, JUDGE: 256, SUMMARY: 512}
 ANTHROPIC_TOKENS = {HINT: 1024, JUDGE: 1024, SUMMARY: 1024}

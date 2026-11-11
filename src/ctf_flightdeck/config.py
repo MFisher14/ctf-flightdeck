@@ -389,7 +389,7 @@ def _api(path: Path, table: dict, ladder: tuple[str, ...]) -> ApiConfig:
 
 def _fast(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tuple[str, ...]:
     """[api] fast: the ladder models a lane calls in fast mode. Only with the Anthropic API,
-    and only models agent/fastmode.py lists (from the claude-api skill). A model id is shown
+    and only models agent/fastmode.py lists (from Anthropic's documentation). A model id is shown
     only when it is one of those: any other string could be a key pasted into the wrong place."""
     if "fast" not in table:
         return ()

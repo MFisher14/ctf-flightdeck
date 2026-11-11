@@ -2,7 +2,7 @@
 
 Fast mode runs the same model at up to 2.5x the output speed, at a premium price. A player
 opts in per ladder model (`[api] fast = ["claude-opus-5-5"]`), and only for a model listed
-here; any other is refused with the reason. The facts come from the claude-api skill
+here; any other is refused with the reason. The facts come from Anthropic's API documentation
 (SKILL.md, "Fast Mode"; shared/model-migration.md and shared/platform-availability.md), not
 from memory:
 
@@ -14,7 +14,7 @@ from memory:
   Anthropic (an account manager, or the waitlist). Fast mode on Opus 4.8 is removed on
   2026-11-30; after that `speed: "fast"` on it returns an error.
 
-Fast mode has its own rate limit, separate from the standard one. On a 429 the skill gives
+Fast mode has its own rate limit, separate from the standard one. On a 429 the documentation gives
 two choices, waiting for retry-after or dropping `speed` to go on at standard speed; the
 Anthropic client drops it, says so, and stays at standard speed for the rest of that lane's
 context, because switching speed invalidates the prompt cache.
@@ -37,7 +37,7 @@ FAST_BETA = "fast-mode-2026-02-01"  # the beta flag the research-preview models 
 
 @dataclass(frozen=True)
 class FastMode:
-    """One model's fast mode, as the claude-api skill lists it."""
+    """One model's fast mode, as Anthropic's documentation lists it."""
 
     model: str
     price: Price  # dollars per million tokens at fast speed (cached input: the input rate)

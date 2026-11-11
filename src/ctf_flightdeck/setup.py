@@ -40,7 +40,7 @@ RUNTIMES = ("docker", "host")
 ANTHROPIC = ("https://api.anthropic.com", "ANTHROPIC_API_KEY")
 ANTHROPIC_LADDER = ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5")
 ANTHROPIC_PRICES = {
-    # Anthropic's list prices, dollars per million tokens (claude-api skill, cached 2026-11-03):
+    # Anthropic's list prices, dollars per million tokens (Anthropic's pricing as of 2026-11-03):
     # input, output, and cache reads; cache writes are counted as input. Claude Haiku 5.5's are
     # for prompts of 100K tokens or fewer (the long-context refresh keeps a lane's well under).
     "claude-haiku-5-5": Price(input=0.10, output=0.50, cached_input=0.01),
