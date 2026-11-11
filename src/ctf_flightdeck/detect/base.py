@@ -8,6 +8,10 @@ Everything a detector reads from a lane or a challenge is untrusted text. It is 
 matched against flightdeck's own rules and word lists, never followed, and any piece of it
 quoted in a reason or a suggestion is folded to one short line (`quote`), so it cannot
 forge a line in the console or the log.
+
+Windows count turns, not steps: "the last 8 turns" is every step the lane reported in its
+last 8 turns. Today the agent driver reports one step per turn; a driver that reports each
+tool call of a turn as its own step gets the same windows.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from typing import Protocol, runtime_checkable
 
 from ..core.model import Action, ActionKind, Actor, Alert, AlertKind, Challenge, Lane, Suggestion
 from ..text import untrusted
+from .hints import Technique
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,7 @@ class Signal:
     kind: AlertKind  # EFFORT, HINT, DIRECTION, LOOP or STALL
     reason: str  # words the player can check, citing the numbers and commands it used
     suggestions: tuple[Suggestion, ...] = ()  # keys h r f k e, as in the CONSOLE-SPEC table
+    technique: Technique | None = None  # HINT only: the technique the description hints at
 
     def alert(self) -> Alert:
         return Alert(self.kind, self.reason, self.suggestions)
@@ -44,25 +50,27 @@ class Detector(Protocol):
 
 @dataclass(frozen=True)
 class DetectConfig:
-    """Every threshold the detectors and the Watch use. Counts are turns or steps."""
+    """Every threshold the detectors and the Watch use. Counts are turns."""
 
-    # Effort vs value: budget = base * points/100, halved at 50+ solves, quartered at 200+.
+    # Effort vs value: budget = base * points/100, halved at 50+ solves, quartered at 200+,
+    # never below the floors (a cheap or very popular challenge still gets a few turns).
     effort_base_tokens: int = 60_000
     effort_base_turns: int = 15
-    effort_min_turns: int = 8  # the turns budget never falls below this (the tokens budget has no floor)
+    effort_min_turns: int = 8  # the turns budget never falls below this
+    effort_min_tokens: int = 16_000  # nor the tokens budget below this: about effort_min_turns short turns
     effort_points_unit: int = 100
     effort_half_solves: int = 50
     effort_quarter_solves: int = 200
     # Ignores the hint.
     hint_grace_turns: int = 4
-    hint_window: int = 8  # steps
+    hint_window: int = 8  # turns
     # Wrong direction (web).
-    direction_window: int = 6  # steps
+    direction_window: int = 6  # turns
     direction_min_fuzz: int = 3  # fuzzing commands in the window
     # Loop.
-    loop_window: int = 6  # steps
-    loop_same_command: int = 3
-    loop_same_output: int = 4
+    loop_window: int = 6  # turns
+    loop_same_command: int = 3  # turns that ran the same command
+    loop_same_output: int = 4  # turns that got the same output
     loop_output_chars: int = 200
     loop_digit_run: int = 4  # runs of this many digits or more are masked when comparing commands
     # Stall.
@@ -91,7 +99,7 @@ class DetectConfig:
         return max(0, points) / self.effort_points_unit / divisor
 
     def effort_tokens(self, points: int, solves: int) -> int:
-        return math.ceil(self.effort_base_tokens * self.effort_factor(points, solves))
+        return max(self.effort_min_tokens, math.ceil(self.effort_base_tokens * self.effort_factor(points, solves)))
 
     def effort_turns(self, points: int, solves: int) -> int:
         return max(self.effort_min_turns, math.ceil(self.effort_base_turns * self.effort_factor(points, solves)))
@@ -106,10 +114,14 @@ def quote(text: str, limit: int = QUOTE_CHARS) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-def steps(lane: Lane, last: int | None = None) -> list[Action]:
-    """The lane's own steps (STEP actions), oldest first; only the last `last` if given."""
+def steps(lane: Lane, turns: int | None = None) -> list[Action]:
+    """The lane's own steps (STEP actions), oldest first; given `turns`, only those of the
+    lane's last `turns` turns (every step of a turn counts, however many it reported)."""
     found = [a for a in lane.actions if a.kind is ActionKind.STEP and a.by is Actor.LANE]
-    return found[-last:] if last is not None else found
+    if turns is None:
+        return found
+    since = lane.turns - turns  # steps after this turn are in the window
+    return [a for a in found if a.turn > since]
 
 
 def suggestions(*items: tuple[str, str] | tuple[str, str, str]) -> tuple[Suggestion, ...]:

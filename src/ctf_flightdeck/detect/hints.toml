@@ -7,11 +7,23 @@
 #   description cues: words/phrases a description uses when it points at this technique
 #   actions     cues a lane's commands, tools, libraries or file names show when it follows it
 #
-# Cues are matched as whole words after normalisation (accents dropped, lower case, runs of
-# other characters collapsed to one space). Keep description cues to plain English a setter
-# would write; keep action cues to tool and library names and command words, so a lane that
-# merely mentions a technique in prose does not count as doing it. Challenge text is data:
-# nothing here is a payload or an instruction, only words to match.
+# Description cues are matched as whole words after normalisation (accents dropped, lower
+# case, runs of other characters collapsed to one space; the last word may take a plural s or
+# es), within one clause, and never just after a negation ("nothing is hidden in the pixels"
+# names nothing). Keep them to phrases a setter writes when they mean the technique: a common
+# word on its own ("stack", "format", "download", "hash", "png") appears in descriptions that
+# hint at nothing, and the loader refuses it.
+#
+# Action cues made of words (joined by spaces, dots, dashes or underscores) are matched the
+# same way; any other action cue is matched as written, symbols and all ("' or ", "<script",
+# "__class__"), and case-sensitively when it has capitals ("tEXt"). Keep action cues to tool
+# and library names, command words and payload shapes, so a lane that merely mentions a
+# technique in prose does not count as doing it.
+#
+# Challenge text is data: nothing here is a payload or an instruction, only text to match.
+
+# Phrases blanked from a description before matching: boilerplate that hints at nothing.
+boilerplate = ["flag format", "format of the flag", "format of flags", "flag is in the format"]
 
 [[technique]]
 id = "sstv"
@@ -24,57 +36,57 @@ actions = ["sstv", "qsstv", "pysstv", "rx-sstv", "robot36", "slowrx"]
 id = "morse"
 name = "Morse code"
 advice = "Decode the signal as Morse code (dots and dashes) to letters."
-description = ["morse", "dots and dashes", "dot dash", "cw signal", "telegraph", "di dah"]
+description = ["morse", "dots and dashes", "dot dash", "cw signal", "telegraph", "di dah", "shorts and longs", "longs and shorts", "long and short tones", "long and short beeps", "long and short flashes"]
 actions = ["morse", "morse-decoder", "cw", "morsedecoder", "from_morse"]
 
 [[technique]]
 id = "dtmf"
 name = "DTMF tones"
 advice = "Decode the audio as DTMF touch-tones into the dialled digits."
-description = ["dtmf", "touch tone", "touch-tone", "dial tone", "phone keypad", "dialled"]
+description = ["dtmf", "touch tone", "touch-tone", "dial tone", "phone keypad", "dialled", "dialed"]
 actions = ["dtmf", "multimon", "multimon-ng", "dtmf-decode", "goertzel"]
 
 [[technique]]
 id = "spectrogram"
 name = "Spectrogram text"
 advice = "Open the audio's spectrogram (Audacity or sox) and read the text drawn in the frequencies."
-description = ["spectrogram", "spectrum", "frequencies", "waterfall", "look at the picture in the sound", "see the sound"]
+description = ["spectrogram", "audio spectrum", "frequency spectrum", "waterfall display", "waterfall plot", "in the frequencies", "picture in the sound", "see the sound"]
 actions = ["spectrogram", "sox", "specgram", "audacity", "librosa.stft", "melspectrogram"]
 
 [[technique]]
 id = "lsb-steg"
 name = "LSB steganography"
 advice = "Extract the least-significant bits of the image or audio samples."
-description = ["least significant", "lsb", "hidden in the pixels", "hidden in the image", "look closer at the bits"]
+description = ["least significant", "lsb", "hidden in the pixels", "low bits", "lowest bit", "low-order bits", "bit plane", "look closer at the bits"]
 actions = ["lsb", "stegsolve", "zsteg", "stegano", "lsb_extract", "getLSB"]
 
 [[technique]]
 id = "steghide"
 name = "steghide / embedded data"
 advice = "Try steghide (and a passphrase from the description) to pull the embedded file out."
-description = ["steghide", "embedded", "hidden file inside", "passphrase is", "something is still in there", "carrier"]
+description = ["steghide", "stegseek", "outguess", "carrier image", "carrier file", "embedded with a passphrase", "jpeg steganography", "jpg steganography"]
 actions = ["steghide", "stegseek", "outguess", "steg_extract"]
 
 [[technique]]
 id = "exif"
 name = "EXIF / image metadata"
 advice = "Read the image metadata (EXIF, XMP, comment fields) with exiftool."
-description = ["metadata", "exif", "where was this photo taken", "gps", "camera details", "when was it taken"]
-actions = ["exif", "exiftool", "exifread", "identify -verbose", "pil.*_getexif", "image.info"]
+description = ["metadata", "exif", "where was this photo taken", "when was this photo taken", "gps coordinates", "gps location", "camera details", "camera model", "when was it taken"]
+actions = ["exif", "exiftool", "exifread", "identify -verbose", "getexif"]
 
 [[technique]]
 id = "png-chunk"
 name = "PNG chunks"
 advice = "Walk the PNG chunks (pngcheck); the data hides in an extra or malformed chunk."
-description = ["png", "chunk", "appended after the image", "extra data", "corrupt image", "truncated height"]
+description = ["png chunk", "extra chunk", "private chunk", "ancillary chunk", "critical chunk", "chunk after", "ihdr", "idat", "iend", "corrupt png", "corrupted png", "broken png", "truncated height", "wrong height"]
 actions = ["pngcheck", "pngchunk", "pngtools", "zlib.decompress", "idat", "iend"]
 
 [[technique]]
 id = "png-text"
 name = "PNG text chunks (tEXt/zTXt)"
 advice = "Read the PNG text chunks (tEXt, zTXt, iTXt), decompressing the zTXt ones."
-description = ["text chunk", "comment in the image", "ztxt", "itxt", "png comment", "author field"]
-actions = ["ztxt", "itxt", "tEXt", "pnginfo", "exiftool -png", "zlib.decompress"]
+description = ["text chunk", "png text", "comment in the image", "ztxt", "itxt", "png comment", "author field"]
+actions = ["ztxt", "itxt", "tEXt", "zTXt", "iTXt", "pnginfo", "zlib.decompress"]
 
 [[technique]]
 id = "qr"
@@ -87,21 +99,21 @@ actions = ["zbarimg", "zbar", "pyzbar", "qrdecode", "qreader", "quirc"]
 id = "xor"
 name = "XOR cipher"
 advice = "XOR the bytes against a repeating or single-byte key (try a crib or frequency analysis)."
-description = ["xor", "exclusive or", "repeating key", "single byte key", "key is one byte"]
-actions = ["xortool", "xor_key", "cyclic xor", "bytes ^", "brute_xor", "from pwn import xor"]
+description = ["xor", "exclusive or", "repeating key", "single byte key", "one byte key", "key is one byte"]
+actions = ["xortool", "xor_key", "cyclic xor", "brute_xor", "strxor", "xor_bytes", "from pwn import xor", "xor(", "^ key", "^key", "^ k for", "^ 0x", "^0x"]
 
 [[technique]]
 id = "base64"
 name = "base64"
 advice = "base64-decode the blob (it may be wrapped in another layer or a data URL)."
-description = ["base64", "base 64", "b64", "looks like gibberish letters", "ends with ==", "data url"]
+description = ["base64", "base 64", "b64", "looks like gibberish letters", "plus and slash", "two equals signs", "data url"]
 actions = ["base64", "b64decode", "base64 -d", "atob", "from base64"]
 
 [[technique]]
 id = "base32"
 name = "base32"
 advice = "base32-decode the blob (upper-case letters A-Z and 2-7, '=' padding)."
-description = ["base32", "base 32", "a to z and 2 to 7", "upper case letters and digits"]
+description = ["base32", "base 32", "a to z and 2 to 7"]
 actions = ["base32", "b32decode", "base32 -d"]
 
 [[technique]]
@@ -115,8 +127,8 @@ actions = ["base85", "b85decode", "a85decode", "ascii85", "basE91"]
 id = "rot13"
 name = "ROT13 / Caesar shift"
 advice = "Try ROT13, then every Caesar shift (two shifts compose to one shift)."
-description = ["rot13", "rot-13", "caesar", "shift cipher", "shift by", "rotate the letters", "twice the shifts"]
-actions = ["rot13", "caesar", "tr a-z", "codecs.*rot_13", "shift_cipher", "rot_n"]
+description = ["rot13", "rot-13", "caesar", "shift cipher", "rotate the letters", "rotate each letter", "rotated by thirteen", "thirteen places", "twice the shifts", "letters are shifted"]
+actions = ["rot13", "rot_13", "caesar", "tr a-z", "shift_cipher", "rot_n"]
 
 [[technique]]
 id = "vigenere"
@@ -143,29 +155,29 @@ actions = ["railfence", "rail_fence", "columnar", "transposition", "zigzag"]
 id = "rsa"
 name = "RSA"
 advice = "Attack the RSA parameters: factor a small or shared modulus, or use a small exponent."
-description = ["rsa", "public key", "modulus", "the exponent is", "e = 3", "e = 7", "two primes", "common modulus"]
-actions = ["rsactftool", "factordb", "sympy.factorint", "gmpy2", "pow(c, d, n", "crt ", "wiener"]
+description = ["rsa", "modulus", "public exponent", "small exponent", "the exponent is", "e = 3", "e = 7", "e is 3", "two primes", "close primes", "common modulus", "factor the modulus"]
+actions = ["rsactftool", "factordb", "sympy.factorint", "gmpy2", "pow(c, d, n", "pow(c,d,n", "wiener"]
 
 [[technique]]
 id = "ecdsa-nonce"
 name = "ECDSA biased/repeated nonce"
 advice = "Attack the ECDSA signatures: a repeated or biased nonce leaks the private key (lattice / HNP)."
-description = ["ecdsa", "signature", "nonce", "signs every", "look a little too alike", "k value", "hidden number problem"]
-actions = ["lattice", "hnp", "lll", "fpylll", "recover_nonce", "sage.*lattice"]
+description = ["ecdsa", "dsa", "biased nonce", "nonce bias", "signs every", "look a little too alike", "k value", "hidden number problem"]
+actions = ["lattice", "hnp", "lll", "fpylll", "recover_nonce"]
 
 [[technique]]
 id = "hash-crack"
 name = "Password / hash cracking"
 advice = "Crack the hash with a wordlist (hashcat or john) rather than brute force."
-description = ["hash", "md5", "sha1", "ntlm", "bcrypt", "crack the password", "wordlist", "rockyou"]
+description = ["crack the hash", "crack the password", "password hash", "hashed password", "hash of the password", "ntlm", "bcrypt", "md5crypt", "rockyou", "shadow file", "john the ripper", "hashcat"]
 actions = ["hashcat", "john", "rockyou", "hashid", "crackstation", "--wordlist"]
 
 [[technique]]
 id = "jwt"
 name = "JWT tampering"
 advice = "Attack the JWT: try alg=none, confused algorithms, or a weak HMAC secret."
-description = ["jwt", "json web token", "bearer token", "three parts separated by dots", "alg", "hs256", "rs256"]
-actions = ["jwt", "jwt_tool", "jwt.decode", "pyjwt", "jwt-cracker", "alg none"]
+description = ["jwt", "json web token", "bearer token", "three parts separated by dots", "alg header", "alg field", "none algorithm", "hs256", "rs256"]
+actions = ["jwt", "jwt_tool", "jwt.decode", "pyjwt", "jwt-cracker", '"alg":"none"', '"alg": "none"', "alg=none"]
 
 [[technique]]
 id = "cookie-tamper"
@@ -178,145 +190,145 @@ actions = ["flask-unsign", "flask_unsign", "itsdangerous", "cookie-monster", "se
 id = "sqli"
 name = "SQL injection"
 advice = "Test the input for SQL injection (a quote that breaks the query), then extract with UNION or blind queries."
-description = ["sql", "database query", "login form", "search box", "query is built from", "single quote"]
-actions = ["sqlmap", "union select", "' or ", "information_schema", "blind sqli", "--batch"]
+description = ["sql injection", "sqli", "sql query", "database query", "query is built from", "builds its sql", "single quote", "union select"]
+actions = ["sqlmap", "union select", "' or ", "' or'", "information_schema", "blind sqli"]
 
 [[technique]]
 id = "ssti"
 name = "Server-side template injection"
 advice = "Test the reflected input for server-side template injection (a template expression that is evaluated)."
-description = ["template", "mail merge", "renders your input", "jinja", "twig", "fill in the template", "name is shown back"]
-actions = ["ssti", "jinja2", "{{7*7}}", "tplmap", "__class__", "render_template_string"]
+description = ["template injection", "ssti", "page template", "rendered into the template", "renders your input", "jinja", "twig", "mail merge", "fill in the template", "name is shown back"]
+actions = ["ssti", "jinja2", "{{7*7}}", "{{ 7*7 }}", "tplmap", "__class__", "render_template_string"]
 
 [[technique]]
 id = "xss"
 name = "Cross-site scripting"
 advice = "Find where your input is reflected into the page unescaped; a support bot that reads tickets is the sink."
-description = ["renders markdown", "safe html", "a bot will read", "very eager to help", "admin reviews", "comment is shown"]
-actions = ["xss", "onerror=", "document.cookie", "<script", "img src=x", "beef "]
+description = ["xss", "cross site scripting", "cross-site scripting", "renders markdown", "safe html", "a bot will read", "admin bot", "very eager to help", "admin reviews", "comment is shown"]
+actions = ["xss", "onerror=", "document.cookie", "<script", "img src=x", "beef"]
 
 [[technique]]
 id = "lfi"
 name = "Path traversal / local file include"
 advice = "Try path traversal on the file parameter (../ out of the export directory) to read arbitrary files."
-description = ["download", "export", "picks its file", "filename parameter", "read the report", "include", "view file"]
+description = ["path traversal", "directory traversal", "local file inclusion", "file inclusion", "lfi", "filename parameter", "file parameter", "picks its file", "view file", "any file on the server", "dot dot slash"]
 actions = ["..%2f", "path traversal", "lfi", "/etc/passwd", "php://filter", "dotdot"]
 
 [[technique]]
 id = "ssrf"
 name = "Server-side request forgery"
 advice = "Make the server fetch a URL you choose (SSRF) to reach an internal service or metadata endpoint."
-description = ["fetches the url", "server will request", "preview the link", "internal service", "webhook", "url you give it"]
+description = ["ssrf", "server side request forgery", "server-side request forgery", "fetches the url", "server will request", "preview the link", "link preview", "internal service", "url you give it"]
 actions = ["ssrf", "169.254.169.254", "gopher://", "localhost admin", "internal_url"]
 
 [[technique]]
 id = "deserialization"
 name = "Insecure deserialization"
 advice = "Look at what untrusted data is deserialized (pickle, PHP, Java); a crafted object runs code."
-description = ["serialized", "pickle", "unserialize", "deserialize", "object is restored", "marshal"]
+description = ["serialized", "deserialization", "pickle", "unserialize", "deserialize", "object is restored", "marshal"]
 actions = ["pickle", "__reduce__", "ysoserial", "phpggc", "yaml.load", "marshal.loads"]
 
 [[technique]]
 id = "zip-crack"
 name = "ZIP password / known-plaintext"
 advice = "Crack the ZIP password (john/zip2john), or use a known-plaintext attack if a file inside is known."
-description = ["zip", "password protected archive", "encrypted zip", "locked archive", "the password is weak"]
+description = ["zip password", "password protected zip", "password-protected zip", "password protected archive", "password-protected archive", "encrypted zip", "locked zip", "locked archive", "zip2john", "bkcrack"]
 actions = ["zip2john", "fcrackzip", "bkcrack", "pkcrack", "unzip -P", "7z x -p"]
 
 [[technique]]
 id = "nested-archive"
 name = "Nested / recursive archive"
 advice = "Keep unpacking: the archive holds another archive; automate the recursion."
-description = ["archive inside an archive", "nested", "matryoshka", "russian dolls", "unpack again and again", "many layers"]
+description = ["nested archive", "nested zip", "zip inside a zip", "archive inside an archive", "matryoshka", "russian dolls", "nesting dolls", "unpack again and again", "keep extracting", "keep unzipping"]
 actions = ["binwalk -e", "recursive unzip", "while unzip", "7z x", "unpack_all", "7z l"]
 
 [[technique]]
 id = "file-carving"
 name = "File carving"
 advice = "Carve embedded files out of the blob by their magic bytes (binwalk, foremost, scalpel)."
-description = ["appended", "embedded file", "more than one file", "hidden after the end", "polyglot", "carve"]
-actions = ["binwalk", "foremost", "scalpel", "photorec", "carve", "dd skip="]
+description = ["appended file", "appended to the end", "appended after the image", "embedded file", "file inside the file", "more than one file", "hidden after the end", "polyglot", "carve", "carving", "binwalk"]
+actions = ["binwalk", "foremost", "scalpel", "photorec", "carve", "dd if="]
 
 [[technique]]
 id = "disk-forensics"
 name = "Disk image forensics"
 advice = "Walk the file system of the disk image (the sleuth kit, autopsy) and look in deleted or slack space."
-description = ["disk image", "partition", "file system", "the disk remembers", "imaged the", "deleted files", "slack space"]
-actions = ["sleuthkit", "tsk_recover", "fls ", "mmls", "autopsy", " fls", "icat ", "testdisk"]
+description = ["disk image", "partition table", "file system image", "filesystem image", "the disk remembers", "imaged the", "recover the deleted", "undelete", "slack space"]
+actions = ["sleuthkit", "tsk_recover", "fls", "mmls", "autopsy", "icat", "testdisk"]
 
 [[technique]]
 id = "memory-forensics"
 name = "Memory forensics"
 advice = "Analyse the memory dump with Volatility: list processes, then pull the artefact you need."
-description = ["memory dump", "ram capture", "vmem", "what was running", "process list", "crash dump"]
+description = ["memory dump", "memory image", "ram capture", "ram dump", "vmem", "what was running", "process list", "crash dump"]
 actions = ["volatility", "vol.py", "volatility3", "rekall", "pslist", "memdump"]
 
 [[technique]]
 id = "pcap"
 name = "Network capture analysis"
 advice = "Follow the streams in the capture (Wireshark / tshark); the flag is in a reassembled transfer."
-description = ["pcap", "packet capture", "network traffic", "wireshark", "follow the stream", "sniffed", "capture file"]
+description = ["pcap", "pcapng", "packet capture", "network capture", "network traffic", "wireshark", "follow the stream", "tcp stream", "sniffed", "capture file"]
 actions = ["wireshark", "tshark", "scapy", "follow tcp", "pyshark", "rdpcap", "tcpflow"]
 
 [[technique]]
 id = "usb-hid"
 name = "USB HID keystroke decode"
 advice = "Decode the USB HID keyboard or mouse capture into the keys that were typed."
-description = ["usb", "keyboard", "hid", "keystrokes", "what was typed", "mouse movements", "capture of the usb"]
-actions = ["usb.capdata", "hid", "usbhid", "keystroke", "ducky", "map_hid"]
+description = ["usb capture", "usb traffic", "usb keyboard", "usb mouse", "usb hid", "usbpcap", "keystrokes", "what was typed", "mouse movements", "capture of the usb"]
+actions = ["usb.capdata", "usbhid", "keystroke", "ducky", "map_hid"]
 
 [[technique]]
 id = "git-leak"
 name = "Exposed .git / VCS history"
 advice = "Pull the exposed .git directory and read deleted or earlier versions of the files."
-description = [".git", "version history", "source control", "repository is exposed", "earlier commit", "git log"]
+description = [".git folder", ".git directory", "exposed .git", "git history", "version history", "source control", "repository is exposed", "earlier commit", "git log"]
 actions = ["git-dumper", "gitdumper", "git log", "git show", "git checkout", "gittools"]
 
 [[technique]]
 id = "angr-symbolic"
 name = "Symbolic execution"
 advice = "Let a symbolic-execution engine (angr) or an SMT solver find the input that passes the check."
-description = ["checker", "right input", "passphrase check", "serial key", "license check", "lines them all up"]
+description = ["symbolic execution", "symbolically", "angr", "smt solver", "constraint solver", "lines them all up"]
 actions = ["angr", "z3", "claripy", "symbolic", "simgr.explore", "boolector", "SimProcedure"]
 
 [[technique]]
 id = "ret2libc"
 name = "Buffer overflow / ret2libc"
 advice = "Find the stack overflow, leak libc, and build a ROP chain (pwntools)."
-description = ["buffer", "stack", "overflow", "exactly as many", "room for", "no canary", "gets(", "fixed-size buffer"]
+description = ["buffer overflow", "stack overflow", "overflow the buffer", "smash the stack", "stack smashing", "ret2libc", "return to libc", "rop chain", "rop", "no canary", "fixed-size buffer"]
 actions = ["pwntools", "from pwn import", "ropgadget", "ret2libc", "cyclic", "rop chain", "one_gadget", "checksec"]
 
 [[technique]]
 id = "format-string"
 name = "Format string"
 advice = "Exploit the format-string bug: a user-controlled format argument leaks or writes memory."
-description = ["printf", "reads your", "format", "prints your name back", "logging your input", "format specifier"]
-actions = ["fmtstr_payload", "fmtstr", "format string", "format-string", "%7$s", "pwntools fmt"]
+description = ["format string", "format-string", "format specifier", "printf", "prints your name back", "logging your input"]
+actions = ["fmtstr_payload", "fmtstr", "format string", "format-string", "%7$s", "%p.%p", "%p %p", "%x.%x", "%x %x", "pwntools fmt"]
 
 [[technique]]
 id = "python-jail"
 name = "Python sandbox escape"
 advice = "Escape the Python jail: reach a dangerous builtin through allowed objects' attributes."
-description = ["python jail", "sandbox", "only lets you", "pyjail", "eval", "restricted shell", "escape"]
+description = ["python jail", "pyjail", "py jail", "python sandbox", "escape the python", "restricted python", "no builtins", "without builtins"]
 actions = ["__builtins__", "__subclasses__", "pyjail", "__globals__", "getattr(", "breakout"]
 
 [[technique]]
 id = "padding-oracle"
 name = "Padding oracle"
 advice = "Use the padding oracle to decrypt the CBC ciphertext a byte at a time."
-description = ["padding", "oracle", "cbc", "tells you whether", "answers eventually", "block cipher", "valid padding"]
+description = ["padding oracle", "valid padding", "invalid padding", "bad padding", "padding error", "tells you whether the padding"]
 actions = ["padbuster", "padding_oracle", "padding-oracle", "bit flip", "poracle"]
 
 [[technique]]
 id = "hash-extension"
 name = "Hash length extension"
 advice = "Forge the MAC with a hash length-extension attack (hashpump) against the MD-construction hash."
-description = ["mac", "secret is prepended", "sha256(secret", "md5(secret", "signature appended", "length extension"]
+description = ["length extension", "secret is prepended", "secret prefix", "prepends a secret", "sha256(secret", "md5(secret", "signature appended"]
 actions = ["hashpump", "hash_extender", "length_extension", "hlextend", "hashpumpy"]
 
 [[technique]]
 id = "lattice-knapsack"
 name = "Knapsack / lattice reduction"
 advice = "Break the knapsack (Merkle-Hellman) with lattice reduction (LLL)."
-description = ["knapsack", "merkle hellman", "subset sum", "superincreasing", "sums to"]
+description = ["knapsack", "merkle hellman", "merkle-hellman", "subset sum", "superincreasing"]
 actions = ["lll", "sage", "fpylll", "knapsack", "lattice reduction", "merkle_hellman"]
