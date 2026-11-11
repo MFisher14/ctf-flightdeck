@@ -45,6 +45,16 @@ AUTO, CONFIRM, MANUAL, OFF = Policy.AUTO, Policy.CONFIRM, Policy.MANUAL, Policy.
 TOKEN_ENV = "TEST_CTFD_TOKEN"
 FAKE_TOKEN = "fake-platform-token-for-tests-7731"  # not a real token, and not shaped like one
 FAKE_KEY = "fake-model-key-for-tests-2208"
+# Shaped like CTFd API tokens (ctfd_ and 64 hex digits; older CTFd: 64 hex digits), but made up.
+# Built here, so this file never holds a token shape for the secret guard to find.
+CTFD_SHAPED = "ctfd_" + "0123456789abcdef" * 4
+HEX_SHAPED = "deadbeef" * 8
+CONFIRM_NOT_ENFORCED = (
+    'the instance policy is "confirm", but flightdeck does not yet ask you before a lane first reaches '
+    "a live instance: a lane can reach it from its first turn, and a docker lane gets an open network "
+    '(bridge: any host, not only the instance). Watch the lanes, or set [policies] instance = "manual" '
+    "to keep docker lanes off instances"
+)
 
 EVENT_CTFD = {
     "name": '"Harbour Lights CTF"',
@@ -344,12 +354,55 @@ def test_more_lanes_than_the_rules_allow_is_refused():
     assert check(bounded, policies(agents=OFF), max_lanes=9, environ=TOKEN_SET) == []  # no lanes at all
 
 
-@pytest.mark.parametrize("name", ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"])
+OTHER_KEYS = [
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GITHUB_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",  # Claude Code's
+    "HF_TOKEN",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "XAI_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "GITLAB_TOKEN",
+]
+
+
+@pytest.mark.parametrize("name", OTHER_KEYS)
 def test_a_token_variable_that_holds_another_services_key_is_refused(name):
+    shared = profile(token_env=name, url="https://collector.example.net")  # a teammate's profile, say
+    problems = check(shared, policies(), max_lanes=4, environ={name: FAKE_KEY})
+    assert refusals(problems) == [
+        f"event.token_env names {name}, a variable for another service's key, not a CTFd token: flightdeck would "
+        "send its value to https://collector.example.net. Name the variable that holds your CTFd token, like CTFD_TOKEN"
+    ]
+    assert FAKE_KEY not in str(problems)
+
+
+@pytest.mark.parametrize(
+    "name, suffix",
+    [
+        ("NEWMODEL_API_KEY", "_API_KEY"),
+        ("SMS_AUTH_TOKEN", "_AUTH_TOKEN"),
+        ("CHAT_OAUTH_TOKEN", "_OAUTH_TOKEN"),
+        ("STORAGE_ACCESS_KEY", "_ACCESS_KEY"),
+        ("SHOP_SECRET_KEY", "_SECRET_KEY"),
+        ("DEPLOY_PRIVATE_KEY", "_PRIVATE_KEY"),
+        ("CLOUD_SESSION_TOKEN", "_SESSION_TOKEN"),
+    ],
+)
+def test_a_token_variable_named_like_another_services_key_is_refused(name, suffix):
     problems = check(profile(token_env=name), policies(), max_lanes=4, environ={name: FAKE_KEY})
-    assert len(refusals(problems)) == 1
-    assert f"event.token_env names {name}" in refusals(problems)[0]
-    assert "https://ctf.example.org" in refusals(problems)[0]  # where it would have gone
+    assert refusals(problems) == [
+        f"event.token_env names {name}, a name ending in {suffix} like other services' key variables (a name with "
+        "CTFD in it is fine), not a CTFd token: flightdeck would send its value to https://ctf.example.org. Name the "
+        "variable that holds your CTFd token, like CTFD_TOKEN"
+    ]
+
+
+@pytest.mark.parametrize("name", ["CTFD_API_KEY", "HARBOUR_CTFD_AUTH_TOKEN", "CTFD_TOKEN", "HARBOUR_TOKEN", "EVENT_API_TOKEN"])
+def test_a_token_variable_with_ctfd_in_its_name_or_no_key_suffix_is_accepted(name):
+    assert check(profile(token_env=name), policies(), max_lanes=4, environ={name: FAKE_TOKEN}) == []
 
 
 def test_a_token_variable_that_is_the_configs_api_key_variable_is_refused(tmp_path):
@@ -569,6 +622,14 @@ BAD_VALUES = [
     ("event", "url", '"https://ctf example.org"', "event.url must not contain spaces or control characters"),
     ("event", "token_env", '"my token"', "event.token_env must be the name of an environment variable"),
     ("event", "token_env", '"9LIVES"', "event.token_env must be the name of an environment variable"),
+    (
+        "event", "token_env", '"ctfd_token"',
+        "event.token_env must be the name of an environment variable, like CTFD_TOKEN (upper-case letters, digits "
+        "and _, not starting with a digit, at most 64 characters), not the token itself",
+    ),
+    ("event", "token_env", '"' + "T" * 65 + '"', "event.token_env must be the name of an environment variable, like CTFD_TOKEN"),
+    ("event", "token_env", f'"{CTFD_SHAPED}"', "event.token_env looks like a CTFd API token itself, not the name of the variable"),
+    ("event", "token_env", f'"{HEX_SHAPED}"', "event.token_env looks like a CTFd API token itself, not the name of the variable"),
 ]
 
 
@@ -614,14 +675,42 @@ def test_a_table_that_is_not_a_table_is_an_error(tmp_path):
     assert "rules must be a table ([rules]) (got 5)" in message
 
 
-def test_error_messages_never_show_a_string_from_the_profile(tmp_path):
-    pasted = "pasted-secret-value-5150"
+@pytest.mark.parametrize("pasted", ["pasted-secret-value-5150", CTFD_SHAPED, HEX_SHAPED])
+def test_error_messages_never_show_a_string_from_the_profile(tmp_path, pasted):
     for table, key in [("event", "token_env"), ("event", "platform"), ("event", "url"), ("rules", "live_targets"), ("policies", "agents"), ("rules", "ai_allowed")]:
         tables = {"event": dict(EVENT_CTFD), "rules": dict(RULES_OPEN), "policies": {}}
         tables[table][key] = f'"{pasted}"'
         message = load_error(write(tmp_path, toml(**tables)))
         assert pasted not in message, (table, key)
         assert f"{table}.{key}" in message
+
+
+@pytest.mark.parametrize("pasted", [CTFD_SHAPED, HEX_SHAPED])
+def test_a_token_pasted_into_token_env_is_refused_and_never_shown(tmp_path, env, pasted):
+    path = write(tmp_path, toml({**EVENT_CTFD, "token_env": f'"{pasted}"'}, RULES_OPEN))
+    message = load_error(path)
+    assert message == (
+        f"{path}: event.token_env looks like a CTFd API token itself, not the name of the variable that holds it: "
+        'export the token (export CTFD_TOKEN=...) and name that variable here, like token_env = "CTFD_TOKEN"'
+    )
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 2
+    assert result.stdout == "" and result.stderr == f"flightdeck: {message}\n"
+    # A profile built in code cannot carry one either, so describe() and check() never get one to show.
+    with pytest.raises(ValueError) as built:
+        profile(token_env=pasted)
+    assert str(built.value).startswith("token_env must be the name of an environment variable, like CTFD_TOKEN")
+    assert pasted not in str(built.value)
+
+
+def test_token_env_is_an_upper_case_name_of_at_most_64_characters(tmp_path):
+    longest = "T" * 64
+    loaded, _ = load_profile(write(tmp_path, toml({**EVENT_CTFD, "token_env": f'"{longest}"'}, RULES_OPEN)))
+    assert loaded.token_env == longest
+    assert check(loaded, defaults(loaded), max_lanes=4, environ={longest: FAKE_TOKEN}) == []
+    for bad in ("T" * 65, "ctfd_token", "Ctfd_Token", "9LIVES", "MY TOKEN", ""):
+        with pytest.raises(ValueError, match="^token_env must be the name of an environment variable"):
+            profile(token_env=bad)
 
 
 def test_a_profile_that_cannot_be_read_says_why(tmp_path):
