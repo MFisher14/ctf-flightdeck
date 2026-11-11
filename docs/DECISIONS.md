@@ -24,7 +24,7 @@ deviate.
 | D15 | Local models | The orchestrator is code, not a model. An optional **local model role** (no API key) may serve small jobs: triage hints from descriptions, the "ignores the hint" detector, lane summaries for escalation, and media helpers (audio transcription, image description). Rules come first; the local model is never required. Candidates to evaluate in M3: Cactus (`pip install cactus-compute`, Apache-2.0, small tool-calling, transcription and vision models; no OpenAI-compatible server per its README, so it needs its own adapter; set `CACTUS_TELEMETRY=0`), and Ollama / llama.cpp / MLX (OpenAI-compatible local servers). Not in M0 or M1. |
 | D16 | Console layout (2026-11-10, M0 review) | Route C: a **fleet view** (board + every lane, attention-sorted) and a **focus view** for one lane (transcript, files and diffs, chat box). One-key interventions in the fleet; a chat box and slash commands in both. Rounded panels, slanted header, alert chips, plain Unicode only. Details in CONSOLE-SPEC; the behaviours listed there under "Proposed at the M0 review" are not yet signed off. |
 
-## Proposed in M1 (built; confirm or change them)
+## Proposed in M1 (built; confirmed by the player on 2026-11-11)
 
 | # | Topic | Proposal |
 |---|---|---|
@@ -37,7 +37,7 @@ deviate.
 | P7 | Unpriced models | Cost comes from the API (OpenRouter reports it), else the config's price, else it is unknown. A dollar-capped lane whose cost becomes unknown asks once before carrying on without the dollar cap. |
 
 
-## Proposed in M2 to M4 (built; confirm or change them)
+## Proposed in M2 to M4 (built; confirmed by the player on 2026-11-11, P8 changed: see D17)
 
 | # | Topic | Proposal |
 |---|---|---|
@@ -48,3 +48,11 @@ deviate.
 | P12 | Cactus Needle | An adapter and an optional extra (`ctf-flightdeck[cactus]`), off unless asked for, its telemetry turned off. In the spike it beat keyword rules only when given the same keywords as triggers (70% against 67% on invented blurbs), so nothing uses it by default. |
 | P13 | CTFd answers | CTFd's "already solved" and "locked out" are not a correct flag: the deck asks the player (and in team mode "already solved" closes the challenge at once). A flag attempt is never retried. |
 | P14 | Extras | `[cactus]` (Cactus Needle) and `[build]` (pytest, for `flightdeck build check`) are optional extras, so the default install stays small. |
+
+## 2026-11-11: decided with the player
+
+| # | Topic | Decision |
+|---|---|---|
+| D17 | L1 isolation (changes P8) | When lanes run in Docker, the player's L1 solvers run in Docker too (a container per engine run, the pack mounted read-only), so a hostile handout cannot reach the player's machine through a solver's parser. On the host runtime they run as the player, as before. |
+| D18 | Keys | Keys live in the environment or in `~/.config/ctf-flightdeck/keys.env` (owner-only, outside the repository); the config names each key's variable and never holds a key. A variable set in the environment wins over the file. |
+| D19 | Model APIs | flightdeck's own lanes may use the Anthropic Messages API directly (the player's Anthropic key first), with an OpenAI-compatible API (OpenRouter) as the automatic fallback when the first keeps failing; a lane that falls back stays there for the rest of its current context. |
