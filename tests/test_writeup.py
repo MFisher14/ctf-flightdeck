@@ -788,7 +788,7 @@ def surrogate_run(tmp_path: Path) -> RunRecord:
     """Alpha's lane set a plan holding a lone surrogate (valid JSON from a model, which the real
     Toolbox takes for a plan); Beta was solved after it."""
     plan = tool(tmp_path, "set_plan", {"plan": "decode the emoji \ud83d note"})
-    assert not plan.error and "\ud83d" in plan.action
+    assert not plan.error and "\ud83d" in plan.plan  # the console's action line shows it escaped already
     run = Run(tmp_path / "run", [Challenge("a", "Alpha", "misc", 50), Challenge("b", "Beta", "web", 100)],
               answers={"a": "t{a}", "b": "t{b}"})
     a, b = run.lane("a"), run.lane("b")
@@ -802,12 +802,12 @@ def surrogate_run(tmp_path: Path) -> RunRecord:
     return run.close()
 
 
-def test_a_lone_surrogate_from_the_run_is_shown_as_a_mark(tmp_path):
+def test_a_lone_surrogate_from_the_run_is_shown_escaped(tmp_path):
     record = surrogate_run(tmp_path)
     assert "\ud83d" in record.lanes["L01"].plan  # read back as it was written
     text = writeup.draft(record, "a")
     text.encode("utf-8")  # a file can hold it
-    assert "1. Turn 1, the lane's plan: `decode the emoji � note`" in text
+    assert "1. Turn 1, the lane's plan: `decode the emoji \\ud83d note`" in text  # escaped, as text.untrusted() shows it
 
 
 # ---------------------------------------------------------------------- redaction

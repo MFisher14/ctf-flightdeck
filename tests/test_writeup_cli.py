@@ -121,7 +121,7 @@ def test_a_lone_surrogate_in_the_run_neither_stops_the_command_nor_loses_a_draft
     assert result.exit_code == 0, result.output
     folder = record.dir / "writeups"
     assert sorted(p.name for p in folder.iterdir()) == ["a.md", "b.md"]  # no temporary file left, none lost
-    assert "`decode the emoji � note`" in (folder / "a.md").read_text(encoding="utf-8")
+    assert "`decode the emoji \\ud83d note`" in (folder / "a.md").read_text(encoding="utf-8")  # escaped
 
 
 def test_a_draft_utf8_cannot_hold_is_refused_and_leaves_no_temporary_file(tmp_path):
@@ -202,7 +202,7 @@ def test_a_model_name_that_is_not_text_is_shown_with_a_mark(tmp_path):
         result = invoke(record.dir, "--polish", model, "--config", config_file(tmp_path, server))
     assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
     assert result.exit_code == 0, result.output
-    assert result.stdout.splitlines()[-1].startswith("polish: 1 of 1 drafts with fake�model, ")
+    assert result.stdout.splitlines()[-1].startswith("polish: 1 of 1 drafts with fake\\xffmodel, ")  # the byte, escaped
 
 
 def test_polish_without_a_usable_config_stops_before_writing_anything(tmp_path):
