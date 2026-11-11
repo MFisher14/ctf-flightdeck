@@ -18,9 +18,9 @@ login and models instead (`[agents]` in your config). Which models fit your mach
 | `mlx` | An MLX server on this machine, `http://127.0.0.1:8080/v1` | none |
 | `custom` | Any OpenAI-compatible API (`--base-url`, `--key-env`) | yours |
 
-A model on your own machine costs nothing and has no provider's safety classifier in front of it,
-so `init` writes no dollar cap for it. `flightdeck models ID` prints the config lines for a model
-from its catalog.
+A model on your own machine costs nothing, so `init` writes no dollar cap for it, and no
+provider's safety classifier stands in front of it. `flightdeck models ID` prints the config
+lines for a model from its catalog.
 
 Your `[models]` ladder lists model ids weakest first: lanes start on the first, and escalating
 moves one step up. `flightdeck config --example` shows every key.
@@ -29,10 +29,10 @@ moves one step up. `flightdeck config --example` shows every key.
 
 The config names each key's environment variable, never the key. flightdeck reads the variable
 from its environment first, then from `~/.config/ctf-flightdeck/keys.env` (or the file
-`$FLIGHTDECK_KEYS` names), which must be readable by you only (chmod 600). Nothing prints, logs
-or stores a key. A lane's commands get an environment built from an allowlist, so no key is
-handed to them; on the host runtime a lane still runs as you and can read your files (see
-[`--host` in the README](../README.md#play-a-board)). `flightdeck doctor` checks that each
+`$FLIGHTDECK_KEYS` names), which must be readable by you only (chmod 600). flightdeck never
+prints, logs or stores a key. A lane's commands get an environment built from an allowlist, so
+no key is handed to them; on the host runtime a lane still runs as you and can read your files
+(see [`--host` in the README](../README.md#play-a-board)). `flightdeck doctor` checks that each
 variable is set, never its value.
 
 ## Before a run
@@ -53,10 +53,10 @@ reads no other credential and no `ANTHROPIC_BASE_URL` from the environment. The 
 and the tools are cached as one prefix, and a lane's history only grows within a context, so the
 cache keeps hitting turn after turn.
 
-A request Anthropic's safety classifiers decline: on Claude Sonnet and Opus 5.5, Anthropic runs
-it again on its recommended fallback model inside the same call (Claude Haiku 5.5 has no such
-fallback). A request still declined ends the lane with "the model declined (category)", and is
-never retried or sent to another API. You decide what next: fork the lane onto another model
+When Anthropic's safety classifiers decline a request on Claude Sonnet or Opus 5.5, Anthropic
+runs it again on its recommended fallback model inside the same call (Claude Haiku 5.5 has no
+such fallback). A request still declined ends the lane with "the model declined (category)", and
+is never retried or sent to another API. You decide what next: fork the lane onto another model
 (`f`), say. The light model's Claude calls carry no such fallback: a refusal leaves the rules'
 answer.
 
