@@ -926,10 +926,11 @@ def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_c
         tmp_path, monkeypatch, scripted_claude):
     """play prints what the run spent (the scorecard) only after the console's quit has stopped
     every lane (run.shutdown): what claude reports as it stops, the cost of the turn quitting
-    cut, is in it."""
+    cut, is in it, though claude takes a moment to report it."""
     from ctf_flightdeck.console.screens import QuitPrompt
 
-    scripted_claude(CUT_BY_QUITTING)
+    (turn,) = CUT_BY_QUITTING["turns"]
+    scripted_claude({"turns": [{**turn, "linger": 1.5}]})  # once cut, it takes 1.5 s to say what the turn cost
 
     async def player(app, pilot) -> None:
         await until(pilot, lambda: any(lane.turns for lane in app.deck.lanes.values()), "claude's step")
