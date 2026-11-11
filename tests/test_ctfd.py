@@ -4,7 +4,9 @@ Nothing is mocked: each test starts a FakeCTFd on 127.0.0.1 with invented challe
 scripts what it needs, and reads back what the adapter sent and wrote. No real CTFd is
 contacted. pytest has no async support here, so each call runs on a fresh event loop with
 asyncio.run(). Backoffs are a millisecond so retries stay fast; the tests about waiting use
-waits that are short but long enough to measure.
+waits that are short but long enough to measure. The tests that need https (CTFd on https,
+object storage a download is sent to) make a throwaway certificate authority with the
+openssl command, and are reported as not run without it.
 """
 
 from __future__ import annotations
