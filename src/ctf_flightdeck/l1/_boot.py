@@ -14,8 +14,10 @@ What the engine prints is never its result. The engine reads the challenge's fil
 print what it read (debug output, a decoded layer); a line the challenge's author wrote
 could pose as a result line, so the result travels apart from stdout. The file is created
 new, never through a symlink (O_CREAT | O_EXCL | O_NOFOLLOW), in the folder opened before the
-engine runs, so an engine that changes directory, or unpacks an archive over .flightdeck,
-changes nothing; a challenge cannot know the name.
+engine runs, so an engine that changes directory still writes it in the right place. A
+challenge cannot know the name, so nothing an engine unpacks from it can pose as the
+result; an engine that removes or replaces .flightdeck loses its result (the runner says
+so), but never gets another.
 
 -I keeps the challenge copy (the working directory) off sys.path, so a handout file named
 like a module (json.py, base64.py) is never imported, and ignores PYTHON* variables. The
