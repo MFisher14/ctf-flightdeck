@@ -35,6 +35,11 @@ Verifier = Callable[[str, str], bool | None]
 """(challenge id, flag) -> correct? None when the board cannot check flags (a folder of
 challenges with no answers): the player submits by hand and confirms the result."""
 
+Submitter = Callable[[str, str, str], None]
+"""(lane id, challenge id, flag): hand a flag to a platform that answers over the network
+(CTFd), instead of the Verifier. It returns at once (it only queues the flag); the answer
+comes later, on the deck's thread, through Deck.platform_verdict(lane id, flag, ...)."""
+
 
 @dataclass(frozen=True)
 class TurnReport:
