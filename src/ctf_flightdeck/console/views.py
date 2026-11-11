@@ -164,8 +164,8 @@ def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
 HELD = "queue held"
 HELD_WHY_MIN = 12  # cells: less room than this after the other pieces, and the header names no reason
 WHY_OUTRANKS = 3  # pieces of this drop rank or more (the event's name, the clock, tokens, dollars) make room for it
-HEADER_WORDS = {  # the pieces that can drop, as doctor names them
-    "event": "the event's name", "mock": "the mock tag", "runtime": "docker or host",
+HEADER_WORDS = {  # the pieces that can drop, as doctor names them (console/room.py)
+    "event": "the event's name", "mock": "the mock tag", "runtime": "the runtime (docker or host)",
     "tokens": "tokens", "dollars": "dollars", "clock": "the event clock",
 }
 

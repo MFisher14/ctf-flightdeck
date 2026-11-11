@@ -40,6 +40,15 @@ KEY_RANK = {
     "f": 4, "e": 4, "t": 4,
     "s": 5, "tab": 5,
 }
+KEY_MARGIN = 2  # the key line has a margin of one cell each side
+# The rows that are not lane rows: the header and the gap under it, the lane list's border and
+# column labels, the why line and the gap over it, the status line, the command bar, the key line.
+FLEET_ROWS = 13
+
+
+def lane_rows(lines: int) -> int:
+    """How many lane rows the lane list shows at once on a terminal `lines` tall (it scrolls to the rest)."""
+    return max(0, lines - FLEET_ROWS)
 
 
 class FleetScreen(Screen, inherit_bindings=False):
@@ -124,7 +133,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.call_after_refresh(self._set_columns)
 
     def _show_keys(self, width: int) -> None:
-        self.query_one("#keys", Static).update(self.key_line(width - 2))  # the line has a margin of 1 each side
+        self.query_one("#keys", Static).update(self.key_line(width - KEY_MARGIN))
 
     @property
     def board_hidden(self) -> bool:
@@ -489,11 +498,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         One Text drawn with the screen, so it is complete on the first frame (Textual's
         Footer fills in after a later refresh, which made screenshots and tests flaky)."""
         shown = [b for b in self.BINDINGS if b.show and self._allowed(b.action)]
-        out = self._keys_text(shown)
-        while width is not None and out.cell_len > width and any(KEY_RANK.get(b.key, 9) for b in shown):
-            shown.pop(max(range(len(shown)), key=lambda i: (KEY_RANK.get(shown[i].key, 9), i)))
-            out = self._keys_text(shown)
-        return out
+        return self._keys_text(fit_keys(shown, width)[0])
 
     @staticmethod
     def _keys_text(bindings: list[Binding]) -> Text:
@@ -509,6 +514,23 @@ class FleetScreen(Screen, inherit_bindings=False):
     def _allowed(self, action: str) -> bool:
         name = action.partition("(")[0]
         return "." in name or bool(self.check_action(name, ()))
+
+
+def fit_keys(bindings: list[Binding], width: int | None) -> tuple[list[Binding], list[Binding]]:
+    """The keys a key line `width` cells wide shows, and the keys it leaves out in the order
+    they go: the highest KEY_RANK first (the later key, on a tie); help and quit always stay."""
+    shown, left = list(bindings), []
+    while width is not None and FleetScreen._keys_text(shown).cell_len > width and any(KEY_RANK.get(b.key, 9) for b in shown):
+        left.append(shown.pop(max(range(len(shown)), key=lambda i: (KEY_RANK.get(shown[i].key, 9), i))))
+    return shown, left
+
+
+def key_room(columns: int, *, team: bool) -> tuple[list[str], int]:
+    """The keys the key line leaves out on a terminal `columns` wide ("s sort", in the order
+    they go), and the columns it needs to show every key. Claim is a team-mode key (check_action)."""
+    keys = [b for b in FleetScreen.BINDINGS if b.show and (team or b.action != "claim")]
+    _, left = fit_keys(keys, columns - KEY_MARGIN)
+    return [f"{b.key_display or b.key} {b.description}" for b in left], FleetScreen._keys_text(keys).cell_len + KEY_MARGIN
 
 
 def _cursor_key(table: DataTable) -> str | None:

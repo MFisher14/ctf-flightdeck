@@ -26,9 +26,11 @@ from textual.containers import ScrollableContainer
 from textual.widgets import DataTable, RichLog, Select, Static
 
 from ctf_flightdeck import fmt
-from ctf_flightdeck.console import theme, views
+from ctf_flightdeck.console import room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
+from ctf_flightdeck.console.fleet import key_room as fleet_key_room
+from ctf_flightdeck.console.focus import KEY_LABELS as FOCUS_KEYS
 from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
@@ -2772,3 +2774,63 @@ def test_the_board_reads_each_event_once_as_the_deck_grows():
     assert deck.apply(iv.Approve(delta.id)).ok
     assert views.owner(deck, deck.challenges["delta"]) == ("L1·rot", "l1")
     assert views.owner(deck, deck.challenges["bravo"]) == ("L02", "lane")
+
+
+# ---------------------------------------------------------------------- what doctor says a terminal leaves out
+
+
+def four_lanes_and_one_finished(*, team: bool = False) -> Deck:
+    """Four lanes at work and one that finished, so the lane list has five rows; more queued."""
+    names = [f"c{n}" for n in range(7)]
+    deck = quiet_deck(DeckConfig(event="E" * room.SAMPLE_EVENT, team=team, models=("glm",), max_lanes=4))
+    deck.release([Challenge(n, n.upper(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    deck.report("L01", TurnReport(turn=False, gave_up="stuck"))
+    assert len(deck.active_lanes()) == 4 and len(deck.lanes) == 5
+    return deck
+
+
+@pytest.mark.parametrize("size", [(60, 12), (99, 17), (100, 30), (108, 18), (125, 18), (146, 18), (147, 17), (147, 18)])
+def test_what_doctor_says_a_terminal_leaves_out_is_what_the_console_leaves_out(size, monkeypatch):
+    """doctor measures a terminal with room.room(); at that size, on the busy run it measures
+    with (the header of room.busy_header), the console leaves out exactly that: the header's
+    pieces in both views, the board, lane rows, the fleet view's keys and the focus view's."""
+    columns, lines = size
+    fit = room.room(columns, lines, max_lanes=4, containerized=True)
+    busy = room.busy_header(max_lanes=4, containerized=True)
+    monkeypatch.setattr(views, "header_facts", lambda deck, mock="": busy)
+    pieces = {name: text for name, rank, (text, *_) in views.header_pieces(busy) if rank}  # the pieces that can drop
+    app = FlightdeckApp(four_lanes_and_one_finished(), refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        for view in ("fleet", "focus"):
+            header = region_text(app, "#header")
+            assert {name for name, text in pieces.items() if text not in header} == set(fit.header), (view, header)
+            keys = region_text(app, "#keys").strip()
+            if view == "fleet":
+                assert app.fleet.board_hidden is fit.board
+                rows = [line for line in region_text(app, "#lanes").splitlines()[1:] if line.strip()]  # under the labels
+                assert len(rows) == min(fit.rows, fit.needed) and (fit.rows < fit.needed) is (len(rows) < 5)
+                every = [f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show and b.action != "claim"]
+                assert [key for key in every if key not in keys.split("  ")] == sorted(fit.fleet_keys, key=every.index), keys
+                await open_focus(pilot, app, "L02")
+            else:
+                labels = [f"{key} {label}" for key, label in FOCUS_KEYS]
+                assert [label for label in labels if label not in keys] == list(fit.focus_keys), keys  # cut, or not there
+        assert (fit.left_out() == []) is (size == (fit.columns, fit.lines))  # the smallest size that leaves nothing out
+
+    drive(app, script, size=size)
+
+
+@pytest.mark.parametrize("columns", [150, 155, 156])
+def test_doctor_measures_team_modes_key_line_with_claim_as_the_console_draws_it(columns):
+    _, solo = fleet_key_room(columns, team=False)
+    left, team = fleet_key_room(columns, team=True)
+    app = FlightdeckApp(four_lanes_and_one_finished(team=True), refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        keys = region_text(app, "#keys").strip().split("  ")
+        every = [f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show]
+        assert "c claim" in every and [key for key in every if key not in keys] == sorted(left, key=every.index)
+        assert (left == []) is (columns >= team) and team == solo + len("  c claim")
+
+    drive(app, script, size=(columns, 30))
