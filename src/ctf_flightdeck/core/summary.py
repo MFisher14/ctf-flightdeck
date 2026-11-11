@@ -247,15 +247,12 @@ def _flag_fates(deck: Deck, lane: Lane) -> dict[str, list[str]]:
     approvals = _approvals(deck, lane)
     up: Mapping[str, object] | None = None  # the approval that is up: its PENDING event's data
     fates: dict[str, list[str]] = {}
-    for n, action in enumerate(lane.actions):
+    for action in lane.actions:
         text = action.text
         if action.by is Actor.DECK and action.kind is ActionKind.APPROVAL:
             up = next(approvals, None)
             if up is None or up.get("detail") != text:
-                raise RuntimeError(
-                    f"{lane.id}'s log and the deck's PENDING events disagree about the approval at "
-                    f"entry {n}, so the summary cannot tell what the player approved or declined"
-                )
+                raise _disagree(lane)
             if up.get("kind") in FLAG_PENDING and isinstance(up.get("flag"), str):
                 fates.setdefault(str(up["flag"]), [])
         elif action.by is Actor.DECK and action.kind is ActionKind.NOTE:
@@ -280,6 +277,8 @@ def _flag_fates(deck: Deck, lane: Lane) -> dict[str, list[str]]:
             # own), and a live box or a budget is no flag, whatever its detail says.
             if up is not None and up.get("kind") == PendingKind.SUBMIT and isinstance(up.get("flag"), str):
                 _fate(fates, str(up["flag"]), "declined by the player")
+    if next(approvals, None) is not None:  # an approval came up that the log does not show
+        raise _disagree(lane)
     for pending in [lane.pending, *lane.waiting]:
         if pending is not None and pending.kind in FLAG_PENDING and pending.flag is not None:
             if pending.kind is PendingKind.SUBMIT:
@@ -299,6 +298,13 @@ def _approvals(deck: Deck, lane: Lane) -> Iterator[Mapping[str, object]]:
     for event in deck.events:
         if event.kind is EventKind.PENDING and event.lane == lane.id and not event.data.get("queued"):
             yield event.data
+
+
+def _disagree(lane: Lane) -> RuntimeError:
+    return RuntimeError(
+        f"{lane.id}'s log and the deck's PENDING events disagree about its approvals, so the summary "
+        "cannot tell what the player approved or declined"
+    )
 
 
 def _fate(fates: dict[str, list[str]], flag: str, fate: str) -> None:

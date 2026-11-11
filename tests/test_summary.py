@@ -26,6 +26,8 @@ from ctf_flightdeck.core.model import (
     AlertKind,
     Challenge,
     DeckConfig,
+    Event,
+    EventKind,
     FileChange,
     LaneState,
     Pending,
@@ -292,6 +294,11 @@ def test_flags_queued_behind_another_are_waiting_too():
     assert line(lane_summary(deck, lane), "Candidate flags") == (
         'Candidate flags: "t{one}" (waits for approval); "t{two}" (waits for approval)'
     )
+    assert deck.apply(iv.Approve(lane.id)).ok  # the platform says no; t{two} comes up
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert line(lane_summary(deck, lane), "Candidate flags") == (
+        'Candidate flags: "t{one}" (wrong); "t{two}" (declined by the player)'
+    )
 
 
 def test_a_board_that_cannot_check_flags_waits_for_the_players_word():
@@ -399,11 +406,24 @@ def test_a_lanes_own_steps_cannot_forge_what_became_of_a_flag():
     assert not any(ln.startswith("Not the flag") for ln in lines(text))
 
 
+def test_a_note_says_not_asked_again_only_of_a_flag_the_deck_knows_is_not_it():
+    deck, lane, _ = make()
+    deck.note(lane.id, "candidate t{z} again; not asked: rejected by the platform")  # no lane ever proposed t{z}
+    assert line(lane_summary(deck, lane), "Candidate flags") == "Candidate flags: none"
+
+
 def test_a_log_that_does_not_match_the_decks_approvals_is_refused():
+    disagree = "L01's log and the deck's PENDING events disagree about its approvals"
     deck, lane, _ = make()
     step(deck, lane, "submit_flag t{x}", flag="t{x}")
     lane.actions.append(Action(100.0, lane.turns, "submit t{y}", "", Actor.DECK, ActionKind.APPROVAL))  # no PENDING event
-    with pytest.raises(RuntimeError, match=f"{lane.id}'s log and the deck's PENDING events disagree"):
+    with pytest.raises(RuntimeError, match=disagree):
+        lane_summary(deck, lane)
+    deck, lane, _ = make()
+    step(deck, lane, "submit_flag t{x}", flag="t{x}")
+    deck.events.append(Event(100.0, EventKind.PENDING, "", lane.id, lane.challenge_id,  # no APPROVAL entry
+                             data={"kind": "submit", "detail": "submit t{y}", "flag": "t{y}"}))
+    with pytest.raises(RuntimeError, match=disagree):
         lane_summary(deck, lane)
 
 
