@@ -316,16 +316,18 @@ class TeamWatcher:
       before a restart); after that, a claim the deck holds is renewed before it goes stale
       (and written again if it went missing) and one it does not hold is released; a box
       hold is renewed while a lane of ours is on that challenge, and freed once none is;
-    - problems (ignored files, failed writes) -> report(), each once while it lasts.
+    - problems (ignored files, failed writes) -> report(), each once while it lasts; with no
+      `report`, each becomes a WARNING event on the deck (the console shows it, the run log
+      keeps it).
     A mark is never applied twice. Marks for challenges that are not on the deck wait
     until they are (a later wave).
     """
 
-    def __init__(self, channel: TeamChannel, deck: Deck, *, report: Callable[[str], None]) -> None:
+    def __init__(self, channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | None = None) -> None:
         _need_team(deck, "the team watcher")
         self.channel = channel
         self.deck = deck
-        self.report = report
+        self.report = report if report is not None else _deck_warnings(deck)
         self.latest: TeamState | None = None  # the last state read, e.g. for box holders
         self._solves: set[tuple[str, str]] = set()  # (challenge id, who) applied
         self._clashes: dict[str, str] = {}  # challenge id -> teammate who claimed what we hold
@@ -479,24 +481,26 @@ async def watch(
     *,
     interval: float = POLL_SECONDS,
     stop: asyncio.Event,
-    report: Callable[[str], None],
+    report: Callable[[str], None] | None = None,
 ) -> None:
     """Poll the team folder and keep the deck in step with it (TeamWatcher) until `stop`
-    is set. Run it on the deck's event loop. `report` gets each problem once, on the
-    deck's thread (the console's warn(), say)."""
+    is set. Run it on the deck's event loop. Each problem is reported once, on the deck's
+    thread: to `report` if given, else as a WARNING event on the deck."""
     await TeamWatcher(channel, deck, report=report).run(interval=interval, stop=stop)
 
 
-def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None]) -> Callable[[], None]:
+def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | None = None) -> Callable[[], None]:
     """Write our claims, solves and live-box holds to the folder as the deck makes them:
     - a claim or release the deck accepted (OUTCOME, ok) -> claim() or release();
     - a correct flag (SUBMIT, correct) -> solved(), noted with the lane, never the flag;
     - a live-box approval the deck accepted -> hold_box(); freed when that lane ends (and
       no other lane of ours on the challenge was allowed on the box).
     It writes on the deck's thread, inside the event, and never raises into the deck: a
-    failed write or a clash with a teammate goes to `report`. Returns the unsubscribe
-    function."""
+    failed write or a clash with a teammate goes to `report`, or with no `report` becomes a
+    WARNING event on the deck. Returns the unsubscribe function."""
     _need_team(deck, "mirror")
+    if report is None:
+        report = _deck_warnings(deck)
     approving: dict[str, PendingKind | None] = {}  # lane id -> what an approval in progress approves
     on_box: dict[str, str] = {}  # lane id -> challenge id: our lanes allowed on a live box
 
@@ -784,6 +788,19 @@ def _holder(channel: TeamChannel, kind: str, challenge_id: str) -> str:
     except TeamError:
         mark = None
     return mark.who if mark is not None else "a teammate"
+
+
+def _deck_warnings(deck: Deck) -> Callable[[str], None]:
+    """The default `report`: each message becomes a WARNING event on the deck, which the
+    console shows and the run log keeps. Like any deck call, on the deck's thread only."""
+
+    def warn(text: str) -> None:
+        # The deck has no public way to raise a warning yet (Deck.warn() is proposed); these
+        # are the two calls its own warnings make.
+        deck._on_thread("_emit")
+        deck._emit(EventKind.WARNING, text, data={"source": "team"})
+
+    return warn
 
 
 def _need_team(deck: Deck, what: str) -> None:

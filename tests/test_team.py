@@ -1002,6 +1002,57 @@ def test_watch_keeps_the_deck_in_step_while_it_runs_and_returns_once_stopped(fol
     assert reports == ['team folder: claims/c2.json: "who" is not a team handle (1 to 40 letters, digits and _ . -, and not \'me\'); ignored']
 
 
+def test_called_as_contract_d_writes_them_mirror_and_watch_warn_on_the_deck(folder):
+    # mirror(channel, deck) and watch(channel, deck, interval=..., stop=...): with no `report`,
+    # each problem is a WARNING event on the deck, which the console shows and the run log keeps
+    deck, _ = make_deck(max_lanes=1)
+    alpha = TeamChannel(folder, "alpha")
+    unsubscribe = mirror(alpha, deck)
+    shutil.rmtree(folder / "claims")
+    (folder / "claims").write_text("not a folder")
+    assert deck.apply(iv.Claim("c1")).ok  # the deck carries on; the failed write is a warning
+    (folder / "claims").unlink()
+    put(folder, "claims", "c2.json", {"who": "bad handle", "at": 1})
+
+    async def main() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(watch(alpha, deck, interval=0.01, stop=stop))
+        await until(lambda: len(events(deck, EventKind.WARNING)) >= 2 and alpha.current("claims", "c1") is not None)
+        stop.set()
+        await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(main())
+    unsubscribe()
+    warnings = events(deck, EventKind.WARNING)
+    assert [w.text.split(": ")[0:2] for w in warnings] == [["team", "could not claim c1 in the team folder"], ["team folder", "claims/c2.json"]]
+    assert "claims: is not a folder" in warnings[0].text and warnings[0].data == {"source": "team"}
+    assert warnings[1].text.endswith("is not a team handle (1 to 40 letters, digits and _ . -, and not 'me'); ignored")
+    assert alpha.current("claims", "c1").who == "alpha"  # and the watcher wrote the claim the mirror could not
+
+
+def test_the_default_warning_refuses_another_thread_like_any_deck_call(folder, tmp_path):
+    deck, _ = make_deck(max_lanes=1)
+    w = TeamWatcher(TeamChannel(folder, "alpha"), deck)
+    folder.rename(tmp_path / "away")
+    folder.mkdir()  # the drive went away: the poll has a problem to report
+    failed: list[BaseException] = []
+
+    def poll() -> None:
+        try:
+            w.poll()
+        except BaseException as exc:  # checked below
+            failed.append(exc)
+
+    worker = threading.Thread(target=poll)
+    worker.start()
+    worker.join()
+    (exc,) = failed
+    assert isinstance(exc, RuntimeError) and "another thread" in str(exc)
+    assert events(deck, EventKind.WARNING) == []  # nothing added to the deck from the wrong thread
+    w.poll()
+    assert "is not a team folder" in events(deck, EventKind.WARNING)[0].text
+
+
 def test_watch_refuses_a_poll_interval_that_is_not_positive(folder):
     deck, _ = make_deck()
     alpha = TeamChannel(folder, "alpha")
