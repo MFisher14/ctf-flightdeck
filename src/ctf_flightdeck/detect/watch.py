@@ -16,13 +16,14 @@ listener subscribed after it receives the alert before the turn that caused it. 
 after every listener that records events (EventLog, TranscriptLog), as run.py does; the
 console's listener only redraws, so its place does not matter.
 
-The optional hint judge (judge.HintJudge). With one, a new rules HINT signal is held, not
-raised: the Watch asks the judge on the deck's event loop (the loop the deck's thread runs),
-and raises the alert once the judge confirms it. A judge that says the lane is following the
-hint keeps it down, and the judge is asked again only after `judge_every_turns` turns. A
-judge that cannot answer (its call failed, or it said neither yes nor no) never hides an
-alert: the rules signal is raised, its reason saying why it is unconfirmed. Without a judge
-the Watch needs no event loop at all.
+The optional hint judge (judge.HintJudge, the light model's). Nothing waits for it: a new
+rules HINT signal is raised at once, as the rules have it, and the Watch asks the judge in
+the background, on the deck's event loop (the loop the deck's thread runs). When the judge
+says the lane is following the hint, the Watch takes the alert down, notes why on the lane,
+and keeps it down while that verdict stands (`judge_every_turns` turns); when it says the
+lane is not, the alert stays. A judge that cannot answer (the light model refused, failed,
+took too long, or said neither yes nor no) never hides an alert: the rules' answer stands, the
+alert's reason says it is unconfirmed. Without a judge the Watch needs no event loop at all.
 """
 
 from __future__ import annotations
@@ -145,6 +146,8 @@ class Watch:
         now = self.deck.now
         raises = []
         clears: list[AlertKind] = []
+        ask: Technique | None = None  # the hint judge is asked about this, once the alert is up
+        withdrawn = False  # the judge took an open hint alert down
         answered = self._answered.get(lane_id, {})
         for detector in self.detectors:
             kind = detector.kind
@@ -160,9 +163,12 @@ class Watch:
                 if answered_turn is not None and lane.turns - answered_turn < self.config.quiet_turns:
                     continue  # the player answered this alert within the quiet period; stay silent
                 if kind is AlertKind.HINT and self.judge is not None:
-                    signal = self._gate(lane, challenge, signal)
-                    if signal is None:
-                        continue  # held for the judge, or the judge says the lane follows the hint
+                    signal, ask = self._gate(lane, signal)
+                    if signal is None:  # the judge says the lane follows the hint
+                        if lane.alert(kind) is not None:
+                            clears.append(kind)
+                            withdrawn = True
+                        continue
                 raises.append(signal.alert())
             elif lane.alert(kind) is not None:
                 clears.append(kind)
@@ -170,6 +176,12 @@ class Watch:
                     self._unconfirmed.pop(lane_id, None)
         if raises or clears:
             self.deck.report(lane_id, TurnReport(turn=False, clear=tuple(clears), alerts=tuple(raises)))
+        if withdrawn:
+            assert self.judge is not None
+            self.deck.note(lane_id, f"hint alert withdrawn: the light model ({self.judge.light.label}) judged that "
+                                    f"{lane_id} is using the hinted technique")
+        if ask is not None:
+            self._consult(lane_id, challenge, ask)  # after the alert is up: nothing waits for the judge
 
     @staticmethod
     def _checkable(lane: Lane) -> bool:
@@ -177,33 +189,35 @@ class Watch:
 
     # ------------------------------------------------------------------ the hint judge
 
-    def _gate(self, lane: Lane, challenge: Challenge, signal: Signal) -> Signal | None:
-        """A rules HINT signal, as the judge would have it. A new one is raised when the judge
-        confirms it, kept down (None) when the judge says the lane follows the hint or has not
-        answered yet, and raised saying it is unconfirmed when the judge gave no verdict. An
-        open one is refreshed as it was raised (still saying so, if it was unconfirmed)."""
+    def _gate(self, lane: Lane, signal: Signal) -> tuple[Signal | None, Technique | None]:
+        """A rules HINT signal, as the judge would have it, and the technique to ask the judge
+        about (None: no need). With no recent verdict the signal is raised (or an open alert
+        kept, with any note it had) at once, as the rules have it, and the judge is asked. A
+        verdict that the lane follows the hint keeps it down, open or not (None); one that it
+        does not raises it; no verdict raises it saying it is unconfirmed."""
         assert self.judge is not None
-        if lane.alert(AlertKind.HINT) is not None:
-            note = self._unconfirmed.get(lane.id)
-            return signal if note is None else replace(signal, reason=f"{signal.reason} {note}")
         verdict = self.judge.recent(lane)
         if verdict is None:
             if signal.technique is None:
                 raise RuntimeError("a HINT signal must name its technique for the hint judge (Signal.technique)")
-            self._consult(lane.id, challenge, signal.technique)
-            return None
+            note = self._unconfirmed.get(lane.id) if lane.alert(AlertKind.HINT) is not None else None
+            if note is None:
+                self._unconfirmed.pop(lane.id, None)
+                return signal, signal.technique
+            return replace(signal, reason=f"{signal.reason} {note}"), signal.technique
+        if verdict.confirmed is False:
+            self._unconfirmed.pop(lane.id, None)
+            return None, None
         if verdict.confirmed is True:
             self._unconfirmed.pop(lane.id, None)
-            return signal
-        if verdict.confirmed is False:
-            return None
+            return signal, None
         note = f"Not confirmed: {quote(verdict.reason, 200)}."
         self._unconfirmed[lane.id] = note
-        return replace(signal, reason=f"{signal.reason} {note}")
+        return replace(signal, reason=f"{signal.reason} {note}"), None
 
     def _consult(self, lane_id: str, challenge: Challenge, technique: Technique) -> None:
         if lane_id in self._judging:
-            return  # already asked; its answer re-checks the lane
+            return  # already asked; its answer settles the lane's alert
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -221,11 +235,22 @@ class Watch:
                 return
             try:
                 await self.judge.judge(lane, challenge, technique, deck=self.deck)
-            except Exception as exc:  # not a model error (those are verdicts): a closed client, a bug
-                self.judge.failed(lane, f"the hint judge failed: {type(exc).__name__}: {exc}")
+            except Exception as exc:  # the light engine answers its own failures; this is a bug or a closed client
+                self.judge.failed(lane, f"the hint judge failed: {type(exc).__name__}: {exc}", deck=self.deck)
         finally:
             self._judging.pop(lane_id, None)
-        # The verdict is in: raise, or keep it down. Only once the judge has recorded an
-        # outcome, so a call that left none is not asked again at once (at most once a turn).
+        # Once the judge has recorded an outcome (a judge that left none is not asked again
+        # until the next turn), settle the alert raised meanwhile.
         if self._unsubscribe is not None and self.judge.recent(lane) is not None:
-            self._run(lane_id, only=AlertKind.HINT)
+            self._settle(lane_id)
+
+    def _settle(self, lane_id: str) -> None:
+        """The judge's verdict is in for an alert raised as the rules had it: check the lane's
+        hint again, so the verdict applies at once (taken down, confirmed, or marked unconfirmed).
+        A lane that is paused or taken over gets it at its next turn."""
+        self._run(lane_id, only=AlertKind.HINT)
+
+    async def aclose(self) -> None:
+        """Close the hint judge's light model, if there is one (after the lanes stopped)."""
+        if self.judge is not None:
+            await self.judge.aclose()

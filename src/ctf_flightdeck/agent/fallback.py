@@ -22,7 +22,7 @@ ends the call with an error that says so.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -152,14 +152,17 @@ def _again(error: ModelError, message: str) -> ModelError:
     return ModelError(message, status=error.status, retryable=error.retryable, declined=error.declined, usage=error.usage)
 
 
-def client_for(provider: str, base_url: str, key: str | None) -> ChatClient:
-    """The client for one API: AnthropicClient for "anthropic", else ModelClient."""
+def client_for(provider: str, base_url: str, key: str | None, *, fast: Sequence[str] = ()) -> ChatClient:
+    """The client for one API: AnthropicClient for "anthropic" (calling the models in `fast`
+    in fast mode), else ModelClient."""
     if provider == "anthropic":
         from .anthropic_client import AnthropicClient
 
-        return AnthropicClient(base_url, key)
+        return AnthropicClient(base_url, key, fast=fast)
     if provider != "openai":
         raise ValueError(f"unknown API provider {provider!r}: openai or anthropic")
+    if fast:
+        raise ValueError("fast mode is a feature of the Anthropic Messages API, not of an OpenAI-compatible one")
     return ModelClient(base_url, key)
 
 
@@ -170,7 +173,7 @@ def build_client(config: Config, key: str | None, fallback_key: str | None) -> C
     # the fallback first: a client that is never used has opened no connection, so the one
     # left behind when the other raises (a key no header can carry) holds nothing open
     fallback = client_for(spare.provider, spare.base_url, fallback_key) if spare is not None else None
-    primary = client_for(config.api.provider, config.api.base_url, key)
+    primary = client_for(config.api.provider, config.api.base_url, key, fast=config.api.fast)
     if spare is None or fallback is None:
         return primary
     return FallbackClient(

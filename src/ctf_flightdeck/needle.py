@@ -53,9 +53,10 @@ class Option:
 
 @dataclass(frozen=True)
 class Pick:
-    option: str | None  # one of the options' names, or None: none fits
+    option: str | None  # one of the options' names, or None: none fits (or no valid pick)
     confidence: float  # Cactus's own figure, 0 to 1
     seconds: float
+    valid: bool = True  # False when Needle named no tool, or one that is neither an option nor NONE
 
 
 def load(environ: MutableMapping[str, str] | None = None) -> ModuleType:
@@ -131,14 +132,17 @@ class Picker:
             raise NeedleError(f"Needle failed: {type(exc).__name__}: {exc}") from None
         seconds = time.monotonic() - begun
         calls = answer.get("function_calls") if isinstance(answer, dict) else None
-        name = None
+        name, valid = None, False
         if isinstance(calls, list) and calls and isinstance(calls[0], dict):
             first = calls[0].get("name")
-            name = first if isinstance(first, str) and first in self._names else None
+            if isinstance(first, str) and first in self._names:
+                name, valid = first, True
+            elif first == NONE:
+                valid = True  # none of the options fits: an answer, not a failure
         confidence = answer.get("confidence") if isinstance(answer, dict) else None
         if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= confidence <= 1:
             confidence = 0.0
-        return Pick(name, float(confidence), seconds)
+        return Pick(name, float(confidence), seconds, valid)
 
     def close(self) -> None:
         close = getattr(self._agent, "close", None)

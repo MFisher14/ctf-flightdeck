@@ -268,6 +268,8 @@ class Run:
                 self._errors.append(f"team: could not free your live-box holds in the team folder: {exc}")
         if self.client is not None:
             await self.client.aclose()
+        if self.watch is not None:
+            await self.watch.aclose()  # the hint judge's light model, if any
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
 
@@ -480,6 +482,10 @@ def prepare_run(options: RunOptions) -> Run:
             primary = api_name(config.api.provider, config.api.base_url)
             spare = api_name(config.fallback.provider, config.fallback.base_url)
             plan.notes.append(f"a lane whose calls to {primary} keep failing moves to {spare} for the rest of its context")
+        if config.api.fast:
+            from .agent.fastmode import fast_note
+
+            plan.notes.append(fast_note(config.api.fast))
     if runtime == "docker":
         _check_docker(config.lanes.image)
         if agent is not None:
@@ -589,7 +595,7 @@ def prepare_run(options: RunOptions) -> Run:
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
-    watch = _watch(deck)
+    watch = _watch(deck, config, plan.notes)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
@@ -996,11 +1002,16 @@ def _l1_manifests(pack: Path | None) -> list | None:
     return manifests
 
 
-def _watch(deck: Deck):
-    """The course detectors (M3), raising and clearing alerts after every turn."""
+def _watch(deck: Deck, config: Config | None = None, notes: list[str] | None = None):
+    """The course detectors (M3), raising and clearing alerts after every turn; with a light
+    model in [light], the hint judge too (its line for the player goes in `notes`)."""
     from .detect import Watch, default_detectors
+    from .detect.judge import from_config
 
-    watch = Watch(deck, default_detectors())
+    judge, note = from_config(config) if config is not None else (None, "")
+    if note and notes is not None:
+        notes.append(note)
+    watch = Watch(deck, default_detectors(), judge=judge)
     watch.attach()
     return watch
 

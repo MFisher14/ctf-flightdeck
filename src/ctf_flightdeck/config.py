@@ -10,7 +10,14 @@ The API speaks one of two dialects, [api] provider: "openai" (an OpenAI-compatib
 completions endpoint: OpenRouter, OpenAI, a local server; the default) or "anthropic" (the
 Anthropic Messages API, through its SDK). The optional [fallback] table names a second API
 that a lane moves to when the first keeps failing (agent/fallback.py), with a ladder of the
-same length as [models] ladder: position i is used for a lane on ladder[i].
+same length as [models] ladder: position i is used for a lane on ladder[i]. With the
+Anthropic API, [api] fast lists the ladder models a lane calls in fast mode; only a model
+agent/fastmode.py lists for fast mode is accepted.
+
+The optional [light] table names the light model for flightdeck's small jobs (light.py):
+engine "rules" (the default: no model), "openai" (an OpenAI-compatible server; recommended:
+an open-weight model on this machine), "anthropic" or "cactus". Its key, like the API's, is
+read from the variable its key_env names, by light_key().
 
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
@@ -41,8 +48,8 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback")
-_API_KEYS = ("provider", "base_url", "key_env")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
+_API_KEYS = ("provider", "base_url", "key_env", "fast")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder")
 API_PROVIDERS = ("openai", "anthropic")
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"  # the Anthropic SDK's default (it adds /v1/messages itself)
@@ -51,6 +58,12 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
+LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus")
+MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
+_LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price")
+LIGHT_TIMEOUT = 30.0  # seconds a light job may take, all its tries; then the rules' answer stands
+OLLAMA_URL = "http://127.0.0.1:11434/v1"  # Ollama's OpenAI-compatible endpoint on this machine
+MLX_URL = "http://127.0.0.1:8080/v1"  # an MLX server's (mlx_lm.server's default port)
 _PRICE_KEYS = ("input", "output", "cached_input")
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 _MAX_ENV_NAME = 64
@@ -62,6 +75,7 @@ class ApiConfig:
     base_url: str = "https://openrouter.ai/api/v1"
     key_env: str = "OPENROUTER_API_KEY"  # "" for a local server that needs no key (openai provider only)
     provider: str = "openai"  # openai | anthropic: the API's dialect
+    fast: tuple[str, ...] = ()  # ladder models a lane calls in fast mode (anthropic only; agent/fastmode.py)
 
 
 @dataclass(frozen=True)
@@ -72,6 +86,18 @@ class FallbackConfig:
     base_url: str
     key_env: str  # "" for a local server that needs no key (openai provider only)
     ladder: tuple[str, ...]  # ladder[i] is the fallback for models.ladder[i]
+
+
+@dataclass(frozen=True)
+class LightConfig:
+    """[light]: the light model for flightdeck's small jobs (light.py). Absent: rules only."""
+
+    engine: str = "rules"  # rules | openai | anthropic | cactus
+    model: str = ""  # openai and anthropic: the model id
+    base_url: str = ""  # openai and anthropic
+    key_env: str = ""  # openai and anthropic; "" for a server that needs no key (openai only)
+    timeout: float = LIGHT_TIMEOUT  # seconds a job may take, all its tries
+    price: Price | None = None  # dollars per million tokens, for an API that reports no cost
 
 
 @dataclass(frozen=True)
@@ -101,6 +127,7 @@ class Config:
     l1: L1Config = L1Config()
     agents: dict[str, tuple[str, ...]] = field(default_factory=dict)  # coding-agent CLI -> its model ladder, weakest first
     fallback: FallbackConfig | None = None  # [fallback], when the config has one
+    light: LightConfig = LightConfig()  # [light]; rules only when the config has none
 
 
 class ConfigError(Exception):
@@ -137,7 +164,7 @@ def _config(path: Path, doc: dict) -> Config:
     _known(path, (), doc, _TABLES)
     ladder = _ladder(path, _table(path, doc, "models"))
     return Config(
-        api=_api(path, _table(path, doc, "api")),
+        api=_api(path, _table(path, doc, "api"), ladder),
         models=ladder,
         prices=_prices(path, _table(path, doc, "prices"), ladder),
         lanes=_lanes(path, _table(path, doc, "lanes")),
@@ -146,6 +173,7 @@ def _config(path: Path, doc: dict) -> Config:
         l1=_l1(path, _table(path, doc, "l1")),
         agents=_agents(path, _table(path, doc, "agents")),
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
+        light=_light(path, _table(path, doc, "light")),
     )
 
 
@@ -170,6 +198,15 @@ def fallback_key(config: Config) -> str | None:
     if config.fallback is None:
         return None
     return _read_key(config, "fallback", config.fallback.key_env, "or remove [fallback] from the config")
+
+
+def light_key(config: Config) -> str | None:
+    """The [light] API's key, read as api_key() reads the [api] one; None for an engine that
+    takes no key (rules, cactus) or a key_env of ""."""
+    light = config.light
+    if light.engine not in MODEL_ENGINES:
+        return None
+    return _read_key(config, "light", light.key_env, 'or set [light] engine = "rules"')
 
 
 def _read_key(config: Config, table: str, name: str, otherwise: str) -> str | None:
@@ -210,6 +247,11 @@ base_url = "https://openrouter.ai/api/v1"
 # The name, in upper case, of the environment variable that holds your API key; the key
 # itself never goes in this file. "" for a local server that needs no key.
 key_env = "OPENROUTER_API_KEY"
+# With provider "anthropic" only: the ladder models a lane calls in fast mode (up to 2.5x the
+# output speed at a premium price: $8 / $40 per million tokens on claude-opus-5-5, twice the
+# standard price). Fast mode has its own rate limit; on a 429 the lane goes on at standard
+# speed for the rest of its context and says so.
+# fast = ["claude-opus-5-5"]
 
 # [fallback]
 # Optional: a second API a lane moves to when [api] keeps failing (rate limits, overload,
@@ -250,6 +292,29 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # weakest first. They use the CLI's own login or key, never the [api] above.
 # claude = ["sonnet", "opus"]
 # codex = ["your-codex-model"]
+
+[light]
+# The light model: a small model for flightdeck's small jobs (today the hint judge, which checks
+# an "ignores the hint" alert). "rules" (the default) uses no model at all.
+# Recommended: an open-weight model served on this machine through an OpenAI-compatible server
+# (Ollama: http://127.0.0.1:11434/v1, an MLX server: http://127.0.0.1:8080/v1, key_env = ""), so
+# no provider's safety classifier declines security work. Measure one before you switch it on:
+#   flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> --compare rules
+# Models to measure, for example (examples, not endorsements: eval-local decides): Qwen3.5 9B,
+# Gemma 4 12B, gpt-oss-20b, Ministral 3 14B, Phi-4-mini. "anthropic" (a Claude model, e.g.
+# claude-haiku-5-5) and "cactus" (Cactus Needle, the [cactus] extra) are there too. The light
+# model never holds up a lane or an alert: when it refuses, fails, times out or answers outside
+# the options, the rules' answer stands and the run says so once.
+engine = "rules"   # rules | openai | anthropic | cactus
+# With engine = "openai" (an open-weight model on this machine, say), also set:
+#   model = "<model>"                         # the name your server gives the model
+#   base_url = "http://127.0.0.1:11434/v1"    # required (no default)
+#   key_env = ""                              # required: "" for a server on this machine
+# With engine = "anthropic": model = "claude-haiku-5-5", say; base_url and key_env default to
+# "https://api.anthropic.com" and "ANTHROPIC_API_KEY". For either:
+#   price = { input = 0.10, output = 0.50 }   # optional: dollars per million tokens, for an API that reports no cost
+# For any engine:
+#   timeout = 30                              # seconds a job may take; then the rules' answer stands
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -316,10 +381,81 @@ def expand(path: Path) -> Path:
         raise ConfigError(f"{path}: starts with ~ for a user that does not exist (or there is no home directory)") from None
 
 
-def _api(path: Path, table: dict) -> ApiConfig:
+def _api(path: Path, table: dict, ladder: tuple[str, ...]) -> ApiConfig:
     _known(path, ("api",), table, _API_KEYS)
     provider, base_url, key_env = _endpoint(path, "api", table)
-    return ApiConfig(base_url=base_url, key_env=key_env, provider=provider)
+    return ApiConfig(base_url=base_url, key_env=key_env, provider=provider, fast=_fast(path, table, provider, ladder))
+
+
+def _fast(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tuple[str, ...]:
+    """[api] fast: the ladder models a lane calls in fast mode. Only with the Anthropic API,
+    and only models agent/fastmode.py lists (from the claude-api skill). A model id is shown
+    only when it is one of those: any other string could be a key pasted into the wrong place."""
+    if "fast" not in table:
+        return ()
+    from .agent.fastmode import FAST_MODES, fast_problem, listed
+
+    value = table["fast"]
+    if not isinstance(value, list):
+        raise _error(path, ("api", "fast"), f"must be a list of model ids from models.ladder{_got(value)}")
+    if value and provider != "anthropic":
+        raise _error(
+            path, ("api", "fast"),
+            'is fast mode, a feature of the Anthropic Messages API: it needs [api] provider = "anthropic"',
+        )
+    seen: dict[str, int] = {}
+    for i, model in enumerate(value):
+        key = f"api.fast[{i}]"
+        if not isinstance(model, str) or not model.strip():
+            raise ConfigError(f"{path}: {key} must be a model id from models.ladder{_got(model)}")
+        if model in seen:
+            raise ConfigError(f"{path}: {key} repeats api.fast[{seen[model]}]; each model is listed once")
+        seen[model] = i
+        if model not in ladder:
+            raise ConfigError(f"{path}: {key} is not a model in models.ladder: fast mode is chosen per ladder model")
+        if model not in FAST_MODES:
+            raise ConfigError(f"{path}: {key} names a model with no fast mode; fast mode is for {listed()}")
+        problem = fast_problem(model)
+        if problem is not None:
+            raise ConfigError(f"{path}: {key}: {problem}")
+    return tuple(value)
+
+
+def _light(path: Path, table: dict) -> LightConfig:
+    """[light]: the engine, and for a model engine its model, endpoint, key variable and price."""
+    _known(path, ("light",), table, _LIGHT_KEYS)
+    engine = _choice(path, table, ("light", "engine"), "rules", LIGHT_ENGINES)
+    timeout = table.get("timeout", LIGHT_TIMEOUT)
+    if not _is_number(timeout) or not math.isfinite(timeout) or timeout <= 0:
+        raise _error(path, ("light", "timeout"), f"must be a positive number of seconds{_got(timeout)}")
+    if engine not in MODEL_ENGINES:
+        for key in ("model", "base_url", "key_env", "price"):
+            if key in table:
+                raise _error(path, ("light", key), f'is for the openai and anthropic engines, not "{engine}"')
+        return LightConfig(engine=engine, timeout=float(timeout))
+    example = "for example claude-haiku-5-5" if engine == "anthropic" else "the name your server gives the model"
+    if "model" not in table:
+        raise _error(path, ("light", "model"), f"is required for the {engine} engine: the model id ({example})")
+    model = _string(path, table, ("light", "model"), "")
+    if model != model.strip() or not _plain(model):
+        raise _error(path, ("light", "model"), "must be a model id: no spaces or control characters")
+    if engine == "openai":
+        for key in ("base_url", "key_env"):
+            if key not in table:
+                raise _error(
+                    path, ("light", key),
+                    f'is required for the openai engine (it has no default): for a server on this machine, base_url = '
+                    f'"{OLLAMA_URL}" (Ollama) or "{MLX_URL}" (an MLX server), and key_env = ""',
+                )
+    endpoint = {key: table[key] for key in ("base_url", "key_env") if key in table}
+    _, base_url, key_env = _endpoint(path, "light", {"provider": engine, **endpoint})
+    price = None
+    if "price" in table:
+        entry = table["price"]
+        if not isinstance(entry, dict):
+            raise _error(path, ("light", "price"), f"must be a table of dollars per million tokens (input, output){_got(entry)}")
+        price = _price(path, ("light", "price"), entry)
+    return LightConfig(engine=engine, model=model, base_url=base_url, key_env=key_env, timeout=float(timeout), price=price)
 
 
 def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfig:
@@ -406,20 +542,25 @@ def _prices(path: Path, table: dict, ladder: tuple[str, ...]) -> dict[str, Price
             raise _error(path, where, f"must be a table of dollars per million tokens (input, output){_got(entry)}")
         if model not in ladder:
             raise _error(path, where, "is for a model that is not in models.ladder")
-        _known(path, where, entry, _PRICE_KEYS)
-        for name in ("input", "output"):
-            if name not in entry:
-                raise _error(path, (*where, name), "is required: dollars per million tokens")
-        values = {}
-        for name, value in entry.items():
-            if not _is_number(value) or not math.isfinite(value) or value < 0:
-                raise _error(path, (*where, name), f"must be a number of dollars per million tokens, 0 or more{_got(value)}")
-            values[name] = float(value)
-        try:
-            prices[model] = Price(**values)
-        except ValueError as exc:
-            raise _error(path, where, f"is not a valid price ({exc})") from None
+        prices[model] = _price(path, where, entry)
     return prices
+
+
+def _price(path: Path, where: tuple[str, ...], entry: dict) -> Price:
+    """One price table: input and output (required) and cached_input, dollars per million tokens."""
+    _known(path, where, entry, _PRICE_KEYS)
+    for name in ("input", "output"):
+        if name not in entry:
+            raise _error(path, (*where, name), "is required: dollars per million tokens")
+    values = {}
+    for name, value in entry.items():
+        if not _is_number(value) or not math.isfinite(value) or value < 0:
+            raise _error(path, (*where, name), f"must be a number of dollars per million tokens, 0 or more{_got(value)}")
+        values[name] = float(value)
+    try:
+        return Price(**values)
+    except ValueError as exc:
+        raise _error(path, where, f"is not a valid price ({exc})") from None
 
 
 def _lanes(path: Path, table: dict) -> LaneConfig:

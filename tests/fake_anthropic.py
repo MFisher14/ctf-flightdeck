@@ -11,9 +11,10 @@ breaks one: no messages, a first message that is not the user's, roles that do n
 alternate, an empty turn or text block, a field the API does not know (a private key like
 "_anthropic_content" included), a tool_use left without its tool_result in the next turn or
 a tool_result for no tool_use, tool results after other content, temperature or top_p or
-top_k (removed on these models), a forced tool_choice, an OpenAI-style tool, or fallbacks
-without their beta header. A test that means to send such a request turns it off with
-check=False.
+top_k (removed on these models), a forced tool_choice, an OpenAI-style tool, fallbacks
+without their beta header, or `speed: "fast"` on a model without fast mode or, on a
+research-preview model, without the fast-mode beta header. A test that means to send such a
+request turns it off with check=False.
 
 With `models`, it also answers the Models API: GET /v1/models lists the models that are not
 retired, and GET /v1/models/{id} gives one, by its id or an alias in `aliases`, or 404
@@ -37,6 +38,9 @@ from fake_model import STOP_WAIT, FakeReply, _Server
 MESSAGES_PATH = "/v1/messages"
 MODELS_PATH = "/v1/models"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+FAST_BETA = "fast-mode-2026-02-01"
+FAST_MODELS = {"claude-opus-5-5", "claude-fable-5-2", "claude-mythos-5-2", "claude-opus-5", "claude-opus-4-8"}
+FAST_PREVIEW = {"claude-opus-5", "claude-opus-4-8"}  # these need the beta header for any speed
 _ids = itertools.count(1)
 
 _MESSAGE_KEYS = {"role", "content"}
@@ -160,6 +164,13 @@ def contract(record: dict) -> str | None:
     betas = {b.strip() for b in record["headers"].get("anthropic-beta", "").split(",") if b.strip()}
     if "fallbacks" in body and FALLBACK_BETA not in betas:
         return "fallbacks: Extra inputs are not permitted (the server-side fallback beta header is missing)"
+    if "speed" in body:
+        if body["speed"] not in ("standard", "fast"):
+            return "speed: Input should be 'standard' or 'fast'"
+        if body["speed"] == "fast" and body["model"] not in FAST_MODELS:
+            return f"speed: fast mode is not supported for {body['model']}"
+        if body["model"] in FAST_PREVIEW and FAST_BETA not in betas:
+            return f"speed: {body['model']} needs the {FAST_BETA} beta header for speed"
     for index, tool in enumerate(body.get("tools") or []):
         if not isinstance(tool, dict) or "name" not in tool or "input_schema" not in tool or set(tool) - {"name", "description", "input_schema", "cache_control"}:
             return f"tools.{index}: a custom tool takes name, description and input_schema"
@@ -230,8 +241,17 @@ def message(
     cache_read: int = 0,
     cache_write: int = 0,
     stop_details: dict | None = None,
+    speed: str | None = None,
 ) -> dict:
-    """A complete Messages API response body."""
+    """A complete Messages API response body; `speed` goes in usage.speed when given."""
+    usage = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_write,
+    }
+    if speed is not None:
+        usage["speed"] = speed
     return {
         "id": f"msg_fake_{next(_ids)}",
         "type": "message",
@@ -241,12 +261,7 @@ def message(
         "stop_reason": stop_reason,
         "stop_sequence": None,
         "stop_details": stop_details,
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cache_read_input_tokens": cache_read,
-            "cache_creation_input_tokens": cache_write,
-        },
+        "usage": usage,
     }
 
 
