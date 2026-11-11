@@ -65,7 +65,7 @@ LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light
 # of four open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11), not a guarantee.
 BENCHMARK = "in a benchmark on one machine"
 SUGGESTED_LADDERS = {
-    "local": ("gpt-oss:20b", f"the one local model that solved practice challenges as served (2 of 4), {BENCHMARK}"),
+    "local": ("gpt-oss:20b", f"the local model that solved the most practice challenges as served (2 of 4), {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
             f"it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 tokens, {BENCHMARK}"),
 }

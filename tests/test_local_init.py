@@ -16,7 +16,8 @@ from ctf_flightdeck.setup import Answers, LightAnswers, doctor, report, write_co
 
 QWEN_MLX = "mlx-community/Qwen3.5-9B-MLX-4bit"
 MLX_COMMAND = f"""mlx_lm.server --model {QWEN_MLX} --max-tokens 8192 --chat-template-args '{{"enable_thinking":false}}'"""
-OLLAMA_WHY = "the one local model that solved practice challenges as served (2 of 4), in a benchmark on one machine"
+# Qwen3.5 9B on Ollama solved 1 of 4 as served in the same benchmark: gpt-oss 20B solved the most, not the only ones
+OLLAMA_WHY = "the local model that solved the most practice challenges as served (2 of 4), in a benchmark on one machine"
 NOTHING_HERE = "http://127.0.0.1:9/v1"  # on this machine, and nothing listens there
 
 
