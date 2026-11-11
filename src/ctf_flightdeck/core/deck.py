@@ -102,6 +102,7 @@ class Deck:
         self._listeners: list[Callable[[Event], None]] = []
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
+        self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
         self._flag_re = re.compile(config.flag_format)
         self._thread = threading.get_ident()
         driver.attach(self)
@@ -159,7 +160,13 @@ class Deck:
             tried=tuple(a.text for a in lane.actions if a.kind is ActionKind.STEP)[-4:],
             found=tuple(lane.artifacts),
             alerts=tuple(f"{a.kind.label}: {a.reason}" for a in lane.alerts),
+            not_flags=tuple(f"{flag} ({why})" for flag, why in self._not_flags.get(ch.id, {}).items()),
         )
+
+    def not_flag(self, challenge_id: str, flag: str) -> str | None:
+        """Why `flag` is known not to be the flag of that challenge (rejected, or declined by
+        the player), or None."""
+        return self._not_flags.get(challenge_id, {}).get(flag)
 
     def fork_model(self, model: str) -> str:
         """Default model for a fork: the next stronger one, else the weakest other one, else the same."""
@@ -335,7 +342,7 @@ class Deck:
                 lane.challenge_id,
                 data={
                     "turn": lane.turns,
-                    "model": lane.model,
+                    "model": rep.model or lane.model,
                     "tokens": rep.tokens,
                     "cached_tokens": rep.cached_tokens,
                     "dollars": rep.dollars,
@@ -450,6 +457,7 @@ class Deck:
         if text == lane.plan:
             return Outcome(False, "Plan unchanged; nothing sent")
         lane.plan = text
+        lane.approach = text  # the player's own words: an escalated lane's brief carries them
         self._clear_course(lane)
         self.driver.redirect(lane, text)
         self._note(lane, f"new plan: {text}", Actor.PLAYER)
@@ -525,6 +533,7 @@ class Deck:
         return Outcome(True, f"Escalated {lane.id} from {old} to {stronger}")
 
     def _take_over(self, lane: Lane) -> Outcome:
+        lane.paused_before_takeover = lane.state is LaneState.PAUSED
         lane.state = LaneState.TAKEOVER
         self.driver.pause(lane)
         self._note(lane, "taken over by the player", Actor.PLAYER)
@@ -533,11 +542,15 @@ class Deck:
     def _hand_back(self, lane: Lane, note: str) -> Outcome:
         if lane.state is not LaneState.TAKEOVER:
             return Outcome(False, f"{lane.id} is not taken over")
-        lane.state = LaneState.WAITING if lane.pending else LaneState.RUNNING
+        if lane.paused_before_takeover:  # the player paused it before: it stays paused until Resume
+            lane.state = LaneState.PAUSED
+        else:
+            lane.state = LaneState.WAITING if lane.pending else LaneState.RUNNING
+        lane.paused_before_takeover = False
         if lane.state is LaneState.RUNNING:
             self.driver.resume(lane)
         self._note(lane, "handed back by the player" + (f": {note}" if note else ""), Actor.PLAYER)
-        return Outcome(True, f"Handed {lane.id} back")
+        return Outcome(True, f"Handed {lane.id} back" + ("; it stays paused" if lane.state is LaneState.PAUSED else ""))
 
     def _approve(self, lane: Lane) -> Outcome:
         pending = lane.pending
@@ -588,6 +601,8 @@ class Deck:
         if pending.kind is PendingKind.BUDGET:
             self._finish(lane, LaneState.STOPPED, "the player declined more budget")
             return Outcome(True, f"Stopped {lane.id}: no more budget")
+        if pending.kind is PendingKind.SUBMIT and pending.flag is not None:
+            self._not_flags.setdefault(lane.challenge_id, {})[pending.flag] = "the player declined to submit it"
         self._resolve(lane)
         self.driver.declined(lane, pending)
         if pending.kind is PendingKind.SUBMIT:
@@ -868,6 +883,14 @@ class Deck:
         if not self._flag_re.fullmatch(flag):
             self._note(lane, f"candidate {flag} does not match the flag format; not submitted")
             return
+        why = self.not_flag(lane.challenge_id, flag)
+        if why is not None:  # asked before and answered: never asked, or submitted, again
+            self._note(lane, f"candidate {flag} again; not asked: {why}")
+            if why.startswith("the player declined"):
+                self.driver.declined(lane, Pending(PendingKind.SUBMIT, f"submit {flag}", flag=flag))
+            else:
+                self.driver.rejected(lane, flag)
+            return
         self._note(lane, f"candidate flag {flag}")
         queued = ([lane.pending] if lane.pending else []) + lane.waiting
         if any(p.flag == flag for p in queued):
@@ -905,6 +928,9 @@ class Deck:
             data={"flag": flag, "correct": ok, "by": by},
         )
         if not ok:
+            self._not_flags.setdefault(ch.id, {})[flag] = (
+                "rejected by the platform" if by == "platform" else "the player said the platform rejected it"
+            )
             if lane.pending is not None and lane.pending.flag == flag:
                 self._resolve(lane)
             else:
@@ -1023,4 +1049,4 @@ def summary_lines(summary: EscalationSummary) -> list[str]:
         "Tried: " + ("; ".join(one(t) for t in summary.tried) or "nothing yet"),
         "Found: " + (", ".join(one(f) for f in summary.found) or "nothing yet"),
         "Alerts: " + ("; ".join(one(a) for a in summary.alerts) or "none"),
-    ]
+    ] + (["Not the flag: " + "; ".join(one(f) for f in summary.not_flags)] if summary.not_flags else [])

@@ -1904,3 +1904,77 @@ def test_an_l1_run_with_no_lane_is_logged_for_the_challenge_only():
     deck.record_l1("c0", "carve.zip", "none", seconds=1.0)
     event = events(deck, EventKind.L1)[-1]
     assert (event.lane, event.challenge, event.data["status"]) == (None, "c0", "none")
+
+
+# ---------------------------------------------------------------------- flags known not to be the flag
+
+
+def test_a_rejected_flag_is_not_asked_or_submitted_again_and_an_escalation_hears_of_it():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    assert deck.apply(iv.Approve(lane.id)).ok  # the platform says wrong
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))  # the lane tries it again
+    assert lane.pending is None and lane.state is LaneState.RUNNING
+    assert deck.verify.calls == [("c0", "t{wrong}")]  # not sent to the platform again
+    assert driver.named("rejected") == [(lane.id, "t{wrong}"), (lane.id, "t{wrong}")]  # the lane hears it again
+    summary = deck.summary(lane)
+    assert summary.not_flags == ("t{wrong} (rejected by the platform)",)
+    assert summary_lines(summary)[-1] == "Not the flag: t{wrong} (rejected by the platform)"
+
+
+def test_under_auto_submit_a_rejected_flag_is_not_sent_to_the_platform_again():
+    deck, driver, _ = make_deck(n=1, submit="auto")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    deck.report(lane.id, TurnReport(flag="t{wrong}"))
+    assert deck.verify.calls == [("c0", "t{wrong}")]
+
+
+def test_a_declined_flag_is_not_asked_again_on_any_lane_of_that_challenge():
+    deck, driver, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    assert deck.apply(iv.Decline(lane.id)).ok
+    sibling = fork(deck, lane)
+    deck.report(sibling.id, TurnReport(flag="t{maybe}"))
+    assert sibling.pending is None and deck.verify.calls == []
+    assert driver.named("declined")[-1] == (sibling.id, PendingKind.SUBMIT, "t{maybe}")
+    assert deck.summary(sibling).not_flags == ("t{maybe} (the player declined to submit it)",)
+
+
+def test_a_flag_the_player_said_the_platform_rejected_is_remembered_too():
+    deck = Deck(DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS), RecordingDriver(), Clock(), lambda cid, flag: None)
+    deck.release([Challenge("c0", "C", "misc", 100)], [QueueEntry("c0", "small")])
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{hand}"))
+    assert deck.apply(iv.Approve(lane.id)).ok  # submit by hand...
+    assert deck.apply(iv.Decline(lane.id)).ok  # ...and the platform did not accept it
+    deck.report(lane.id, TurnReport(flag="t{hand}"))
+    assert lane.pending is None
+    assert deck.summary(lane).not_flags == ("t{hand} (the player said the platform rejected it)",)
+
+
+# ---------------------------------------------------------------------- the player's direction, the player's pause
+
+
+def test_a_new_plan_is_the_players_direction_and_a_lanes_own_plan_is_not():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(plan="the model's idea"))
+    assert (lane.plan, lane.approach) == ("the model's idea", "")
+    assert deck.apply(iv.Redirect(lane.id, "read the source first")).ok
+    assert (lane.plan, lane.approach) == ("read the source first", "read the source first")
+
+
+def test_taking_over_a_paused_lane_leaves_it_paused_on_hand_back():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    assert deck.apply(iv.Pause(lane.id)).ok
+    assert deck.apply(iv.TakeOver(lane.id)).ok
+    out = deck.apply(iv.HandBack(lane.id))
+    assert out.ok and out.message == f"Handed {lane.id} back; it stays paused"
+    assert lane.state is LaneState.PAUSED and driver.named("resume") == []
+    assert deck.apply(iv.Resume(lane.id)).ok and driver.named("resume") == [(lane.id,)]
+    assert deck.apply(iv.TakeOver(lane.id)).ok  # a running lane taken over runs again on hand back
+    assert deck.apply(iv.HandBack(lane.id)).ok and lane.state is LaneState.RUNNING

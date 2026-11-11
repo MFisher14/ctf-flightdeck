@@ -227,6 +227,7 @@ class EscalationSummary:
     tried: tuple[str, ...]
     found: tuple[str, ...]
     alerts: tuple[str, ...]
+    not_flags: tuple[str, ...] = ()  # flags known to be wrong for this challenge, each with why ("t{x} (rejected by the platform)")
 
 
 @dataclass
@@ -236,7 +237,7 @@ class Lane:
     model: str
     state: LaneState = LaneState.RUNNING
     plan: str = ""
-    approach: str = ""
+    approach: str = ""  # the player's own direction (a fork's approach, a new plan), never the model's words
     parent: str | None = None  # lane id this one was forked from
     attempt: int = 1  # 2+ after a kill and re-queue
     turns: int = 0
@@ -256,6 +257,7 @@ class Lane:
     pending: Pending | None = None  # the approval the lane waits for now
     waiting: list[Pending] = field(default_factory=list)  # further approvals, oldest first
     hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
+    paused_before_takeover: bool = False  # hand back leaves it paused
 
     @property
     def id(self) -> str:

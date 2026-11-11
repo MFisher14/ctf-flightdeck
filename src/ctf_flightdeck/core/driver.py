@@ -55,6 +55,12 @@ class TurnReport:
     flag: str | None = None  # candidate flag
     gave_up: str | None = None  # the lane ends without a flag, with this reason
     hints_taken: int = 0  # how many queued hints this turn read (oldest first)
+    model: str | None = None  # the model that took this turn, when it is not the lane's model now (escalated meanwhile)
+
+
+class TakeoverRefused(Exception):
+    """Raised by a driver's optional takeover(lane) when the player cannot have the lane's
+    shell now; the message says why ("L01's workspace is not ready yet")."""
 
 
 class LaneDriver(Protocol):
@@ -66,7 +72,10 @@ class LaneDriver(Protocol):
         """Begin work. Raising here parks the challenge with the error as the reason."""
         ...
 
-    def pause(self, lane: Lane) -> None: ...
+    def pause(self, lane: Lane) -> None:
+        """The lane is PAUSED, or TAKEOVER (the player has its shell): it must not start
+        anything new until resume()."""
+        ...
 
     def resume(self, lane: Lane) -> None: ...
 
