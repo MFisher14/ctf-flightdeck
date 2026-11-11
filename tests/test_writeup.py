@@ -3,7 +3,10 @@
 Every run here is made by a real Deck (with a recording driver: the test reports each step,
 as a lane would), its EventLog and its TranscriptLog in tmp_path, then read back with
 runrecord.load_run. File changes come from the real workspace snapshots and diffs
-(agent.workspace.changed_files), so the drafts parse exactly what a run writes.
+(agent.workspace.changed_files), so the drafts parse exactly what a run writes. Where the
+form of a step's text matters (a command folded to one line, text clipped with a "…", an
+output cut to its first lines), the step comes from a real Toolbox call through a workspace
+that prints fixed bytes (nothing runs), and from the real agent.driver step.
 
 Drafts are parsed as Markdown with markdown-it (CommonMark plus GFM tables, strikethrough and
 autolinks) to check that nothing from the run acts as markup: no HTML, no link, no block that
@@ -15,13 +18,16 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
 
 from ctf_flightdeck import writeup
-from ctf_flightdeck.agent.client import ModelClient, ModelError
-from ctf_flightdeck.agent.workspace import changed_files, take_snapshot
+from ctf_flightdeck.agent.client import ModelClient, ModelError, Reply, Usage
+from ctf_flightdeck.agent.driver import _step as driver_step
+from ctf_flightdeck.agent.tools import Toolbox, ToolResult
+from ctf_flightdeck.agent.workspace import RunResult, changed_files, take_snapshot
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -30,14 +36,14 @@ from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.mock.world import ManualClock
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.runrecord import RunRecord, load_run
-from ctf_flightdeck.text import untrusted
+from ctf_flightdeck.text import NEWLINE, untrusted
 from ctf_flightdeck.transcript import TranscriptLog
 from fake_model import FakeModelServer, error_reply, text_reply
 
 FLAG_FORMAT = r"t\{[^{}\s]+\}"
 ALPHA = "t{alpha}"
 SOLVE = "import base64\n# prints the flag\nprint(base64.b64decode(open('note.txt').read()).decode())\n"
-TOKEN = re.compile(r"\{\{[0-9a-f]{8}-(?:block-)?\d+\}\}")
+TOKEN = re.compile(r"\{\{[0-9a-f]{8}-(?:block-|line-)?\d+\}\}")
 
 
 # ---------------------------------------------------------------------- building real runs
@@ -59,12 +65,13 @@ class Run:
     """A deck, its event log and its lane transcripts, in one run folder."""
 
     def __init__(self, folder: Path, challenges: list[Challenge], *, answers: dict[str, str],
-                 models: tuple[str, ...] = ("small", "mid"), submit: str = "confirm") -> None:
+                 models: tuple[str, ...] = ("small", "mid"), submit: str = "confirm",
+                 flag_format: str = FLAG_FORMAT) -> None:
         self.folder = folder
         self.clock = ManualClock(0.0)
         self.driver = RecordingDriver()
         verify = lambda cid, flag: (answers[cid] == flag) if cid in answers else None  # noqa: E731
-        config = DeckConfig(event="test", flag_format=FLAG_FORMAT, submit=submit, models=models)
+        config = DeckConfig(event="test", flag_format=flag_format, submit=submit, models=models)
         self.deck = Deck(config, self.driver, self.clock, verify)
         self.log = EventLog(folder / "events.jsonl")
         self.log.attach(self.deck)
@@ -103,6 +110,26 @@ def change(workspace: Path, path: str, content: str | bytes | None) -> FileChang
         target.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
     (changed,) = changed_files(before, take_snapshot(workspace), workspace)
     return changed
+
+
+class CannedShell:
+    """A workspace whose every command prints the same fixed bytes: nothing runs."""
+
+    def __init__(self, root: Path, output: bytes) -> None:
+        self.root = root
+        self.workdir = str(root)
+        self.output = output
+
+    async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:
+        return RunResult(0, self.output)
+
+
+def tool(tmp_path: Path, name: str, arguments: dict, output: bytes = b"") -> ToolResult:
+    """One real Toolbox call: its action and output are what a lane's transcript holds (an
+    action folded to one line and clipped with a "…", an output cut to its first lines)."""
+    root = tmp_path / "toolbox"
+    root.mkdir(exist_ok=True)
+    return asyncio.run(Toolbox(CannedShell(root, output)).call(name, json.dumps(arguments), turn=1, index=0))
 
 
 def alpha_run(tmp_path: Path) -> RunRecord:
@@ -187,10 +214,40 @@ def test_the_steps_that_mattered_are_the_one_whose_output_held_the_flag_and_the_
     headings = [line for line in section if line.startswith("### ")]
     assert headings == [f"### Turn {n}" for n in range(6, 11)] + ["### Turn 11 (the flag shows here)"]
     key = section.index("### Turn 11 (the flag shows here)")
-    assert section[key + 2] == "`$ python3 solve.py`"
-    assert section[key + 4: key + 8] == ["```text", "decoding", ALPHA, "```"]
+    assert section[key + 2: key + 5] == ["```text", "$ python3 solve.py", "```"]  # the command, in its own block
+    assert section[key + 6: key + 10] == ["```text", "decoding", ALPHA, "```"]  # then its output
     turn10 = section.index("### Turn 10")
-    assert section[turn10 + 2: turn10 + 5] == ["`$ cat > solve.py <<'EOF'`", "", "No output recorded."]
+    assert section[turn10 + 2: turn10 + 7] == ["```text", "$ cat > solve.py <<'EOF'", "```", "", "No output recorded."]
+
+
+def test_a_command_is_its_own_fenced_block_with_the_lines_the_transcript_folded(tmp_path, markdown_it):
+    command = "cat > solve.py <<'EOF'\nimport base64\nprint(base64.b64decode(open('note.txt').read()).decode())\nEOF\npython3 solve.py"
+    shell = tool(tmp_path, "shell", {"command": command}, b"t{c}\n")
+    assert NEWLINE in shell.action and "\n" not in shell.action  # one line, as the transcript keeps it
+    run = Run(tmp_path / "run", [Challenge("c", "Cmd", "misc", 10)], answers={"c": "t{c}"})
+    lane = run.lane("c")
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, "submit t{c}", flag="t{c}")
+    run.apply(iv.Approve(lane))
+    text = writeup.draft(run.close(), "c")
+    fences = [(t.info, t.content) for t in markdown_it.parse(text) if t.type == "fence"]
+    assert fences[0] == ("text", f"$ {command}\n")  # its lines back, in a block of its own
+    assert fences[1] == ("text", "t{c}\n")
+    spans = [c.content for t in markdown_it.parse(text) if t.type == "inline" for c in t.children if c.type == "code_inline"]
+    assert not [span for span in spans if "solve.py" in span]  # never a one-line code span
+
+
+def test_a_turn_with_more_calls_shows_its_command_alone_and_says_there_were_more(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("m", "More", "misc", 10)], answers={"m": "t{m}"})
+    lane = run.lane("m")
+    run.step(lane, "$ ls  (+2 more)", "t{m}")  # agent/driver.py keeps the first real call of a turn
+    run.step(lane, "submit t{m}", flag="t{m}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "m"), "## Steps that mattered")
+    key = section.index("### Turn 1 (the flag shows here)")
+    assert section[key + 2: key + 7] == [
+        "```text", "$ ls", "```", "", "The turn made 2 more tool calls; the transcript keeps only this one.",
+    ]
 
 
 def test_the_files_the_lane_wrote_are_shown_whole(tmp_path):
@@ -261,6 +318,25 @@ def test_a_redirect_that_is_the_last_plan_is_not_listed_twice(tmp_path):
     assert items == ["1. Turn 1, you redirected it: try rot13"]
 
 
+def test_a_turn_that_set_the_plan_and_submitted_lists_the_plan_once_and_stays_a_step(tmp_path):
+    plan = tool(tmp_path, "set_plan", {"plan": "submit the decoded note"})
+    submit = tool(tmp_path, "submit_flag", {"flag": "t{p}", "how": "decoded the note"})
+    action, output = driver_step([plan, submit], None)  # the step text a real lane's turn gets
+    assert action == "plan: submit the decoded note  (+1 more)"
+    run = Run(tmp_path / "run", [Challenge("p", "Plans", "misc", 10)], answers={"p": "t{p}"})
+    p = run.lane("p")
+    run.step(p, "$ cat note.txt", "dGhlIGZsYWc=")
+    run.step(p, action, output, plan=plan.plan, flag=submit.flag)
+    run.apply(iv.Approve(p))
+    text = writeup.draft(run.close(), "p")
+    assert [line for line in lines_of(text, "## Approach") if line] == ["1. Turn 2, the lane's plan: submit the decoded note"]
+    section = lines_of(text, "## Steps that mattered")
+    key = section.index("### Turn 2 (the last step)")  # it submitted the flag: a step, not only a plan
+    assert section[key + 2: key + 7] == [
+        "```text", "plan: submit the decoded note", "```", "", "The turn made 1 more tool call; the transcript keeps only this one.",
+    ]
+
+
 # ---------------------------------------------------------------------- which steps mattered
 
 
@@ -298,6 +374,98 @@ def test_with_neither_the_last_step_before_the_flag_matters_and_the_draft_says_w
     ]
 
 
+def test_the_flag_is_found_in_the_first_output_that_holds_it_not_a_later_one(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("f", "First", "misc", 10)], answers={"f": "t{f}"})
+    lane = run.lane("f")
+    run.step(lane, "$ ls", "solve.py")
+    run.step(lane, "$ python3 solve.py", "t{f}")
+    run.step(lane, "$ echo done", "done")
+    run.step(lane, "submit t{f}", "solve.py printed t{f}", flag="t{f}")  # how it was found repeats it
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "f"), "## Steps that mattered")
+    assert section[1] == "The flag first shows in the output of turn 2. Here it is with the 1 step before it."
+
+
+def test_the_last_run_of_a_file_the_lane_wrote_is_the_one_that_mattered(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("r", "Rerun", "rev", 10)], answers={"r": "t{r}"})
+    lane = run.lane("r")
+    run.step(lane, "$ cat > solve.py <<'EOF'", files=(change(tmp_path / "work", "solve.py", "print(1)\n"),))
+    run.step(lane, "$ python3 solve.py", "Traceback: KeyError")
+    run.step(lane, "$ sed -i s/1/2/ solve.py", "", files=(change(tmp_path / "work", "solve.py", "print(2)\n"),))
+    run.step(lane, "$ python3 solve.py", "decoded the key")
+    run.step(lane, "submit t{r}", "from the key", flag="t{r}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "r"), "## Steps that mattered")
+    assert section[1].startswith("No step's output shows the flag; the last step that ran a file the lane wrote is "
+                                 "turn 4, which ran `solve.py`.")
+
+
+SOLVER = "for i in range(4):\n    print('round', i)\nprint('t{x}')\n"
+
+
+def test_a_solver_written_and_run_in_one_command_is_seen_in_the_folded_line_a_transcript_holds(tmp_path):
+    command = "cat > solve.py <<'EOF'\n" + SOLVER + "EOF\npython3 solve.py"
+    shell = tool(tmp_path, "shell", {"command": command}, b"round 0\nround 1\nround 2\nround 3\nt{x}\n")
+    assert NEWLINE in shell.action and "\n" not in shell.action  # one line, as the transcript keeps it
+    assert shell.output == "round 0\nround 1\nround 2"  # the first lines only: the flag is not in it
+    run = Run(tmp_path / "run", [Challenge("x", "Ex", "rev", 100)], answers={"x": "t{x}"})
+    lane = run.lane("x")
+    run.step(lane, "$ file chall", "ELF 64-bit LSB executable")
+    run.step(lane, shell.action, shell.output, files=(change(tmp_path / "work", "solve.py", SOLVER),))
+    run.step(lane, "$ ls", "chall solve.py")
+    run.step(lane, "submit t{x}", "the solver printed it", flag="t{x}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "x"), "## Steps that mattered")
+    assert section[1] == ("No step's output shows the flag; the last step that ran a file the lane wrote is turn 2, "
+                          "which ran `solve.py`. Here it is with the 1 step before it.")
+
+
+def test_a_line_inside_a_heredoc_is_not_a_command(tmp_path):
+    script = "#!/bin/sh\n./helper.sh\n"  # run.sh would run helper.sh, but nothing runs run.sh
+    shell = tool(tmp_path, "shell", {"command": "cat > run.sh <<'EOF'\n" + script + "EOF"})
+    run = Run(tmp_path / "run", [Challenge("h", "Here", "misc", 10)], answers={"h": "t{h}"})
+    lane = run.lane("h")
+    run.step(lane, "$ cat > helper.sh <<'EOF'", files=(change(tmp_path / "work", "helper.sh", "echo hi\n"),))
+    run.step(lane, shell.action, shell.output, files=(change(tmp_path / "work", "run.sh", script),))
+    run.step(lane, "$ ls", "helper.sh run.sh")
+    run.step(lane, "submit t{h}", "guessed", flag="t{h}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "h"), "## Steps that mattered")
+    assert section[1].startswith("No step's output shows the flag and no step ran a file the lane wrote")
+
+
+def test_a_command_run_after_a_folded_newline_is_a_command(tmp_path):
+    shell = tool(tmp_path, "shell", {"command": "chmod +x x.sh\n./x.sh"}, b"ok\n")
+    assert shell.action == f"$ chmod +x x.sh{NEWLINE}./x.sh"
+    run = Run(tmp_path / "run", [Challenge("c", "Chmod", "misc", 10)], answers={"c": "t{c}"})
+    lane = run.lane("c")
+    run.step(lane, "$ cat > x.sh <<'EOF'", files=(change(tmp_path / "work", "x.sh", "echo ok\n"),))
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, "submit t{c}", "x.sh said ok", flag="t{c}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "c"), "## Steps that mattered")
+    assert "the last step that ran a file the lane wrote is turn 2, which ran `x.sh`" in section[1]
+
+
+def test_a_long_lane_with_many_files_is_drafted_quickly(tmp_path):
+    """300 steps and 600 files (an unpacked handout): each step is checked against each file,
+    which must not cost a regex compiled per pair (it took over ten seconds)."""
+    run = Run(tmp_path / "run", [Challenge("c", "Long", "misc", 10)], answers={"c": "t{c}"})
+    lane = run.lane("c")
+    for n in range(300):
+        files = tuple(FileChange(f"extracted/dir{k // 50}/file{k:04d}.dat", "binary file, 10 bytes", "added")
+                      for k in (2 * n, 2 * n + 1))
+        run.step(lane, f"$ ./tool --input data/file{n % 97}.dat --verbose", "ok", files=files)
+    run.step(lane, "submit t{c}", flag="t{c}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    assert len(record.lanes[lane].files) == 600
+    start = time.perf_counter()
+    text = writeup.draft(record, "c")
+    assert time.perf_counter() - start < 2.0
+    assert "600 files, not shown here" in text
+
+
 def test_long_outputs_are_cut_to_twenty_lines_and_long_lines_short_and_the_draft_says_so(tmp_path):
     run = Run(tmp_path / "run", [Challenge("o", "Output", "misc", 10)], answers={"o": "t{o}"})
     o = run.lane("o")
@@ -307,7 +475,7 @@ def test_long_outputs_are_cut_to_twenty_lines_and_long_lines_short_and_the_draft
     run.step(o, "submit t{o}", flag="t{o}")
     run.apply(iv.Approve(o))
     section = lines_of(writeup.draft(run.close(), "o"), "## Steps that mattered")
-    start = section.index("```text")
+    start = section.index("```text", section.index("$ ./dump"))  # the output's block, after the command's
     end = section.index("```", start + 1)
     assert section[start + 1: end] == ["t{o}"] + [f"line {k}" for k in range(2, 21)]
     assert section[end + 2] == "Output cut: the first 20 of its 30 lines are shown."
@@ -321,7 +489,7 @@ def test_a_line_over_the_limit_is_cut_and_the_draft_says_so(tmp_path):
     run.step(w, "submit t{w}", flag="t{w}")
     run.apply(iv.Approve(w))
     section = lines_of(writeup.draft(run.close(), "w"), "## Steps that mattered")
-    start = section.index("```text")
+    start = section.index("```text", section.index("$ ./wide"))
     assert section[start + 1: start + 4] == ["w" * writeup.LINE_CHARS, "t{w}", "```"]
     assert section[start + 5] == f"Output cut: lines over {writeup.LINE_CHARS} characters are cut short."
 
@@ -366,18 +534,19 @@ def test_a_file_is_shown_whole_under_200_lines_and_named_at_200(tmp_path):
     text = run_with_files(tmp_path, [("short.txt", short), ("long.txt", long)])
     section = "\n".join(lines_of(text, "## Files the lane wrote"))
     assert "### `short.txt`, added in turn 1, 199 lines\n\n```text\n" + short + "```" in section
-    assert ("### `long.txt`, added in turn 2, 200 lines\n\nToo long to show here (a draft shows files under 200 lines); "
-            "its diff is in `lanes/L01.jsonl`.") in section
+    assert ("1 more file, not shown here (see `lanes/L01.jsonl`):\n\n- `long.txt`, added in turn 2: 200 lines, too "
+            "long to show here (a draft shows files under 200 lines)") in section
     assert "\n199\n" not in section
 
 
 def test_modified_binary_and_deleted_files_are_described_not_dumped(tmp_path):
     text = run_with_files(tmp_path, [("keep.txt", "v1\n"), ("keep.txt", "v2\n"), ("blob.bin", b"\x00\xff" * 8),
-                                     ("gone.txt", "x\n"), ("gone.txt", None)])
+                                     ("empty.txt", ""), ("gone.txt", "x\n"), ("gone.txt", None)])
     section = "\n".join(lines_of(text, "## Files the lane wrote"))
     assert ("### `keep.txt`, modified in turn 2\n\nIts last change, as the transcript keeps it:\n\n```diff\n"
             "--- a/keep.txt\n+++ b/keep.txt\n@@ -1 +1 @@\n-v1\n+v2\n```") in section
-    assert "### `blob.bin`, added in turn 3\n\nNot shown: binary file, 16 bytes." in section
+    assert ("2 more files, not shown here (see `lanes/L01.jsonl`):\n\n- `blob.bin`, added in turn 3: binary file, 16 bytes\n"
+            "- `empty.txt`, added in turn 4: an empty file") in section
     assert section.rstrip().endswith("Deleted: `gone.txt`.")
 
 
@@ -387,10 +556,31 @@ def test_files_a_step_ran_come_first_and_only_ten_are_shown_whole(tmp_path):
     headings = [line for line in section if line.startswith("### ")]
     assert headings[0] == "### `solve.py`, added in turn 13, 1 line"  # the one a step ran, though written last
     assert len(headings) == writeup.WHOLE_FILES
-    assert "3 more, not shown here (their diffs are in `lanes/L01.jsonl`):" in section
+    assert "3 more files, not shown here (see `lanes/L01.jsonl`):" in section
     assert [line for line in section if line.startswith("- ")] == [
-        "- `out09.txt`, added in turn 10", "- `out10.txt`, added in turn 11", "- `out11.txt`, added in turn 12",
+        "- `out09.txt`, added in turn 10: 1 line", "- `out10.txt`, added in turn 11: 1 line",
+        "- `out11.txt`, added in turn 12: 1 line",
     ]
+
+
+def test_files_with_nothing_to_show_never_push_one_that_has_out(tmp_path):
+    """Twelve binary files unpacked first, then a solver run in a way no step shows
+    (`python3 < solve.py`): the solver is shown whole, the binaries listed one line each."""
+    run = Run(tmp_path / "run", [Challenge("f", "Files", "misc", 10)], answers={"f": "t{f}"})
+    f = run.lane("f")
+    for k in range(12):
+        run.step(f, "$ unzip -o handout.zip", files=(change(tmp_path / "work", f"dist/part{k:02d}.bin", bytes([0, k, 255]) * 8),))
+    run.step(f, "$ cat > solve.py <<'EOF'", files=(change(tmp_path / "work", "solve.py", SOLVE),))
+    run.step(f, "$ python3 < solve.py", "decoded the note")
+    run.step(f, "submit t{f}", flag="t{f}")
+    run.apply(iv.Approve(f))
+    section = lines_of(writeup.draft(run.close(), "f"), "## Files the lane wrote")
+    assert [line for line in section if line.startswith("### ")] == ["### `solve.py`, added in turn 13, 3 lines"]
+    assert "12 more files, not shown here (see `lanes/L01.jsonl`):" in section
+    assert [line for line in section if line.startswith("- ")] == [
+        f"- `dist/part{k:02d}.bin`, added in turn {k + 1}: binary file, 24 bytes" for k in range(12)
+    ]
+    assert not any(line.startswith("Not shown") for line in section)
 
 
 # ---------------------------------------------------------------------- forks, escalations, take-overs
@@ -518,6 +708,52 @@ def test_an_l1_flag_nobody_accepted_is_not_a_solve(tmp_path):
     assert writeup.solves(run.close()) == {}
 
 
+def test_a_wrong_l1_candidate_then_a_lane_solve_is_the_lanes_solve(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("c", "Gamma", "cry", 100)], answers={"c": "t{right}"})
+    lane = run.lane("c")
+    run.deck.record_l1("c", "decode.rot13", "candidate", flags=["t{wrong}"], seconds=0.1, lane_id=lane)
+    run.deck.report(lane, TurnReport(turn=False, flag="t{wrong}"))
+    run.apply(iv.Approve(lane))  # the platform rejects it; the lane carries on
+    run.step(lane, "$ python3 solve.py", "t{right}")
+    run.step(lane, "submit t{right}", flag="t{right}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    assert writeup.solves(record)["c"].l1 is None
+    text = writeup.draft(record, "c")
+    assert f"- Solved by: lane {lane} at" in text and "## Steps that mattered" in text
+    assert "with no model" not in text
+
+
+def test_an_l1_flag_submitted_at_once_does_not_say_you_approved_it(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("d", "Delta", "cry", 100)], answers={"d": "t{delta}"}, submit="auto")
+    d = run.lane("d")
+    run.clock.advance(1.0)
+    run.deck.record_l1("d", "decode.base64", "solved", flags=["t{delta}"], seconds=0.4, notes="two layers", lane_id=d)
+    run.deck.report(d, TurnReport(turn=False, flag="t{delta}"))  # auto: submitted at once, no approval asked
+    record = run.close()
+    assert not [a for a in record.lanes[d].actions if a.by == "player"]
+    lines = lines_of(writeup.draft(record, "d"), "## How L1 solved it")
+    assert "- Reported on lane L01 and submitted at once, with no approval asked (submit is set to auto)" in lines
+    assert not any("approved" in line for line in lines)
+
+
+def test_an_l1_flag_you_submitted_by_hand_says_so(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("d", "Delta", "cry", 100)], answers={}, submit="auto")  # the board cannot check
+    d = run.lane("d")
+    run.deck.record_l1("d", "decode.base64", "solved", flags=["t{delta}"], seconds=0.4, lane_id=d)
+    run.deck.report(d, TurnReport(turn=False, flag="t{delta}"))  # auto, but you submit it by hand and confirm
+    run.apply(iv.Approve(d))
+    lines = lines_of(writeup.draft(run.close(), "d"), "## How L1 solved it")
+    assert "- Reported on lane L01, where you submitted it by hand and said the platform accepted it" in lines
+
+
+def test_an_l1_solve_whose_lane_transcript_is_missing_does_not_guess_the_approval(tmp_path):
+    record = l1_run(tmp_path)
+    (record.dir / "lanes" / "L01.jsonl").unlink()
+    lines = lines_of(writeup.draft(load_run(record.dir), "d"), "## How L1 solved it")
+    assert "- Reported on lane L01, whose transcript is missing, so whether you approved it is not known" in lines
+
+
 # ---------------------------------------------------------------------- what the run folder lacks
 
 
@@ -548,6 +784,32 @@ def test_lines_the_run_log_lost_are_named_in_the_draft(tmp_path):
     assert len(gaps) == 2 and gaps[1].startswith("- `events.jsonl:") and "not JSON" in gaps[1]
 
 
+def surrogate_run(tmp_path: Path) -> RunRecord:
+    """Alpha's lane set a plan holding a lone surrogate (valid JSON from a model, which the real
+    Toolbox takes for a plan); Beta was solved after it."""
+    plan = tool(tmp_path, "set_plan", {"plan": "decode the emoji \ud83d note"})
+    assert not plan.error and "\ud83d" in plan.action
+    run = Run(tmp_path / "run", [Challenge("a", "Alpha", "misc", 50), Challenge("b", "Beta", "web", 100)],
+              answers={"a": "t{a}", "b": "t{b}"})
+    a, b = run.lane("a"), run.lane("b")
+    run.step(a, plan.action, plan.output, plan=plan.plan)
+    run.step(a, "$ cat note", "t{a}")
+    run.step(a, "submit t{a}", flag="t{a}")
+    run.apply(iv.Approve(a))
+    run.step(b, "$ cat flag", "t{b}")
+    run.step(b, "submit t{b}", flag="t{b}")
+    run.apply(iv.Approve(b))
+    return run.close()
+
+
+def test_a_lone_surrogate_from_the_run_is_shown_as_a_mark(tmp_path):
+    record = surrogate_run(tmp_path)
+    assert "\ud83d" in record.lanes["L01"].plan  # read back as it was written
+    text = writeup.draft(record, "a")
+    text.encode("utf-8")  # a file can hold it
+    assert "1. Turn 1, the lane's plan: `decode the emoji � note`" in text
+
+
 # ---------------------------------------------------------------------- redaction
 
 
@@ -567,13 +829,121 @@ def test_redact_replaces_every_copy_of_the_flag(tmp_path):
     assert "t{a" not in redacted  # not even the part a cut would have left
     assert "```python\nprint('<flag>')\n```" in redacted
     assert lines_of(redacted, "## Flag")[1:4] == ["```text", "<flag>", "```"]
-    assert "Redacted: every copy of the flag in this draft reads `<flag>`." in redacted
+    assert ("Redacted: `<flag>` stands for the flag wherever the run's text held it: whole, cut short, with characters "
+            "folded, or the part inside its braces.") in redacted
     assert "- Turn 1, hint: `is it <flag>?`" in redacted
 
 
 def test_redact_covers_an_l1_solve_too(tmp_path):
     text = writeup.draft(l1_run(tmp_path), "d", redact=True)
     assert "t{delta}" not in text and "- Flags it reported: `<flag>`, `t{other}`" in text
+
+
+CLIPPED = "t{redact_me_please_0123456789}"
+
+
+def test_redact_finds_the_flag_the_toolbox_cut_short_in_an_output(tmp_path):
+    shell = tool(tmp_path, "shell", {"command": "python3 solve.py"}, f"decoded: {'A' * 260} {CLIPPED} (2 layers)\n".encode())
+    assert shell.output.endswith(CLIPPED[:-1] + "…")  # the Toolbox kept all of it but the closing brace
+    run = Run(tmp_path / "run", [Challenge("c", "Clip", "misc", 50)], answers={"c": CLIPPED})
+    lane = run.lane("c")
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, f"submit {CLIPPED}", flag=CLIPPED)
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    section = lines_of(writeup.draft(record, "c"), "## Steps that mattered")
+    assert section[1] == "The flag first shows, cut short, in the output of turn 1."
+    redacted = writeup.draft(record, "c", redact=True)
+    assert "t{redact" not in redacted and "redact_me" not in redacted
+    assert f"decoded: {'A' * 260} <flag>…" in redacted
+
+
+def test_redact_finds_the_flag_cut_short_in_how_a_lane_found_it(tmp_path):
+    how = "it printed it at the very end of its padding, " + "z" * 230 + " " + CLIPPED
+    submit = tool(tmp_path, "submit_flag", {"flag": CLIPPED, "how": how})
+    assert submit.output.endswith("…") and CLIPPED not in submit.output and "t{redact_me" in submit.output
+    run = Run(tmp_path / "run", [Challenge("c", "Clip", "misc", 50)], answers={"c": CLIPPED})
+    lane = run.lane("c")
+    run.step(lane, "$ ls", "solve.py")
+    run.step(lane, submit.action, submit.output, flag=submit.flag)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "c", redact=True)
+    assert "t{redact" not in redacted and "redact_me" not in redacted
+    assert "z" * 230 + " <flag>…" in redacted
+
+
+def test_redact_finds_the_flag_cut_short_at_the_end_of_a_line(tmp_path):
+    said = "I believe the answer is " + "very " * 32 + CLIPPED
+    action, _ = driver_step([], Reply({}, said, (), "", Usage(), ""))  # the driver keeps 200 characters, no "…"
+    assert action.endswith(" t{redact_me_plea")
+    run = Run(tmp_path / "run", [Challenge("c", "Clip", "misc", 50)], answers={"c": CLIPPED})
+    lane = run.lane("c")
+    run.step(lane, action)  # a turn in which the model only spoke
+    run.step(lane, f"submit {CLIPPED}", flag=CLIPPED)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "c", redact=True)
+    assert "t{redact" not in redacted
+    assert "```text\nsays: I believe the answer is " + "very " * 32 + "<flag>\n```" in redacted
+
+
+def test_redact_finds_the_flag_the_toolbox_folded(tmp_path):
+    emoji = "t{i_❤️_ctf}"  # a heart and variation selector 16, which untrusted() makes U+FFFD
+    submit = tool(tmp_path, "submit_flag", {"flag": emoji, "how": "decoded note.txt"})
+    assert submit.action == "submit t{i_❤�_ctf}" and submit.flag == emoji
+    run = Run(tmp_path / "run", [Challenge("e", "Emoji", "misc", 50)], answers={"e": emoji})
+    lane = run.lane("e")
+    run.step(lane, "$ cat note.txt", "the note says hi")
+    run.step(lane, submit.action, submit.output, flag=submit.flag)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "e", redact=True)
+    assert "t{i_" not in redacted and "_ctf" not in redacted
+    assert "```text\nsubmit <flag>\n```" in redacted
+
+
+def test_the_part_inside_the_braces_is_a_copy_of_the_flag(tmp_path):
+    body = "s3cr3t_x0r_k3y_found"
+    shell = tool(tmp_path, "shell", {"command": "python3 xor.py"}, f"key found: {body}\n".encode())
+    run = Run(tmp_path / "run", [Challenge("k", "Key", "cry", 50)], answers={"k": f"t{{{body}}}"})
+    lane = run.lane("k")
+    run.step(lane, "$ ls", "xor.py")
+    run.step(lane, shell.action, shell.output)  # the solver prints the key; the lane wraps it in t{...}
+    run.step(lane, f"submit t{{{body}}}", "wrapped the key in the flag format", flag=f"t{{{body}}}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    section = lines_of(writeup.draft(record, "k"), "## Steps that mattered")
+    assert section[1] == ("The part inside the flag's braces first shows in the output of turn 2. Here it is with "
+                          "the 1 step before it.")
+    redacted = writeup.draft(record, "k", redact=True)
+    assert body not in redacted and "```text\nkey found: <flag>\n```" in redacted
+
+
+def test_the_part_inside_the_braces_cut_short_is_a_copy_too(tmp_path):
+    body = "s3cr3t_x0r_k3y_found"
+    shell = tool(tmp_path, "shell", {"command": "python3 xor.py"}, f"key: {'A' * 280} {body}\n".encode())
+    assert shell.output.endswith(" s3cr3t_x0r_k3…")  # the Toolbox cut the key short
+    run = Run(tmp_path / "run", [Challenge("k", "Key", "cry", 50)], answers={"k": f"t{{{body}}}"})
+    lane = run.lane("k")
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, f"submit t{{{body}}}", flag=f"t{{{body}}}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    section = lines_of(writeup.draft(record, "k"), "## Steps that mattered")
+    assert section[1] == "The part inside the flag's braces first shows in the output of turn 1."
+    redacted = writeup.draft(record, "k", redact=True)
+    assert "s3cr3t" not in redacted and f"key: {'A' * 280} <flag>…" in redacted
+
+
+def test_a_cut_that_keeps_only_the_flag_format_is_not_redacted(tmp_path):
+    flag = "picoCTF{s3cr3t_x0r}"
+    run = Run(tmp_path / "run", [Challenge("p", "Pico", "for", 50)], answers={"p": flag},
+              flag_format=r"picoCTF\{[^{}\s]+\}")
+    lane = run.lane("p")
+    run.step(lane, "$ strings chall | grep picoCTF{", flag)  # the command ends with the format, not the flag
+    run.step(lane, f"submit {flag}", flag=flag)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "p", redact=True)
+    assert "s3cr3t" not in redacted
+    assert "```text\n$ strings chall | grep picoCTF{\n```\n\n```text\n<flag>\n```" in redacted
 
 
 # ---------------------------------------------------------------------- hostile text
@@ -702,6 +1072,14 @@ def block_keys(frozen: str) -> list[str]:
     return [line for line in frozen.split("\n") if TOKEN.fullmatch(line) and "-block-" in line]
 
 
+def fact_keys(frozen: str) -> list[str]:
+    return [line for line in frozen.split("\n") if TOKEN.fullmatch(line) and "-line-" in line]
+
+
+def value_keys(frozen: str) -> list[str]:
+    return [key for key in TOKEN.findall(frozen) if "-block-" not in key and "-line-" not in key]
+
+
 def polish(record: RunRecord, cid: str, server: FakeModelServer, **kwargs) -> writeup.Polished:
     async def go():
         async with ModelClient(server.base_url, None, max_retries=0) as client:
@@ -712,7 +1090,7 @@ def polish(record: RunRecord, cid: str, server: FakeModelServer, **kwargs) -> wr
 
 def reworded(request: dict) -> dict:
     frozen = frozen_of(request)
-    text = frozen.replace("## Approach", "## How it went").replace("Here it is with", "Shown here with")
+    text = frozen.replace("## Approach", "## How it went").replace("No output recorded.", "It printed nothing.")
     return text_reply(text, prompt_tokens=900, completion_tokens=700, cost=0.002)
 
 
@@ -728,8 +1106,52 @@ def test_polish_sends_none_of_the_runs_text_and_keeps_every_block(tmp_path, mark
     assert request["json"]["messages"][0] == {"role": "system", "content": writeup.POLISH_INSTRUCTIONS}
     assert "tools" not in request["json"]
     plain = writeup.draft(record, "a")
-    assert done.markdown == plain.replace("## Approach", "## How it went").replace("Here it is with", "Shown here with")
+    assert done.markdown == plain.replace("## Approach", "## How it went").replace("No output recorded.", "It printed nothing.")
     assert (done.usage.total, done.usage.cost) == (1600, 0.002)
+    assert tags(markdown_it.render(done.markdown)) <= ALLOWED_TAGS
+
+
+def test_polish_never_shows_the_model_a_line_that_states_a_fact(tmp_path):
+    record = alpha_run(tmp_path)
+    with FakeModelServer(responder=lambda r: text_reply(frozen_of(r))) as server:
+        done = polish(record, "a", server)
+    sent = frozen_of(server.requests[0])
+    for fact in ("Category", "Points", "Solved by", "T+00:", "6m after", "Model", "Spent", "12 turns", "Started as",
+                 "first shows", "Accepted at", "the board checked it"):
+        assert fact not in sent, fact
+    assert len(fact_keys(sent)) == 8  # six at the top, why turn 11 was picked, when it was accepted
+    assert done.markdown == writeup.draft(record, "a")  # and each comes back exactly as it was
+
+
+@pytest.mark.parametrize("make", [alpha_run, l1_run, lambda tmp_path: hostile_run(tmp_path), lambda tmp_path: surrogate_run(tmp_path)])
+def test_a_reply_that_changes_nothing_gives_back_the_plain_draft(tmp_path, make):
+    record = make(tmp_path)
+    cid = next(iter(writeup.solves(record)))
+    for redact in (False, True):
+        with FakeModelServer(responder=lambda r: text_reply(frozen_of(r))) as server:
+            assert polish(record, cid, server, redact=redact).markdown == writeup.draft(record, cid, redact=redact)
+
+
+def test_a_reply_may_join_a_list_into_prose_around_the_placeholders(tmp_path, markdown_it):
+    record = alpha_run(tmp_path)
+
+    def tidy(request: dict) -> dict:
+        frozen = frozen_of(request)
+        plan, redirect = value_keys(frozen)[1:3]
+        reply = frozen.replace(
+            f"1. Turn 1, the lane's plan: {plan}\n2. Turn 9, you redirected it: {redirect}",
+            f"In turn 1 the lane meant to ({plan}), and in turn 9 you redirected it: {redirect}.",
+        )
+        assert reply != frozen
+        return text_reply(reply)
+
+    with FakeModelServer(responder=tidy) as server:
+        done = polish(record, "a", server)
+    assert done.markdown == writeup.draft(record, "a").replace(
+        "1. Turn 1, the lane's plan: read the note, then decode it\n2. Turn 9, you redirected it: xor it with the key in the note",
+        "In turn 1 the lane meant to (read the note, then decode it), and in turn 9 you redirected it: xor it with the "
+        "key in the note.",
+    )
     assert tags(markdown_it.render(done.markdown)) <= ALLOWED_TAGS
 
 
@@ -751,9 +1173,20 @@ def test_a_reply_wrapped_whole_in_one_markdown_block_is_unwrapped_then_checked(t
             polish(record, "a", server)
 
 
-def _swap_blocks(frozen: str) -> str:
-    first, second = block_keys(frozen)[:2]
+def _swap(first: str, second: str, frozen: str) -> str:
     return frozen.replace(first, "\0").replace(second, first).replace("\0", second)
+
+
+def _glue_values(frozen: str) -> str:
+    """Two value placeholders side by side, with no markup of the reply's own: their code spans
+    would run together, and the second value's text out of its span."""
+    first, second = value_keys(frozen)[1:3]
+    return frozen.replace(" " + second, "", 1).replace(first, first + second, 1)
+
+
+def _join_facts(frozen: str) -> str:
+    first, second = fact_keys(frozen)[:2]
+    return frozen.replace(f"{first}\n{second}", f"{first} and {second}")
 
 
 @pytest.mark.parametrize(
@@ -762,14 +1195,24 @@ def _swap_blocks(frozen: str) -> str:
         (lambda f: TOKEN.sub("", f, count=1), "placeholder 1 of"),
         (lambda f: f + "\n" + TOKEN.findall(f)[0], "2 times"),
         (lambda f: f.replace("\n\n" + block_keys(f)[0] + "\n", " " + block_keys(f)[0] + "\n"), "moved a code block"),
-        (_swap_blocks, "changed the order of the code blocks"),
+        (lambda f: _swap(*block_keys(f)[:2], f), "changed the order of the code blocks"),
+        (_join_facts, "moved a line that states a fact into a line of prose"),
+        (lambda f: _swap(*fact_keys(f)[:2], f), "changed the order of the code blocks and the lines that state facts"),
         (lambda f: f + "\nSee {{0badbeef-99}} too.", "placeholder(s) the draft does not have"),
         (lambda f: f + "\nSee the [writeup](http://example.com).", "a square bracket"),
         (lambda f: f + "\n<b>done</b>", "HTML"),
         (lambda f: f + "\nIt was &lt;easy&gt;.", "HTML"),
+        (lambda f: f.replace(value_keys(f)[0], f"<{value_keys(f)[0]} onmouseover=alert(1)>"), "right against a placeholder"),
+        (lambda f: f.replace(value_keys(f)[0], f"&{value_keys(f)[0]};"), "right against a placeholder"),
+        (_glue_values, "right against a placeholder"),
+        (lambda f: f.replace(value_keys(f)[0], f"{value_keys(f)[0]}.com"), "a domain or a file name"),
+        (lambda f: f + "\nMore on evil.com later.", "a domain or a file name"),
         (lambda f: f + "\nRun `ls` first.", "backtick"),
         (lambda f: f + "\n~~~\nls\n~~~", "a code block"),
-        (lambda f: f + "\nIt took 4242 tries.", "numbers the draft does not: 4242"),
+        (lambda f: f + "\nIt took 4242 tries.", "is 4242 where the draft has none"),
+        (lambda f: f.replace("### Turn 11 (", "### Turn 6 ("), "is 6 where the draft has 11"),
+        (lambda f: f.replace("1. Turn 1,", "1. Turn 9,").replace("2. Turn 9,", "2. Turn 1,"), "is 9 where the draft has 1"),
+        (lambda f: f.replace("### Turn 11 (", "### Turn eleven ("), "is 10 where the draft has 11"),  # the next one, early
         (lambda f: f + "\nMore on www.example.com later.", "web address"),
         (lambda f: f + "\nThanks to @someone.", "mention"),
         (lambda f: f.replace("}}", "}", 1), "placeholder"),

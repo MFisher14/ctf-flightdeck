@@ -16,6 +16,7 @@ Mounted by the main CLI with `app.add_typer(writeup_cli.app)` (no name: the comm
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
@@ -23,11 +24,12 @@ from typing import Annotated, NoReturn
 
 import typer
 
-from .text import untrusted
+from .text import MARK, untrusted
 
 app = typer.Typer(add_completion=False, rich_markup_mode="markdown")
 
 FOLDER = "writeups"
+_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 class _Refused(Exception):
@@ -37,7 +39,14 @@ class _Refused(Exception):
 @app.command("writeups")
 def writeups(
     run_dir: Annotated[Path, typer.Argument(help="A run folder (the one holding events.jsonl).")],
-    redact: Annotated[bool, typer.Option("--redact", help="Write `<flag>` in place of every copy of the flag.")] = False,
+    redact: Annotated[
+        bool,
+        typer.Option(
+            "--redact",
+            help="Write `<flag>` in place of the flag wherever the run's text holds it: whole, cut short, "
+            "folded, or the part inside its braces.",
+        ),
+    ] = False,
     board: Annotated[
         Path | None, typer.Option("--board", file_okay=False, help="The board folder, for names and points the run log lacks.")
     ] = None,
@@ -214,7 +223,9 @@ def _folder(folder: Path) -> None:
 def _write(target: Path, markdown: str) -> None:
     """Write a new file in the same folder (O_EXCL: never one that is there, a symlink
     included), then rename it over the target, so a symlink at the target is replaced, never
-    followed, and a crash leaves no half-written draft."""
+    followed, and a crash leaves no half-written draft. Text UTF-8 cannot hold (a lone
+    surrogate) is refused like a full disk: the temporary file goes, the other drafts are
+    still written."""
     temp = target.parent / f".draft-{secrets.token_hex(8)}.md"
     try:
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
@@ -224,13 +235,19 @@ def _write(target: Path, markdown: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(markdown)
         os.replace(temp, target)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         temp.unlink(missing_ok=True)
-        raise _Refused(f"cannot write {_show(target)}: {exc.strerror or exc}") from None
+        why = (exc.strerror or exc) if isinstance(exc, OSError) else "the draft holds text that is not valid Unicode"
+        raise _Refused(f"cannot write {_show(target)}: {why}") from None
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def _show(value: object) -> str:
-    return untrusted(str(value), one_line=True)
+    """Untrusted text for the terminal: folded, and a lone surrogate (which a UTF-8 terminal
+    cannot take) shown as U+FFFD."""
+    return _SURROGATE.sub(MARK, untrusted(str(value), one_line=True))
 
 
 def _fail(message: str) -> NoReturn:
