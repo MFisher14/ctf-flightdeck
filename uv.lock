@@ -84,6 +84,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+build = [
+    { name = "pytest" },
+]
 cactus = [
     { name = "cactus-compute" },
 ]
@@ -97,10 +100,11 @@ dev = [
 requires-dist = [
     { name = "cactus-compute", marker = "extra == 'cactus'", specifier = "==4.1.0" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "pytest", marker = "extra == 'build'", specifier = ">=9.2.0" },
     { name = "textual", specifier = ">=8.2.8" },
     { name = "typer", specifier = ">=0.29.0" },
 ]
-provides-extras = ["cactus"]
+provides-extras = ["cactus", "build"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.2.0" }]

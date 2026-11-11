@@ -695,9 +695,9 @@ def _probe(python: str, work: Path) -> None:
         raise BuildError(f"{_show(python)} could not be asked what it can import (it exited {done.returncode})")
     if "pytest" in missing:
         raise BuildError(
-            f"pytest is not installed for {_show(python)}, so the case tests cannot run: install pytest "
-            "where flightdeck is installed (pip install pytest in its environment; for a uv tool, "
-            "uv tool install --with pytest ctf-flightdeck)"
+            f"pytest is not installed for {_show(python)}, so the case tests cannot run: install flightdeck "
+            'with its build extra (pip install "ctf-flightdeck[build]"; for a uv tool, uv tool install '
+            '"ctf-flightdeck[build]"), or pytest into the environment flightdeck runs in'
         )
     if missing:
         raise BuildError(f"{_show(python)} cannot import ctf_flightdeck, which the case tests use")
