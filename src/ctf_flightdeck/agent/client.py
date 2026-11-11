@@ -21,6 +21,11 @@ through `text.untrusted()` and shortened. The reply's message is handed back as 
 the history, with its role pinned to "assistant" so an answer cannot smuggle a system or
 tool message into the conversation. Only strict JSON is accepted, so whatever the message
 holds can be sent back on the next turn.
+
+Private keys. A message key that starts with "_" is flightdeck's own and never goes into a
+request: the Anthropic client (agent/anthropic_client.py) keeps each answer's raw content
+blocks under "_anthropic_content", and a lane that moves to this client mid-context
+(agent/fallback.py) must not send them to an OpenAI-style API.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from http import HTTPStatus
+from typing import Protocol
 
 import httpx
 
@@ -88,6 +94,7 @@ class Reply:
     finish_reason: str  # "" if absent
     usage: Usage
     model: str  # the model the API says answered ("" if absent)
+    notice: str = ""  # flightdeck's own line for the lane's transcript ("moved to OpenRouter ..."); "" for none
 
 
 class ModelError(Exception):
@@ -97,13 +104,52 @@ class ModelError(Exception):
     could not connect, or timed out). `retryable` is True when the failure was of a kind
     that passes (a rate limit, an overload, the network) and the retries ran out, so trying
     again later may work; False when trying again will not help (a bad request, a bad key,
-    a reply that makes no sense).
+    a reply that makes no sense). `declined` is True when the model answered and declined
+    the request (a refusal): never retryable. `usage` is what the failed call used, when the
+    API answered and said (a refusal is paid for), else None.
     """
 
-    def __init__(self, message: str, *, status: int | None = None, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        retryable: bool = False,
+        declined: bool = False,
+        usage: Usage | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.retryable = retryable
+        self.declined = declined
+        self.usage = usage
+
+
+class ChatClient(Protocol):
+    """What the agent driver needs from a model client: ModelClient, AnthropicClient and
+    FallbackClient all answer chat() with a Reply, or raise ModelError."""
+
+    async def chat(
+        self,
+        model: str,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        session_id: str,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        before_retry: Callable[[], Awaitable[None]] | None = None,
+    ) -> Reply: ...
+
+    async def aclose(self) -> None: ...
+
+
+def public(message: dict) -> dict:
+    """The message without flightdeck's private keys (those starting with "_"), as an
+    OpenAI-style API may see it. The same dict when it has none."""
+    if not isinstance(message, dict) or not any(isinstance(key, str) and key.startswith("_") for key in message):
+        return message
+    return {key: value for key, value in message.items() if not (isinstance(key, str) and key.startswith("_"))}
 
 
 def retry_delay(attempt: int, backoff: float, retry_after: str | None = None) -> float:
@@ -309,14 +355,14 @@ def _request_body(
     """The JSON body, encoded once so every try sends the same bytes.
 
     Never a `provider` object: provider.order switches off sticky routing, and with it
-    the prompt cache.
+    the prompt cache. Never a private key of a message (public()).
     """
     if not isinstance(model, str) or not model:
         raise ValueError("model must be a non-empty string")
     if not isinstance(session_id, str) or not 1 <= len(session_id) <= MAX_SESSION_ID:
         size = len(session_id) if isinstance(session_id, str) else type(session_id).__name__
         raise ValueError(f"session_id must be 1 to {MAX_SESSION_ID} characters (OpenRouter's limit), got {size}")
-    body: dict = {"model": model, "messages": messages, "session_id": session_id}
+    body: dict = {"model": model, "messages": [public(m) for m in messages], "session_id": session_id}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"

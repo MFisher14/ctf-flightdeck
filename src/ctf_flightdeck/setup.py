@@ -13,10 +13,11 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__
+from .pricing import Price
 
 PROVIDERS = {
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
@@ -26,6 +27,36 @@ PROVIDERS = {
 }
 LOCAL_PROVIDERS = ("local", "mlx")  # nothing to spend: no dollar cap
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+# `init --provider anthropic`: the Anthropic Messages API (config [api] provider = "anthropic").
+ANTHROPIC = ("https://api.anthropic.com", "ANTHROPIC_API_KEY")
+ANTHROPIC_LADDER = ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5")
+ANTHROPIC_PRICES = {
+    # Anthropic's list prices, dollars per million tokens (claude-api skill, cached 2026-11-03):
+    # input, output, and cache reads; cache writes are counted as input. Claude Haiku 5.5's are
+    # for prompts of 100K tokens or fewer (the long-context refresh keeps a lane's well under).
+    "claude-haiku-5-5": Price(input=0.10, output=0.50, cached_input=0.01),
+    "claude-sonnet-5-5": Price(input=2.0, output=10.0, cached_input=0.10),
+    "claude-opus-5-5": Price(input=4.0, output=20.0, cached_input=0.20),
+}
+OPENROUTER_NAMES = {
+    # OpenRouter's names for the same models (as openrouter.ai/anthropic lists them), for the
+    # OpenRouter fallback that `init --provider anthropic` offers
+    "claude-haiku-5-5": "anthropic/claude-haiku-5.5",
+    "claude-sonnet-5-5": "anthropic/claude-sonnet-5.5",
+    "claude-opus-5-5": "anthropic/claude-opus-5.5",
+}
+
+
+@dataclass(frozen=True)
+class FallbackAnswers:
+    """[fallback] as `init` writes it."""
+
+    base_url: str
+    key_env: str
+    ladder: tuple[str, ...]  # one per model in Answers.models, in order
+    provider: str = "openai"
+    comment: str = ""  # a line above the table, without the "# "
 
 
 @dataclass(frozen=True)
@@ -39,6 +70,9 @@ class Answers:
     max_lanes: int = 4
     token_cap: int | None = 400_000
     dollar_cap: float | None = 2.0
+    provider: str = "openai"  # [api] provider: openai | anthropic
+    prices: Mapping[str, Price] = field(default_factory=dict)  # [prices], per model in the ladder
+    fallback: FallbackAnswers | None = None
 
 
 def render(answers: Answers) -> str:
@@ -46,17 +80,23 @@ def render(answers: Answers) -> str:
     models = ", ".join(f'"{m}"' for m in answers.models)
     token_cap = str(answers.token_cap) if answers.token_cap else "false"
     dollar_cap = f"{answers.dollar_cap:g}" if answers.dollar_cap else "false"
+    provider = (
+        f'provider = "{answers.provider}"   # the Anthropic Messages API\n' if answers.provider == "anthropic" else ""
+    )
     return (
         "# flightdeck config, written by `flightdeck init`. Check it with `flightdeck doctor`.\n"
         "\n"
         "[api]\n"
-        f'base_url = "{answers.base_url}"\n'
+        + provider
+        + f'base_url = "{answers.base_url}"\n'
         f'key_env = "{answers.key_env}"   # the environment variable holding your key (never the key)\n'
         "\n"
         "[models]\n"
         f"ladder = [{models}]   # weakest first; escalation moves right\n"
         "\n"
-        "[lanes]\n"
+        + _prices(answers.prices)
+        + _fallback(answers.fallback)
+        + "[lanes]\n"
         f"max_lanes = {answers.max_lanes}\n"
         f'runtime = "{answers.runtime}"\n'
         + (f'image = "{_lane_image()}"   # build it with `flightdeck image build`\n' if answers.runtime == "docker" else "")
@@ -64,6 +104,46 @@ def render(answers: Answers) -> str:
         f"token_cap = {token_cap}\n"
         f"dollar_cap = {dollar_cap}\n"
         'submit = "confirm"   # you approve every flag before it is submitted\n'
+    )
+
+
+def _prices(prices: Mapping[str, Price]) -> str:
+    if not prices:
+        return ""
+    out = "# Dollars per million tokens: input, output, and cached_input for cache reads (a cache write counts as input).\n"
+    for model, price in prices.items():
+        out += f'[prices."{model}"]\ninput = {price.input:g}\noutput = {price.output:g}\n'
+        if price.cached_input is not None:
+            out += f"cached_input = {price.cached_input:g}\n"
+        out += "\n"
+    return out
+
+
+def _fallback(spare: FallbackAnswers | None) -> str:
+    if spare is None:
+        return ""
+    ladder = ", ".join(f'"{m}"' for m in spare.ladder)
+    return (
+        "[fallback]\n"
+        + (f"# {spare.comment}\n" if spare.comment else "")
+        + f'provider = "{spare.provider}"\n'
+        f'base_url = "{spare.base_url}"\n'
+        f'key_env = "{spare.key_env}"\n'
+        f"ladder = [{ladder}]   # one per [models] ladder entry, in order\n"
+        "\n"
+    )
+
+
+def anthropic_fallback(models: Sequence[str]) -> FallbackAnswers | None:
+    """The OpenRouter fallback for an Anthropic ladder, or None when OpenRouter's name for one
+    of its models is not known here."""
+    names = [OPENROUTER_NAMES.get(model) for model in models]
+    if not models or not all(names):
+        return None
+    url, env = PROVIDERS["openrouter"]
+    return FallbackAnswers(
+        url, env, tuple(n for n in names if n),
+        comment="OpenRouter, for a lane whose calls to Anthropic keep failing; these are OpenRouter's names for the same models",
     )
 
 
@@ -120,22 +200,17 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         else:
             checks.append(Check("config", True, f"{path}: {len(config.models)} model(s), runtime {config.lanes.runtime}"))
     if config is not None:
-        name = config.api.key_env
-        if not name:
-            checks.append(Check("api key", True, "the config's API needs no key"))
-        else:
-            from .keys import KeysError, keys_path, source
-
-            try:
-                where = source(name, environ)
-            except KeysError as exc:
-                checks.append(Check("keys file", False, str(exc), "fix the keys file, or remove it and export the key"))
-                where = None
-            detail = f"{name} is set (in your {where})" if where else f"{name} is not set"
-            checks.append(Check("api key", where is not None, detail,
-                                f"put {name}=<your key> in {keys_path()} (chmod 600), or export it"))
+        checks += _key_check("api key", config.api.key_env, environ, "the config's API needs no key")
+        if config.fallback is not None:
+            # the fallback's key is checked like the primary's: a run refuses to start without it
+            checks += _key_check("fallback key", config.fallback.key_env, environ, "the [fallback] API needs no key",
+                                 keys_file_checked=bool(config.api.key_env))
     if config is not None:
-        checks += _local_server_check(config.api.base_url)
+        if config.api.provider == "openai":
+            checks += _local_server_check(config.api.base_url)
+        spare = config.fallback
+        if spare is not None and spare.provider == "openai":
+            checks += _local_server_check(spare.base_url, name="fallback server")
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
     if agent is not None:
@@ -191,9 +266,29 @@ def _l1_check(pack: Path) -> Check:
     return Check("l1 pack", True, f"{pack}: {len(engines)} engine(s)")
 
 
-def _local_server_check(base_url: str) -> list[Check]:
-    """For an API on this machine (Ollama, an MLX server), check that it answers. A remote
-    API is never contacted here."""
+def _key_check(name: str, variable: str, environ: Mapping[str, str], none_needed: str, *,
+               keys_file_checked: bool = False) -> list[Check]:
+    """Whether the key variable is set, in the environment or the keys file (never its value).
+    A keys file flightdeck refuses is reported once: `keys_file_checked` when an earlier check did."""
+    if not variable:
+        return [Check(name, True, none_needed)]
+    from .keys import KeysError, keys_path, source
+
+    checks = []
+    try:
+        where = source(variable, environ)
+    except KeysError as exc:  # a run refuses to start on such a file, wherever the key is
+        if not keys_file_checked:
+            checks.append(Check("keys file", False, str(exc), "fix the keys file, or remove it and export the key"))
+        where = None
+    detail = f"{variable} is set (in your {where})" if where else f"{variable} is not set"
+    checks.append(Check(name, where is not None, detail, f"put {variable}=<your key> in {keys_path()} (chmod 600), or export it"))
+    return checks
+
+
+def _local_server_check(base_url: str, *, name: str = "model server") -> list[Check]:
+    """For an OpenAI-compatible API on this machine (Ollama, an MLX server), check that it
+    answers. A remote API is never contacted here."""
     from urllib.parse import urlsplit
 
     import httpx
@@ -203,14 +298,16 @@ def _local_server_check(base_url: str) -> list[Check]:
         return []
     url = base_url.rstrip("/") + "/models"
     shown = _shown(url)  # never a credential the URL might carry (user:password@, ?api_key=)
+    table = "[fallback]" if name == "fallback server" else "[api]"
     try:
         answer = httpx.get(url, timeout=2.0, follow_redirects=False)
     except httpx.HTTPError as exc:
-        return [Check("model server", False, f"nothing answers at {_shown(base_url)} ({type(exc).__name__})",
-                      "start your local model server (it must speak the OpenAI API with tool calling)")]
+        return [Check(name, False, f"nothing answers at {_shown(base_url)} ({type(exc).__name__})",
+                      f"start your local model server (it must speak the OpenAI API with tool calling), "
+                      f"or check {table} base_url")]
     ok = answer.status_code < 400
-    return [Check("model server", ok, f"{shown} answered {answer.status_code}",
-                  "check the server's address and port in [api] base_url")]
+    return [Check(name, ok, f"{shown} answered {answer.status_code}",
+                  f"check the server's address and port in {table} base_url")]
 
 
 def _shown(url: str) -> str:

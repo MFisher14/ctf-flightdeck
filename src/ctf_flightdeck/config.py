@@ -1,8 +1,16 @@
-"""The player's config: the model API, the model ladder, prices, lane settings and the run folder.
+"""The player's config: the model API (and its fallback), the model ladder, prices, lane
+settings and the run folder.
 
 It lives outside the repository (~/.config/ctf-flightdeck/config.toml, or the file
 $FLIGHTDECK_CONFIG names) and holds no secret: it names the environment variable that
-holds the API key, and api_key() reads the key from there only when it is needed.
+holds the API key, and api_key() reads the key from there only when it is needed
+(fallback_key() for the [fallback] API's).
+
+The API speaks one of two dialects, [api] provider: "openai" (an OpenAI-compatible chat
+completions endpoint: OpenRouter, OpenAI, a local server; the default) or "anthropic" (the
+Anthropic Messages API, through its SDK). The optional [fallback] table names a second API
+that a lane moves to when the first keeps failing (agent/fallback.py), with a ladder of the
+same length as [models] ladder: position i is used for a lane on ladder[i].
 
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
@@ -33,8 +41,15 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents")
-_API_KEYS = ("base_url", "key_env")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback")
+_API_KEYS = ("provider", "base_url", "key_env")
+_FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder")
+API_PROVIDERS = ("openai", "anthropic")
+ANTHROPIC_BASE_URL = "https://api.anthropic.com"  # the Anthropic SDK's default (it adds /v1/messages itself)
+PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves them out
+    "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
+}
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
 _PRICE_KEYS = ("input", "output", "cached_input")
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
@@ -45,7 +60,18 @@ _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 @dataclass(frozen=True)
 class ApiConfig:
     base_url: str = "https://openrouter.ai/api/v1"
-    key_env: str = "OPENROUTER_API_KEY"  # "" for a local server that needs no key
+    key_env: str = "OPENROUTER_API_KEY"  # "" for a local server that needs no key (openai provider only)
+    provider: str = "openai"  # openai | anthropic: the API's dialect
+
+
+@dataclass(frozen=True)
+class FallbackConfig:
+    """[fallback]: the API a lane moves to when the [api] one keeps failing."""
+
+    provider: str  # openai | anthropic
+    base_url: str
+    key_env: str  # "" for a local server that needs no key (openai provider only)
+    ladder: tuple[str, ...]  # ladder[i] is the fallback for models.ladder[i]
 
 
 @dataclass(frozen=True)
@@ -74,6 +100,7 @@ class Config:
     source: Path | None  # the file it was read from
     l1: L1Config = L1Config()
     agents: dict[str, tuple[str, ...]] = field(default_factory=dict)  # coding-agent CLI -> its model ladder, weakest first
+    fallback: FallbackConfig | None = None  # [fallback], when the config has one
 
 
 class ConfigError(Exception):
@@ -108,22 +135,39 @@ def load_config(path: Path | None = None) -> Config:
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
         agents=_agents(path, _table(path, doc, "agents")),
+        fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
     )
 
 
 def api_key(config: Config) -> str | None:
-    """The API key, read from the environment variable api.key_env names; None when key_env is "".
+    """The API key, read from the environment variable api.key_env names (or the keys file);
+    None when key_env is "".
 
     An unset or empty variable is a ConfigError that names the variable and never shows a
     value. A key_env that is not an upper-case variable name may be the key itself, so it is
     refused without being shown, here too (a Config built in code skips load_config's check).
     """
+    if config.api.provider == "anthropic":
+        otherwise = "or point [api] at another API"
+    else:
+        otherwise = 'or set api.key_env = "" for a local server that needs no key'
+    return _read_key(config, "api", config.api.key_env, otherwise)
+
+
+def fallback_key(config: Config) -> str | None:
+    """The [fallback] API's key, read as api_key() reads the [api] one; None when the config
+    has no [fallback] or its key_env is ""."""
+    if config.fallback is None:
+        return None
+    return _read_key(config, "fallback", config.fallback.key_env, "or remove [fallback] from the config")
+
+
+def _read_key(config: Config, table: str, name: str, otherwise: str) -> str | None:
     where = f"{config.source}: " if config.source is not None else ""
-    name = config.api.key_env
     if not name:
         return None
     if not _is_env_name(name):
-        raise ConfigError(f"{where}api.key_env {_NOT_A_NAME}")
+        raise ConfigError(f"{where}{table}.key_env {_NOT_A_NAME}")
     from .keys import KeysError, environment, keys_path
 
     try:
@@ -132,8 +176,8 @@ def api_key(config: Config) -> str | None:
         raise ConfigError(str(exc)) from None
     if not value:
         raise ConfigError(
-            f"{where}api.key_env names the variable {name}, which is not set: put {name}=<your key> in "
-            f'{keys_path()} (chmod 600), or export it, or set api.key_env = "" for a local server that needs no key.'
+            f"{where}{table}.key_env names the variable {name}, which is not set: put {name}=<your key> in "
+            f"{keys_path()} (chmod 600), or export it, {otherwise}."
         )
     return value
 
@@ -148,11 +192,25 @@ EXAMPLE = """\
 # Every key has the default shown except the model ladder, which you fill in.
 
 [api]
-# An OpenAI-compatible chat completions endpoint (OpenRouter by default).
+# "openai": an OpenAI-compatible chat completions endpoint (OpenRouter by default).
+# "anthropic": the Anthropic Messages API; base_url and key_env then default to
+# "https://api.anthropic.com" and "ANTHROPIC_API_KEY" (`flightdeck init --provider anthropic`).
+provider = "openai"
 base_url = "https://openrouter.ai/api/v1"
 # The name, in upper case, of the environment variable that holds your API key; the key
 # itself never goes in this file. "" for a local server that needs no key.
 key_env = "OPENROUTER_API_KEY"
+
+# [fallback]
+# Optional: a second API a lane moves to when [api] keeps failing (rate limits, overload,
+# outages: still failing after every retry). The lane stays there for the rest of its context;
+# escalating, or the long-context refresh, tries [api] again. A refusal or a bad request never
+# moves a lane. Same keys as [api], and a ladder: one model id per [models] ladder entry, in
+# the same order, in the fallback API's own naming.
+# provider = "openai"
+# base_url = "https://openrouter.ai/api/v1"
+# key_env = "OPENROUTER_API_KEY"
+# ladder = ["vendor/small-model", "vendor/big-model"]
 
 [models]
 # Model ids, weakest to strongest: lanes start on the first, and escalating moves one step right.
@@ -242,23 +300,61 @@ def expand(path: Path) -> Path:
 
 def _api(path: Path, table: dict) -> ApiConfig:
     _known(path, ("api",), table, _API_KEYS)
-    defaults = ApiConfig()
-    base_url = _string(path, table, ("api", "base_url"), defaults.base_url)
+    provider, base_url, key_env = _endpoint(path, "api", table)
+    return ApiConfig(base_url=base_url, key_env=key_env, provider=provider)
+
+
+def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfig:
+    """[fallback]: provider, base_url and key_env as in [api], and a ladder like [models]'s."""
+    _known(path, ("fallback",), table, _FALLBACK_KEYS)
+    provider, base_url, key_env = _endpoint(path, "fallback", table)
+    one_each = "one for each model in models.ladder, in the same order"
+    if "ladder" not in table:
+        raise _error(path, ("fallback", "ladder"), f"is required: the fallback API's model ids, {one_each}")
+    models = table["ladder"]
+    if not isinstance(models, list):
+        raise _error(path, ("fallback", "ladder"), f"must be a list of model ids, {one_each}{_got(models)}")
+    for i, name in enumerate(models):
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError(f"{path}: fallback.ladder[{i}] must be a model id (a non-empty string){_got(name)}")
+        if name != name.strip():
+            raise ConfigError(f"{path}: fallback.ladder[{i}] has spaces around the model id")
+    if len(models) != len(ladder):
+        raise _error(
+            path, ("fallback", "ladder"),
+            f"has {len(models)} model(s) but models.ladder has {len(ladder)}: "
+            "fallback.ladder[i] is the fallback for models.ladder[i]",
+        )
+    return FallbackConfig(provider=provider, base_url=base_url, key_env=key_env, ladder=tuple(models))
+
+
+def _endpoint(path: Path, name: str, table: dict) -> tuple[str, str, str]:
+    """(provider, base_url, key_env) of [api] or [fallback], with the provider's defaults."""
+    provider = _choice(path, table, (name, "provider"), "openai", API_PROVIDERS)
+    default_url, default_env = PROVIDER_DEFAULTS[provider]
+    base_url = _string(path, table, (name, "base_url"), default_url)
     if not _plain(base_url):  # urlsplit would quietly drop them, and the client would not
-        raise _error(path, ("api", "base_url"), "must not contain spaces or control characters")
+        raise _error(path, (name, "base_url"), "must not contain spaces or control characters")
     url = _split_url(base_url)
     if url is None or url.scheme not in ("http", "https") or not url.hostname:
-        raise _error(path, ("api", "base_url"), "must start with http:// or https:// and name a host")
+        raise _error(path, (name, "base_url"), "must start with http:// or https:// and name a host")
     if url.username is not None or url.password is not None:
         raise _error(
             path,
-            ("api", "base_url"),
-            "must not carry a user name or password; the key goes in the environment variable api.key_env names",
+            (name, "base_url"),
+            f"must not carry a user name or password; the key goes in the environment variable {name}.key_env names",
         )
-    key_env = _string(path, table, ("api", "key_env"), defaults.key_env, empty=True)
+    if provider == "anthropic" and url.path.rstrip("/").endswith("/v1"):
+        raise _error(path, (name, "base_url"), "ends in /v1, but the Anthropic SDK adds /v1/messages itself: drop the /v1")
+    key_env = _string(path, table, (name, "key_env"), default_env, empty=True)
     if key_env and not _is_env_name(key_env):
-        raise _error(path, ("api", "key_env"), _NOT_A_NAME)
-    return ApiConfig(base_url=base_url, key_env=key_env)
+        raise _error(path, (name, "key_env"), _NOT_A_NAME)
+    if provider == "anthropic" and not key_env:
+        raise _error(
+            path, (name, "key_env"),
+            "is empty, but the Anthropic API needs a key: name the variable that holds it, like ANTHROPIC_API_KEY",
+        )
+    return provider, base_url, key_env
 
 
 def _ladder(path: Path, table: dict) -> tuple[str, ...]:

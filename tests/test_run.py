@@ -215,6 +215,36 @@ def test_the_image_dockerfile_command_prints_it():
     assert result.exit_code == 0 and result.output == dockerfile()
 
 
+def test_a_run_on_anthropic_with_a_fallback_needs_both_keys_and_says_where_a_failing_lane_goes(tmp_path, monkeypatch):
+    from ctf_flightdeck.agent.anthropic_client import AnthropicClient
+    from ctf_flightdeck.agent.client import ModelClient
+    from ctf_flightdeck.agent.fallback import FallbackClient
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[api]\nprovider = "anthropic"\nkey_env = "FD_TEST_CLAUDE_KEY"\n[models]\nladder = ["claude-haiku-5-5"]\n'
+        '[prices."claude-haiku-5-5"]\ninput = 0.1\noutput = 0.5\n'
+        '[fallback]\nkey_env = "FD_TEST_ROUTER_KEY"\nladder = ["anthropic/claude-haiku-5.5"]\n'
+        f'[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+    )
+    monkeypatch.setenv("FD_TEST_CLAUDE_KEY", "fake-claude-key-NOT-SHOWN")
+    monkeypatch.delenv("FD_TEST_ROUTER_KEY", raising=False)
+    with pytest.raises(RunError, match="fallback.key_env names the variable FD_TEST_ROUTER_KEY, which is not set"):
+        prepare_run(RunOptions(board=board(tmp_path), config=path))
+    monkeypatch.setenv("FD_TEST_ROUTER_KEY", "fake-router-key-NOT-SHOWN")
+    run = prepare_run(RunOptions(board=tmp_path / "board", config=path))
+    run.close()
+    try:
+        client = run.client
+        assert isinstance(client, FallbackClient) and run.driver.client is client
+        assert isinstance(client.primary, AnthropicClient) and isinstance(client.fallback, ModelClient)
+        assert client.models == {"claude-haiku-5-5": "anthropic/claude-haiku-5.5"}
+        assert "a lane whose calls to Anthropic keep failing moves to OpenRouter for the rest of its context" in run.notes()
+        assert "NOT-SHOWN" not in repr(client)
+    finally:
+        asyncio.run(client.aclose())
+
+
 def test_a_run_notes_models_with_no_known_price_when_the_api_may_not_report_one(tmp_path):
     with FakeModelServer() as server:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))

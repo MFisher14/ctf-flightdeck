@@ -51,12 +51,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from .agent.client import ModelClient
+from .agent.client import ChatClient
 from .agent.driver import AgentDriver
+from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
 from .clock import RunClock
-from .config import Config, ConfigError, api_key, load_config
+from .config import Config, ConfigError, api_key, fallback_key, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
@@ -141,7 +142,7 @@ class Run:
     config: Config
     deck: Deck
     driver: AgentDriver  # or agent.external.ExternalDriver, for a coding-agent CLI (--agent)
-    client: ModelClient | None  # None when lanes are a coding-agent CLI
+    client: ChatClient | None  # None when lanes are a coding-agent CLI
     log: EventLog
     transcripts: TranscriptLog
     dir: Path
@@ -432,7 +433,7 @@ def prepare_run(options: RunOptions) -> Run:
     plan = _plan(options, config, runtime)
     options = plan.options
     board = None if plan.ctfd else _load_board(options)
-    ladder, agent, key = config.models, None, None
+    ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
         ladder = _agent_ladder(options.agent, config, plan.notes)
         model = options.model or ladder[0]
@@ -450,11 +451,16 @@ def prepare_run(options: RunOptions) -> Run:
     else:
         try:
             key = api_key(config)
+            spare_key = fallback_key(config)  # a [fallback] whose key is missing stops the run, as [api]'s does
         except ConfigError as exc:
             raise RunError(str(exc)) from None
         model = options.model or config.models[0]
         if model not in config.models:
             raise RunError(f"model {model!r} is not in the ladder in {config.source}: {', '.join(config.models)}")
+        if config.fallback is not None:
+            primary = api_name(config.api.provider, config.api.base_url)
+            spare = api_name(config.fallback.provider, config.fallback.base_url)
+            plan.notes.append(f"a lane whose calls to {primary} keep failing moves to {spare} for the rest of its context")
     if runtime == "docker":
         _check_docker(config.lanes.image)
         if agent is not None:
@@ -486,7 +492,10 @@ def prepare_run(options: RunOptions) -> Run:
     l1 = None
     if manifests is not None:
         l1 = L1Stage(manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency)
-    client = ModelClient(config.api.base_url, key) if agent is None else None
+    try:
+        client = build_client(config, key, spare_key) if agent is None else None
+    except ValueError as exc:  # a key no HTTP header can carry; never shown
+        raise RunError(f"the model API cannot be used: {exc}") from None
     instance = options.instance
     link = verifier = None
     if first is not None:
@@ -1041,6 +1050,18 @@ def host_warning() -> str:
     )
 
 
-def environment_has_key(config: Config, environ: Mapping[str, str] = os.environ) -> bool:
-    """Whether the API key variable is set (never its value)."""
-    return not config.api.key_env or bool(environ.get(config.api.key_env))
+def environment_has_key(config: Config, environ: Mapping[str, str] = os.environ, *, fallback: bool = False) -> bool:
+    """Whether the API key variable ([fallback]'s with fallback=True) is set, in the
+    environment or the keys file (never its value)."""
+    if fallback:
+        name = config.fallback.key_env if config.fallback is not None else ""
+    else:
+        name = config.api.key_env
+    if not name:
+        return True
+    from .keys import KeysError, source
+
+    try:
+        return source(name, environ) is not None
+    except KeysError:  # a keys file flightdeck refuses to read holds nothing it would use
+        return bool(environ.get(name, "").strip())

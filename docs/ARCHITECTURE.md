@@ -49,8 +49,10 @@ with an agent loop per lane behind the same `LaneDriver` protocol.
 | Piece | Where | Job |
 |---|---|---|
 | Folder board | `platform/manual.py` | A folder of challenge folders (format below); `answers.sha256.json` checks flags by hash; without it the player submits by hand and confirms (the deck's `CONFIRM` approval). |
-| Config | `config.py` | `~/.config/ctf-flightdeck/config.toml`: API base URL, the name of the key's environment variable (never the key), the model ladder, prices, lane defaults, the run folder. Unknown keys fail loudly. |
-| Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx; a stable `session_id` per lane for OpenRouter's sticky prompt caching; never `provider.order`; retries with backoff; usage incl. cached tokens and the reported cost. |
+| Config | `config.py` | `~/.config/ctf-flightdeck/config.toml`: the API (`provider` openai or anthropic, base URL, the name of the key's environment variable, never the key) and an optional `[fallback]` API with its own ladder, the model ladder, prices, lane defaults, the run folder. Unknown keys fail loudly. Keys are read from the environment, else `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600). |
+| Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx; a stable `session_id` per lane for OpenRouter's sticky prompt caching; never `provider.order`; retries with backoff; usage incl. cached tokens and the reported cost. A message key starting with `_` is flightdeck's own and never sent. |
+| Anthropic client | `agent/anthropic_client.py` | `[api] provider = "anthropic"`: the Messages API through the official `anthropic` SDK, with the model client's interface. The driver's OpenAI-style history is translated each call: the system prompt is `system` with a cache breakpoint (tools and system are the fixed prefix), the tail is cached automatically, a reply's raw content blocks (thinking included) ride on its history message and go back unchanged, tool results become one user turn. No `thinking`, `temperature` or `tool_choice` is sent; Sonnet and Opus 5.5 carry the server-side refusal fallback, and a final refusal ends the lane as "the model declined (category)". The SDK's own retries are off, so the driver's retry gate holds; the key and base URL are passed explicitly, never read from the environment by the SDK; no SDK exception is chained onto an error. |
+| Fallback | `agent/fallback.py` | Optional `[fallback]`: when the primary API fails for good with a retryable error (rate limit, 5xx, overload, no answer), the lane's call goes to the fallback API with the model at the same ladder position, and the lane stays there for the rest of its context (the APIs never mix in one context); the lane's transcript says so. Escalation and the context refresh try the primary again. A 400, 401 or refusal never moves a lane. |
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane: on the host (an allowlisted environment, no keys) or in a container per lane (`--pull never`); snapshots and diffs of the files a lane changes; the take-over shell. |
 | Tools | `agent/tools.py` | `shell`, `read_file`, `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | One asyncio task per lane on the console's loop (the deck's single thread). A turn is one model call; tool results go back into the context; the deck gets a `TurnReport` per turn. A small fixed prefix, then the challenge brief (challenge text fenced as data). Escalation starts a fresh context with the deck's summary. |
@@ -82,7 +84,9 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **Caps and stop signals pay for themselves.** One stuck lane on one low-value challenge can cost more
   than the rest of an event. Per-lane caps, stall detection and teammate-solved stops are core.
 - **Prompt caching must survive routing.** With OpenRouter, use a stable `session_id` per lane; setting
-  `provider.order` disables sticky routing.
+  `provider.order` disables sticky routing. With the Anthropic API, caching is by content: keep the
+  system prompt and tools byte-identical and the history append-only within a context (that also keeps
+  replayed thinking blocks valid).
 
 ## M2 to M4 in a run
 

@@ -160,7 +160,8 @@ def _polish_config(path: Path | None):
 async def _polished(record, ids, model, client_config, board, redact) -> tuple[dict[str, tuple[str, str]], str]:
     """Each draft polished, or plain with the reason it is not; and a line on what it cost."""
     from . import writeup
-    from .agent.client import ModelClient, ModelError
+    from .agent.client import ModelError
+    from .agent.fallback import client_for
     from .pricing import call_cost
 
     loaded, key = client_config
@@ -178,7 +179,7 @@ async def _polished(record, ids, model, client_config, board, redact) -> tuple[d
             dollars += cost
 
     try:
-        client = ModelClient(loaded.api.base_url, key)
+        client = client_for(loaded.api.provider, loaded.api.base_url, key)  # the [api] one: polishing is not a lane
     except ValueError as exc:  # the key from the environment cannot go in a header; never shown
         raise _Refused(f"--polish cannot use the model API: {exc}") from None
     async with client:

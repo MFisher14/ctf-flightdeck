@@ -319,19 +319,33 @@ def image_dockerfile() -> None:
 
 @app.command(rich_help_panel=SETUP)
 def init(
-    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, openai, local (Ollama), mlx (an MLX server) or custom.")] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, anthropic, openai, local (Ollama), mlx (an MLX server) or custom.")] = None,
     base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
     key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
     models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
     host: Annotated[bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker.")] = None,
     max_lanes: Annotated[int, typer.Option("--max-lanes", min=1, help="Lanes at a time.")] = 4,
+    fallback: Annotated[bool | None, typer.Option(
+        "--fallback/--no-fallback",
+        help="With --provider anthropic: OpenRouter (OPENROUTER_API_KEY) for a lane whose calls to Anthropic keep failing. "
+             "At a terminal you are asked when that key is set.")] = None,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Replace an existing config.")] = False,
 ) -> None:
     """Write a config by answering a few questions (or give them all as options)."""
     from .agent.workspace import docker_unavailable
     from .config import ConfigError, default_config_path
-    from .setup import LOCAL_PROVIDERS, PROVIDERS, Answers, write_config
+    from .keys import KeysError, keys_path, source
+    from .setup import (
+        ANTHROPIC,
+        ANTHROPIC_LADDER,
+        ANTHROPIC_PRICES,
+        LOCAL_PROVIDERS,
+        PROVIDERS,
+        Answers,
+        anthropic_fallback,
+        write_config,
+    )
 
     interactive = _at_terminal()
 
@@ -343,8 +357,20 @@ def init(
             raise typer.Exit(2)
         return typer.prompt(question, default=default) if default is not None else typer.prompt(question)
 
-    provider = need(provider, "Provider: openrouter, openai, local (Ollama), mlx or custom", "openrouter").strip().lower()
-    if provider in PROVIDERS:
+    def known(variable: str) -> bool:
+        """Whether the player has this key, in the environment or the keys file (never its value)."""
+        try:
+            return source(variable) is not None
+        except KeysError:
+            return False  # doctor reports the keys file
+
+    provider = need(provider, "Provider: openrouter, anthropic, openai, local (Ollama), mlx or custom", "openrouter").strip().lower()
+    dialect = "openai"
+    if provider == "anthropic":
+        dialect = "anthropic"
+        base_url = base_url or ANTHROPIC[0]
+        key_env = ANTHROPIC[1] if key_env is None else key_env
+    elif provider in PROVIDERS:
         url, env = PROVIDERS[provider]
         base_url = base_url or url
         key_env = env if key_env is None else key_env
@@ -352,11 +378,34 @@ def init(
         base_url = need(base_url, "API base URL (OpenAI-compatible, ending in /v1 usually)")
         key_env = need(key_env, "Environment variable for the key (empty if none)", "")
     else:
-        typer.echo(f"flightdeck: provider must be openrouter, openai, local, mlx or custom, not {provider!r}", err=True)
+        typer.echo(f"flightdeck: provider must be openrouter, anthropic, openai, local, mlx or custom, not {provider!r}", err=True)
+        raise typer.Exit(2)
+    if fallback is not None and dialect != "anthropic":
+        typer.echo("flightdeck: --fallback is for --provider anthropic (write [fallback] in the config for others)", err=True)
         raise typer.Exit(2)
     if models is None and interactive and provider == "openrouter":
         typer.echo("Model ids look like vendor/model; see https://openrouter.ai/models")
+    if models is None and dialect == "anthropic":
+        default_ladder = ",".join(ANTHROPIC_LADDER)
+        models = typer.prompt("Models, weakest first, comma-separated", default=default_ladder) if interactive else default_ladder
     ladder = tuple(m.strip() for m in need(models, "Models, weakest first, comma-separated").split(",") if m.strip())
+    prices = {m: ANTHROPIC_PRICES[m] for m in ladder if m in ANTHROPIC_PRICES} if dialect == "anthropic" else {}
+    spare, offer = None, ""
+    if dialect == "anthropic":
+        candidate = anthropic_fallback(ladder)
+        if candidate is None and fallback:
+            typer.echo("flightdeck: --fallback: OpenRouter's name is not known here for every model in the ladder; "
+                       "write [fallback] in the config yourself (see `flightdeck config --example`)", err=True)
+            raise typer.Exit(2)
+        if candidate is not None and fallback is None and known(candidate.key_env):
+            if interactive:
+                fallback = typer.confirm(
+                    f"{candidate.key_env} is set: use OpenRouter for a lane whose calls to Anthropic keep failing?", default=True)
+            else:
+                offer = (f"note: {candidate.key_env} is set: `flightdeck init --provider anthropic --fallback` "
+                         "also writes OpenRouter as the fallback when Anthropic keeps failing")
+        if fallback and candidate is not None:
+            spare = candidate
     if host is None:
         docker_reason = docker_unavailable()
         default = "docker" if docker_reason is None else "host"
@@ -368,14 +417,25 @@ def init(
     # stop once to ask whether to carry on without it.
     dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
     try:
-        answers = Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes, dollar_cap=dollar_cap)
+        answers = Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes, dollar_cap=dollar_cap,
+                          provider=dialect, prices=prices, fallback=spare)
         written = write_config(answers, target, force=force)
     except (ConfigError, FileExistsError) as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
     typer.echo(f"wrote {written}")
-    if key_env:
-        typer.echo(f"next: export {key_env}=<your key>  (flightdeck never stores it)")
+    if spare is not None:
+        typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
+    try:
+        keys_file = str(keys_path())
+    except KeysError:
+        keys_file = "the keys file"
+    for variable in (key_env, spare.key_env if spare is not None else ""):
+        if variable:
+            typer.echo(f"next: put {variable}=<your key> in {keys_file} (chmod 600), or export {variable}=<your key>  "
+                       "(flightdeck never stores it)")
+    if offer:
+        typer.echo(offer)
     if runtime.strip().lower() == "docker":
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo("then: flightdeck doctor, and flightdeck practice")
@@ -416,9 +476,14 @@ def config_command(
     lanes = loaded.lanes
     key = loaded.api.key_env
     typer.echo(f"config: {target}")
-    typer.echo(f"api: {loaded.api.base_url}")
+    typer.echo(f"api: {loaded.api.base_url} ({loaded.api.provider})")
     typer.echo(f"key: {key or '(none needed)'}" + (f" is {'set' if environment_has_key(loaded) else 'NOT set'}" if key else ""))
     typer.echo(f"models (weakest first): {', '.join(loaded.models)}")
+    spare = loaded.fallback
+    if spare is not None:
+        typer.echo(f"fallback: {spare.base_url} ({spare.provider}), key {spare.key_env or '(none needed)'}"
+                   + (f" is {'set' if environment_has_key(loaded, fallback=True) else 'NOT set'}" if spare.key_env else ""))
+        typer.echo(f"fallback models: {', '.join(spare.ladder)}")
     priced = [m for m in loaded.models if m in loaded.prices]
     typer.echo(f"prices from config: {', '.join(priced) or 'none (the API reports cost, or it shows as unknown)'}")
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))

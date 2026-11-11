@@ -31,7 +31,7 @@ from ..core.summary import lane_summary
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
-from .client import ModelClient, ModelError, Reply
+from .client import ChatClient, ModelError, Reply
 from .l1stage import FLAG_STATUSES, L1Stage, result_line
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
@@ -163,7 +163,7 @@ class AgentDriver:
 
     def __init__(
         self,
-        client: ModelClient,
+        client: ChatClient,
         workspaces: WorkspaceFactory,
         *,
         run_id: str,
@@ -354,12 +354,10 @@ class AgentDriver:
                     # does not end the lane, which goes on with the next call
                     self._overtaken(run, messages, hints, notes)
                     continue
-                self._report(
-                    run,
-                    TurnReport(turn=False, action=f"model call to {model} failed", output=str(exc),
-                               hints_taken=len(hints), gave_up=f"model API error: {exc}"),
-                )
+                self._failed(run, exc, model, len(hints))
                 return
+            if reply.notice:
+                self.deck.note(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
             if not await self._until_running(run, generation) and self._over(run):
                 return  # killed or finished while the model was thinking
             if run.generation != generation:
@@ -435,6 +433,23 @@ class AgentDriver:
         and stop it once the lane has ended or the call no longer counts."""
         if not await self._until_running(run, generation):
             raise _Overtaken()
+
+    def _failed(self, run: _Run, error: ModelError, model: str, hints_taken: int) -> None:
+        """The model call failed for good: the lane ends with the reason. A model that declined
+        (a refusal) is not an API error, and its call was paid for: its tokens count."""
+        usage = error.usage
+        tokens = usage.total if usage else 0
+        cached = usage.cached_tokens if usage else 0
+        dollars = 0.0
+        if usage is not None:
+            dollars = call_cost(usage.cost, self.prices.get(model), usage.prompt_tokens, usage.completion_tokens,
+                                usage.cached_tokens)
+        if error.declined:
+            action, gave_up = f"{model} declined", str(error)
+        else:
+            action, gave_up = f"model call to {model} failed", f"model API error: {error}"
+        self._report(run, TurnReport(turn=False, action=action, output=str(error), tokens=tokens, cached_tokens=cached,
+                                     dollars=dollars, hints_taken=hints_taken, gave_up=gave_up))
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
                    reply: Reply | None = None, model: str = "") -> None:

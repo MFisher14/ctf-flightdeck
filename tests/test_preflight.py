@@ -571,6 +571,24 @@ def test_agents_without_a_usable_model_config_warn_with_the_reason(tmp_path, age
     assert check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=None) == []
 
 
+def test_a_token_variable_that_is_the_configs_fallback_key_variable_is_refused(tmp_path):
+    config = model_config(tmp_path, extra='[fallback]\nkey_env = "MY_SPARE_KEY"\nladder = ["other/small"]\n')
+    env = {"MY_SPARE_KEY": FAKE_KEY, "TEST_MODEL_KEY": FAKE_KEY}
+    problems = check(profile(token_env="MY_SPARE_KEY"), policies(), max_lanes=4, environ=env, model_config=config)
+    assert len(refusals(problems)) == 1
+    assert "event.token_env names MY_SPARE_KEY (fallback.key_env in your config)" in refusals(problems)[0]
+    assert FAKE_KEY not in str(problems)
+
+
+@pytest.mark.parametrize("agents", LANES_START)
+def test_agents_whose_fallback_key_variable_is_unset_warn_naming_it(tmp_path, agents):
+    config = model_config(tmp_path, extra='[fallback]\nkey_env = "MY_SPARE_KEY"\nladder = ["other/small"]\n')
+    env = {**TOKEN_SET, "TEST_MODEL_KEY": FAKE_KEY}
+    (warning,) = warnings(check(profile(), policies(agents=agents), max_lanes=4, environ=env, model_config=config))
+    assert f'the agents policy is "{agents}", but the fallback API key variable MY_SPARE_KEY (fallback.key_env in' in warning
+    assert check(profile(), policies(agents=agents), max_lanes=4, environ={**env, "MY_SPARE_KEY": FAKE_KEY}, model_config=config) == []
+
+
 @pytest.mark.parametrize("agents", LANES_START)
 def test_agents_whose_api_key_variable_is_unset_warn_naming_it(tmp_path, agents):
     config = model_config(tmp_path)

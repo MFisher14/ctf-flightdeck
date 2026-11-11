@@ -366,10 +366,13 @@ def _check_ctfd(
         )
     name = profile.token_env
     if name is not None:
-        model_key = isinstance(model_config, Config) and model_config.api.key_env == name
+        api_env = isinstance(model_config, Config) and model_config.api.key_env == name
+        fallback_env = (isinstance(model_config, Config) and model_config.fallback is not None
+                        and model_config.fallback.key_env == name)
+        model_key = api_env or fallback_env
         what = "a variable for another service's key" if model_key else _other_service(name)
         if what is not None:
-            where = " (api.key_env in your config)" if model_key else ""
+            where = (" (api.key_env in your config)" if api_env else " (fallback.key_env in your config)") if model_key else ""
             refuse.append(
                 f"event.token_env names {name}{where}, {what}, not a CTFd token: flightdeck would send its value "
                 f"to {_shown_url(profile)}. Name the variable that holds your CTFd token, like CTFD_TOKEN"
@@ -399,12 +402,15 @@ def _check_models(agents: Policy, env: Mapping[str, str], model_config: Config |
     if isinstance(model_config, ConfigError):
         warn.append(f'the agents policy is "{agents}", but no model config could be loaded: {model_config}')
     elif isinstance(model_config, Config):
-        key = model_config.api.key_env
-        if key and not _is_set(env, key):
-            warn.append(
-                f'the agents policy is "{agents}", but the API key variable {key} (api.key_env in '
-                f"{_show(model_config.source)}) is not set or is empty"
-            )
+        keys = [("API key", model_config.api.key_env, "api.key_env")]
+        if model_config.fallback is not None:
+            keys.append(("fallback API key", model_config.fallback.key_env, "fallback.key_env"))
+        for what, key, setting in keys:
+            if key and not _is_set(env, key):
+                warn.append(
+                    f'the agents policy is "{agents}", but the {what} variable {key} ({setting} in '
+                    f"{_show(model_config.source)}) is not set or is empty"
+                )
 
 
 def _rule(profile: EventProfile, stage: str) -> str:

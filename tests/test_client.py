@@ -227,6 +227,24 @@ def test_the_body_holds_the_model_the_messages_and_the_session_id_and_nothing_un
     assert request["path"] == "/v1/chat/completions"
 
 
+def test_a_messages_private_keys_are_never_sent_and_the_history_keeps_them():
+    # a context that moved here from the Anthropic client carries raw blocks under a private key
+    raw = [{"type": "thinking", "thinking": "", "signature": "sig"}, {"type": "text", "text": "Reading."}]
+    turn = {"role": "assistant", "content": "Reading.", "_anthropic_content": raw, "_other": 1}
+    messages = [*MESSAGES, turn, {"role": "user", "content": "go on"}]
+
+    async def run() -> None:
+        async with ModelClient(server.base_url, None, max_retries=0) as client:
+            await client.chat("fake/model", messages, [], session_id=SESSION)
+
+    with FakeModelServer([text_reply("ok")]) as server:
+        asyncio.run(run())
+        sent = server.requests[0]["json"]["messages"]
+    assert sent[2] == {"role": "assistant", "content": "Reading."}
+    assert "_anthropic_content" not in json.dumps(sent) and "signature" not in json.dumps(sent)
+    assert turn["_anthropic_content"] is raw and turn["_other"] == 1  # the history itself is unchanged
+
+
 def test_tools_are_sent_with_tool_choice_auto_and_still_no_provider():
     with FakeModelServer([text_reply("hello")]) as server:
         call(server.base_url, tools=[SHELL])
