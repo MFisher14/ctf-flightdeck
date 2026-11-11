@@ -31,6 +31,7 @@ from .hints import (
     named_techniques,
     top_technique,
 )
+from .watch import Watch
 
 __all__ = [
     "DetectConfig",
@@ -43,6 +44,7 @@ __all__ = [
     "LoopDetector",
     "StallDetector",
     "default_detectors",
+    "Watch",
     "Lexicon",
     "LexiconError",
     "Technique",
