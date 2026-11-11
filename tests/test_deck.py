@@ -1880,3 +1880,27 @@ def test_cached_tokens_add_up_per_lane_and_each_turn_event_says_how_many():
     deck.report(lane.id, TurnReport(action="b", tokens=5200, cached_tokens=4800))
     assert (lane.tokens, lane.cached_tokens) == (10_200, 7800)
     assert [e.data["cached_tokens"] for e in events(deck, EventKind.TURN, since=mark)] == [3000, 4800]
+
+
+# ---------------------------------------------------------------------- L1 results
+
+
+def test_an_l1_run_is_logged_as_an_event_and_noted_on_its_lane_without_submitting_anything():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    deck.record_l1("c0", "decode.base64", "candidate", flags=["t{c0}"], seconds=0.4, notes="base64 of a.txt", lane_id=lane.id)
+    (event,) = events(deck, EventKind.L1, since=mark)
+    assert (event.lane, event.challenge) == (lane.id, "c0")
+    assert dict(event.data) == {"engine": "decode.base64", "status": "candidate", "flags": ["t{c0}"], "seconds": 0.4, "notes": "base64 of a.txt"}
+    assert event.text == "L1 decode.base64 on Chall 0: candidate: t{c0}"
+    note = lane.actions[-1]
+    assert note.kind is ActionKind.NOTE and note.text == "L1 decode.base64: candidate: t{c0} (base64 of a.txt)"
+    assert lane.pending is None and deck.verify.calls == []  # flags go through the lane's approval, not here
+
+
+def test_an_l1_run_with_no_lane_is_logged_for_the_challenge_only():
+    deck, _, _ = make_deck(n=1)
+    deck.record_l1("c0", "carve.zip", "none", seconds=1.0)
+    event = events(deck, EventKind.L1)[-1]
+    assert (event.lane, event.challenge, event.data["status"]) == (None, "c0", "none")

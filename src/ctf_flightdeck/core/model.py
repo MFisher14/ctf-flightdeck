@@ -309,6 +309,7 @@ class EventKind(StrEnum):
     TEAMMATE = "teammate"
     BOARD = "board"
     WARNING = "warning"  # something did not happen as asked, with the reason
+    L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
 
 
 @dataclass(frozen=True)

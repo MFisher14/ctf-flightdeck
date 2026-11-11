@@ -239,6 +239,35 @@ class Deck:
             text += f" · stopped {', '.join(stopped)}"
         self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={"who": who, "solved": True, "stopped": stopped})
 
+    def record_l1(
+        self,
+        challenge_id: str,
+        engine: str,
+        status: str,
+        *,
+        flags: Sequence[str] = (),
+        seconds: float = 0.0,
+        notes: str = "",
+        lane_id: str | None = None,
+    ) -> None:
+        """A no-model (L1) solver ran on a challenge: log it as an `l1` event, and as a
+        flightdeck note on the lane it ran for. Its flags are not submitted here: report
+        them on the lane (TurnReport.flag) so they go through the usual approval."""
+        self._on_thread("record_l1")
+        ch = self.challenges[challenge_id]
+        lane = self.lanes.get(lane_id) if lane_id else None
+        found = f": {', '.join(flags)}" if flags else ""
+        text = f"L1 {engine} on {ch.name}: {status}{found}"
+        if lane is not None and not lane.finished:
+            self._note(lane, f"L1 {engine}: {status}{found}" + (f" ({notes})" if notes else ""))
+        self._emit(
+            EventKind.L1,
+            text,
+            lane_id,
+            challenge_id,
+            data={"engine": engine, "status": status, "flags": list(flags), "seconds": seconds, "notes": notes},
+        )
+
     def teammate_claim(self, challenge_id: str, who: str) -> None:
         """Team mode: a teammate claimed a challenge. It is not started while they hold it."""
         self._on_thread("teammate_claim")
