@@ -3,7 +3,10 @@
 Every run here is made by a real Deck (with a recording driver: the test reports each step,
 as a lane would), its EventLog and its TranscriptLog in tmp_path, then read back with
 runrecord.load_run. File changes come from the real workspace snapshots and diffs
-(agent.workspace.changed_files), so the drafts parse exactly what a run writes.
+(agent.workspace.changed_files), so the drafts parse exactly what a run writes. Where the
+form of a step's text matters (a command folded to one line, text clipped with a "…", an
+output cut to its first lines), the step comes from a real Toolbox call through a workspace
+that prints fixed bytes (nothing runs), and from the real agent.driver step.
 
 Drafts are parsed as Markdown with markdown-it (CommonMark plus GFM tables, strikethrough and
 autolinks) to check that nothing from the run acts as markup: no HTML, no link, no block that
@@ -21,7 +24,8 @@ import pytest
 
 from ctf_flightdeck import writeup
 from ctf_flightdeck.agent.client import ModelClient, ModelError
-from ctf_flightdeck.agent.workspace import changed_files, take_snapshot
+from ctf_flightdeck.agent.tools import Toolbox, ToolResult
+from ctf_flightdeck.agent.workspace import RunResult, changed_files, take_snapshot
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -103,6 +107,26 @@ def change(workspace: Path, path: str, content: str | bytes | None) -> FileChang
         target.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
     (changed,) = changed_files(before, take_snapshot(workspace), workspace)
     return changed
+
+
+class CannedShell:
+    """A workspace whose every command prints the same fixed bytes: nothing runs."""
+
+    def __init__(self, root: Path, output: bytes) -> None:
+        self.root = root
+        self.workdir = str(root)
+        self.output = output
+
+    async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:
+        return RunResult(0, self.output)
+
+
+def tool(tmp_path: Path, name: str, arguments: dict, output: bytes = b"") -> ToolResult:
+    """One real Toolbox call: its action and output are what a lane's transcript holds (an
+    action folded to one line and clipped with a "…", an output cut to its first lines)."""
+    root = tmp_path / "toolbox"
+    root.mkdir(exist_ok=True)
+    return asyncio.run(Toolbox(CannedShell(root, output)).call(name, json.dumps(arguments), turn=1, index=0))
 
 
 def alpha_run(tmp_path: Path) -> RunRecord:
@@ -588,6 +612,32 @@ def test_lines_the_run_log_lost_are_named_in_the_draft(tmp_path):
     gaps = [line for line in lines_of(text, "## Gaps in the run log") if line]
     assert gaps[0] == "These lines of the run folder could not be read, so this draft may miss something:"
     assert len(gaps) == 2 and gaps[1].startswith("- `events.jsonl:") and "not JSON" in gaps[1]
+
+
+def surrogate_run(tmp_path: Path) -> RunRecord:
+    """Alpha's lane set a plan holding a lone surrogate (valid JSON from a model, which the real
+    Toolbox takes for a plan); Beta was solved after it."""
+    plan = tool(tmp_path, "set_plan", {"plan": "decode the emoji \ud83d note"})
+    assert not plan.error and "\ud83d" in plan.action
+    run = Run(tmp_path / "run", [Challenge("a", "Alpha", "misc", 50), Challenge("b", "Beta", "web", 100)],
+              answers={"a": "t{a}", "b": "t{b}"})
+    a, b = run.lane("a"), run.lane("b")
+    run.step(a, plan.action, plan.output, plan=plan.plan)
+    run.step(a, "$ cat note", "t{a}")
+    run.step(a, "submit t{a}", flag="t{a}")
+    run.apply(iv.Approve(a))
+    run.step(b, "$ cat flag", "t{b}")
+    run.step(b, "submit t{b}", flag="t{b}")
+    run.apply(iv.Approve(b))
+    return run.close()
+
+
+def test_a_lone_surrogate_from_the_run_is_shown_as_a_mark(tmp_path):
+    record = surrogate_run(tmp_path)
+    assert "\ud83d" in record.lanes["L01"].plan  # read back as it was written
+    text = writeup.draft(record, "a")
+    text.encode("utf-8")  # a file can hold it
+    assert "1. Turn 1, the lane's plan: `decode the emoji � note`" in text
 
 
 # ---------------------------------------------------------------------- redaction

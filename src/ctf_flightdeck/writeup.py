@@ -28,7 +28,8 @@ a lane wrote, and a draft is meant to be read, edited and published. So nothing 
 as Markdown:
 
 - each value has the flag redacted first (when asked), so no cut can leave part of it, and is
-  folded with text.untrusted() (control and invisible characters made visible);
+  folded with text.untrusted() (control and invisible characters made visible), lone
+  surrogates included (JSON from a model can hold one; no UTF-8 file can);
 - a one-line value stays plain text only when it is letters, digits, spaces and a few marks
   that mean nothing in Markdown (inline()); anything else becomes a code span whose backtick
   run is longer than any inside it (code());
@@ -58,7 +59,7 @@ from typing import TYPE_CHECKING
 
 from . import fmt
 from .runrecord import ActionLine, EventLine, FileLine, LaneRecord, RunRecord
-from .text import untrusted
+from .text import MARK, untrusted
 
 if TYPE_CHECKING:
     from .agent.client import ModelClient, Usage
@@ -78,6 +79,7 @@ _PLAIN_MARKS = frozenset(" ,'\"-()?!%+/;")
 _NUMBERED = re.compile(r"\d+\)")  # "1) x" would start an ordered list
 _TICKS = re.compile(r"`+")
 _LANG = re.compile(r"[a-z]*")
+_SURROGATE = re.compile("[\ud800-\udfff]")  # half of a UTF-16 pair: JSON allows one alone; UTF-8 cannot hold it
 _MORE = re.compile(r"\s+\(\+\d+ more\)$")  # agent/driver.py: a turn with several tool calls
 _SEPARATORS = re.compile(r"&&|\|\||[;|&\n]")
 _REDIRECT = re.compile(r"\d*(?:>>?|<<?<?)\s*(?:'[^']*'|\"[^\"]*\"|\S+)")  # > out.txt, < in.txt, <<'EOF'
@@ -190,7 +192,7 @@ def file_name(challenge_id: str) -> str | None:
 def _solve(record: RunRecord, challenge_id: str) -> Solve:
     solve = solves(record).get(challenge_id)
     if solve is None:
-        shown = untrusted(challenge_id, one_line=True)
+        shown = _fold(challenge_id, one_line=True)
         known = any(e.challenge == challenge_id for e in record.events) or any(
             lane.challenge == challenge_id for lane in record.lanes.values()
         )
@@ -244,7 +246,7 @@ def inline(text: str) -> str:
     """One line of untrusted text for Markdown prose: plain when it holds only letters,
     digits, spaces and marks that mean nothing in Markdown (so it reads the same anywhere on
     a line, even first), otherwise a code span. "(empty)" for empty text."""
-    text = untrusted(text, one_line=True)
+    text = _fold(text, one_line=True)
     if _plain(text):
         return text
     return code(text)
@@ -254,7 +256,7 @@ def code(text: str) -> str:
     """Untrusted text as a code span: one line, delimited by a backtick run longer than any
     inside it, padded with a space when it starts or ends with a backtick or a space (the
     renderer takes one space off each side). "(empty)" for empty text."""
-    text = untrusted(text, one_line=True)
+    text = _fold(text, one_line=True)
     if not text:
         return "(empty)"
     tick = "`" * (max((len(run) for run in _TICKS.findall(text)), default=0) + 1)
@@ -268,11 +270,16 @@ def fenced(text: str, lang: str = "text") -> str:
     of our own info strings, never text from the run."""
     if not _LANG.fullmatch(lang):
         raise ValueError(f"info string {lang!r} is not a plain language name")
-    body = untrusted(text.replace("\r\n", "\n"))
+    body = _fold(text.replace("\r\n", "\n"))
     if body.endswith("\n"):
         body = body[:-1]
     fence = "`" * max(3, max((len(run) for run in _TICKS.findall(body)), default=0) + 1)
     return f"{fence}{lang}\n{body}\n{fence}"
+
+
+def _fold(text: str, *, one_line: bool = False) -> str:
+    """text.untrusted(), with each lone surrogate shown as U+FFFD too."""
+    return _SURROGATE.sub(MARK, untrusted(text, one_line=one_line))
 
 
 def _plain(text: str) -> bool:
@@ -350,7 +357,7 @@ def _names(text: str, path: str) -> bool:
 
 def _same_plan(listed: str, final: str) -> bool:
     """Whether `final` is the plan already listed (a plan step's text is cut with a …)."""
-    a, b = untrusted(listed, one_line=True), untrusted(final, one_line=True)
+    a, b = _fold(listed, one_line=True), _fold(final, one_line=True)
     return a == b or (a.endswith("…") and b.startswith(a[:-1]))
 
 
@@ -770,7 +777,7 @@ async def polish(
 
 def checked_reply(reply: str, frozen: str, held: Mapping[str, str], blocks: Sequence[str]) -> str:
     """The model's reply, folded, once it passes every check; PolishError naming the first it fails."""
-    text = untrusted(reply.replace("\r\n", "\n")).strip("\n")
+    text = _fold(reply.replace("\r\n", "\n")).strip("\n")
     wrapped = _WRAPPED.fullmatch(text.strip())
     if wrapped:  # the whole answer in one ```markdown block, as models like to send it; the inside is checked
         text = wrapped.group(1)

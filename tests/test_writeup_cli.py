@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck import writeup, writeup_cli
 from ctf_flightdeck.runrecord import load_run
 from fake_model import FakeModelServer, FakeReply, text_reply
-from test_writeup import ALPHA, alpha_run, frozen_of, l1_run
+from test_writeup import ALPHA, alpha_run, frozen_of, l1_run, surrogate_run
 
 runner = CliRunner()
 
@@ -114,6 +114,22 @@ def test_a_challenge_id_that_cannot_name_a_file_is_reported_and_writes_nothing(t
     assert not (tmp_path / "evil.md").exists() and not (record.dir.parent / "evil.md").exists()
 
 
+def test_a_lone_surrogate_in_the_run_neither_stops_the_command_nor_loses_a_draft(tmp_path):
+    record = surrogate_run(tmp_path)  # a plan from the model holds one; Beta was solved after Alpha
+    result = invoke(record.dir)
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 0, result.output
+    folder = record.dir / "writeups"
+    assert sorted(p.name for p in folder.iterdir()) == ["a.md", "b.md"]  # no temporary file left, none lost
+    assert "`decode the emoji � note`" in (folder / "a.md").read_text(encoding="utf-8")
+
+
+def test_a_draft_utf8_cannot_hold_is_refused_and_leaves_no_temporary_file(tmp_path):
+    with pytest.raises(writeup_cli._Refused, match=r"cannot write .*a\.md: the draft holds text that is not valid Unicode"):
+        writeup_cli._write(tmp_path / "a.md", "a lone surrogate: \ud83d\n")
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_folder_that_is_not_a_run_is_an_error(tmp_path):
     result = invoke(tmp_path)
     assert result.exit_code == 2
@@ -177,6 +193,16 @@ def test_a_failed_model_call_keeps_the_plain_draft_and_says_why(tmp_path):
     assert (record.dir / "writeups" / "a.md").read_text(encoding="utf-8") == writeup.draft(record, "a")
     assert "not polished: the model API answered HTTP 401 (Unauthorized): bad key" in result.stderr
     assert "polish: 0 of 1 drafts with fake/model, 0 tokens, $0.00" in result.stdout
+
+
+def test_a_model_name_that_is_not_text_is_shown_with_a_mark(tmp_path):
+    record = alpha_run(tmp_path)
+    model = "fake\udcffmodel"  # a byte that is not UTF-8 on the command line reaches Python as a lone surrogate
+    with FakeModelServer(responder=lambda r: text_reply(frozen_of(r))) as server:
+        result = invoke(record.dir, "--polish", model, "--config", config_file(tmp_path, server))
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[-1].startswith("polish: 1 of 1 drafts with fake�model, ")
 
 
 def test_polish_without_a_usable_config_stops_before_writing_anything(tmp_path):
