@@ -699,8 +699,8 @@ def test_the_verifier_answers_true_false_or_none_with_the_reason():
         verify = CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1, "baby-rsa": 2, "two-parts": 7})
         assert verify("warmup", "test{nope}") is False and verify.last_attempt.status == "incorrect"
         assert verify.last_error is None
-        assert verify("warmup", "test{hello}") is True and verify("warmup", "test{hello}") is True
-        assert verify.last_attempt.status == "already_solved"
+        assert verify("warmup", "test{hello}") is True and verify.last_error is None
+        assert verify("warmup", "test{hello}") is None and verify.last_attempt.status == "already_solved"
         assert verify("two-parts", "test{half}") is None and "only part of the answer" in verify.last_error
         fake.script("POST", "/api/v1/challenges/attempt",
                     Reply(429, {"success": True, "data": {"status": "ratelimited", "message": "Slow down."}}))
@@ -826,3 +826,21 @@ def test_a_flag_ctfd_did_not_check_for_want_of_tries_is_not_remembered_as_wrong(
             assert deck.not_flag("one-try", "test{right}") is None and driver.rejected_flags == []
             assert deck.summary(lane).not_flags == ()
         assert len(fake.to("/api/v1/challenges/attempt")) == 2
+
+
+def test_a_flag_for_a_challenge_already_solved_on_ctfd_is_not_counted_correct():
+    # CTFd answers already_solved as soon as the account (the team) has a solve, without checking the flag
+    with FakeCTFd(sample()) as fake:
+        fake.solved = {2}  # a teammate solved Baby RSA, whose flag is test{rsa}
+        with CTFdVerifier(fake.base_url, TOKEN, {"baby-rsa": 2}) as verify:
+            events = []
+            deck, lane = one_lane_deck(verify, Challenge(id="baby-rsa", name="Baby RSA", category="cry", points=100),
+                                       Driver(), team=True)
+            deck.subscribe(events.append)
+            deck.report(lane.id, TurnReport(action="solve", flag="test{a_wrong_guess}"))
+            deck.apply(iv.Approve(lane.id))
+            assert verify.last_attempt == Attempt("already_solved", "You already solved this")
+            assert "already solved" in verify.last_error and "did not check this flag" in verify.last_error
+            assert deck.challenges["baby-rsa"].status is not ChallengeStatus.SOLVED
+            assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM
+            assert [e for e in events if e.kind is EventKind.SUBMIT] == []  # no flag recorded as the solution

@@ -557,12 +557,13 @@ class _Again:
 class CTFdVerifier:
     """The deck's verify() for a CTFd board: submits a flag and says whether it was right.
 
-    True for correct (or already solved), False for incorrect, None when CTFd did not judge
-    it (paused, rate-limited, out of tries, a partial answer) or the outcome is unknown (no
-    answer, an error): the deck then asks the player to submit by hand and confirm.
+    True for correct, False for incorrect, None when CTFd did not judge the flag (already
+    solved, paused, rate-limited, out of tries, a partial answer) or the outcome is unknown
+    (no answer, an error): the deck then asks the player to submit by hand and confirm.
     `last_error` says why for the console; `last_attempt` holds CTFd's answer when there was
-    one (its status tells a caller what to do next: "locked_out" means no flag for that
-    challenge can be checked any more).
+    one, and its status tells a caller what to do next: "already_solved" means the account
+    (the team) solved the challenge already, without that flag being checked, and
+    "locked_out" that no flag for it can be checked any more.
 
     The deck calls it synchronously on the console's event loop, so it never touches asyncio:
     one request with its own httpx.Client, which blocks the console for that round trip (a
@@ -641,7 +642,7 @@ class CTFdVerifier:
             self.last_error = error
             return None
         self.last_attempt = attempt
-        if attempt.status in ("correct", "already_solved"):
+        if attempt.status == "correct":
             return True
         if attempt.status == "incorrect":
             return False
@@ -651,6 +652,9 @@ class CTFdVerifier:
 
 def _unjudged(attempt: Attempt) -> str:
     said = f" (CTFd says: {attempt.message})" if attempt.message else ""
+    if attempt.status == "already_solved":
+        # CTFd answers so for any submission once the account has a solve: this flag may be wrong
+        return f"CTFd says this challenge is already solved (by you or a teammate){said}; it did not check this flag"
     if attempt.status == "paused":
         return f"CTFd is paused, so it did not check the flag{said}. Submit it by hand when CTFd runs again"
     if attempt.status == "ratelimited":

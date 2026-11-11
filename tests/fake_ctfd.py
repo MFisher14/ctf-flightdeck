@@ -15,8 +15,9 @@ fake behaves as CTFd 3.x does:
   /files/<dir>/<name>?token=<file token>, as CTFd's are;
 - GET /files/<dir>/<name>: the file (the file token or the API token lets it through);
 - POST /api/v1/challenges/attempt: a status in the data whatever the HTTP status: correct,
-  incorrect (with the tries left when max_attempts is set), already_solved, partial,
-  paused (403) and, out of tries, incorrect with 403;
+  incorrect (with the tries left when max_attempts is set), already_solved (for any flag,
+  once solved), partial, paused (403) and, out of tries, incorrect with 403 (both of the
+  last two sent before the flag is looked at);
 - GET /api/v1/teams/me/solves (404 in users mode, 403 when `no_team`) and
   GET /api/v1/users/me/solves.
 
@@ -318,8 +319,8 @@ class FakeCTFd:
         c = self.challenges.get(number) if isinstance(number, int) else None
         if c is None or c.type == "hidden":
             return not_found()
-        if number in self.solved:
-            return Reply(200, {"success": True, "data": {"status": "already_solved", "message": "Correct but you already solved this"}})
+        if number in self.solved:  # answered before the flag is looked at, as CTFd does
+            return Reply(200, {"success": True, "data": {"status": "already_solved", "message": "You already solved this"}})
         fails = self.fails.get(number, 0)
         if c.max_attempts and fails >= c.max_attempts:
             return Reply(403, {"success": True, "data": {"status": "incorrect", "message": "You have 0 tries remaining"}})
