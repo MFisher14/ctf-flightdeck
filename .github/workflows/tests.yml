@@ -1,0 +1,26 @@
+# Tests and the secret scan on every push and pull request. No secrets are needed: the tests use
+# local fakes only (a fake model server, a fake CTFd, fake agent CLIs), and the docker tests
+# report as not run when their image is absent (they never pull one).
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - run: python3 -I .githooks/secret_scan.py --all
+      - run: uv run pytest -q
