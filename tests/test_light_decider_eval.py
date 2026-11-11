@@ -167,6 +167,15 @@ def test_a_decider_that_is_unsure_on_every_job_still_measures_it(tmp_path):
     assert rows["unsure"] == ["-", "2/2 100%"] and rows["hint"][2] == rows["overall"][2] == "all unsure"
 
 
+def test_a_reply_with_a_number_too_large_for_a_float_is_a_failure_on_the_scorecard(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "Decode the slow scan picture."),
+                        hint_case("xor", "A repeating single-byte key."))
+    huge = {"model": "m", "answers": {L.DECIDER_QUESTION: {"type": "choice", "choice": "xor", "probabilities": {},
+                                                           "confidence": 10**400}}}
+    rows = scorecard(cases, picks("sstv", 0.97), huge)  # never an uncaught OverflowError
+    assert rows["hint"] == ["2", "2/2 100%", "1/2 50%"] and rows["failed"] == ["-", "1/2 50%"]
+
+
 def test_eval_local_stops_a_decider_that_is_not_there(tmp_path):
     cases = write_cases(tmp_path / "cases.jsonl", *[hint_case("sstv", "slow scan")] * 5)
     url = f"http://127.0.0.1:{closed_port()}"

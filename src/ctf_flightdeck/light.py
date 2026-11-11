@@ -922,12 +922,17 @@ def _shorten(about: str, step: dict, room: int) -> dict | None:
 
 
 def _unit(value: object) -> bool:
-    """A number from 0 to 1 (JSON's true and false are not numbers here, nor NaN)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
+    """A number from 0 to 1 (JSON's true and false are not numbers here, nor NaN). Compared,
+    never converted: a JSON integer can be too large for a float."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1  # NaN fails both
 
 
 def _number(value: float) -> str:
     """A number for a message, to 4 decimals at most."""
+    try:
+        value = float(value)
+    except OverflowError:  # a JSON integer too large for a float
+        return "an integer too large to show"
     if not math.isfinite(value) or abs(value) >= 1e6:
         return f"{value:g}"
     return f"{value:.4f}".rstrip("0").rstrip(".") or "0"
