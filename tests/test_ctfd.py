@@ -27,6 +27,7 @@ from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, EventKind, PendingKind
 from ctf_flightdeck.platform.ctfd import (
+    MAX_REDIRECTS,
     STATE_FILE,
     Attempt,
     CTFdClient,
@@ -391,6 +392,41 @@ def test_a_download_redirect_on_the_same_origin_is_followed(tmp_path):
     assert path.read_bytes() == b"hello\n" and path.name == "hello.txt"
 
 
+def test_an_https_ctfd_never_sends_the_token_in_clear_to_its_own_host_and_port(tmp_path):
+    with FakeCTFd(sample()) as fake:  # it answers plain http on 127.0.0.1:<port>
+        port = fake.base_url.rsplit(":", 1)[1]
+        plain = f"http://127.0.0.1:{port}" + fake.file_url(1, "hello.txt")
+
+        async def run():
+            async with CTFdClient(f"https://127.0.0.1:{port}", TOKEN, backoff=0.001, max_retries=0) as c:
+                return await c.download(plain, tmp_path)  # the CTFd as given is https; the file entry says http
+
+        with pytest.raises(CTFdError) as caught:
+            asyncio.run(run())
+        assert fake.requests == []  # nothing went out, the token least of all
+    assert f"is on another host (http://127.0.0.1:{port})" in str(caught.value) and list(tmp_path.iterdir()) == []
+
+
+def test_an_https_ctfd_redirecting_a_download_to_plain_http_on_its_own_host_is_not_followed(tmp_path, tls):
+    with FakeCTFd(sample(), tls=tls) as fake:
+        url = fake.file_url(1, "hello.txt")
+        downgraded = fake.base_url.replace("https://", "http://") + url  # the same host and port
+        fake.script("GET", url.split("?")[0], Reply(302, None, {"Location": downgraded}))
+        error = failure(fake, lambda c: c.download(url, tmp_path))
+        assert len(fake.requests) == 1  # the redirect, and nothing after it
+    assert "another host" in str(error) and "only over https" in str(error) and list(tmp_path.iterdir()) == []
+
+
+def test_a_redirect_loop_on_ctfds_own_origin_is_cut_off(tmp_path):
+    with FakeCTFd(sample()) as fake:
+        url = fake.file_url(1, "hello.txt")
+        fake.script("GET", url.split("?")[0], *[Reply(302, None, {"Location": url})] * 50)
+        error = failure(fake, lambda c: c.download(url, tmp_path), max_retries=0)
+        asked = len(fake.to(url.split("?")[0]))
+    assert f"more than {MAX_REDIRECTS} times" in str(error) and asked == MAX_REDIRECTS + 1
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_file_over_the_size_cap_is_refused_and_leaves_nothing(tmp_path):
     with FakeCTFd(sample()) as fake:
         error = failure(fake, lambda c: c.download(fake.file_url(2, "out.txt"), tmp_path), max_file_bytes=8)
@@ -495,6 +531,18 @@ def test_a_failed_attempt_is_never_retried_and_says_the_outcome_is_unknown():
         error = failure(fake, lambda c: c.attempt(1, "test{hello}"), max_retries=3)
         assert len(fake.to("/api/v1/challenges/attempt")) == 1
     assert error.status == 502 and "may have reached CTFd" in str(error)
+
+
+def test_a_submit_cut_off_after_it_was_sent_says_the_flag_may_have_reached_ctfd():
+    # CTFd got the flag (and may have counted the try), then the connection dropped: never "not submitted"
+    with FakeCTFd(sample()) as fake:
+        fake.script("POST", "/api/v1/challenges/attempt", HANG_UP, HANG_UP)
+        error = failure(fake, lambda c: c.attempt(1, "test{hello}"))
+        with CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}) as verify:
+            assert verify("warmup", "test{hello}") is None
+        assert len(fake.to("/api/v1/challenges/attempt")) == 2  # both arrived, once each
+    for said in (str(error), verify.last_error):
+        assert "no answer from CTFd" in said and "may have reached CTFd" in said and "not submitted" not in said
 
 
 def test_an_attempt_status_flightdeck_does_not_know_is_an_error():
