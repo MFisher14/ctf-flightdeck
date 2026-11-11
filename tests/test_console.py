@@ -57,6 +57,7 @@ from ctf_flightdeck.core.model import (
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.scenarios import DEEP_ARCHIVE, ReleaseAt, Scenario, Spec
 from ctf_flightdeck.mock.world import FakeWorld, ManualClock
+from deadline import within
 
 SIZE = (160, 46)
 NARROW = (120, 36)
@@ -1712,6 +1713,102 @@ def test_model_names_in_the_fork_prompt_are_text_not_markup():
         assert "[@click=app.quit]x[/]" in text and "[b]bold[/b]" in text
 
     drive(app, script)
+
+
+# Made-up keys, built from pieces so no line here is shaped like a real one (.githooks/secret_scan.py).
+OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
+GITHUB = "ghp" + "_" + "a1B2" * 9
+ANTHROPIC = "sk-" + "ant-api03-" + "Qx7-" * 20
+JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWRtaW4ifQ.bm90LWEtcmVhbC1zaWduYXR1cmU"
+VALUES = ("5f" * 32, "a1B2" * 9, "Qx7-" * 20, JWT)  # the part of each that would show if it were drawn
+
+
+def test_what_a_lane_did_is_shown_without_its_credentials_and_the_deck_keeps_it_as_it_was():
+    """A host lane that read the player's keys: its step and its output, its plan, the alert
+    quoting an output and the diff of a file it wrote show each credential's name and not its
+    value, in the fleet (the last-action cell, the why line) and in the focus view (the
+    transcript, the plan, the needs-you card, the diff), as its transcript file keeps them. A
+    flag shaped like a credential stays whole once the run knows it. The deck keeps what the
+    lane did as it was, for the lane's model, which has read it already."""
+    flag = "t{TOKEN=c0ffee}"
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), flag_format=r"t\{[^{}\s]+\}"))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    deck.report(lane.id, TurnReport(action=f"submit {flag}", flag=flag))
+    assert deck.apply(iv.Decline(lane.id)).ok  # the run knows the flag now, and the lane carries on
+    curl = f"curl -H 'Authorization: Bearer {JWT}' 127.0.0.1"
+    diff = f"+++ b/env.txt\n+ANTHROPIC_API_KEY={ANTHROPIC}\n"
+    deck.report(lane.id, TurnReport(action=curl, output=f"OPENROUTER_API_KEY={OPENROUTER}", plan=f"log in with GITHUB_TOKEN={GITHUB}",
+                                    files=(FileChange("env.txt", diff, "added"),)))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+    reason = f"The same output came back twice: OPENROUTER_API_KEY={OPENROUTER}"
+
+    def nothing_raw(stop: str) -> None:
+        frame = terminal_frame(app)
+        assert not [value for value in VALUES if value in frame], f"{stop}: a credential's value is drawn"
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        nothing_raw("fleet")
+        assert cell(app, "lanes", lane.id, "last") == "curl -H 'Authorization: Bearer [redacted]' 127.0.0.1"
+        assert views.lane_why(deck, lane).plain == (
+            f"▌{lane.id} plan: log in with GITHUB_TOKEN=[redacted]\n"
+            "  last: curl -H 'Authorization: Bearer [redacted]' 127.0.0.1 → OPENROUTER_API_KEY=[redacted]   enter open"
+        )
+        assert "plan: log in with GITHUB_TOKEN=[redacted]" in region_text(app, "#why")
+        deck.report(lane.id, TurnReport(action="cat keys.env", output=f"OPENROUTER_API_KEY={OPENROUTER}",
+                                        alerts=(Alert(AlertKind.LOOP, reason),)))
+        app.refresh_view()
+        await pilot.pause()
+        nothing_raw("fleet, the alert")
+        assert "▲ Loop: The same output came back twice: OPENROUTER_API_KEY=[redacted]" in region_text(app, "#why")
+        focus = await open_focus(pilot, app, lane.id)
+        nothing_raw("focus")
+        lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
+        assert [line for line in lines if line.startswith(("⏺", "⎿", "The same"))] == [
+            f"⏺ submit {flag}",
+            "⏺ curl -H 'Authorization: Bearer [redacted]' 127.0.0.1",
+            "⎿  OPENROUTER_API_KEY=[redacted]",
+            "⏺ cat keys.env",
+            "⎿  OPENROUTER_API_KEY=[redacted]",
+            "The same output came back twice: OPENROUTER_API_KEY=[redacted]",
+        ]
+        assert "plan log in with GITHUB_TOKEN=[redacted]" in screen_text(app)  # under the transcript, on its border
+        assert "Loop  The same output came back twice: OPENROUTER_API_KEY=[redacted]" in region_text(app, "#now")
+        await send(pilot, app, "/diff")
+        nothing_raw("diff")
+        assert "+ANTHROPIC_API_KEY=[redacted]" in region_text(app, "#diff-scroll")
+
+    drive(app, script)
+    assert [(a.text, a.output) for a in lane.actions if a.kind is ActionKind.STEP][1:] == [
+        (curl, f"OPENROUTER_API_KEY={OPENROUTER}"), ("cat keys.env", f"OPENROUTER_API_KEY={OPENROUTER}"),
+    ]
+    assert lane.plan == f"log in with GITHUB_TOKEN={GITHUB}" and lane.files["env.txt"].diff == diff
+    assert lane.alerts[0].reason == reason
+
+
+def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh():
+    """Taking credentials out costs time in proportion to the text: a megabyte that is all keys
+    takes a few tenths of a second. The fleet draws each lane's last action and the selected
+    lane's why line again on every refresh, twice a second, and the focus view its open diff:
+    what was taken out is kept, so fifty refreshes of a lane whose last step printed a
+    megabyte of keys into its output and a file stay well inside the deadline, the first
+    included, and none of them shows a key."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    row = f"OPENROUTER_API_KEY={OPENROUTER}\n"
+    keys = row * (1_000_000 // len(row))
+    deck.report(lane.id, TurnReport(action="env; env > env.txt", output=keys,
+                                    files=(FileChange("env.txt", "+++ b/env.txt\n" + keys, "added"),)))
+    with within(10, "fifty refreshes of the fleet and the open diff"):
+        for _ in range(50):
+            cells, why = views.lane_cells(deck, lane), views.lane_why(deck, lane)
+            diff = views.diff_view(deck, lane, lane.files["env.txt"])
+    assert why.plain.startswith(f"▌{lane.id} plan: -\n  last: env; env > env.txt → OPENROUTER_API_KEY=[redacted] ⏎ OPENROUTER")
+    assert "5f" * 32 not in why.plain + cells["last"].plain + diff.code
+    assert diff.code.count("OPENROUTER_API_KEY=[redacted]\n") == keys.count("\n")
 
 
 # ---------------------------------------------------------------------- review fixes: the fleet

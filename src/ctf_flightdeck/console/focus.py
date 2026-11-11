@@ -167,11 +167,11 @@ class FocusScreen(Screen, inherit_bindings=False):
             self.query_one("#others", Static).update(views.others_strip(deck, lane))
             pane = self.query_one("#talk-pane")
             pane.border_title = views.focus_title(deck, lane)
-            pane.border_subtitle = views.plan_line(lane)
+            pane.border_subtitle = views.plan_line(deck, lane)
             log = self.query_one("#transcript", RichLog)
             at_end = log.scroll_y >= log.max_scroll_y  # a player reading back stays where they are
             for action in lane.actions[self._written :]:
-                for line in views.transcript_lines(action):
+                for line in views.transcript_lines(deck, lane, action):
                     log.write(line, scroll_end=at_end)
             self._written = len(lane.actions)
             self.query_one("#now", Static).update(views.now_card(deck, lane))
@@ -196,7 +196,7 @@ class FocusScreen(Screen, inherit_bindings=False):
                 files.highlighted = paths.index(self.diff_path)
         diff = self.query_one("#diff", Static)
         change = lane.files.get(self.diff_path or "")
-        diff.update(views.diff_view(change) if change else Text("No files changed yet.", theme.MUTED))
+        diff.update(views.diff_view(self.fd.deck, lane, change) if change else Text("No files changed yet.", theme.MUTED))
 
     @on(OptionList.OptionHighlighted, "#files")
     def _file_highlighted(self, event: OptionList.OptionHighlighted) -> None:
