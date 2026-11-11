@@ -243,6 +243,23 @@ def test_find_agent_fails_loudly_when_the_cli_is_not_on_path(tmp_path):
         find_agent("claude", "sonnet", environ={"PATH": str(tmp_path / "empty"), "ANTHROPIC_API_KEY": KEY})
 
 
+def test_find_agent_never_takes_a_cli_from_a_relative_path_entry_such_as_the_current_folder(tmp_path, monkeypatch):
+    here = tmp_path / "handout"  # flightdeck started in a folder that holds an executable `claude`
+    here.mkdir()
+    planted = here / "claude"
+    planted.write_text("#!/bin/sh\nexit 0\n")
+    planted.chmod(0o755)
+    monkeypatch.chdir(here)
+    (tmp_path / "empty").mkdir()
+    for path in (".", f".{os.pathsep}{tmp_path / 'empty'}", f"{os.pathsep}{tmp_path / 'empty'}"):
+        with pytest.raises(AgentError) as caught:
+            find_agent("claude", "sonnet", environ={"PATH": path, "ANTHROPIC_API_KEY": KEY})
+        assert "claude not found on PATH" in str(caught.value) and "relative entries" in str(caught.value)
+    fake = Fake(tmp_path, {})
+    agent = find_agent("claude", "sonnet", environ={"PATH": f".{os.pathsep}{fake.bin}", "ANTHROPIC_API_KEY": KEY})
+    assert agent.executable == str(fake.bin / "claude")  # the absolute folder's, though "." comes first
+
+
 def test_a_claude_agent_needs_a_key_or_a_subscription_token_and_says_which_variables(tmp_path):
     fake = Fake(tmp_path, {})
     with pytest.raises(AgentError) as caught:

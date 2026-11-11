@@ -95,6 +95,7 @@ from .workspace import (
     Snapshot,
     Workspace,
     WorkspaceError,
+    absolute_path,
     changed_files,
     open_dir,
     restore_private,
@@ -193,16 +194,24 @@ def find_agent(kind: str, model: str, *, environ: Mapping[str, str] = os.environ
     missing. `auth` picks the credential: claude "api-key" (ANTHROPIC_API_KEY) or
     "oauth-token" (CLAUDE_CODE_OAUTH_TOKEN); codex "api-key" (CODEX_API_KEY) or "login" (the
     saved login in CODEX_HOME). None: the one the CLI itself would use. The returned
-    warnings say that the agent's own key is visible to the commands it runs."""
+    warnings say that the agent's own key is visible to the commands it runs.
+
+    Only PATH's absolute folders are searched, as for a lane's own commands
+    (workspace.absolute_path): a relative entry ("." or an empty one) is whatever folder
+    flightdeck was started in, a handout or a pulled board say, and a `claude` there must
+    never run as the player with the agent's key."""
     if kind not in KINDS:
         raise AgentError(f"unknown agent {kind!r}: flightdeck runs {' or '.join(KINDS)}")
     _check_model(model)
-    path = environ.get("PATH", os.defpath)
-    found = shutil.which(kind, path=path)
+    raw = environ.get("PATH", os.defpath)
+    path = absolute_path(raw)
+    found = shutil.which(kind, path=path) if path else None
     if found is None:
+        skipped = sum(1 for entry in raw.split(os.pathsep) if not os.path.isabs(entry))
+        why = f"; {skipped} relative entries (such as .) were skipped: they mean the current folder" if skipped else ""
         raise AgentError(
-            f"{kind} not found on PATH ({len([p for p in path.split(os.pathsep) if p])} folders searched): install it, "
-            "or put the folder that has it on PATH"
+            f"{kind} not found on PATH ({len([p for p in path.split(os.pathsep) if p])} folders searched{why}): "
+            "install it, or put the folder that has it on PATH"
         )
     if kind == "claude":
         extra, how, warnings = _claude_auth(environ, auth)
