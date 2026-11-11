@@ -140,6 +140,138 @@ def test_doctor_checks_a_local_model_server_answers_and_never_contacts_a_remote_
     assert "model server" not in {c.name for c in doctor(remote, environ={})}
 
 
+# ---------------------------------------------------------------------- the Anthropic provider and its fallback
+
+CLAUDE_LADDER = ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5")
+OPENROUTER_LADDER = ("anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5")
+ROUTER_KEY = "fake-router-key-for-init-tests"
+
+
+def anthropic_init(tmp_path, monkeypatch, *args: str, terminal: bool = False, answers: str = "", router_key: bool = False):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: terminal)
+    if router_key:
+        monkeypatch.setenv("OPENROUTER_API_KEY", ROUTER_KEY)
+    else:
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    target = tmp_path / "config.toml"
+    result = CliRunner().invoke(cli.app, ["init", "--provider", "anthropic", *args, "--path", str(target)], input=answers)
+    return result, target
+
+
+def test_init_for_anthropic_writes_the_claude_ladder_with_anthropics_prices(tmp_path, monkeypatch):
+    from ctf_flightdeck.config import ApiConfig
+    from ctf_flightdeck.pricing import Price
+
+    result, target = anthropic_init(tmp_path, monkeypatch, "--host")
+    assert result.exit_code == 0, result.output
+    config = load_config(target)
+    assert config.api == ApiConfig("https://api.anthropic.com", "ANTHROPIC_API_KEY", "anthropic")
+    assert config.models == CLAUDE_LADDER
+    assert config.prices == {  # dollars per million tokens: input, output, cache reads
+        "claude-haiku-5-5": Price(0.10, 0.50, 0.01),
+        "claude-sonnet-5-5": Price(2.0, 10.0, 0.10),
+        "claude-opus-5-5": Price(4.0, 20.0, 0.20),
+    }
+    assert config.fallback is None and config.lanes.dollar_cap == 2.0  # caps in dollars work from the start
+    assert "put ANTHROPIC_API_KEY=<your key> in" in result.output and "export ANTHROPIC_API_KEY=<your key>" in result.output
+    assert "OpenRouter" not in result.output  # no OpenRouter key known: nothing offered
+
+
+@pytest.mark.parametrize("answer, wanted", [("y", True), ("n", False)])
+def test_at_a_terminal_init_for_anthropic_offers_openrouter_as_the_fallback_when_its_key_is_known(tmp_path, monkeypatch, answer, wanted):
+    from ctf_flightdeck.config import FallbackConfig
+
+    result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, router_key=True, answers=f"\n{answer}\nhost\n")
+    assert result.exit_code == 0, result.output
+    assert "OPENROUTER_API_KEY is set: use OpenRouter for a lane whose calls to Anthropic keep failing?" in result.output
+    config = load_config(target)
+    assert config.models == CLAUDE_LADDER  # the default ladder, taken at the prompt
+    if wanted:
+        assert config.fallback == FallbackConfig("openai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", OPENROUTER_LADDER)
+        assert "these are OpenRouter's names for the same models" in target.read_text()
+        assert "put OPENROUTER_API_KEY=<your key> in" in result.output
+    else:
+        assert config.fallback is None and "[fallback]" not in target.read_text()
+    assert ROUTER_KEY not in result.output and ROUTER_KEY not in target.read_text()
+
+
+def test_an_openrouter_key_in_the_keys_file_is_known_too(tmp_path, monkeypatch):
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"OPENROUTER_API_KEY={ROUTER_KEY}\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, answers="\ny\nhost\n")
+    assert result.exit_code == 0, result.output
+    assert load_config(target).fallback.ladder == OPENROUTER_LADDER
+
+
+def test_away_from_a_terminal_init_mentions_the_fallback_and_writes_it_with_the_option(tmp_path, monkeypatch):
+    offered, target = anthropic_init(tmp_path, monkeypatch, "--host", router_key=True)
+    assert offered.exit_code == 0, offered.output
+    assert load_config(target).fallback is None
+    assert "--provider anthropic --fallback` also writes OpenRouter as the fallback" in offered.output
+    asked, target = anthropic_init(tmp_path, monkeypatch, "--host", "--fallback", "--force")
+    assert asked.exit_code == 0, asked.output
+    assert load_config(target).fallback.ladder == OPENROUTER_LADDER
+    declined, target = anthropic_init(tmp_path, monkeypatch, "--host", "--no-fallback", "--force", router_key=True)
+    assert load_config(target).fallback is None and "--fallback` also writes" not in declined.output
+
+
+def test_init_refuses_a_fallback_it_cannot_write(tmp_path, monkeypatch):
+    unknown, target = anthropic_init(tmp_path, monkeypatch, "--models", "claude-haiku-5-5,claude-some-other-model",
+                                     "--host", "--fallback")
+    assert unknown.exit_code == 2 and "OpenRouter's name is not known" in unknown.output and not target.exists()
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    other = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--models", "a/b", "--host", "--fallback",
+                                         "--path", str(tmp_path / "o.toml")])
+    assert other.exit_code == 2 and "--fallback is for --provider anthropic" in other.output
+
+
+def test_doctor_checks_the_fallback_key_like_the_primarys_in_the_environment_or_the_keys_file(tmp_path, monkeypatch):
+    path = tmp_path / "c.toml"
+    path.write_text('[api]\nprovider = "anthropic"\n[models]\nladder = ["claude-haiku-5-5"]\n'
+                    '[fallback]\nladder = ["anthropic/claude-haiku-5.5"]\n[lanes]\nruntime = "host"\n')
+    checks = {c.name: c for c in doctor(path, environ={"ANTHROPIC_API_KEY": "value-that-must-not-show"})}
+    assert checks["api key"].ok
+    spare = checks["fallback key"]
+    assert not spare.ok and spare.essential and spare.detail == "OPENROUTER_API_KEY is not set"
+    assert "OPENROUTER_API_KEY=<your key> in" in spare.fix
+    assert report(list(checks.values()))[1] == 1  # the run would refuse to start, so doctor fails
+    keys = tmp_path / "keys.env"
+    keys.write_text("OPENROUTER_API_KEY=value-that-must-not-show-either\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    checks = doctor(path, environ={"ANTHROPIC_API_KEY": "value-that-must-not-show"})
+    spare = {c.name: c for c in checks}["fallback key"]
+    assert spare.ok and spare.detail == "OPENROUTER_API_KEY is set (in your keys file)"
+    text, _ = report(checks)
+    assert "must-not-show" not in text
+
+
+def test_doctor_asks_only_an_openai_style_server_on_this_machine_for_its_models(tmp_path):
+    path = tmp_path / "c.toml"
+    path.write_text('[api]\nprovider = "anthropic"\nbase_url = "http://127.0.0.1:9"\n[models]\nladder = ["m"]\n'
+                    '[fallback]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = ""\nladder = ["m"]\n[lanes]\nruntime = "host"\n')
+    checks = {c.name: c for c in doctor(path, environ={"ANTHROPIC_API_KEY": "x"})}
+    assert "model server" not in checks  # an Anthropic API has no OpenAI /models to ask
+    assert not checks["fallback server"].ok and "[fallback] base_url" in checks["fallback server"].fix
+
+
+def test_config_command_shows_the_provider_and_the_fallback_never_a_key(tmp_path, monkeypatch):
+    path = tmp_path / "c.toml"
+    path.write_text('[api]\nprovider = "anthropic"\n[models]\nladder = ["claude-haiku-5-5"]\n'
+                    '[fallback]\nladder = ["anthropic/claude-haiku-5.5"]\n')
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "value-that-must-not-show")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    result = CliRunner().invoke(cli.app, ["config", "--path", str(path)])
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "api: https://api.anthropic.com (anthropic)" in lines and "key: ANTHROPIC_API_KEY is set" in lines
+    assert "fallback: https://openrouter.ai/api/v1 (openai), key OPENROUTER_API_KEY is NOT set" in lines
+    assert "fallback models: anthropic/claude-haiku-5.5" in lines
+    assert "must-not-show" not in result.output
+
+
 def test_doctor_checks_the_l1_pack_when_the_config_names_one(tmp_path):
     from l1_kit import python_engine
 
