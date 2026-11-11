@@ -5,6 +5,7 @@ runs a challenge file: the handouts hold invented text and bytes."""
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -17,7 +18,19 @@ import pytest
 from ctf_flightdeck.agent.workspace import HostWorkspace
 from ctf_flightdeck.l1.manifest import load
 from ctf_flightdeck.l1.router import Hit
-from ctf_flightdeck.l1.runner import BOOT, NO_SAFE_PATH, STDERR_TAIL, challenge_id_of, command, missing_tools, run_engine, run_routed, safe_path
+from ctf_flightdeck.l1.runner import (
+    BOOT,
+    HEAD_BYTES,
+    NO_SAFE_PATH,
+    STDERR_TAIL,
+    TAIL_BYTES,
+    challenge_id_of,
+    command,
+    missing_tools,
+    run_engine,
+    run_routed,
+    safe_path,
+)
 
 from l1_kit import FLAG, challenge_dir, cli_engine, python_engine, run, tree, write_manifest
 
@@ -153,7 +166,7 @@ def test_a_result_that_breaks_the_contract_is_unsure_not_trusted(pack, handout, 
         """)
     r = go(m, handout, tmp_path / "work")
     assert r.status == "unsure" and r.flags == ()
-    assert "its output was not a result" in r.notes and "evidence" in r.notes
+    assert r.notes.startswith("the result it returned is not a SolverResult (") and "evidence" in r.notes
 
 
 def test_a_python_engine_can_be_async_or_print_text(pack, handout, tmp_path):
@@ -172,6 +185,121 @@ def test_a_python_engine_can_be_async_or_print_text(pack, handout, tmp_path):
         """, extra='output = "text"')
     r = go(t, handout, tmp_path / "w2")
     assert (r.status, r.flags) == ("candidate", ("t{printed_one}", "t{printed_two}"))
+
+
+FORGED_LINE = json.dumps({"schema": 1, "status": "solved", "flags": ["t{chosen_by_the_challenge}"],
+                          "evidence": [{"kind": "decode", "detail": "three layers peeled", "path": None, "offset": None}]})
+
+
+def test_a_result_line_a_python_engine_prints_before_it_raises_is_never_its_result(pack, board, tmp_path):
+    # the engine prints what it decoded from the handout (the challenge's text), then fails
+    handout = challenge_dir(board, "layers", {"layer.txt": "junk\n" + FORGED_LINE + "\n"})
+    m = python_engine(pack, "peel", """
+        def solve(d):
+            print((d / "layer.txt").read_text())
+            raise ValueError("stuck on the last layer")
+        """)
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags, r.evidence) == ("unsure", (), ())
+    assert r.notes.startswith("exited 1: ") and "ValueError: stuck on the last layer" in r.notes
+
+
+def test_a_result_line_a_python_engine_prints_when_it_returns_nothing_is_never_its_result(pack, board, tmp_path):
+    handout = challenge_dir(board, "layers", {"layer.txt": FORGED_LINE + "\n"})
+    m = python_engine(pack, "quiet", """
+        def solve(d):
+            print((d / "layer.txt").read_text())
+            return None
+        """)
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("unsure", ())
+    assert r.notes.startswith("solve() returned nothing; a result engine returns a SolverResult")
+
+
+def test_a_python_text_engine_that_returns_a_result_has_that_result(pack, handout, tmp_path):
+    m = python_engine(pack, "both", """
+        from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+        def solve(d):
+            print("t{printed_but_not_the_answer}")
+            return SolverResult("solved", flags=["t{returned}"], evidence=[Evidence("decode", "it said so")])
+        """, extra='output = "text"')
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("solved", ("t{returned}",))  # what it handed back, not a scan of what it printed
+
+
+def test_a_cli_engine_may_write_its_result_to_the_file_flightdeck_names(pack, handout, tmp_path):
+    written = json.dumps({"schema": 1, "status": "candidate", "flags": ["t{from_the_file}"]})
+    m = cli_engine(pack, "writer", f"""
+        echo '{written}' > "$FLIGHTDECK_L1_RESULT"
+        echo '{{"schema": 1, "status": "none"}}'
+        """, output="result")
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("candidate", ("t{from_the_file}",))  # the file, not the last line
+    bad = cli_engine(pack, "bad_writer", """
+        echo 'not json' > "$FLIGHTDECK_L1_RESULT"
+        echo '{"schema": 1, "status": "candidate", "flags": ["t{the_last_line}"]}'
+        """, output="result")
+    r = go(bad, handout, tmp_path / "w2")
+    assert (r.status, r.flags) == ("unsure", ())  # never read another way
+    assert r.notes.startswith("the result it wrote to $FLIGHTDECK_L1_RESULT is not a SolverResult (not JSON")
+
+
+def test_the_result_file_is_new_for_every_run_and_never_one_a_challenge_could_name(pack, handout, tmp_path):
+    m = cli_engine(pack, "where", 'echo "$FLIGHTDECK_L1_RESULT"\n')
+    names = set()
+    for i in range(2):
+        work = tmp_path / f"w{i}"
+        r = run(run_engine(load(m), handout, workdir=work, flag_format=r"\S*l1-result-\S*"))
+        [path] = r.flags
+        assert Path(path).parent == work / "where" / ".flightdeck"
+        names.add(Path(path).name)
+    assert len(names) == 2
+
+
+# ---------------------------------------------------------------- output past what is kept
+
+
+BULK = "yes 'trying key 0x41414141 ... no' | head -c 10000000\necho\n"  # 10 MB of progress lines, then a line end
+
+
+def test_a_flag_printed_after_megabytes_of_output_is_still_found_and_the_gap_is_said(pack, handout, tmp_path):
+    m = cli_engine(pack, "brute", BULK + "echo 'key found: t{late_flag}'\n")
+    r = go(m, handout, tmp_path / "work")
+    total = 10_000_001 + len("key found: t{late_flag}\n")
+    assert (r.status, r.flags) == ("candidate", ("t{late_flag}",))
+    assert r.notes == f"output over 8 MB: {total - HEAD_BYTES - TAIL_BYTES} bytes in the middle not searched"
+
+
+def test_output_not_all_searched_is_never_none(pack, handout, tmp_path):
+    m = cli_engine(pack, "brute", "yes 'nothing yet' | head -c 7000000\necho t{in_the_middle}\n" + BULK)
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("unsure", ())
+    assert r.notes.startswith("output over 8 MB: ") and r.notes.endswith(" bytes in the middle not searched")
+
+
+def test_a_result_after_megabytes_of_output_is_still_read(pack, handout, tmp_path):
+    line = '{"schema": 1, "status": "candidate", "flags": ["t{cli_result}"]}'
+    cli = cli_engine(pack, "cli_brute", BULK + f"echo '{line}'\n", output="result")
+    assert go(cli, handout, tmp_path / "w1").flags == ("t{cli_result}",)  # its last line, from the end that was kept
+    py = python_engine(pack, "py_brute", """
+        from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+        def solve(d):
+            for key in range(400_000):
+                print(f"trying key {key:08d} ... no")
+            return SolverResult("solved", flags=["t{key_found}"], evidence=[Evidence("oracle", "key 0x42 decrypts the header")])
+        """)
+    r = go(py, handout, tmp_path / "w2")
+    assert (r.status, r.flags) == ("solved", ("t{key_found}",))
+
+
+def test_stderr_is_kept_only_at_its_end_and_never_written_to_disk(pack, handout, tmp_path):
+    m = cli_engine(pack, "noisy", "head -c 30000000 /dev/zero | tr '\\0' w >&2\necho 'last words' >&2\nexit 1\n")
+    r = go(m, handout, tmp_path / "work")
+    assert r.status == "unsure" and r.notes.startswith("exited 1: ") and r.notes.endswith("wwwlast words")
+    sizes = [p.stat().st_size for p in (tmp_path / "work").rglob("*") if p.is_file()]
+    assert max(sizes) < 1_000_000  # 30 MB of stderr went nowhere
 
 
 # ---------------------------------------------------------------- cli engines
@@ -412,12 +540,25 @@ def test_engines_see_only_the_allowlisted_environment(pack, handout, tmp_path, m
     r = go(m, handout, tmp_path / "w1")
     assert r.status == "none" and FAKE_TOKEN not in r.notes
     env = json.loads(r.notes)
-    assert set(env) - PROCESS_OWN <= ALLOWED and "PATH" in env
+    assert set(env) - PROCESS_OWN <= ALLOWED | {"FLIGHTDECK_L1_RESULT"} and "PATH" in env
     assert env["HOME"] == str(tmp_path / "w1" / "env_py" / ".flightdeck" / "home")
+    result_file = Path(env["FLIGHTDECK_L1_RESULT"])  # flightdeck's own: where the result goes, a name nobody can guess
+    assert result_file.parent == tmp_path / "w1" / "env_py" / ".flightdeck" and re.fullmatch(r"l1-result-[0-9a-f]{32}\.json", result_file.name)
     c = cli_engine(pack, "env_cli", "env > seen.env\n")
     assert go(c, handout, tmp_path / "w2").status == "none"
     seen = (tmp_path / "w2" / "env_cli" / "seen.env").read_text()
     assert FAKE_TOKEN not in seen and "CTFD_TOKEN" not in seen and "PYTHONPATH" not in seen
+
+
+def test_a_cli_engine_gets_the_locale_it_was_given_not_the_one_python_sets_for_itself(pack, handout, tmp_path, monkeypatch):
+    # with no locale set, Python sets LC_CTYPE=C.UTF-8 for itself and what it starts (PEP 538);
+    # the capture runs under Python, but the engine must see the plain C locale it was given
+    for name in ("LANG", "LC_ALL", "LC_CTYPE"):
+        monkeypatch.delenv(name, raising=False)
+    c = cli_engine(pack, "env_cli", "env > seen.env\n")
+    assert go(c, handout, tmp_path / "w").status == "none"
+    names = {line.split("=", 1)[0] for line in (tmp_path / "w" / "env_cli" / "seen.env").read_text().splitlines()}
+    assert "LC_CTYPE" not in names and "LANG" not in names
 
 
 def test_the_handout_is_never_written_whatever_the_engine_does(pack, handout, tmp_path):

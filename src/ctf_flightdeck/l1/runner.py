@@ -18,15 +18,30 @@ absolute path. The engine runs with PATH cut to those directories too, so neithe
 anything it starts finds a program through "." or an empty entry, both of which mean the
 working directory: the copy of the challenge, where a handout file named python3 waits.
 
-Then what it printed becomes a SolverResult:
-- output "result": the last non-empty stdout line, read as a SolverResult (not one: unsure);
+The engine runs under l1/_capture.py, flightdeck's own python, which keeps the first 6 MB
+and the last 2 MB of its stdout and the last 4 KB of its stderr, counts every byte, and
+writes nothing to disk; so an engine that prints without end fills neither memory nor disk.
+
+The result channel. The engine's environment has FLIGHTDECK_L1_RESULT, the path of a file
+in the workspace's .flightdeck/ whose name has a random part. A python engine's returned
+result reaches it through the boot script; a cli engine may write its SolverResult JSON
+there itself. Stdout is never read as a python engine's result: an engine prints what it
+read from the challenge, and a line the challenge's author wrote could pose as a result.
+
+Then the run becomes a SolverResult:
+- a result in the result file is the result, whatever the output mode (not a valid one:
+  unsure, never another reading);
+- a python engine with output "result" that returned nothing: unsure;
+- a cli engine with output "result": the last non-empty stdout line, read as a
+  SolverResult (not one: unsure);
 - output "text": every flag-format match in stdout, in order and deduplicated: candidate;
-  no match: none;
+  no match: none. Output past what was kept is reported, never taken for nothing: the
+  notes say how many bytes went unsearched, and with no flag found the run is unsure;
 - a timeout: unsure, "timed out after Ns"; a non-zero exit with no result: unsure, "exited
   N: <the end of its stderr>";
 - tools missing from PATH (needs_tools, python3 for a python entry, the program of a cli
-  entry), files of the pack that have gone, or a PATH with no absolute directory at all:
-  blocked, naming them, and nothing runs;
+  entry, bash), files of the pack that have gone, or a PATH with no absolute directory at
+  all: blocked, naming them, and nothing runs;
 - a workspace that cannot be prepared: blocked, with the reason.
 engine and challenge_id are filled in, and cost.seconds is the measured run time.
 
@@ -34,8 +49,9 @@ Engines are the player's code, but they read untrusted challenge data, so what t
 is untrusted: it is parsed strictly, and stderr reaches notes only through untrusted().
 On the host runtime an engine runs as the player and can read the player's files (P6); the
 allowlist only keeps flightdeck's environment from it. A docker workspace can be passed as
-workspace_factory: the boot script, the engine files and the tool check are host-side, so
-such a factory must mount the pack and this folder at the same paths, read-only.
+workspace_factory: the boot script, the capture, flightdeck's python, the engine files and
+the tool check are host-side, so such a factory must mount them at the same paths,
+read-only.
 """
 
 from __future__ import annotations
@@ -46,14 +62,16 @@ import json
 import math
 import os
 import re
+import secrets
 import shlex
 import shutil
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..agent.workspace import PRIVATE, HostWorkspace, RunResult, Workspace, WorkspaceError, open_inside
+from ..agent.workspace import OUTPUT_CAP, PRIVATE, HostWorkspace, RunResult, Workspace, WorkspaceError, open_inside
 from ..platform.manual import CHALLENGE_FILE
 from ..text import untrusted
 from .manifest import Manifest
@@ -61,14 +79,24 @@ from .result import Cost, Evidence, ResultError, SolverResult
 from .router import Hit
 
 BOOT = Path(__file__).resolve().with_name("_boot.py")
+CAPTURE = Path(__file__).resolve().with_name("_capture.py")
 PYTHON = "python3"
-STDERR_FILE = f"{PRIVATE}/l1-stderr.log"  # in the workspace: the engine's stderr, apart from stdout
+SHELL = "bash"  # starts the engine (as the workspace's own commands do): a #!-less script runs as a shell script
+RESULT_ENV = "FLIGHTDECK_L1_RESULT"  # the engine's result file, as the engine sees it
+RESULT_MAX = 1024 * 1024  # a result file bigger than this is not read
+MB = 1024 * 1024
+HEAD_BYTES = 6 * MB  # stdout kept from its start
+TAIL_BYTES = 2 * MB  # and from its end
+STDERR_BYTES = 4096  # stderr kept from its end
 STDERR_TAIL = 300  # characters of stderr kept in the notes of a failed run
 NO_SAFE_PATH = (
     "PATH has no absolute directory (only relative entries such as \".\", which would find programs in the copy "
     "of the challenge), so no program can be looked up safely; nothing ran"
 )
 LINE_TAIL = 120  # characters of a last line that was not a result, kept in the notes
+_CAPTURE_KEYS = ("capture", "status", "stdout", "head", "tail", "stderr", "stderr_kept")
+if HEAD_BYTES + TAIL_BYTES + STDERR_BYTES + 4096 > OUTPUT_CAP:  # the record must reach the runner whole
+    raise RuntimeError("the capture's record would not fit in a workspace's output cap")
 
 WorkspaceFactory = Callable[[str, Path, Path], Workspace]
 """(engine id, workspace root, handout) -> a workspace that is not prepared yet."""
@@ -114,6 +142,8 @@ async def run_engine(
     path = safe_path()
     if not path:
         return done(SolverResult("blocked", notes=NO_SAFE_PATH), 0.0)
+    if not (sys.executable and os.path.isabs(sys.executable)):
+        return done(SolverResult("blocked", notes="flightdeck cannot name its own python, which captures what an engine prints; nothing ran"), 0.0)
     missing = missing_tools(manifest)
     if missing:
         return done(SolverResult("blocked", notes=f"missing tools: {', '.join(missing)} (not on PATH); nothing ran"), 0.0)
@@ -235,6 +265,7 @@ def missing_tools(manifest: Manifest) -> list[str]:
     elif 0 not in manifest.entry.pack_files:
         needed.append(manifest.entry.argv[0])  # a command on PATH, or an absolute path
     needed += manifest.needs_tools
+    needed.append(SHELL)  # flightdeck's own: it starts the engine
     path = safe_path()
     return [tool for tool in dict.fromkeys(needed) if find_program(tool, path) is None]
 
@@ -264,45 +295,164 @@ async def _run_in(
         await workspace.prepare()
     except WorkspaceError as exc:
         return SolverResult("blocked", notes=f"its workspace could not be prepared: {_safe(str(exc))}"), 0.0
-    line = f"PATH={shlex.quote(path)} exec {shlex.join(argv)} 2>{shlex.quote(STDERR_FILE)}"
+    name = f"l1-result-{secrets.token_hex(16)}.json"  # a challenge cannot know it, so cannot plant it
+    seen_as = getattr(workspace, "workdir", None) or str(workspace.root)  # the root as the command sees it
+    shell = _program(SHELL, path)
+    line = " ".join([
+        f"PATH={shlex.quote(path)}",
+        f"{RESULT_ENV}={shlex.quote(f'{seen_as}/{PRIVATE}/{name}')}",
+        "exec",
+        shlex.join([sys.executable, "-I", str(CAPTURE), str(HEAD_BYTES), str(TAIL_BYTES), str(STDERR_BYTES)]),
+        '${LC_CTYPE+"--lc-ctype=$LC_CTYPE"}',  # the engine gets the LC_CTYPE this shell has, or none (_capture.py)
+        "--",
+        shlex.join([shell, "-c", 'exec "$@"', "flightdeck-l1", *argv]),
+    ])
     begun = time.monotonic()
     try:
         run = await workspace.run(line, timeout=limit)
     except WorkspaceError as exc:
         return SolverResult("blocked", notes=f"its workspace could not run it: {_safe(str(exc))}"), time.monotonic() - begun
     seconds = time.monotonic() - begun
-    stderr = _stderr_tail(workspace.root) if run.exit_code else ""
-    return _interpret(manifest, run, stderr, pattern, limit), seconds
+    return _interpret(manifest, run, workspace.root, name, pattern, limit), seconds
 
 
-def _interpret(manifest: Manifest, run: RunResult, stderr: str, pattern: re.Pattern[str], limit: float) -> SolverResult:
+@dataclass(frozen=True)
+class Captured:
+    """What _capture.py kept of an engine's output, and how much there was."""
+
+    status: int
+    stdout: int  # bytes the engine printed on stdout
+    head: bytes  # the first of them
+    tail: bytes  # the last of those after the head
+    stderr: bytes  # the end of stderr
+    stderr_total: int
+
+    @property
+    def dropped(self) -> int:
+        """Bytes of stdout between head and tail that were not kept."""
+        return self.stdout - len(self.head) - len(self.tail)
+
+
+def parse_captured(output: bytes) -> Captured:
+    """The record _capture.py writes (its docstring has the format). ValueError, saying what
+    is wrong, for anything else: the capture failed, or something else wrote there."""
+    line, newline, rest = output.partition(b"\n")
+    if not newline:
+        raise ValueError("no record")
+    try:
+        record = json.loads(line)
+    except ValueError:
+        raise ValueError("the record is not JSON") from None
+    if not (isinstance(record, dict) and sorted(record) == sorted(_CAPTURE_KEYS) and record["capture"] == 1
+            and all(type(record[key]) is int and record[key] >= 0 for key in _CAPTURE_KEYS)):
+        raise ValueError("not a capture record")
+    head, tail, err = record["head"], record["tail"], record["stderr_kept"]
+    if len(rest) != head + tail + err or record["stdout"] < head + tail or record["stderr"] < err:
+        raise ValueError("its sizes do not match what follows it")
+    return Captured(record["status"], record["stdout"], rest[:head], rest[head:head + tail], rest[head + tail:], record["stderr"])
+
+
+def _interpret(manifest: Manifest, run: RunResult, root: Path, name: str, pattern: re.Pattern[str], limit: float) -> SolverResult:
     if run.timed_out:
         return SolverResult("unsure", notes=f"timed out after {limit:g}s")
     if run.exit_code is None:
         return SolverResult("unsure", notes="stopped before it finished (its workspace was closed)")
-    code = run.exit_code
-    stdout = run.output.decode("utf-8", "replace")
+    try:
+        out = parse_captured(run.output)
+    except ValueError as exc:
+        shown = _safe(run.output[-STDERR_TAIL:].decode("utf-8", "replace").strip())
+        return SolverResult("unsure", notes=f"flightdeck could not read what it printed ({exc}): {shown or 'nothing more'}")
+    code = out.status
+    stderr = _stderr_text(out.stderr) if code else ""
+    own, problem = _result_file(root, name, "the result it returned" if manifest.entry.kind == "python" else f"the result it wrote to ${RESULT_ENV}")
+    if own is not None:
+        return own
+    if problem:
+        return SolverResult("unsure", notes=problem if code == 0 else f"{problem}; {_exited(code, stderr)}")
     if manifest.output == "result":
-        last = _last_line(stdout)
-        try:
-            if last is None:
-                raise ResultError("it printed nothing")
-            return SolverResult.from_json(last)
-        except ResultError as exc:
-            if code != 0:
-                return SolverResult("unsure", notes=_exited(code, stderr))
-            shown = "" if last is None else f"; its last line: {_safe(last[:LINE_TAIL])}"
-            return SolverResult(
-                "unsure",
-                notes=f"its output was not a result ({_safe(str(exc))}){shown}. A result engine prints a SolverResult as JSON on its last line",
-            )
-    flags = _flags(stdout, pattern)
+        if manifest.entry.kind == "cli":
+            return _last_line_result(out, code, stderr)
+        if code != 0:  # what a python engine prints is never its result
+            return SolverResult("unsure", notes=_exited(code, stderr))
+        return SolverResult("unsure", notes=(
+            f"{manifest.entry.function}() returned nothing; a result engine returns a SolverResult "
+            '(output = "text" is for an engine that prints its findings)'
+        ))
+    flags, unsearched = _search(out, pattern)
     if flags:
         evidence = Evidence("match", f"{len(flags)} distinct flag-format match{'es' if len(flags) > 1 else ''} in its output")
-        return SolverResult("candidate", flags=flags, evidence=(evidence,), notes="" if code == 0 else f"exited {code}")
+        notes = [f"exited {code}"] if code else []
+        return SolverResult("candidate", flags=flags, evidence=(evidence,), notes="; ".join(notes + unsearched))
     if code != 0:
-        return SolverResult("unsure", notes=_exited(code, stderr))
+        return SolverResult("unsure", notes="; ".join([_exited(code, stderr), *unsearched]))
+    if unsearched:  # not all of it was searched: that is not "nothing found"
+        return SolverResult("unsure", notes="; ".join(unsearched))
     return SolverResult("none")
+
+
+def _last_line_result(out: Captured, code: int, stderr: str) -> SolverResult:
+    """A cli result engine's last non-empty stdout line, read as its SolverResult; kept even
+    after a non-zero exit (the engine said what it could)."""
+    end = out.head + out.tail if out.dropped == 0 else out.tail
+    last = _last_line(end.decode("utf-8", "replace"))
+    try:
+        if last is None:
+            raise ResultError("it printed nothing")
+        return SolverResult.from_json(last)
+    except ResultError as exc:
+        if code != 0:
+            return SolverResult("unsure", notes=_exited(code, stderr))
+        shown = "" if last is None else f"; its last line: {_safe(last[:LINE_TAIL])}"
+        return SolverResult("unsure", notes=(
+            f"its output was not a result ({_safe(str(exc))}){shown}. A result engine prints a SolverResult as "
+            f"JSON on its last line, or writes it to the file ${RESULT_ENV} names"
+        ))
+
+
+def _result_file(root: Path, name: str, label: str) -> tuple[SolverResult | None, str]:
+    """(the result in the engine's result file, "") or (None, why there is none to read: ""
+    when the engine wrote none). `label` names the result in what goes wrong."""
+    try:
+        fd = open_inside(root, [PRIVATE, name])
+    except FileNotFoundError:
+        if not os.path.lexists(root / PRIVATE):
+            return None, f"its workspace's {PRIVATE} folder is gone (did it remove it?), and any result with it"
+        return None, ""
+    except OSError as exc:  # a symlink, a directory, a FIFO where the file should be
+        return None, f"{label} cannot be read ({_safe(exc.strerror or str(exc))})"
+    try:
+        data = _read_upto(fd, RESULT_MAX + 1)
+    except OSError as exc:
+        return None, f"{label} cannot be read ({_safe(exc.strerror or str(exc))})"
+    finally:
+        os.close(fd)
+    if len(data) > RESULT_MAX:
+        return None, f"{label} is over {RESULT_MAX // MB} MB, too big for a result"
+    try:
+        return SolverResult.from_json(data), ""
+    except ResultError as exc:
+        return None, f"{label} is not a SolverResult ({_safe(str(exc))})"
+
+
+def _search(out: Captured, pattern: re.Pattern[str]) -> tuple[tuple[str, ...], list[str]]:
+    """(the flags in what was kept of stdout, notes on what was not searched)."""
+    if out.dropped == 0:
+        return _flags((out.head + out.tail).decode("utf-8", "replace"), pattern), []
+    found = _flags(out.head.decode("utf-8", "replace"), pattern) + _flags(out.tail.decode("utf-8", "replace"), pattern)
+    kept = (HEAD_BYTES + TAIL_BYTES) // MB
+    return tuple(dict.fromkeys(found)), [f"output over {kept} MB: {out.dropped} bytes in the middle not searched"]
+
+
+def _read_upto(fd: int, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    while size < limit:
+        chunk = os.read(fd, min(65536, limit - size))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
 
 
 def _last_line(text: str) -> str | None:
@@ -323,20 +473,8 @@ def _exited(code: int, stderr: str) -> str:
     return f"exited {code}: {stderr}" if stderr else f"exited {code} with nothing on stderr"
 
 
-def _stderr_tail(root: Path) -> str:
-    """The last STDERR_TAIL characters of the engine's stderr, made safe and on one line."""
-    try:
-        fd = open_inside(root, STDERR_FILE.split("/"))
-    except OSError:
-        return ""
-    try:
-        size = os.fstat(fd).st_size
-        os.lseek(fd, max(0, size - STDERR_TAIL * 4), os.SEEK_SET)  # a character is at most 4 bytes
-        data = os.read(fd, STDERR_TAIL * 4)
-    except OSError:
-        return ""
-    finally:
-        os.close(fd)
+def _stderr_text(data: bytes) -> str:
+    """The last STDERR_TAIL characters of what was kept of stderr, made safe and on one line."""
     text = data.decode("utf-8", "replace").strip()
     return untrusted(text[-STDERR_TAIL:], one_line=True)
 
