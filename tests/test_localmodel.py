@@ -733,7 +733,7 @@ def test_cli_fails_when_most_jobs_are_declined_and_says_why_a_local_model_helps(
         result = invoke(server.base_url, cases)
     assert result.exit_code == 1
     assert "openai local/m declined 2 of 2 jobs" in result.output
-    assert "an open-weight model on your own machine does not" in result.output
+    assert "an open-weight model on your own machine has no such classifier in front of it" in result.output
 
 
 def test_cli_makes_one_call_per_case_and_never_retries(tmp_path):

@@ -305,8 +305,8 @@ def _unmeasured(report: localmodel.EvalReport) -> str:
     of = f"of {report.total}"
     if refused >= max(failed, blank):
         return (f"{report.label} declined {refused} {of} jobs, so this score does not measure what it knows. A "
-                "provider's safety classifier can decline security work; an open-weight model on your own machine "
-                "does not. In a run, each refusal leaves the rules' answer.")
+                "provider's safety classifier can decline security work; an open-weight model on your own machine has "
+                "no such classifier in front of it. In a run, each refusal leaves the rules' answer.")
     if failed >= blank:
         return (f"{report.label} failed or timed out on {failed} {of} jobs, so this score does not measure the "
                 "model: check the server, or give it a longer --timeout.")

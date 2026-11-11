@@ -101,8 +101,8 @@ def light_line(light: LightAnswers | None) -> str:
                 f"--engine openai --base-url {light.base_url} --model {light.model}")
     if light.engine == "anthropic":
         return (f"light model: {light.model} (Anthropic): a refusal leaves the rules' answer; an open-weight model on "
-                "this machine never refuses security work. Measure it: flightdeck eval-local --engine anthropic "
-                f"--model {light.model}")
+                "this machine has no provider classifier in front of it. Measure it: flightdeck eval-local --engine "
+                f"anthropic --model {light.model}")
     return f'light model: Cactus Needle ({EXTRA_CACTUS}); measure it: flightdeck eval-local --engine cactus'
 
 
