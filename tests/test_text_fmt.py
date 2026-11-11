@@ -7,18 +7,40 @@ import pytest
 from ctf_flightdeck import fmt
 from ctf_flightdeck.text import MARK, untrusted
 
-# Bidi controls, zero-width and other invisible characters that untrusted() turns into MARK.
+# Bidi controls, zero-width and other invisible characters that untrusted() turns into MARK:
+# Unicode's Default_Ignorable_Code_Point set (DerivedCoreProperties.txt), the line and
+# paragraph separators, and the interlinear annotation characters.
 INVISIBLE = [
+    0x00AD,  # soft hyphen
+    0x034F,  # combining grapheme joiner
+    0x115F, 0x1160, 0x3164, 0xFFA0,  # Hangul fillers: blank-looking letters
+    0x17B4, 0x17B5,  # Khmer inherent vowels
+    *range(0x180B, 0x1810),  # Mongolian free variation selectors, vowel separator
     *range(0x200B, 0x2010),  # zero-width space, ZWNJ, ZWJ, LRM, RLM
     0x2028,  # line separator
     0x2029,  # paragraph separator
     *range(0x202A, 0x202F),  # LRE, RLE, PDF, LRO, RLO
     *range(0x2060, 0x2065),  # word joiner, invisible operators
+    0x2065,  # unassigned, default-ignorable
     *range(0x2066, 0x206A),  # LRI, RLI, FSI, PDI
+    *range(0x206A, 0x2070),  # deprecated format characters
+    *range(0xFE00, 0xFE10),  # variation selectors 1-16
     0xFEFF,  # byte order mark / zero-width no-break space
+    *range(0xFFF0, 0xFFF9),  # unassigned specials, default-ignorable
+    *range(0xFFF9, 0xFFFC),  # interlinear annotation anchor, separator, terminator
+    *range(0x1BCA0, 0x1BCA4),  # shorthand format controls
+    *range(0x1D173, 0x1D17B),  # musical symbol format controls
+    0xE0001, *range(0xE0020, 0xE0080),  # language tag and tag characters
+    0xE0000, 0xE0002, 0xE0080, 0xE00FF,  # unassigned in the tag block, default-ignorable
+    *range(0xE0100, 0xE01F0),  # variation selectors 17-256
+    0xE01F0, 0xE0FFF,  # unassigned, default-ignorable, to the end of that block
 ]
 # Printable neighbours of those ranges, which must come through unchanged.
-NEIGHBOURS = [0x00A0, 0x200A, 0x2010, 0x2027, 0x202F, 0x205F, 0x2070, 0xFEFC, 0xFF01]
+NEIGHBOURS = [
+    0x00A0, 0x00AC, 0x00AE, 0x034E, 0x0350, 0x115E, 0x1161, 0x17B3, 0x17B6, 0x180A, 0x1810,
+    0x200A, 0x2010, 0x2027, 0x202F, 0x205F, 0x2070, 0x2800, 0x3163, 0x3165, 0xFDFC, 0xFE10,
+    0xFEFC, 0xFF01, 0xFF9F, 0xFFA1, 0xFFFC, 0x1BC9F, 0x1D172, 0x1D17B,
+]
 
 
 def test_escape_shows_as_caret_bracket():
