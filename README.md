@@ -19,11 +19,12 @@ A board is a folder of challenge folders, each with a `challenge.json` and its h
 in [`practice/`](practice/README.md).
 
 ```sh
-uv run flightdeck config --example > ~/.config/ctf-flightdeck/config.toml   # then fill in the model ladder
-export OPENROUTER_API_KEY=...                  # or whatever [api] key_env names; never put it in the file
-uv run flightdeck config                       # checks the config; says whether the key is set, never shows it
-uv run flightdeck play practice --docker       # each lane in its own container (the image is never pulled for you)
-uv run flightdeck play ~/ctf/some-board --host --max-lanes 4 --team
+uv run flightdeck init            # a few questions; writes ~/.config/ctf-flightdeck/config.toml
+export OPENROUTER_API_KEY=...     # the variable init named; flightdeck never stores the key
+uv run flightdeck image build     # once, for Docker lanes: builds the lane image (python3 and CTF tools)
+uv run flightdeck doctor          # checks everything and says how to fix what is missing
+uv run flightdeck practice        # the bundled practice set: 14 small synthetic challenges
+uv run flightdeck play ~/ctf/some-board --max-lanes 4
 ```
 
 `play` spends tokens: every lane is a model conversation, capped per lane by `token_cap` and
@@ -31,8 +32,10 @@ uv run flightdeck play ~/ctf/some-board --host --max-lanes 4 --team
 cheapest-first. A flag a lane finds waits for you: `a` or `1` submits it, `d` or `0` declines. With
 an `answers.sha256.json` (practice) flightdeck checks flags itself; without one you submit by hand
 and tell it how it went. `t` takes over a lane's shell; exit the shell to hand it back. Every run
-writes an append-only `events.jsonl` under the run folder. `--host` runs lane commands as you, on
-this machine: use a disposable VM, or Docker.
+writes an append-only `events.jsonl` and each lane's full transcript (`lanes/`) under the run folder.
+Docker lanes get no network unless their challenge has a live instance. `--host` runs lane commands
+as you, on this machine, where a lane can read your files and your API key: use Docker, a disposable
+VM, or a separate low-limit key.
 
 ## Try the mock (M0)
 
