@@ -10,6 +10,7 @@ four commands and the alerts. lane_summary() says more, in this order:
     Last steps (n of m):              then one line per step, newest last:
       turn 12: the command → its output
     Files changed: path (status, turn n), ...
+    Found: what the lane reported finding, ...       only when it reported something
     Candidate flags: "flag" (what became of it); ...
     Not the flag: "flag" (why); ...                  only when a flag is known not to be it
     Open alerts: label: reason; ...
@@ -62,6 +63,7 @@ COMMAND = 160
 OUTPUT = 160
 PATH = 100  # a file the lane changed
 STATUS = 20
+ARTIFACT = 100  # something the lane found
 FLAG = 100  # before it is quoted
 WHY = 80  # why a flag is known not to be the flag
 ALERT = 240  # an alert's label and reason
@@ -71,6 +73,7 @@ RESULT = 160  # how a finished lane ended
 # How many shown: the rest are counted.
 HANDOUT = 12  # the first ones, in board order
 FILES = 12  # the newest ones
+ARTIFACTS = 8  # the newest ones
 FLAGS = 8  # the newest ones (candidate flags, and flags known not to be the flag)
 MESSAGES = 6  # the newest ones
 
@@ -112,6 +115,7 @@ def lane_summary(
         line
         for line in (
             _files_line(lane),
+            _found_line(lane),
             _flags_line(deck, lane),
             _not_flags_line(deck, lane),
             _alerts_line(lane, before),
@@ -182,6 +186,13 @@ def _step_line(turn: int, command: str, output: str) -> str:
 def _files_line(lane: Lane) -> str:
     items = [f"{_one(c.path, PATH)} ({_one(c.status, STATUS)}, turn {c.turn})" for c in lane.files.values()]
     return _listing("Files changed", items, FILES, ", ")
+
+
+def _found_line(lane: Lane) -> str | None:
+    """What the lane reported finding (TurnReport.artifacts), oldest first; None if nothing."""
+    if not lane.artifacts:
+        return None
+    return _listing("Found", [_one(item, ARTIFACT) for item in lane.artifacts], ARTIFACTS, ", ")
 
 
 def _flags_line(deck: Deck, lane: Lane) -> str:
