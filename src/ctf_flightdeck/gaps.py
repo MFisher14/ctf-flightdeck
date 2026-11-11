@@ -573,7 +573,7 @@ def _visible(text: str) -> str:
 def _one(text: str, limit: int) -> str:
     """Untrusted text in a reason: on one line, made visible, cut to `limit`."""
     folded = _visible(untrusted(text, one_line=True)).strip()
-    return folded if len(folded) <= limit else folded[: limit - 1] + "…"
+    return folded if len(folded) <= limit else folded[: limit - 1] + "\u2026"
 
 
 def _md(value: object, limit: int = 200) -> str:

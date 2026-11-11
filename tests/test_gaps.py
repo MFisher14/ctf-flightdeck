@@ -332,7 +332,7 @@ def test_a_candidate_without_a_flag_and_a_status_from_nowhere_are_said(tmp_path)
     (gap,) = gaps(run.close())
     assert gap.l1 == (("half", "candidate"), ("odd", "maybe"))
     assert gap.reason == (
-        "routed: half candidate (no flag in the log); odd maybe (not a status flightdeck knows; line one ⏎ line two)"
+        "routed: half candidate (no flag in the log); odd maybe (not a status flightdeck knows; line one \u23ce line two)"
     )
 
 
@@ -341,7 +341,7 @@ def test_long_notes_are_cut_in_the_reason(tmp_path):
     run.release([Challenge("x", "X", "misc", 10)])
     run.l1("x", "chatty", "unsure", notes="n" * 500)
     (gap,) = gaps(run.close())
-    assert gap.reason == "routed: chatty unsure (" + "n" * 119 + "…)"
+    assert gap.reason == "routed: chatty unsure (" + "n" * 119 + "\u2026)"
 
 
 def test_ids_the_player_typed_do_not_put_a_challenge_in_the_run(tmp_path):
@@ -365,19 +365,21 @@ def test_a_log_that_lost_its_release_line_still_names_its_challenges(tmp_path):
 def test_values_of_the_wrong_type_become_unknowns_not_crashes(tmp_path):
     lines = [
         {"kind": "run-start", "wall": "w"},
-        {"at": 0, "wall": "w", "kind": "release", "data": {"challenges": ["x", 7, None, ""]}},
+        {"at": 0, "wall": "w", "kind": "release", "data": {"challenges": ["x", 7, None, "", "y"]}},
         {"at": 1, "wall": "w", "kind": "l1", "challenge": "x", "data": {"engine": 5, "status": None, "flags": "t{x}"}},
         {"at": 2, "wall": "w", "kind": "l1", "challenge": None, "data": {"engine": "lost", "status": "solved"}},
         {"at": 3, "wall": "w", "kind": "submit", "challenge": "x", "lane": "L01", "data": {"flag": 9, "correct": "yes"}},
+        {"at": 4, "wall": "w", "kind": "l1", "challenge": "y", "data": {"engine": "e", "status": "solved"}},  # flags lost
         {"kind": "run-end", "wall": "w"},
     ]
     (tmp_path / "events.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines) + "{not json\n")
     rep = gap_report(load_run(tmp_path))
     assert summarised(rep.gaps) == [("x", "", (("?", "?"),), "routed: ? ? (not a status flightdeck knows)")]
+    assert rep.l1_solved == (L1Solve("y", "", "e"),)  # a solved result is taken at its word
     assert rep.notes == (
-        "events.jsonl:7: not JSON (Expecting property name enclosed in double quotes); skipped",
+        "events.jsonl:8: not JSON (Expecting property name enclosed in double quotes); skipped",
         "1 L1 result names no challenge; left out",
-        "no name or points in the run for x (give --board to fill them in)",
+        "no name or points in the run for x, y (give --board to fill them in)",
     )
 
 
@@ -637,7 +639,7 @@ def test_the_json_says_null_for_what_is_unknown_and_never_holds_a_flag(played):
 
 EVIL = (
     "x | <img src=x onerror=alert(1)> ![p](http://evil.example/p.png) [c](javascript:alert(1)) "
-    "`t` *b* _i_ ~~s~~ $m$ &amp; \\| #h\n# Heading\x1b[31m‮!"
+    "`t` *b* _i_ ~~s~~ $m$ &amp; \\| #h\n# Heading\x1b[31m\u202e!"
 )
 
 
@@ -664,7 +666,7 @@ def test_hostile_text_renders_as_itself_never_as_markup(tmp_path):
     (board / "board.json").write_text(json.dumps({"event": "CTF <script>x</script> [y](http://e) # z"}))
     (board / "e1" / "challenge.json").write_text(json.dumps({"name": "n", "category": "web", "points": 1}))
     text = gaps_markdown(gap_report(record, board=load_board(board)))
-    assert not re.search("[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]", text)
+    assert not re.search("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", text)
     kinds = {token.type for token in walk(text)}
     assert not kinds & FORBIDDEN, kinds & FORBIDDEN
     assert all(t.markup.startswith("#") for t in walk(text) if t.type == "heading_open")  # no "===" heading
@@ -676,9 +678,9 @@ def test_hostile_text_renders_as_itself_never_as_markup(tmp_path):
         f"{fold}1 (web<b>|, 10 pts): solved by a lane",
         f"{fold}2 (web<b>|, 10 pts): not solved",
         f"{fold}3 (web<b>|, 10 pts): not solved",
-        "e`<i>| ⏎ 4 (category unknown, points unknown): not solved",
+        "e`<i>| \u23ce 4 (category unknown, points unknown): not solved",
     ]
-    notes = fold[:119] + "…"  # an engine's notes are cut to 120 characters
+    notes = fold[:119] + "\u2026"  # an engine's notes are cut to 120 characters
     items = [shown(t) for t in walk(text) if t.type == "inline"]
     assert f"Why L1 did not solve it: routed: eng<i>|`x` solved (its flag was rejected; {notes})" in items
 
@@ -688,7 +690,7 @@ def test_hostile_text_is_never_a_link_a_reader_could_not_see(tmp_path):
     tokens = list(walk(text, LINKIFY))
     links = [(t.attrs.get("href"), tokens[i + 1].content) for i, t in enumerate(tokens) if t.type == "link_open"]
     assert links, "linkify should still find the bare URLs"
-    for href, label in links:  # a value cut inside a URL ends in "…", which the href percent-encodes
+    for href, label in links:  # a value cut inside a URL ends in an ellipsis, which the href percent-encodes
         assert unquote(href) in (label, "http://" + label) and href.startswith(("http://", "https://")), (href, label)
     assert not any(t.type in ("image", "html_inline", "html_block") for t in tokens)
 
