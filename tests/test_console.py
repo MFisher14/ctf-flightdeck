@@ -2535,7 +2535,7 @@ def platform_run(names: tuple[str, ...] = ("alpha", "bravo", "charlie"), max_lan
     return deck
 
 
-def send(deck: Deck, lane_id: str, flag: str) -> None:
+def send_flag(deck: Deck, lane_id: str, flag: str) -> None:
     """The lane finds `flag` and the player approves it: it goes to the platform (or waits its turn)."""
     deck.report(lane_id, TurnReport(flag=flag))
     assert deck.apply(iv.Approve(lane_id)).ok
@@ -2545,9 +2545,9 @@ def send(deck: Deck, lane_id: str, flag: str) -> None:
 def test_the_quit_prompt_names_each_flag_on_its_way_to_the_platform_and_says_quitting_leaves_its_answer_unknown(size):
     deck = platform_run(("alpha", "bravo", "charlie", "delta"))  # three lanes at work, one challenge queued
     alpha, bravo, charlie = (deck.lanes_on(n)[0] for n in ("alpha", "bravo", "charlie"))
-    send(deck, alpha.id, "t{one}")  # handed to the platform
-    send(deck, alpha.id, "t{two}")  # waits its turn behind it: one flag at a time per challenge
-    send(deck, bravo.id, "t{three}")
+    send_flag(deck, alpha.id, "t{one}")  # handed to the platform
+    send_flag(deck, alpha.id, "t{two}")  # waits its turn behind it: one flag at a time per challenge
+    send_flag(deck, bravo.id, "t{three}")
     deck.report(charlie.id, TurnReport(flag="t{four}"))  # waits for the player: not on its way
     calls = []
 
@@ -2579,7 +2579,7 @@ def test_the_quit_prompt_names_five_flags_on_their_way_and_counts_the_rest():
     names = tuple(f"chal{letter}" for letter in "abcdefg")  # letters only: the flag format is t\{[a-z]+\}
     deck = platform_run(names, max_lanes=len(names))
     for name in names:
-        send(deck, deck.lanes_on(name)[0].id, f"t{{{name}}}")
+        send_flag(deck, deck.lanes_on(name)[0].id, f"t{{{name}}}")
     text = views.quit_summary(deck).plain
     assert "7 flags on their way to the platform" in text
     assert [f"t{{{name}}}" in text for name in names] == [True] * 5 + [False] * 2  # in board order: the first five
@@ -2591,7 +2591,7 @@ def test_quitting_asks_first_while_a_flag_is_on_its_way_though_every_lane_has_en
     quitting asks first and names the flag; once its answer is in, it quits at once."""
     deck = platform_run(("alpha",))
     (lane,) = deck.lanes.values()
-    send(deck, lane.id, "t{one}")
+    send_flag(deck, lane.id, "t{one}")
     assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
     calls = []
 
