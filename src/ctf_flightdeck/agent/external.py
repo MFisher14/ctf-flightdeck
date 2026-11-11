@@ -1275,6 +1275,8 @@ class _Run:
             if files:
                 self.report(TurnReport(turn=False, files=files))
         self.spawns += 1
+        if self.spawns == 1:  # the handout as it came, its agent files too (they are held below)
+            await self.plant(await asyncio.to_thread(take_snapshot, root))
         try:
             moved = await asyncio.to_thread(hold_agent_config, root, self.spawns)
         except OSError as exc:
@@ -1292,14 +1294,12 @@ class _Run:
                 f"instructions: {names}."
             )
         self.snapshot = await asyncio.to_thread(take_snapshot, root)
-        if self.spawns == 1:
-            await self.plant(self.snapshot)
 
     async def plant(self, snapshot: Snapshot) -> None:
         """Remember the flag-format matches in the challenge's own text, its description and
-        the handout as it came (the first snapshot): a decoy flag.txt, an example in a
-        comment, a flag in a readme. Even when the agent gives one as its answer, it waits
-        for the player (see sort_out)."""
+        the handout as it came (a snapshot before the CLI first starts): a decoy flag.txt,
+        an example in a comment, a flag in a readme. Even when the agent gives one as its
+        answer, it waits for the player (see sort_out)."""
         texts = await asyncio.to_thread(_handout_texts, self.workspace.root, snapshot)
         found, done = await asyncio.to_thread(
             _search_all, [self.challenge.description, *texts], self.driver.flag_re, time.monotonic() + SCAN_SECONDS
