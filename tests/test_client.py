@@ -384,6 +384,31 @@ def test_a_reply_that_is_not_json_fails_with_a_safe_snippet_of_it():
     assert "\x1b" not in str(err)
 
 
+# valid JSON, but nested far deeper than Python's parser can follow (it raises RecursionError)
+DEEP = '{"error": ' + "[" * 200_000 + "]" * 200_000 + "}"
+
+
+@pytest.mark.parametrize("status", [200, 400])
+def test_a_body_nested_too_deep_to_parse_fails_at_once_as_a_model_error(status):
+    with FakeModelServer([FakeReply(status, DEEP), text_reply("never sent")]) as server:
+        err = fails(server.base_url)
+        assert len(server.requests) == 1
+    assert err.status == status and err.retryable is False
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_a_reply_holding_a_number_json_cannot_carry_is_refused_before_it_reaches_the_history(number):
+    # Python's parser takes these (1e400 becomes infinity), but a message holding one could
+    # never be sent back: the next request's body would fail to encode
+    message = '{"role": "assistant", "content": "thinking", "logprobs": %s}' % number
+    raw = '{"choices": [{"message": %s, "finish_reason": "stop"}], "model": "fake/model"}' % message
+    with FakeModelServer([FakeReply(200, raw), text_reply("never sent")]) as server:
+        err = fails(server.base_url)
+        assert len(server.requests) == 1
+    assert "not JSON" in str(err)
+    assert err.status == 200 and err.retryable is False
+
+
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 422])
 def test_any_other_failing_status_fails_at_once_with_the_servers_message(status):
     with FakeModelServer([error_reply(status, "you sent something wrong"), text_reply("never sent")]) as server:
@@ -417,6 +442,12 @@ def test_a_redirect_is_not_followed():
 @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
 def test_a_status_that_means_not_now_is_tried_again(status):
     with FakeModelServer([error_reply(status, "not now"), text_reply("now")]) as server:
+        assert call(server.base_url).content == "now"
+        assert len(server.requests) == 2
+
+
+def test_a_429_whose_body_is_nested_too_deep_to_parse_is_still_tried_again():
+    with FakeModelServer([FakeReply(429, DEEP), text_reply("now")]) as server:
         assert call(server.base_url).content == "now"
         assert len(server.requests) == 2
 

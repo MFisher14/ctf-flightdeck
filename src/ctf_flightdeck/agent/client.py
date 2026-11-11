@@ -435,11 +435,28 @@ def _text(value: object) -> str:
 
 
 def _json(response: httpx.Response) -> object:
-    """The parsed body, or _NOT_JSON."""
+    """The parsed body, or _NOT_JSON when it is not strict JSON.
+
+    Python's parser also takes NaN and Infinity, and reads a number such as 1e400 as
+    infinity. JSON has neither, and a reply message holding one could never be sent back
+    in the history: `_request_body` refuses it. A body nested deeper than the parser can
+    follow raises RecursionError, not ValueError, and is refused the same way.
+    """
     try:
-        return response.json()
-    except ValueError:  # also UnicodeDecodeError
+        return response.json(parse_constant=_refuse_constant, parse_float=_finite_float)
+    except (ValueError, RecursionError):  # ValueError covers UnicodeDecodeError too
         return _NOT_JSON
+
+
+def _refuse_constant(name: str) -> float:
+    raise ValueError(f"{name} is not JSON")
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("a number too big for a float")
+    return value
 
 
 def _error_message(data: object) -> str:
