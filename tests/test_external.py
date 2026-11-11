@@ -1088,9 +1088,12 @@ def test_codex_exiting_without_finishing_its_turn_ends_the_lane_with_the_status_
     run(main())
 
 
-def test_a_codex_file_change_shows_as_a_changed_file_with_its_diff(tmp_path):
+def test_a_codex_file_change_shows_as_a_changed_file_with_its_diff_and_one_outside_the_workspace_too(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    away = str(elsewhere / "scratch.txt")
     script = {"turns": [
-        {"items": [{"file": ["solve.py", "print('hi')\n"]}], "usage": [10, 0, 5]},
+        {"items": [{"file": ["solve.py", "print('hi')\n"]}, {"file": [away, "x\n"]}], "usage": [10, 0, 5]},
         {"items": [{"message": "t{note}"}]},
     ]}
 
@@ -1103,6 +1106,8 @@ def test_a_codex_file_change_shows_as_a_changed_file_with_its_diff(tmp_path):
             assert "edit solve.py" in steps(lane)
             change = lane.files["solve.py"]
             assert change.status == "added" and "+print('hi')" in change.diff
+            outside = lane.files[away]  # no snapshot covers it: codex's own word, by its full path
+            assert (outside.status, outside.diff) == ("added", "")
         finally:
             await lab.finish()
 

@@ -667,6 +667,9 @@ class _Proc:
         self.completed = False  # codex: turn.completed seen
         self.failed: str | None = None  # codex: turn.failed's message
         self.sent = ""  # the player's messages and flightdeck's notes it was given, until a turn of its ends
+        self.tail = ""  # its last stderr line: why it exited, when it dies
+        self.landed = False  # frozen, and the STOP has reached it (docker: after a round trip)
+        self.freezes = 0
         self.problems = 0
         self.seen: set[int] = set()  # host: processes the CLI started, collected while it lived
         self._order = asyncio.Lock()
@@ -676,12 +679,12 @@ class _Proc:
     def alive(self) -> bool:
         return self.process.returncode is None
 
-    def send(self, sig: int, *, tree: bool = True) -> None:
-        """Signal the CLI (tree: and everything it started). Host: at once. Docker: in order,
-        in the background."""
+    def send(self, sig: int, *, tree: bool = True) -> asyncio.Future[None] | None:
+        """Signal the CLI (tree: and everything it started). Host: at once (None). Docker:
+        in order, in the background; the task is returned."""
         if self.container is None:
             if not self.alive:
-                return
+                return None
             try:
                 if tree:
                     os.killpg(self.pid, sig)
@@ -689,10 +692,11 @@ class _Proc:
                     os.kill(self.pid, sig)
             except (ProcessLookupError, PermissionError):
                 pass
-            return
+            return None
         task = asyncio.ensure_future(self._in_container(sig, tree))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     async def _in_container(self, sig: int, tree: bool) -> None:
         async with self._order:
@@ -798,7 +802,6 @@ class _Run:
         self.in_flight: dict[str, str] = {}  # tool call id -> its action, until its result
         self.timer: asyncio.TimerHandle | None = None  # a take-over freezes after TAKEOVER_WAIT whatever runs
         self.log: _Log | None = None
-        self.stderr_tail = ""
         self.spawns = 0
         self.steps = 0  # steps since the turn began
         self.idle_turns = 0
@@ -878,20 +881,31 @@ class _Run:
         self.cancel_timer()
         proc = self.proc
         if proc is not None and proc.alive and proc.ending is None and not proc.frozen:
-            proc.send(signal.SIGSTOP)
             proc.frozen = True
+            proc.freezes += 1
+            task = proc.send(signal.SIGSTOP)
+            if task is None:
+                proc.landed = True
+            else:  # docker: the take-over shell opens once the CLI has really stopped
+                mark = proc.freezes
+                task.add_done_callback(lambda _: self._landed(proc, mark))
+        self.update_idle()
+
+    def _landed(self, proc: _Proc, mark: int) -> None:
+        if proc.frozen and proc.freezes == mark:
+            proc.landed = True
         self.update_idle()
 
     def thaw(self) -> None:
         proc = self.proc
         if proc is not None and proc.frozen and proc.ending is None:
             proc.send(signal.SIGCONT)
-            proc.frozen = False
+            proc.frozen = proc.landed = False
         self.update_idle()
 
     def update_idle(self) -> None:
         proc = self.proc
-        if proc is None or not proc.alive or proc.frozen or proc.ending is not None:
+        if proc is None or not proc.alive or proc.ending is not None or (proc.frozen and proc.landed):
             self.idle.set()
         else:
             self.idle.clear()
@@ -998,8 +1012,11 @@ class _Run:
             return
         self.ready = True
         root = self.workspace.root
-        await asyncio.to_thread(restore_private, root)
-        self.log = await asyncio.to_thread(_Log, root)
+        try:
+            await asyncio.to_thread(restore_private, root)
+            self.log = await asyncio.to_thread(_Log, root)
+        except OSError as exc:
+            raise WorkspaceError(f"cannot set up {PRIVATE} in {root} for {self.kind}: {exc}") from None
         if self.docker:
             self.cli = await self.container_cli()
         await self.session()
@@ -1154,7 +1171,7 @@ class _Run:
                 if self.log is not None:
                     self.log.write(raw + b"\n")
                 if text.strip():
-                    self.stderr_tail = _one_line(text, 300)
+                    proc.tail = _one_line(text, 300)
         finally:
             if not proc.inner.done():
                 proc.inner.set_result(None)
@@ -1216,9 +1233,10 @@ class _Run:
         self.unknown.add(name)
         self.note(f"{self.kind} sent an event flightdeck does not know ({name}); it was skipped")
 
-    async def finished(self, proc: _Proc) -> int | None:
+    async def finished(self, proc: _Proc) -> None:
         """The CLI's run is over (its stdout ended): make sure it has exited and left
-        nothing running, report its unreported tokens, and say how it exited."""
+        nothing running, and report its unreported tokens. exit_reason(proc) says how it
+        ended."""
         try:
             await asyncio.wait_for(asyncio.shield(proc.process.wait()), self.driver.stop_grace)
         except TimeoutError:
@@ -1233,12 +1251,12 @@ class _Run:
         tokens, cached = self.take_tokens()
         if tokens:
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached))
-        return proc.process.returncode
 
-    def exit_reason(self, code: int | None) -> str:
-        status = _status(code)
+    def exit_reason(self, proc: _Proc) -> str:
+        """How a run of the CLI ended: its exit status and its last stderr line."""
+        status = _status(proc.process.returncode)
         reason = f"{self.kind} exited" + (f" with status {status}" if status is not None else "")
-        return reason + (f": {self.stderr_tail}" if self.stderr_tail else "")
+        return reason + (f": {proc.tail}" if proc.tail else "")
 
     async def close(self) -> None:
         if self.closing is None:
@@ -1381,14 +1399,14 @@ class _ClaudeRun(_Run):
             if hints:
                 self.report(TurnReport(turn=False, hints_taken=len(hints)))
             await self.pump(proc)
-            code = await self.finished(proc)
+            await self.finished(proc)
             self.busy = False
             if self.over():
                 return
             if generation != self.generation:
                 self.carry = proc.sent  # what it was told mid-turn goes to the stronger model too
                 continue  # escalated: start again on the stronger model
-            self.report(TurnReport(turn=False, gave_up=self.exit_reason(code)))
+            self.report(TurnReport(turn=False, gave_up=self.exit_reason(proc)))
             return
 
     def write(self, proc: _Proc, text: str, sent: str) -> None:
@@ -1588,7 +1606,7 @@ class _CodexRun(_Run):
             if hints:
                 self.report(TurnReport(turn=False, hints_taken=len(hints)))
             await self.pump(proc)
-            code = await self.finished(proc)
+            await self.finished(proc)
             if self.over():
                 return
             if generation != self.generation:
@@ -1607,7 +1625,7 @@ class _CodexRun(_Run):
                 if proc.thread is None and extra:
                     self.carry = extra  # codex never took it: it goes with the next turn
                 continue
-            self.report(TurnReport(turn=False, gave_up=self.exit_reason(code)))
+            self.report(TurnReport(turn=False, gave_up=self.exit_reason(proc)))
             return
 
     def deliver(self) -> None:
