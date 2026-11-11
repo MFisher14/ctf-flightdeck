@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from ctf_flightdeck import writeup
-from ctf_flightdeck.agent.client import ModelClient, ModelError
+from ctf_flightdeck.agent.client import ModelClient, ModelError, Reply, Usage
 from ctf_flightdeck.agent.driver import _step as driver_step
 from ctf_flightdeck.agent.tools import Toolbox, ToolResult
 from ctf_flightdeck.agent.workspace import RunResult, changed_files, take_snapshot
@@ -840,6 +840,20 @@ def test_redact_finds_the_flag_cut_short_in_how_a_lane_found_it(tmp_path):
     redacted = writeup.draft(run.close(), "c", redact=True)
     assert "t{redact" not in redacted and "redact_me" not in redacted
     assert "z" * 230 + " <flag>…" in redacted
+
+
+def test_redact_finds_the_flag_cut_short_at_the_end_of_a_line(tmp_path):
+    said = "I believe the answer is " + "very " * 32 + CLIPPED
+    action, _ = driver_step([], Reply({}, said, (), "", Usage(), ""))  # the driver keeps 200 characters, no "…"
+    assert action.endswith(" t{redact_me_plea")
+    run = Run(tmp_path / "run", [Challenge("c", "Clip", "misc", 50)], answers={"c": CLIPPED})
+    lane = run.lane("c")
+    run.step(lane, action)  # a turn in which the model only spoke
+    run.step(lane, f"submit {CLIPPED}", flag=CLIPPED)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "c", redact=True)
+    assert "t{redact" not in redacted
+    assert "```text\nsays: I believe the answer is " + "very " * 32 + "<flag>\n```" in redacted
 
 
 def test_redact_finds_the_flag_the_toolbox_folded(tmp_path):
