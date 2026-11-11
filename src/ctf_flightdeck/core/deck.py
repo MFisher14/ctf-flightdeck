@@ -239,6 +239,13 @@ class Deck:
             text += f" · stopped {', '.join(stopped)}"
         self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={"who": who, "solved": True, "stopped": stopped})
 
+    def note(self, lane_id: str, text: str) -> None:
+        """A flightdeck note on a lane's transcript (from a component outside the deck)."""
+        self._on_thread("note")
+        lane = self.lanes.get(lane_id)
+        if lane is not None and not lane.finished:
+            self._note(lane, text)
+
     def record_l1(
         self,
         challenge_id: str,

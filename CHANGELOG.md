@@ -18,6 +18,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   and the lane hears what you changed. Other lanes keep working meanwhile.
 - Per-lane token and dollar caps (an alert at 80%, an approval at 100%), cost from the API or
   your config's prices, cached tokens counted.
+- A lane whose history passes 50k prompt tokens continues in a fresh context with a summary, so a
+  long lane does not get more expensive with every turn.
 - Every run writes an append-only `events.jsonl` and each lane's full transcript.
 - Docker lanes get no network unless their challenge has a live instance.
 

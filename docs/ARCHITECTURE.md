@@ -74,6 +74,9 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **Context size drives cost, not the model.** Most tokens are the same context re-read every turn.
   Keep each lane fresh per challenge, keep the fixed prefix small (target under 6K tokens), and
   truncate tool output (large outputs go to a file the agent can read on purpose).
+- **A lane's own history grows too.** Past 50k prompt tokens (configurable) a lane continues in a
+  fresh context: the same prefix and brief, so the provider's cache still hits, plus a summary of
+  its work instead of every old tool output.
 - **Long-lived orchestrator threads are the expensive tail.** The console is the orchestrator; it is
   code, not a model holding hundreds of thousands of tokens of context.
 - **Caps and stop signals pay for themselves.** One stuck lane on one low-value challenge can cost more

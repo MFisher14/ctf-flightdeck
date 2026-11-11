@@ -490,3 +490,48 @@ def test_a_turn_that_changes_many_files_reports_the_first_fifty_and_tells_the_la
             await lab.finish()
 
     run(main())
+
+
+def test_a_lane_whose_context_grows_past_the_limit_continues_in_a_fresh_one(tmp_path):
+    server = FakeModelServer([
+        tool_call_reply("shell", {"command": "echo one"}, prompt_tokens=1000),
+        tool_call_reply("shell", {"command": "echo two"}, prompt_tokens=60_000),  # over the limit
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+    ])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.driver.compact_at = 50_000
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            second, third = server.requests[1]["json"], server.requests[2]["json"]
+            assert [m["role"] for m in second["messages"]] == ["system", "user", "assistant", "tool"]
+            assert [m["role"] for m in third["messages"]] == ["system", "user", "user"]  # fresh, with the summary
+            assert "60,000 prompt tokens" in third["messages"][2]["content"]
+            assert "echo two" in third["messages"][2]["content"]  # the summary names the last steps
+            assert third["session_id"] == second["session_id"]  # same lane, same cached prefix
+            assert any("context refreshed at 60,000 prompt tokens" in a.text for a in lane.actions)
+            await lab.finish()
+
+    run(main())
+
+
+def test_no_refresh_when_compaction_is_off(tmp_path):
+    server = FakeModelServer([
+        tool_call_reply("shell", {"command": "echo big"}, prompt_tokens=90_000),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+    ])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.driver.compact_at = None
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert [m["role"] for m in server.requests[1]["json"]["messages"]] == ["system", "user", "assistant", "tool"]
+            await lab.finish()
+
+    run(main())

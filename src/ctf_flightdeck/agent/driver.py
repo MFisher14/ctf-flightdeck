@@ -31,6 +31,7 @@ WorkspaceFactory = Callable[[Lane, Challenge], Workspace]
 
 MAX_SESSION = 256  # OpenRouter's limit for session_id
 MAX_FILES_PER_TURN = 50  # an unpacked archive can change thousands; the console shows the first 50
+COMPACT_AT = 50_000  # prompt tokens: past this, a lane continues in a fresh context with a summary
 
 
 @dataclass
@@ -95,6 +96,7 @@ class AgentDriver:
         urls: Mapping[str, Sequence[str]] | None = None,
         prices: Mapping[str, Price] | None = None,
         max_tokens: int | None = None,
+        compact_at: int | None = COMPACT_AT,
     ) -> None:
         self.client = client
         self.workspaces = workspaces
@@ -103,6 +105,7 @@ class AgentDriver:
         self.urls = {cid: tuple(u) for cid, u in (urls or {}).items()}  # challenge id -> live instance origins
         self.prices = dict(prices or {})
         self.max_tokens = max_tokens
+        self.compact_at = compact_at  # None: never refresh a lane's context
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.deck = None
@@ -241,6 +244,7 @@ class AgentDriver:
             if not await self._until_running(run):
                 return  # killed or finished while the model was thinking
             await self._turn(run, reply, len(hints))
+            self._refresh_if_long(run, reply.usage.prompt_tokens)
 
     async def _until_running(self, run: _Run) -> bool:
         """Wait while the lane is paused, taken over or waiting for the player. False once
@@ -297,6 +301,16 @@ class AgentDriver:
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag))
+
+    def _refresh_if_long(self, run: _Run, prompt_tokens: int) -> None:
+        """Past compact_at prompt tokens, continue in a fresh context: the same prefix and
+        brief (so the API's cache still hits) plus a summary, instead of the whole history."""
+        lane = self._lane(run)
+        if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
+            return
+        summary = self.deck.summary(lane)
+        run.messages = self._fresh(run, lane.plan) + [{"role": "user", "content": prompts.refresh(summary, prompt_tokens)}]
+        self.deck.note(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
 
     # ------------------------------------------------------------------ helpers
 
