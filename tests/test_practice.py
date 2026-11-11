@@ -520,24 +520,74 @@ def test_the_reference_solver_recovers_the_flag_from_the_handout(folder):
     assert digest == ANSWERS[cid], f"{cid}: the recovered flag does not hash to the answer on file"
 
 
-def repository_files() -> list[Path]:
-    """The repository's own files: what is committed or about to be (no venv, caches or .git)."""
-    found = [p for p in REPO.iterdir() if p.is_file()]
-    for top in ("tests", "src", "docs", ".githooks"):
-        found += [p for p in files_under(REPO / top) if "__pycache__" not in p.parts]
-    return found
+def git_or_skip() -> str:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not installed, and the repository's file list comes from git ls-files")
+    return git
+
+
+def git_env() -> dict[str, str]:
+    """The environment without GIT_* variables, so git finds the repository from its working
+    directory: a hook's GIT_DIR or GIT_INDEX_FILE would point it at another one."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
+def repository_files(root: Path = REPO) -> list[Path]:
+    """What a commit of `root` could publish: every file git tracks, plus every untracked one it
+    does not ignore. git lists them, so no directory can be left off a list kept here, and what
+    .gitignore covers (the venv, caches, build output, private notes, agent worktrees, run state)
+    is left out."""
+    if not (root / ".git").exists():
+        pytest.skip(f"{root} is not a git checkout, so there is no repository to scan")
+    listing = subprocess.run(
+        [git_or_skip(), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=root, env=git_env(), capture_output=True, timeout=60,
+    )
+    assert listing.returncode == 0, f"git ls-files failed in {root}: {listing.stderr.decode('utf-8', 'replace').strip()}"
+    paths = {root / os.fsdecode(name) for name in listing.stdout.split(b"\0") if name}
+    # a tracked file deleted from the work tree, or a submodule, has no file here to read
+    return sorted(path for path in paths if path.is_symlink() or path.is_file())
+
+
+def flag_leaks(root: Path, flags: dict[str, bytes]) -> list[str]:
+    """'<name> in <path>' for each flag written verbatim in a file a commit of `root` could publish."""
+    leaks = []
+    for path in repository_files(root):
+        # a symlink is published as the text of its target, so that is what is read, never the target
+        data = os.fsencode(os.readlink(path)) if path.is_symlink() else path.read_bytes()
+        leaks += [f"{name} in {path.relative_to(root).as_posix()}" for name, flag in flags.items() if flag in data]
+    return leaks
+
+
+def test_the_flag_scan_reads_every_file_git_would_publish_and_nothing_it_ignores(tmp_path):
+    """A directory nobody thought to list (examples/, .github/) is scanned all the same."""
+    git = git_or_skip()
+    canary = os.urandom(16).hex().encode()  # stands in for a flag
+    files = {
+        ".gitignore": b"ignored/\n.venv/\n*.log\n",
+        "README.md": b"top level, tracked ",
+        "docs/guide.md": b"tracked ",
+        "examples/demo-run.jsonl": b"untracked and not ignored ",
+        ".github/workflows/ci.yml": b"in a dot directory ",
+        "ignored/notes.md": b"ignored ",
+        ".venv/lib/site.py": b"ignored ",
+        "run.log": b"ignored ",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(text + canary + b"\n")
+    for args in (["init", "-q"], ["add", ".gitignore", "README.md", "docs/guide.md"]):
+        subprocess.run([git, *args], cwd=tmp_path, env=git_env(), check=True, capture_output=True, timeout=60)
+    publishable = [".gitignore", "README.md", "docs/guide.md", "examples/demo-run.jsonl", ".github/workflows/ci.yml"]
+    assert sorted(flag_leaks(tmp_path, {"canary": canary})) == sorted(f"canary in {name}" for name in publishable)
 
 
 def test_no_flag_is_written_in_plain_text_anywhere_in_the_repository():
     """Not in another file, and not in its own handout either: every challenge takes a step."""
+    assert Path(__file__).resolve() in repository_files(), "git's file list for the repository misses this file"
     flags = {challenge_id(f): SOLVERS[challenge_id(f)](f).encode() for f in CHALLENGES}
-    leaks = [
-        f"{cid} in {path.relative_to(REPO)}"
-        for path in repository_files()
-        for cid, flag in flags.items()
-        if flag in path.read_bytes()
-    ]
-    assert leaks == []
+    assert flag_leaks(REPO, flags) == []
 
 
 EXECUTABLE_MAGIC = (
