@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli
+from ctf_flightdeck.agent.workspace import docker_unavailable
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.lane import IMAGE
 from ctf_flightdeck.setup import Answers, Check, doctor, render, report, write_config
@@ -400,6 +402,64 @@ def test_doctor_never_prints_a_credential_carried_in_the_base_url(tmp_path):
     check = {c.name: c for c in doctor(path, environ={})}["model server"]
     assert not check.ok and "http://127.0.0.1:9/v1" in check.detail
     assert secret not in check.detail and secret not in report([check])[0]
+
+
+@pytest.fixture
+def fake_claude_bin(tmp_path, monkeypatch):
+    """A `claude` that does nothing, first on PATH, and no folder holding a real one."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "claude"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    return {"CLAUDE_CODE_OAUTH_TOKEN": "fake-oauth-token-for-doctor-tests", "PATH": os.environ["PATH"]}
+
+
+def test_doctor_for_agent_lanes_only_warns_about_the_api_key_they_never_use(tmp_path, fake_claude_bin):
+    cfg = write_config(Answers("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", ("a/b",), "host"), tmp_path / "c.toml")
+    checks = doctor(cfg, environ=fake_claude_bin, agent="claude")
+    key = {c.name: c for c in checks}["api key"]
+    assert not key.ok and not key.essential
+    assert key.detail == ("OPENROUTER_API_KEY is not set (only flightdeck's own lanes use it; claude lanes use claude's "
+                          "own credential and models)")
+    text, status = report(checks, agent="claude")
+    assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice --agent claude`.")
+    assert "fake-oauth-token-for-doctor-tests" not in text
+    own = doctor(cfg, environ=fake_claude_bin)  # flightdeck's own lanes do need the key
+    assert {c.name: c for c in own}["api key"].essential and report(own)[1] == 1
+
+
+def test_doctor_for_docker_agent_lanes_runs_plays_probe_of_the_lane_image(tmp_path, fake_claude_bin):
+    reason = docker_unavailable()
+    if reason:
+        pytest.skip(f"not run: {reason}")
+    if subprocess.run(["docker", "image", "inspect", "debian:bookworm-slim"], capture_output=True).returncode != 0:
+        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+    path = tmp_path / "c.toml"
+    path.write_text('[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "docker"\nimage = "debian:bookworm-slim"\n')
+    checks = doctor(path, environ=fake_claude_bin, agent="claude")
+    image = {c.name: c for c in checks}["agent image"]
+    assert not image.ok and image.essential
+    assert image.detail == "the lane image debian:bookworm-slim has no claude CLI, so claude lanes cannot run in Docker"
+    assert image.fix.startswith("play with --host (lanes on this machine), or build an image FROM debian:bookworm-slim")
+    assert report(checks, agent="claude")[1] == 1  # play --agent claude would refuse this config
+
+
+def test_doctor_on_a_host_config_does_not_ask_for_docker_or_its_image_and_names_no_missing_option(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker here
+    host_cfg = write_config(Answers("https://openrouter.ai/api/v1", "", ("a/b",), "host"), tmp_path / "host.toml")
+    checks = {c.name: c for c in doctor(host_cfg, environ={})}
+    docker = checks["docker"]
+    assert not docker.ok and not docker.essential and docker.fix == ""
+    assert docker.detail.endswith("your config runs lanes on this machine, so only `play --docker` needs Docker")
+    assert "lane image" not in checks
+    docker_cfg = write_config(ANSWERS, tmp_path / "docker.toml")
+    fix = {c.name: c for c in doctor(docker_cfg, environ={"OPENROUTER_API_KEY": "x"})}["docker"].fix
+    assert fix == (f'install or start Docker, or run lanes on this machine: set runtime = "host" under [lanes] in '
+                   f"{docker_cfg}, or pass --host to play or practice")
 
 
 def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):

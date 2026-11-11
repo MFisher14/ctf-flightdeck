@@ -260,10 +260,25 @@ class Check:
     essential: bool = True  # a failing essential check makes doctor exit 1
 
 
+API_CHECKS = ("api key", "fallback key", "model server", "fallback server")  # what only flightdeck's own lanes use
+
+
 def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ,
            agent: str | None = None) -> list[Check]:
     """Every check, in order. Never prints or returns the API key. `agent` ("claude" or
-    "codex") also checks that coding-agent CLI and its credential (play --agent)."""
+    "codex") also checks that coding-agent CLI and its credential, and in the docker runtime
+    that the lane image has it, as play --agent does; the [api] checks are then warnings,
+    since that CLI's lanes never use the [api] key or server."""
+    from dataclasses import replace
+
+    checks = _checks(config_path, environ, agent)
+    if agent is None:
+        return checks
+    why = f" (only flightdeck's own lanes use it; {agent} lanes use {agent}'s own credential and models)"
+    return [replace(c, essential=False, detail=c.detail + ("" if c.ok else why)) if c.name in API_CHECKS else c for c in checks]
+
+
+def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | None) -> list[Check]:
     from .config import ConfigError, default_config_path, load_config
 
     checks: list[Check] = []
@@ -295,10 +310,16 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
             checks += _local_server_check(spare.base_url, name="fallback server")
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
+    found = False
     if agent is not None:
-        checks += _agent_checks(agent, config, environ)
-    runtime = config.lanes.runtime if config is not None else "docker"
-    checks += _docker_checks(config.lanes.image if config is not None else None, essential=runtime == "docker")
+        agent_checks = _agent_checks(agent, config, environ)
+        found = any(c.name == "agent" and c.ok for c in agent_checks)
+        checks += agent_checks
+    docker = _docker_checks(config)
+    checks += docker
+    image_there = any(c.name == "lane image" and c.ok for c in docker)
+    if agent is not None and found and image_there and config is not None and config.lanes.runtime == "docker":
+        checks.append(_agent_image_check(agent, config))  # play --agent runs the CLI inside that image
     try:
         columns, lines = os.get_terminal_size()
     except OSError:
@@ -332,6 +353,22 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
     checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
     return checks
+
+
+def _agent_image_check(kind: str, config) -> Check:
+    """A docker lane runs the agent's CLI inside the lane image: the probe play runs (it starts
+    a throwaway container of the image, with no network)."""
+    from .run import image_lacks
+
+    image = config.lanes.image
+    problem = image_lacks(image, kind)
+    if problem is None:
+        return Check("agent image", True, f"{image} has {kind}")
+    return Check(
+        "agent image", False, problem,
+        f"play with --host (lanes on this machine), or build an image FROM {image} that installs {kind}, and set "
+        f"[lanes] image in {config.source} to it",
+    )
 
 
 def _l1_check(pack: Path) -> Check:
@@ -402,24 +439,37 @@ def _shown(url: str) -> str:
         return "(the [api] base_url)"
 
 
-def _docker_checks(image: str | None, *, essential: bool) -> list[Check]:
+def _docker_checks(config) -> list[Check]:
+    """Docker and the lane image, for a config whose lanes run in Docker. For one whose lanes
+    run on this machine, Docker is only a warning and the image is not looked at: only
+    `play --docker` would need them."""
     from .agent.workspace import docker_unavailable
     from .lane import IMAGE
 
+    where = f"in {config.source}" if config is not None and config.source is not None else "in your config"
     reason = docker_unavailable()
+    if config is not None and config.lanes.runtime == "host":
+        if reason:
+            return [Check("docker", False, f"{reason}; your config runs lanes on this machine, so only `play --docker` "
+                                           "needs Docker", essential=False)]
+        return [Check("docker", True, "running (your config runs lanes on this machine; `play --docker` would use it)")]
     if reason:
-        return [Check("docker", False, reason, "start Docker, or use the host runtime (--host)", essential)]
+        return [Check("docker", False, reason, f'install or start Docker, or run lanes on this machine: set runtime = "host" '
+                                               f"under [lanes] {where}, or pass --host to play or practice")]
     out = [Check("docker", True, "running")]
-    if image is not None:
+    if config is not None:
+        image = config.lanes.image
         docker = shutil.which("docker") or "docker"
         found = subprocess.run([docker, "image", "inspect", image], capture_output=True).returncode == 0
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
-        out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`", essential))
+        out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
     return out
 
 
-def report(checks: Sequence[Check]) -> tuple[str, int]:
-    """The checks as lines for the terminal, and the exit status (1 if an essential check failed)."""
+def report(checks: Sequence[Check], *, agent: str | None = None) -> tuple[str, int]:
+    """The checks as lines for the terminal, and the exit status (1 if an essential check
+    failed). `agent`: what was checked was for that coding-agent CLI's lanes, so the next
+    step is practice with it."""
     lines = []
     for check in checks:
         mark = "ok  " if check.ok else ("FAIL" if check.essential else "warn")
@@ -427,5 +477,6 @@ def report(checks: Sequence[Check]) -> tuple[str, int]:
         if not check.ok and check.fix:
             lines.append(f"     fix: {check.fix}")
     failed = any(not c.ok and c.essential for c in checks)
-    lines.append("" if failed else "Ready. Try `flightdeck practice`.")
+    practice = "flightdeck practice" + (f" --agent {agent}" if agent else "")
+    lines.append("" if failed else f"Ready. Try `{practice}`.")
     return "\n".join(lines).rstrip() + "\n", 1 if failed else 0

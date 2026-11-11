@@ -504,7 +504,8 @@ def doctor(
     from .setup import doctor as run_checks
     from .setup import report
 
-    text, status = report(run_checks(_path(config) if config else None, agent=agent.value if agent else None))
+    kind = agent.value if agent else None
+    text, status = report(run_checks(_path(config) if config else None, agent=kind), agent=kind)
     typer.echo(text, nl=False)
     raise typer.Exit(status)
 

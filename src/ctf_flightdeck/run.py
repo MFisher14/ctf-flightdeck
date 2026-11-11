@@ -1005,6 +1005,18 @@ def _environment() -> dict[str, str]:
 
 def _check_image_has(image: str, program: str) -> None:
     """A docker lane runs the agent's CLI inside its container, so the lane image must have it."""
+    problem = image_lacks(image, program)
+    if problem is not None:
+        raise RunError(
+            f"{problem}: run them on this machine with --host, or build an image that has {program} and set "
+            "[lanes] image in your config"
+        )
+
+
+def image_lacks(image: str, program: str) -> str | None:
+    """Why `program` cannot run in the lane image `image` (it is not on its PATH, or docker did
+    not say), or None when it is there. play --agent and doctor --agent ask the same way: a
+    throwaway container of the image, never pulled, with no network."""
     docker = shutil.which("docker") or "docker"
     try:
         probe = subprocess.run(
@@ -1012,12 +1024,10 @@ def _check_image_has(image: str, program: str) -> None:
             capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:
-        raise RunError(f"docker did not answer whether the lane image {image} has {program} (within 120 s)") from None
+        return f"docker did not answer whether the lane image {image} has {program} (within 120 s), so {program} lanes cannot run in Docker"
     if probe.returncode != 0:
-        raise RunError(
-            f"the lane image {image} has no {program} CLI, so {program} lanes cannot run in Docker: run them on this "
-            f"machine with --host, or build an image that has {program} and set [lanes] image in your config"
-        )
+        return f"the lane image {image} has no {program} CLI, so {program} lanes cannot run in Docker"
+    return None
 
 
 def _check_docker(image: str) -> None:
