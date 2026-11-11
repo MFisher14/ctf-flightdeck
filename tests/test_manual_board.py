@@ -72,26 +72,56 @@ def board(tmp_path) -> Path:
     return folder
 
 
+@pytest.fixture
+def listing_reversed(monkeypatch) -> list[Path]:
+    """Directories list their entries in reverse name order, whatever order this file system
+    uses, so a test of the loader's sorting cannot pass by the file system's luck. Returns the
+    directories listed, so a test can check its listing really came through here."""
+    listed: list[Path] = []
+    real_iterdir = Path.iterdir
+
+    def iterdir(self):
+        listed.append(self)
+        return iter(sorted(real_iterdir(self), key=lambda entry: entry.name, reverse=True))
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    return listed
+
+
 # ---------------------------------------------------------------------- the board
 
 
-def test_each_subdirectory_with_a_challenge_json_is_a_challenge_sorted_by_directory_name(board):
-    challenge(board, "zeta-two", spec(name="Sample Two"))
-    challenge(board, "alpha-one", spec())
-    challenge(board, "notes", files={"todo.txt": "later"})
-    challenge(board, "Loose Files", files={"a.txt": "x"})
+def test_each_subdirectory_with_a_challenge_json_is_a_challenge_sorted_by_directory_name(board, listing_reversed):
+    for cid in ["mango", "zeta-two", "0-start", "kilo", "alpha-one", "x", "delta-9", "a.b", "echo_5", "beta"]:
+        challenge(board, cid, spec(name=f"Sample {cid}"))
+    for name in ["notes", "_drafts", "Loose Files", "Zed"]:
+        challenge(board, name, files={"todo.txt": "later"})
     put(board / "README.md", "not a challenge")
     loaded = load_board(board)
-    assert [item.challenge.id for item in loaded.challenges] == ["alpha-one", "zeta-two"]
-    assert [item.handout for item in loaded.challenges] == [board.resolve() / "alpha-one", board.resolve() / "zeta-two"]
-    assert loaded.skipped == ("Loose Files", "notes")
+    assert board.resolve() in listing_reversed
+    ids = ["0-start", "a.b", "alpha-one", "beta", "delta-9", "echo_5", "kilo", "mango", "x", "zeta-two"]
+    assert [item.challenge.id for item in loaded.challenges] == ids
+    assert [item.handout for item in loaded.challenges] == [board.resolve() / cid for cid in ids]
+    assert loaded.skipped == ("Loose Files", "Zed", "_drafts", "notes")
     assert (loaded.event, loaded.flag_format, loaded.answers) == ("Practice Range", None, None)
 
 
-def test_a_minimal_challenge_json_gets_the_documented_defaults(board):
-    files = {"b.txt": "b", "a.bin": b"\x00\x01", ".notes": "n", "sub/inner.txt": "deeper"}
-    challenge(board, "sample-one", spec(), files)
+def test_a_minimal_challenge_json_gets_the_documented_defaults(board, listing_reversed):
+    files = {
+        "b.txt": "b",
+        "a.bin": b"\x00\x01",
+        ".notes": "n",
+        "sub/inner.txt": "deeper",
+        "sub/deeper/z.txt": "deepest",
+        "sub/challenge.json": "{}",  # only the challenge's own challenge.json is left out
+        "Z-last/a.txt": "a",
+        ".DS_Store": b"\x00\x00\x00\x01Bud1",  # Finder's, at any depth: not part of the handout
+        "sub/.DS_Store": b"\x00\x00\x00\x01Bud1",
+    }
+    directory = challenge(board, "sample-one", spec(), files)
+    (directory / "empty").mkdir()
     (item,) = load_board(board).challenges
+    assert {directory.resolve(), directory.resolve() / "sub"} <= set(listing_reversed)
     assert item.challenge == Challenge(
         id="sample-one",
         name="Sample One",
@@ -99,7 +129,8 @@ def test_a_minimal_challenge_json_gets_the_documented_defaults(board):
         points=100,
         solves=0,
         description="",
-        files=(".notes", "a.bin", "b.txt"),  # regular files directly in the directory, sorted
+        # every regular file under the directory, subfolders too, as relative posix paths, sorted
+        files=(".notes", "Z-last/a.txt", "a.bin", "b.txt", "sub/challenge.json", "sub/deeper/z.txt", "sub/inner.txt"),
         live=False,
     )
     assert item.challenge.status is ChallengeStatus.NEW
@@ -169,6 +200,10 @@ def test_category_names_map_to_the_console_codes(board, given, code):
         ("https://instance.example", "https://instance.example"),
         ("http://[::1]:9000", "http://[::1]:9000"),
         ("http://box_1.local:31337", "http://box_1.local:31337"),
+        ("http://10.0.0.255:8080", "http://10.0.0.255:8080"),
+        ("http://0.0.0.0", "http://0.0.0.0"),
+        ("http://box-10:8080", "http://box-10:8080"),
+        ("http://10.0.0.7.example", "http://10.0.0.7.example"),
     ],
 )
 def test_urls_become_origins_in_one_form(board, given, origin):
@@ -307,6 +342,23 @@ BAD_SPECS = {
     "url bad port": (spec(urls=["http://127.0.0.1:99999"]), '"urls"[0] must be'),
     "url bad host": (spec(urls=["http://a b"]), '"urls"[0] must be'),
     "url bad IPv6": (spec(urls=["http://[::zz]"]), '"urls"[0] must be'),
+    # urlsplit would quietly turn each of these into another origin: refused, never rewritten
+    "url with a tab": (spec(urls=["http://127.0.0.1:80\t80"]), '"urls"[0] must be an http:// or https:// origin'),
+    "url with a newline": (spec(urls=["http://exa\nmple.com"]), '"urls"[0] must be'),
+    "url ending in a newline": (spec(urls=["http://127.0.0.1:8080\n"]), '"urls"[0] must be'),
+    "url with a space in front": (spec(urls=[" http://127.0.0.1:8080"]), '"urls"[0] must be'),
+    "url with a control character in front": (spec(urls=["\u0001http://127.0.0.1:8080"]), '"urls"[0] must be'),
+    "url with a Kelvin sign": (spec(urls=["http://\N{KELVIN SIGN}ali.example:8080"]), '"urls"[0] must be'),
+    # a host that ends in a number is an IPv4 address: a valid one, in the usual form
+    "url bad IPv4": (spec(urls=["http://10.0.0.256:8080"]), "a host that ends in a number must be an IPv4 address"),
+    "url IPv4 with leading zeros": (spec(urls=["http://127.000.000.001:8080"]), '"urls"[0] must be'),
+    "url IPv4 in two parts": (spec(urls=["http://127.1:8080"]), '"urls"[0] must be'),
+    "url IPv4 in three parts": (spec(urls=["http://1.2.3:8080"]), '"urls"[0] must be'),
+    "url IPv4 in five parts": (spec(urls=["http://127.0.0.1.5:8080"]), '"urls"[0] must be'),
+    "url IPv4 as one number": (spec(urls=["http://2130706433:8080"]), '"urls"[0] must be'),
+    "url IPv4 with a dot at the end": (spec(urls=["http://127.0.0.1.:8080"]), '"urls"[0] must be'),
+    "url IPv4 in hex": (spec(urls=["http://0x7f.1:8080"]), '"urls"[0] must be'),
+    "url host ending in hex": (spec(urls=["http://box.0x1f"]), '"urls"[0] must be'),
     "url not a string": (spec(urls=[8080]), '"urls"[0] must be'),
     "url twice": (spec(urls=["http://box.local:1", "HTTP://BOX.local:1/"]), 'lists http://box.local:1 twice'),
     "nesting too deep": ('{"name": ' + "[" * 100_000, "nesting too deep"),
@@ -367,12 +419,33 @@ def test_untrusted_names_in_errors_cannot_reach_the_terminal_raw(board):
 # ---------------------------------------------------------------------- symlinks are never followed
 
 
-def test_default_files_leave_out_symlinks(board, tmp_path):
+def test_default_files_neither_list_nor_enter_symlinks(board, tmp_path):
     secret = put(tmp_path / "outside" / "secret.txt", "not for lanes")
-    directory = challenge(board, "sample-one", spec(), {"a.txt": "a"})
+    directory = challenge(board, "sample-one", spec(), {"a.txt": "a", "real/b.txt": "b"})
     (directory / "peek.txt").symlink_to(secret)
     (directory / "peek-dir").symlink_to(secret.parent, target_is_directory=True)
-    assert load_board(board).challenges[0].challenge.files == ("a.txt",)
+    (directory / "real" / "peek.txt").symlink_to(secret)
+    (directory / "alias").symlink_to(directory / "real", target_is_directory=True)
+    assert load_board(board).challenges[0].challenge.files == ("a.txt", "real/b.txt")
+
+
+def test_an_explicit_files_list_is_kept_as_given(board):
+    files = {"z.txt": "z", ".DS_Store": b"\x00", "sub/a.txt": "a", "sub/b.txt": "not listed"}
+    challenge(board, "sample-one", spec(files=["z.txt", ".DS_Store", "sub/a.txt"]), files)
+    assert load_board(board).challenges[0].challenge.files == ("z.txt", ".DS_Store", "sub/a.txt")
+
+
+def test_a_subfolder_that_cannot_be_listed_is_an_error_naming_it(board):
+    if os.geteuid() == 0:
+        pytest.skip("root lists every folder, so a permission error cannot be made")
+    directory = challenge(board, "sample-one", spec(), {"a.txt": "a", "locked/b.txt": "b"})
+    locked = (directory / "locked").resolve()
+    locked.chmod(0)
+    try:
+        message = board_error(board)
+    finally:
+        locked.chmod(0o755)
+    assert message.startswith(f"{locked}: cannot list it")
 
 
 def test_a_listed_file_that_is_a_symlink_is_refused(board, tmp_path):

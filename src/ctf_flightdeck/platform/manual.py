@@ -35,6 +35,7 @@ from ..text import untrusted
 CHALLENGE_FILE = "challenge.json"
 BOARD_FILE = "board.json"
 ANSWERS_FILE = "answers.sha256.json"
+DS_STORE = ".DS_Store"  # Finder's folder settings: litter, left out of the default files list
 MAX_JSON_BYTES = 1_000_000  # a challenge.json, board.json or answers file bigger than this is refused
 MAX_ID = 64  # ids name folders and containers
 ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
@@ -60,6 +61,7 @@ CATEGORY_CODES = {
 """Category names to the console's short codes. Any other name is kept, lower-cased."""
 
 _HOST = re.compile(r"[a-z0-9_.-]+")
+_NUMBER = re.compile(r"[0-9]+|0x[0-9a-f]*")  # a last label a browser reads as part of an IPv4 address
 _MISSING = object()
 
 
@@ -239,11 +241,10 @@ def _challenge(directory: Path) -> BoardChallenge:
 
 
 def _files(directory: Path, path: Path, value: object) -> tuple[str, ...]:
-    """The handout files: as listed (each checked), or every regular file directly in the
-    challenge directory except challenge.json, sorted."""
+    """The handout files: as listed (each checked, and kept as given), or by default every
+    regular file under the challenge directory (see _default_files)."""
     if value is _MISSING:
-        names = (p.name for p in directory.iterdir() if p.name != CHALLENGE_FILE and not p.is_symlink() and p.is_file())
-        return tuple(sorted(names))
+        return _default_files(directory)
     if not isinstance(value, list):
         raise BoardError(f'{_show(path)}: "files" must be a list of paths inside the challenge directory')
     files: list[str] = []
@@ -253,6 +254,29 @@ def _files(directory: Path, path: Path, value: object) -> tuple[str, ...]:
             raise BoardError(f'{_show(path)}: "files" lists {_quote(rel)} twice')
         files.append(rel)
     return tuple(files)
+
+
+def _default_files(directory: Path) -> tuple[str, ...]:
+    """Every regular file under the challenge directory, in subfolders too, as relative posix
+    paths, sorted, so a lane's brief names what its copy of the handout holds. Left out:
+    challenge.json itself, Finder's .DS_Store files, and symlinks, which are never entered
+    either (one could point anywhere on this machine)."""
+    found: list[str] = []
+    pending: list[tuple[Path, str]] = [(directory, "")]
+    while pending:  # iterative, so a deeply nested handout cannot hit the recursion limit
+        current, prefix = pending.pop()
+        try:
+            for entry in current.iterdir():
+                rel = prefix + entry.name
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    pending.append((entry, rel + "/"))
+                elif entry.is_file() and rel != CHALLENGE_FILE and entry.name != DS_STORE:
+                    found.append(rel)
+        except OSError as exc:
+            raise BoardError(f"{_show(current)}: cannot list it ({exc.strerror})") from None
+    return tuple(sorted(found))
 
 
 def _handout_file(directory: Path, where: str, item: object) -> str:
@@ -287,7 +311,8 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
         if url is None:
             raise BoardError(
                 f'{_show(path)}: "urls"[{i}] must be an http:// or https:// origin: scheme://host[:port], '
-                "with no path, query or user name"
+                "in printable ASCII with no spaces, and with no path, query or user name; a host that ends "
+                "in a number must be an IPv4 address, four numbers from 0 to 255"
             )
         if url in urls:
             raise BoardError(f'{_show(path)}: "urls" lists {url} twice')
@@ -298,7 +323,9 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
 def _origin(value: object) -> str | None:
     """`value` as an origin with a lower-case scheme and host and no trailing "/", or None if
     it is not an http(s) origin. The tools compare origins, so they must be in one form."""
-    if not isinstance(value, str):
+    if not isinstance(value, str) or not _printable_ascii(value):
+        # urlsplit quietly drops a tab or newline anywhere and spaces and control characters in
+        # front, and lower-cases a Kelvin sign to k: the origin would not be the one written
         return None
     try:
         url = urlsplit(value)
@@ -320,7 +347,21 @@ def _origin(value: object) -> str | None:
         host = f"[{host}]"
     elif not _HOST.fullmatch(host):
         return None
+    elif _NUMBER.fullmatch(host.removesuffix(".").rpartition(".")[2]) and not _ipv4(host):
+        # read as an IPv4 address, so only a valid one in the usual form is taken: the lane's
+        # tools refuse 10.0.0.256 (it would fail only when a lane starts), and 127.1 or
+        # 2130706433 is 127.0.0.1 in disguise
+        return None
     return f"{url.scheme}://{host}" + ("" if port is None else f":{port}")
+
+
+def _ipv4(host: str) -> bool:
+    """`host` is an IPv4 address written as four numbers from 0 to 255, with no leading zeros."""
+    try:
+        ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------- answers
@@ -455,6 +496,11 @@ def _count(value: object) -> bool:
 
 def _valid_id(value: object) -> bool:
     return isinstance(value, str) and len(value) <= MAX_ID and ID.fullmatch(value) is not None
+
+
+def _printable_ascii(text: str) -> bool:
+    """Only the printable ASCII characters, and no space."""
+    return all("!" <= ch <= "~" for ch in text)
 
 
 def _present(path: Path) -> bool:

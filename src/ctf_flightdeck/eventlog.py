@@ -115,7 +115,8 @@ def new_run_dir(base: Path, now: datetime | None = None) -> Path:
 
 
 def json_safe(value: object, _depth: int = 0) -> object:
-    """`value` as plain JSON data: enums by their value, tuples, lists and sets as lists,
+    """`value` as plain JSON data: enums by their value, tuples, lists and sets as lists (a
+    set sorted by repr, so the same data is the same line whatever the hash seed),
     mappings with string keys, floats that are not finite as strings ("nan", "inf"), and
     any other object as its repr. It never raises, so a listener built on it cannot break
     the deck."""
