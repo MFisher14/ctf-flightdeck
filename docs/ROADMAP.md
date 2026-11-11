@@ -92,6 +92,10 @@ server (init and doctor support it).
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
   in terminals that draw them; plain Unicode stays the default.
 - Batch approve (several waiting flags at once), dismissing an alert without intervening.
+- **A host sandbox without Docker.** Strands Box (Apache-2.0: OS isolation with deny-by-default
+  policies, an egress gateway and credentials injected outside the agent) could make `--host` lanes
+  safe. Watch it: in November 2026 it was a preview for Apple silicon and Linux ARM64 only, with no
+  Linux x86-64.
 
 ## v0.1.0: go public
 
@@ -112,3 +116,25 @@ nothing to a running console in a few minutes, without reading the architecture:
   work right after installing, with no clone.
 - A lane image that works out of the box, built or pulled only by a command the player runs.
 - A three-command quickstart at the top of the README, tested on a clean machine.
+
+## M5: Autopilot (after v0.1.0)
+
+Engage autopilot and flightdeck runs the event end to end while you are away; take the controls
+back at any time (D20). A sketch, decided in detail when M5 starts:
+
+- **Every stage as automatic as the event's rules allow.** Pull, L1, agents, submit and live
+  instances at `auto` where the profile permits, never looser. Flags a lane claims are submitted;
+  everything else waits.
+- **Scheduled.** Start at the event's start time, pull new waves on a timer, stop at the end. When
+  the queue runs dry, unsolved challenges go round again on the next model up, within the budget.
+- **Interventions by rule.** A stalled lane escalates one rung, a lane that gave up is forked onto
+  another model, a looping lane is killed, a lane that ignores the hint is redirected to it. Code
+  decides (D15); a light model may confirm.
+- **Guardrails.** A run budget (dollars and tokens) is required to engage; at the budget no new lane
+  starts. No guessed flags, no last try spent, no refused request rerouted, nothing reached but a
+  challenge's own instance.
+- **Disengage.** Budget reached, the platform locking out or failing, the model API failing for every
+  lane, a challenge down to its last try, a human check (a CAPTCHA): autopilot holds the queue, raises
+  an alert and logs why, for the post-flight report.
+- **Headless, and a way to reach you.** Run without the console (a status file to start with); an
+  opt-in notification (webhook or phone push) when a flag lands or autopilot disengages.

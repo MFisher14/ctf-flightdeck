@@ -56,6 +56,7 @@ deviate.
 | D17 | L1 isolation (changes P8) | When lanes run in Docker, the player's L1 solvers run in Docker too (a container per engine run, the pack mounted read-only), so a hostile handout cannot reach the player's machine through a solver's parser. On the host runtime they run as the player, as before. |
 | D18 | Keys | Keys live in the environment or in `~/.config/ctf-flightdeck/keys.env` (owner-only, outside the repository); the config names each key's variable and never holds a key. A variable set in the environment wins over the file. |
 | D19 | Model APIs | flightdeck's own lanes may use the Anthropic Messages API directly (the player's Anthropic key first), with an OpenAI-compatible API (OpenRouter) as the automatic fallback when the first keeps failing; a lane that falls back stays there for the rest of its current context. |
+| D20 | Autopilot | **Autopilot** is the name of the mode where flightdeck runs an event end to end: scheduled pulls, L1, lanes, interventions and submits, with the player away. It comes after v0.1.0, as M5 (see ROADMAP). Fixed now: the event's rules stay the ceiling (autopilot is never looser than the profile); it never guesses a flag or spends a challenge's last try; engaging it needs a run budget; it disengages, holding the queue and raising an alert, when something needs a human; the player can always take the controls (take over, pause, kill, or switch autopilot off). The rest of its design is decided in M5. |
 
 ## Proposed with the light role (built; awaiting the player)
 
