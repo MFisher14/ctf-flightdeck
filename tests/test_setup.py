@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from typer.testing import CliRunner
 
@@ -163,3 +165,23 @@ def test_doctor_never_prints_a_credential_carried_in_the_base_url(tmp_path):
     check = {c.name: c for c in doctor(path, environ={})}["model server"]
     assert not check.ok and "http://127.0.0.1:9/v1" in check.detail
     assert secret not in check.detail and secret not in report([check])[0]
+
+
+def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    cfg = write_config(Answers("https://openrouter.ai/api/v1", "", ("a/b",), "host"), tmp_path / "c.toml")
+    missing = {c.name: c for c in doctor(cfg, environ={}, agent="claude")}["agent"]
+    assert not missing.ok and missing.essential
+    exe = bin_dir / "claude"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    secret = "fake-anthropic-credential-for-tests"
+    checks = doctor(cfg, environ={"ANTHROPIC_API_KEY": secret, "PATH": os.environ["PATH"]}, agent="claude")
+    found = {c.name: c for c in checks}["agent"]
+    assert found.ok and str(exe) in found.detail
+    assert any(c.name == "agent note" and not c.essential for c in checks)  # its key is visible to its commands
+    assert secret not in report(checks)[0]

@@ -333,3 +333,62 @@ def test_a_run_on_a_board_with_answers_ends_with_a_scorecard(tmp_path):
         run.close()
     card = run.scorecard()
     assert card is not None and "solved 1 of 1" in card and "Note       misc   50  solved L01" in card, card
+
+
+# ---------------------------------------------------------------------- coding-agent CLIs as lanes (--agent)
+
+
+@pytest.fixture
+def fake_claude(tmp_path, monkeypatch):
+    """A `claude` that does nothing, first on PATH, and no folder holding a real one."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "claude"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-credential-for-tests")
+    monkeypatch.delenv("FLIGHTDECK_TEST_UNSET_KEY", raising=False)
+    return exe
+
+
+def test_a_run_with_a_coding_agent_needs_no_api_key_and_uses_the_agents_ladder(tmp_path, fake_claude):
+    from ctf_flightdeck.agent.external import ExternalDriver
+
+    with FakeModelServer() as server:
+        cfg = config(tmp_path, server.base_url, key_env="FLIGHTDECK_TEST_UNSET_KEY")  # not set, and not needed
+        run = prepare_run(RunOptions(board=board(tmp_path), config=cfg, agent="claude", runtime="host"))
+        run.close()
+    assert isinstance(run.driver, ExternalDriver) and run.client is None
+    assert run.deck.config.models == ("sonnet", "opus") and run.model == "sonnet"
+    notes = run.notes()
+    assert any(note.startswith("lanes are claude on sonnet") for note in notes)
+    assert any("claude lanes start on sonnet and escalate to opus" in note for note in notes)
+    assert "fake-anthropic-credential-for-tests" not in " ".join(notes)
+
+
+def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude):
+    with FakeModelServer() as server:
+        with pytest.raises(RunError, match='the instance policy is "confirm", but a claude lane reaches whatever its CLI can reach'):
+            prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url),
+                                   agent="claude", runtime="host", instance="confirm"))
+
+
+def test_codex_lanes_need_their_ladder_in_the_config(tmp_path):
+    with FakeModelServer() as server:
+        with pytest.raises(RunError, match=r"no model ladder for codex lanes: add \[agents\] codex"):
+            prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="codex", runtime="host"))
+
+
+def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude):
+    reason = docker_unavailable()
+    if reason:
+        pytest.skip(f"not run: {reason}")
+    if not _image_present("debian:bookworm-slim"):
+        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+    with FakeModelServer() as server:
+        cfg = config(tmp_path, server.base_url, runtime="docker")
+        with pytest.raises(RunError, match="the lane image debian:bookworm-slim has no claude CLI.*--host"):
+            prepare_run(RunOptions(board=board(tmp_path), config=cfg, agent="claude"))

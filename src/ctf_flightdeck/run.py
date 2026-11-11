@@ -109,6 +109,8 @@ class RunOptions:
     solves_seconds: float = SOLVES_SECONDS
     team_seconds: float = POLL_SECONDS  # how often the team folder is read
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
+    agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
+    agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
 
 
 @dataclass(eq=False)
@@ -138,8 +140,8 @@ class Run:
     board: Board
     config: Config
     deck: Deck
-    driver: AgentDriver
-    client: ModelClient
+    driver: AgentDriver  # or agent.external.ExternalDriver, for a coding-agent CLI (--agent)
+    client: ModelClient | None  # None when lanes are a coding-agent CLI
     log: EventLog
     transcripts: TranscriptLog
     dir: Path
@@ -165,12 +167,12 @@ class Run:
         """Things the player should know before lanes start."""
         out = list(self._notes)
         lanes = self.config.lanes
-        l1 = self.driver.l1
+        l1 = getattr(self.driver, "l1", None)
         if l1 is not None:
             where = " (on this machine, as you, even though lanes run in Docker)" if self.runtime == "docker" else ""
             out.append(f"L1: {len(l1.manifests)} engine(s) from your pack run first on each challenge{where}")
         unpriced = [m for m in self.config.models if m not in self.config.prices]
-        if lanes.dollar_cap and unpriced and "openrouter.ai" not in self.config.api.base_url:
+        if self.client is not None and lanes.dollar_cap and unpriced and "openrouter.ai" not in self.config.api.base_url:
             out.append(
                 f"no price in your config for {', '.join(unpriced)}: if the API does not report a cost, a lane "
                 f"on that model asks you once before it carries on without its ${lanes.dollar_cap:g} cap"
@@ -235,7 +237,8 @@ class Run:
                 self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
             except TeamError as exc:
                 self._errors.append(f"team: could not free your live-box holds in the team folder: {exc}")
-        await self.client.aclose()
+        if self.client is not None:
+            await self.client.aclose()
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
 
@@ -429,15 +432,33 @@ def prepare_run(options: RunOptions) -> Run:
     plan = _plan(options, config, runtime)
     options = plan.options
     board = None if plan.ctfd else _load_board(options)
-    try:
-        key = api_key(config)
-    except ConfigError as exc:
-        raise RunError(str(exc)) from None
+    ladder, agent, key = config.models, None, None
+    if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
+        ladder = _agent_ladder(options.agent, config, plan.notes)
+        model = options.model or ladder[0]
+        if model not in ladder:
+            raise RunError(f"model {model!r} is not in the {options.agent} ladder: {', '.join(ladder)}")
+        if options.instance != "auto":
+            raise RunError(
+                f'the instance policy is "{options.instance}", but a {options.agent} lane reaches whatever its CLI '
+                "can reach (in Docker its container needs a network for the CLI's own API), so flightdeck "
+                "cannot hold it to that: play this event with flightdeck's own lanes (no --agent)"
+            )
+        agent = _find_agent(options.agent, model, options.agent_auth)
+        plan.notes.append(f"lanes are {options.agent} on {model} ({agent.auth})" if agent.auth else f"lanes are {options.agent} on {model}")
+        plan.notes.extend(agent.warnings)
+    else:
+        try:
+            key = api_key(config)
+        except ConfigError as exc:
+            raise RunError(str(exc)) from None
+        model = options.model or config.models[0]
+        if model not in config.models:
+            raise RunError(f"model {model!r} is not in the ladder in {config.source}: {', '.join(config.models)}")
     if runtime == "docker":
         _check_docker(config.lanes.image)
-    model = options.model or config.models[0]
-    if model not in config.models:
-        raise RunError(f"model {model!r} is not in the ladder in {config.source}: {', '.join(config.models)}")
+        if agent is not None:
+            _check_image_has(config.lanes.image, agent.kind)
     manifests = _l1_manifests(options.pack)
     team = _team_channel(options, plan)
     profile = plan.profile
@@ -457,7 +478,7 @@ def prepare_run(options: RunOptions) -> Run:
         containerized=runtime == "docker",
         max_lanes=options.max_lanes,
         submit=options.submit,
-        models=config.models,
+        models=ladder,
         **({"flag_format": flag_format} if flag_format else {}),
     )
     handouts = {b.challenge.id: b.handout for b in board.challenges}
@@ -465,7 +486,7 @@ def prepare_run(options: RunOptions) -> Run:
     l1 = None
     if manifests is not None:
         l1 = L1Stage(manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency)
-    client = ModelClient(config.api.base_url, key)
+    client = ModelClient(config.api.base_url, key) if agent is None else None
     instance = options.instance
     link = verifier = None
     if first is not None:
@@ -498,20 +519,29 @@ def prepare_run(options: RunOptions) -> Run:
                 handouts[challenge.id],
                 image=config.lanes.image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
-                network=lane_network(urls[challenge.id]) if instance == "auto" else "none",
+                network="bridge" if agent is not None else (lane_network(urls[challenge.id]) if instance == "auto" else "none"),
             )
         return HostWorkspace(root, handouts[challenge.id])
 
-    driver = AgentDriver(
-        client,
-        workspace,
-        run_id=run_dir.name,
-        files={b.challenge.id: b.challenge.files for b in board.challenges},
-        urls=urls,
-        prices=config.prices,
-        l1=l1,
-        instance=instance,
-    )
+    files = {b.challenge.id: b.challenge.files for b in board.challenges}
+    if agent is not None:
+        from .agent.external import ExternalDriver
+
+        if l1 is not None:
+            plan.notes.append(f"your L1 pack is not used: L1 runs before flightdeck's own lanes, not {agent.kind} lanes (for now)")
+        driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices)
+    else:
+        assert client is not None
+        driver = AgentDriver(
+            client,
+            workspace,
+            run_id=run_dir.name,
+            files=files,
+            urls=urls,
+            prices=config.prices,
+            l1=l1,
+            instance=instance,
+        )
     deck = Deck(deck_config, driver, RunClock(), verify)
     if isinstance(verify, _OnCTFd):
         verify.deck = deck
@@ -918,6 +948,52 @@ def _watch(deck: Deck):
     watch = Watch(deck, default_detectors())
     watch.attach()
     return watch
+
+
+DEFAULT_AGENT_LADDERS = {"claude": ("sonnet", "opus")}  # Claude Code's own model aliases
+
+
+def _agent_ladder(kind: str, config: Config, notes: list[str]) -> tuple[str, ...]:
+    """The models a `kind` lane may use, weakest first: [agents] in the config, else the default."""
+    if kind not in ("claude", "codex"):
+        raise RunError(f"--agent must be claude or codex, not {kind!r}")
+    ladder = config.agents.get(kind)
+    if ladder:
+        return ladder
+    ladder = DEFAULT_AGENT_LADDERS.get(kind)
+    if not ladder:
+        raise RunError(
+            f'no model ladder for {kind} lanes: add [agents] {kind} = ["<model>", ...] to {config.source} '
+            "(weakest first; escalating moves right)"
+        )
+    notes.append(f"{kind} lanes start on {ladder[0]} and escalate to {', '.join(ladder[1:])} ([agents] {kind} in your config changes this)")
+    return ladder
+
+
+def _find_agent(kind: str, model: str, auth: str | None):
+    from .agent.external import AgentError, find_agent
+
+    try:
+        return find_agent(kind, model, auth=auth)
+    except AgentError as exc:
+        raise RunError(str(exc)) from None
+
+
+def _check_image_has(image: str, program: str) -> None:
+    """A docker lane runs the agent's CLI inside its container, so the lane image must have it."""
+    docker = shutil.which("docker") or "docker"
+    try:
+        probe = subprocess.run(
+            [docker, "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "sh", image, "-c", f"command -v {program}"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise RunError(f"docker did not answer whether the lane image {image} has {program} (within 120 s)") from None
+    if probe.returncode != 0:
+        raise RunError(
+            f"the lane image {image} has no {program} CLI, so {program} lanes cannot run in Docker: run them on this "
+            f"machine with --host, or build an image that has {program} and set [lanes] image in your config"
+        )
 
 
 def _check_docker(image: str) -> None:

@@ -98,8 +98,10 @@ class Check:
     essential: bool = True  # a failing essential check makes doctor exit 1
 
 
-def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ) -> list[Check]:
-    """Every check, in order. Never prints or returns the API key."""
+def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ,
+           agent: str | None = None) -> list[Check]:
+    """Every check, in order. Never prints or returns the API key. `agent` ("claude" or
+    "codex") also checks that coding-agent CLI and its credential (play --agent)."""
     from .config import ConfigError, default_config_path, load_config
 
     checks: list[Check] = []
@@ -129,6 +131,8 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         checks += _local_server_check(config.api.base_url)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
+    if agent is not None:
+        checks += _agent_checks(agent, config, environ)
     runtime = config.lanes.runtime if config is not None else "docker"
     checks += _docker_checks(config.lanes.image if config is not None else None, essential=runtime == "docker")
     try:
@@ -139,6 +143,24 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         big = columns >= 100 and lines >= 30
         checks.append(Check("terminal", big, f"{columns}x{lines}",
                             "the console is easiest at 100x30 or more (it works smaller)", essential=False))
+    return checks
+
+
+def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
+    """The coding-agent CLI is on PATH with a credential; its warnings as non-essential checks.
+    Nothing is run: finding it costs nothing."""
+    from .agent.external import AgentError, find_agent
+    from .run import DEFAULT_AGENT_LADDERS
+
+    ladder = (config.agents.get(kind) if config is not None else None) or DEFAULT_AGENT_LADDERS.get(kind)
+    if not ladder:
+        return [Check("agent", False, f"no model ladder for {kind} lanes", f'add [agents] {kind} = ["<model>", ...] to your config')]
+    try:
+        found = find_agent(kind, ladder[0], environ=environ)
+    except AgentError as exc:
+        return [Check("agent", False, str(exc), f"install {kind}, then log in or set its key variable")]
+    checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
+    checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
     return checks
 
 

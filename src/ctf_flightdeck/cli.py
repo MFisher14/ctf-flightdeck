@@ -141,6 +141,15 @@ class Submit(StrEnum):
     auto = "auto"
 
 
+class Agent(StrEnum):
+    claude = "claude"
+    codex = "codex"
+
+
+AGENT_HELP = "Lanes are this coding-agent CLI (its own login or key and models: [agents] in your config) instead of flightdeck's own loop."
+AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
+
+
 @app.command(rich_help_panel=PLAY)
 def play(
     board: Annotated[
@@ -189,6 +198,8 @@ def play(
     pack: Annotated[
         Path | None, typer.Option("--pack", file_okay=False, help="Your L1 pack: no-model solvers a lane runs first (default: the config's [l1] pack).")
     ] = None,
+    agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
+    agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens
@@ -210,6 +221,8 @@ def play(
         team_dir=_path(team_dir) if team_dir else None,
         handle=handle,
         confirm=_ask if _at_terminal() else None,
+        agent=agent.value if agent else None,
+        agent_auth=agent_auth,
     )
     try:
         run = prepare_run(options)
@@ -251,6 +264,8 @@ def practice(
     pack: Annotated[
         Path | None, typer.Option("--pack", file_okay=False, help="Your L1 pack: no-model solvers a lane runs first (default: the config's [l1] pack).")
     ] = None,
+    agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
+    agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends tokens like `play`."""
@@ -263,7 +278,7 @@ def practice(
         raise typer.Exit(2) from None
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
-        team=False, submit=None, model=model, run_dir=run_dir, pack=pack,
+        team=False, submit=None, model=model, run_dir=run_dir, pack=pack, agent=agent, agent_auth=agent_auth,
     )
 
 
@@ -369,12 +384,13 @@ def init(
 @app.command(rich_help_panel=SETUP)
 def doctor(
     config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="The config file to check.")] = None,
+    agent: Annotated[Agent | None, typer.Option("--agent", help="Also check this coding-agent CLI and its credential (play --agent).")] = None,
 ) -> None:
     """Check Python, the config, the API key variable, Docker and the lane image, with fixes."""
     from .setup import doctor as run_checks
     from .setup import report
 
-    text, status = report(run_checks(config))
+    text, status = report(run_checks(_path(config) if config else None, agent=agent.value if agent else None))
     typer.echo(text, nl=False)
     raise typer.Exit(status)
 

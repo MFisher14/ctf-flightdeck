@@ -21,7 +21,7 @@ import os
 import re
 import shlex
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
@@ -33,7 +33,7 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents")
 _API_KEYS = ("base_url", "key_env")
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
 _PRICE_KEYS = ("input", "output", "cached_input")
@@ -73,6 +73,7 @@ class Config:
     run_dir: Path  # expanded (~)
     source: Path | None  # the file it was read from
     l1: L1Config = L1Config()
+    agents: dict[str, tuple[str, ...]] = field(default_factory=dict)  # coding-agent CLI -> its model ladder, weakest first
 
 
 class ConfigError(Exception):
@@ -106,6 +107,7 @@ def load_config(path: Path | None = None) -> Config:
         run_dir=_run_dir(path, _table(path, doc, "run")),
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
+        agents=_agents(path, _table(path, doc, "agents")),
     )
 
 
@@ -169,6 +171,12 @@ submit = "confirm"              # "confirm": you approve each flag; "auto": subm
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
+
+[agents]
+# Coding-agent CLIs as lanes (`flightdeck play --agent claude`): each CLI's own model ladder,
+# weakest first. They use the CLI's own login or key, never the [api] above.
+# claude = ["sonnet", "opus"]
+# codex = ["your-codex-model"]
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -315,6 +323,22 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         dollar_cap=_cap(path, table, "dollar_cap", defaults.dollar_cap, whole=False),
         submit=_choice(path, table, ("lanes", "submit"), defaults.submit, SUBMIT_POLICIES),
     )
+
+
+AGENT_KINDS = ("claude", "codex")
+
+
+def _agents(path: Path, table: dict) -> dict[str, tuple[str, ...]]:
+    """[agents]: a model ladder per coding-agent CLI (`play --agent`), weakest first."""
+    _known(path, ("agents",), table, AGENT_KINDS)
+    out = {}
+    for kind, value in table.items():
+        if not isinstance(value, list) or not value or not all(isinstance(m, str) and _plain(m) for m in value):
+            raise _error(path, ("agents", kind), f"must be a non-empty list of model names, weakest first{_got(value)}")
+        if len(set(value)) != len(value):
+            raise _error(path, ("agents", kind), "names a model twice")
+        out[kind] = tuple(value)
+    return out
 
 
 def _l1(path: Path, table: dict) -> L1Config:
