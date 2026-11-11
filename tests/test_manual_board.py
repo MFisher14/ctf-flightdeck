@@ -348,7 +348,7 @@ BAD_SPECS = {
     "url ending in a newline": (spec(urls=["http://127.0.0.1:8080\n"]), '"urls"[0] must be'),
     "url with a space in front": (spec(urls=[" http://127.0.0.1:8080"]), '"urls"[0] must be'),
     "url with a control character in front": (spec(urls=["\u0001http://127.0.0.1:8080"]), '"urls"[0] must be'),
-    "url with a Kelvin sign": (spec(urls=["http://Kali.example:8080"]), '"urls"[0] must be'),
+    "url with a Kelvin sign": (spec(urls=["http://\N{KELVIN SIGN}ali.example:8080"]), '"urls"[0] must be'),
     # a host that ends in a number is an IPv4 address: a valid one, in the usual form
     "url bad IPv4": (spec(urls=["http://10.0.0.256:8080"]), "a host that ends in a number must be an IPv4 address"),
     "url IPv4 with leading zeros": (spec(urls=["http://127.000.000.001:8080"]), '"urls"[0] must be'),
