@@ -20,6 +20,7 @@ from ctf_flightdeck import preflight_cli
 from ctf_flightdeck.config import Config, ConfigError, load_config
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
+from ctf_flightdeck.core.interventions import Approve
 from ctf_flightdeck.core.model import Challenge, DeckConfig, LaneState, PendingKind
 from ctf_flightdeck.platform.manual import cannot_check
 from ctf_flightdeck.preflight import (
@@ -341,16 +342,20 @@ def test_a_ctfd_profile_that_may_not_pull_has_no_board_and_is_refused(pull):
     assert check(profile(), policies(pull=CONFIRM), max_lanes=4, environ=TOKEN_SET) == []
 
 
-def test_more_lanes_than_the_rules_allow_is_refused():
+LANES_START = [AUTO, CONFIRM, MANUAL]  # agents policies under which lanes run: on their own, on a yes, when queued
+
+
+@pytest.mark.parametrize("agents", LANES_START)
+def test_more_lanes_than_the_rules_allow_is_refused(agents):
     bounded = profile(max_lanes=8)
-    problems = check(bounded, policies(), max_lanes=9, environ=TOKEN_SET)
+    problems = check(bounded, policies(agents=agents), max_lanes=9, environ=TOKEN_SET)
     assert refusals(problems) == [
         "9 lanes at once is more than the rules allow (rules.max_lanes = 8): run with --max-lanes 8 or fewer, "
         "or lower [lanes] max_lanes in your config"
     ]
-    assert check(bounded, policies(), max_lanes=8, environ=TOKEN_SET) == []
-    assert check(bounded, policies(), max_lanes=None, environ=TOKEN_SET) == []  # not known yet: not checked
-    assert check(profile(), policies(), max_lanes=40, environ=TOKEN_SET) == []  # the rules set no bound
+    assert check(bounded, policies(agents=agents), max_lanes=8, environ=TOKEN_SET) == []
+    assert check(bounded, policies(agents=agents), max_lanes=None, environ=TOKEN_SET) == []  # not known yet: not checked
+    assert check(profile(), policies(agents=agents), max_lanes=40, environ=TOKEN_SET) == []  # the rules set no bound
     assert check(bounded, policies(agents=OFF), max_lanes=9, environ=TOKEN_SET) == []  # no lanes at all
 
 
@@ -414,9 +419,10 @@ def test_a_token_variable_that_is_the_configs_api_key_variable_is_refused(tmp_pa
     assert FAKE_KEY not in str(problems)
 
 
-def test_rules_that_forbid_live_targets_refuse_lanes_on_the_host():
+@pytest.mark.parametrize("agents", LANES_START)
+def test_rules_that_forbid_live_targets_refuse_lanes_on_the_host(agents):
     closed = profile(live_targets="off")
-    chosen = policies(instance=OFF)
+    chosen = policies(agents=agents, instance=OFF)
     problems = check(closed, chosen, max_lanes=4, environ=TOKEN_SET, runtime="host")
     assert len(refusals(problems)) == 1
     assert 'rules.live_targets = "off"' in refusals(problems)[0] and "docker runtime" in refusals(problems)[0]
@@ -506,25 +512,28 @@ def test_the_profile_keeps_the_variables_name_never_its_value(tmp_path, monkeypa
     assert check(loaded, chosen, max_lanes=4) == []  # reads os.environ by default
 
 
-def test_agents_without_a_usable_model_config_warn_with_the_reason(tmp_path):
+@pytest.mark.parametrize("agents", LANES_START)
+def test_agents_without_a_usable_model_config_warn_with_the_reason(tmp_path, agents):
     missing = tmp_path / "missing.toml"
     with pytest.raises(ConfigError) as caught:
         load_config(missing)
-    problems = check(profile(), policies(), max_lanes=4, environ=TOKEN_SET, model_config=caught.value)
-    assert warnings(problems) == [f'the agents policy is "auto", but no model config could be loaded: {caught.value}']
+    problems = check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=caught.value)
+    assert warnings(problems) == [f'the agents policy is "{agents}", but no model config could be loaded: {caught.value}']
     assert str(missing) in warnings(problems)[0]
     assert check(profile(), policies(agents=OFF), max_lanes=4, environ=TOKEN_SET, model_config=caught.value) == []
-    assert check(profile(), policies(), max_lanes=4, environ=TOKEN_SET, model_config=None) == []
+    assert check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=None) == []
 
 
-def test_agents_whose_api_key_variable_is_unset_warn_naming_it(tmp_path):
+@pytest.mark.parametrize("agents", LANES_START)
+def test_agents_whose_api_key_variable_is_unset_warn_naming_it(tmp_path, agents):
     config = model_config(tmp_path)
-    problems = check(profile(), policies(), max_lanes=4, environ=TOKEN_SET, model_config=config)
+    problems = check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=config)
     assert len(warnings(problems)) == 1
-    assert "the API key variable TEST_MODEL_KEY (api.key_env in" in warnings(problems)[0]
+    assert f'the agents policy is "{agents}", but the API key variable TEST_MODEL_KEY (api.key_env in' in warnings(problems)[0]
     env = {**TOKEN_SET, "TEST_MODEL_KEY": FAKE_KEY}
-    assert check(profile(), policies(), max_lanes=4, environ=env, model_config=config) == []
-    assert check(profile(), policies(), max_lanes=4, environ=TOKEN_SET, model_config=model_config(tmp_path, key_env="")) == []
+    assert check(profile(), policies(agents=agents), max_lanes=4, environ=env, model_config=config) == []
+    assert check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=model_config(tmp_path, key_env="")) == []
+    assert check(profile(), policies(agents=OFF), max_lanes=4, environ=TOKEN_SET, model_config=config) == []  # no lanes, no key needed
 
 
 @pytest.mark.parametrize(
@@ -535,6 +544,8 @@ def test_agents_whose_api_key_variable_is_unset_warn_naming_it(tmp_path):
         ("https://ctf.example.org", False),
         ("http://127.0.0.1:8000", False),
         ("http://localhost:8000", False),
+        ("http://ctf.localhost:8000", False),  # *.localhost is loopback too (RFC 6761)
+        ("http://localhost.example.org", True),  # but not a name that only starts with it
         ("http://[::1]:8000", False),
     ],
 )
@@ -620,6 +631,10 @@ BAD_VALUES = [
     ("event", "url", '"https://ctf.example.org/#top"', "event.url must be the site's address, with no query"),
     ("event", "url", '"https://ctf.example.org/?"', "event.url must be the site's address, with no query"),
     ("event", "url", '"https://ctf example.org"', "event.url must not contain spaces or control characters"),
+    # urlsplit drops tabs and newlines without a word, so they must be refused before it sees them
+    ("event", "url", '"https://ctf.exa\\tmple.org"', "event.url must not contain spaces or control characters"),
+    ("event", "url", '"https://ctf.example.org/\\u001b[2J"', "event.url must not contain spaces or control characters"),
+    ("event", "url", '"https://ctf.example.org/\\u202e"', "event.url must not contain spaces or control characters"),
     ("event", "token_env", '"my token"', "event.token_env must be the name of an environment variable"),
     ("event", "token_env", '"9LIVES"', "event.token_env must be the name of an environment variable"),
     (
@@ -670,9 +685,18 @@ def test_a_missing_table_is_an_error(tmp_path, table):
     assert f"the [{table}] table is missing" in load_error(write(tmp_path, toml(**tables)))
 
 
-def test_a_table_that_is_not_a_table_is_an_error(tmp_path):
-    message = load_error(write(tmp_path, "rules = 5\n" + toml(EVENT_CTFD)))
-    assert "rules must be a table ([rules]) (got 5)" in message
+@pytest.mark.parametrize(
+    "top, tables, expected",
+    [
+        ("rules = 5\n", {"event": EVENT_CTFD}, "rules must be a table ([rules]) (got 5)"),
+        ("event = [1]\n", {"rules": RULES_OPEN}, "event must be a table ([event]) (got a list)"),
+        # a teammate's "make everything manual" must not be read as no [policies] (looser, derived ones)
+        ('policies = "manual"\n', {"event": EVENT_CTFD, "rules": RULES_OPEN}, "policies must be a table ([policies]) (got a string)"),
+    ],
+)
+def test_a_table_that_is_not_a_table_is_an_error(tmp_path, top, tables, expected):
+    path = write(tmp_path, top + toml(**tables))
+    assert load_error(path) == f"{path}: {expected}"
 
 
 @pytest.mark.parametrize("pasted", ["pasted-secret-value-5150", CTFD_SHAPED, HEX_SHAPED])
@@ -806,10 +830,14 @@ def test_submit_auto_hands_the_flag_to_the_platform_at_once():
     assert deck.lanes["L01"].state is LaneState.SOLVED
 
 
-def test_submit_confirm_waits_for_the_players_approval_first():
+def test_submit_confirm_waits_for_the_players_approval_then_hands_the_flag_over():
     deck, platform = lane_finds_a_flag(CONFIRM)
     assert platform.flags == []
     assert deck.lanes["L01"].pending.kind is PendingKind.SUBMIT
+    outcome = deck.apply(Approve("L01"))
+    assert outcome.ok, outcome.message
+    assert platform.flags == [("lamp", "hl{lamp}")]
+    assert deck.lanes["L01"].state is LaneState.SOLVED
 
 
 @pytest.mark.parametrize("submit", [MANUAL, OFF])
@@ -845,6 +873,19 @@ def test_describe_draws_a_hostile_profile_safely(tmp_path):
     text = "\n".join(describe(event, policies(), environ={}))
     assert "\x1b" not in text and "\x07" not in text and "\u202e" not in text
     assert "Night^[[2J^[]52;c;cGFzdGU=^GShift\ufffd" in text
+
+
+def test_describe_and_check_draw_a_hostile_board_path_safely(tmp_path):
+    # A teammate's profile whose board path carries OSC 52 (write to the clipboard) and a bidi
+    # override. The folder does not exist, so check() names the path in its refusal too.
+    event = manual(tmp_path, board=tmp_path / "Night\x1b]52;c;cGFzdGU=\x07Shift\N{RIGHT-TO-LEFT OVERRIDE}")
+    lines = describe(event, policies(), environ={})
+    messages = [problem.message for problem in check(event, policies(), max_lanes=4, environ={})]
+    shown = f"{tmp_path}/Night^[]52;c;cGFzdGU=^GShift\N{REPLACEMENT CHARACTER}"
+    assert f"board     {shown}" in lines
+    assert messages == [f"event.board: {shown}: no such directory"]
+    text = "\n".join(lines + messages)
+    assert "\x1b" not in text and "\x07" not in text and "\N{RIGHT-TO-LEFT OVERRIDE}" not in text
 
 
 # ---------------------------------------------------------------------- the command line
