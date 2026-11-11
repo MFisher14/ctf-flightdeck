@@ -53,6 +53,16 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Optional local model role (D15): evaluate Cactus and an OpenAI-compatible local server (Ollama,
   llama.cpp or MLX) on triage hints, the "ignores the hint" detector and lane summaries. Measure
   accuracy against rules-only before enabling by default.
+- Cactus Needle (Apache-2.0/MIT; a 14-30 MB tool-calling model that runs on the CPU in
+  milliseconds): an adapter in this repo plus an optional extra, `pip install
+  ctf-flightdeck[cactus]` (pinned versions; their package fetches its engine and weights on first
+  use; nothing of theirs bundled here); its anonymous telemetry switched off by default
+  (NEEDLE_TELEMETRY=0, DO_NOT_TRACK=1, CACTUS_TELEMETRY=0). Jobs: which technique or L1 engine fits
+  a challenge, whether a lane follows the hint, a typed or spoken command to an intervention.
+  Needle does not run on MLX (a custom architecture) and does not need to at its size.
+- MLX for lanes: `flightdeck init --provider mlx` for a local MLX server that speaks the OpenAI API
+  with tool calling (lanes need tools; `mlx_lm.server`'s tool support is unclear, vllm-mlx and
+  mlx-openai-server document it), and a doctor check that the server answers.
 - Practice mode: replay an archived board offline, scored against an answers file kept outside the
   handout.
 
