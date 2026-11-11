@@ -372,10 +372,14 @@ class AgentDriver:
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
-        lane's candidate; what they all found goes in the lane's context."""
+        lane's candidate (claimed, unless the runner found it in what a text engine printed);
+        what they all found goes in the lane's context. In Docker an engine is online only
+        when the lane may reach the challenge's instance at once (instance auto): it runs
+        before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
+        online = bool(self.urls.get(run.challenge.id)) and self.instance == "auto"
         try:
-            runs = await self.l1.run(run.lane_id, run.challenge)
+            runs = await self.l1.run(run.lane_id, run.challenge, online=online)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
@@ -394,7 +398,8 @@ class AgentDriver:
         for engine in runs:
             if engine.result.status in FLAG_STATUSES:
                 for flag in engine.result.flags:
-                    self._report(run, TurnReport(turn=False, flag=flag))
+                    # a match in what a text engine printed may be the challenge's decoy: it waits for the player
+                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped))
         if not self._over(run):
             run.messages.append({"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])})
 

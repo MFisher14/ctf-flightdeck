@@ -316,6 +316,32 @@ def test_a_run_with_an_l1_pack_runs_its_engines_before_any_model_call(tmp_path):
     assert [(e["data"]["engine"], e["data"]["status"]) for e in l1] == [("reader", "solved")]
 
 
+@pytest.mark.parametrize("runtime", ["host", "docker"])
+def test_l1_engines_run_where_the_lanes_do_and_the_notes_say_where(tmp_path, runtime):
+    """D17: in Docker each engine runs in a container of the lane image, the pack mounted."""
+    from l1_kit import python_engine
+
+    if runtime == "docker":
+        reason = docker_unavailable()
+        if reason:
+            pytest.skip(f"not run: {reason}")
+        if not _image_present("debian:bookworm-slim"):
+            pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", READER, route='keywords = ["note"]')
+    with FakeModelServer() as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url, runtime=runtime), pack=pack))
+        (note,) = [n for n in run.notes() if n.startswith("L1: ")]
+        run.close()
+    l1 = run.driver.l1
+    if runtime == "docker":
+        assert (l1.image, l1.pack) == ("debian:bookworm-slim", pack)
+        assert "each in a container of the lane image debian:bookworm-slim with your pack mounted read-only" in note
+        assert "no network unless lanes may reach the challenge's live instance at once" in note
+    else:
+        assert l1.image is None and note.endswith("run first on each challenge, on this machine, as you")
+
+
 def test_an_l1_pack_that_cannot_be_used_stops_the_run_before_it_starts(tmp_path):
     (tmp_path / "empty").mkdir()
     with FakeModelServer() as server:

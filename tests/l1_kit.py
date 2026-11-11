@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -95,3 +96,65 @@ def tree(root: Path) -> dict[str, tuple[str, int, int]]:
             else:
                 out[rel] = ("dir", info.st_mode, info.st_mtime_ns)
     return out
+
+
+# ---------------------------------------------------------------- L1 engines in Docker
+
+DOCKER_IMAGE = "debian:bookworm-slim"  # the only image tests use, and only when it is already here (never pulled)
+
+FAKE_DOCKER = r"""#!/bin/bash
+# A stand-in for the docker CLI: it records each `docker run`, answers what an engine's
+# container asks while it prepares (from this machine's bash), and runs no engine.
+case "$1" in
+  version) echo 99.0.0-fake ;;
+  image) echo sha256:fake ;;
+  container) echo "Error: No such container" >&2; exit 1 ;;
+  run) printf '%s\n' "$*" >> "$(dirname "$0")/runs.log"; echo fake-container-id ;;
+  rm) exit 0 ;;
+  exec)
+    shift
+    while [ "${1#-}" != "$1" ]; do case "$1" in -w|-e|-u) shift 2 ;; *) shift ;; esac; done
+    shift
+    if [ "$1 $2" = "bash -c" ] && [ "${3#command -v }" != "$3" ]; then echo "/usr/bin/${3#command -v }"; exit 0; fi
+    if [ "$1" = bash ]; then shift; exec bash "$@"; fi  # the program lookup, answered from this machine
+    exit 0 ;;
+  *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;
+esac
+"""
+FAKE_IMAGE = "flightdeck-test-fake-image:1"  # a made-up name: only the fake docker ever sees it
+
+
+def install_fake_docker(tmp_path: Path, monkeypatch) -> Path:
+    """FAKE_DOCKER first on PATH, so no container is started; returns the file each `docker
+    run` is written to (one line of its arguments)."""
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "docker").write_text(FAKE_DOCKER)
+    (fake_bin / "docker").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return fake_bin / "runs.log"
+
+
+def docker_skip_reason() -> str | None:
+    """Why the tests with a real container cannot run here, or None when they can."""
+    from ctf_flightdeck.agent.workspace import docker_unavailable
+
+    reason = docker_unavailable()
+    if reason:
+        return reason
+    probe = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", DOCKER_IMAGE], capture_output=True, timeout=60)
+    if probe.returncode != 0:
+        return f"image {DOCKER_IMAGE} is not present locally (these tests never pull it)"
+    return None
+
+
+def containers(word: str) -> list[str]:
+    """The names of the containers (running or not) whose name holds `word`."""
+    out = subprocess.run(["docker", "ps", "-a", "--filter", f"name={word}", "--format", "{{.Names}}"],
+                         capture_output=True, text=True, timeout=60)
+    return [line for line in out.stdout.splitlines() if word in line]
+
+
+def remove_containers(word: str) -> None:
+    for left in containers(word):
+        subprocess.run(["docker", "rm", "-f", left], capture_output=True, timeout=60)

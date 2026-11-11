@@ -48,10 +48,21 @@ engine and challenge_id are filled in, and cost.seconds is the measured run time
 Engines are the player's code, but they read untrusted challenge data, so what they print
 is untrusted: it is parsed strictly, and stderr reaches notes only through untrusted().
 On the host runtime an engine runs as the player and can read the player's files (P6); the
-allowlist only keeps flightdeck's environment from it. A docker workspace can be passed as
-workspace_factory: the boot script, the capture, flightdeck's python, the engine files and
-the tool check are host-side, so such a factory must mount them at the same paths,
-read-only.
+allowlist only keeps flightdeck's environment from it.
+
+When lanes run in Docker, so do engines (D17): a workspace_factory that makes an
+l1.container.EngineContainer runs each engine in a container of its own. Then its programs
+(python3, a cli entry's program, needs_tools, bash) are looked up in the container's image,
+not on this machine; the pack and the boot script are mounted there at the paths they have
+here, so the command names the same files; and the capture still runs here, with
+flightdeck's own python, starting `docker exec`. A program the image lacks blocks the engine,
+naming it, after the container was started (its image is what is checked), and nothing ran.
+The engine gets PATH (the image's, absolute directories only), TERM=dumb and
+FLIGHTDECK_L1_RESULT (in /work), and nothing else of this machine's environment.
+
+A run marks the flags it found in an engine's output (output "text") as scraped
+(EngineRun.scraped): the engine printed them, it never claimed them, and what it printed may
+be the challenge's own decoy.
 """
 
 from __future__ import annotations
@@ -71,10 +82,12 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from ..agent.workspace import OUTPUT_CAP, PRIVATE, HostWorkspace, RunResult, Workspace, WorkspaceError, open_inside
 from ..platform.manual import CHALLENGE_FILE
 from ..text import untrusted
+from .container import EngineContainer
 from .manifest import Manifest
 from .result import Cost, Evidence, ResultError, SolverResult
 from .router import Hit
@@ -114,6 +127,12 @@ class EngineRun:
     manifest: Manifest
     result: SolverResult
     seconds: float  # the whole run: workspace copy, command and reading its output
+    scraped: bool = False  # its flags are flag-format matches in what it printed (output "text"), never claimed by it
+
+
+class _Outcome(NamedTuple):
+    result: SolverResult
+    scraped: bool  # the result's flags are matches the runner found in the engine's output
 
 
 async def run_engine(
@@ -134,6 +153,22 @@ async def run_engine(
     the run is never removed. A run that is cancelled (a lane killed, flightdeck quitting)
     still closes its workspace and removes its copy before the cancel goes on: the clean-up
     is shielded, and waits for a copy still being made (its thread cannot be stopped)."""
+    outcome = await _run_engine(manifest, handout, workdir=workdir, flag_format=flag_format, timeout=timeout,
+                                workspace_factory=workspace_factory, challenge_id=challenge_id, keep=keep)
+    return outcome.result
+
+
+async def _run_engine(
+    manifest: Manifest,
+    handout: Path,
+    *,
+    workdir: Path,
+    flag_format: str,
+    timeout: float | None,
+    workspace_factory: WorkspaceFactory | None,
+    challenge_id: str | None,
+    keep: bool,
+) -> _Outcome:
     pattern = _flag_pattern(flag_format)
     limit = manifest.timeout_seconds if timeout is None else timeout
     if not (isinstance(limit, (int, float)) and not isinstance(limit, bool) and math.isfinite(limit) and limit > 0):
@@ -141,49 +176,56 @@ async def run_engine(
     handout = Path(handout)
     label = challenge_id if challenge_id is not None else challenge_id_of(handout)
 
-    def done(result: SolverResult, seconds: float) -> SolverResult:
+    def done(result: SolverResult, seconds: float, scraped: bool = False) -> _Outcome:
         cost = Cost(seconds=seconds, usd=result.cost.usd, tokens=result.cost.tokens)
-        return dataclasses.replace(result, engine=manifest.id, challenge_id=label, cost=cost)
+        return _Outcome(dataclasses.replace(result, engine=manifest.id, challenge_id=label, cost=cost), scraped)
 
     gone = missing_files(manifest)
     if gone:
         return done(SolverResult("blocked", notes=f"pack file {', '.join(gone)} is missing (it was there when the pack was read); nothing ran"), 0.0)
-    path = safe_path()
-    if not path:
+    workspace = (workspace_factory or host_workspace)(manifest.id, Path(workdir) / manifest.id, handout)
+    boxed = isinstance(workspace, EngineContainer)  # its programs are looked up in the container, once it runs
+    path = "" if boxed else safe_path()
+    if not boxed and not path:
         return done(SolverResult("blocked", notes=NO_SAFE_PATH), 0.0)
     if not (sys.executable and os.path.isabs(sys.executable)):
         return done(SolverResult("blocked", notes="flightdeck cannot name its own python, which captures what an engine prints; nothing ran"), 0.0)
-    missing = missing_tools(manifest)
-    if missing:
-        return done(SolverResult("blocked", notes=f"missing tools: {', '.join(missing)} (not on PATH); nothing ran"), 0.0)
-    try:
-        argv = command(manifest)
-    except LookupError as exc:  # a program went between the check and now
-        return done(SolverResult("blocked", notes=f"{_safe(str(exc))}; nothing ran"), 0.0)
-    workspace = (workspace_factory or host_workspace)(manifest.id, Path(workdir) / manifest.id, handout)
+    argv: list[str] = []
+    if not boxed:
+        missing = missing_tools(manifest)
+        if missing:
+            return done(SolverResult("blocked", notes=f"missing tools: {', '.join(missing)} (not on PATH); nothing ran"), 0.0)
+        try:
+            argv = command(manifest)
+        except LookupError as exc:  # a program went between the check and now
+            return done(SolverResult("blocked", notes=f"{_safe(str(exc))}; nothing ran"), 0.0)
     root = Path(workspace.root)
     ours = not os.path.lexists(root)  # made by prepare(): this run's to remove
     # prepare() runs as a task of its own: a cancel must not leave the handout's copy thread
     # running unseen, so the clean-up below can wait for it
     preparing = asyncio.ensure_future(workspace.prepare())
     try:
-        result, seconds = await _run_in(workspace, preparing, manifest, argv, path, limit, pattern)
+        result, seconds, scraped = await _run_in(workspace, preparing, manifest, argv, path, limit, pattern)
     finally:
         tidy = asyncio.ensure_future(_tidy(workspace, preparing, root, remove=ours and not keep))
         trouble = await asyncio.shield(tidy)  # cancelled meanwhile: the clean-up still runs to its end
     if trouble:  # said in the notes, after the engine's own
         result = dataclasses.replace(result, notes="; ".join(filter(None, [result.notes, *trouble])))
-    return done(result, seconds)
+    return done(result, seconds, scraped)
 
 
 async def _tidy(workspace: Workspace, preparing: asyncio.Future[None], root: Path, *, remove: bool) -> list[str]:
     """After an engine's run, however it ended: wait until its workspace is prepared or has
     failed to be (the copy may still be going on after a cancel), close the workspace, and
-    remove the copy when `remove`. What went wrong, for the notes; it never raises."""
+    remove the copy when `remove` (an engine's container empties it first, from inside: what
+    the engine made there may not be this machine's user's to remove). What went wrong, for
+    the notes; it never raises."""
     trouble: list[str] = []
     await asyncio.wait([preparing])
     if not preparing.cancelled():
         preparing.exception()  # its failure is the run's result already (or the run never got to it)
+    if remove and isinstance(workspace, EngineContainer):
+        await workspace.wipe()  # what it could not remove is tried again from here, which says if it fails
     try:
         await workspace.close()
     except WorkspaceError as exc:  # e.g. docker rm failed: say so, keep the result
@@ -255,35 +297,42 @@ async def run_routed(
         async with gate:
             begun = time.monotonic()
             try:
-                result = await run_engine(
-                    hit.manifest, handout, workdir=workdir, flag_format=flag_format,
+                outcome = await _run_engine(
+                    hit.manifest, handout, workdir=workdir, flag_format=flag_format, timeout=None,
                     workspace_factory=workspace_factory, challenge_id=label, keep=keep,
                 )
             except Exception as exc:  # a flightdeck bug or a failing factory: this engine's run only, never the others'
-                result = SolverResult(
+                outcome = _Outcome(SolverResult(
                     "unsure", engine=hit.manifest.id, challenge_id=label, cost=Cost(seconds=time.monotonic() - begun),
                     notes=f"flightdeck could not run it: {type(exc).__name__}: {_safe(str(exc))}",
-                )
-            return EngineRun(hit.manifest, result, time.monotonic() - begun)
+                ), False)
+            return EngineRun(hit.manifest, outcome.result, time.monotonic() - begun, scraped=outcome.scraped)
 
     async with asyncio.TaskGroup() as group:
         tasks = [group.create_task(one(hit)) for hit in ordered]
     return [task.result() for task in tasks]
 
 
-def command(manifest: Manifest) -> list[str]:
-    """The argv an engine runs with, in its workspace: its program by absolute path (found on
-    safe_path(), or a pack file) and pack files by absolute path. LookupError when the
-    program is not there (run_engine checks missing_tools first)."""
-    path = safe_path()
+def command(manifest: Manifest, find: Callable[[str], str] | None = None) -> list[str]:
+    """The argv an engine runs with, in its workspace: its program by absolute path, or a
+    pack file, and pack files by absolute path. `find` gives a program's absolute path where
+    the engine runs (default: on safe_path() here; an engine's container passes what it
+    found in its image). LookupError when the program is not there (run_engine checks
+    missing_tools first)."""
+    if find is None:
+        path = safe_path()
+
+        def find(name: str) -> str:
+            return _program(name, path)
+
     entry = manifest.entry
     if entry.kind == "python":
-        return [_program(PYTHON, path), "-I", str(BOOT), str(manifest.entry_file), str(entry.function), "."]
+        return [find(PYTHON), "-I", str(BOOT), str(manifest.entry_file), str(entry.function), "."]
     words = list(entry.argv)
     for i in entry.pack_files:  # settled when the manifest was loaded, never looked up again here
         words[i] = str(manifest.base / entry.argv[i])
     if 0 not in entry.pack_files:
-        words[0] = _program(words[0], path)
+        words[0] = find(words[0])
     return [*words, "."]
 
 
@@ -321,8 +370,10 @@ def missing_files(manifest: Manifest) -> list[str]:
     return [str(word) for word, path in zip(words, manifest.files) if not path.is_file()]
 
 
-def missing_tools(manifest: Manifest) -> list[str]:
-    """The tools the engine needs that are not on PATH, in the order it names them."""
+def needed_tools(manifest: Manifest) -> list[str]:
+    """The programs an engine needs where it runs, in the order it names them, each once:
+    python3 for a python entry or a cli entry's program (unless it is a pack file),
+    needs_tools, then bash, which starts it."""
     needed: list[str] = []
     if manifest.entry.kind == "python":
         needed.append(PYTHON)
@@ -330,8 +381,13 @@ def missing_tools(manifest: Manifest) -> list[str]:
         needed.append(manifest.entry.argv[0])  # a command on PATH, or an absolute path
     needed += manifest.needs_tools
     needed.append(SHELL)  # flightdeck's own: it starts the engine
+    return list(dict.fromkeys(needed))
+
+
+def missing_tools(manifest: Manifest) -> list[str]:
+    """The tools the engine needs that are not on PATH, in the order it names them."""
     path = safe_path()
-    return [tool for tool in dict.fromkeys(needed) if find_program(tool, path) is None]
+    return [tool for tool in needed_tools(manifest) if find_program(tool, path) is None]
 
 
 def challenge_id_of(handout: Path) -> str:
@@ -354,35 +410,61 @@ def challenge_id_of(handout: Path) -> str:
 async def _run_in(
     workspace: Workspace, preparing: asyncio.Future[None], manifest: Manifest, argv: list[str], path: str, limit: float,
     pattern: re.Pattern[str],
-) -> tuple[SolverResult, float]:
-    """(result, seconds the command ran) for one engine in a workspace that `preparing` (its
-    prepare(), as a task) gets ready."""
+) -> tuple[SolverResult, float, bool]:
+    """(result, seconds the command ran, whether its flags were scraped from its output) for
+    one engine in a workspace that `preparing` (its prepare(), as a task) gets ready."""
     try:
         await asyncio.shield(preparing)  # a cancel leaves it running: run_engine's clean-up waits for it
     except WorkspaceError as exc:
-        return SolverResult("blocked", notes=f"its workspace could not be prepared: {_safe(str(exc))}"), 0.0
+        return SolverResult("blocked", notes=f"its workspace could not be prepared: {_safe(str(exc))}"), 0.0, False
     name = f"l1-result-{secrets.token_hex(16)}.json"  # a challenge cannot know it, so cannot plant it
-    seen_as = getattr(workspace, "workdir", None) or str(workspace.root)  # the root as the command sees it
-    shell = _program(SHELL, path)
-    line = " ".join([
-        f"PATH={shlex.quote(path)}",
-        f"{RESULT_ENV}={shlex.quote(f'{seen_as}/{PRIVATE}/{name}')}",
-        "exec",
-        shlex.join([sys.executable, "-I", str(CAPTURE), str(HEAD_BYTES), str(TAIL_BYTES), str(STDERR_BYTES)]),
-        '${LC_CTYPE+"--lc-ctype=$LC_CTYPE"}',  # the engine gets the LC_CTYPE this shell has, or none (_capture.py)
-        "--",
-        shlex.join([shell, "-c", 'exec "$@"', "flightdeck-l1", *argv]),
-    ])
+    capture = [sys.executable, "-I", str(CAPTURE), str(HEAD_BYTES), str(TAIL_BYTES), str(STDERR_BYTES)]
     begun = time.monotonic()
     try:
-        run = await workspace.run(line, timeout=limit)
+        if isinstance(workspace, EngineContainer):
+            host_argv = await _in_container(workspace, manifest, name, capture)
+            if isinstance(host_argv, SolverResult):  # the image lacks a program: nothing ran
+                return host_argv, 0.0, False
+            begun = time.monotonic()
+            run = await workspace.run_argv(host_argv, timeout=limit)
+        else:
+            seen_as = getattr(workspace, "workdir", None) or str(workspace.root)  # the root as the command sees it
+            shell = _program(SHELL, path)
+            line = " ".join([
+                f"PATH={shlex.quote(path)}",
+                f"{RESULT_ENV}={shlex.quote(f'{seen_as}/{PRIVATE}/{name}')}",
+                "exec",
+                shlex.join(capture),
+                '${LC_CTYPE+"--lc-ctype=$LC_CTYPE"}',  # the engine gets the LC_CTYPE this shell has, or none (_capture.py)
+                "--",
+                shlex.join([shell, "-c", 'exec "$@"', "flightdeck-l1", *argv]),
+            ])
+            run = await workspace.run(line, timeout=limit)
     except WorkspaceError as exc:
-        return SolverResult("blocked", notes=f"its workspace could not run it: {_safe(str(exc))}"), time.monotonic() - begun
+        return SolverResult("blocked", notes=f"its workspace could not run it: {_safe(str(exc))}"), time.monotonic() - begun, False
     seconds = time.monotonic() - begun
     # reading the record and searching megabytes of output: never on the event loop, where it
     # would hold up every other engine's timeout (and, in a lane, the console)
-    result = await asyncio.to_thread(_interpret, manifest, run, workspace.root, name, pattern, limit)
-    return result, seconds
+    result, scraped = await asyncio.to_thread(_interpret, manifest, run, workspace.root, name, pattern, limit)
+    return result, seconds, scraped
+
+
+async def _in_container(box: EngineContainer, manifest: Manifest, name: str, capture: list[str]) -> list[str] | SolverResult:
+    """The argv, run on this machine, that runs the engine in its container: flightdeck's
+    capture starting `docker exec` with the programs the image has. The blocked result,
+    naming them, when the image lacks some."""
+    needed = needed_tools(manifest)
+    found, path = await box.programs(needed)
+    missing = [tool for tool in needed if found.get(tool) is None]
+    if missing:
+        hint = " (`flightdeck image build` builds the lane image, which has python3)" if PYTHON in missing else ""
+        return SolverResult("blocked", notes=(
+            f"missing tools: {', '.join(missing)} (not in the lane image {box.image}, where engines run when lanes "
+            f"run in Docker){hint}; nothing ran"
+        ))
+    argv = command(manifest, find=lambda program: str(found[program]))
+    env = {"PATH": path, "TERM": "dumb", RESULT_ENV: f"{box.workdir}/{PRIVATE}/{name}"}
+    return [*capture, "--", *box.exec_argv([str(found[SHELL]), "-c", 'exec "$@"', "flightdeck-l1", *argv], env)]
 
 
 @dataclass(frozen=True)
@@ -421,7 +503,22 @@ def parse_captured(output: bytes) -> Captured:
     return Captured(record["status"], record["stdout"], rest[:head], rest[head:head + tail], rest[head + tail:], record["stderr"])
 
 
-def _interpret(manifest: Manifest, run: RunResult, root: Path, name: str, pattern: re.Pattern[str], limit: float) -> SolverResult:
+def _interpret(manifest: Manifest, run: RunResult, root: Path, name: str, pattern: re.Pattern[str],
+               limit: float) -> tuple[SolverResult, bool]:
+    """(the run's result, True when its flags are flag-format matches found in what the
+    engine printed: output "text" with no result of its own)."""
+    result = _result_of(manifest, run, root, name, pattern, limit)
+    if isinstance(result, _Scraped):
+        return result.result, True
+    return result, False
+
+
+class _Scraped(NamedTuple):
+    result: SolverResult  # a candidate whose flags the runner found in the engine's output
+
+
+def _result_of(manifest: Manifest, run: RunResult, root: Path, name: str, pattern: re.Pattern[str],
+               limit: float) -> SolverResult | _Scraped:
     if run.timed_out:
         return SolverResult("unsure", notes=f"timed out after {limit:g}s")
     if run.exit_code is None:
@@ -451,7 +548,7 @@ def _interpret(manifest: Manifest, run: RunResult, root: Path, name: str, patter
     if flags:
         evidence = Evidence("match", f"{len(flags)} distinct flag-format match{'es' if len(flags) > 1 else ''} in its output")
         notes = [f"exited {code}"] if code else []
-        return SolverResult("candidate", flags=flags, evidence=(evidence,), notes="; ".join(notes + unsearched))
+        return _Scraped(SolverResult("candidate", flags=flags, evidence=(evidence,), notes="; ".join(notes + unsearched)))
     if code != 0:
         return SolverResult("unsure", notes="; ".join([_exited(code, stderr), *unsearched]))
     if unsearched:  # not all of it was searched: that is not "nothing found"

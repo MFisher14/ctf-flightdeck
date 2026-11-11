@@ -54,7 +54,8 @@ class Lab:
 
     def __init__(self, tmp_path: Path, server: FakeModelServer, *, verify=None, max_lanes: int = 2,
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
-                 max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto") -> None:
+                 max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
+                 submit: str = "confirm", compact_at: int | None = 50_000) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -68,8 +69,9 @@ class Lab:
             l1=l1,
             urls=urls,
             instance=instance,
+            compact_at=compact_at,
         )
-        config = DeckConfig(event="t", flag_format=FLAG, models=MODELS, max_lanes=max_lanes)
+        config = DeckConfig(event="t", flag_format=FLAG, models=MODELS, max_lanes=max_lanes, submit=submit)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
 
     def release(self, *ids: str) -> None:
@@ -1054,6 +1056,137 @@ def test_a_challenge_no_engine_routes_to_goes_straight_to_the_model_and_says_so(
             await lab.finish()
 
     run(main())
+
+
+def test_under_auto_submit_an_engines_own_flag_goes_at_once_and_one_found_in_its_output_waits(tmp_path):
+    """D17: a flag matched in what a text engine printed is not claimed by the engine (it may
+    be the challenge's decoy, which the engine just read out), so auto submit waits for the
+    player; a flag an engine returns as its result is claimed, and goes at once."""
+    from ctf_flightdeck.agent.l1stage import L1Stage
+    from ctf_flightdeck.l1.manifest import discover
+
+    from l1_kit import cli_engine
+
+    server = FakeModelServer(responder=lambda record: text_reply("should not be asked"))
+    tried: list[str] = []
+
+    def verify(cid, flag):
+        tried.append(flag)
+        return flag == "t{note}"
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            cli_engine(tmp_path / "pack", "say", "cat note.txt\n", route='keywords = ["about"]')
+            stage = L1Stage(discover(tmp_path / "pack"), handouts, tmp_path / "runs", FLAG)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=verify)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the scraped flag's approval", timeout=30)
+            assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}") and tried == []
+            await lab.finish()
+
+    run(main())
+    tmp_path2 = tmp_path / "second"
+    tmp_path2.mkdir()
+    server2 = FakeModelServer(responder=lambda record: text_reply("should not be asked"))
+
+    async def claimed():
+        with server2:
+            handouts = {"note": handout(tmp_path2)}
+            lab = Lab(tmp_path2, server2, handouts=handouts, l1=l1_stage(tmp_path2, handouts, {"reader": SOLVES}), submit="auto",
+                      verify=verify)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished, "the engine's own flag to be submitted", timeout=30)
+            assert lane.state is LaneState.SOLVED and tried == ["t{note}"]
+            await lab.finish()
+
+    run(claimed())
+
+
+def l1_in_fake_docker(tmp_path: Path, handouts: dict[str, Path]):
+    from ctf_flightdeck.agent.l1stage import L1Stage
+    from ctf_flightdeck.l1.manifest import discover
+
+    from l1_kit import FAKE_IMAGE, cli_engine
+
+    cli_engine(tmp_path / "pack", "probe", "echo nothing\n", route='keywords = ["about"]')
+    return L1Stage(discover(tmp_path / "pack"), handouts, tmp_path / "runs", FLAG, image=FAKE_IMAGE, pack=tmp_path / "pack")
+
+
+@pytest.mark.parametrize(
+    "instance, has_instance, network",
+    [("auto", True, "bridge"), ("auto", False, "none"), ("confirm", True, "none"), ("off", True, "none")],
+)
+def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_instance_at_once(
+        tmp_path, monkeypatch, instance, has_instance, network):
+    """Findings 1 and 7: under confirm (before the player is asked), manual and off no engine
+    gets a network; under auto only a challenge with an instance gives one."""
+    from l1_kit import install_fake_docker
+
+    runs_log = install_fake_docker(tmp_path, monkeypatch)
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            urls = {"note": ("http://127.0.0.1:9",)} if has_instance else None
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_in_fake_docker(tmp_path, handouts), urls=urls, instance=instance)
+            lab.release()
+            await until(lambda: any(e.kind is EventKind.L1 for e in lab.deck.events), "the L1 result", timeout=30)
+            (started,) = runs_log.read_text().splitlines()
+            words = started.split()
+            assert words[words.index("--network") + 1] == network
+            await lab.finish()
+
+    run(main())
+
+
+def test_under_confirm_in_docker_l1_runs_before_the_question_with_no_network(tmp_path):
+    """The findings' case with a real container: the engine reads the instance's URL from its
+    copy of challenge.json, before the lane asks the player, and has no network to use it."""
+    from l1_kit import DOCKER_IMAGE, containers, docker_skip_reason, remove_containers
+
+    reason = docker_skip_reason()
+    if reason:
+        pytest.skip(reason)
+    from ctf_flightdeck.agent.l1stage import L1Stage
+    from ctf_flightdeck.l1.manifest import discover
+
+    from l1_kit import cli_engine
+
+    origin = "http://127.0.0.1:9"
+    server = FakeModelServer(responder=lambda record: text_reply("should not be asked"))
+    run_name = f"t{time.time_ns()}"
+    cli_engine(tmp_path / "pack", "web", """
+        url=$(grep -o 'http://[^"]*' challenge.json | head -n 1)
+        routes=$(( $(wc -l < /proc/net/route) - 1 ))
+        printf '{"schema": 1, "status": "none", "notes": "read %s; routes=%s"}\\n' "$url" "$routes"
+        """, output="result", route='keywords = ["about"]')
+
+    async def main():
+        with server:
+            folder = handout(tmp_path)
+            (folder / "challenge.json").write_text(f'{{"name": "Note", "urls": ["{origin}"]}}')
+            handouts = {"note": folder}
+            stage = L1Stage(discover(tmp_path / "pack"), handouts, tmp_path / run_name, FLAG, image=DOCKER_IMAGE,
+                            pack=tmp_path / "pack")
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, urls={"note": (origin,)}, instance="confirm")
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane asking for the instance", timeout=60)
+            kinds = [e.kind for e in lab.deck.events if e.kind in (EventKind.L1, EventKind.PENDING)]
+            assert kinds[:2] == [EventKind.L1, EventKind.PENDING] and lane.pending.kind is PendingKind.LIVE_BOX
+            (l1,) = [e for e in lab.deck.events if e.kind is EventKind.L1]
+            assert l1.data["notes"] == f"read {origin}; routes=0"  # it knew where the instance was, and had no way there
+            assert server.requests == [] and containers(run_name) == []
+            await lab.finish()
+
+    try:
+        run(main())
+    finally:
+        remove_containers(run_name)
 
 
 # ---------------------------------------------------------------------- the live instance policy

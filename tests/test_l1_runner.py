@@ -799,6 +799,27 @@ def test_a_kept_copy_stays_when_its_run_is_cancelled(pack, handout, tmp_path):
     assert (work / "sleeper" / "note.txt").is_file()
 
 
+def test_flags_found_in_what_an_engine_printed_are_marked_scraped_and_its_own_results_are_not(pack, handout, tmp_path):
+    text = cli_engine(pack, "text", "cat note.txt\n")
+    own = cli_engine(pack, "own", """
+        cat note.txt
+        printf '{"schema": 1, "status": "candidate", "flags": ["t{claimed}"]}\\n' > "$FLIGHTDECK_L1_RESULT"
+        """)  # output "text", but it wrote a result of its own: that is its result
+    py = python_engine(pack, "py", """
+        from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+        def solve(d):
+            print("t{printed_only}")
+            return SolverResult("solved", flags=["t{in_the_note}"], evidence=[Evidence("read", "the note", "note.txt", 0)])
+        """, extra='output = "text"')
+    runs = run(run_routed([hit(text), hit(own), hit(py)], handout, workdir=tmp_path / "work", flag_format=FLAG))
+    assert {r.manifest.id: (r.result.status, r.result.flags, r.scraped) for r in runs} == {
+        "text": ("candidate", ("t{in_the_note}",), True),
+        "own": ("candidate", ("t{claimed}",), False),
+        "py": ("solved", ("t{in_the_note}",), False),
+    }
+
+
 def test_run_routed_keeps_the_copies_only_when_asked(pack, handout, tmp_path):
     hits = [hit(cli_engine(pack, "a", "echo t{a}\n")), hit(cli_engine(pack, "b", "echo t{b}\n"))]
     gone = run(run_routed(hits, handout, workdir=tmp_path / "w1", flag_format=FLAG))
