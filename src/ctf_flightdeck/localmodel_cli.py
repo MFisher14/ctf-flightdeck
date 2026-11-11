@@ -17,8 +17,9 @@ the light role falls back to):
   `anthropic:MODEL` or `openai:MODEL@BASE_URL` (a server with no key).
 - `--thinking on|off`: whether an openai column's model may reason before it answers, as
   [light] thinking says in a run (off sends light.THINKING_OFF with each request). Default:
-  [light] thinking as your config sets it, else off for a server on this machine and on for
-  any other (config.light_thinking()). Each openai column's label says which.
+  for a column on [light]'s own server, [light] thinking as your config sets it; for any
+  other, off for a server on this machine and on elsewhere (config.light_thinking()), so
+  nothing is added for an API elsewhere unless asked. Each openai column's label says which.
 
 Before any call the cases are checked and the rules scored (no network): a missing lexicon, or
 a case that names an id it lacks, stops the command before anything is spent. A paid API
@@ -44,13 +45,16 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import httpx
 import typer
 
 from . import light as L
 from . import localmodel
+
+if TYPE_CHECKING:
+    from .config import LightConfig
 
 app = typer.Typer(no_args_is_help=True, help="Measure a light model against the rules on small jobs (D15).")
 
@@ -104,7 +108,8 @@ def eval_local(
         str | None,
         typer.Option("--thinking", metavar="on|off",
                      help="Whether an openai model may reason before it answers; off asks for thinking off with each "
-                          "request. Default: [light] thinking from your config, else off for a server on this machine.")
+                          "request. Default: [light] thinking from your config for [light]'s own server, else off for a "
+                          "server on this machine and on elsewhere.")
     ] = None,
 ) -> None:
     """Score light models and the rules side by side on hints, hint judging and lane summaries."""
@@ -202,9 +207,12 @@ def _thinking_option(text: str) -> bool:
 
 
 def _thinks(columns: list[Spec], think: bool | None) -> dict[Spec, bool]:
-    """Whether each openai column's model may reason before it answers: --thinking when given,
-    else what [light] would say for that server: its thinking as your config sets it, or the
-    default for the server (config.light_thinking(): off on this machine, on elsewhere)."""
+    """Whether each openai column's model may reason before it answers: --thinking when given;
+    else, for a column on [light]'s own server, [light] thinking as the player's config sets it
+    (their word for that server, said on stderr); else the default for the column's server
+    (config.light_thinking(): off on this machine, on elsewhere). So [light] thinking = false,
+    which init writes for a light model on this machine, never sends a field to an API
+    elsewhere, which may refuse fields it does not know."""
     openai = [spec for spec in columns if spec.engine == "openai"]
     if think is not None:
         return {spec: think for spec in openai}
@@ -212,18 +220,23 @@ def _thinks(columns: list[Spec], think: bool | None) -> dict[Spec, bool]:
         return {}
     from .config import LightConfig, light_thinking
 
-    configured, where = _configured_thinking()
-    if configured is not None:
-        typer.echo(f"flightdeck: thinking {'on' if configured else 'off'}, as [light] thinking in {where} says "
-                   "(--thinking on|off overrides it)", err=True)
-    return {spec: light_thinking(LightConfig("openai", spec.model, spec.base_url, spec.key_env, thinking=configured))
-            for spec in openai}
+    light, where = _configured_light()
+    thinks, said = {}, set()
+    for spec in openai:
+        mine = light is not None and light.thinking is not None and _same_server(spec.base_url, light.base_url)
+        thinks[spec] = light_thinking(LightConfig("openai", spec.model, spec.base_url, spec.key_env,
+                                                  thinking=light.thinking if mine else None))
+        if mine and _shown(spec.base_url) not in said:
+            said.add(_shown(spec.base_url))
+            typer.echo(f"flightdeck: thinking {'on' if light.thinking else 'off'} for {_shown(spec.base_url)}, [light]'s "
+                       f"server, as [light] thinking in {where} says (--thinking on|off overrides it)", err=True)
+    return thinks
 
 
-def _configured_thinking() -> tuple[bool | None, Path | None]:
-    """[light] thinking as the player's config sets it (None when it sets none, or there is
-    no config file), and the file. A config that cannot be read stops here, named: its value
-    is not guessed."""
+def _configured_light() -> tuple[LightConfig | None, Path | None]:
+    """The player's [light] table when its engine is openai (None for another engine, or when
+    there is no config file), and the file. A config that cannot be read stops here, named:
+    its thinking is not guessed."""
     from .config import ConfigError, default_config_path, load_config
 
     try:
@@ -234,7 +247,26 @@ def _configured_thinking() -> tuple[bool | None, Path | None]:
     except (ConfigError, OSError) as exc:
         _fail(f"--thinking takes its default from [light] thinking in your config, which cannot be read: {exc}. "
               "Fix it, or give --thinking on or off")
-    return (light.thinking if light.engine == "openai" else None), path
+    return (light if light.engine == "openai" else None), path
+
+
+def _same_server(one: str, other: str) -> bool:
+    """Whether two base URLs name the same server: the same scheme, port and path (a trailing
+    slash aside) and the same host, 127.0.0.1, localhost and ::1 being one machine. User info,
+    query and fragment do not count."""
+    from urllib.parse import urlsplit
+
+    def server(url: str) -> tuple | None:
+        try:
+            parts = urlsplit(url.strip())
+            port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+        except ValueError:
+            return None
+        host = "this machine" if L.on_this_machine(url) else parts.hostname
+        return parts.scheme, host, port, parts.path.rstrip("/")
+
+    here = server(one)
+    return here is not None and here == server(other)
 
 
 def _key_env(name: str) -> str:

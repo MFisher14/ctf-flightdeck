@@ -250,18 +250,92 @@ def test_a_server_elsewhere_is_left_thinking_unless_asked(tmp_path, monkeypatch)
     assert columns(asked.output) == ["openai m (thinking off)"] and second["reasoning_effort"] == "none"
 
 
-def test_by_default_eval_local_measures_with_light_thinking_as_the_players_config_sets_it(tmp_path, monkeypatch):
-    config = write(tmp_path, LADDER + OPENAI_LIGHT + "thinking = true\n")
-    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+def light_at(tmp_path: Path, base_url: str, thinking: str) -> Path:
+    """A player's config whose [light] is an openai model at `base_url` with `thinking`."""
+    return write(tmp_path, LADDER + f'[light]\nengine = "openai"\nmodel = "light/m"\nbase_url = "{base_url}"\nkey_env = ""\n'
+                 f"thinking = {thinking}\n", name="player.toml")
+
+
+def test_by_default_a_column_on_lights_own_server_is_measured_with_light_thinking_as_the_config_sets_it(tmp_path, monkeypatch):
     with FakeModelServer([text_reply("sstv"), text_reply("sstv")]) as server:
+        config = light_at(tmp_path, server.base_url, "true")
+        monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
         default = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m")
         overridden = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m", "--thinking", "off")
         first, second = (request["json"] for request in server.chats())
     assert default.exit_code == 0, default.output
     assert columns(default.output) == ["openai m (thinking on)"] and "reasoning_effort" not in first
-    assert f"flightdeck: thinking on, as [light] thinking in {config} says (--thinking on|off overrides it)" in default.output
+    assert (f"flightdeck: thinking on for {server.base_url}, [light]'s server, as [light] thinking in {config} says "
+            "(--thinking on|off overrides it)") in default.output
     assert columns(overridden.output) == ["openai m (thinking off)"] and second["reasoning_effort"] == "none"
     assert "as [light] thinking in" not in overridden.output
+
+
+def test_the_init_written_thinking_off_for_a_local_light_model_never_reaches_an_api_elsewhere(tmp_path, monkeypatch):
+    """`init --light ollama` writes thinking = false for [light] on 127.0.0.1:11434. That is the
+    player's word for that server only: a column on an API elsewhere takes the default for its
+    own server (thinking on: nothing added), so no field it may refuse reaches it."""
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import cli
+
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    config = tmp_path / "written.toml"
+    made = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--models", "a/b", "--host", "--light", "ollama",
+                                        "--light-model", "qwen3.5:9b", "--path", str(config)])
+    assert made.exit_code == 0, made.output
+    assert (load_config(config).light.base_url, load_config(config).light.thinking) == (LOCAL, False)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    monkeypatch.setattr(L, "on_this_machine", lambda url: False)  # the fake server, as if it were an API elsewhere
+    with FakeModelServer([text_reply("sstv")]) as server:
+        result = eval_local(tmp_path, "--base-url", server.base_url, "--model", "hosted/m")
+        body = server.chats()[0]["json"]
+    assert result.exit_code == 0, result.output
+    assert columns(result.output) == ["openai hosted/m (thinking on)"]
+    assert "reasoning_effort" not in body and "chat_template_kwargs" not in body
+    assert "as [light] thinking in" not in result.output
+
+
+def test_thinking_false_set_for_lights_server_elsewhere_is_sent_there_and_to_no_other_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "on_this_machine", lambda url: False)  # both fakes, as if they were APIs elsewhere
+    with FakeModelServer([text_reply("sstv")]) as light, FakeModelServer([text_reply("sstv")]) as other:
+        config = light_at(tmp_path, light.base_url + "/", "false")  # the same server, written with a trailing slash
+        monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+        result = eval_local(tmp_path, "--base-url", light.base_url, "--model", "a", "--compare", f"openai:b@{other.base_url}")
+        asked, elsewhere = light.chats()[0]["json"], other.chats()[0]["json"]
+    assert result.exit_code == 0, result.output
+    assert columns(result.output) == ["openai a (thinking off)", "openai b (thinking on)"]
+    assert asked["reasoning_effort"] == "none" and asked["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in elsewhere and "chat_template_kwargs" not in elsewhere
+    assert f"flightdeck: thinking off for {light.base_url}, [light]'s server, as [light] thinking in {config} says" in result.output
+    assert result.output.count("as [light] thinking in") == 1
+
+
+def test_a_column_on_another_server_on_this_machine_takes_its_own_default_not_lights(tmp_path, monkeypatch):
+    with FakeModelServer([text_reply("sstv")]) as light, FakeModelServer([text_reply("sstv")]) as other:
+        monkeypatch.setenv("FLIGHTDECK_CONFIG", str(light_at(tmp_path, light.base_url, "true")))
+        result = eval_local(tmp_path, "--base-url", light.base_url, "--model", "a", "--compare", f"openai:b@{other.base_url}")
+        on, off = light.chats()[0]["json"], other.chats()[0]["json"]
+    assert result.exit_code == 0, result.output
+    assert columns(result.output) == ["openai a (thinking on)", "openai b (thinking off)"]
+    assert "reasoning_effort" not in on and off["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize("one, other, same", [
+    ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/", True),
+    ("http://127.0.0.1:11434/v1", "http://localhost:11434/v1", True),  # one machine, three names for it
+    ("http://[::1]:8080/v1", "http://127.0.0.1:8080/v1", True),
+    ("HTTPS://API.Example.com/v1", "https://api.example.com:443/v1", True),
+    ("http://127.0.0.1:11434/v1", "http://127.0.0.1:8080/v1", False),
+    ("http://127.0.0.1:8080/v1", "https://127.0.0.1:8080/v1", False),
+    ("https://api.example.com/v1", "https://api.example.com/v2", False),
+    ("https://api.example.com/v1", "https://other.example.com/v1", False),
+    ("http://127.0.0.1:8080/v1", "http://10.0.0.5:8080/v1", False),
+])
+def test_what_counts_as_lights_own_server(one, other, same):
+    from ctf_flightdeck.localmodel_cli import _same_server
+
+    assert _same_server(one, other) is same and _same_server(other, one) is same
 
 
 def test_a_config_that_cannot_be_read_stops_eval_local_before_any_call_unless_thinking_is_given(tmp_path, monkeypatch):
