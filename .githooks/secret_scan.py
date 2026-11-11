@@ -6,9 +6,16 @@ prints a matched value: each finding names the file, the rule and, for denylist 
 an 8-character sha256 prefix.
 
 Optional denylist: sha256 hex digests, one per line, of exact sensitive strings (your
-platform tokens, IPs, team names). Location: $FLIGHTDECK_DENYLIST, else
+platform tokens, IPs, team names, handles). Location: $FLIGHTDECK_DENYLIST, else
 ~/.config/ctf-flightdeck/denylist.sha256. If none is found the scan still runs the
 pattern rules and prints a warning saying the hash checks were skipped.
+
+What gets hashed and compared: token-shaped runs (IPs, ctfd_ tokens, 16+ characters)
+exactly as written; every word of 3+ characters (also joined ones like quokka-crew or
+quokka_crew); and every run of 2 to 4 words joined by one space. Words are taken as
+written and in lower case. So a name matches when its digest is of the name in lower
+case, words separated by single spaces, e.g.
+    printf '%s' 'quokka crew' | shasum -a 256
 
 A line containing the pragma "secret-scan: allow" may carry a known-fake value that
 matches a token shape (test fixtures). The pragma never overrides a denylist hit.
@@ -45,13 +52,31 @@ WARN_RULES = [
     (re.compile(rb"(?i)\bauthorization:\s*(?:bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{16,}"), "Authorization header value"),
 ]
 
-# Candidate substrings hashed against the denylist (exact-string match).
+# Candidate substrings hashed against the denylist (exact-string match), plus the names
+# from name_candidates().
 CANDIDATE_PATTERNS = [
     re.compile(rb"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
     re.compile(rb"ctfd_[a-f0-9]{16,}"),
     re.compile(rb"[A-Za-z0-9_.\-]{20,}"),
     re.compile(rb"[A-Za-z0-9_\-]{16,}"),
 ]
+
+
+JOINED = re.compile(r"\w+(?:[.'-]\w+)*")  # quokka-crew, quokka_crew, q.crew
+WORD = re.compile(r"[^\W_]+")  # letters and digits only: quokka_crew is two words
+MIN_WORD = 3
+MAX_WINDOW = 4
+
+
+def name_candidates(data):
+    """Words (3+ characters) and runs of 2-4 words, as written and lower-cased, as bytes."""
+    text = data.decode("utf-8", "ignore")
+    words = WORD.findall(text)
+    out = {w for w in JOINED.findall(text) + words if len(w) >= MIN_WORD}
+    for n in range(2, MAX_WINDOW + 1):
+        out.update(" ".join(words[i : i + n]) for i in range(len(words) - n + 1))
+    out |= {s.lower() for s in out}
+    return {s.encode("utf-8") for s in out}
 
 
 def load_denylist():
@@ -120,16 +145,11 @@ def scan(path, data, deny):
         if rx.search(data):
             warns.append(rule)
     if deny:
-        seen = set()
-        for rx in CANDIDATE_PATTERNS:
-            for m in rx.finditer(data):
-                s = m.group(0)
-                if s in seen:
-                    continue
-                seen.add(s)
-                h = hashlib.sha256(s).hexdigest()
-                if h in deny:
-                    blocks.append(f"denylisted value [sha256:{h[:8]}]")
+        candidates = {m.group(0) for rx in CANDIDATE_PATTERNS for m in rx.finditer(data)}
+        for s in sorted(candidates | name_candidates(data)):
+            h = hashlib.sha256(s).hexdigest()
+            if h in deny:
+                blocks.append(f"denylisted value [sha256:{h[:8]}]")
     return blocks, warns
 
 
