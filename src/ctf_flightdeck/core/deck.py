@@ -26,6 +26,8 @@ Rules the deck enforces:
   left, and a platform's answer that first says so is a warning under "auto";
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
+- a lane that gave up while a flag of it waits is open only for that flag's answer: it takes
+  no hint, new plan or escalation (no driver gives it another turn);
 - team mode: a challenge a teammate solved or claimed is not worked; a teammate's
   solve stops every lane on it;
 - once the run is closing (close(): the player quit), its lanes stop without ending, nothing
@@ -586,6 +588,8 @@ class Deck:
             return Outcome(False, f"{lane.id} has finished ({lane.state.value}){hint}")
         if lane.state is LaneState.TAKEOVER and not isinstance(iv, (HandBack, Kill)):
             return Outcome(False, f"You have {lane.id}'s shell; hand it back first")
+        if lane.gave_up_later and isinstance(iv, (Hint, Redirect, Escalate)):
+            return Outcome(False, self._no_more_turns(lane))
         match iv:
             case Pause():
                 return self._pause(lane)
@@ -610,6 +614,16 @@ class Deck:
             case Decline():
                 return self._decline(lane)
         raise TypeError(f"unknown intervention {iv!r}")
+
+    def _no_more_turns(self, lane: Lane) -> str:
+        """Why a lane that gave up takes no hint, new plan or escalation, and what to do
+        instead: it is open only for its flag's answer (gave_up_later), and no driver gives it
+        another turn."""
+        if self._flag_waits(lane):
+            why, then = "until you answer its flag", "answer it (a or d)"
+        else:
+            why, then = "for the platform's answer to its flag", "wait for that answer"
+        return f"{lane.id} gave up and takes no more turns; it is open only {why}: fork it onto another model (f), or {then}"
 
     def _pause(self, lane: Lane) -> Outcome:
         if lane.state is LaneState.PAUSED:

@@ -11,6 +11,7 @@ plays the same through a real run, against the fake CTFd.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import threading
 
@@ -290,6 +291,40 @@ def test_a_lane_that_gave_up_while_its_flag_waits_for_the_player_says_so():
     deck.report(lane.id, TurnReport(turn=False, gave_up="the model gave up"))
     assert notes(lane)[-1] == "gave up (the model gave up), but a candidate flag waits for you"
     assert deck.apply(iv.Decline(lane.id)).ok and lane.state is LaneState.GAVE_UP
+
+
+NO_MORE_TURNS = {
+    "confirm": "L01 gave up and takes no more turns; it is open only until you answer its flag: fork it onto another "
+               "model (f), or answer it (a or d)",
+    "auto": "L01 gave up and takes no more turns; it is open only for the platform's answer to its flag: fork it onto "
+            "another model (f), or wait for that answer",
+}
+
+
+@pytest.mark.parametrize("submit", ["confirm", "auto"], ids=["its flag waits for the player", "its flag is with the platform"])
+@pytest.mark.parametrize("make", [
+    lambda lane: iv.Hint(lane, "look at the other port"), lambda lane: iv.Redirect(lane, "a new plan"),
+    lambda lane: iv.Escalate(lane),
+], ids=["hint", "redirect", "escalate"])
+def test_a_lane_that_gave_up_and_is_open_for_its_flags_answer_takes_no_hint_plan_or_escalation(submit, make):
+    """No driver gives a lane that gave up another turn: what it would read on its next turn is
+    refused, saying why and what to do instead, and both of those work."""
+    deck, driver, _ = platform_deck(submit=submit)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))  # under confirm it waits for the player; under auto it goes out
+    deck.report(lane.id, TurnReport(turn=False, gave_up="the model gave up"))
+    assert lane.gave_up_later and not lane.finished
+    before, calls = copy.deepcopy(lane), list(driver.calls)
+    out = deck.apply(make(lane.id))
+    assert not out.ok and out.message == NO_MORE_TURNS[submit]
+    assert lane == before and driver.calls == calls  # no hint queued, no new plan, no stronger model
+    sibling = fork(deck, lane, model="big")  # fork it onto another model
+    assert sibling is not None and sibling.model == "big" and sibling.challenge_id == "c0"
+    if submit == "confirm":
+        assert deck.apply(iv.Decline(lane.id)).ok  # answer its flag
+    else:
+        deck.platform_verdict(lane.id, "t{maybe}", False, "Incorrect")  # its answer comes in
+    assert lane.state is LaneState.GAVE_UP and sibling.state is LaneState.RUNNING
 
 
 def test_sending_names_each_lanes_flags_on_their_way_until_their_answer_is_in():
