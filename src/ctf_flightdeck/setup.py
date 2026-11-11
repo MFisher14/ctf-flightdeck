@@ -616,23 +616,48 @@ def _agent_image_check(kind: str, config) -> Check:
 
 
 def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
-    """[light], checked like the API: the key is there, the server on this machine answers,
-    Cactus is installed. None of it is essential: a light model that cannot be used leaves the
-    rules alone, and the run says so."""
+    """[light] and its job tables, checked like the API: each distinct engine spec once (jobs
+    or tables that share a spec share its checks), naming the jobs that use it: the key is
+    there, the server on this machine answers, Cactus is installed. None of it is essential: a
+    light model that cannot be used leaves the rules alone, and the run says so. A config with
+    no jobs and no job tables is checked as it always was."""
+    from .config import DEFAULT_JOBS, RUN_JOBS, light_specs
+
+    if config.light_jobs == DEFAULT_JOBS and not config.light_tables:
+        return _light_spec_checks(config, config.light, environ)
+    checks: list[Check] = []
+    for spec in light_specs(config):
+        if not spec.jobs and spec.config.engine == "rules":
+            continue  # [light] left as the rules, with every job on a table of its own
+        suffix = "" if "light" in spec.tables else " [" + ", ".join(spec.tables) + "]"
+        named = [job if job in RUN_JOBS else f"{job} (in eval-local)" for job in spec.jobs]
+        if not named:
+            used = "used by no job (each job in [light] jobs has a table of its own)"
+        else:
+            used = "for " + (named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1])
+        for check in _light_spec_checks(config, spec.config, environ, suffix=suffix):
+            if check.name.startswith("light model"):
+                check = replace(check, detail=f"{used}: {check.detail}")
+            checks.append(check)
+    return checks
+
+
+def _light_spec_checks(config, light, environ: Mapping[str, str], *, suffix: str = "") -> list[Check]:
+    """One light engine spec, checked; every check's name ends in `suffix` (the job tables that
+    set the spec, or "" for [light]'s own)."""
     import importlib.util
 
-    light = config.light
     if light.engine == "rules":
-        return [Check("light model", True, "none, the rules alone (optional: an open-weight model on this machine, "
-                      "e.g. served by Ollama at http://127.0.0.1:11434/v1; see [light] in `flightdeck config --example`, "
-                      "and measure one first with `flightdeck eval-local`)", essential=False)]
+        return [Check("light model" + suffix, True, "none, the rules alone (optional: an open-weight model on this "
+                      "machine, e.g. served by Ollama at http://127.0.0.1:11434/v1; see [light] in `flightdeck config "
+                      "--example`, and measure one first with `flightdeck eval-local`)", essential=False)]
     if light.engine == "cactus":
         found = importlib.util.find_spec("cactus") is not None
         detail = "Cactus Needle, " + ("installed" if found else "not installed")
-        return [Check("light model", found, detail + "; measure it: flightdeck eval-local --engine cactus",
+        return [Check("light model" + suffix, found, detail + "; measure it: flightdeck eval-local --engine cactus",
                       f'{EXTRA_CACTUS}, or set [light] engine = "rules"', essential=False)]
     if light.engine == "decider":
-        return _decider_checks(light, config.source)
+        return [replace(check, name=check.name + suffix) for check in _decider_checks(light, config.source)]
     shown = _shown(light.base_url)
     measure = f"flightdeck eval-local --engine {light.engine} --model {light.model}"
     thinking = ""
@@ -645,14 +670,14 @@ def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
     if light.engine == "anthropic":
         detail += (" (a provider's classifier can decline security work: a refusal leaves the rules' answer, and an "
                    "open-weight model on this machine is recommended)")
-    checks = [Check("light model", True, detail, essential=False)]
+    checks = [Check("light model" + suffix, True, detail, essential=False)]
     if light.key_env:
         reported = bool(config.api.key_env) or bool(config.fallback is not None and config.fallback.key_env)
         checks += [replace(c, essential=False) for c in
-                   _key_check("light key", light.key_env, environ, "", keys_file_checked=reported)]
+                   _key_check("light key" + suffix, light.key_env, environ, "", keys_file_checked=reported)]
     if light.engine == "openai":
         checks += [replace(c, essential=False) for c in
-                   _local_server_check(light.base_url, (light.model,), name="light server", source=config.source)]
+                   _local_server_check(light.base_url, (light.model,), name="light server" + suffix, source=config.source)]
     return checks
 
 
