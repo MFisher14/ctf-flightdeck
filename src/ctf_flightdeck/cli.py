@@ -103,9 +103,19 @@ class Submit(StrEnum):
 @app.command(rich_help_panel=PLAY)
 def play(
     board: Annotated[
-        Path,
-        typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A folder of challenge folders (each with a challenge.json)."),
-    ],
+        Path | None,
+        typer.Argument(
+            file_okay=False, dir_okay=True, show_default=False,
+            help="A folder of challenge folders (each with a challenge.json); for a CTFd event, the folder its board is pulled into.",
+        ),
+    ] = None,
+    event: Annotated[
+        Path | None,
+        typer.Option(
+            "--event", dir_okay=False, metavar="EVENT.toml",
+            help="The event profile: play by the event's rules and policies (`flightdeck preflight` checks it).",
+        ),
+    ] = None,
     answers: Annotated[
         Path | None,
         typer.Option("--answers", exists=True, dir_okay=False, help="sha256 answers file (default: answers.sha256.json in the board, if any)."),
@@ -117,7 +127,19 @@ def play(
     host: Annotated[
         bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker (default: the config's runtime).")
     ] = None,
-    team: Annotated[bool, typer.Option("--team/--solo", help="Team or solo mode.")] = False,
+    team: Annotated[
+        bool | None, typer.Option("--team/--solo", help="Team or solo mode (default: the event profile's, else solo).")
+    ] = None,
+    team_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--team-dir", file_okay=False, metavar="FOLDER",
+            help="Team mode through the folder your teammates share (`flightdeck team init` makes it).",
+        ),
+    ] = None,
+    handle: Annotated[
+        str | None, typer.Option("--handle", metavar="NAME", help="Your name in the team folder (default: your login name).")
+    ] = None,
     submit: Annotated[
         Submit | None, typer.Option("--submit", help="confirm: you approve each flag; auto: submit at once (default: the config's).")
     ] = None,
@@ -127,11 +149,13 @@ def play(
         Path | None, typer.Option("--pack", file_okay=False, help="Your L1 pack: no-model solvers a lane runs first (default: the config's [l1] pack).")
     ] = None,
 ) -> None:
-    """Play a board with agent lanes. Spends tokens on the API in your config."""
+    """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
+    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens
+    on the API in your config."""
     from .run import RunError, RunOptions, host_warning, prepare_run
 
     options = RunOptions(
-        board=board.expanduser(),
+        board=board.expanduser() if board else None,
         answers=answers.expanduser() if answers else None,
         config=config.expanduser() if config else None,
         max_lanes=max_lanes,
@@ -141,6 +165,10 @@ def play(
         model=model,
         run_dir=run_dir.expanduser() if run_dir else None,
         pack=pack.expanduser() if pack else None,
+        event=event,  # load_profile expands ~ itself, and says so when it cannot
+        team_dir=team_dir.expanduser() if team_dir else None,
+        handle=handle,
+        confirm=_ask if _at_terminal() else None,
     )
     try:
         run = prepare_run(options)
@@ -159,8 +187,13 @@ def play(
         if card:
             typer.echo(card, nl=False)
         typer.echo(f"run log: {run.log.path}")
-        for problem in run.driver.errors:
+        for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
+
+
+def _ask(question: str) -> bool:
+    """A yes/no question to the player at the terminal; no is the default."""
+    return typer.confirm(question, default=False)
 
 
 @app.command(rich_help_panel=PLAY)
