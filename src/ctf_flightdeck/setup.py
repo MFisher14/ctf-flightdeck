@@ -60,6 +60,36 @@ LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus")  # `init --lig
 LIGHT_EXAMPLES = "Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B or Phi-4-mini"  # to measure, not endorsements
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
+# What init suggests for a server on this machine: the default at its prompt, named in its
+# message away from a terminal, never written without the player choosing it. From a benchmark
+# of four open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11), not a guarantee.
+BENCHMARK = "in a benchmark on one machine"
+SUGGESTED_LADDERS = {
+    "local": ("gpt-oss:20b", f"the one local model that solved practice challenges as served (2 of 4), {BENCHMARK}"),
+    "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
+            f"it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 tokens, {BENCHMARK}"),
+}
+SUGGESTED_LIGHT = {  # `init --light ollama|mlx`, with thinking off
+    "ollama": ("qwen3.5:9b", f"with thinking off it scored 42 of 44 in eval-local against the rules' 38, {BENCHMARK}"),
+    "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
+            f"with thinking off it scored 41 of 44 in eval-local against the rules' 38, {BENCHMARK}"),
+}
+MLX_MAX_TOKENS = 8192  # the --max-tokens init suggests for mlx_lm.server (its own default is 512)
+
+
+def mlx_server_command(model: str, base_url: str = PROVIDERS["mlx"][0]) -> str:
+    """How to start mlx_lm.server for `model` as init suggests: replies of up to 8192 tokens and
+    thinking off (--chat-template-args, for every request it serves), on 127.0.0.1 (its default
+    host) at the port `base_url` names (8080, its default, unless another is given). The model
+    id is quoted for the shell."""
+    import shlex
+    from urllib.parse import urlsplit
+
+    port = urlsplit(base_url).port
+    command = (f"mlx_lm.server --model {shlex.quote(model)} --max-tokens {MLX_MAX_TOKENS} "
+               """--chat-template-args '{"enable_thinking":false}'""")
+    return command + (f" --port {port}" if port is not None and port != 8080 else "")
+
 
 @dataclass(frozen=True)
 class LightAnswers:
@@ -70,12 +100,13 @@ class LightAnswers:
     base_url: str = ""
     key_env: str = ""
     price: Price | None = None
+    thinking: bool | None = None  # openai only: written as [light] thinking when set
 
 
 def light_answers(choice: str, model: str | None) -> LightAnswers | None:
     """[light] for `init --light CHOICE [--light-model MODEL]`: None for rules. ValueError says
     what is missing. ollama and mlx are an open-weight model served on this machine: the
-    recommended light model, measured first with eval-local."""
+    recommended light model, measured first with eval-local, and written with thinking off."""
     if choice == "rules":
         if model:
             raise ValueError("--light-model needs --light ollama, mlx or anthropic")
@@ -83,11 +114,13 @@ def light_answers(choice: str, model: str | None) -> LightAnswers | None:
     if choice in ("ollama", "mlx"):
         url = PROVIDERS["local" if choice == "ollama" else "mlx"][0]
         if not model:
+            suggested, why = SUGGESTED_LIGHT[choice]
             raise ValueError(
-                f"--light {choice} needs --light-model, the name your server gives the model (examples to measure: "
-                f"{LIGHT_EXAMPLES}); measure it first: flightdeck eval-local --engine openai --base-url {url} --model <model>"
+                f"--light {choice} needs --light-model, the name your server gives the model (suggested: --light-model "
+                f"{suggested}: {why}; examples to measure: {LIGHT_EXAMPLES}); measure it first: flightdeck eval-local "
+                f"--engine openai --base-url {url} --model <model>"
             )
-        return LightAnswers("openai", model, url, "")
+        return LightAnswers("openai", model, url, "", thinking=False)
     if choice == "anthropic":
         model = model or LIGHT_ANTHROPIC
         return LightAnswers("anthropic", model, ANTHROPIC[0], ANTHROPIC[1], ANTHROPIC_PRICES.get(model))
@@ -104,8 +137,9 @@ def light_line(light: LightAnswers | None) -> str:
         return ("light model: none, the rules alone. Recommended when you want one: an open-weight model on this "
                 "machine (`flightdeck init --light ollama --light-model <model>`), measured first with `flightdeck eval-local`")
     if light.engine == "openai":
-        return (f"light model: {light.model} on this machine; measure it against the rules: flightdeck eval-local "
-                f"--engine openai --base-url {light.base_url} --model {light.model}")
+        thinking = ", thinking off (asked for with each request)" if light.thinking is False else ""
+        return (f"light model: {light.model} on this machine{thinking}; measure it against the rules: flightdeck "
+                f"eval-local --engine openai --base-url {light.base_url} --model {light.model}")
     if light.engine == "anthropic":
         return (f"light model: {light.model} (Anthropic): a refusal leaves the rules' answer; an open-weight model on "
                 "this machine has no provider classifier in front of it. Measure it: flightdeck eval-local --engine "
@@ -142,6 +176,8 @@ class Answers:
     prices: Mapping[str, Price] = field(default_factory=dict)  # [prices], per model in the ladder
     fallback: FallbackAnswers | None = None
     light: LightAnswers | None = None  # [light]; None: the rules alone
+    timeout: float | None = None  # [api] timeout, written when set (init: a server on this machine)
+    max_tokens: int | None = None  # [api] max_tokens, written when set (init: a server on this machine)
 
 
 def render(answers: Answers) -> str:
@@ -159,7 +195,8 @@ def render(answers: Answers) -> str:
         + provider
         + f"base_url = {_toml(answers.base_url)}\n"
         f"key_env = {_toml(answers.key_env)}   # the environment variable holding your key (never the key)\n"
-        "\n"
+        + _api_limits(answers)
+        + "\n"
         "[models]\n"
         f"ladder = [{models}]   # weakest first; escalation moves right\n"
         "\n"
@@ -180,6 +217,21 @@ def render(answers: Answers) -> str:
 def _toml(text: str) -> str:
     """`text` as a TOML basic string: a quote or backslash in it cannot end the string early."""
     return json.dumps(text, ensure_ascii=False)
+
+
+def _api_limits(answers: Answers) -> str:
+    """[api] timeout and max_tokens, each with why, when the answers set them."""
+    out = ""
+    if answers.timeout is not None:
+        out += ("# Seconds a lane waits for one reply before it tries again (180 when unset). A model on this machine\n"
+                "# can take minutes for one: Gemma 4 12B on Ollama, at about 22 tokens a second, ran past 180 s\n"
+                f"# {BENCHMARK}.\n"
+                f"timeout = {answers.timeout:g}\n")
+    if answers.max_tokens is not None:
+        out += ("# The most tokens a lane's reply may hold (mlx_lm.server's own default is 512, too few for a model\n"
+                "# that reasons first). Leave it out for OpenAI's own API: its reasoning models refuse max_tokens.\n"
+                f"max_tokens = {answers.max_tokens}\n")
+    return out
 
 
 def _prices(prices: Mapping[str, Price]) -> str:
@@ -214,6 +266,16 @@ def _fallback(spare: FallbackAnswers | None) -> str:
 
 class AnswerError(ValueError):
     """An answer init cannot use. The message says what is wanted and never shows the answer."""
+
+
+def light_model_answer(text: str) -> str:
+    """The light model's id, as its server names it: one id, no spaces or control characters."""
+    from .config import _plain
+
+    model = text.strip()
+    if not model or not _plain(model):
+        raise AnswerError("give the model's id as your server names it (one id, no spaces)")
+    return model
 
 
 def provider_answer(text: str) -> str:
@@ -292,6 +354,13 @@ def _light(light: LightAnswers | None) -> str:
         return out + "\n"
     out += f"model = {json.dumps(light.model)}\nbase_url = {json.dumps(light.base_url)}\n"
     out += f"key_env = {json.dumps(light.key_env)}" + ("   # a server on this machine needs no key\n" if not light.key_env else "\n")
+    if light.thinking is not None:
+        if not light.thinking:
+            out += ("# Thinking off: each request asks the model to answer without reasoning first. As served, a model\n"
+                    "# that reasons first spent eval-local's few hundred tokens a job reasoning and answered nothing;\n"
+                    "# with thinking off, Qwen3.5 9B and Gemma 4 12B beat the rules (41 or 42 of 44 against 38)\n"
+                    f"# {BENCHMARK}.\n")
+        out += f"thinking = {'true' if light.thinking else 'false'}\n"
     if light.price is not None:
         parts = [f"input = {light.price.input:g}", f"output = {light.price.output:g}"]
         if light.price.cached_input is not None:
@@ -389,9 +458,11 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     if config is not None:
         if config.api.provider == "openai":
             checks += _local_server_check(config.api.base_url, config.models, source=config.source)
+            checks += _lane_calls(config.api, "api")
         spare = config.fallback
         if spare is not None and spare.provider == "openai":
             checks += _local_server_check(spare.base_url, spare.ladder, name="fallback server", source=config.source)
+            checks += _lane_calls(spare, "fallback")
         checks += _light_checks(config, environ)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
@@ -474,9 +545,13 @@ def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
                       f'{EXTRA_CACTUS}, or set [light] engine = "rules"', essential=False)]
     shown = _shown(light.base_url)
     measure = f"flightdeck eval-local --engine {light.engine} --model {light.model}"
+    thinking = ""
     if light.engine == "openai":
+        from .config import light_thinking
+
         measure += f" --base-url {shown}"
-    detail = f"{light.engine} {light.model} at {shown}; measure it against the rules: {measure}"
+        thinking = ", thinking off (asked for with each request)" if not light_thinking(light) else ", thinking on"
+    detail = f"{light.engine} {light.model} at {shown}{thinking}; measure it against the rules: {measure}"
     if light.engine == "anthropic":
         detail += (" (a provider's classifier can decline security work: a refusal leaves the rules' answer, and an "
                    "open-weight model on this machine is recommended)")
@@ -565,6 +640,28 @@ def _local_server_check(base_url: str, ladder: Sequence[str], *, name: str = "mo
         return [Check(name, False, f"{_shown(base_url)} does not serve {not_listed(gone, listed)}",
                       f"pull the model into the server (for Ollama: ollama pull NAME), or change {key}{where} to ids it serves")]
     return [Check(name, True, f"{shown} serves {', '.join(ladder)}")]
+
+
+def _lane_calls(table, name: str) -> list[Check]:
+    """For an OpenAI-compatible server on this machine ([api] or [fallback]): the max_tokens a
+    lane's calls send and how long one try may take, each with where it comes from. A slow
+    local model needs both: a 512-token cap ends its reply mid-thought, and a try that runs out
+    of time is given up and made again."""
+    from .agent.client import DEFAULT_TIMEOUT
+    from .config import LOCAL_TIMEOUT, lane_max_tokens
+    from .light import on_this_machine
+
+    if table.provider != "openai" or not on_this_machine(table.base_url):
+        return []
+    tokens = lane_max_tokens(table.provider, table.base_url, table.max_tokens)
+    said = f"[{name}] max_tokens" if table.max_tokens is not None else "the default for a server on this machine"
+    if table.timeout is not None:
+        wait = f"{table.timeout:g} s per try ([{name}] timeout)"
+    else:
+        wait = (f"{DEFAULT_TIMEOUT:g} s per try (the default; a model on this machine can take longer for one reply: "
+                f"timeout = {LOCAL_TIMEOUT} under [{name}] gives it {LOCAL_TIMEOUT // 60} minutes, as init writes)")
+    detail = f"to {_shown(table.base_url)}: replies of up to {tokens} tokens (max_tokens, {said}), {wait}"
+    return [Check("lane calls" if name == "api" else "fallback calls", True, detail)]
 
 
 def _shown(url: str) -> str:
