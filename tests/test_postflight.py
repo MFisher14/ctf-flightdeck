@@ -33,6 +33,7 @@ from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.mock.world import ManualClock
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.postflight import md_code, md_fence, md_text, report, solves, summary
+from ctf_flightdeck.practice_mode import score, scorecard
 from ctf_flightdeck.runrecord import load_run
 from ctf_flightdeck.text import untrusted
 from ctf_flightdeck.transcript import TranscriptLog
@@ -88,13 +89,13 @@ class RecordingDriver:
 class Script:
     """A run played by script; the real deck, EventLog and TranscriptLog write its folder."""
 
-    def __init__(self, folder: Path, *, flags=None, models=MODELS, team=True, max_lanes=8, clock=None) -> None:
+    def __init__(self, folder: Path, *, flags=None, models=MODELS, team=True, max_lanes=8, clock=None, event="test") -> None:
         self.folder = folder
         self.clock = clock if clock is not None else ManualClock(0.0)
         self.driver = RecordingDriver()
         self.flags = dict(flags or {})
         self.models = models
-        config = DeckConfig(event="test", team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, models=models)
+        config = DeckConfig(event=event, team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, models=models)
         self.deck = Deck(config, self.driver, self.clock, lambda cid, flag: self.flags.get(cid) == flag)
         self.log = EventLog(folder / "events.jsonl")
         self.log.attach(self.deck)
@@ -337,8 +338,21 @@ def test_at_a_glance_counts_the_run_with_the_boards_names_and_points(played):
     ]
 
 
-def test_without_the_board_unknown_points_are_said_not_guessed(played):
+def test_without_the_board_the_run_log_names_the_event_and_every_challenge(played):
     _, record = played
+    text = report(record)
+    glance = items(sections(text)["At a glance"])
+    assert glance[0] == "Event: test (from the run log)"  # the deck's event, as its releases recorded it
+    assert "Points: 700 of 1250" in glance  # India had no lane and no transcript: its release named it
+    assert "### India (web, 100 pts): not solved" in text.splitlines()
+    assert "Problems reading the run" not in sections(text)
+    assert text.startswith("# Post-flight: test\n")
+    assert summary(record).splitlines()[0] == "Post-flight: test, run run"
+
+
+def test_an_older_log_without_the_board_says_what_it_lacks_never_guesses(played):
+    _, record = played
+    record = load_run(older(record.dir))
     text = report(record)
     glance = items(sections(text)["At a glance"])
     assert glance[0] == "Event: not in the run log (give --board to name it)"
@@ -347,6 +361,7 @@ def test_without_the_board_unknown_points_are_said_not_guessed(played):
     assert "- no name or points in the run for india (give --board to fill them in)" in text.splitlines()
     assert "### Bravo (web, 100 pts): solved by L1 engine sqli" in text.splitlines()  # from L08's transcript
     assert text.startswith("# Post-flight: run run\n")
+    assert summary(record).splitlines()[0] == "Post-flight: event not in the run log, run run"
 
 
 def test_solves_are_credited_to_whoever_got_there_first(tmp_path):
@@ -367,6 +382,59 @@ def test_solves_are_credited_to_whoever_got_there_first(tmp_path):
         "z": ("player", ME, 5.0), "x": ("lane", "L01", 5.0), "y": ("lane", "L02", 9.0),
     }
     assert "- Solves: 3 (lanes 2, L1 0, teammates 0, you 1)" in report(record).splitlines()
+
+
+def test_a_solve_the_platform_lists_is_yours_or_your_teams_never_a_teammates(tmp_path):
+    run = Script(tmp_path, flags={"z": "t{z}"}, team=False)
+    run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "misc", 20), Challenge("z", "Z", "misc", 30)])
+    x, y, z = run.lane("x"), run.lane("y"), run.lane("z")
+    run.deck.platform_solved("x", "you", before_run=True)  # solved by hand before this run started
+    run.at(30)
+    run.deck.platform_solved("y", "your team")  # CTFd in teams mode: you or a teammate, it cannot say which
+    run.turn(z, "solve", flag="t{z}")
+    run.do(iv.Approve(z))
+    record = run.close()
+    text = report(record)
+    assert "- Solves: 3 (lanes 1, L1 0, teammates 0, you 1, your team on the platform 1)" in text.splitlines()
+    assert "- Points: 60 of 60" in text.splitlines()
+    timeline = sections(text, "### ")
+    assert entries(timeline["X (misc, 10 pts): solved by you on the platform, before this run"])[-1] == (
+        f"the platform lists it as solved by you, from before this run; flightdeck stopped {x} (the solve)"
+    )
+    assert entries(timeline["Y (misc, 20 pts): solved by your team on the platform"])[-1] == (
+        f"the platform lists it as solved by your team; flightdeck stopped {y} (the solve)"
+    )
+    assert summary(record).splitlines()[1].endswith(
+        "3 solved (lanes 1, L1 0, teammates 0, you 1, your team on the platform 1), 60 of 60 points"
+    )
+
+
+def test_an_older_logs_solve_by_your_team_is_the_platforms_not_a_teammates(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    run.deck.teammate_solved("x", "your team")  # how run.py recorded a solve CTFd listed, before platform solves
+    text = report(run.close())
+    assert "### X (misc, 10 pts): solved by your team on the platform" in text.splitlines()
+    assert "- Solves: 1 (lanes 0, L1 0, teammates 0, you 0, your team on the platform 1)" in text.splitlines()
+
+
+def test_a_warning_about_several_challenges_is_on_each_timeline_and_one_about_none_has_its_own_section(tmp_path):
+    run = Script(tmp_path, team=False)
+    run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "misc", 20)])
+    run.at(60)
+    listed = "CTFd lists X, Y as solved for your account (by you or your team), and this run did not solve them"
+    run.deck.warn(listed, data={"source": "ctfd", "solved": ["x", "y"]})  # as run.py warns in solo mode
+    run.at(120)
+    run.deck.warn("could not read the solves from CTFd: HTTP 400; flightdeck tries again in 60 s", data={"source": "ctfd"})
+    record = run.close()
+    text = report(record)
+    timeline = sections(text, "### ")
+    for heading in ("X (misc, 10 pts): not solved", "Y (misc, 20 pts): not solved"):
+        assert items(timeline[heading])[-1] == f"T+00:01:00 · warning: {listed}"
+    assert items(sections(text)["Warnings for the whole run"]) == [
+        "T+00:02:00 · could not read the solves from CTFd: HTTP 400; flightdeck tries again in 60 s",
+    ]
+    assert "1 warning for the whole run: see the report" in summary(record).splitlines()
 
 
 def test_an_l1_flag_is_a_solve_only_once_it_is_accepted(tmp_path):
@@ -559,11 +627,11 @@ def test_warnings_and_budget_requests_are_on_the_timeline(tmp_path):
     run.turn(run.lane("x"), "big read", tokens=1200)  # over the cap: it asks for more
     text = report(run.close())
     timeline = sections(text, "### ")
-    no_lane = timeline["y (category unknown, points unknown): not solved"]  # no lane, so no name without --board
+    no_lane = timeline["Y (misc, 20 pts): not solved"]  # no lane, no transcript: its release names it
     assert entries(no_lane) == ["released (Board)", "warning: could not start a lane on Y: no container runtime"]
     x = entries(timeline["X (misc, 10 pts): not solved"])
     assert "L01 asked for approval: raise the cap by 50% (now 1k of 1k tokens)" in x
-    assert "- Points: 0 of at least 10 (1 challenge with no known points)" in text.splitlines()
+    assert "- Points: 0 of 30" in text.splitlines()
 
 
 def test_the_release_comes_first_on_a_clock_that_moves_on_every_read(tmp_path):
@@ -577,7 +645,7 @@ def test_the_release_comes_first_on_a_clock_that_moves_on_every_read(tmp_path):
     assert kinds.index("lane.start") < kinds.index("warning") < kinds.index("release")  # as the deck logs a release
     timeline = sections(report(record), "### ")
     x = items(timeline["X (misc, 10 pts): not solved"])
-    y = items(timeline["y (category unknown, points unknown): not solved"])
+    y = items(timeline["Y (misc, 20 pts): not solved"])
     assert [re.sub(r"^T\+\S+ · ", "", item) for item in x[:2]] == ["released (Board)", "L01 started on small"]
     assert [re.sub(r"^T\+\S+ · ", "", item) for item in y] == [
         "released (Board)", "warning: could not start a lane on Y: no container runtime",
@@ -839,6 +907,105 @@ def test_a_flag_queued_behind_another_was_found_when_the_lane_proposed_it(tmp_pa
     assert line.endswith("(on X); L01 solved it with a flag already waiting since T+00:00:40")
 
 
+@pytest.mark.parametrize("step", ["hint", "redirect"])
+def test_a_hint_or_redirect_did_not_help_a_fresh_lane_that_never_got_it(tmp_path, step):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    first = run.lane("x")
+    run.at(60)
+    run.do(iv.Hint(first, "the key is in the file name") if step == "hint" else iv.Redirect(first, "read the file name"))
+    run.at(70)
+    run.do(iv.Kill(first, requeue=True))  # a fresh lane: no hints, none of the plan
+    fresh = run.lane("x")
+    run.at(130)
+    run.turn(fresh, "cat note", flag="t{x}")
+    run.do(iv.Approve(fresh))
+    record = run.close()
+    found = sections(report(record), "### ")
+    assert found["Helped (0)"] == ["None."]
+    (line,) = items(found["No effect seen (1)"])
+    assert line.endswith(f"(on X); {fresh} solved it, a lane this {step} never reached")
+    assert "Interventions: 0 helped, 1 no effect seen" in summary(record).splitlines()
+
+
+def test_a_fork_helped_when_it_solved_and_a_hint_to_its_parent_before_or_after_did_not(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    parent = run.lane("x")
+    run.at(10)
+    run.do(iv.Hint(parent, "early hint"))  # the fork starts with its own approach, never the parent's hints
+    run.at(20)
+    run.do(iv.Fork(parent, "try binwalk"))
+    fork = run.newest()
+    run.at(30)
+    run.do(iv.Hint(parent, "late hint"))
+    run.at(40)
+    run.turn(fork, "binwalk -e", flag="t{x}")
+    run.do(iv.Approve(fork))
+    found = sections(report(run.close()), "### ")
+    (helped,) = items(found["Helped (1)"])
+    assert helped.startswith(f"T+00:00:20 · you: fork {parent}: try binwalk") and helped.endswith(f"{fork} solved it 1 turn and 20s later")
+    assert [line.split(" → ")[0] + " | " + line.split("(on X); ")[1] for line in items(found["No effect seen (2)"])] == [
+        f"T+00:00:10 · you: hint {parent}: early hint | {fork} solved it, a lane this hint never reached",
+        f"T+00:00:30 · you: hint {parent}: late hint | {fork} solved it, a lane this hint never reached",
+    ]
+
+
+def test_a_fork_did_not_help_when_its_parent_solved(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    parent = run.lane("x")
+    run.at(10)
+    run.do(iv.Fork(parent, "try binwalk"))
+    fork = run.newest()
+    run.at(20)
+    run.turn(parent, "cat note", flag="t{x}")
+    run.do(iv.Approve(parent))
+    (line,) = items(sections(report(run.close()), "### ")["No effect seen (1)"])
+    assert line.endswith(f"(on X); {parent} solved it, not the fork {fork}")
+
+
+def test_an_escalation_helped_a_lane_re_queued_from_its_lane_which_starts_on_the_stronger_model(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    first = run.lane("x")
+    run.at(10)
+    run.do(iv.Escalate(first))
+    run.at(20)
+    run.do(iv.Kill(first, requeue=True))
+    second = run.lane("x")
+    run.at(25)
+    run.do(iv.Kill(second, requeue=True))  # re-queued again: still the model the escalation chose
+    third = run.lane("x")
+    assert run.deck.lanes[third].model == "big"
+    run.at(30)
+    run.turn(third, "solve", flag="t{x}")
+    run.do(iv.Approve(third))
+    (line,) = items(sections(report(run.close()), "### ")["Helped (1)"])
+    assert line.startswith(f"T+00:00:10 · you: escalate {first}") and line.endswith(f"(on X); {third} solved it 1 turn and 20s later")
+
+
+def test_the_stall_and_the_interventions_tell_the_same_story(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    first = run.lane("x")
+    run.turn(first, "ls", alerts=(Alert(AlertKind.STALL, "idle"),))
+    run.at(30)
+    run.do(iv.Hint(first, "look at the headers"))
+    run.at(40)
+    run.do(iv.Kill(first, requeue=True))
+    fresh = run.lane("x")
+    run.at(50)
+    run.turn(fresh, "curl -I", flag="t{x}")
+    run.do(iv.Approve(fresh))
+    record = run.close()
+    stall = items(sections(report(record), "### ")["T+00:00:00 · L01 on X: Stall"])
+    assert stall[3] == f"Solved within 10 turns: no, {first} did not solve it (lane {fresh} did)"
+    lines = summary(record).splitlines()
+    assert "Stalls: 1 alert, 1 answered, 0 then solved within 10 turns" in lines
+    assert "Interventions: 0 helped, 1 no effect seen" in lines  # the hint went to L01, which did not solve it
+
+
 def test_a_solve_by_a_teammate_after_a_hint_is_not_the_hint_helping(tmp_path):
     run = Script(tmp_path)
     run.release([Challenge("x", "X", "misc", 10)])
@@ -889,16 +1056,59 @@ def test_tokens_counted_outside_a_turn_get_their_own_row(tmp_path):
     assert rows[2] == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "$0.04"]
 
 
-def test_tokens_outside_a_turn_of_a_lane_with_no_known_price_have_unknown_dollars(tmp_path):
+def test_spend_outside_a_turn_keeps_its_price_after_a_turn_with_none(tmp_path):
     run = Script(tmp_path)
     run.release([Challenge("x", "X", "misc", 10)])
     lane = run.lane("x")
     run.turn(lane, "look", tokens=1000, dollars=0.1)
     run.turn(lane, "look again", tokens=500, dollars=None)  # on a model with no price: the lane's dollars are unknown
-    run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04))  # a reply dropped on escalation
-    rows = table_rows(report(run.close()))
-    outside = next(row for row in rows if row[0].startswith("outside a turn"))
+    run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04, why="a reply dropped on escalation"))
+    record = run.close()
+    text = report(record)
+    outside = next(row for row in table_rows(text) if row[0].startswith("outside a turn"))
+    assert outside == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "$0.04"]  # the API's own price
+    assert "- Dollars: unknown (at least $0.14; the lane had a turn with no price)" in text.splitlines()
+    assert "L01 spent 400 tokens outside a turn ($0.04): a reply dropped on escalation" in entries(
+        sections(text, "### ")["X (misc, 10 pts): not solved"]
+    )
+
+
+def test_an_older_log_without_spend_events_cannot_price_what_a_lane_with_no_price_spent_outside_a_turn(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "look", tokens=1000, dollars=0.1)
+    run.turn(lane, "look again", tokens=500, dollars=None)
+    run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04))
+    run.close()
+    text = report(load_run(older(tmp_path)))  # only the transcript's totals say what was spent outside a turn
+    outside = next(row for row in table_rows(text) if row[0].startswith("outside a turn"))
     assert outside == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "unknown"]  # not $0.00
+    assert "- Dollars: unknown (at least $0.10; the lane had a turn with no price)" in text.splitlines()
+
+
+def test_the_report_the_scorecard_and_the_console_give_the_same_floor_for_dollars(tmp_path):
+    """A priced turn, a reply dropped on escalation whose cost the API reported, then a turn on
+    a model with no price; and a lane priced throughout. $0.80 had a price: every report says so."""
+    board = load_board(write_board(tmp_path / "board"))
+    run = Script(tmp_path / "run", flags=FLAGS)
+    run.release([b.challenge for b in board.challenges if b.challenge.id in ("alpha", "bravo")])
+    alpha, bravo = run.lane("alpha"), run.lane("bravo")
+    run.turn(alpha, "cat note", dollars=0.20)
+    run.deck.report(alpha, TurnReport(turn=False, tokens=1240, dollars=0.30, why="a reply dropped on escalation"))
+    run.do(iv.Escalate(alpha))
+    run.turn(alpha, "submit", dollars=None, flag="t{alpha}")  # the big model has no price anywhere
+    run.do(iv.Approve(alpha))
+    for n in range(3):
+        run.turn(bravo, f"try {n}", dollars=0.10, flag="t{bravo}" if n == 2 else None)
+    run.do(iv.Approve(bravo))
+    assert run.deck.totals()[1] == pytest.approx(0.80)  # the console's header: tokens, known dollars, unknown?
+    record = run.close()
+    assert "- Dollars: unknown (at least $0.80; 1 of 2 lanes had a turn with no price)" in report(record).splitlines()
+    assert record.lanes[alpha].known_dollars == pytest.approx(0.50)
+    card = score(record.dir / "events.jsonl", board)
+    assert card.known_dollars == pytest.approx(0.80) and card.dollars is None
+    assert "Spent 6k tokens · $0.80+ · $0.40+ per solve" in scorecard(card).splitlines()
 
 
 # ---------------------------------------------------------------------- lanes that gave up or were killed
@@ -931,7 +1141,7 @@ def test_the_summary_is_a_few_plain_lines(played):
         "Interventions: 2 helped, 2 no effect seen",
         "Lanes: 9 (4 solved, 1 gave up, 1 killed, 2 stopped, 1 still open)",  # L08 ended solved; the solve is L1's
     ]
-    assert summary(record).splitlines()[0] == "Post-flight: event not in the run log, run run"
+    assert summary(record).splitlines()[0] == "Post-flight: test, run run"  # the run log's own name for the event
 
 
 # ---------------------------------------------------------------------- damaged and unfinished runs
@@ -1000,6 +1210,25 @@ def rewrite(path: Path, change) -> None:
     path.write_text("".join(json.dumps(change(line)) + "\n" for line in lines))
 
 
+def older(folder: Path) -> Path:
+    """The run folder as a format 1 log has it: no format, no event or names in the releases,
+    no spend events, and transcripts without known_dollars."""
+
+    def strip(line: dict) -> dict:
+        if line.get("kind") == "run-start":
+            return {k: v for k, v in line.items() if k != "format"}
+        if line.get("kind") == "release":
+            return {**line, "data": {k: v for k, v in line["data"].items() if k not in ("event", "board")}}
+        return line
+
+    rewrite(folder / "events.jsonl", strip)
+    events = folder / "events.jsonl"
+    events.write_text("".join(line + "\n" for line in events.read_text().splitlines() if '"kind": "spend"' not in line))
+    for transcript in (folder / "lanes").glob("*.jsonl"):
+        rewrite(transcript, lambda line: {k: v for k, v in line.items() if k != "known_dollars"})
+    return folder
+
+
 def test_times_that_are_not_times_show_as_unknown_not_a_crash(tmp_path):
     run = Script(tmp_path)
     run.release([Challenge("x", "X", "misc", 10)])
@@ -1066,9 +1295,10 @@ EVIL_STEP = "echo ```` <b>|</b>\n# not a heading\n```"
 
 
 def evil_run(folder: Path):
-    """A run where every text a challenge, lane, player or engine controls is hostile. Lanes:
-    L01 e1, L02 e2, L03 e3, (L04: e5's start fails), L05 e4 (L1 solves it), L06 forks L01."""
-    run = Script(folder, flags={"e1": EVIL_FLAG, "e4": "t{<b>`|`}"}, models=("m<b>|1", "m`2`"))
+    """A run where every text a challenge, lane, player or engine controls is hostile, the
+    event's name too. Lanes: L01 e1, L02 e2, L03 e3, (L04: e5's start fails), L05 e4 (L1
+    solves it), L06 forks L01."""
+    run = Script(folder, flags={"e1": EVIL_FLAG, "e4": "t{<b>`|`}"}, models=("m<b>|1", "m`2`"), event=EVIL)
     run.driver.fail["e5"] = "boom <b>|x\n# h"
     run.release(
         [Challenge(f"e{n}", EVIL + str(n), "web<b>|", 10) for n in range(1, 6)], ["e1", "e2", "e3", "e5", "e4"],
@@ -1084,6 +1314,7 @@ def evil_run(folder: Path):
     run.do(iv.Approve(lane))
     run.turn(run.lane("e2"), "x", gave_up="1. not a list\n- nor this\n> nor a quote\n===")
     run.deck.teammate_solved("e3", "<u>mate</u>|x")
+    run.deck.warn(EVIL)  # a warning that belongs to no challenge
     return run.close()
 
 
@@ -1094,11 +1325,13 @@ def test_hostile_text_renders_as_itself_never_as_markup(tmp_path):
     assert not kinds & FORBIDDEN, kinds & FORBIDDEN
     assert all(t.markup.startswith("#") for t in walk(text) if t.type == "heading_open")  # no "===" heading
     assert all(t.level == 0 for t in walk(text) if t.type == "bullet_list_open")  # no list nested by a value
-    assert headings(text, "h1") == ["Post-flight: run " + tmp_path.name]
+    assert headings(text, "h1") == ["Post-flight: " + fold(EVIL)]  # the event's name, from the run log
     assert headings(text, "h2") == [
-        "At a glance", "Timeline", "Where lanes stalled", "Interventions", "Spend",
-        "Lanes that gave up or were killed", "Problems reading the run",
+        "At a glance", "Timeline", "Warnings for the whole run", "Where lanes stalled", "Interventions", "Spend",
+        "Lanes that gave up or were killed",  # the run log names every challenge: nothing to say about reading it
     ]
+    shown_lines = [shown(t) for t in PARSER.parse(text) if t.type == "inline"]
+    assert f"T+00:00:00 · {fold(EVIL)}" in shown_lines  # the run-wide warning renders as itself
     h3 = headings(text, "h3")
     assert f"{fold(EVIL)}1 (web<b>|, 10 pts): solved by lane L01" in h3
     assert f"{fold(EVIL)}4 (web<b>|, 10 pts): solved by L1 engine eng<i>|`x`" in h3
@@ -1139,9 +1372,10 @@ def test_hostile_text_in_the_summary_is_folded_onto_its_line(tmp_path):
     text = summary(record)
     assert not re.search("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e]", text)
     lines = text.splitlines()
-    assert len(lines) == 7  # title, play, spend, stalls, interventions, lanes, problems: no line of its own
-    assert lines[0] == f"Post-flight: event not in the run log, run {tmp_path.name}"
+    assert len(lines) == 7  # title, play, spend, stalls, interventions, lanes, warnings: no line of its own
+    assert lines[0] == f"Post-flight: {fold(EVIL)}, run {tmp_path.name}"
     assert lines[5] == "Lanes: 5 (2 solved, 1 gave up, 2 stopped)"
+    assert lines[6] == "1 warning for the whole run: see the report"
 
 
 def test_md_helpers_pick_fences_longer_than_any_backtick_run():
@@ -1208,6 +1442,16 @@ def test_report_with_a_board_that_cannot_be_read_fails_with_the_reason(played, t
     assert result.exit_code == 2
     assert "--board:" in result.output and "no challenge directories" in result.output
     assert not (record.dir / "report.md").exists()
+
+
+def test_report_takes_the_event_log_the_run_printed_too(played):
+    _, record = played
+    result = runner.invoke(mounted(), ["report", str(record.dir / "events.jsonl")])
+    assert result.exit_code == 0, result.output
+    assert (record.dir / "report.md").read_text(encoding="utf-8") == report(load_run(record.dir))
+    other = runner.invoke(mounted(), ["report", str(record.dir / "lanes" / "L01.jsonl")])
+    assert other.exit_code == 2
+    assert "not a run folder; give the run folder (the one holding events.jsonl) or its events.jsonl" in other.output
 
 
 def test_report_needs_an_existing_folder(tmp_path):

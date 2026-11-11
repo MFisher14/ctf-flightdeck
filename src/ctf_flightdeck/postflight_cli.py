@@ -1,5 +1,9 @@
 """`flightdeck report RUN_DIR [--board PATH]`: the post-flight report for a run folder.
 
+RUN_DIR is the run folder or its events.jsonl (the path a run prints when it ends). The run
+log names the event and every challenge it released (a format 2 log), so --board only fills
+in what an older log lacks.
+
 cli.py mounts `report_command` as `flightdeck report`; `app` holds it too, for a mount of
 its own. A run folder or board that cannot be read fails with the reason (exit 2), never a
 traceback.
@@ -22,7 +26,7 @@ app = typer.Typer(add_completion=False, help="Post-flight: what happened in a ru
 def report_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A run folder (it holds events.jsonl)."),
+        typer.Argument(exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
     ],
     board: Annotated[
         Path | None,
@@ -35,11 +39,11 @@ def report_command(
     """Write the post-flight report to RUN_DIR/report.md and print a short summary."""
     from .platform.manual import BoardError, load_board
     from .postflight import report, summary
-    from .runrecord import RunFolderError, load_run
+    from .runrecord import RunFolderError, load_run, run_folder
     from .text import untrusted
 
-    run_dir = run_dir.expanduser()
     try:
+        run_dir = run_folder(run_dir.expanduser())
         record = load_run(run_dir)
     except RunFolderError as exc:
         _fail(str(exc))
