@@ -427,20 +427,22 @@ class AgentDriver:
     async def _plant(self, run: _Run) -> None:
         """Remember the flag-format matches in the challenge's own text, its description and
         the handout as it came (the workspace before anything ran in it): a decoy flag.txt, an
-        example in a readme. A flag the model submits that is one of them is not claimed, so
-        it waits for the player under auto too, as agent/external.py does for its agents.
-        What the search did not cover (cut short, or parts of a big handout) is said on the lane."""
+        example in a readme. A flag the model submits, or an L1 engine gives as its result, that
+        is one of them is not claimed, so it waits for the player under auto too, as
+        agent/external.py does for its agents. What the search did not cover (cut short, or
+        parts of a big handout) is said on the lane."""
         found, done, left = await asyncio.to_thread(
             _own_flags, run.workspace.root, run.challenge.description, self._flag_re(), time.monotonic() + PLANT_SECONDS
         )
         run.planted = frozenset(found)
         if not done:
             self.deck.note(run.lane_id, f"the search of the handout for flags stopped after {PLANT_SECONDS:g} s; a flag "
-                                        "the model submits that is written in the rest of it may be submitted without you "
-                                        "under submit auto")
+                                        "the model or an L1 engine gives that is written in the rest of it may be submitted "
+                                        "without you under submit auto")
         elif left:
             self.deck.note(run.lane_id, f"the search of the handout for flags left out {'; '.join(left)}; a flag the model "
-                                        "submits that is written there may be submitted without you under submit auto")
+                                        "or an L1 engine gives that is written there may be submitted without you under "
+                                        "submit auto")
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the

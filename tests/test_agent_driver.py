@@ -519,7 +519,8 @@ def test_a_search_of_the_handout_cut_short_is_said_on_the_lane(tmp_path, monkeyp
             await until(lambda: tried, "the flag submitted")
             assert tried == ["t{note}"]  # not known to be the handout's, so it went out: as the note warns
             assert any(a.text.startswith("the search of the handout for flags stopped after -1 s; a flag the model "
-                                         "submits that is written in the rest of it may be submitted without you")
+                                         "or an L1 engine gives that is written in the rest of it may be submitted "
+                                         "without you")
                        for a in lane.actions)
             await lab.finish()
 
@@ -542,7 +543,7 @@ def test_what_the_search_of_a_big_handout_left_out_is_said_on_the_lane(tmp_path)
             await until(lambda: tried, "the flag submitted")
             assert tried == ["t{in_tail}"]  # not known to be the handout's, so it went out: as the note warns
             assert ("the search of the handout for flags left out the rest of 1 file past its first 1 MB; a flag the "
-                    "model submits that is written there may be submitted without you under submit auto"
+                    "model or an L1 engine gives that is written there may be submitted without you under submit auto"
                     ) in [a.text for a in lane.actions]
             await lab.finish()
 
