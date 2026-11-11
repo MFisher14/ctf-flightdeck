@@ -3,7 +3,9 @@
 
 Runs as the pre-commit hook (--staged), across the whole index (--all), or across every
 file version in the history (--history, before a repository goes public). --add asks for
-strings to deny (without showing them) and appends their digests to the denylist. It never
+strings to deny (without showing them) and appends their digests to the denylist; --remove
+asks for strings that may appear after all (a name made public on purpose) and takes their
+digests out. It never
 prints a matched value: each finding names the file, the rule and, for denylist hits,
 an 8-character sha256 prefix.
 
@@ -112,6 +114,48 @@ def add_to_denylist():
     return 0
 
 
+def _forms(value):
+    """The digests --add stores for one string: as typed, and as names are compared."""
+    return {hashlib.sha256(form.encode("utf-8")).hexdigest() for form in {value, " ".join(value.lower().split())}}
+
+
+def _asked(prompt_intro):
+    """Strings typed without echo (at a terminal), else one per line on stdin."""
+    import getpass
+
+    if not sys.stdin.isatty():
+        return [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
+    print(prompt_intro)
+    values = []
+    while True:
+        value = getpass.getpass("string: ").strip()
+        if not value:
+            return values
+        values.append(value)
+
+
+def remove_from_denylist():
+    """Take strings off the denylist (a name or handle made public on purpose): every digest
+    --add would have stored for each is removed. Prints how many went, never a value."""
+    path = denylist_path()
+    if not path.is_file():
+        print(f"secret-scan: no denylist at {path}; nothing to remove", file=sys.stderr)
+        return 1
+    values = _asked("Type each string that may now appear in the repository. Nothing you type is shown. "
+                    "Press Enter on an empty line to finish.")
+    gone = set().union(*(_forms(value) for value in values)) if values else set()
+    lines = path.read_text().splitlines()
+    kept = [line for line in lines if line.strip() not in gone]
+    removed = len(lines) - len(kept)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text("".join(line + "\n" for line in kept))
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+    print(f"removed {removed} digest(s) for {len(values)} string(s)"
+          + ("" if removed else ": none of them was on the denylist"))
+    return 0
+
+
 def history_blobs():
     """(path, data) for every blob in every commit's tree, each blob once."""
     listing = subprocess.run(["git", "rev-list", "--all", "--objects"], capture_output=True, check=True).stdout
@@ -203,10 +247,12 @@ def scan(path, data, deny):
 
 def main(argv):
     mode = argv[1] if len(argv) > 1 else "--staged"
-    if mode not in ("--staged", "--all", "--history", "--add"):
-        sys.exit("usage: secret_scan.py --staged | --all | --history | --add")
+    if mode not in ("--staged", "--all", "--history", "--add", "--remove"):
+        sys.exit("usage: secret_scan.py --staged | --all | --history | --add | --remove")
     if mode == "--add":
         return add_to_denylist()
+    if mode == "--remove":
+        return remove_from_denylist()
     deny = load_denylist()
     if mode == "--history":
         blobs = list(history_blobs())

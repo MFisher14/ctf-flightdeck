@@ -26,6 +26,10 @@ Private keys. A message key that starts with "_" is flightdeck's own and never g
 request: the Anthropic client (agent/anthropic_client.py) keeps each answer's raw content
 blocks under "_anthropic_content", and a lane that moves to this client mid-context
 (agent/fallback.py) must not send them to an OpenAI-style API.
+
+Per client. `max_tokens` is sent with every call that gives none of its own (a lane's calls:
+[api] max_tokens, or 8192 for a server on this machine; config.lane_max_tokens()), and
+`extra_body` adds fields of a server's own to every request (the light role's thinking off).
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ import json
 import math
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Protocol
@@ -51,7 +55,10 @@ TRANSIENT = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolErr
 """Transport errors a retry can fix: timeouts, refused or dropped connections."""
 
 MAX_WAIT = 30.0  # seconds: the longest pause between tries, whatever Retry-After asks for
+DEFAULT_TIMEOUT = 180.0  # seconds per try when the caller gives none ([api] timeout unset)
 CONNECT_TIMEOUT = 15.0  # seconds: a connection that takes longer is not coming
+_OWN_FIELDS = frozenset({"model", "messages", "session_id", "tools", "tool_choice", "max_tokens", "temperature",
+                         "provider", "stream"})  # what extra_body may not set: the client's own, and what it never sends
 MAX_SESSION_ID = 256  # OpenRouter's limit on session_id
 MAX_ERROR_TEXT = 300  # characters of the server's own words kept in a ModelError
 
@@ -173,7 +180,9 @@ class ModelClient:
     byte of the answer: an answer that is not complete by then is given up on and tried
     again (a non-streaming answer only starts once the model has finished); connecting gets
     at most CONNECT_TIMEOUT of it. A call makes at most `max_retries + 1` tries. With
-    `transport` given, httpx ignores proxy variables.
+    `transport` given, httpx ignores proxy variables. `max_tokens` goes with every call that
+    gives none (None: none is sent), and `extra_body`'s fields with every request; they may not
+    be fields the client sets itself.
     """
 
     def __init__(
@@ -181,11 +190,13 @@ class ModelClient:
         base_url: str,
         api_key: str | None,
         *,
-        timeout: float = 180.0,
+        timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = 4,
         backoff: float = 1.0,
         transport: httpx.AsyncBaseTransport | None = None,
         app_name: str = "ctf-flightdeck",
+        max_tokens: int | None = None,
+        extra_body: Mapping[str, object] | None = None,
     ) -> None:
         self._url = _endpoint(base_url)
         if api_key is not None and not _KEY_CHARS.fullmatch(api_key):
@@ -201,9 +212,13 @@ class ModelClient:
             raise ValueError(f"max_retries must not be negative, got {max_retries}")
         if not backoff >= 0:
             raise ValueError(f"backoff must not be negative, got {backoff}")
+        if max_tokens is not None and (not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1):
+            raise ValueError(f"max_tokens must be a positive whole number, got {max_tokens!r}")
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff = backoff
+        self.max_tokens = max_tokens
+        self.extra_body = _extra(extra_body)
         self._key = api_key
         self._where = str(self._url.copy_with(userinfo=b"", query=None, fragment=None))
         headers = {"Content-Type": "application/json", "X-Title": app_name}
@@ -246,7 +261,8 @@ class ModelClient:
         before_retry, if given, is awaited before each retry, after the backoff: the agent
         driver holds a paused lane's retries there, and stops them (by raising) once the
         call no longer matters. Whatever it raises comes out of chat() as it is."""
-        content = _request_body(model, messages, tools, session_id, max_tokens, temperature)
+        limit = self.max_tokens if max_tokens is None else max_tokens
+        content = _request_body(model, messages, tools, session_id, limit, temperature, self.extra_body)
         if self._closed:
             raise RuntimeError("the model client is closed")
         tries = self.max_retries + 1
@@ -345,6 +361,21 @@ def _endpoint(base_url: str) -> httpx.URL:
     return url.copy_with(path=url.path.rstrip("/") + "/chat/completions")
 
 
+def _extra(fields: Mapping[str, object] | None) -> dict:
+    """extra_body checked: text keys, none of the client's own fields, and values JSON can carry."""
+    if fields is None:
+        return {}
+    if not isinstance(fields, Mapping) or not all(isinstance(key, str) and key for key in fields):
+        raise ValueError("extra_body must map field names to values")
+    taken = sorted(key for key in fields if key in _OWN_FIELDS)
+    if taken:
+        raise ValueError(f"extra_body may not set {', '.join(taken)}: the client sets it, or never sends it")
+    try:
+        return json.loads(json.dumps(dict(fields), allow_nan=False))  # a copy of its own, plain JSON
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"extra_body must be JSON: {type(exc).__name__}") from None
+
+
 def _request_body(
     model: str,
     messages: list[dict],
@@ -352,11 +383,13 @@ def _request_body(
     session_id: str,
     max_tokens: int | None,
     temperature: float | None,
+    extra: Mapping[str, object] | None = None,
 ) -> bytes:
     """The JSON body, encoded once so every try sends the same bytes.
 
     Never a `provider` object: provider.order switches off sticky routing, and with it
-    the prompt cache. Never a private key of a message (public()).
+    the prompt cache. Never a private key of a message (public()). `extra`: a server's own
+    fields (checked by _extra()), after the client's.
     """
     if not isinstance(model, str) or not model:
         raise ValueError("model must be a non-empty string")
@@ -371,6 +404,7 @@ def _request_body(
         body["max_tokens"] = max_tokens
     if temperature is not None:
         body["temperature"] = temperature
+    body.update(extra or {})
     return json.dumps(body, separators=(",", ":"), allow_nan=False).encode("ascii")
 
 

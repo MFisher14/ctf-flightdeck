@@ -151,7 +151,7 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
     installed) leaves the judge off and says why: the light role never stops a run."""
     from urllib.parse import urlsplit
 
-    from ..config import ConfigError, light_key
+    from ..config import ConfigError, light_key, light_thinking
     from ..light import LightError, build, on_this_machine
 
     light = config.light
@@ -179,4 +179,6 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
         note += unpriced + ": a dollar-capped lane asks you once before it carries on without its cap"
     elif light.price is None and light.engine == "openai" and not on_this_machine(light.base_url):
         note += unpriced + " unless the API reports their cost: a dollar-capped lane may ask you once"
+    if light.engine == "openai" and not light_thinking(light):
+        note += "; thinking off: each request asks it to answer without reasoning first ([light] thinking)"
     return HintJudge(engine), note

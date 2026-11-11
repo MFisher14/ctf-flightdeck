@@ -417,10 +417,13 @@ def init(
                                                     "decider: optional, the model its server must serve).")] = None,
 ) -> None:
     """Write a config by answering a few questions (or give them all as options)."""
-    from .setup import light_answers, light_line
+    from .setup import SUGGESTED_LIGHT, light_answers, light_line
 
+    light_choice = light.strip().lower()
+    # at a terminal, a light model on this machine without --light-model is asked for, with a suggestion
+    ask_light = light_choice in SUGGESTED_LIGHT and not light_model and _at_terminal()
     try:
-        light_table = light_answers(light.strip().lower(), light_model)
+        light_table = None if ask_light else light_answers(light_choice, light_model)
     except ValueError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
@@ -433,11 +436,14 @@ def init(
         ANTHROPIC_PRICES,
         LOCAL_PROVIDERS,
         PROVIDERS,
+        SUGGESTED_LADDERS,
         AnswerError,
         Answers,
         anthropic_fallback,
         base_url_answer,
         key_env_answer,
+        light_model_answer,
+        mlx_server_command,
         models_answer,
         provider_answer,
         runtime_answer,
@@ -493,7 +499,10 @@ def init(
             missing.append("--base-url URL")
         if provider == "custom" and key_env is None:
             missing.append("--key-env VAR (--key-env '' for a server that needs no key)")
-        if models is None and provider != "anthropic":
+        if models is None and provider in SUGGESTED_LADDERS:
+            suggested, why = SUGGESTED_LADDERS[provider]
+            missing.append(f"--models ID,ID (weakest first; suggested: --models {suggested}, {why})")
+        elif models is None and provider != "anthropic":
             missing.append("--models ID,ID (weakest first)")
         if host is None:
             missing.append("--host or --docker")
@@ -532,7 +541,10 @@ def init(
     else:
         if provider == "openrouter":
             typer.echo("Model ids look like vendor/model; see https://openrouter.ai/models")
-        ladder = ask(question, models_answer)
+        suggested, why = SUGGESTED_LADDERS.get(provider, (None, ""))
+        if suggested is not None:
+            typer.echo(f"Suggested: {suggested}, {why}. Press Enter to take it, or give your own.")
+        ladder = ask(question, models_answer, suggested)
     prices = {m: ANTHROPIC_PRICES[m] for m in ladder if m in ANTHROPIC_PRICES} if dialect == "anthropic" else {}
     spare, offer = None, ""
     if dialect == "anthropic":
@@ -556,11 +568,25 @@ def init(
                        runtime_answer, default)
     else:
         lanes_at = "host" if host else "docker"
+    if ask_light:
+        suggested, why = SUGGESTED_LIGHT[light_choice]
+        typer.echo(f"Suggested light model: {suggested}, {why}. Press Enter to take it, or give your own.")
+        light_table = light_answers(light_choice, ask("Light model, as your server names it", light_model_answer, suggested))
     # A local model costs nothing and reports no cost: a dollar cap would only make every lane
     # stop once to ask whether to carry on without it.
     dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
+    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
+    from .light import on_this_machine
+
+    here = dialect == "openai" and on_this_machine(base_url)  # a server on this machine: its replies can take minutes
+    mlx_here = provider == "mlx" and on_this_machine(base_url)  # the lanes' MLX server, at whatever port it was given
+    if light_table is not None and light_choice == "mlx" and mlx_here and light_table.model == ladder[0]:
+        from dataclasses import replace
+
+        light_table = replace(light_table, base_url=base_url)  # the one server the player starts serves both
     answers = Answers(base_url, key_env or "", ladder, lanes_at, max_lanes, dollar_cap=dollar_cap,
-                      provider=dialect, prices=prices, fallback=spare, light=light_table)
+                      provider=dialect, prices=prices, fallback=spare, light=light_table,
+                      timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None)
     try:
         written = write_config(answers, target, force=force)
     except (ConfigError, FileExistsError) as exc:
@@ -570,6 +596,27 @@ def init(
     typer.echo(f"wrote {written}")
     if spare is not None:
         typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
+    if here:
+        typer.echo(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
+                   "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
+                   "12B's replies in a benchmark on one machine); change timeout and max_tokens under [api]")
+    if provider == "mlx":
+        typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
+                   "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX in a "
+                   "benchmark on one machine)")
+    if light_table is not None and light_choice == "mlx":
+        import shlex
+        from urllib.parse import urlsplit
+
+        served = shlex.quote(light_table.model)
+        port = urlsplit(light_table.base_url).port  # [light]'s: mlx_lm.server's default 8080, or the lanes' (above)
+        if not (mlx_here and urlsplit(base_url).port == port):  # a server of its own, at the default port
+            typer.echo(f"next: serve the light model: mlx_lm.server --model {served}   (flightdeck asks for thinking off "
+                       "with each request, so it needs no flag for that)")
+        elif light_table.model != ladder[0]:  # the lanes' server, which holds one model at a time
+            typer.echo(f"note: lanes and the light model share the MLX server at {urlsplit(base_url).netloc}, which holds "
+                       "one model at a time; to keep both loaded, serve the light model on another port (mlx_lm.server "
+                       f"--model {served} --port {port + 1}) and set [light] base_url to http://127.0.0.1:{port + 1}/v1")
     try:
         keys_file = str(keys_path())
     except KeysError:

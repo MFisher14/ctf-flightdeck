@@ -6,12 +6,32 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
+authors = [{ name = "Maximus Fisher" }]
+keywords = ["ctf", "capture-the-flag", "security", "ai-agents", "llm", "tui", "terminal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+
 dependencies = [
     "anthropic>=2.8.0,<3",
     "httpx>=0.28",
     "textual>=8.2.8",
     "typer>=0.29.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/MFisher14/ctf-flightdeck"
+Documentation = "https://github.com/MFisher14/ctf-flightdeck#readme"
+Issues = "https://github.com/MFisher14/ctf-flightdeck/issues"
+Changelog = "https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Cactus Needle, an optional on-device model (see src/ctf_flightdeck/needle.py). Pinned: its
