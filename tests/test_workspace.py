@@ -611,6 +611,39 @@ def test_the_container_is_started_from_a_local_image_only_with_limits(tmp_path, 
     assert args[args.index("--entrypoint") + 1] == "sleep" and args[-2:] == [IMAGE, "infinity"]
 
 
+def test_more_mounts_are_read_only_at_the_paths_given_and_a_lane_has_none(tmp_path, handout):
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    lane = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name="flightdeck-test-args")
+    assert lane.run_args().count("-v") == 1
+    ws = DockerWorkspace(tmp_path / "e", handout, image=IMAGE, name="flightdeck-test-args", mounts=[(pack, "/opt/pack")])
+    args = ws.run_args()
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "-v"] == [
+        f"{(tmp_path / 'e').resolve()}:/work",
+        f"{pack.resolve()}:/opt/pack:ro",
+    ]
+
+
+@pytest.mark.parametrize(
+    "source, target, words",
+    [
+        ("nope", "/opt/pack", "not on this machine"),
+        ("pack", "opt/pack", "absolute path"),
+        ("pack", "/", "absolute path"),
+        ("pack", "/opt/../work", "absolute path"),
+        ("pack", "/work", "overlaps /work"),
+        ("pack", "/work/pack", "overlaps /work"),
+        ("pack", "/opt/a:b", "':'"),
+        ("a:b", "/opt/pack", "':'"),
+    ],
+)
+def test_a_mount_that_cannot_be_made_safely_is_refused(tmp_path, handout, source, target, words):
+    for name in ("pack", "a:b"):
+        (tmp_path / name).mkdir()
+    with pytest.raises(ValueError, match=words):
+        DockerWorkspace(tmp_path / "e", handout, image=IMAGE, name="flightdeck-test-args", mounts=[(tmp_path / source, target)])
+
+
 FAKE_DOCKER = r"""#!/bin/bash
 # A stand-in for the docker CLI. It answers what DockerWorkspace asks while it prepares; on a
 # lane's command (exec -i) it records its pid and hangs, the way a stuck docker would.
@@ -765,6 +798,20 @@ def test_the_container_has_the_limits_an_init_and_the_bind_mount(box):
     assert host["NetworkMode"] == "bridge"
     assert host["Init"] is True and host["AutoRemove"] is True
     assert [(m["Source"], m["Destination"]) for m in info["Mounts"]] == [(str(box.root.resolve()), "/work")]
+
+
+def test_a_read_only_mount_is_there_to_read_and_never_written_from_the_container(tmp_path, handout, container_name):
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "tool.sh").write_text("echo from the pack\n")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name, network="none", mounts=[(pack, str(pack))])
+    run(ws.prepare())
+    try:
+        out = run(ws.run(f"bash {pack}/tool.sh; touch {pack}/planted 2>&1; echo made > made.txt", timeout=30)).output.decode()
+    finally:
+        run(ws.close())
+    assert out.splitlines()[0] == "from the pack" and "Read-only file system" in out
+    assert not (pack / "planted").exists() and (ws.root / "made.txt").read_text() == "made\n"
 
 
 def test_a_docker_lane_sees_none_of_the_players_environment(box, monkeypatch):

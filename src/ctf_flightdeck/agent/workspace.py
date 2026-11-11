@@ -38,7 +38,7 @@ import subprocess
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from ..core.model import FileChange
@@ -634,6 +634,10 @@ class DockerWorkspace:
     prepare() refuses an image without bash or timeout, which every command needs. An image
     without python3 (debian:bookworm-slim, say) is fine for the shell, so it only sets
     python_missing, for the python tool to answer, and says so in prepare.log.
+
+    `mounts` are more bind mounts, each (a path on this machine, where the container sees
+    it), read-only: an L1 engine's container (l1/container.py) gets the pack and flightdeck's
+    boot script this way. A lane's own container has none.
     """
 
     def __init__(
@@ -647,6 +651,7 @@ class DockerWorkspace:
         memory: str = "2g",
         cpus: str = "2",
         pids_limit: int = 512,
+        mounts: Sequence[tuple[Path, str]] = (),
     ) -> None:
         _require(bool(_DOCKER_NAME.fullmatch(name)), f"container name {name!r} is not valid (letters, digits, _ . -; at least 2 characters)")
         _require(bool(image) and not image.startswith("-") and not any(c.isspace() for c in image), f"image {image!r} is not a valid image name")
@@ -656,6 +661,7 @@ class DockerWorkspace:
         _require(isinstance(pids_limit, int) and not isinstance(pids_limit, bool) and pids_limit > 0, f"pids_limit must be a positive integer, got {pids_limit!r}")
         self.root = Path(root).absolute()
         _require(":" not in str(self.root.resolve()), f"workspace path {self.root} contains ':', which docker -v cannot mount")
+        self.mounts = tuple(_read_only_mount(source, target) for source, target in mounts)
         self.handout = Path(handout)
         self.image = image
         self.name = name
@@ -783,6 +789,7 @@ class DockerWorkspace:
 
     def run_args(self) -> list[str]:
         """The `docker run` arguments that start this lane's container."""
+        mounts = [arg for source, target in self.mounts for arg in ("-v", f"{source}:{target}:ro")]
         return [
             "run", "-d", "--rm", "--init", "--pull", "never",
             "--name", self.name,
@@ -791,6 +798,7 @@ class DockerWorkspace:
             "--cpus", self.cpus,
             "--pids-limit", str(self.pids_limit),
             "-v", f"{self.root.resolve()}:{CONTAINER_ROOT}",
+            *mounts,
             "-w", CONTAINER_ROOT,
             "--entrypoint", "sleep",
             self.image, "infinity",
@@ -810,6 +818,26 @@ class DockerWorkspace:
 def _require(ok: bool, message: str) -> None:
     if not ok:
         raise ValueError(message)
+
+
+def _read_only_mount(source: Path, target: str) -> tuple[str, str]:
+    """(the path on this machine, resolved; the path in the container) for a read-only bind
+    mount. ValueError when it cannot be one: the source must exist (docker -v would make a
+    missing one, as root), neither path may hold a ':' (docker -v cannot say it), and the
+    target must be an absolute path that stays clear of /work, the lane's copy."""
+    try:
+        real = Path(source).resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ValueError(f"cannot mount {source}: it is not on this machine") from None
+    where = PurePosixPath(target)
+    _require(
+        isinstance(target, str) and "\0" not in target and where.is_absolute() and ".." not in where.parts and len(where.parts) > 1,
+        f"mount target {target!r} must be an absolute path in the container, not / and with no ..",
+    )
+    work = PurePosixPath(CONTAINER_ROOT)
+    _require(not (where == work or work in where.parents or where in work.parents), f"mount target {target} overlaps {CONTAINER_ROOT}, the lane's copy")
+    _require(":" not in str(real) and ":" not in target, f"cannot mount {source}: docker -v cannot mount a path with ':' in it")
+    return str(real), str(where)
 
 
 # ---------------------------------------------------------------- snapshots and diffs
