@@ -50,6 +50,7 @@ _WORDS = re.compile(r"[a-z0-9]+(?:[ _.-][a-z0-9]+)*")  # an action cue made of w
 _URL_OPENERS = "([{<\"'"
 
 BOUNDARY = "|"  # stands for a clause boundary or a blanked phrase in normalised description text
+_SIBILANTS = ("s", "x", "z", "ch", "sh")  # a word ending in one of these takes "es" as its plural
 NEGATION_WINDOW = 4  # words before a cue, in its clause, that can negate it
 NEGATIONS = frozenset({
     "no", "not", "nothing", "never", "none", "neither", "nor", "without", "cannot",
@@ -124,13 +125,15 @@ def description_text(description: str, boilerplate: Iterable[str] = ()) -> str:
 
 def _find_words(text: str, core: str, start: int = 0) -> int:
     """Where the words `core` (" a b", normalised, no trailing space) start in normalised
-    `text`, as whole words with an optional plural "s"/"es" on the last one; -1 if absent."""
+    `text`, as whole words with an optional plural on the last one: "s", or "es" after s, x,
+    z, ch or sh ("hashes", never "ropes" for "rop"); -1 if absent."""
+    es = core.endswith(_SIBILANTS)
     while True:
         at = text.find(core, start)
         if at < 0:
             return -1
         end = at + len(core)
-        if text.startswith(" ", end) or text.startswith("s ", end) or text.startswith("es ", end):
+        if text.startswith(" ", end) or text.startswith("s ", end) or (es and text.startswith("es ", end)):
             return at
         start = at + 1
 

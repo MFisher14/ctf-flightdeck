@@ -208,6 +208,8 @@ def test_a_cue_just_after_a_negation_names_nothing():
 def test_a_plural_matches_its_cue():
     assert top_technique("Read the PNG's text chunks instead.").id == "png-text"
     assert top_technique("The office XORs its memos.").id == "xor"
+    assert top_technique("Crack the hashes with any list you like.").id == "hash-crack"
+    assert named_techniques("Climb the ropes to the top.") == []  # "es" only after s, x, z, ch, sh: not "rop"
 
 
 # ---------------------------------------------------------------------- action cues keep their symbols

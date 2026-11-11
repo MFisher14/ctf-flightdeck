@@ -13,6 +13,7 @@ import fnmatch
 import re
 import shlex
 from collections.abc import Sequence
+from functools import lru_cache
 
 from .. import fmt
 from ..core.model import ActionKind, Actor, AlertKind, Challenge, Lane
@@ -265,26 +266,9 @@ class DirectionDetector:
         """Whether a step reads source code: read_file of a source file, a shell command
         (any simple command of it) that reads, greps or pages one (by name or by a glob that
         takes in the handout's `sources`), a recursive search over a directory that holds
-        `sources`, or python that opens a source file."""
-        if text.startswith("read "):  # the read_file tool
-            return _names_source(text[5:], sources)
-        low = text.lower()
-        if not _mentions_source(low, sources) and not any(s in low for s in ("grep", "rg", "ag", "ack", "*")):
-            return False  # names no source and searches nothing: no need to parse it
-        if text.startswith("python: "):  # the python tool: its first line
-            return _mentions_source(low, sources) and any(f in low for f in ("open(", "read_text(", "read_bytes("))
-        command = command_of(text)
-        if command is None:
-            return False
-        for words in simple_commands(command):
-            verb, args = _verb_and_args(words)
-            if verb not in READ_VERBS:
-                continue
-            if any(_names_source(arg, sources) for arg in args if not arg.startswith("-")):
-                return True
-            if (verb in SEARCHERS or (verb in GREPS and _recursive(args))) and _searches_sources(args, sources):
-                return True
-        return False
+        `sources`, or python that opens a source file. Remembered per (step, sources): the
+        detector asks it of every step of a lane, every turn."""
+        return _reads_source(text, tuple(sources))
 
     def check(self, lane: Lane, challenge: Challenge, now: float) -> Signal | None:
         if not is_web(challenge):
@@ -315,6 +299,29 @@ class DirectionDetector:
                 ("f", "Fork with a source-first approach", "Read the source first"),
             ),
         )
+
+
+@lru_cache(maxsize=65536)  # keys hold the steps' own strings: a few lanes' long histories fit
+def _reads_source(text: str, sources: tuple[str, ...]) -> bool:
+    if text.startswith("read "):  # the read_file tool
+        return _names_source(text[5:], sources)
+    low = text.lower()
+    if not _mentions_source(low, sources) and not any(s in low for s in ("grep", "rg", "ag", "ack", "*")):
+        return False  # names no source and searches nothing: no need to parse it
+    if text.startswith("python: "):  # the python tool: its first line
+        return _mentions_source(low, sources) and any(f in low for f in ("open(", "read_text(", "read_bytes("))
+    command = command_of(text)
+    if command is None:
+        return False
+    for words in simple_commands(command):
+        verb, args = _verb_and_args(words)
+        if verb not in READ_VERBS:
+            continue
+        if any(_names_source(arg, sources) for arg in args if not arg.startswith("-")):
+            return True
+        if (verb in SEARCHERS or (verb in GREPS and _recursive(args))) and _searches_sources(args, sources):
+            return True
+    return False
 
 
 def _mentions_source(low: str, sources: Sequence[str]) -> bool:
