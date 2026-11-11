@@ -4,7 +4,6 @@ fit a machine for each role. Machines are fakes (fake_host.py); nothing is probe
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 from fake_host import GIB, FakeHost, apple_mac, linux_box
