@@ -49,7 +49,7 @@ size_bytes = 6550825550    # results/ollama-qwen.measure.json: disk.size_bytes
 # Ollama runs it with thinking on unless a request turns that off ("reasoning_effort": "none"),
 # and flightdeck's requests do not: so served, nearly every light-role job got no answer
 # (logs/eval-ollama-qwen.log; with thinking off, logs/eval-ollama-qwen.reasoning-none.log).
-not_for = { light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off, and its light-role replies then held no answer" }
+not_for = { light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off, and most of its light-role replies then held no answer" }
 
 [local.mlx]
 model = "mlx-community/Qwen3.5-9B-MLX-4bit"
@@ -79,9 +79,10 @@ model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
 quantization = "MXFP4 4-bit, group size 32; 122 layers 8-bit, group size 64"  # results/mlx-gptoss.measure.json: disk.quantization
 size_bytes = 12076207568   # results/mlx-gptoss.measure.json: disk.weights_bytes
 # mlx_lm.server passed its replies on as text in gpt-oss's own channel format: its tool calls
-# (results/mlx-gptoss.measure.json: tool_calls, none usable in 5 tries) and its answers to the
-# light role's jobs, which began with its reasoning (logs/eval-mlx-gptoss.log).
-not_for = { lanes = "mlx_lm.server passed its tool calls on as text, in gpt-oss's own channel format, so a lane gets none", light = "mlx_lm.server passed its replies on in gpt-oss's own channel format, reasoning first, so they held no answer" }
+# (results/mlx-gptoss.measure.json: tool_calls, none usable in 5 tries) and every answer to the
+# light role's jobs, each beginning with its reasoning (results/mlx-gptoss.eval-timing.json:
+# calls; logs/eval-mlx-gptoss.log).
+not_for = { lanes = "mlx_lm.server passed its tool calls on as text, in gpt-oss's own channel format, so a lane gets none", light = "mlx_lm.server passed every reply on in gpt-oss's own channel format, reasoning first, so none answered with one of the options" }
 
 [[local]]
 id = "gemma4-12b"
@@ -97,7 +98,7 @@ quantization = "Q4_K_M"    # logs/ollama-show-gemma4_12b.txt: quantization
 size_bytes = 8021618941    # results/ollama-gemma.measure.json: disk.size_bytes
 # As for Qwen3.5 9B on Ollama: thinking on, and most light-role jobs got no answer
 # (logs/eval-ollama-gemma.log; with thinking off, logs/eval-ollama-gemma.reasoning-none.log).
-not_for = { light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off, and its light-role replies then held no answer" }
+not_for = { light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off, and most of its light-role replies then held no answer" }
 
 [local.mlx]
 model = "mlx-community/gemma-4-12B-it-4bit"

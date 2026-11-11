@@ -116,8 +116,8 @@ def test_on_the_36_gb_mac_the_benchmark_ran_on_gemma_4_fits_on_both_runtimes(mon
 
 QWEN_MLX_SERVER = ("mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --host 127.0.0.1 --port 8080 "
                    "--chat-template-args '{\"enable_thinking\":false}' --max-tokens 8192")
-THINKING_ON_OLLAMA = ("Ollama runs it with thinking on, which flightdeck's requests do not turn off, and its light-role "
-                      "replies then held no answer")
+THINKING_ON_OLLAMA = ("Ollama runs it with thinking on, which flightdeck's requests do not turn off, and most of its "
+                      "light-role replies then held no answer")
 
 
 def test_a_thinking_model_is_served_with_thinking_off_and_never_offered_where_flightdeck_cannot_turn_it_off(monkeypatch):
@@ -151,7 +151,7 @@ def test_a_build_that_serves_no_role_gets_no_commands_or_config_lines(monkeypatc
     out = models("gpt-oss-20b").output
     mlx = out[out.index("On MLX:"):]
     assert "  not for lanes: mlx_lm.server passed its tool calls on as text" in mlx
-    assert "  not for the light role: mlx_lm.server passed its replies on in gpt-oss's own channel format" in mlx
+    assert "  not for the light role: mlx_lm.server passed every reply on in gpt-oss's own channel format" in mlx
     assert "get it" not in mlx and "mlx_lm.server --model" not in out and "[light]" not in mlx
     data = json.loads(models("gpt-oss-20b", "--json").output)
     mlx_build = next(b for b in data["builds"] if b["runtime"] == "mlx")
