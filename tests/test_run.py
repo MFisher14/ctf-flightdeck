@@ -939,11 +939,11 @@ def test_a_tool_call_claude_ends_as_quitting_begins_counts_though_a_background_t
     token and dollar claude spent counts, on the lane, in the totals, the run log, the lane's
     transcript and the scorecard."""
     started, go = tmp_path / "second-call-started", tmp_path / "quit-now"
-    second = f"touch {shlex.quote(str(started))}; for _ in $(seq 1000); do [ -e {shlex.quote(str(go))} ] && break; sleep 0.01; done"
+    second = f"touch {shlex.quote(str(started))}; for _ in $(seq 3000); do [ -e {shlex.quote(str(go))} ] && break; sleep 0.01; done"
     call = {"tools": [{"bash": "true"}], "usage": [100, 10, 0, 0], "cost": 0.1}  # 110 tokens and $0.10 a call
     scripted_claude({"turns": [{"calls": [
         call,  # the lane's first step
-        {**call, "tools": [{"bash": second}]},  # it ends as quitting begins (at most 10 s)
+        {**call, "tools": [{"bash": second}]},  # it ends as quitting begins (at most 30 s)
         {"think": 30.0},  # and the turn goes on: quitting cuts it
     ]}]})
     with FakeModelServer() as server:  # the config's API, which a claude lane never calls
