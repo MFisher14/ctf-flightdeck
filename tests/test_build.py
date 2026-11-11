@@ -13,6 +13,7 @@ import importlib.util
 import itertools
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,7 +35,7 @@ from ctf_flightdeck.l1.importer import import_scripts
 from ctf_flightdeck.l1.manifest import Route, discover, load
 from ctf_flightdeck.l1.router import route
 from ctf_flightdeck.platform.manual import load_board
-from ctf_flightdeck.text import untrusted
+from ctf_flightdeck.text import MARK, NEWLINE, untrusted
 
 from l1_kit import challenge_dir, tree, write_manifest
 
@@ -338,6 +339,13 @@ def test_handout_files_are_copied_as_data_and_never_run_imported_or_read_as_engi
     assert import_scripts(pack).written == []  # nor are its scripts, for the importer
     [result] = check(pack)
     assert (result.engine, result.passed, result.outcomes) == ("cry.layers", True, (("test_routed", "passed"), ("test_solved", "passed")))
+    # a player who runs plain pytest on the whole pack collects the case test, and nothing of the handout
+    plain = subprocess.run(
+        [sys.executable, "-I", "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", str(pack)],
+        cwd=pack, env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=300,
+    )
+    assert plain.returncode == 0, plain.stdout
+    assert plain.stdout.splitlines()[-1].startswith("2 passed")
     assert list(marks.iterdir()) == []  # nothing from the handout ran, while scaffolding or checking
 
 
@@ -451,6 +459,20 @@ def test_a_case_test_that_does_not_import_fails_with_its_error(board, pack):
     assert result.detail == "tests.test_cry_layers: ModuleNotFoundError: No module named 'not_a_module_anywhere'"
 
 
+def test_failure_messages_are_made_safe_to_print(board, pack, tmp_path):
+    solver, _, test, _ = scaffold(pack, board / "layers")
+    solver.write_text(  # an engine whose notes carry what a challenge file might
+        "from ctf_flightdeck.l1.result import SolverResult\n\n"
+        "def solve(challenge_dir):\n    return SolverResult('none', notes='line one\\nline \\u202etwo\\x1b[2J')\n"
+    )
+    with pytest.raises(pytest.fail.Exception) as failed:
+        case_test(pack, "cry_layers").test_solved(tmp_path / "w")
+    assert str(failed.value) == f"cry.layers reported none, not solved: line one{NEWLINE}line {MARK}two^[[2J"
+    test.write_text("raise RuntimeError('bad \\u202eidea')\n" + test.read_text())
+    [result] = check(pack)
+    assert result.detail == f"tests.test_cry_layers: RuntimeError: bad {MARK}idea"
+
+
 def test_check_runs_the_case_tests_without_the_players_secrets(board, pack, tmp_path, monkeypatch):
     for name in ("CTFD_TOKEN", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"):
         monkeypatch.setenv(name, FAKE_TOKEN)
@@ -459,15 +481,27 @@ def test_check_runs_the_case_tests_without_the_players_secrets(board, pack, tmp_
     scaffold(pack, board / "layers")
     seen = tmp_path / "seen.json"
     (pack / "tests" / "conftest.py").write_text(  # the player's own test code, which check runs
-        f"import json, os\nwith open({str(seen)!r}, 'w') as out:\n    json.dump(dict(os.environ), out)\n"
+        f"import json, os, sys\nwith open({str(seen)!r}, 'w') as out:\n"
+        "    json.dump({'env': dict(os.environ), 'isolated': sys.flags.isolated, 'no_bytecode': sys.dont_write_bytecode}, out)\n"
     )
     [result] = check(pack)
     assert result.outcomes == (("test_routed", "passed"), ("test_solved", "failed"))  # pytest ran, without the bad option
     raw = seen.read_text()
-    env = json.loads(raw)
+    seen_by_tests = json.loads(raw)
+    env = seen_by_tests["env"]
     assert FAKE_TOKEN not in raw and "PYTHONPATH" not in env and "PYTEST_ADDOPTS" not in env
     assert set(env) - PROCESS_OWN <= ALLOWED and "PATH" in env
     assert "flightdeck-build-check-" in env["HOME"] and env["HOME"] != os.environ.get("HOME")
+    assert (seen_by_tests["isolated"], seen_by_tests["no_bytecode"]) == (1, True)  # python -I -B
+
+
+def test_a_run_pytest_calls_failed_is_not_a_pass_even_when_each_test_passed(board, pack):
+    solver, *_ = scaffold(pack, board / "layers")
+    solver.write_text(REAL)
+    (pack / "tests" / "conftest.py").write_text("def pytest_sessionfinish(session):\n    session.exitstatus = 3\n")
+    [result] = check(pack)
+    assert result.outcomes == (("test_routed", "passed"), ("test_solved", "passed"))
+    assert (result.passed, result.detail) == (False, "pytest exited 3")
 
 
 def test_no_configuration_or_conftest_above_the_pack_applies(board, tmp_path):

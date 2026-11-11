@@ -484,8 +484,8 @@ returns a SolverResult:
 - "blocked": something it needs is missing (its notes say what).
 
 The engine is done when its test passes: `flightdeck build check <pack>` runs
-tests/test_$name.py. The challenge it was written for is in
-tests/cases/$name/.board/$challenge/, as it was handed out.
+$tests/test_$name.py. The challenge it was written for is in
+$tests/$cases/$name/$board/$challenge/, as it was handed out.
 """
 
 from pathlib import Path
@@ -502,10 +502,10 @@ def solve(challenge_dir: Path) -> SolverResult:
 _TEST = Template('''\
 """The case test of the L1 engine $engine, written by `flightdeck build gap`.
 
-cases/$name/ is the challenge $challenge as it was handed out: a copy of its challenge.json
-and files in cases/$name/.board/ (a hidden folder, so that neither flightdeck nor pytest
-ever reads a handout file as code), and the sha256 of its flag in answers.sha256.json, never
-the flag itself.
+$cases/$name/ is the challenge $challenge as it was handed out: a copy of its challenge.json
+and files in $cases/$name/$board/ (a hidden folder, so that neither flightdeck nor pytest
+ever reads a handout file as code), and the sha256 of its flag in $answers (never
+the flag itself).
 
 The engine is done when both tests pass:
 - test_routed: flightdeck's router sends the archived handout to $engine;
@@ -530,13 +530,13 @@ ENGINE = $engine_literal
 CHALLENGE = $challenge_literal
 HERE = Path(__file__).resolve().parent
 PACK = HERE.parent
-CASE = HERE / "cases" / $name_literal
-ANSWERS = CASE / "answers.sha256.json"
+CASE = HERE / $cases_literal / $name_literal
+ANSWERS = CASE / $answers_literal
 
 
 def archived():
     """(board, challenge) from the case, read the way flightdeck reads a folder board."""
-    board = load_board(CASE / ".board", answers=ANSWERS if ANSWERS.exists() else None)
+    board = load_board(CASE / $board_literal, answers=ANSWERS if ANSWERS.exists() else None)
     for item in board.challenges:
         if item.challenge.id == CHALLENGE:
             return board, item
@@ -571,15 +571,20 @@ def test_solved(tmp_path):
 ''')
 
 
+_LAYOUT = {"tests": TESTS, "cases": CASES, "board": BOARD, "answers": ANSWERS_FILE}
+
+
 def _solver_text(engine: str, challenge_id: str, name: str) -> str:
-    return _SOLVER.substitute(engine=engine, challenge=challenge_id, name=name)
+    return _SOLVER.substitute(engine=engine, challenge=challenge_id, name=name, **_LAYOUT)
 
 
 def _test_text(engine: str, challenge_id: str, name: str) -> str:
-    return _TEST.substitute(
-        engine=engine, challenge=challenge_id, name=name,
-        engine_literal=json.dumps(engine), challenge_literal=json.dumps(challenge_id), name_literal=json.dumps(name),
-    )
+    """Every value is an id or a layout name, checked to hold only [a-z0-9_.-] (or written by
+    flightdeck), so it is safe in the docstring; in code it is a JSON string, a valid python
+    string literal."""
+    literals = {f"{key}_literal": json.dumps(value) for key, value in
+                {"engine": engine, "challenge": challenge_id, "name": name, **_LAYOUT}.items()}
+    return _TEST.substitute(engine=engine, challenge=challenge_id, name=name, **_LAYOUT, **literals)
 
 
 # ---------------------------------------------------------------- check
