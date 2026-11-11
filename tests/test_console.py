@@ -27,7 +27,7 @@ from textual import events
 from textual.containers import ScrollableContainer
 from textual.widgets import DataTable, RichLog, Select, Static
 
-from ctf_flightdeck import fmt
+from ctf_flightdeck import credentials, fmt
 from ctf_flightdeck.console import room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
@@ -1815,14 +1815,14 @@ def test_a_lanes_result_and_an_alert_that_needs_no_answer_are_shown_without_cred
     assert ended.result == f"the server wants OPENROUTER_API_KEY={OPENROUTER}"  # the deck's own, as it was
 
 
-def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh():
-    """Taking credentials out costs time in proportion to the text: a megabyte that is all keys
-    takes a few tenths of a second. The fleet draws each lane's last action and the selected
-    lane's why line again on every refresh, twice a second, and the focus view its open diff:
-    what was taken out is kept, so fifty refreshes of a lane whose last step printed a
-    megabyte of keys into its output and a file stay well inside the deadline, the first
-    included, and none of them shows a key. A one-line cell holds no more of a text than a
-    terminal could show, so it is not a megabyte of text to lay out on every refresh."""
+def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh(monkeypatch):
+    """Taking credentials out costs time in proportion to the text. The fleet draws each
+    lane's last action and the selected lane's why line again on every refresh, twice a
+    second, and the focus view its open diff: what was taken out is kept, so over fifty
+    refreshes of a lane whose last step printed a megabyte of keys into its output and a file,
+    each megabyte is taken out once, the refreshes stay well inside the deadline, and none of
+    them shows a key. A one-line cell holds no more of a text than a terminal could show, so
+    it is not a megabyte of text to lay out on every refresh."""
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
     deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
     (lane,) = deck.lanes_on("c")
@@ -1830,10 +1830,18 @@ def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh():
     keys = row * (1_000_000 // len(row))
     deck.report(lane.id, TurnReport(action="env; env > env.txt", output=keys,
                                     files=(FileChange("env.txt", "+++ b/env.txt\n" + keys, "added"),)))
+    taken: list[int] = []  # the size of each text the console took credentials out of
+
+    def counted(text: str, *, keep=()) -> str:
+        taken.append(len(text))
+        return credentials.redact(text, keep=keep)
+
+    monkeypatch.setattr(views, "redact", counted)
     with within(10, "fifty refreshes of the fleet and the open diff"):
         for _ in range(50):
             cells, why = views.lane_cells(deck, lane), views.lane_why(deck, lane)
             diff = views.diff_view(deck, lane, lane.files["env.txt"])
+    assert len([size for size in taken if size >= len(keys)]) <= 2  # the output and the diff, once each at most
     assert why.plain.startswith(f"▌{lane.id} plan: -\n  last: env; env > env.txt → OPENROUTER_API_KEY=[redacted] ⏎ OPENROUTER")
     assert len(why.plain) < 4 * views.LINE_CHARS  # a line's worth, with each newline shown as " ⏎ "
     assert "5f" * 32 not in why.plain + cells["last"].plain + diff.code
