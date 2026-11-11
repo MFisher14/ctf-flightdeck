@@ -101,14 +101,16 @@ def closed_port() -> int:
 
 
 class CountingTransport(httpx.AsyncBaseTransport):
-    """httpx's real transport, counting the requests it is asked to send."""
+    """httpx's real transport, counting the requests it is asked to send and when."""
 
     def __init__(self) -> None:
         self.inner = httpx.AsyncHTTPTransport()
         self.sent = 0
+        self.times: list[float] = []  # time.monotonic() as each request set off
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self.sent += 1
+        self.times.append(time.monotonic())
         return await self.inner.handle_async_request(request)
 
     async def aclose(self) -> None:
@@ -567,13 +569,26 @@ def test_a_retry_after_header_sets_the_wait_instead_of_the_backoff():
         assert time.monotonic() - start >= 0.3
 
 
-def test_the_wait_between_tries_doubles_from_the_backoff():
-    replies = [error_reply(502, "a"), error_reply(502, "b"), text_reply("ok")]
-    with FakeModelServer(replies) as server:
-        start = time.monotonic()
-        assert call(server.base_url, max_retries=2, backoff=0.1).content == "ok"
-        elapsed = time.monotonic() - start
-    assert elapsed >= 0.1 + 0.2  # a steady 0.1 s would be 0.2 s in all
+def gaps(times: list[float]) -> list[float]:
+    return [later - earlier for earlier, later in itertools.pairwise(times)]
+
+
+def test_the_waits_between_tries_double_from_the_backoff_and_none_follows_the_last():
+    arrivals: list[float] = []
+
+    def failing(request: dict) -> FakeReply:
+        arrivals.append(time.monotonic())
+        return error_reply(500, "upstream exploded")
+
+    with FakeModelServer(responder=failing) as server:
+        err = fails(server.base_url, max_retries=2, backoff=0.2)
+        ended = time.monotonic()
+    assert len(arrivals) == 3
+    first, second = gaps(arrivals)
+    assert first >= 0.2 and second >= 0.4  # doubling from the backoff (a steady 0.2 s fails)
+    assert first + second < 1.0  # not from twice the backoff, which waits 0.4 + 0.8 s
+    assert ended - arrivals[-1] < 0.5  # no wait after the last try (it would be 0.8 s)
+    assert err.status == 500 and err.retryable is True
 
 
 def test_a_try_that_times_out_is_tried_again():
@@ -626,10 +641,15 @@ def test_when_the_last_try_runs_out_of_time_the_error_says_so_and_is_retryable()
     assert elapsed < 2.0
 
 
-def test_a_refused_connection_is_tried_again_then_fails_as_retryable():
+def test_a_refused_connection_is_tried_again_after_the_same_waits_then_fails_as_retryable():
     transport = CountingTransport()
-    err = fails(f"http://127.0.0.1:{closed_port()}/v1", max_retries=2, transport=transport)
+    err = fails(f"http://127.0.0.1:{closed_port()}/v1", max_retries=2, backoff=0.2, transport=transport)
+    ended = time.monotonic()
     assert transport.sent == 3
+    first, second = gaps(transport.times)
+    assert first >= 0.2 and second >= 0.4  # a transport error waits as a failing status does
+    assert first + second < 1.0
+    assert ended - transport.times[-1] < 0.5
     assert err.status is None and err.retryable is True
     assert "no answer from the model API" in str(err) and "3 tries" in str(err)
 
