@@ -7,7 +7,9 @@
 # [[local]]: an open-weight model served on the player's machine.
 #   id          what `flightdeck models ID` takes
 #   name, family, parameters (as `ollama show` counts them), license
-#   roles       the roles it may serve: "lanes" (needs reliable tool calls) and "light"
+#   roles       the roles the catalog considers it for: "lanes" (needs reliable tool calls) and
+#               "light". Each build serves them all but those its not_for names; `flightdeck
+#               models` offers the model for a role while at least one of its builds serves it.
 #   [local.ollama], [local.mlx]: the model as one runtime serves it.
 #     model         the runtime's name for it: an Ollama tag; a Hugging Face repo for mlx_lm.server
 #     quantization, size_bytes (its weights on disk)
@@ -33,6 +35,9 @@
 # practice challenges, Crab Walk, Half and Half, Mille Feuille and Welcome Mat, one lane at a
 # time, 480 s for all four). All were measured on 2026-11-11: one machine, under load, one run;
 # a lane's count in particular can differ from run to run.
+# A build that measured badly for a role is not for it (not_for, with the numbers): for lanes, no
+# usable tool call or no practice challenge solved; for the light role, a score below the rules'
+# 38, flightdeck's default, which needs no model and costs nothing.
 # The memory a model needs is not stored here: model_catalog.py estimates it as its weights
 # (size_bytes) plus an allowance for the context (CONTEXT_ALLOWANCE). An estimate, not a
 # measurement.
@@ -169,32 +174,38 @@ parameters = "3.8B"        # logs/ollama-show-phi4-mini.txt: parameters
 # Ollama's record shows only the license's first lines ("Microsoft. Copyright (c) Microsoft
 # Corporation."); the model card of mlx-community/Phi-4-mini-instruct-4bit names it: license: mit.
 license = "MIT"
-# The light role only: a 3.8B model, and lanes need reliable tool calls over a long loop. In the
-# benchmark's tool-call check it made no usable tool call on either runtime
-# (results/mlx-phi.measure.json and results/ollama-phi.measure.json: tool_calls). 2026-11-11, one
-# machine, under load, one run: "Tool calls": 0/5 on each (on MLX its chat template gets no
-# tools; on Ollama it writes its calls as text), so its lanes were not run.
-roles = ["light"]
+# Measured for both roles, and not for either on either runtime: no usable tool call, so its
+# lanes were not run, and a light-role score below the rules'.
+roles = ["lanes", "light"]
 
 [local.ollama]
 model = "phi4-mini"
 quantization = "Q4_K_M"    # logs/ollama-show-phi4-mini.txt: quantization
 size_bytes = 2491876774    # results/ollama-phi.measure.json: disk.size_bytes
 
-[local.ollama.measured]
-# 2026-11-11, one machine, under load, one run: "Light role", as served: 22/44, below the rules'
-# 38 (15 of 58 replies held no usable answer: not exactly one of the options).
-light = "eval-local 22/44 as served, below the rules' 38/44; 15 of 58 replies held no usable answer"
+[local.ollama.not_for]
+# It wrote its tool calls as text (results/ollama-phi.measure.json: tool_calls), and named fewer
+# hinted techniques than the rules (logs/eval-ollama-phi.log). 2026-11-11, one machine, under load,
+# one run: "Tool calls": 0/5, so its lanes were not run; "Light role", as served: 22/44 against
+# the rules' 38 (hints 11/30 against their 30/30, judge 11/14 against their 8/14), 15 of 58 replies
+# with no usable answer (not exactly one of the options).
+lanes = "it wrote its tool calls as text, so a lane gets none: tool calls 0/5"
+light = "eval-local 22/44 as served, below the rules' 38/44, flightdeck's default with no model; 15 of 58 replies held no usable answer"
 
 [local.mlx]
 model = "mlx-community/Phi-4-mini-instruct-4bit"
 quantization = "4-bit, group size 64"  # results/mlx-phi.measure.json: disk.quantization
 size_bytes = 2158100796    # results/mlx-phi.measure.json: disk.weights_bytes
 
-[local.mlx.measured]
-# 2026-11-11, one machine, under load, one run: "Light role", served as it comes: 18/44, below the
-# rules' 38 (19 of 58 replies held no usable answer: not exactly one of the options).
-light = "eval-local 18/44 served as it comes, below the rules' 38/44; 19 of 58 replies held no usable answer"
+[local.mlx.not_for]
+# mlx_lm.server gave its chat template no tools ("Received tools but model does not support tool
+# calling": logs/mlx-server-phi.log; results/mlx-phi.measure.json: tool_calls), and it named fewer
+# hinted techniques than the rules (logs/eval-mlx-phi.log). 2026-11-11, one machine, under load,
+# one run: "Tool calls": 0/5, so its lanes were not run; "Light role", served as it comes: 18/44
+# against the rules' 38 (hints 8/30 against their 30/30, judge 10/14 against their 8/14), 19 of 58
+# replies with no usable answer (not exactly one of the options).
+lanes = "mlx_lm.server gives its chat template no tools, so it makes no tool call: tool calls 0/5"
+light = "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model; 19 of 58 replies held no usable answer"
 
 [[api]]
 id = "anthropic"

@@ -35,9 +35,11 @@ guess. MLX runs on Apple Silicon only.
 
 Each build (a model on one runtime) carries what was found serving it: the arguments its MLX
 server was measured with (server_args, printed in the command that serves it), the roles it
-should not serve and why (not_for: it is never offered for them), and its measured results
+should not serve and why (not_for: it is never offered for them; the catalog marks so a build
+that measured badly, such as a light-role score below the rules'), and its measured results
 (measured, from docs/MODELS.md). A model's results and settings differ by runtime: thinking can
-be turned off at an MLX server, and not by anything flightdeck sends to Ollama.
+be turned off at an MLX server, and not by anything flightdeck sends to Ollama. A model is
+offered for the roles at least one of its builds serves (LocalModel.offered_for).
 """
 
 from __future__ import annotations
@@ -117,6 +119,12 @@ class LocalModel:
     def serves(self, build: Build) -> tuple[str, ...]:
         """The roles `build` may serve: the model's, less those the build is not for."""
         return tuple(role for role in self.roles if role not in build.not_for)
+
+    @property
+    def offered_for(self) -> tuple[str, ...]:
+        """The roles it is offered for: those at least one of its builds may serve. Its roles are
+        the ones the catalog considers it for; a role every build is not for is not offered."""
+        return tuple(role for role in self.roles if any(role in self.serves(build) for build in self.builds))
 
 
 @dataclass(frozen=True)
@@ -499,8 +507,8 @@ def advise(catalog: Catalog, machine: Machine, role: str, plan: Budget | None = 
             why = "Local models would run on the CPU here, and slowly."
         elif plan.where == UNKNOWN:
             why = "flightdeck cannot tell what fits this machine."
-        else:
-            why = "No catalog model with a recorded size fits this machine."
+        else:  # a model that is not for the role may fit by size: it is not counted
+            why = f"No model the catalog offers for {ROLE_WORDS[role]} is known to fit this machine."
         lead = RULES if role == LIGHT else API
     return Advice(
         role=role, where=plan.where, lead=lead, lead_why=why, fits=tuple(fits),

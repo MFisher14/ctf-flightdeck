@@ -98,9 +98,11 @@ def test_on_an_apple_silicon_mac_local_models_that_fit_come_first(monkeypatch):
         "call, with no reply within flightdeck's 180 s per try; tool calls 5/5",
         "    gemma4-12b on MLX: solved 0 of 4 practice challenges served as it comes, and 0 of 4 with thinking off and "
         "--max-tokens 8192 (its second reply then took about 181 s, past flightdeck's 180 s per try); tool calls 5/5",
-        "    phi4-mini: the catalog lists it for the light role only"]
+        "    phi4-mini on Ollama: it wrote its tool calls as text, so a lane gets none: tool calls 0/5",
+        "    phi4-mini on MLX: mlx_lm.server gives its chat template no tools, so it makes no tool call: tool calls 0/5"]
     light = section(out, "Light role:")
-    assert "phi4-mini on MLX (mlx-community/Phi-4-mini-instruct-4bit): needs about 4 GiB" in light
+    assert fit_names(light) == ["qwen3.5-9b on MLX", "gpt-oss-20b on Ollama", "gemma4-12b on MLX"]  # 41, 38, 41 of 44
+    assert "    phi4-mini on MLX: eval-local 18/44 served as it comes, below the rules' 38/44" in light
     assert "docs/MODELS.md" in out and out.rstrip().endswith("This only recommends: it never changes your config.")
     assert host.fetched == list(SERVERS.values()) and {urlsplit(u).hostname for u in host.fetched} == {"127.0.0.1"}
 
@@ -126,7 +128,7 @@ def test_on_the_36_gb_mac_the_benchmark_ran_on_each_result_shows_under_its_role_
                     assert f"    {name}: {build.not_for[role]}" in refused
                     assert not [line for line in fits if line.startswith(f"    {name} (")]
                     shown += 1
-    assert shown == 14  # 8 results and 6 reasons not to, in the catalog
+    assert shown == 16  # 6 results and 10 reasons not to, in the catalog
     entry = models("gemma4-12b").output
     assert entry.splitlines()[1] == ("Measured: on MLX, for the light role: eval-local 41/44 with thinking off, against the "
                                      "rules' 38/44 (docs/MODELS.md).")
@@ -183,6 +185,84 @@ def test_a_build_that_serves_no_role_gets_no_commands_or_config_lines(monkeypatc
     assert (mlx_build["roles"], mlx_build["get"], sorted(mlx_build["not_for"])) == ({}, [], ["lanes", "light"])
 
 
+PHI_NOT_FOR_LIGHT = {  # Phi-4-mini's light-role results, below the rules' 38/44
+    "Ollama": "eval-local 22/44 as served, below the rules' 38/44, flightdeck's default with no model; 15 of 58 replies "
+              "held no usable answer",
+    "MLX": "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model; 19 of 58 "
+           "replies held no usable answer",
+}
+
+
+@pytest.mark.parametrize("host", [
+    apple_mac(memory=8 * GIB, chip="Apple M1"),
+    linux_box(64 * 1024 * 1024, nvidia="NVIDIA GeForce RTX 4070, 12282\n"),
+], ids=["8-gb-m1", "12-gb-rtx-4070"])
+def test_where_only_a_model_that_scored_below_the_rules_would_fit_the_light_role_leads_with_the_rules(host, monkeypatch):
+    """Phi-4-mini fits these machines by size, but scored 22/44 (Ollama) and 18/44 (MLX) on the
+    light role's jobs, against the rules' 38/44: the rules come first, no model is offered as a
+    fit, and Phi-4-mini is listed as not for the light role, with its score."""
+    on(monkeypatch, host)
+    out = models().output
+    light = section(out, "Light role:")
+    assert light.splitlines()[1:3] == [
+        "  First: the rules (the default, no model), or a small model that fits. No model the catalog offers for the light "
+        "role is known to fit this machine.",
+        "    rules: the default; no model, no cost"]
+    assert "Fit here" not in light
+    assert [line for line in group(light, "  Not for the light role:").splitlines() if line.startswith("    phi4-mini")] == [
+        f"    phi4-mini on {runtime}: {why}" for runtime, why in PHI_NOT_FOR_LIGHT.items()]
+    assert "for example: flightdeck models phi4-mini" not in out
+    data = json.loads(models("--json").output)["roles"]["light"]
+    assert (data["lead"], data["fits"]) == ("rules", [])
+    assert [(n["id"], n["runtime"]) for n in data["not_for"] if n["id"] == "phi4-mini"] == [
+        ("phi4-mini", "ollama"), ("phi4-mini", "mlx")]
+
+
+def test_a_model_that_measured_badly_for_every_role_is_offered_for_none_and_says_why(monkeypatch):
+    on(monkeypatch, apple_mac(programs={"ollama": "/opt/homebrew/bin/ollama", "mlx_lm.server": "/opt/bin/mlx_lm.server"}))
+    out = models("phi4-mini").output
+    assert out.splitlines()[:2] == [
+        "Phi-4-mini (phi4-mini): Phi-4, 3.8B parameters, MIT. Not offered for any role.",
+        "Measured: each runtime below says what it is not for, and why (docs/MODELS.md)."]  # never "not yet"
+    assert section(out, "On Ollama:").splitlines()[1:] == [
+        "  not for lanes: it wrote its tool calls as text, so a lane gets none: tool calls 0/5",
+        f"  not for the light role: {PHI_NOT_FOR_LIGHT['Ollama']}"]
+    assert section(out, "On MLX:").splitlines()[1:] == [
+        "  not for lanes: mlx_lm.server gives its chat template no tools, so it makes no tool call: tool calls 0/5",
+        f"  not for the light role: {PHI_NOT_FOR_LIGHT['MLX']}"]
+    for offer in ("get it", "[light]", "[api]", "measure it first", "try it", "flightdeck init"):  # nothing to use it with
+        assert offer not in out
+    data = json.loads(models("phi4-mini", "--json").output)
+    assert data["roles"] == []
+    assert [(b["runtime"], b["roles"], b["get"]) for b in data["builds"]] == [("ollama", {}, []), ("mlx", {}, [])]
+
+
+def test_a_model_is_said_to_be_for_the_roles_a_build_of_it_serves(monkeypatch):
+    """Gemma 4 12B is not for lanes on either runtime: its entry and its JSON say it is for the
+    light role only, and each runtime says why it is not for lanes."""
+    on(monkeypatch, apple_mac())
+    out = models("gemma4-12b").output
+    assert out.splitlines()[0] == "Gemma 4 12B (gemma4-12b): Gemma 4, 11.9B parameters, Apache-2.0. For the light role."
+    assert out.count("\n  not for lanes: solved 0 of 4 practice challenges") == 2
+    data = json.loads(models("gemma4-12b", "--json").output)
+    assert data["roles"] == ["light"] and [list(b["roles"]) for b in data["builds"]] == [[], ["light"]]
+    assert json.loads(models("qwen3.5-9b", "--json").output)["roles"] == ["lanes", "light"]
+
+
+def test_a_model_listed_for_one_role_only_and_one_with_no_results_say_so(monkeypatch, tmp_path):
+    (tmp_path / "models.toml").write_text(
+        '[[local]]\nid = "small"\nname = "Small"\nfamily = "Test"\nparameters = "1B"\nlicense = "MIT"\nroles = ["light"]\n\n'
+        f'[local.ollama]\nmodel = "small:q4"\nsize_bytes = {GIB}\n', encoding="utf-8")
+    monkeypatch.setattr(model_catalog, "files", lambda package: tmp_path)
+    on(monkeypatch, apple_mac())
+    lanes = section(models().output, "Lanes:")
+    assert group(lanes, "  Not for a lane:").splitlines() == ["    small: the catalog lists it for the light role only"]
+    assert json.loads(models("--json").output)["roles"]["lanes"]["not_for"] == [
+        {"id": "small", "runtime": None, "model": None, "why": "the catalog lists it for the light role only"}]
+    assert models("small").output.splitlines()[:2] == [
+        "Small (small): Test, 1B parameters, MIT. For the light role.", "Measured: not yet (docs/MODELS.md has the results)."]
+
+
 def test_on_a_linux_box_with_an_nvidia_gpu_its_memory_is_the_budget(monkeypatch):
     on(monkeypatch, linux_box(128 * 1024 * 1024, nvidia="NVIDIA GeForce RTX 4090, 24564\n"))
     out = models().output
@@ -191,8 +271,8 @@ def test_on_a_linux_box_with_an_nvidia_gpu_its_memory_is_the_budget(monkeypatch)
     lanes = section(out, "Lanes:")
     assert "First: an open-weight model on this machine" in lanes and "qwen3.5-9b on Ollama (qwen3.5:9b): needs about 12.1 GiB" in lanes
     assert "Not for this machine: qwen3.5-9b on MLX (MLX runs on Apple Silicon only)" in lanes  # gemma4-12b: not for lanes
-    assert ("Not for this machine: qwen3.5-9b on MLX, gemma4-12b on MLX, phi4-mini on MLX (MLX runs on Apple Silicon only)"
-            in section(out, "Light role:"))
+    # phi4-mini: not for the light role on either runtime, so not judged for this machine
+    assert "Not for this machine: qwen3.5-9b on MLX, gemma4-12b on MLX (MLX runs on Apple Silicon only)" in section(out, "Light role:")
 
 
 def test_on_a_cpu_only_box_lanes_lead_with_an_api_and_the_light_role_with_the_rules(monkeypatch):
@@ -205,9 +285,14 @@ def test_on_a_cpu_only_box_lanes_lead_with_an_api_and_the_light_role_with_the_ru
     assert "qwen3.5-9b on Ollama (qwen3.5:9b): needs about 12.1 GiB" in section(lanes, "  Do not fit here:")
     light = section(out, "Light role:")
     assert "First: the rules (the default, no model), or a small model that fits." in light
+    assert light.index("rules: the default; no model, no cost") < light.index("Model APIs:")
+    assert "Fit here" not in light  # 8 GiB: phi4-mini would fit by size, but it is not for the light role
+    on(monkeypatch, linux_box(32 * 1024 * 1024))  # 16 GiB: gpt-oss-20b fits the light role
+    light = section(models().output, "Light role:")
+    assert "First: the rules (the default, no model), or a small model that fits." in light
     assert light.index("rules: the default; no model, no cost") < light.index("Fit here, on the CPU (slow):")
     assert light.index("Fit here, on the CPU (slow):") < light.index("Model APIs:")
-    assert "phi4-mini on Ollama (phi4-mini): needs about 4.3 GiB" in light
+    assert group(light, "  Fit here, on the CPU (slow):").startswith("    gpt-oss-20b on Ollama (gpt-oss:20b): needs about 14.8 GiB")
 
 
 def test_on_a_big_cpu_only_box_local_lane_models_follow_the_apis_smallest_first(monkeypatch):
@@ -261,7 +346,7 @@ def test_json_gives_scripts_the_same_advice(monkeypatch):
         assert [f"    {n['id']}{' on ' + hardware.RUNTIME_NAMES[n['runtime']] if n['runtime'] else ''}: {n['why']}"
                 for n in data["roles"][role]["not_for"]] == not_for
     assert [(n["id"], n["runtime"]) for n in lanes["not_for"]] == [
-        ("gpt-oss-20b", "mlx"), ("gemma4-12b", "ollama"), ("gemma4-12b", "mlx"), ("phi4-mini", None)]
+        ("gpt-oss-20b", "mlx"), ("gemma4-12b", "ollama"), ("gemma4-12b", "mlx"), ("phi4-mini", "ollama"), ("phi4-mini", "mlx")]
     assert data["roles"]["light"]["default"] == "rules"
 
 
@@ -269,8 +354,8 @@ def test_json_names_the_basis_of_a_fit_only(monkeypatch):
     """"basis" says why a fit is offered; a model that does not fit has none, measured or not."""
     on(monkeypatch, apple_mac(memory=4 * GIB, chip="Apple M1"))  # 2.7 GiB for local models: nothing fits
     light = json.loads(models("--json").output)["roles"]["light"]
-    phi_mlx = next(o for o in light["too_big"] if (o["id"], o["runtime"]) == ("phi4-mini", "mlx"))
-    assert (phi_mlx["verdict"], phi_mlx["basis"]) == ("too big", None) and phi_mlx["measured"].startswith("eval-local 18/44")
+    qwen_mlx = next(o for o in light["too_big"] if (o["id"], o["runtime"]) == ("qwen3.5-9b", "mlx"))
+    assert (qwen_mlx["verdict"], qwen_mlx["basis"]) == ("too big", None) and qwen_mlx["measured"].startswith("eval-local 41/44")
     assert light["fits"] == []
 
 
@@ -368,28 +453,28 @@ def fit_names(block: str) -> list[str]:
 
 
 def test_a_measured_build_says_so_comes_first_and_names_where_the_results_are(monkeypatch, tmp_path):
-    """With the results of Qwen3.5 9B on MLX and of Phi-4-mini taken out of the catalog, those
+    """With the results of Qwen3.5 9B and Gemma 4 12B on MLX taken out of the catalog, those
     builds fit by size only: they come after the measured ones, and say so."""
-    text = shipped_without_results(("qwen3.5-9b", "mlx"), ("phi4-mini", "ollama"), ("phi4-mini", "mlx"))
+    text = shipped_without_results(("qwen3.5-9b", "mlx"), ("gemma4-12b", "mlx"))
     (tmp_path / "models.toml").write_text(text, encoding="utf-8")
     monkeypatch.setattr(model_catalog, "files", lambda package: tmp_path)
     unmeasured = [(m.id, b.runtime) for m in model_catalog.load_catalog().local for b in m.builds if not b.measured]
-    # gpt-oss-20b on MLX and gemma4-12b on Ollama have none in the shipped catalog either: only not_for lines
-    assert unmeasured == [("qwen3.5-9b", "mlx"), ("gpt-oss-20b", "mlx"), ("gemma4-12b", "ollama"), ("phi4-mini", "ollama"),
-                          ("phi4-mini", "mlx")]
+    # gpt-oss-20b on MLX, gemma4-12b on Ollama and phi4-mini have none in the shipped catalog either: only not_for lines
+    assert unmeasured == [("qwen3.5-9b", "mlx"), ("gpt-oss-20b", "mlx"), ("gemma4-12b", "ollama"), ("gemma4-12b", "mlx"),
+                          ("phi4-mini", "ollama"), ("phi4-mini", "mlx")]
     on(monkeypatch, apple_mac())
     out = models().output
     light = section(out, "Light role:")
-    assert fit_names(light) == ["gpt-oss-20b on Ollama", "gemma4-12b on MLX", "qwen3.5-9b on MLX", "phi4-mini on Ollama",
-                                "phi4-mini on MLX"]
+    assert fit_names(light) == ["gpt-oss-20b on Ollama", "qwen3.5-9b on MLX", "gemma4-12b on MLX"]
     fits = group(light, "  Fit here:").splitlines()
     assert fits[0].endswith("; measured: eval-local 38/44 as served, against the rules' 38/44 (docs/MODELS.md)")
-    assert all(line.endswith("; fits by size only: not measured for the light role yet") for line in fits[2:])
+    assert all(line.endswith("; fits by size only: not measured for the light role yet") for line in fits[1:])
     assert fit_names(section(out, "Lanes:")) == ["qwen3.5-9b on Ollama", "gpt-oss-20b on Ollama", "qwen3.5-9b on MLX"]
     assert models("qwen3.5-9b").output.splitlines()[1] == (
         "Measured: on Ollama, for lanes: solved 1 of 4 practice challenges as served; tool calls 4/5, the fifth a well-formed "
         "call to set_plan, which the test did not offer (docs/MODELS.md).")
-    assert models("phi4-mini").output.splitlines()[1] == "Measured: not yet (docs/MODELS.md has the results)."
+    assert models("gemma4-12b").output.splitlines()[1] == (  # its results now are only what it is not for
+        "Measured: not yet for the light role; each runtime below says what it is not for, and why (docs/MODELS.md).")
     data = json.loads(models("qwen3.5-9b", "--json").output)
     assert [(b["runtime"], sorted(b["measured"])) for b in data["builds"]] == [("ollama", ["lanes"]), ("mlx", [])]
 

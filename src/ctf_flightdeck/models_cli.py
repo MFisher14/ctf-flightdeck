@@ -303,11 +303,10 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
     assert machine is not None
     plan = budget(machine)
     model = choice
-    roles = " and ".join(ROLE_HEADS[r] for r in model.roles)
-    lines = [f"{model.name} ({model.id}): {model.family}, {model.parameters} parameters, {model.license}. For {roles}."]
-    measured = "; ".join(f"on {_runtime_label(b.runtime)}, for {ROLE_HEADS[r]}: {_safe(text)}"
-                         for b in model.builds for r, text in b.measured.items())
-    lines.append(f"Measured: {measured} ({MODELS_DOC})." if measured else f"Measured: not yet ({MODELS_DOC} has the results).")
+    offered = " and ".join(ROLE_HEADS[r] for r in model.offered_for)  # a role no build serves is not offered
+    use = f"For {offered}." if offered else "Not offered for any role."
+    lines = [f"{model.name} ({model.id}): {model.family}, {model.parameters} parameters, {model.license}. {use}"]
+    lines.append(f"Measured: {_measured(model)}")
     for build in model.builds:
         found = sizing(build, machine)
         facts = [_safe(build.model)]
@@ -338,6 +337,20 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
             lines.append(f"    or a new config: {init_command(model, role, build)}")
     lines += ["", RECOMMENDS]
     return "\n".join(lines) + "\n"
+
+
+def _measured(model: LocalModel) -> str:
+    """The rest of a local model's "Measured:" line: its results, by build and role. A model
+    with none but reasons it is not for a role (each with what was measured) points at them."""
+    results = "; ".join(f"on {_runtime_label(b.runtime)}, for {ROLE_HEADS[r]}: {_safe(text)}"
+                        for b in model.builds for r, text in b.measured.items())
+    if results:
+        return f"{results} ({MODELS_DOC})."
+    if not any(b.not_for for b in model.builds):
+        return f"not yet ({MODELS_DOC} has the results)."
+    offered = " and ".join(ROLE_HEADS[r] for r in model.offered_for)
+    pending = f"not yet for {offered}; " if offered else ""
+    return f"{pending}each runtime below says what it is not for, and why ({MODELS_DOC})."
 
 
 def _api_entry_text(api: ApiChoice) -> str:
@@ -466,7 +479,7 @@ def entry_json(choice: LocalModel | ApiChoice, machine: Machine | None) -> dict:
         })
     return {
         "id": choice.id, "name": choice.name, "family": choice.family, "parameters": choice.parameters,
-        "license": choice.license, "roles": list(choice.roles),
+        "license": choice.license, "roles": list(choice.offered_for),  # each build's not_for says why a role is not
         "measured_results": MODELS_DOC, "builds": builds, "local_models": {"where": plan.where, "memory_bytes": plan.bytes},
         "changes_config": False,
     }
