@@ -14,8 +14,9 @@ the light role falls back to):
 - `--engine cactus`: Cactus Needle on this machine (the [cactus] extra).
 - `--engine decider --base-url URL`: a Strands Decider server (a decision model; e.g.
   http://127.0.0.1:8000 for `strands-decider serve MODEL --port 8000`), `--model` optional (the
-  model it should report serving). An answer below `--threshold` (default 0.9) is unsure, a row
-  of its own; summary cases are n/a (a decision model writes no text). It is always announced
+  model it should report serving). An answer below `--threshold` (default 0.9) is unsure: a row
+  of its own, and neither right nor wrong, so its accuracy is how often an answer it was sure of
+  is right. Summary cases are n/a (a decision model writes no text). It is always announced
   first: the server it calls and at most how many times (one call per hint and judge case).
 - `--engine rules`: the rules alone.
 - `--compare SPEC`, as often as you like: another column, `rules`, `cactus`,

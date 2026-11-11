@@ -82,12 +82,42 @@ def test_eval_local_scores_the_decider_beside_the_rules_with_unsure_apart_and_su
             "below confidence 0.9 counts as unsure") in result.output
     rows = table(result.output)
     assert rows["cases"] == ["rules", f"decider {server.base_url}"]
-    assert rows["hint"] == ["2", "2/2 100%", "1/2 50%"]  # the unsure xor scores wrong
+    assert rows["hint"] == ["2", "2/2 100%", "1/1 100%"]  # the unsure xor is neither right nor wrong
     assert rows["judge"] == ["2", "2/2 100%", "1/2 50%"]  # the rules see qsstv; the decider's HTTP 500 scores wrong
     assert rows["summary"] == ["1", "n/a", "n/a"]  # not applicable, not a failure
+    assert rows["overall"] == ["4", "4/4 100%", "2/3 67%"]
     assert rows["unsure"] == ["-", "1/4 25%"] and rows["failed"] == ["-", "1/4 25%"] and rows["no answer"] == ["-", "0/4 0%"]
     assert rows["cost per job"] == ["$0", "$0"] and rows["time per job"][1].endswith(("ms", "s"))
-    assert "unsure: the decision model's confidence was below its threshold" in result.output
+    assert ("unsure: the decision model's confidence was below its threshold, so in a run the rules' answer stands. "
+            "An unsure job counts neither right nor wrong") in " ".join(result.output.split())
+
+
+def scorecard(cases, *replies) -> dict[str, list[str]]:
+    """The scorecard's rows for a decider column answering `replies`, one per hint or judge case."""
+    with FakeDeciderServer(replies) as server:
+        result = runner.invoke(mount(), ["eval-local", "--engine", "decider", "--base-url", server.base_url,
+                                         "--cases", str(cases)])
+    assert result.exit_code == 0, result.output
+    return table(result.output)
+
+
+def test_an_unsure_answer_is_neither_right_nor_wrong_so_the_accuracy_is_over_the_answers_it_was_sure_of(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "Decode the slow scan picture."),
+                        hint_case("xor", "A repeating single-byte key."))
+    unsure = scorecard(cases, picks("sstv", 0.97), picks("xor", 0.5))  # sure and right; then unsure
+    wrong = scorecard(cases, picks("sstv", 0.97), picks("sstv", 0.97))  # sure and right; then sure and wrong
+    assert unsure["hint"] == ["2", "2/2 100%", "1/1 100%"] and unsure["unsure"] == ["-", "1/2 50%"]
+    assert unsure["overall"] == ["2", "2/2 100%", "1/1 100%"]  # in a run the rules answer the unsure one
+    assert wrong["hint"] == ["2", "2/2 100%", "1/2 50%"] and wrong["unsure"] == ["-", "0/2 0%"]
+
+
+def test_a_kind_the_decider_was_unsure_of_throughout_says_so_and_is_not_n_a(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "Decode the slow scan picture."),
+                        judge_case("yes", [("qsstv -i a.wav", "")]), summary_case())
+    rows = scorecard(cases, picks("sstv", 0.3), picks("yes", 0.95))
+    assert rows["hint"] == ["1", "1/1 100%", "all unsure"]  # it ran the job: not "n/a", which is a job it does not do
+    assert rows["judge"] == ["1", "1/1 100%", "1/1 100%"] and rows["summary"] == ["1", "n/a", "n/a"]
+    assert rows["overall"] == ["2", "2/2 100%", "1/1 100%"] and rows["unsure"] == ["-", "1/2 50%"]
 
 
 def test_eval_local_compares_a_decider_column_at_the_threshold_given(tmp_path):
@@ -114,13 +144,27 @@ def test_eval_local_without_a_decider_column_has_no_unsure_row():
     assert decider.unanswered == 0 and decider.unsure == 1  # unsure is counted apart from failures
 
 
+def test_the_report_leaves_unsure_jobs_out_of_its_accuracy_and_counts_them_apart():
+    unsure = lm.CaseResult("hint", "xor", "xor", False, answered=False, failure=L.UNSURE)  # leaned right: still not right
+    decider = lm.EvalReport("decider d", (lm.CaseResult("hint", "sstv", "sstv", True), unsure,
+                                          lm.CaseResult("judge", "no", "yes", False),
+                                          lm.CaseResult("judge", "no", "", False, answered=False, failure=L.ERROR)),
+                            0, 0.0, "decider")
+    assert decider.by_kind() == {"hint": (1, 1), "judge": (0, 2)}  # a failure still scores wrong
+    assert decider.correct == 1 and decider.accuracy == 1 / 3 and decider.total == 4  # four jobs run, three graded
+    assert decider.unsure == 1 and decider.unanswered == 1
+    only_unsure = lm.EvalReport("decider d", (unsure,), 0, 0.0, "decider")
+    assert only_unsure.by_kind() == {"hint": (0, 0)} and only_unsure.accuracy == 0.0
+
+
 def test_a_decider_that_is_unsure_on_every_job_still_measures_it(tmp_path):
     cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "slow scan"), hint_case("xor", "repeating key"))
     with FakeDeciderServer([picks("sstv", 0.3), picks("xor", 0.2)]) as server:
         result = runner.invoke(mount(), ["eval-local", "--engine", "decider", "--base-url", server.base_url,
                                          "--cases", str(cases)])
     assert result.exit_code == 0, result.output  # unsure is the model saying it does not know, not a failure
-    assert table(result.output)["unsure"] == ["-", "2/2 100%"]
+    rows = table(result.output)
+    assert rows["unsure"] == ["-", "2/2 100%"] and rows["hint"][2] == rows["overall"][2] == "all unsure"
 
 
 def test_eval_local_stops_a_decider_that_is_not_there(tmp_path):
