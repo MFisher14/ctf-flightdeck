@@ -104,9 +104,13 @@ def test_option_names_must_be_plain_unique_and_not_none(names):
 def test_a_pick_is_one_of_the_options_or_none(installed):
     module = installed([call("decode_base64", 0.8), call(NONE), call("rm_rf_everything"), {"function_calls": []}])
     with Picker(OPTIONS) as picker:
-        assert (picker.pick("ZmxhZw== looks like base64").option, picker.pick("x").option) == ("decode_base64", None)
-        assert picker.pick("y").option is None  # a name that is not an option counts as none
-        assert picker.pick("z").option is None
+        first, second = picker.pick("ZmxhZw== looks like base64"), picker.pick("x")
+        assert (first.option, first.valid) == ("decode_base64", True)
+        assert (second.option, second.valid) == (None, True)  # none of these: an answer
+        bad = picker.pick("y")
+        assert (bad.option, bad.valid) == (None, False)  # a name that is not an option is no answer at all
+        empty = picker.pick("z")
+        assert (empty.option, empty.valid) == (None, False)
     (agent,) = module.made
     assert agent.kwargs == {"auto_date": False, "stateless": True} and agent.closed
 
