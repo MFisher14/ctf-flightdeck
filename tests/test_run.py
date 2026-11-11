@@ -7,6 +7,8 @@ import asyncio
 import hashlib
 import json
 import os
+import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,7 @@ from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
 from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
 from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
 
-from fake_model import FakeModelServer, tool_call_reply
+from fake_model import FakeModelServer, FakeReply, tool_call_reply
 
 FLAG = "t{note}"
 LADDER = ("fake/small", "fake/big")  # the test config's
@@ -135,6 +137,148 @@ def test_play_names_a_flag_left_waiting_for_approval_when_the_player_quits(tmp_p
     expected = f"flightdeck: not submitted, still waiting for your approval when the run ended: L01 Note^[]0;pwned^G: {FLAG}"
     assert expected in result.stderr, result.stderr
     assert "\x1b" not in result.output + result.stderr and "\x07" not in result.output + result.stderr
+
+
+def headless(monkeypatch, player) -> None:
+    """`play` opens the console headless (160x46) and `player(app, pilot)` plays it; then the
+    console is given time to quit, as `q` with no lane open does."""
+    from ctf_flightdeck.console.app import FlightdeckApp
+
+    def run(self, *args, **kwargs) -> None:
+        async def main() -> None:
+            async with self.run_test(size=(160, 46)) as pilot:
+                await player(self, pilot)
+                for _ in range(400):
+                    if not self.is_running:
+                        break
+                    await pilot.pause(0.01)
+
+        asyncio.run(main())
+
+    monkeypatch.setattr(FlightdeckApp, "run", run)
+
+
+async def until(pilot, cond, what: str, seconds: float = 20.0) -> None:
+    for _ in range(int(seconds / 0.02)):
+        if cond():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"{what}: not within {seconds} s")
+
+
+async def solve_then_quit(app, pilot) -> None:
+    """The lane submits its flag (submit auto); then the player quits."""
+    await until(pilot, lambda: any(lane.state is LaneState.SOLVED for lane in app.deck.lanes.values()), "the solve")
+    await pilot.press("q")
+
+
+async def flag_then_quit(app, pilot) -> None:
+    """The lane's flag waits for the player (a board with no answers cannot check it), who quits all the same."""
+    await until(pilot, lambda: any(lane.pending is not None for lane in app.deck.lanes.values()), "the flag's approval")
+    await pilot.press("q")
+    await pilot.pause()
+    await pilot.press("y")
+
+
+def next_steps(stdout: str) -> tuple[Path, list[str]]:
+    """The run folder `play` printed after the run log line, and the commands it said come next."""
+    lines = stdout.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("run log: "))
+    assert lines[at + 1].startswith("run folder: ") and lines[at + 2] == "next:", lines[at:]
+    folder = Path(lines[at + 1].removeprefix("run folder: "))
+    assert lines[at] == f"run log: {folder / 'events.jsonl'}"
+    commands = []
+    for line in lines[at + 3:]:
+        if not line.startswith("  flightdeck "):
+            break
+        commands.append(re.split(r"\s{2,}", line.strip())[0])
+    return folder, commands
+
+
+def test_play_ends_with_the_run_folder_and_the_commands_that_read_it_and_each_works_as_printed(tmp_path, monkeypatch):
+    headless(monkeypatch, solve_then_quit)
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url)),
+                                              "--submit", "auto"])
+    assert result.exit_code == 0, result.output
+    folder, commands = next_steps(result.stdout)
+    assert folder.parent == tmp_path / "runs" and (folder / "events.jsonl").is_file()
+    assert result.stdout.index("solved 1 of 1") < result.stdout.index("run log: ")  # the scorecard comes first
+    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "score")]
+    for command in commands:
+        ran = CliRunner().invoke(cli.app, shlex.split(command)[1:])
+        assert ran.exit_code == 0, (command, ran.output)
+    assert (folder / "report.md").is_file() and (folder / "gaps.md").is_file() and list((folder / "writeups").iterdir())
+
+
+def test_play_offers_score_only_for_a_board_with_answers_and_finds_an_answers_file_given_with_the_option(tmp_path, monkeypatch):
+    root = board(tmp_path)
+    answers = tmp_path / "answers.json"
+    (root / "answers.sha256.json").rename(answers)  # the board has none of its own now
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})] * 2) as server:
+        cfg = str(config(tmp_path, server.base_url))
+        headless(monkeypatch, flag_then_quit)
+        plain = CliRunner().invoke(cli.app, ["play", str(root), "--config", cfg, "--submit", "auto"])
+        headless(monkeypatch, solve_then_quit)
+        given = CliRunner().invoke(cli.app, ["play", str(root), "--config", cfg, "--submit", "auto", "--answers", str(answers)])
+    assert plain.exit_code == 0 and given.exit_code == 0, plain.output + given.output
+    _, commands = next_steps(plain.stdout)
+    assert [command.split()[1] for command in commands] == ["report", "writeups", "gaps"]  # nothing to score against
+    folder, commands = next_steps(given.stdout)
+    assert commands[-1] == f"flightdeck score {folder}"
+    scored = CliRunner().invoke(cli.app, shlex.split(commands[-1])[1:])
+    assert scored.exit_code == 0 and "Flags checked against answers.json" in scored.stdout, scored.output
+
+
+def test_play_quotes_a_run_folder_with_a_space_so_its_commands_paste_whole(tmp_path, monkeypatch):
+    headless(monkeypatch, solve_then_quit)
+    cfg = config(tmp_path, "http://127.0.0.1:9/v1")
+    runs = tmp_path / "my runs"
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        cfg.write_text(cfg.read_text().replace("http://127.0.0.1:9/v1", server.base_url).replace(str(tmp_path / "runs"), str(runs)))
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(cfg), "--submit", "auto"])
+    assert result.exit_code == 0, result.output
+    folder, commands = next_steps(result.stdout)
+    assert folder.parent == runs and commands[0] == f"flightdeck report '{folder}'"
+    assert CliRunner().invoke(cli.app, shlex.split(commands[0])[1:]).exit_code == 0
+
+
+def test_play_says_why_the_queue_was_held_when_the_run_ended_after_the_scorecard(tmp_path, monkeypatch):
+    """Every model call is refused (HTTP 401): the first lanes end, the queue is held, and the
+    player quits. play says the queue was held, why, and what never started."""
+    root = board(tmp_path)
+    for name in ("memo", "list"):
+        (root / name).mkdir()
+        (root / name / "challenge.json").write_text(json.dumps({"name": name.title(), "category": "misc", "points": 100}))
+
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: app.deck.held and all(lane.finished for lane in app.deck.lanes.values()), "the hold")
+        await pilot.press("q")
+
+    headless(monkeypatch, player)
+    refused = FakeReply(401, {"error": {"message": "No auth credentials found"}})
+    with FakeModelServer(responder=lambda record: refused) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url))])
+    assert result.exit_code == 0, result.output
+    said = re.search(r"flightdeck: the queue was held when the run ended \(1 challenge queued, not started\): L0[12]'s "
+                     r"call to fake/small failed in a way every lane would \(check the API key\): .*HTTP 401", result.stderr)
+    assert said is not None, result.stderr  # the lane that hit it first: two started at once
+    out = result.output  # stdout and stderr, in the order they were written
+    assert out.index("Test Event: solved 0 of 3") < out.index(said.group(0)) < out.index("run log: ")  # after the scorecard
+
+
+def test_play_says_nothing_of_a_hold_the_player_lifted(tmp_path, monkeypatch):
+    async def player(app, pilot) -> None:
+        app.deck.hold_queue("the model API does not answer: is it running, and is base_url right?")
+        assert app.deck.release_hold().ok
+        await solve_then_quit(app, pilot)
+
+    headless(monkeypatch, player)
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url)),
+                                              "--submit", "auto"])
+    assert result.exit_code == 0, result.output
+    assert "held" not in result.stderr and "run folder: " in result.stdout
 
 
 def test_the_event_log_and_the_lane_workspaces_go_in_a_new_folder_per_run(tmp_path):
