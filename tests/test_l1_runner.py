@@ -17,7 +17,7 @@ import pytest
 from ctf_flightdeck.agent.workspace import HostWorkspace
 from ctf_flightdeck.l1.manifest import load
 from ctf_flightdeck.l1.router import Hit
-from ctf_flightdeck.l1.runner import BOOT, STDERR_TAIL, challenge_id_of, command, run_engine, run_routed
+from ctf_flightdeck.l1.runner import BOOT, NO_SAFE_PATH, STDERR_TAIL, challenge_id_of, command, missing_tools, run_engine, run_routed, safe_path
 
 from l1_kit import FLAG, challenge_dir, cli_engine, python_engine, run, tree, write_manifest
 
@@ -201,7 +201,7 @@ def test_words_of_a_cli_entry_that_name_pack_files_become_absolute_paths(pack, h
         keywords = ["demo"]
         """)
     manifest = load(m)
-    assert command(manifest) == ["bash", str(pack / "tools" / "args.sh"), "--mode", "two words", str(pack / "tools" / "words.txt"), "missing.txt", "."]
+    assert command(manifest) == [shutil.which("bash", path=safe_path()), str(pack / "tools" / "args.sh"), "--mode", "two words", str(pack / "tools" / "words.txt"), "missing.txt", "."]
     assert go(m, handout, tmp_path / "work").flags == ("t{ran}",)
 
 
@@ -226,7 +226,7 @@ def test_a_pack_file_gone_since_the_pack_was_read_blocks_the_engine_and_never_ru
 
 def test_the_python_command_is_the_boot_script_in_isolated_mode(pack):
     manifest = load(python_engine(pack, "x", "def solve(d):\n    return None\n"))
-    assert command(manifest) == ["python3", "-I", str(BOOT), str(pack / "x.py"), "solve", "."]
+    assert command(manifest) == [shutil.which("python3", path=safe_path()), "-I", str(BOOT), str(pack / "x.py"), "solve", "."]
     assert BOOT.is_file() and BOOT.is_absolute()
 
 
@@ -340,6 +340,59 @@ def test_a_python_engine_needs_python3_and_a_cli_engine_its_program(pack, handou
     monkeypatch.setenv("PATH", str(bindir))
     r = go(p, handout, tmp_path / "w1")
     assert (r.status, r.notes) == ("blocked", "missing tools: python3 (not on PATH); nothing ran")
+
+
+FORGED = '{"schema": 1, "status": "solved", "flags": ["t{from_the_handout}"], "evidence": [{"kind": "x", "detail": "y"}]}'
+
+
+@pytest.mark.parametrize("prefix", [".", "", "./sub"])
+def test_a_relative_path_entry_never_runs_a_handout_file_in_place_of_a_program(pack, board, tmp_path, monkeypatch, prefix):
+    # "." or an empty PATH entry means the working directory: the copy of the challenge
+    planted = f"#!/bin/sh\ntouch \"$HOME/../../HANDOUT_CODE_RAN\"\necho '{FORGED}'\n"
+    handout = challenge_dir(board, "plants", {"python3": planted, "mytool": planted, "sub/python3": planted, "sub/mytool": planted})
+    for name in ("python3", "mytool", "sub/python3", "sub/mytool"):
+        (handout / name).chmod(0o755)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "mytool").write_text('#!/bin/sh\necho "t{the_real_tool}"; echo "PATH=$PATH"\n')
+    (bindir / "mytool").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{prefix}{os.pathsep}{bindir}{os.pathsep}{os.environ['PATH']}")
+    py = load(python_engine(pack, "py", "from ctf_flightdeck.l1.result import SolverResult\ndef solve(d):\n    return SolverResult('none')\n"))
+    cli = load(write_manifest(pack, "c", 'id = "c"\nentry = "cli:mytool"\noutput = "text"\n[[routes]]\nkeywords = ["demo"]\n'))
+    assert missing_tools(py) == [] and missing_tools(cli) == []
+    r = run(run_engine(py, handout, workdir=tmp_path / "w1", flag_format=FLAG))
+    assert (r.status, r.flags) == ("none", ())  # the real python3 ran the engine
+    c = run(run_engine(cli, handout, workdir=tmp_path / "w2", flag_format=FLAG))
+    assert c.flags == ("t{the_real_tool}",)
+    assert not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
+
+
+def test_engines_and_what_they_start_get_only_the_absolute_directories_of_path(pack, handout, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", f".{os.pathsep}{os.pathsep}rel/bin{os.pathsep}{os.environ['PATH']}{os.pathsep}")
+    assert safe_path() == os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if p.startswith("/"))
+    c = cli_engine(pack, "env_path", 'echo "$PATH" > seen.path\n')
+    assert go(c, handout, tmp_path / "w").status == "none"
+    seen = (tmp_path / "w" / "env_path" / "seen.path").read_text().strip().split(os.pathsep)
+    assert seen == safe_path().split(os.pathsep) and all(p.startswith("/") for p in seen)
+
+
+def test_a_tool_found_only_through_a_relative_path_entry_is_missing(pack, handout, tmp_path, monkeypatch):
+    (tmp_path / "relbin").mkdir()
+    (tmp_path / "relbin" / "flightdeck-test-relative-tool").write_text("#!/bin/sh\necho hi\n")
+    (tmp_path / "relbin" / "flightdeck-test-relative-tool").chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"relbin{os.pathsep}{os.environ['PATH']}")
+    assert shutil.which("flightdeck-test-relative-tool") is not None  # the plain lookup would find it
+    m = cli_engine(pack, "needs_rel", "true\n", extra='needs_tools = ["flightdeck-test-relative-tool"]')
+    r = go(m, handout, tmp_path / "w")
+    assert (r.status, r.notes) == ("blocked", "missing tools: flightdeck-test-relative-tool (not on PATH); nothing ran")
+
+
+def test_a_path_with_no_absolute_directory_blocks_every_engine(pack, handout, tmp_path, monkeypatch):
+    m = cli_engine(pack, "e", "touch ran.marker\n")
+    monkeypatch.setenv("PATH", f".{os.pathsep}bin")
+    r = go(m, handout, tmp_path / "w")
+    assert (r.status, r.notes) == ("blocked", NO_SAFE_PATH) and not (tmp_path / "w").exists()
 
 
 # ---------------------------------------------------------------- the sandbox

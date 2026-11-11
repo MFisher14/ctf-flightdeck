@@ -12,6 +12,12 @@ command is the entry with "." (the copy) appended:
   in the copy, not in the pack). A pack file that has gone since blocks the engine: the bare
   word would name the challenge's file of that name in the copy.
 
+Programs (python3, a cli entry's program, needs_tools) are looked up on the absolute
+directories of PATH only (safe_path), and the command names the program it found by its
+absolute path. The engine runs with PATH cut to those directories too, so neither it nor
+anything it starts finds a program through "." or an empty entry, both of which mean the
+working directory: the copy of the challenge, where a handout file named python3 waits.
+
 Then what it printed becomes a SolverResult:
 - output "result": the last non-empty stdout line, read as a SolverResult (not one: unsure);
 - output "text": every flag-format match in stdout, in order and deduplicated: candidate;
@@ -19,7 +25,8 @@ Then what it printed becomes a SolverResult:
 - a timeout: unsure, "timed out after Ns"; a non-zero exit with no result: unsure, "exited
   N: <the end of its stderr>";
 - tools missing from PATH (needs_tools, python3 for a python entry, the program of a cli
-  entry), or files of the pack that have gone: blocked, naming them, and nothing runs;
+  entry), files of the pack that have gone, or a PATH with no absolute directory at all:
+  blocked, naming them, and nothing runs;
 - a workspace that cannot be prepared: blocked, with the reason.
 engine and challenge_id are filled in, and cost.seconds is the measured run time.
 
@@ -57,6 +64,10 @@ BOOT = Path(__file__).resolve().with_name("_boot.py")
 PYTHON = "python3"
 STDERR_FILE = f"{PRIVATE}/l1-stderr.log"  # in the workspace: the engine's stderr, apart from stdout
 STDERR_TAIL = 300  # characters of stderr kept in the notes of a failed run
+NO_SAFE_PATH = (
+    "PATH has no absolute directory (only relative entries such as \".\", which would find programs in the copy "
+    "of the challenge), so no program can be looked up safely; nothing ran"
+)
 LINE_TAIL = 120  # characters of a last line that was not a result, kept in the notes
 
 WorkspaceFactory = Callable[[str, Path, Path], Workspace]
@@ -100,12 +111,19 @@ async def run_engine(
     gone = missing_files(manifest)
     if gone:
         return done(SolverResult("blocked", notes=f"pack file {', '.join(gone)} is missing (it was there when the pack was read); nothing ran"), 0.0)
+    path = safe_path()
+    if not path:
+        return done(SolverResult("blocked", notes=NO_SAFE_PATH), 0.0)
     missing = missing_tools(manifest)
     if missing:
         return done(SolverResult("blocked", notes=f"missing tools: {', '.join(missing)} (not on PATH); nothing ran"), 0.0)
+    try:
+        argv = command(manifest)
+    except LookupError as exc:  # a program went between the check and now
+        return done(SolverResult("blocked", notes=f"{_safe(str(exc))}; nothing ran"), 0.0)
     workspace = (workspace_factory or host_workspace)(manifest.id, Path(workdir) / manifest.id, handout)
     try:
-        result, seconds = await _run_in(workspace, manifest, limit, pattern)
+        result, seconds = await _run_in(workspace, manifest, argv, path, limit, pattern)
     finally:
         try:
             await workspace.close()
@@ -160,14 +178,45 @@ async def run_routed(
 
 
 def command(manifest: Manifest) -> list[str]:
-    """The argv an engine runs with, in its workspace."""
+    """The argv an engine runs with, in its workspace: its program by absolute path (found on
+    safe_path(), or a pack file) and pack files by absolute path. LookupError when the
+    program is not there (run_engine checks missing_tools first)."""
+    path = safe_path()
     entry = manifest.entry
     if entry.kind == "python":
-        return [PYTHON, "-I", str(BOOT), str(manifest.entry_file), str(entry.function), "."]
+        return [_program(PYTHON, path), "-I", str(BOOT), str(manifest.entry_file), str(entry.function), "."]
     words = list(entry.argv)
     for i in entry.pack_files:  # settled when the manifest was loaded, never looked up again here
         words[i] = str(manifest.base / entry.argv[i])
+    if 0 not in entry.pack_files:
+        words[0] = _program(words[0], path)
     return [*words, "."]
+
+
+def safe_path(path: str | None = None) -> str:
+    """PATH (default: this process's) with only its absolute directories, in order. A
+    relative entry, "." or an empty one, is the working directory of whatever looks a
+    program up: for an engine, the copy of the challenge."""
+    raw = os.environ.get("PATH", "") if path is None else path
+    return os.pathsep.join(entry for entry in raw.split(os.pathsep) if os.path.isabs(entry))
+
+
+def find_program(name: str, path: str) -> str | None:
+    """The absolute path `name` runs as: itself if it is an absolute path to an executable,
+    else the first executable of that name in path's directories; None if there is none."""
+    if os.path.isabs(name):
+        return name if shutil.which(name) is not None else None
+    if not path or "/" in name:
+        return None
+    found = shutil.which(name, path=path)
+    return os.path.abspath(found) if found is not None else None
+
+
+def _program(name: str, path: str) -> str:
+    found = find_program(name, path)
+    if found is None:
+        raise LookupError(f"{name} is not on PATH")
+    return found
 
 
 def missing_files(manifest: Manifest) -> list[str]:
@@ -186,7 +235,8 @@ def missing_tools(manifest: Manifest) -> list[str]:
     elif 0 not in manifest.entry.pack_files:
         needed.append(manifest.entry.argv[0])  # a command on PATH, or an absolute path
     needed += manifest.needs_tools
-    return [tool for tool in dict.fromkeys(needed) if shutil.which(tool) is None]
+    path = safe_path()
+    return [tool for tool in dict.fromkeys(needed) if find_program(tool, path) is None]
 
 
 def challenge_id_of(handout: Path) -> str:
@@ -206,13 +256,15 @@ def challenge_id_of(handout: Path) -> str:
 # ---------------------------------------------------------------- running and reading what an engine printed
 
 
-async def _run_in(workspace: Workspace, manifest: Manifest, limit: float, pattern: re.Pattern[str]) -> tuple[SolverResult, float]:
+async def _run_in(
+    workspace: Workspace, manifest: Manifest, argv: list[str], path: str, limit: float, pattern: re.Pattern[str]
+) -> tuple[SolverResult, float]:
     """(result, seconds the command ran) for one engine in a workspace that is not prepared yet."""
     try:
         await workspace.prepare()
     except WorkspaceError as exc:
         return SolverResult("blocked", notes=f"its workspace could not be prepared: {_safe(str(exc))}"), 0.0
-    line = f"exec {shlex.join(command(manifest))} 2>{shlex.quote(STDERR_FILE)}"
+    line = f"PATH={shlex.quote(path)} exec {shlex.join(argv)} 2>{shlex.quote(STDERR_FILE)}"
     begun = time.monotonic()
     try:
         run = await workspace.run(line, timeout=limit)
