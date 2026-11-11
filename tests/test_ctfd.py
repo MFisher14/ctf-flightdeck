@@ -42,7 +42,7 @@ from ctf_flightdeck.platform.ctfd import (
     pull_board,
     slugify,
 )
-from ctf_flightdeck.platform.manual import load_board
+from ctf_flightdeck.platform.manual import BoardError, load_board
 from fake_ctfd import FLAG_FORMAT, HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply, make_tls, sample
 
 
@@ -777,6 +777,19 @@ def test_a_re_pull_keeps_board_json_and_may_add_a_flag_format_it_lacked(tmp_path
     assert (new.board.event, new.board.flag_format) == ("spring", None)  # a new board: the folder's name
     assert (first.board.event, kept.board.event, kept.board.flag_format) == ("Spring CTF", "Spring CTF", None)
     assert (added.board.event, added.board.flag_format) == ("Spring CTF", FLAG_FORMAT)
+
+
+def test_a_re_pull_into_a_board_whose_board_json_was_broken_by_hand_says_so_first(tmp_path):
+    dest = tmp_path / "board"
+    with FakeCTFd(sample()) as fake:
+        pulled(fake, dest)
+        (dest / "board.json").write_text('{"event": "Fake CTF", "flag_format": "(unclosed"}')
+        asked = len(fake.requests)
+        with pytest.raises(BoardError) as caught:
+            pulled(fake, dest, event=None, flag_format=None)
+        assert len(fake.requests) == asked  # nothing asked of CTFd, and board.json left for the player to fix
+    assert "board.json" in str(caught.value) and "flag_format" in str(caught.value)
+    assert json.loads((dest / "board.json").read_text())["flag_format"] == "(unclosed"
 
 
 def test_a_challenge_that_cannot_be_pulled_is_left_out_and_retried_next_time(tmp_path):
