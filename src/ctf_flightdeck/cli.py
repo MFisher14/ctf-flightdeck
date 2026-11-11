@@ -517,7 +517,16 @@ def init(
     except KeysError:
         keys_file = "the keys file"
     for variable in (key_env, spare.key_env if spare is not None else ""):
-        if variable:
+        if not variable:
+            continue
+        try:
+            where = source(variable)
+        except KeysError:
+            where = None  # a keys file flightdeck refuses to read: doctor says why
+        if where is not None:
+            shown = keys_file if where == "keys file" else "your environment"
+            typer.echo(f"key: {variable} is set in {shown} (its value is never shown or stored)")
+        else:
             typer.echo(f"next: put {variable}=<your key> in {keys_file} (chmod 600), or export {variable}=<your key>  "
                        "(flightdeck never stores it)")
     if offer:

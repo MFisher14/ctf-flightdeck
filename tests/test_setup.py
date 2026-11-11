@@ -269,6 +269,7 @@ ROUTER_KEY = "fake-router-key-for-init-tests"
 
 def anthropic_init(tmp_path, monkeypatch, *args: str, terminal: bool = False, answers: str = "", router_key: bool = False):
     monkeypatch.setattr(cli, "_at_terminal", lambda: terminal)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)  # init says whether a key is set: none is, here
     if router_key:
         monkeypatch.setenv("OPENROUTER_API_KEY", ROUTER_KEY)
     else:
@@ -309,7 +310,8 @@ def test_at_a_terminal_init_for_anthropic_offers_openrouter_as_the_fallback_when
     if wanted:
         assert config.fallback == FallbackConfig("openai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", OPENROUTER_LADDER)
         assert "these are OpenRouter's names for the same models" in target.read_text()
-        assert "put OPENROUTER_API_KEY=<your key> in" in result.output
+        assert "key: OPENROUTER_API_KEY is set in your environment" in result.output  # set: nothing to ask for
+        assert "put OPENROUTER_API_KEY=<your key>" not in result.output
     else:
         assert config.fallback is None and "[fallback]" not in target.read_text()
     assert ROUTER_KEY not in result.output and ROUTER_KEY not in target.read_text()
@@ -323,6 +325,19 @@ def test_an_openrouter_key_in_the_keys_file_is_known_too(tmp_path, monkeypatch):
     result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, answers="\ny\nhost\n")
     assert result.exit_code == 0, result.output
     assert load_config(target).fallback.ladder == OPENROUTER_LADDER
+
+
+def test_init_does_not_ask_for_a_key_the_keys_file_already_holds(tmp_path, monkeypatch):
+    secret = "sk-ant-fake-" + "k" * 24
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"ANTHROPIC_API_KEY={secret}\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    result, target = anthropic_init(tmp_path, monkeypatch, "--host")
+    assert result.exit_code == 0, result.output
+    assert f"key: ANTHROPIC_API_KEY is set in {keys}" in result.output
+    assert "put ANTHROPIC_API_KEY=<your key>" not in result.output
+    assert secret not in result.output and secret not in target.read_text()
 
 
 def test_away_from_a_terminal_init_mentions_the_fallback_and_writes_it_with_the_option(tmp_path, monkeypatch):
