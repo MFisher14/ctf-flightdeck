@@ -190,9 +190,14 @@ def _parse(path: Path) -> dict:
         how = f"flightdeck config --example > {shlex.quote(str(path))}"
         if not path.parent.is_dir():
             how = f"mkdir -p {shlex.quote(str(path.parent))} && {how}"
+        try:
+            usual = path == default_config_path()
+        except RuntimeError:  # no home directory to compare with
+            usual = False
+        init = "flightdeck init" if usual else f"flightdeck init --path {shlex.quote(str(path))}"
         raise ConfigError(
-            f"{path}: no config file. Create one with `{how}`, then fill in the model ladder "
-            f"([models] ladder), or name another file with ${CONFIG_ENV}."
+            f"{path}: no config file yet. Run `{init}`: it asks a few questions and writes one. Or "
+            f"`{how}` for a commented one to fill in, or name another file with ${CONFIG_ENV}."
         ) from None
     except IsADirectoryError:
         raise ConfigError(f"{path}: is a directory, not a config file") from None

@@ -149,6 +149,14 @@ def test_a_missing_file_names_the_path_and_how_to_create_it(tmp_path):
     assert "mkdir" not in message  # the folder is there already
 
 
+def test_a_missing_config_points_a_new_player_at_init(tmp_path, monkeypatch):
+    custom = tmp_path / "elsewhere.toml"
+    assert f"Run `flightdeck init --path {custom}`" in error(custom)
+    usual = tmp_path / "usual.toml"
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(usual))
+    assert "Run `flightdeck init`: it asks a few questions" in error(usual)
+
+
 def test_a_missing_file_in_a_missing_folder_says_to_create_the_folder_too(tmp_path):
     path = tmp_path / "not-yet" / "config.toml"
     message = error(path)
