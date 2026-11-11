@@ -24,6 +24,10 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
   written to a file, per-call budget meter.
 - Lanes run in Docker or on the host per `containerized` (D9); `max_lanes` with a queue (D8).
 - Console from M0 wired to real lanes: pause, hint, redirect, fork, kill, take over.
+- Quick answers (parked at the M0 review): the needs-you card and the fleet's why line number their
+  options (`1` approve, `2`… the suggestions, `0` decline) and one key answers, no Enter (in the
+  focus view only while the chat box is empty). A decline for candidate flags, live-box and budget
+  requests, so "no" does not mean killing the lane.
 - Per-lane tokens and turns, dollars with API pricing; per-lane caps that stop the lane.
 - Append-only event log (JSONL) per run.
 - OpenRouter: send a stable `session_id` per lane for sticky prompt caching; do not set
@@ -59,6 +63,16 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Writeup drafts.
 - Build mode: turn gaps into solvers; a solver is done only when a test shows a raw handout reaches it
   through the router.
+
+## Later (parked at the M0 review, not scheduled)
+
+- **Phone control.** Today: run flightdeck in tmux and attach over SSH (needs a compact layout for
+  50–60 columns). Option: serve the same console in a browser (textual-serve); touches D4 and must be
+  locked down. Best: push a notification when a lane needs you, with approve and decline from the
+  phone; needs its own sign-in and permission design.
+- **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
+  in terminals that draw them; plain Unicode stays the default.
+- Batch approve (several waiting flags at once), dismissing an alert without intervening.
 
 ## v0.1.0: go public
 

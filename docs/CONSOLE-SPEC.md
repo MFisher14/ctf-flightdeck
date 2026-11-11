@@ -11,8 +11,8 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
  flightdeck ╱ event ╱ team ╱ docker ╱ lanes 16/16 · queue 27 ╱ ▲ 5 need you ╱ tok 4.1M ╱ $3.18 ╱ T+01:44
 ╭ board 51 · ✓ 2 · team ✓ 1 ───────╮ ╭ fleet 16/16 · sort attention ─────────────────────────────────╮
 │ cat  name         pts solv   own │ │   !          lane chall        model state turns cost idle last │
-│ web  Ticket Desk  100   41 ▶ L04 │ │ ▌ ▐flag▌     L04  Ticket Desk  sonnet wait     7  .16  11m …    │
-│ for  Static Hiss   50   88 ▶ L01 │ │   ▐offhint▌  L01  Static Hiss  glm    run     21  .13  20s …    │
+│ web  Ticket Desk  100   41 ▶ L04 │ │ ▌ [flag]     L04  Ticket Desk  sonnet wait     7  .16  11m …    │
+│ for  Static Hiss   50   88 ▶ L01 │ │   [offhint]  L01  Static Hiss  glm    run     21  .13  20s …    │
 │ ...                              │ │   ...                                                          │
 │                                  │ │ ▌L04 ▲ Flag found: candidate mock{…} matches the flag format    │
 │                                  │ │    a submit mock{…}   enter open                                │
@@ -23,21 +23,32 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
  o open  ? help  p pause  h hint  r redirect  f fork  k kill  e escalate  t take over  a approve  ...
 ```
 
+`[flag]` stands for a chip: a solid colored label (no half-block caps, so no color shows past a
+corner in any font). The header's segments are solid blocks with a `╱` between them on the page.
+
 - **Header**: event, solo/team, docker/host, lanes used/limit, queue length, **how many lanes need
-  you**, tokens, dollars, event clock. Low-priority pieces drop out on narrow terminals.
+  you**, tokens, dollars, event clock. On a narrow terminal the dollars go first, then tokens, the
+  mock tag, the event name and the clock; the name, solo/team, lanes and the need-you count stay.
 - **Board**: every challenge with category, points, solve count, status (new ·, queued …, running ▶,
   solved by us ✓, solved by a teammate ✓ in cyan, blocked ✗, parked ‖) and owner (lane, me,
-  teammate). Enter on a row opens its lane, or a card to queue or claim it.
+  teammate). Enter on a row opens its lane; with no lane or several, a card to queue or claim it
+  and to open any of its lanes (`1`-`9`). Under 100 columns the board hides (the lane list says so).
 - **Fleet**: one compact row per lane, scrolling, **sorted by attention** (below). Finished lanes
-  collapse into one row. 40+ rows stay usable; low-value columns drop first on narrow terminals.
+  collapse into one row. 40+ rows stay usable; low-value columns drop first on narrow terminals,
+  and the challenge name narrows before a column is cut. The list keeps its scroll position.
 - **Why line**: under the list, why the selected lane is flagged and the keys that answer it.
-- **Status line**: the latest intervention outcome or deck event (no toasts over the lanes).
+- **Command bar**: acts on the same lane the keys do (the board challenge's only lane when the board
+  has focus; refused when the filter hides the selected lane). Its suggestions follow the selection.
+  Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
+  word (`/approve 2` does not approve the selected lane; name it: `/approve L02`).
+- **Status line**: the latest intervention outcome or deck event (no toasts over the lanes); it
+  clears after 12 seconds.
 
 ## Focus view (enter on a lane)
 
 ```
  flightdeck ╱ ...header...
- 4 other lanes need you: ▐L04 flag▌ ▐L07 loop▌ ▐L02 effort▌ ▐L03 wrongway▌   ctrl+n next
+ 4 other lanes need you: [L04 flag] [L07 loop] [L02 effort] [L03 wrongway]   ctrl+n next
 ╭ L01 · Static Hiss  for 50 · glm · run · turn 24 ─────────╮ ╭ files changed 3 ──────────────────╮
 │ ⏺ python3 diff_channels.py --window 512 left.wav right…  │ │ ocr.py  +6 −0  new · turn 24      │
 │   ⎿  no window rises above the noise floor               │ │ diff_channels.py  +9 −1  turn 21  │
@@ -52,10 +63,14 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
 ```
 
 - **Transcript**: the lane's steps (⏺ command, ⎿ output), your messages (› you), flightdeck notes,
-  alerts and approvals, in order.
+  alerts and approvals, in order. It follows the lane; scroll back (`pgup`) and it stays where you
+  are reading until you scroll to the end again.
 - **Needs you now**: the lane's open alerts with their reasons and the suggested answers as commands.
+  It takes at most half the pane, so the transcript keeps its rows on a small terminal.
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
-- **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command.
+- **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
+  reaches it from any pane. An unsent message stays with its lane when you switch lanes.
+- **ctrl+n** goes through the lanes that need you in attention order, then round to the first.
 
 ## Attention order
 
@@ -99,7 +114,7 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
 | `?` | `/help` | Help |
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
-back to the fleet and `ctrl+n` jumps to the next lane that needs you.
+back to the fleet and `ctrl+n` goes on to the next lane that needs you.
 
 ## Proposed at the M0 review (built in the mock, not yet signed off)
 
