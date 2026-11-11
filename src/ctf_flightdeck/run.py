@@ -75,6 +75,7 @@ from .preflight import (
     looser,
     strictest,
 )
+from .runrecord import write_run_info
 from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
 from .text import untrusted
 from .transcript import TranscriptLog
@@ -476,6 +477,7 @@ def prepare_run(options: RunOptions) -> Run:
         board = first.board
     assert board is not None
     run_dir = new_run_dir((options.run_dir or config.run_dir).expanduser())
+    write_run_info(run_dir, board=options.board, answers=options.answers)  # for the commands after the run
     log = EventLog(run_dir / "events.jsonl")
     flag_format = (profile.flag_format if profile is not None else None) or board.flag_format
     deck_config = DeckConfig(

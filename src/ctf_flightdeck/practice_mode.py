@@ -17,15 +17,17 @@ timer of its own: call tick() from one on the console's event loop (the deck's t
 and by which lane, the tokens and dollars of the model turns, the player's interventions
 and the wrong submissions. With an answers file on the board, each submitted flag is
 checked against it again, so a run is scored against the answers and not only by what it
-was told at the time.
+was told at the time. Who a solve goes to (a lane, or the L1 engine whose flag it was) is the
+rule every report uses (runrecord.Credit); a teammate's solve, or one the platform lists
+for you or your team, is shown on its row but earns the run nothing.
 
-Tokens and dollars come from the log's turn events, and from the lane transcripts beside
-the log (lanes/<lane id>.jsonl, written by transcript.py as each lane ends): a lane's
-transcript starts with the deck's own totals for it, and those also count what the lane
-spent outside a turn (a model reply dropped on escalation, for one), which no event
-records. A transcript must agree with the log (the same lane, challenge and turns, and no
-less spent), or it is left out with a note. A lane with no transcript counts its turns
-only, and the score says so in a note.
+Tokens and dollars come from the log's turn events and spend events (what a lane spent
+outside a turn: a model reply dropped on escalation, for one). A log older than spend
+events (format 1, eventlog.FORMAT) has that only in the lane transcripts beside it
+(lanes/<lane id>.jsonl, written by transcript.py as each lane ends): a transcript starts
+with the deck's own totals for its lane. A transcript must agree with the log (the same
+lane, challenge and turns, and no less spent), or it is left out with a note. In an older
+log, a lane with no transcript counts its turns only, and the score says so in a note.
 
 `scorecard()` is a score as plain text for the terminal. It never shows a flag, and every
 name in it is folded to one safe line.
@@ -52,7 +54,7 @@ from . import fmt
 from .core.deck import Deck, QueueEntry
 from .core.model import ME, EventKind
 from .platform.manual import AnswerVerifier, Board
-from .runrecord import LANES
+from .runrecord import L1, LANES, Credit, Solve, event_line
 from .text import untrusted
 
 TIMELINE_FILE = "timeline.json"
@@ -298,8 +300,10 @@ class ChallengeScore:
     dollars: float | None  # the same; None when any of their cost had no price
     interventions: int
     wrong_submissions: int
-    teammate: str | None = None  # team mode: the teammate who solved it
+    teammate: str | None = None  # solved with no flag this run took: the teammate's handle, or the platform's word for who
     overruled: bool = False  # the run took a flag for it, and the answers file rejects every one it took
+    l1: str | None = None  # the L1 engine whose flag the solve was (runrecord.Credit); None: the lane's own
+    platform: bool = False  # `teammate` is the platform's word: it lists the challenge as solved
 
     @property
     def solved(self) -> bool:
@@ -330,7 +334,7 @@ class Score:
     wrong_submissions: int
     event: str = ""
     lanes: Mapping[str, LaneScore] = field(default_factory=_empty)  # in start order
-    known_dollars: float = 0.0  # every priced turn, and what a priced lane's transcript counts outside its turns
+    known_dollars: float = 0.0  # everything that had a price: turns, and spend outside them (spend events; an older log's transcripts)
     unpriced: tuple[str, ...] = ()  # lanes with a cost that had no price (a turn, or something outside one)
     intervention_kinds: Mapping[str, int] = field(default_factory=_empty)  # e.g. {"hint": 2}, most first
     ended_at: float | None = None  # the time of the log's last event
@@ -360,6 +364,9 @@ class _Lane:
     state: str | None = None
     known: float = 0.0  # the part of its cost that had a price
     unpriced_turn: bool = False  # a turn of it had no price
+    spends: int = 0  # spend events: what it spent outside a turn
+    unpriced_spends: int = 0  # spend events with no price
+    unpriced_spend: int = 0  # the tokens they spent
 
 
 @dataclass(frozen=True)
@@ -370,6 +377,7 @@ class _Submit:
     flag: str
     correct: bool
     by: str
+    credit: Solve  # who it goes to if it is the solve (runrecord.Credit, from the log up to it)
 
 
 @dataclass
@@ -403,10 +411,12 @@ def score(events_jsonl: Path, board: Board) -> Score:
     released: dict[str, float] = {}
     lanes: dict[str, _Lane] = {}
     submits: dict[str, list[_Submit]] = {}
-    teammates: dict[str, str] = {}
+    others: dict[str, Solve] = {}  # challenge -> its first solve with no flag of this run's (a teammate's, the platform's)
+    credit = Credit()
     asked: list[_Asked] = []  # interventions waiting for their outcomes (they nest)
     done: list[_Asked] = []  # interventions the deck carried out
     ended_at: float | None = None
+    log_format = _format(records[0][1])
 
     for n, rec in records:
         kind = rec["kind"]
@@ -415,6 +425,8 @@ def score(events_jsonl: Path, board: Board) -> Score:
         get = _Fields(where, n, kind, rec)
         at = float(get.top("at", _is_time, "a time (seconds, 0 or more)"))
         ended_at = at if ended_at is None else max(ended_at, at)
+        line = event_line(rec)
+        credit.see(n, line)
         if kind == "release":
             for cid in get.data("challenges", _is_ids, "a list of challenge ids"):
                 released.setdefault(known(cid), at)
@@ -450,22 +462,43 @@ def score(events_jsonl: Path, board: Board) -> Score:
                     raise ScoreError(f"{where}: line {n}: a lane.end event for {_quote(lane)} names no challenge")
                 acc = lanes.setdefault(lane, _Lane(known(cid)))
             acc.state = state
+        elif kind == "spend":  # tokens and dollars spent outside a turn (a format 2 log)
+            lane = get.top("lane", _is_text, "a lane id")
+            cid = known(get.top("challenge", _is_text, "a challenge id"))
+            tokens = get.data("tokens", _is_count, f"a token count (a whole number from 0 to {MAX_COUNT:,})")
+            dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
+            acc = lanes.setdefault(lane, _Lane(cid))
+            acc.tokens += tokens
+            acc.spends += 1
+            if dollars is None:
+                acc.dollars = None
+                acc.unpriced_spends += 1
+                acc.unpriced_spend += tokens
+            else:
+                acc.known += float(dollars)
+                if acc.dollars is not None:
+                    acc.dollars += float(dollars)
         elif kind == "submit":
             cid = known(get.top("challenge", _is_text, "a challenge id"))
+            flag = get.data("flag", _is_string, "the flag submitted")
             submits.setdefault(cid, []).append(
                 _Submit(
                     at,
                     n,
                     get.top("lane", _is_text_or_none, "a lane id or null"),
-                    get.data("flag", _is_string, "the flag submitted"),
+                    flag,
                     get.data("correct", _is_bool, "correct: true or false"),
                     get.data("by", _is_text, "who checked it (platform or player)", default="platform"),
+                    credit.flag(n, line, flag),
                 )
             )
         elif kind == "teammate":
             cid = known(get.top("challenge", _is_text, "a challenge id"))
             if get.data("solved", _is_bool, "solved: true or false", default=False):
-                teammates.setdefault(cid, get.data("who", _is_text, "the teammate's name"))
+                get.data("who", _is_text, "the teammate's name")
+                solve = Credit.other(n, line)
+                if solve is not None:
+                    others.setdefault(cid, solve)
         elif kind == "intervention":
             asked.append(
                 _Asked(
@@ -490,7 +523,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             f"{where}: the run played challenges that are not on the board {_quote(board.event)}: {names}; "
             "score it against the board it played (--board)"
         )
-    spent_outside = _add_transcripts(path.parent / LANES, lanes)  # before the sums below, so they hold it
+    spent_outside = _add_transcripts(path.parent / LANES, lanes, log_format)  # before the sums below, so they hold it
 
     verifier = AnswerVerifier(board.answers) if board.answers is not None else None
     per: dict[str, ChallengeScore] = {}
@@ -523,6 +556,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
         costs = [lanes[lane].dollars for lane in on_it]
         if first is not None:
             firsts[ch.id] = first
+        other = others.get(ch.id) if first is None else None
         total_wrong += wrong
         per[ch.id] = ChallengeScore(
             id=ch.id,
@@ -539,14 +573,22 @@ def score(events_jsonl: Path, board: Board) -> Score:
             dollars=None if any(c is None for c in costs) else sum((c for c in costs if c is not None), 0.0),
             interventions=iv_by_challenge[ch.id],
             wrong_submissions=wrong,
-            teammate=teammates.get(ch.id) if first is None else None,
+            teammate=other.who if other is not None else None,
             overruled=took and first is None,
+            l1=first.credit.who if first is not None and first.credit.by == L1 else None,
+            platform=other is not None and other.platform,
         )
     solved = tuple(sorted(firsts, key=lambda cid: (firsts[cid].at, firsts[cid].line)))  # log order on a time tie
     unpriced = tuple(lane for lane, acc in lanes.items() if acc.dollars is None)
     for lane, acc in lanes.items():
         if acc.unpriced_turn:
-            notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only priced turns.")
+            notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only what had a price.")
+        if acc.unpriced_spends:
+            spent = f"{fmt.tokens(acc.unpriced_spend)} tokens" if acc.unpriced_spend else "something"
+            notes.append(
+                f"{lane} spent {spent} {OUTSIDE_TURNS} with no price, so its cost is not fully known: the dollars "
+                "count only what had a price."
+            )
     notes += spent_outside
     known_dollars = sum(acc.known for acc in lanes.values())
     kinds = Counter(iv.name for iv in done)
@@ -577,13 +619,21 @@ def score(events_jsonl: Path, board: Board) -> Score:
 
 
 OUTSIDE = "a model reply dropped on escalation, for one"  # what a lane spends outside its turns
+OUTSIDE_TURNS = f"outside its turns ({OUTSIDE})"
 _PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # a lane id that is safe as a file name ("L01")
 
 
-def _add_transcripts(folder: Path, lanes: dict[str, _Lane]) -> list[str]:
-    """Add to each lane what its transcript in `folder` counts that its turns do not, and
+def _format(start: dict) -> int:
+    """The log's format from its run-start line (eventlog.FORMAT); 1 for a log older than it."""
+    value = start.get("format")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 1
+
+
+def _add_transcripts(folder: Path, lanes: dict[str, _Lane], log_format: int = 1) -> list[str]:
+    """Add to each lane what its transcript in `folder` counts that the log does not, and
     return the notes that say so. A transcript's header holds the deck's own totals for the
-    lane, which also count what was spent outside a turn; no event records that."""
+    lane, which also count what was spent outside a turn: a format 2 log has that as spend
+    events too (so the transcript adds nothing), an older log has it only there."""
     notes: list[str] = []
     missing: list[str] = []
     for lane, acc in lanes.items():
@@ -591,10 +641,12 @@ def _add_transcripts(folder: Path, lanes: dict[str, _Lane]) -> list[str]:
         if head is not None:
             problem = _disagreement(head, lane, acc)
         if problem is not None:
-            notes.append(f"{LANES}/{lane}.jsonl {problem}, so it is left out: {lane}'s cost is its model turns only.")
+            whose = "what the event log records" if log_format >= 2 else "its model turns only"
+            notes.append(f"{LANES}/{lane}.jsonl {problem}, so it is left out: {lane}'s cost is {whose}.")
             continue
         if head is None:
-            missing.append(lane)
+            if log_format < 2:  # a format 2 log has every spend: the transcript would add nothing
+                missing.append(lane)
             continue
         tokens, dollars, unpriced = head["tokens"] - acc.tokens, 0.0, False
         if acc.dollars is not None:
@@ -683,7 +735,7 @@ def _outside_note(lane: str, tokens: int, dollars: float, unpriced: bool) -> str
     if unpriced:
         return (
             f"{lane} {spent} ({OUTSIDE}), and not all of it had a price, so its cost is not fully known: "
-            "the dollars count only its turns."
+            "the dollars count only what had a price."
         )
     return f"{lane} {spent} ({OUTSIDE}): counted from its transcript, as the event log does not record it."
 
@@ -870,10 +922,16 @@ def _ordered(rows: list[ChallengeScore], score: Score) -> list[ChallengeScore]:
 def _result(row: ChallengeScore, lanes: Mapping[str, LaneScore]) -> str:
     if row.solved:
         mark = MARKS.get(row.checked or "")
-        who = "by you" if row.solved_by in (None, ME) else _one(row.solved_by)
+        if row.l1:  # the L1 engine's flag, which went through a lane's approval: credited as the report credits it
+            via = f" via {_one(row.solved_by)}" if row.solved_by not in (None, ME) else ""
+            who = f"by L1 {_one(row.l1)}{via}"
+        else:
+            who = "by you" if row.solved_by in (None, ME) else _one(row.solved_by)
         return f"solved {who}" + (f" {mark}" if mark else "")
     if row.teammate:
-        return f"teammate {_one(row.teammate)}"
+        if row.platform:
+            return f"{_one(row.teammate)} on the platform"
+        return "you" if row.teammate == ME else f"teammate {_one(row.teammate)}"
     if row.overruled:  # whatever state its lanes ended in: the run thought it was solved
         return "tried (flag rejected by answers)"
     if row.lanes:

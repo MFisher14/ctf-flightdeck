@@ -362,7 +362,8 @@ def test_a_run_on_a_board_with_answers_ends_with_a_scorecard(tmp_path):
         asyncio.run(main())
         run.close()
     card = run.scorecard()
-    assert card is not None and "solved 1 of 1" in card and "Note       misc   50  solved L01" in card, card
+    assert card is not None and "solved 1 of 1" in card, card
+    assert "Note       misc   50  solved by L1 reader via L01" in card, card  # the L1 engine's flag, as every report credits it
 
 
 # ---------------------------------------------------------------------- coding-agent CLIs as lanes (--agent)
