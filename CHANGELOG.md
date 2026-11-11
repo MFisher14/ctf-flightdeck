@@ -58,6 +58,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - Fast mode on the Anthropic API: `[api] fast = ["claude-opus-5-5"]` calls those ladder models at
   up to 2.5x the output speed, priced at the fast rate. A model without fast mode is refused with
   the reason. On fast mode's own rate limit a lane goes on at standard speed and says so.
+- `[api]` and `[fallback]` take `timeout`, the seconds one try of a lane's call may take (180 by
+  default, 600 with the Anthropic API), and `max_tokens`, the most tokens a lane's reply may
+  hold. A server on this machine gets 8192 unless you set it, instead of its own default
+  (mlx_lm.server's is 512, too few for a model that reasons first); no other OpenAI-compatible
+  API is sent one, and the Anthropic API gets 16000.
 
 ### Setup
 
@@ -88,6 +93,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   containers, the process groups it recorded), never another setup's.
 - `flightdeck init` names a key that is already set (in your environment or the keys file)
   instead of asking you to add it.
+- `flightdeck init` suggests the local models that did best in a benchmark on one machine:
+  `gpt-oss:20b` for lanes on Ollama, Qwen3.5 9B for lanes on MLX and as the light model
+  (`--light ollama|mlx`). At a terminal the suggestion is the default answer; away from one, the
+  message names it. For a server on this machine it writes `timeout = 600` and
+  `max_tokens = 8192` under `[api]` (a local model can take minutes for one reply), and for MLX
+  it prints the `mlx_lm.server` command to start, with thinking off and replies of up to 8192
+  tokens. `flightdeck doctor` says what lane calls to a server on this machine send and how long
+  each try may take (`lane calls`).
 - `flightdeck preflight` says when nothing runs at the l1 stage (no `[l1]` pack) and how to set
   one, and that under submit `auto` only a flag a lane claims goes to the platform at once (a
   model's submit, a coding agent's `FLAG:` line, an L1 engine's result); any other match waits
@@ -173,6 +186,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `flightdeck eval-local --engine decider --base-url URL` (or `--compare decider@URL`) scores
   it: its unsure answers in a row of their own, neither right nor wrong (its accuracy is over
   the answers it was sure of), and summaries as n/a.
+- A light model on a server on this machine is asked, with each request, to answer without
+  thinking first (`[light] thinking`: false by default there, and written by
+  `init --light ollama|mlx`): a model that reasons first spent a job's few hundred tokens
+  reasoning and answered nothing. `thinking = true` sends nothing extra, and an API elsewhere
+  gets nothing extra unless you set `thinking = false`. The run says when thinking is off, and
+  `flightdeck eval-local --thinking on|off` measures either way (by default as your `[light]
+  thinking` says for that server).
 
 ### M4: after a run
 
@@ -190,7 +210,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   SECRET, PASSWORD, PASSWD, COOKIE or AUTH (a Makefile's `:=`, `::=`, `?=` and `+=` too),
   Authorization and Cookie header values, and keys with a well-known prefix (`sk-ant-`, `ghp_`,
   `AKIA` and the like). The name stays and the value becomes `[redacted]`; flags stay, since
-  hiding them is `--redact`'s job. Drafting writeups cleans older run folders too.
+  hiding them is `--redact`'s job. Drafts made from older run folders are cleaned too (the run
+  folders themselves are not changed).
 - Post-flight and the scorecard count each spend for the model that spent it (an escalated
   lane's earlier model too), and a coding-agent CLI's own cost of its turns is no longer called
   spend outside a turn. A CLI turn whose cost never came leaves that model's dollars, and the
@@ -218,8 +239,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - L1 solver packs: your no-model solvers, each with a small manifest saying which challenges it
   fits (`flightdeck l1 import` writes them for a folder of scripts, without changing the scripts).
   With `[l1] pack` in the config (or `--pack`), a lane runs the engines routed to its challenge
-  before its first model call; a flag one finds waits for your approval, so a solve can cost no
-  tokens at all.
+  before its first model call; a flag one finds waits for your approval (under auto submit, an
+  engine's result goes at once), so a solve can cost no tokens at all.
 - `flightdeck preflight event.toml`: what an event's rules allow, and how far flightdeck goes on
   its own at each stage (pull, L1, agents, submit, live instance).
 - The live instance policy: under `confirm` a lane asks before it may reach its challenge's
