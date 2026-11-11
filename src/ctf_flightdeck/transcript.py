@@ -6,6 +6,12 @@ with its output, flightdeck's notes, the alerts, and the files a lane changed wi
 diffs. This writes them to `<run>/lanes/<lane id>.jsonl` when a lane ends, and for every
 lane still open when the run closes. Lines are JSON objects (pure ASCII), first a header
 for the lane, then one per action, then one per changed file.
+
+What the lane wrote (its plan and result, each action's text and output, each file's diff)
+is written with the value of anything shaped like a credential taken out (credentials.py):
+a host lane can read the player's keys file or another process's environment, and a run
+folder is read, shared and drafted into writeups. The flags the run knows for the
+challenge (proposed, waiting, submitted, or reported by L1) stay as they are.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import credentials
 from .core.deck import Deck
 from .core.model import EventKind, Lane
 
@@ -38,26 +45,46 @@ class TranscriptLog:
         """Write (or rewrite) one lane's transcript."""
         assert self._deck is not None, "attach() first"
         challenge = self._deck.challenges[lane.challenge_id]
+        flags = self._flags(challenge.id)
+
+        def clean(text: str) -> str:
+            return credentials.redact(text, keep=flags)
+
         self.folder.mkdir(parents=True, exist_ok=True)
         path = self.folder / f"{lane.id}.jsonl"
         lines = [{
             "lane": lane.id, "challenge": challenge.id, "name": challenge.name, "category": challenge.category,
-            "points": challenge.points, "model": lane.model, "state": lane.state.value, "result": lane.result,
+            "points": challenge.points, "model": lane.model, "state": lane.state.value, "result": clean(lane.result),
             "turns": lane.turns, "tokens": lane.tokens, "cached_tokens": lane.cached_tokens, "dollars": lane.dollars, "known_dollars": lane.known_dollars,
             "started_at": lane.started_at, "ended_at": lane.ended_at, "parent": lane.parent, "attempt": lane.attempt,
-            "plan": lane.plan,
+            "plan": clean(lane.plan),
         }]
         lines += [{
-            "at": a.at, "turn": a.turn, "kind": a.kind.value, "by": a.by.value, "text": a.text, "output": a.output,
+            "at": a.at, "turn": a.turn, "kind": a.kind.value, "by": a.by.value, "text": clean(a.text), "output": clean(a.output),
             "alert": a.alert.value if a.alert else None,
         } for a in lane.actions]
         lines += [
-            {"file": f.path, "status": f.status, "turn": f.turn, "at": f.at, "diff": f.diff, "by": f.by}
+            {"file": f.path, "status": f.status, "turn": f.turn, "at": f.at, "diff": clean(f.diff), "by": f.by}
             for f in lane.files.values()
         ]
         path.write_text("".join(json.dumps(line, ensure_ascii=True) + "\n" for line in lines), encoding="ascii")
         self.written.add(lane.id)
         return path
+
+    def _flags(self, challenge_id: str) -> tuple[str, ...]:
+        """Every flag the run knows for a challenge, from the deck's events: proposed and
+        waiting (pending), submitted, and reported by an L1 engine."""
+        assert self._deck is not None
+        flags: dict[str, None] = {}
+        for event in self._deck.events:
+            if event.challenge != challenge_id:
+                continue
+            flag, found = event.data.get("flag"), event.data.get("flags")
+            if isinstance(flag, str):
+                flags[flag] = None
+            if isinstance(found, (list, tuple)):
+                flags.update((item, None) for item in found if isinstance(item, str))
+        return tuple(flags)
 
     def close(self) -> None:
         """Write every lane not yet written (those still open at the end of the run)."""

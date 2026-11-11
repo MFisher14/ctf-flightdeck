@@ -45,13 +45,23 @@ several tool calls keeps one in the transcript, and the draft says how many more
 The transcript keeps the newest change to each file, so a file the lane added and then edited
 shows as modified, with its last diff.
 
+Credentials. Whether or not `redact` is asked, the value of anything shaped like a
+credential is taken out of the run's text (credentials.py: an upper-case NAME=value or
+NAME: value whose NAME holds KEY, TOKEN, SECRET, PASSWORD, PASSWD, COOKIE or AUTH; an
+Authorization or Cookie header; a key with a well-known prefix): a draft is meant to be
+published, and a run folder written before flightdeck took secrets out of what lanes record
+can hold the player's keys. The name stays and the value becomes [redacted]. Flags are not
+credentials: the accepted flag (its copies, as above) and the flags L1 engines reported
+stay, and hiding the flag is `redact`'s job.
+
 Untrusted text. Everything read from a run came from a challenge, a model, a tool or a file
 a lane wrote, and a draft is meant to be read, edited and published. So nothing in it may act
 as Markdown:
 
-- each value has the flag redacted first (when asked), so no cut can leave part of it, and is
-  folded with text.untrusted() (control and invisible characters made visible), lone
-  surrogates included (JSON from a model can hold one; no UTF-8 file can);
+- each value has the flag redacted first (when asked) and credentials taken out, so no cut
+  can leave part of either, and is folded with text.untrusted() (control and invisible
+  characters made visible), lone surrogates included (JSON from a model can hold one; no
+  UTF-8 file can);
 - a one-line value stays plain text only when it is letters, digits, spaces and a few marks
   that mean nothing in Markdown (inline()); anything else becomes a code span whose backtick
   run is longer than any inside it (code());
@@ -83,7 +93,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from . import fmt
+from . import credentials, fmt
 from .runrecord import L1, ActionLine, EventLine, FileLine, LaneRecord, RunRecord
 from .runrecord import solves as _first_solves
 from .text import MARK, NEWLINE, untrusted
@@ -217,7 +227,8 @@ def solves(record: RunRecord) -> dict[str, Solve]:
 def draft(record: RunRecord, challenge_id: str, *, board: Board | None = None, redact: bool = False) -> str:
     """The Markdown draft for one solved challenge. `board` gives names and points the run
     log lacks; `redact` writes <flag> in place of every copy of the flag (see the module
-    docstring for what counts as one). WriteupError when the run did not solve it."""
+    docstring for what counts as one). Credentials are taken out either way. WriteupError
+    when the run did not solve it."""
     return _Writer(record, _solve(record, challenge_id), board=board, redact=redact).markdown()
 
 
@@ -579,6 +590,8 @@ class _Writer:
         self.lane = record.lanes.get(solve.lane) if solve.lane else None
         self.copies = _Copies(solve.flag) if solve.flag else None
         self.redact = redact and self.copies is not None
+        found = (flag for run in solve.l1_runs for flag in run.flags)
+        self.flags = (*self.copies.whole, *self.copies.body, *found) if self.copies is not None else tuple(found)
         self.board = next((b.challenge for b in board.challenges if b.challenge.id == solve.challenge), None) if board else None
         self.held = held
         self.nonce = secrets.token_hex(4)
@@ -595,8 +608,12 @@ class _Writer:
     # ------------------------------------------------------------ pieces
 
     def _clean(self, text: str) -> str:
-        """Redacted, before any folding or cutting (so a cut never leaves part of the flag)."""
-        return self.copies.redact(text) if self.redact and self.copies is not None else text
+        """Redacted, before any folding or cutting (so a cut never leaves part of the flag or of
+        a credential): the flag's copies when asked, and always every credential's value
+        (credentials.py), never a flag's."""
+        if self.redact and self.copies is not None:
+            text = self.copies.redact(text)
+        return credentials.redact(text, keep=self.flags)
 
     def _piece(self, markdown: str, kind: str = "") -> str:
         """`markdown`, or when polishing a placeholder holding it. `kind` is "block-" or "line-"
