@@ -27,22 +27,37 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
 corner in any font). The header's segments are solid blocks with a `╱` between them on the page.
 
 - **Header**: event, solo/team, docker/host, lanes used/limit, queue length, **how many lanes need
-  you**, tokens, dollars, event clock. On a narrow terminal the dollars go first, then tokens, the
-  mock tag, the event name and the clock; the name, solo/team, lanes and the need-you count stay.
+  you** ("all clear" when none), tokens, dollars, event clock. While the queue is held (a model
+  API failure every lane would hit), "queue held" stands where "all clear" would be (or beside
+  "▲ N need you"), followed by why: never "all clear", since nothing starts until the player
+  lifts the hold with `/unhold`. On a narrow terminal the dollars go first, then tokens, the event
+  clock, the event name, the mock tag and docker/host; flightdeck, solo/team, lanes, the need-you
+  count and a held queue stay. A held queue's reason gets its room the same way (dollars, tokens,
+  the clock, then the event name give way to it) and is cut to the room left; with fewer than 12
+  cells left, the header names no reason. `flightdeck doctor` measures a terminal with this code
+  (`console/room.py`), so what it says a size leaves out is what the console leaves out.
 - **Board**: every challenge with category, points, solve count, status (new ·, queued …, running ▶,
   solved by us ✓, solved by a teammate ✓ in cyan, blocked ✗, parked ‖) and owner (lane, me,
-  teammate). Enter on a row opens its lane; with no lane or several, a card to queue or claim it
-  and to open any of its lanes (`1`-`9`). Under 100 columns the board hides (the lane list says so).
+  teammate, or `L1·<engine>` when the flag that engine found solved it, whichever lane submitted
+  it: every report credits the solve the same way). Enter on a row opens its lane; with no lane or
+  several, a card to queue or claim it and to open any of its lanes (`1`-`9`). Under 100 columns
+  the board hides (the lane list says so).
 - **Fleet**: one compact row per lane, scrolling, **sorted by attention** (below). Finished lanes
   collapse into one row. 40+ rows stay usable; low-value columns drop first on narrow terminals,
-  and the challenge name narrows before a column is cut. The list keeps its scroll position.
+  and the challenge name narrows before a column is cut. The list keeps its scroll position. The
+  attention cell (`!`) shows the lane's most urgent alert or approval; with none, `sending` while
+  a flag of the lane is on its way to the platform (there is nothing to answer: the answer comes
+  back on its own). The cost column has room for its markers: `$0.42+` when some spend had no
+  price (what is known, as "at least"), and `…` while a coding-agent CLI's turn is under way (it
+  reports the turn's cost when the turn ends), never a settled `$0.00` then.
 - **Why line**: under the list, why the selected lane is flagged and the keys that answer it.
 - **Command bar**: acts on the same lane the keys do (the board challenge's only lane when the board
   has focus; refused when the filter hides the selected lane). Its suggestions follow the selection.
   Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
   word (`/approve 2` does not approve the selected lane; name it: `/approve L02`).
 - **Status line**: the latest intervention outcome or deck event (no toasts over the lanes); it
-  clears after 12 seconds.
+  clears after 12 seconds. When the queue is held it says so and how to lift it: "queue held until
+  you /unhold it: <why>".
 
 ## Focus view (enter on a lane)
 
@@ -112,19 +127,24 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 |  | `/diff [file]` | Show the files the lane changed |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
+|  | `/unhold` | Lift the hold on the queue once its cause is fixed: queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help |
-| `q`, `ctrl+q` | `/quit` | Quit. While lanes are open it asks first, saying what is at stake: `y` stops every lane and closes its workspace (a run cannot be resumed); `n` or `esc` stays |
+| `q`, `ctrl+q` | `/quit` | Quit. While lanes are open it asks first, saying what is at stake: the open lanes by state, what each lane waiting for you waits for (five at most, then a count), the challenges queued and not started, that nothing waiting for you is submitted or approved, and where the run's log and transcripts stay. `y` stops every lane and closes its workspace (a run cannot be resumed); `n`, `esc` or enter on Stay stays (`q` is not an answer, so a double tap never quits) |
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
 back to the fleet and `ctrl+n` goes on to the next lane that needs you.
 
 The fleet's key line always shows `? help` and `q quit`; on a narrow terminal the keys needed least
-(sort and focus first, then fork, escalate and take over) are left out whole rather than cut.
+are left out whole rather than cut: focus and sort first, then take over, escalate and fork, then
+claim, redirect, hint and pause, then kill and open, and last the commands, decline and approve.
 
 During a run, closing the terminal (or an SSH drop) and a SIGTERM stop the run the way quitting
 does, without asking: every lane stops and every workspace closes, and `play` exits with 128 plus
-the signal's number.
+the signal's number. On the way out `play` prints the scorecard (when the board has answers), the
+run folder and the commands that read it, and names any flag still waiting for your approval
+(never submitted) and any flag still on its way to the platform (not known to have been
+submitted).
 
 ## Proposed at the M0 review (built in the mock, not yet signed off)
 
