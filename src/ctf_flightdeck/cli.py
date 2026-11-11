@@ -241,7 +241,12 @@ def play(
         card = run.scorecard()
         if card:
             typer.echo(card, nl=False)
+        held = _held_at_the_end(run.deck)
+        if held:
+            typer.echo(f"flightdeck: {held}", err=True)
         typer.echo(f"run log: {run.log.path}")
+        for line in _after_the_run(run.dir):
+            typer.echo(line)
         waiting = _flags_left_waiting(run.deck)
         if waiting:
             typer.echo(f"flightdeck: not submitted, still waiting for your approval when the run ended: {'; '.join(waiting)}", err=True)
@@ -250,6 +255,57 @@ def play(
     if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
         typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
         raise typer.Exit(128 + console.stopped_by)
+
+
+def _held_at_the_end(deck) -> str:
+    """Why the queue was held when the run ended, and what that left unstarted; "" when it was
+    not held. Made safe to print: the reason quotes the model API's answer."""
+    from .text import untrusted
+
+    if not deck.held:
+        return ""
+    queued = len(deck.queue)
+    left = f"{queued} challenge{'' if queued == 1 else 's'} queued, not started" if queued else "nothing was queued"
+    return f"the queue was held when the run ended ({left}): {untrusted(deck.held, one_line=True)}"
+
+
+def _after_the_run(run_dir: Path) -> list[str]:
+    """The run folder and the commands that read it, ready to paste: report, writeups and gaps
+    for every run; score only when it can score this one, that is when the run recorded a
+    board (run.json) that is still there with answers to check flags against."""
+    import shlex
+
+    from .text import untrusted
+
+    shown = untrusted(str(run_dir), one_line=True)
+    folder = shlex.quote(shown)
+    steps = [
+        (f"flightdeck report {folder}", "the post-flight report: solves, interventions, spend"),
+        (f"flightdeck writeups {folder}", "a writeup draft for each solve"),
+        (f"flightdeck gaps {folder}", "what no L1 engine solved, and why"),
+    ]
+    if _scorable(run_dir):
+        steps.append((f"flightdeck score {folder}", "the scorecard, against the board's answers"))
+    width = max(len(command) for command, _ in steps)
+    return [f"run folder: {shown}", "next:"] + [f"  {command:<{width}}  {what}" for command, what in steps]
+
+
+def _scorable(run_dir: Path) -> bool:
+    """Whether `flightdeck score RUN_DIR` can score the run: what it reads is there (the board
+    run.json records, and answers: the file the run was given, or the board's own)."""
+    from .platform.manual import BoardError, load_board
+    from .runrecord import RunFolderError, read_run_info
+
+    try:
+        info = read_run_info(run_dir)
+    except RunFolderError:
+        return False
+    if info is None or info.board is None:
+        return False
+    try:
+        return load_board(info.board, answers=info.answers).answers is not None
+    except (BoardError, OSError):
+        return False
 
 
 def _flags_left_waiting(deck) -> list[str]:

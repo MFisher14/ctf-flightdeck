@@ -81,7 +81,7 @@ def preflight(
     problems = check(profile, policies, max_lanes=lanes, model_config=loaded, runtime=runtime, environ=environ)
 
     typer.echo(f"profile   {untrusted(str(profile.source), one_line=True)}")
-    for line in describe(profile, policies):
+    for line in describe(profile, policies, config=loaded):
         typer.echo(line)
     if policies.agents is Policy.OFF:
         typer.echo("lanes     none (agents off)")

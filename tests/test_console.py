@@ -26,9 +26,11 @@ from textual.containers import ScrollableContainer
 from textual.widgets import DataTable, RichLog, Select, Static
 
 from ctf_flightdeck import fmt
-from ctf_flightdeck.console import theme, views
+from ctf_flightdeck.console import room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
+from ctf_flightdeck.console.fleet import key_room as fleet_key_room
+from ctf_flightdeck.console.focus import KEY_LABELS as FOCUS_KEYS
 from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
@@ -219,8 +221,9 @@ def region_text(app: FlightdeckApp, selector: str) -> str:
 
 
 def prompt_text(app: FlightdeckApp) -> str:
-    """What the open modal says, as one line: its border, buttons' edges and line breaks left out."""
-    return " ".join(re.sub(r"[│╭╮╰╯─▔▁]", " ", region_text(app, "Vertical")).split())
+    """What the open modal says, as one line: its border, buttons' edges, a scrollbar's thumb
+    (which can sit at the end of any row of text) and line breaks left out."""
+    return " ".join(re.sub(r"[│╭╮╰╯─▔▁▂▃▄▅▆▇█]", " ", region_text(app, "Vertical")).split())
 
 
 def status_line(app: FlightdeckApp) -> str:
@@ -2691,3 +2694,241 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
         assert "the workspace could not be checked" in lane.actions[-1].text
 
     drive(app, script)
+
+
+# ---------------------------------------------------------------------- a held queue
+
+HELD_WHY = "L01's call to glm failed in a way every lane would (check the API key): model API error: HTTP 401: no credentials"
+
+
+def held_run(*, max_lanes: int = 1, flag_on: str | None = None) -> Deck:
+    """A run's deck whose first lane failed in a way every lane would: the queue is held with
+    challenges still in it. `flag_on`: a lane on that challenge waits for the player with a flag."""
+    names = ["alpha", "bravo", "charlie", "delta"]
+    deck = quiet_deck(DeckConfig(event="Harbour Lights", models=("glm",), max_lanes=max_lanes, flag_format=r"t\{[a-z]+\}"))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    if flag_on is not None:
+        deck.report(deck.lanes_on(flag_on)[0].id, TurnReport(flag=f"t{{{flag_on}}}"))
+    deck.hold_queue(HELD_WHY)
+    deck.report("L01", TurnReport(turn=False, gave_up="model API error: HTTP 401"))
+    return deck
+
+
+async def nothing() -> None:
+    pass
+
+
+def test_a_held_queue_is_in_the_header_with_why_never_all_clear_and_unhold_from_the_bar_starts_the_queue():
+    deck = held_run()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        header = region_text(app, "#header")
+        assert "lanes 0/1 · queue 3" in header and "all clear" not in header and "need you" not in header
+        # why, as far as the room goes: tokens, dollars, the clock and the event's name gave way to it
+        assert "queue held: L01's call to glm failed in a way every lane would (check the API key): model" in header
+        assert "tok " not in header and "$" not in header and "T+" not in header and "Harbour" not in header
+        await press(pilot, "slash")
+        entries = [line for line in region_text(app, "#menu").splitlines() if line.strip("│╭╮╰╯─ ")]
+        assert "/unhold" in entries[0] and "suggested" in entries[0] and "the queue is held: L01's call" in entries[0]
+        await press(pilot, *"unhold", "enter")
+        assert deck.held == "" and [lane.challenge_id for lane in deck.active_lanes()] == ["bravo"]
+        assert "Lifted the hold on the queue: 1 lane started, 2 queued" in status_line(app)
+        header = region_text(app, "#header")
+        assert "queue held" not in header and "all clear" in header and "lanes 1/1 · queue 2" in header
+        assert "tok " in header and "T+" in header and "Harbour Lights" in header  # back once there is no reason to show
+        await press(pilot, "slash")
+        assert "/unhold" not in region_text(app, "#menu").splitlines()[1]  # suggested no more
+        await press(pilot, *"unhold", "enter")
+        assert_warning(app, "The queue is not held: queued lanes start as slots free up")
+
+    drive(app, script)
+
+
+def test_a_hold_while_the_console_runs_says_why_and_how_to_lift_it_and_the_focus_view_shows_it_too():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=1))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo")], [QueueEntry(n, "glm") for n in ("alpha", "bravo")])
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert "all clear" in region_text(app, "#header")
+        deck.hold_queue(HELD_WHY)
+        await pilot.pause()
+        assert_warning(app, f"queue held until you /unhold it: {HELD_WHY}")
+        header = region_text(app, "#header")
+        assert "queue held: L01's call to glm" in header and "all clear" not in header
+        await send(pilot, app, "/unhold")  # a command, not a lane message: it works from a lane's chat box too
+        assert deck.held == "" and "Lifted the hold on the queue: 0 lanes started, 1 queued" in status_line(app)
+        assert deck.lanes["L01"].hints == []
+
+    drive(app, script)
+
+
+def test_help_and_the_command_menu_list_unhold_and_what_it_does():
+    deck = held_run()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+    said = "lift the hold on the queue once its cause is fixed (a key or model id changed in your config needs a new run)"
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert f"/unhold {said}" in prompt_text(app)
+        await press(pilot, "escape")
+        bar(app).start("/unh")
+        await pilot.pause()
+        assert f"/unhold {said[:40]}" in " ".join(region_text(app, "#bar").split())
+
+    drive(app, script, size=(160, 100))  # tall enough for help to show every command without scrolling
+
+
+def test_the_header_keeps_need_you_and_queue_held_and_gives_the_reason_only_room_tokens_and_the_clock_leave():
+    deck = held_run(max_lanes=2, flag_on="bravo")
+    wide = views.header(deck, width=400).plain
+    assert "▲ 1 need you" in wide and f"queue held: {HELD_WHY} ╱ tok 0 ╱ $0.00 ╱ T+" in wide  # room for everything
+    mid = views.header(deck, width=150)
+    assert mid.cell_len == 150 and "▲ 1 need you" in mid.plain and "Harbour Lights" not in mid.plain
+    assert "queue held: L01's call to glm failed" in mid.plain and mid.plain.rstrip().endswith("…")
+    for gone in ("tok ", "$", "T+"):
+        assert gone not in mid.plain
+    tight = views.header(deck, width=80)
+    assert tight.plain.rstrip().endswith("▲ 1 need you ╱ queue held") and tight.cell_len <= 80  # no room for why
+    lifted = views.header(quiet_deck(DeckConfig(event="ev", models=("glm",))), width=200).plain
+    assert "all clear" in lifted and "queue held" not in lifted
+
+
+# ---------------------------------------------------------------------- who solved it: the reports' rule
+
+
+def solving_deck() -> Deck:
+    """A run's deck where three challenges are solved: alpha with the flag L1 engine "reader"
+    found, bravo by its lane alone, charlie by its lane with a flag L1 engine "strings" had
+    printed before (a candidate the lane then submitted itself)."""
+    names = ["alpha", "bravo", "charlie"]
+    deck = Deck(DeckConfig(event="ev", models=("glm",), max_lanes=3, flag_format=r"t\{[a-z]+\}"), QuietDriver(),
+                ManualClock(1000.0), lambda cid, flag: flag == f"t{{{cid}}}")
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    alpha, bravo, charlie = (deck.lanes_on(n)[0] for n in names)
+    deck.record_l1("alpha", "reader", "solved", flags=["t{alpha}"], lane_id=alpha.id)
+    deck.report(alpha.id, TurnReport(turn=False, flag="t{alpha}"))
+    deck.record_l1("charlie", "strings", "candidate", flags=["t{charlie}"], lane_id=charlie.id)
+    deck.report(charlie.id, TurnReport(turn=False, flag="t{charlie}", claimed=False))
+    deck.report(charlie.id, TurnReport(action="submit_flag t{charlie}", flag="t{charlie}"))
+    deck.report(bravo.id, TurnReport(action="submit_flag t{bravo}", flag="t{bravo}"))
+    for lane in (alpha, bravo, charlie):
+        assert deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+    return deck
+
+
+def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_found_to_that_engine(tmp_path):
+    from ctf_flightdeck.eventlog import EventLog
+    from ctf_flightdeck.runrecord import load_run, solves
+
+    deck = solving_deck()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        assert [cell(app, "board", n, "own") for n in ("alpha", "bravo", "charlie")] == ["L1·reader", "L02", "L1·strings"]
+        app.fleet.select_challenge("alpha")
+        await pilot.pause()
+        assert "✓ solved by L1·reader" in region_text(app, "#why")  # in full: the board's column is narrow
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ChallengeCard) and "owner L1·reader" in prompt_text(app)
+        await press(pilot, "escape", "question_mark")
+        assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
+
+    drive(app, script, size=(160, 100))
+    log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
+    log.attach(deck)
+    log.close()
+    found = solves(load_run(tmp_path).events)
+    assert {cid: (s.by, s.who) for cid, s in found.items()} == {
+        "alpha": ("l1", "reader"), "bravo": ("lane", "L02"), "charlie": ("l1", "strings"),
+    }
+
+
+def test_the_board_reads_each_event_once_as_the_deck_grows(monkeypatch):
+    """The board asks owner() of every row on every redraw: the deck's events are read once
+    each, in order, however often it asks, and events added later are read when it next asks."""
+    from ctf_flightdeck.runrecord import Credit
+
+    seen: list[int] = []
+
+    class Counted(Credit):
+        def see(self, index, event):
+            seen.append(index)
+            super().see(index, event)
+
+    monkeypatch.setattr(views, "Credit", Counted)
+    deck = solving_deck()
+    for _ in range(3):
+        assert views.owner(deck, deck.challenges["alpha"]) == ("L1·reader", "l1")
+        assert views.owner(deck, deck.challenges["charlie"]) == ("L1·strings", "l1")
+    assert seen == list(range(len(deck.events)))
+    deck.release([Challenge("delta", "Delta", "misc", 50)], [QueueEntry("delta", "glm")])
+    (delta,) = deck.lanes_on("delta")
+    deck.record_l1("delta", "rot", "solved", flags=["t{delta}"], lane_id=delta.id)  # after the first read
+    deck.report(delta.id, TurnReport(turn=False, flag="t{delta}"))
+    assert deck.apply(iv.Approve(delta.id)).ok
+    assert views.owner(deck, deck.challenges["delta"]) == ("L1·rot", "l1")
+    assert views.owner(deck, deck.challenges["bravo"]) == ("L02", "lane")
+    assert seen == list(range(len(deck.events)))
+
+
+# ---------------------------------------------------------------------- what doctor says a terminal leaves out
+
+
+def four_lanes_and_one_finished(*, team: bool = False) -> Deck:
+    """Four lanes at work and one that finished, so the lane list has five rows; more queued."""
+    names = [f"c{n}" for n in range(7)]
+    deck = quiet_deck(DeckConfig(event="E" * room.SAMPLE_EVENT, team=team, models=("glm",), max_lanes=4))
+    deck.release([Challenge(n, n.upper(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    deck.report("L01", TurnReport(turn=False, gave_up="stuck"))
+    assert len(deck.active_lanes()) == 4 and len(deck.lanes) == 5
+    return deck
+
+
+@pytest.mark.parametrize("size", [(60, 12), (99, 17), (100, 30), (108, 18), (125, 18), (146, 18), (147, 17), (147, 18)])
+def test_what_doctor_says_a_terminal_leaves_out_is_what_the_console_leaves_out(size, monkeypatch):
+    """doctor measures a terminal with room.room(); at that size, on the busy run it measures
+    with (the header of room.busy_header), the console leaves out exactly that: the header's
+    pieces in both views, the board, lane rows, the fleet view's keys and the focus view's."""
+    columns, lines = size
+    fit = room.room(columns, lines, max_lanes=4, containerized=True)
+    busy = room.busy_header(max_lanes=4, containerized=True)
+    monkeypatch.setattr(views, "header_facts", lambda deck, mock="": busy)
+    pieces = {name: text for name, rank, (text, *_) in views.header_pieces(busy) if rank}  # the pieces that can drop
+    app = FlightdeckApp(four_lanes_and_one_finished(), refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        for view in ("fleet", "focus"):
+            header = region_text(app, "#header")
+            assert {name for name, text in pieces.items() if text not in header} == set(fit.header), (view, header)
+            keys = region_text(app, "#keys").strip()
+            if view == "fleet":
+                assert app.fleet.board_hidden is fit.board
+                rows = [line for line in region_text(app, "#lanes").splitlines()[1:] if line.strip()]  # under the labels
+                assert len(rows) == min(fit.rows, fit.needed) and (fit.rows < fit.needed) is (len(rows) < 5)
+                every = [f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show and b.action != "claim"]
+                assert [key for key in every if key not in keys.split("  ")] == sorted(fit.fleet_keys, key=every.index), keys
+                await open_focus(pilot, app, "L02")
+            else:
+                labels = [f"{key} {label}" for key, label in FOCUS_KEYS]
+                assert [label for label in labels if label not in keys] == list(fit.focus_keys), keys  # cut, or not there
+        assert (fit.left_out() == []) is (size == (fit.columns, fit.lines))  # the smallest size that leaves nothing out
+
+    drive(app, script, size=size)
+
+
+@pytest.mark.parametrize("columns", [150, 155, 156])
+def test_doctor_measures_team_modes_key_line_with_claim_as_the_console_draws_it(columns):
+    _, solo = fleet_key_room(columns, team=False)
+    left, team = fleet_key_room(columns, team=True)
+    app = FlightdeckApp(four_lanes_and_one_finished(team=True), refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        keys = region_text(app, "#keys").strip().split("  ")
+        every = [f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show]
+        assert "c claim" in every and [key for key in every if key not in keys] == sorted(left, key=every.index)
+        assert (left == []) is (columns >= team) and team == solo + len("  c claim")
+
+    drive(app, script, size=(columns, 30))

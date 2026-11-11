@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -30,11 +31,16 @@ if TYPE_CHECKING:
     from .app import FlightdeckApp
 
 
+KEY_LABELS = (
+    ("esc", "fleet"), ("enter", "send"), ("/", "commands"), ("1-9 0", "answer"), ("ctrl+n", "next lane needing you"),
+    ("tab", "files"), ("pgup pgdn", "scroll"),
+)
+KEY_MARGIN = 2  # the key line has a margin of one cell each side
+
+
 def _key_line() -> Text:
     out = Text(no_wrap=True, overflow="ellipsis")
-    for i, (key, label) in enumerate(
-        (("esc", "fleet"), ("enter", "send"), ("/", "commands"), ("1-9 0", "answer"), ("ctrl+n", "next lane needing you"), ("tab", "files"), ("pgup pgdn", "scroll"))
-    ):
+    for i, (key, label) in enumerate(KEY_LABELS):
         out.append("  " if i else "")
         out.append(key, f"bold {theme.ACCENT}")
         out.append(f" {label}", theme.MUTED)
@@ -42,6 +48,17 @@ def _key_line() -> Text:
 
 
 KEYS = _key_line()
+
+
+def key_room(columns: int) -> tuple[list[str], int]:
+    """The keys the key line does not show whole on a terminal `columns` wide (it is cut at its
+    edge, the last keys first), and the columns it needs to show every key."""
+    width, end, cut = columns - KEY_MARGIN, 0, []
+    for i, (key, label) in enumerate(KEY_LABELS):
+        end += (2 if i else 0) + cell_len(f"{key} {label}")
+        if end > width:
+            cut.append(f"{key} {label}")
+    return cut, KEYS.cell_len + KEY_MARGIN
 
 
 class FocusScreen(Screen, inherit_bindings=False):

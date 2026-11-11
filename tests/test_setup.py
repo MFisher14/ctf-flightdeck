@@ -510,3 +510,79 @@ def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):
     assert found.ok and str(exe) in found.detail
     assert any(c.name == "agent note" and not c.essential for c in checks)  # its key is visible to its commands
     assert secret not in report(checks)[0]
+
+
+# ---------------------------------------------------------------------- the terminal: what its size leaves out
+
+
+def terminal_check(tmp_path, monkeypatch, size: tuple[int, int], answers: Answers = ANSWERS) -> list[str]:
+    """What `flightdeck doctor` says of a terminal of this size (its line, and its fix when it
+    warns), with a config written from `answers`. No docker on PATH and no key set: doctor
+    runs nothing and reads no key."""
+    monkeypatch.setenv("PATH", str(tmp_path))
+    if answers.key_env:
+        monkeypatch.delenv(answers.key_env, raising=False)
+    path = tmp_path / f"{answers.runtime}-{answers.max_lanes}.toml"
+    if not path.exists():
+        write_config(answers, path)
+    monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size(size))
+    result = CliRunner().invoke(cli.app, ["doctor", "--config", str(path)])
+    lines = result.stdout.splitlines()
+    at = next(i for i, line in enumerate(lines) if line[5:].startswith("terminal: "))
+    return lines[at:at + 2] if lines[at].startswith("warn") else lines[at:at + 1]
+
+
+def test_doctor_says_what_a_100x30_terminal_leaves_out_of_the_console_and_from_which_size_nothing(tmp_path, monkeypatch):
+    """100x30 was called fine, yet on a busy run the header drops dollars, tokens and the clock
+    there, in the order the console drops them (CONSOLE-SPEC "Header", D16), and key lines lose
+    keys. doctor says what, and the size from which nothing is left out (4 lanes in docker)."""
+    assert terminal_check(tmp_path, monkeypatch, (100, 30)) == [
+        "warn terminal: 100x30: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
+        "tab focus, s sort, t take over, e escalate and f fork on the fleet view's key line (? lists every key); "
+        "pgup pgdn scroll on the focus view's key line",
+        "     fix: from 147x18 it leaves none of this out, with an event name of up to 41 characters (a column more for "
+        "each character more); team mode's key line, with c claim, needs 156 columns; the console still works smaller",
+    ]
+    assert terminal_check(tmp_path, monkeypatch, (146, 18))[0] == (
+        "warn terminal: 146x18: on a busy run the console leaves out tab focus on the fleet view's key line (? lists every key)"
+    )
+    assert terminal_check(tmp_path, monkeypatch, (147, 18)) == [
+        "ok   terminal: 147x18: on a busy run the console shows the whole header, the board, every key and a row for "
+        "each of your 4 lanes; team mode's key line, with c claim, needs 156 columns"
+    ]
+    assert terminal_check(tmp_path, monkeypatch, (156, 46)) == [
+        "ok   terminal: 156x46: on a busy run the console shows the whole header, the board, every key and a row for "
+        "each of your 4 lanes"
+    ]
+
+
+def test_doctor_measures_the_terminal_with_your_lanes_and_runtime(tmp_path, monkeypatch):
+    six_on_host = Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host", max_lanes=6)
+    assert terminal_check(tmp_path, monkeypatch, (90, 19), six_on_host) == [
+        "warn terminal: 90x19: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
+        "the board (it shows from 100 columns); 1 of the lane list's 7 rows (6 lanes and the finished row): it has room "
+        "for 6 and scrolls to the rest; tab focus, s sort, t take over, e escalate, f fork and r redirect on the fleet "
+        "view's key line (? lists every key); pgup pgdn scroll on the focus view's key line",
+        "     fix: from 147x20 it leaves none of this out, with an event name of up to 43 characters (a column more for "
+        "each character more); team mode's key line, with c claim, needs 156 columns; the console still works smaller",
+    ]  # host is two cells narrower than docker in the header: room for two more characters of the event's name
+    one = Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host", max_lanes=1)
+    assert terminal_check(tmp_path, monkeypatch, (160, 15), one)[0].endswith("every key and a row for your lane")
+    assert "1 of the lane list's 2 rows (1 lane and the finished row)" in terminal_check(tmp_path, monkeypatch, (160, 14), one)[0]
+
+
+def test_the_terminal_check_never_fails_doctor_and_is_left_out_away_from_a_terminal(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker here: doctor runs nothing
+    cfg = write_config(Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host"), tmp_path / "c.toml")
+    monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size((60, 12)))
+    (check,) = [c for c in doctor(cfg, environ={}) if c.name == "terminal"]
+    assert not check.ok and not check.essential  # a warning: the console still works smaller
+    monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size((147, 18)))
+    check = {c.name: c for c in doctor(tmp_path / "none.toml", environ={})}["terminal"]
+    assert check.ok and "each of your 4 lanes" in check.detail  # no config yet: measured with the defaults (4 lanes, docker)
+
+    def no_terminal(*args):
+        raise OSError("not a terminal")
+
+    monkeypatch.setattr(os, "get_terminal_size", no_terminal)
+    assert "terminal" not in {c.name for c in doctor(cfg, environ={})}

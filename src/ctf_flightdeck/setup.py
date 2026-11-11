@@ -410,10 +410,31 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     except OSError:
         columns = lines = 0
     if columns:
-        big = columns >= 100 and lines >= 30
-        checks.append(Check("terminal", big, f"{columns}x{lines}",
-                            "the console is easiest at 100x30 or more (it works smaller)", essential=False))
+        checks.append(_terminal_check(columns, lines, config))
     return checks
+
+
+def _terminal_check(columns: int, lines: int, config) -> Check:
+    """What a terminal this size leaves out of the console on a busy run with your lanes and
+    runtime, and from which size none of it (console/room.py measures it with the console's
+    own code: the header's pieces drop in the order CONSOLE-SPEC "Header" and D16 set)."""
+    from .config import LaneConfig
+    from .console.room import room
+
+    lanes = config.lanes if config is not None else LaneConfig()
+    fit = room(columns, lines, max_lanes=lanes.max_lanes, containerized=lanes.runtime == "docker")
+    size = f"{columns}x{lines}"
+    team = f"; team mode's key line, with c claim, needs {fit.team_columns} columns" if fit.team_columns > fit.columns else ""
+    missing = fit.left_out()
+    if not missing:
+        rows = f"each of your {lanes.max_lanes} lanes" if lanes.max_lanes > 1 else "your lane"
+        return Check("terminal", True, f"{size}: on a busy run the console shows the whole header, the board, every key "
+                                       f"and a row for {rows}" + (team if columns < fit.team_columns else ""))
+    return Check(
+        "terminal", False, f"{size}: on a busy run the console leaves out " + "; ".join(missing),
+        f"from {fit.columns}x{fit.lines} it leaves none of this out, with an event name of up to {fit.event} characters "
+        f"(a column more for each character more){team}; the console still works smaller", essential=False,
+    )
 
 
 def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
