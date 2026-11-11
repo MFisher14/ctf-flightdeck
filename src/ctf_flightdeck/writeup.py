@@ -6,7 +6,8 @@
   changes and your redirects, in order), the steps that mattered, the files it wrote, your
   interventions, and the flag;
 - solved by L1: a no-model solver found the flag, which then went through a lane's approval
-  like any candidate (Deck.record_l1). The draft names the engine and what it recorded.
+  like any candidate (Deck.record_l1), or was submitted at once when submit is "auto". The
+  draft names the engine and what it recorded.
 
 Solved means accepted: a submit event with `correct` true. A flag an L1 engine found that was
 never accepted is not a solve ("flag found" is never "accepted"). A solve is L1's when the
@@ -94,6 +95,7 @@ REDACTED = "<flag>"
 
 PLAN = "plan: "  # agent/tools.py: a turn that only set the plan
 NEW_PLAN = "new plan: "  # core/deck.py: the player's redirect
+APPROVED = "approved: "  # core/deck.py: the player approved what the lane waited for
 CLIP = "…"  # agent/tools.py: where it cut text short
 
 _PLAIN_MARKS = frozenset(" ,'\"-()?!%+/;")
@@ -126,7 +128,7 @@ _LANGUAGES = {
 
 _INTERVENTIONS = (  # the deck's own wording for what the player did (core/deck.py), most specific first
     ("approved more budget: ", "more budget"),
-    ("approved: ", "approval"),
+    (APPROVED, "approval"),
     ("declined: ", "decline"),
     (NEW_PLAN, "redirect"),
     ("forked to ", "fork to"),
@@ -865,7 +867,7 @@ class _Writer:
         else:
             self.out("- Evidence: the run log keeps the engine's notes, not its evidence list")
         if self.solve.lane:
-            self.out(f"- Reported on lane {self.t(self.solve.lane)}, where you approved it")
+            self.out(self._reported(self.solve.lane))
         self.out("")
         others = [run for run in self.solve.l1_runs if run is not result]
         if others:
@@ -874,6 +876,21 @@ class _Writer:
                 notes = f": {self.t(run.notes)}" if run.notes else ""
                 self.out(f"- {self.t(run.engine)}, {self.t(run.status)}{notes}")
             self.out("")
+
+    def _reported(self, lane_id: str) -> str:
+        """How the L1 flag went from the lane it was reported on to the board: what the
+        lane's transcript says the player did with it (core/deck.py's wording)."""
+        where, flag = f"lane {self.t(lane_id)}", self.solve.flag
+        if self.lane is None:
+            return f"- Reported on {where}, whose transcript is missing, so whether you approved it is not known"
+        said = {a.text for a in self.lane.actions if a.by == "player"}
+        if flag and f"{APPROVED}submit {flag}" in said:
+            return f"- Reported on {where}, where you approved it"
+        if flag and f"{APPROVED}did the platform accept {flag}? (you submit it)" in said:
+            return f"- Reported on {where}, where you submitted it by hand and said the platform accepted it"
+        if self.solve.judged_by == "platform":
+            return f"- Reported on {where} and submitted at once, with no approval asked (submit is set to auto)"
+        return f"- Reported on {where}"
 
     # ------------------------------------------------------------ the flag and the log's gaps
 

@@ -724,6 +724,36 @@ def test_a_wrong_l1_candidate_then_a_lane_solve_is_the_lanes_solve(tmp_path):
     assert "with no model" not in text
 
 
+def test_an_l1_flag_submitted_at_once_does_not_say_you_approved_it(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("d", "Delta", "cry", 100)], answers={"d": "t{delta}"}, submit="auto")
+    d = run.lane("d")
+    run.clock.advance(1.0)
+    run.deck.record_l1("d", "decode.base64", "solved", flags=["t{delta}"], seconds=0.4, notes="two layers", lane_id=d)
+    run.deck.report(d, TurnReport(turn=False, flag="t{delta}"))  # auto: submitted at once, no approval asked
+    record = run.close()
+    assert not [a for a in record.lanes[d].actions if a.by == "player"]
+    lines = lines_of(writeup.draft(record, "d"), "## How L1 solved it")
+    assert "- Reported on lane L01 and submitted at once, with no approval asked (submit is set to auto)" in lines
+    assert not any("approved" in line for line in lines)
+
+
+def test_an_l1_flag_you_submitted_by_hand_says_so(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("d", "Delta", "cry", 100)], answers={}, submit="auto")  # the board cannot check
+    d = run.lane("d")
+    run.deck.record_l1("d", "decode.base64", "solved", flags=["t{delta}"], seconds=0.4, lane_id=d)
+    run.deck.report(d, TurnReport(turn=False, flag="t{delta}"))  # auto, but you submit it by hand and confirm
+    run.apply(iv.Approve(d))
+    lines = lines_of(writeup.draft(run.close(), "d"), "## How L1 solved it")
+    assert "- Reported on lane L01, where you submitted it by hand and said the platform accepted it" in lines
+
+
+def test_an_l1_solve_whose_lane_transcript_is_missing_does_not_guess_the_approval(tmp_path):
+    record = l1_run(tmp_path)
+    (record.dir / "lanes" / "L01.jsonl").unlink()
+    lines = lines_of(writeup.draft(load_run(record.dir), "d"), "## How L1 solved it")
+    assert "- Reported on lane L01, whose transcript is missing, so whether you approved it is not known" in lines
+
+
 # ---------------------------------------------------------------------- what the run folder lacks
 
 
