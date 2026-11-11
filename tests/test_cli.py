@@ -528,3 +528,34 @@ def test_screenshots_are_byte_identical_on_every_run(flag_runs):
     assert names == sorted(p.name for p in b.iterdir())
     for name in names:
         assert (a / name).read_bytes() == (b / name).read_bytes(), name
+
+
+MOUNTED = {
+    ("preflight",): "event profile",
+    ("ctfd", "pull"): "CTFd",
+    ("team", "init"): "",
+    ("team", "status"): "",
+    ("l1", "list"): "",
+    ("l1", "route"): "",
+    ("l1", "run"): "",
+    ("l1", "import"): "",
+    ("report",): "report",
+    ("writeups",): "writeup",
+    ("score",): "Score",
+    ("eval-local",): "",
+}
+
+
+@pytest.mark.parametrize("command", sorted(MOUNTED), ids=" ".join)
+def test_every_component_command_is_mounted_and_explains_itself(command):
+    result = CliRunner().invoke(cli.app, [*command, "--help"])
+    assert result.exit_code == 0, result.output
+    assert MOUNTED[command].lower() in result.output.lower()
+
+
+def test_the_root_help_groups_the_commands():
+    out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
+    for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run"):
+        assert panel in out
+    for name in ("preflight", "ctfd", "team", "l1", "report", "writeups", "score", "eval-local"):
+        assert f" {name} " in out

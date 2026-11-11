@@ -16,6 +16,8 @@ SCENARIO_LIST = "Scenarios:\n\n" + "\n".join(
     f"- **{name}**: {build().summary}." for name, build in scenarios.SCENARIOS.items()
 )
 
+PLAY, SETUP, EVENT, AFTER, SOLVERS = "Play", "Set up", "Before and during an event", "After a run", "Solvers (L1)"
+
 app = typer.Typer(
     name="flightdeck",
     no_args_is_help=True,
@@ -42,7 +44,7 @@ def root(
     """A terminal harness for playing CTFs with AI agents, where you run the loop."""
 
 
-@app.command(epilog=SCENARIO_LIST)
+@app.command(epilog=SCENARIO_LIST, rich_help_panel=PLAY)
 def mock(
     scenario: Annotated[
         ScenarioName,
@@ -98,7 +100,7 @@ class Submit(StrEnum):
     auto = "auto"
 
 
-@app.command()
+@app.command(rich_help_panel=PLAY)
 def play(
     board: Annotated[
         Path,
@@ -154,7 +156,7 @@ def play(
             typer.echo(f"flightdeck: {problem}", err=True)
 
 
-@app.command()
+@app.command(rich_help_panel=PLAY)
 def practice(
     config: Annotated[
         Path | None, typer.Option("--config", dir_okay=False, help="Config file (default: $FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml).")
@@ -182,7 +184,7 @@ def practice(
 
 
 image_app = typer.Typer(no_args_is_help=True, help="The lane image: what a lane's shell has inside its container.")
-app.add_typer(image_app, name="image")
+app.add_typer(image_app, name="image", rich_help_panel=SETUP)
 
 
 @image_app.command("build")
@@ -216,7 +218,7 @@ def image_dockerfile() -> None:
     typer.echo(dockerfile(), nl=False)
 
 
-@app.command()
+@app.command(rich_help_panel=SETUP)
 def init(
     provider: Annotated[str | None, typer.Option("--provider", help="openrouter, openai, local (Ollama), mlx (an MLX server) or custom.")] = None,
     base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
@@ -280,7 +282,7 @@ def init(
     typer.echo("then: flightdeck doctor, and flightdeck practice")
 
 
-@app.command()
+@app.command(rich_help_panel=SETUP)
 def doctor(
     config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="The config file to check.")] = None,
 ) -> None:
@@ -293,7 +295,7 @@ def doctor(
     raise typer.Exit(status)
 
 
-@app.command("config")
+@app.command("config", rich_help_panel=SETUP)
 def config_command(
     example: Annotated[bool, typer.Option("--example", help="Print a commented example config and exit.")] = False,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="The config file to check.")] = None,
@@ -322,6 +324,30 @@ def config_command(
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))
     typer.echo(f"caps per lane: {lanes.token_cap or 'no'} tokens, ${lanes.dollar_cap if lanes.dollar_cap else 'no cap'}; submit {lanes.submit}")
     typer.echo(f"runs go to: {loaded.run_dir}")
+
+
+# ---------------------------------------------------------------------- the components' own commands
+# Each lives in its component's module (heavy imports inside the command, so mounting costs
+# little at startup) and is mounted here.
+
+
+def _mount() -> None:
+    from . import localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
+    from .l1 import cli as l1_cli
+    from .platform import ctfd_cli
+
+    app.add_typer(preflight_cli.app, name="preflight", rich_help_panel=EVENT,
+                  help="Check an event profile (event.toml): what the rules allow, and what flightdeck will do.")
+    app.add_typer(ctfd_cli.app, name="ctfd", rich_help_panel=EVENT)
+    app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
+    app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
+    app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
+    app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
+    app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
+    app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)
+
+
+_mount()
 
 
 def _at_terminal() -> bool:
