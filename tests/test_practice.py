@@ -617,6 +617,7 @@ EXECUTABLE_MAGIC = (
     (b"\xfe\xed\xfa\xcf", "Mach-O"),
     (b"\xcf\xfa\xed\xfe", "Mach-O"),
     (b"\xca\xfe\xba\xbe", "Mach-O universal or Java class"),
+    (b"\xca\xfe\xba\xbf", "Mach-O universal (64-bit)"),
 )
 
 
@@ -631,6 +632,55 @@ def executable_problems(name: str, data: bytes, mode: int) -> list[str]:
     elif data.startswith(b"\x1f\x8b"):
         problems += executable_problems(f"{name}!gunzip", gzip.decompress(data), 0)
     return problems
+
+
+# The headers the check must catch, written out on their own rather than read from
+# EXECUTABLE_MAGIC, so a format missing from that list fails here.
+EXECUTABLE_HEADERS = {
+    "ELF": b"\x7fELF\x02\x01\x01\x00",
+    "PE": b"MZ\x90\x00\x03\x00\x00\x00",
+    "Mach-O 32-bit big-endian": b"\xfe\xed\xfa\xce\x00\x00\x00\x12",
+    "Mach-O 32-bit little-endian": b"\xce\xfa\xed\xfe\x07\x00\x00\x00",
+    "Mach-O 64-bit big-endian": b"\xfe\xed\xfa\xcf\x01\x00\x00\x12",
+    "Mach-O 64-bit little-endian": b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01",
+    "Mach-O universal": b"\xca\xfe\xba\xbe\x00\x00\x00\x02",
+    "Mach-O universal 64-bit": b"\xca\xfe\xba\xbf\x00\x00\x00\x02",
+}
+
+
+def zipped(name: str, data: bytes, mode: int) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        info = zipfile.ZipInfo(name)
+        info.external_attr = mode << 16
+        archive.writestr(info, data)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("header", EXECUTABLE_HEADERS.values(), ids=EXECUTABLE_HEADERS.keys())
+def test_the_executable_check_finds_each_format_plain_zipped_and_gzipped(header):
+    data = header + bytes(56)
+    found = {
+        "gate.bin": executable_problems("gate.bin", data, 0o100644),
+        "box.zip": executable_problems("box.zip", zipped("inner/gate", data, 0o100644), 0o100644),
+        "box.gz": executable_problems("box.gz", gzip.compress(data), 0o100644),
+    }
+    where = {packed: [problem.partition(":")[0] for problem in problems] for packed, problems in found.items()}
+    assert where == {"gate.bin": ["gate.bin"], "box.zip": ["box.zip!inner/gate"], "box.gz": ["box.gz!gunzip"]}
+    assert all("magic bytes" in problem for problems in found.values() for problem in problems)
+
+
+def test_the_executable_check_finds_executable_modes_and_passes_plain_data():
+    script = b"#!/bin/sh\necho synthetic\n"
+    assert executable_problems("run.sh", script, 0o100755) == ["run.sh: mode 100755 is executable"]
+    assert executable_problems("box.zip", zipped("run.sh", script, 0o100755), 0o100644) == ["box.zip!run.sh: mode 100755 is executable"]
+    plain = {
+        "notes.txt": b"just words\n",
+        "image.png": b"\x89PNG\r\n\x1a\n" + bytes(24),
+        "box.zip": zipped("notes.txt", b"just words\n", 0o100644),
+        "notes.gz": gzip.compress(b"just words\n"),
+    }
+    assert {name: executable_problems(name, data, 0o100644) for name, data in plain.items()} == {name: [] for name in plain}
 
 
 def test_nothing_in_the_set_is_executable_or_a_symlink():
