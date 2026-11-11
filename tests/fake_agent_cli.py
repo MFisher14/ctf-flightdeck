@@ -57,6 +57,7 @@ process, in order across processes. When the turns run out, the fake answers not
 - claude TURN: {"calls": [CALL, ...], "cost": dollars for the turn (null: no total_cost_usd),
   "result": text, "subtype": "success", "is_error": false}. CALL: {"think": seconds,
   "raw": [lines], "stderr": line, "spawn": [{"cmd": [...], "session": bool}], "exit": status,
+  "ignore": ["INT", "TERM"] (from then on those signals are ignored: a hung CLI),
   "text": text, "tools": [{"bash": cmd} | {"read": path} | {"write": [path, text]} |
   {"tool": name, "input": {...}}], "usage": [input, output, cache_read, cache_creation]}.
 - codex TURN: {"items": [ITEM, ...], "usage": [input, cached, output] added to the thread,
@@ -153,7 +154,11 @@ def next_turn() -> dict | None:
 
 
 def directives(step: dict) -> None:
-    """What a call or an item does besides its events: think, write raw lines, die, start children."""
+    """What a call or an item does besides its events: think, write raw lines, die, start children,
+    stop answering signals (a hung CLI)."""
+    for name in step.get("ignore", []):
+        signal.signal(getattr(signal, f"SIG{name}"), signal.SIG_IGN)
+        record("ignoring", sig=f"SIG{name}")
     if step.get("think") or step.get("sleep"):
         time.sleep(float(step.get("think") or step.get("sleep")))
     for line in step.get("raw", []) if isinstance(step.get("raw"), list) else ([step["raw"]] if "raw" in step else []):

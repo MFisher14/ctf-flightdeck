@@ -830,6 +830,47 @@ def test_kill_ends_the_cli_and_every_process_it_started(tmp_path):
     run(main())
 
 
+def test_a_cli_that_ignores_sigint_and_sigterm_is_killed_all_the_same(tmp_path):
+    script = {"turns": [{"calls": [{"tools": [bash("echo started")]}, {"ignore": ["INT", "TERM"], "think": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo started" in steps(lane), "the first step")
+            await until(lambda: len(lab.fake.records("ignoring")) == 2, "the CLI deaf to SIGINT and SIGTERM")
+            pid = lab.pid(lane)
+            began = time.monotonic()
+            assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            await until(lambda: gone(pid), "the hung CLI killed")
+            assert time.monotonic() - began < 5  # SIGINT, SIGTERM 0.3 s later, SIGKILL 0.3 s after that
+            assert not any(r["rec"] == "exit" for r in lab.fake.records())  # it never got to exit by itself
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_turn_whose_only_work_is_a_candidate_flag_is_not_an_idle_one(tmp_path):
+    idle = {"calls": [{"text": "Thinking."}]}
+    script = {"turns": [idle, idle, {"calls": [{"text": "Thinking harder."}], "result": "So the flag is t{guess}"}]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate in claude's last words")
+            assert lane.pending.flag == "t{guess}"  # only in the result's text, never in a text block
+            await until(lambda: any(s.startswith("says: So the flag") for s in steps(lane)), "the turn's end accounted for")
+            assert not any("gave up" in a.text for a in lane.actions) and not lane.finished
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_escalation_restarts_the_cli_on_the_stronger_model_with_the_brief_and_the_summary(tmp_path):
     script = {"turns": [
         {"calls": [{"tools": [bash("echo small")]}, {"think": 30.0}]},
