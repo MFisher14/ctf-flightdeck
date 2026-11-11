@@ -100,6 +100,41 @@ def test_a_run_plays_a_lane_from_the_board_to_a_solve_through_the_console(tmp_pa
     asyncio.run(main())
 
 
+def test_play_names_a_flag_left_waiting_for_approval_when_the_player_quits(tmp_path, monkeypatch):
+    """Quitting stops the lane with its flag never submitted: play says which, as it exits."""
+    from ctf_flightdeck.console.app import FlightdeckApp
+    from ctf_flightdeck.console.screens import QuitPrompt
+
+    def player(self, *args, **kwargs) -> None:  # the console, headless, with a player who quits
+        async def main() -> None:
+            async with self.run_test(size=(160, 46)) as pilot:
+                for _ in range(500):
+                    if any(lane.pending is not None for lane in self.deck.lanes.values()):
+                        break
+                    await pilot.pause(0.01)
+                await pilot.press("q")
+                await pilot.pause()
+                assert isinstance(self.screen, QuitPrompt)
+                await pilot.press("y")
+                for _ in range(200):
+                    if not self.is_running:
+                        break
+                    await pilot.pause(0.01)
+
+        asyncio.run(main())
+
+    monkeypatch.setattr(FlightdeckApp, "run", player)
+    root = board(tmp_path)
+    spec = root / "note" / "challenge.json"
+    spec.write_text(json.dumps({**json.loads(spec.read_text()), "name": "Note\x1b]0;pwned\x07"}))  # board text is untrusted
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url))])
+    assert result.exit_code == 0, result.output
+    expected = f"flightdeck: not submitted, still waiting for your approval when the run ended: L01 Note^[]0;pwned^G: {FLAG}"
+    assert expected in result.stderr, result.stderr
+    assert "\x1b" not in result.output + result.stderr and "\x07" not in result.output + result.stderr
+
+
 def test_the_event_log_and_the_lane_workspaces_go_in_a_new_folder_per_run(tmp_path):
     with FakeModelServer() as server:
         cfg = config(tmp_path, server.base_url)

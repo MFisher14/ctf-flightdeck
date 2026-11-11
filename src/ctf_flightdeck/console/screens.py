@@ -1,4 +1,5 @@
-"""Modal screens: fork and kill prompts, the take-over placeholder, a challenge card and help."""
+"""Modal screens: fork, kill and quit prompts, the take-over placeholder, a challenge card and
+help."""
 
 from __future__ import annotations
 
@@ -117,6 +118,41 @@ class KillPrompt(ModalScreen[str | None]):
 
     def action_choose(self, choice: str) -> None:
         self.dismiss(choice or None)
+
+
+class QuitPrompt(ModalScreen[bool]):
+    """Quit while lanes are still open: y quits (every lane stops); n, esc, or enter on Stay
+    keep the run going. q is not an answer: it closes help and queues from a card, so a
+    double tap must not quit."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="QuitPrompt")
+    BINDINGS = [
+        Binding("y", "choose(True)", "quit"),
+        Binding("n", "choose(False)", "stay"),
+        Binding("escape", "choose(False)", "stay"),
+    ]
+
+    def __init__(self, summary: Text) -> None:
+        super().__init__()
+        self.quit_summary = summary
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Quit flightdeck and stop the run?", "bold"))
+            yield Static(self.quit_summary)
+            with Horizontal():
+                yield Button("Stay (esc)", id="stay")
+                yield Button("Quit (y)", id="quit", variant="error")
+
+    def on_mount(self) -> None:
+        self.query_one("#stay", Button).focus()
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        self.action_choose(event.button.id == "quit")
+
+    def action_choose(self, yes: bool) -> None:
+        self.dismiss(yes)
 
 
 class TakeOverScreen(ModalScreen[None]):
@@ -243,9 +279,9 @@ KEY_HELP = (
     ("f", "Fork: a sibling lane on the same challenge, another approach or model"),
     ("k", "Kill the lane: re-queue the challenge fresh, or park it"),
     ("e", "Escalate: hand a compact summary to the next stronger model"),
-    ("t", "Take over: a shell in the lane's workspace (placeholder in M0)"),
+    ("t", "Take over: a shell in the lane's workspace (its container in Docker); exit it to hand back, and the lane hears what you changed"),
     ("a", "Approve what the lane waits for: submit, more budget, live-box access"),
-    ("d", "Decline it: do not submit, stay off the box, no more budget (the lane stops)"),
+    ("d", "Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; refusing more budget stops the lane"),
     ("1-9, 0", "Quick answers, no enter: the numbers in the why line and the needs-you card (0 says no)"),
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
@@ -255,12 +291,16 @@ KEY_HELP = (
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
     ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
-    ("q", "Quit"),
+    ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
 )
 MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
 )
+MOCK_KEY_HELP = {
+    "t": "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)",
+    "q": "Quit (the mock has nothing to stop, so it never asks)",
+}
 ALERT_HELP = (
     (AlertKind.EFFORT, "Turns or tokens are high for a low-point challenge with many solves"),
     (AlertKind.HINT, "The description hints at something the lane is not doing"),
@@ -297,7 +337,7 @@ class HelpScreen(ModalScreen[None]):
         keys.add_column(style="bold", no_wrap=True)
         keys.add_column()
         for key, text in KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
-            keys.add_row(Text(key), Text(text))
+            keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
         commands = Table.grid(padding=(0, 2))
         commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
         commands.add_column()

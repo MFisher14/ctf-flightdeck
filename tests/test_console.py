@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import html
+import os
 import re
+import signal
 
 import pytest
 from rich.cells import cell_len
@@ -28,7 +30,7 @@ from ctf_flightdeck.console import theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
-from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, TakeOverScreen
+from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
 from ctf_flightdeck.console.widgets import CommandBar
 from ctf_flightdeck.core import interventions as iv
@@ -214,6 +216,11 @@ def region_text(app: FlightdeckApp, selector: str) -> str:
     region = app.screen.query_one(selector).region
     lines = screen_lines(app)
     return "\n".join(lines[y][region.x : region.right].rstrip() for y in range(region.y, region.bottom))
+
+
+def prompt_text(app: FlightdeckApp) -> str:
+    """What the open modal says, as one line: its border, buttons' edges and line breaks left out."""
+    return " ".join(re.sub(r"[│╭╮╰╯─▔▁]", " ", region_text(app, "Vertical")).split())
 
 
 def status_line(app: FlightdeckApp) -> str:
@@ -673,6 +680,53 @@ def test_question_mark_opens_help_that_scrolls_and_escape_closes_it():
         assert body.scroll_y > 0
         await press(pilot, "escape")
         assert isinstance(app.screen, FleetScreen)
+
+    drive(app, script)
+
+
+def test_in_a_run_help_and_the_command_menu_say_what_take_over_and_decline_do_and_they_do_it():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), flag_format=r"t\{[a-z]+\}"))
+    deck.release([Challenge("alpha", "Alpha", "misc", 50), Challenge("bravo", "Bravo", "misc", 50)],
+                 [QueueEntry("alpha", "glm"), QueueEntry("bravo", "glm")])
+    flagged, costly = deck.lanes_on("alpha")[0], deck.lanes_on("bravo")[0]
+    deck.report(flagged.id, TurnReport(flag="t{alpha}"))
+    deck.report(costly.id, TurnReport(pending=Pending(PendingKind.BUDGET, "raise the cap by 50%")))
+
+    async def on_exit():
+        pass
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)  # a run's console: no mock clock
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        text = prompt_text(app)
+        assert "placeholder" not in text
+        assert ("Take over: a shell in the lane's workspace (its container in Docker); exit it to hand back, "
+                "and the lane hears what you changed") in text
+        assert ("Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; "
+                "refusing more budget stops the lane") in text
+        assert "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)" in text
+        await press(pilot, "escape")
+        for typed, shown in (("/take", "/takeover a shell in the lane's workspace; exit it to hand the lane back"),
+                             ("/decl", "/decline say no: not submitted, or off the box (the lane carries on); no more budget (it stops)")):
+            bar(app).start(typed)
+            await pilot.pause()
+            assert shown in " ".join(region_text(app, "#bar").split())
+            await press(pilot, "escape")
+        assert deck.apply(iv.Decline(flagged.id)).ok and flagged.state is LaneState.RUNNING  # carries on
+        assert deck.apply(iv.Decline(costly.id)).ok and costly.state is LaneState.STOPPED  # stops
+
+    drive(app, script)
+
+
+def test_in_the_mock_help_says_take_over_is_a_placeholder_there_and_quitting_does_not_ask():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        text = prompt_text(app)
+        assert "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)" in text
+        assert "Quit (the mock has nothing to stop, so it never asks)" in text and "asks first" not in text
 
     drive(app, script)
 
@@ -1310,6 +1364,48 @@ def test_narrow_terminal_keeps_idle_and_last_action_and_drops_the_model():
         assert "idle" in region_text(app, "#lanes").splitlines()[0]  # the header row is drawn
 
     drive(app, script, size=NARROW)
+
+
+SHOWN_KEYS = {f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show}
+
+
+def check_key_line(app: FlightdeckApp, width: int) -> list[str]:
+    """The fleet's key line fits, shows only whole keys, and keeps the ones a player must find."""
+    line = footer_line(app).strip()
+    pairs = line.split("  ")
+    assert cell_len(line) <= width - 2 and "…" not in line, line
+    assert set(pairs) <= SHOWN_KEYS, line  # nothing cut in half
+    for needed in ("? help", "a approve", "d decline", "/ commands", "q quit"):
+        assert needed in pairs, (needed, line)
+    return pairs
+
+
+@pytest.mark.parametrize("scenario", ["sstv", "team"])
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40), SIZE], ids=["80x24", "100x30", "120x40", "160x46"])
+def test_the_key_line_always_shows_help_quit_and_the_answers_and_only_whole_keys(scenario, size):
+    world, app = make(scenario)
+
+    async def script(pilot):
+        pairs = check_key_line(app, size[0])
+        if size == SIZE:
+            assert len(pairs) == len(SHOWN_KEYS) - (0 if world.deck.config.team else 1)  # all of them (claim: team only)
+
+    drive(app, script, size)
+
+
+def test_the_key_line_fits_again_when_the_terminal_is_resized():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        everything = check_key_line(app, SIZE[0])
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+        assert len(check_key_line(app, 80)) < len(everything)
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause()
+        assert check_key_line(app, SIZE[0]) == everything
+
+    drive(app, script)
 
 
 def test_header_counts_the_lanes_that_need_you():
@@ -2211,7 +2307,7 @@ def test_on_start_runs_once_on_the_consoles_running_event_loop():
     drive(app, script)
 
 
-@pytest.mark.parametrize("how", ["q", "/quit"])
+@pytest.mark.parametrize("how", ["q", "/quit", "ctrl+q"])
 def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
     world = FakeWorld(scenarios.get("sstv"))
     calls = []
@@ -2224,11 +2320,13 @@ def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
     app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
 
     async def script(pilot):
-        if how == "q":
-            await pilot.press("q")
-        else:
+        if how == "/quit":
             bar(app).start(how)
-            await pilot.press("enter")
+            await press(pilot, "enter")
+        else:
+            await press(pilot, how)
+        assert isinstance(app.screen, QuitPrompt) and calls == []  # its lanes are at work: it asks first
+        await pilot.press("y")
         for _ in range(50):
             if not app.is_running:
                 break
@@ -2237,6 +2335,171 @@ def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
         assert not app.is_running
 
     drive(app, script)
+
+
+def open_run(*, queued: int = 0) -> tuple[Deck, list]:
+    """A run's deck with three lanes at work: L01 waits for the player with a flag, L02 is
+    paused, L03 runs; `queued` more challenges wait in the queue."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=3, flag_format=r"t\{[a-z]+\}"))
+    names = ["alpha", "bravo", "charlie"] + [f"extra{n}" for n in range(queued)]
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    first, second, _ = (deck.lanes_on(n)[0] for n in names[:3])
+    deck.report(first.id, TurnReport(flag="t{alpha}"))
+    assert deck.apply(iv.Pause(second.id)).ok
+    calls: list[str] = []
+    return deck, calls
+
+
+@pytest.mark.parametrize("size", [SIZE, (80, 24)], ids=["160x46", "80x24"])
+def test_quitting_while_lanes_are_open_asks_first_says_what_quitting_does_and_esc_or_n_stays(size):
+    deck, calls = open_run(queued=2)
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit, run_dir="/runs/20261111-093000")
+
+    async def script(pilot):
+        for answer in ("escape", "n"):
+            await press(pilot, "q")
+            assert isinstance(app.screen, QuitPrompt)
+            text = prompt_text(app)
+            assert "3 lanes still open: 1 waiting for you, 1 paused, 1 running" in text
+            assert "L01 Alpha submit t{alpha}" in text  # what waits for the player, named
+            assert "2 challenges queued, not started" in text
+            assert "Quitting stops every lane and closes its workspace, and a run cannot be resumed" in text
+            assert "Nothing that waits for you is submitted or approved" in text
+            assert "The run's log and transcripts stay in /runs/20261111-093000" in text
+            assert "Stay (esc) Quit (y)" in text
+            await press(pilot, answer)
+            assert isinstance(app.screen, FleetScreen) and app.is_running
+        assert calls == [] and not any(lane.finished for lane in deck.lanes.values())
+        assert deck.lanes["L01"].pending is not None
+
+    drive(app, script, size)
+
+
+def test_a_second_q_or_one_meant_for_help_or_a_card_does_not_quit_a_run():
+    """q also closes help and queues from a challenge card: a double tap must not end the run."""
+    deck, calls = open_run()
+    deck.release([Challenge("delta", "Delta", "misc", 50)], [])  # on the board, with no lane
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        await press(pilot, "q", "q")
+        assert isinstance(app.screen, QuitPrompt)  # the second q is not an answer
+        await press(pilot, "escape", "question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        await press(pilot, "q", "q")  # closes help, then asks
+        assert isinstance(app.screen, QuitPrompt)
+        await press(pilot, "escape")
+        app.fleet.select_challenge("delta")
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ChallengeCard)
+        await press(pilot, "q", "q")  # queues delta, then asks
+        assert isinstance(app.screen, QuitPrompt)
+        await press(pilot, "ctrl+q")  # ctrl+q on the prompt is not an answer either, nor a second prompt
+        assert [type(s) for s in app.screen_stack].count(QuitPrompt) == 1
+        await press(pilot, "escape")
+        assert app.is_running and calls == []
+
+    drive(app, script)
+
+
+def test_quitting_does_not_ask_once_every_lane_has_finished_nor_in_the_mock():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("alpha", "Alpha", "misc", 50)], [QueueEntry("alpha", "glm")])
+    (lane,) = deck.lanes.values()
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
+    calls = []
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def finished(pilot):
+        await press(pilot, "q")
+        for _ in range(50):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["stopped"] and not app.is_running
+
+    drive(app, finished)
+
+    world, mock = make("sstv")  # fake lanes at work, nothing to stop: no question
+    assert any(not lane.finished for lane in world.deck.lanes.values())
+
+    async def in_the_mock(pilot):
+        await press(pilot, "q")
+        for _ in range(50):
+            if not mock.is_running:
+                break
+            await pilot.pause(0.01)
+        assert not mock.is_running
+
+    drive(mock, in_the_mock)
+
+
+@pytest.fixture
+def stop_signals_default():
+    """SIGHUP and SIGTERM as a terminal starts flightdeck (their default action); put back after."""
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGHUP, signal.SIGTERM)}
+    for sig in saved:
+        signal.signal(sig, signal.SIG_DFL)
+    yield
+    for sig, handler in saved.items():
+        signal.signal(sig, handler)
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP], ids=["SIGTERM", "SIGHUP"])
+def test_a_sigterm_or_a_hang_up_stops_the_run_as_quitting_does_without_asking(stop_signals_default, sig):
+    world = FakeWorld(scenarios.get("sstv"))
+    calls = []
+
+    async def on_exit():
+        calls.append("started")
+        await asyncio.sleep(0.01)
+        calls.append("done")
+
+    app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        # the console catches it; if it did not, the signal would end this test run
+        assert signal.getsignal(sig) not in (signal.SIG_DFL, signal.SIG_IGN, None)
+        os.kill(os.getpid(), sig)
+        for _ in range(100):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["started", "done"] and not app.is_running  # nobody had to say yes
+        assert app.stopped_by == sig
+
+    drive(app, script)
+    assert signal.getsignal(sig) is signal.SIG_DFL  # given back when the console exits
+
+
+def test_a_stop_signal_ignored_when_flightdeck_started_stays_ignored(stop_signals_default):
+    """Under nohup, a hang-up is meant to leave the run going."""
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    world = FakeWorld(scenarios.get("sstv"))
+
+    async def on_exit():
+        pass
+
+    app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        assert signal.getsignal(signal.SIGHUP) is signal.SIG_IGN
+        assert signal.getsignal(signal.SIGTERM) not in (signal.SIG_DFL, signal.SIG_IGN, None)
+
+    drive(app, script)
+    assert signal.getsignal(signal.SIGHUP) is signal.SIG_IGN
 
 
 def test_take_over_with_a_shell_hands_the_lane_back_when_the_console_cannot_let_go_of_the_terminal():

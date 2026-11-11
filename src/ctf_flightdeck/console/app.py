@@ -5,15 +5,23 @@ slash commands in both.
 The console only reads the Deck and sends it interventions, so the same app runs on the
 M0 mock and, in M1, on real lanes. It redraws on its own timer and whenever the deck
 emits an event, whether or not a mock clock is ticking.
+
+In a real run, a hang-up (the terminal window closed) or a SIGTERM stops the run the way
+quitting does: every lane stops and every workspace closes before the console exits, and
+`stopped_by` names the signal (terminal.py has why a dead terminal cannot stop that).
 """
 
 from __future__ import annotations
 
+import asyncio
+import signal
 import time
 from collections.abc import Awaitable, Callable
 
 from rich.text import Text
 from textual.app import App
+from textual.driver import Driver
+from textual.drivers.linux_driver import LinuxDriver
 from textual.screen import Screen
 
 from ..core import interventions as iv
@@ -26,7 +34,8 @@ from . import theme, views
 from .commands import CommandError, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
-from .screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, TakeOverScreen
+from .screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
+from .terminal import STOP_SIGNALS, TerminalDriver
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
@@ -58,16 +67,21 @@ class FlightdeckApp(App[None]):
         refresh_seconds: float | None = 0.5,
         on_start: Callable[[], None] | None = None,
         on_exit: Callable[[], Awaitable[None]] | None = None,
+        run_dir: str = "",
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
-        (a real run stops its lanes and closes their workspaces)."""
+        (a real run stops its lanes and closes their workspaces), also on SIGHUP or SIGTERM.
+        `run_dir` is where the run's log goes (the quit prompt says it stays there)."""
         super().__init__()
         self.deck = deck
         self.mock = mock
         self._on_start = on_start
         self._on_exit = on_exit
+        self._run_dir = run_dir
         self._exiting = False
+        self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
+        self._signals: list[int] = []  # the signals this console catches while it runs
         self._ticker = ticker
         self._tick_seconds = tick_seconds
         self._refresh_seconds = refresh_seconds
@@ -80,6 +94,10 @@ class FlightdeckApp(App[None]):
 
     def get_default_screen(self) -> Screen:
         return self._fleet
+
+    def get_driver_class(self) -> type[Driver]:
+        driver = super().get_driver_class()
+        return TerminalDriver if driver is LinuxDriver else driver
 
     @property
     def fleet(self) -> FleetScreen:
@@ -94,21 +112,62 @@ class FlightdeckApp(App[None]):
             self.set_interval(self._tick_seconds, self._on_tick)
         if self._refresh_seconds:
             self.set_interval(self._refresh_seconds, self.refresh_view)
+        if self._on_exit is not None:
+            self._catch_signals()  # before any lane starts
         if self._on_start is not None:
             self._on_start()
 
     async def action_quit(self) -> None:
-        """Stop the run's lanes (on_exit) before the console exits."""
+        """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
+        While lanes are still open, ask first: quitting stops them all, and a run cannot be
+        resumed. (A signal does not ask: see _on_signal.)"""
+        if self._exiting or isinstance(self.screen, QuitPrompt):
+            return
+        if self._on_exit is not None and any(not lane.finished for lane in self.deck.lanes.values()):
+            self.push_screen(QuitPrompt(views.quit_summary(self.deck, self._run_dir)), self._quit_answered)
+            return
+        await self._quit_now()
+
+    def _quit_answered(self, yes: bool | None) -> None:
+        if yes:
+            self.call_later(self._quit_now)
+
+    async def _quit_now(self, why: str = "") -> None:
         if self._exiting:
             return
         self._exiting = True
         if self._on_exit is not None:
-            self.say("Stopping lanes and closing their workspaces...")
+            self.say(f"{why}Stopping lanes and closing their workspaces...")
             await self._on_exit()
         self.exit()
 
+    def _catch_signals(self) -> None:
+        """SIGHUP and SIGTERM stop the run as quitting does, instead of ending flightdeck
+        with its lanes still running. A signal ignored when flightdeck started (nohup) stays
+        ignored."""
+        loop = asyncio.get_running_loop()
+        for sig in STOP_SIGNALS:
+            if signal.getsignal(sig) is signal.SIG_IGN:
+                continue
+            loop.add_signal_handler(sig, self._on_signal, sig)
+            self._signals.append(sig)
+
+    def _on_signal(self, sig: int) -> None:
+        """Stop the run without asking: nobody may be there to answer."""
+        first = self.stopped_by is None
+        if first:
+            self.stopped_by = signal.Signals(sig)
+        if sig == signal.SIGHUP and isinstance(self._driver, TerminalDriver):
+            self._driver.let_go()  # the terminal is gone: nothing reads or writes it from now on
+        if first:
+            self.call_later(self._quit_now, f"{signal.Signals(sig).name}: ")
+
     def on_unmount(self) -> None:
         self._unsubscribe()
+        loop = asyncio.get_running_loop()
+        for sig in self._signals:
+            loop.remove_signal_handler(sig)
+        self._signals.clear()
 
     # ------------------------------------------------------------------ drawing
 

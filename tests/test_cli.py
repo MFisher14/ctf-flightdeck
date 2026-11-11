@@ -364,6 +364,18 @@ def test_play_with_neither_a_board_nor_an_event_says_what_to_give(tmp_path, monk
     assert "name the board: `flightdeck play BOARD` (a folder of challenge folders), or give an event profile" in result.stderr
 
 
+@pytest.mark.parametrize("caps, shown", [
+    ("dollar_cap = false\n", "caps per lane: 400000 tokens, no dollar cap; submit confirm"),
+    ("token_cap = false\ndollar_cap = 2.5\n", "caps per lane: no token cap, $2.5; submit confirm"),
+])
+def test_config_says_which_cap_a_lane_does_not_have(tmp_path, caps, shown):
+    path = tmp_path / "config.toml"
+    path.write_text('[api]\nkey_env = ""\n[models]\nladder = ["m"]\n[lanes]\n' + caps)
+    result = invoke("config", "--path", str(path))
+    assert result.exit_code == 0, result.output
+    assert shown in result.output.splitlines()
+
+
 # ---------------------------------------------------------------------- packaging
 
 

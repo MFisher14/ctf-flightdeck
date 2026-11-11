@@ -233,16 +233,38 @@ def play(
         typer.echo(f"flightdeck: {host_warning()}", err=True)
     for note in run.notes():
         typer.echo(f"flightdeck: {note}", err=True)
+    console = run.app()
     try:
-        run.app().run()
+        console.run()
     finally:
         run.close()
         card = run.scorecard()
         if card:
             typer.echo(card, nl=False)
         typer.echo(f"run log: {run.log.path}")
+        waiting = _flags_left_waiting(run.deck)
+        if waiting:
+            typer.echo(f"flightdeck: not submitted, still waiting for your approval when the run ended: {'; '.join(waiting)}", err=True)
         for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
+    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
+        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(128 + console.stopped_by)
+
+
+def _flags_left_waiting(deck) -> list[str]:
+    """The flags lanes still waited for the player to approve when the run ended (so never
+    submitted), as "L01 Name: flag", made safe to print (they come from a lane)."""
+    from .core.model import PendingKind
+    from .text import untrusted
+
+    out = []
+    for lane in sorted(deck.lanes.values(), key=lambda lane: lane.number):
+        for pending in ([lane.pending] if lane.pending is not None else []) + list(lane.waiting):
+            if pending.kind is PendingKind.SUBMIT and pending.flag:
+                name = untrusted(deck.challenges[lane.challenge_id].name, one_line=True)
+                out.append(f"{lane.id} {name}: {untrusted(pending.flag, one_line=True)}")
+    return out
 
 
 def _ask(question: str) -> bool:
@@ -487,7 +509,9 @@ def config_command(
     priced = [m for m in loaded.models if m in loaded.prices]
     typer.echo(f"prices from config: {', '.join(priced) or 'none (the API reports cost, or it shows as unknown)'}")
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))
-    typer.echo(f"caps per lane: {lanes.token_cap or 'no'} tokens, ${lanes.dollar_cap if lanes.dollar_cap else 'no cap'}; submit {lanes.submit}")
+    tokens = f"{lanes.token_cap} tokens" if lanes.token_cap else "no token cap"
+    dollars = f"${lanes.dollar_cap:g}" if lanes.dollar_cap else "no dollar cap"
+    typer.echo(f"caps per lane: {tokens}, {dollars}; submit {lanes.submit}")
     typer.echo(f"runs go to: {loaded.run_dir}")
 
 

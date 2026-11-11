@@ -27,10 +27,10 @@ COMMANDS = (
     Command("fork", "[approach]", "a sibling lane on another model"),
     Command("kill", "[park]", "end the lane: re-queue it fresh, or park it"),
     Command("approve", "", "approve what the lane waits for"),
-    Command("decline", "", "say no: do not submit, stay off the box, no more budget"),
+    Command("decline", "", "say no: not submitted, or off the box (the lane carries on); no more budget (it stops)"),
     Command("escalate", "", "hand a summary to a stronger model"),
     Command("pause", "", "pause or resume the lane"),
-    Command("takeover", "", "take the lane's shell (placeholder until M1)"),
+    Command("takeover", "", "a shell in the lane's workspace; exit it to hand the lane back"),
     Command("diff", "[file]", "show the files the lane changed"),
     Command("open", "<lane>", "open a lane in the focus view"),
     Command("queue", "<challenge>", "queue a parked or new challenge", lane=False),
@@ -39,7 +39,7 @@ COMMANDS = (
     Command("sort", "[mode]", "sort lanes: attention, idle, cost, turns, lane", lane=False),
     Command("back", "", "back to the fleet", lane=False),
     Command("help", "", "keys and commands", lane=False),
-    Command("quit", "", "quit flightdeck", lane=False),
+    Command("quit", "", "quit flightdeck (asks first while lanes are open)", lane=False),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
 

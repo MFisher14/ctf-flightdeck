@@ -275,7 +275,7 @@ class Run:
         from .console.app import FlightdeckApp
 
         return FlightdeckApp(
-            self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown
+            self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir)
         )
 
     # ------------------------------------------------------------------ the event's background work
