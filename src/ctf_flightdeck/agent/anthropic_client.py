@@ -139,7 +139,8 @@ class AnthropicClient:
 
     Like ModelClient: shared by the lanes on one event loop, `timeout` bounds each try as a
     whole (connecting gets at most CONNECT_TIMEOUT of it), and a call makes at most
-    `max_retries + 1` tries, waiting retry_delay() between them.
+    `max_retries + 1` tries, waiting retry_delay() between them. `max_tokens` ([api]
+    max_tokens) goes with every call that gives none; without it, DEFAULT_MAX_TOKENS.
     """
 
     def __init__(
@@ -153,6 +154,7 @@ class AnthropicClient:
         fast: Iterable[str] = (),
         server_fallback: bool = True,
         effort: str | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         where = _base_url(base_url)
         if not isinstance(api_key, str) or not _KEY_CHARS.fullmatch(api_key):
@@ -173,6 +175,9 @@ class AnthropicClient:
                 raise ValueError(f"fast mode cannot be used: {problem}")
         if effort is not None and effort not in EFFORTS:
             raise ValueError(f"effort must be one of {', '.join(EFFORTS)}, got {effort!r}")
+        if max_tokens is not None and (not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1):
+            raise ValueError(f"max_tokens must be a positive whole number, got {max_tokens!r}")
+        self.max_tokens = max_tokens
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff = backoff
@@ -230,6 +235,8 @@ class AnthropicClient:
                 "the Anthropic client sends no temperature: Claude's current models reject it; "
                 "leave temperature unset for this provider"
             )
+        if max_tokens is None:
+            max_tokens = self.max_tokens
         fast = model in self.fast and session_id not in self._standard
         params = self._params(model, messages, tools, max_tokens, fast=fast)
         if self._closed:
