@@ -40,10 +40,17 @@ format, and `answers.sha256.json` lets flightdeck check a flag without knowing i
 
 ## Honest practice uses the docker runtime
 
-In the host runtime a lane's commands run as you, on your machine. Nothing stops a lane from
-reading this repository, and the repository holds a reference solution for every challenge
-(`tests/test_practice.py`). In the docker runtime (`runtime = "docker"`) a lane sees only its own
-copy of the challenge, mounted at `/work`.
+In the host runtime (`runtime = "host"`) a lane's commands run as you, on your machine, so nothing
+stops a lane from reading a clone of this repository, which holds a reference solution for every
+challenge (`tests/test_practice.py`). In the docker runtime (`runtime = "docker"`) a lane's
+commands run in a container whose filesystem holds only its own copy of the challenge, mounted at
+`/work`.
+
+Docker isolates the filesystem only. A docker lane still has network (docker's default bridge
+network), so until lanes run without network, a lane can download this repository, reference
+solutions included. No challenge here needs a network, and flightdeck is to run a lane with no
+network when its challenge lists no `urls`, but that is not built yet. Until it is, a lane that
+fetches anything from the internet while you practise is not playing fair: stop it.
 
 The lane's python tool runs `python3` inside the container. The default image,
 `debian:bookworm-slim`, has bash, coreutils and perl but no `python3`, `file`, `xxd`, `unzip` or

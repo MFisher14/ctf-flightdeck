@@ -733,3 +733,12 @@ def test_the_readme_says_how_to_play_and_that_honest_practice_uses_docker():
     assert "flightdeck practice" in readme
     assert "host runtime" in readme and "docker runtime" in readme
     assert "tests/test_practice.py" in readme  # where the spoilers are
+
+
+def test_the_readme_says_docker_isolates_the_filesystem_but_not_the_network():
+    """A docker lane has network (DockerWorkspace's default is docker's bridge network, and the
+    lane config has no network key), and the repository holds every reference solver, so the
+    README must not promise that a docker lane can reach nothing but its own copy."""
+    readme = " ".join((PRACTICE / "README.md").read_text(encoding="utf-8").split())  # line breaks do not matter
+    assert "Docker isolates the filesystem only." in readme
+    assert "until lanes run without network, a lane can download this repository" in readme
