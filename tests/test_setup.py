@@ -60,6 +60,7 @@ def test_init_asks_at_a_terminal(tmp_path, monkeypatch):
     config = load_config(target)
     assert (config.api.base_url, config.api.key_env, config.lanes.runtime) == ("http://127.0.0.1:11434/v1", "", "host")
     assert "export" not in result.output  # a local server needs no key
+    assert config.lanes.dollar_cap is None  # nothing to spend: no cap to ask about
 
 
 def test_init_away_from_a_terminal_names_the_missing_answer(tmp_path, monkeypatch):

@@ -263,8 +263,12 @@ def init(
     else:
         runtime = "host" if host else "docker"
     target = (path or default_config_path()).expanduser()
+    # A local model costs nothing and reports no cost: a dollar cap would only make every lane
+    # stop once to ask whether to carry on without it.
+    dollar_cap = None if provider == "local" else 2.0
     try:
-        written = write_config(Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes), target, force=force)
+        answers = Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes, dollar_cap=dollar_cap)
+        written = write_config(answers, target, force=force)
     except (ConfigError, FileExistsError) as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
