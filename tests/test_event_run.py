@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -297,6 +298,14 @@ def test_the_profiles_name_board_flag_format_and_lane_limit_apply(tmp_path):
         prepare_run(RunOptions(event=profile, config=config(tmp_path), max_lanes=3))
 
 
+def test_the_notes_say_the_flag_format_is_the_event_profiles(tmp_path):
+    root = folder_board(tmp_path)
+    profile = event(tmp_path, platform="manual", board=root, flag_format=r"x\{\w+\}")
+    run = prepare_run(RunOptions(event=profile, config=config(tmp_path)))
+    run.close()
+    assert "flag format: " + r"x\{\w+\}" + f", from the event profile {profile} (event.flag_format)" in run.notes()
+
+
 def test_l1_off_leaves_the_pack_out_and_confirm_runs_it_saying_play_is_the_yes(tmp_path):
     from l1_kit import python_engine
 
@@ -383,6 +392,34 @@ def test_a_ctfd_event_pulls_the_board_before_anything_starts(tmp_path, token):
     assert (run.deck.config.event, run.deck.config.flag_format) == ("Fake CTF", FLAG_FORMAT)
     assert run.deck.challenges == {} and run.ctfd.waves  # the board goes on the deck once the console runs
     assert f"board: 3 challenges from CTFd at {fake.base_url} in {folder} (3 new)" in run.notes()
+
+
+def test_a_coding_agent_lane_on_a_ctfd_event_shows_the_token_by_its_name(tmp_path, token, monkeypatch):
+    """The CTFd token is a secret the run holds: a lane that learned it (here the fake CLI
+    echoes it) shows it as [NAME] in the run's events and transcripts (agent/external.py)."""
+    from test_external import Fake
+
+    agent = Fake(tmp_path, {"turns": [{"calls": [{"tools": [{"bash": f"echo token {TOKEN}"}]}]}]})
+    path = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(agent.bin), *path]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-credential-for-tests")
+    try:
+        with FakeCTFd(three()) as fake:
+            run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url),
+                                         config=config(tmp_path, max_lanes=1), agent="claude", runtime="host"))
+
+            async def body(run):
+                (lane,) = run.deck.lanes.values()
+                await wait_for(lambda: any(a.output.startswith("token ") for a in lane.actions), "the step")
+
+            play(run, body)
+    finally:
+        agent.kill_leftovers()
+    (lane,) = run.deck.lanes.values()
+    assert [a.output for a in lane.actions if a.output.startswith("token ")] == [f"token [{TOKEN_VAR}]"]
+    for kept in (run.log.path, *(run.dir / "lanes").iterdir()):
+        assert TOKEN not in kept.read_text(), kept.name
 
 
 @pytest.mark.parametrize(

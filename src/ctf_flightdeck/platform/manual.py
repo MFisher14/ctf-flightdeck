@@ -11,8 +11,9 @@ player, under the auto submit policy too (core/deck.py).
 Everything in a board folder is untrusted data, challenge.json included. It is checked
 field by field and an unknown key is an error, so a typo fails loudly. No path in it may
 leave its challenge directory, symlinks are never followed, and nothing in it is run.
-Error messages never show a value from the folder, and show its names and paths only
-made safe, since a directory name could carry terminal escape sequences.
+Error messages never show a value from the folder (but a bad flag format, escaped and cut
+short: flagformat.py), and show its names and paths only made safe, since a directory name
+could carry terminal escape sequences.
 
 The answers file must sit outside every challenge directory: a lane works in a copy of
 its challenge directory and must never find the answers there. It holds hashes, never
@@ -33,6 +34,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from ..core.model import Challenge
+from ..flagformat import problem as flag_format_problem
 from ..text import untrusted
 
 CHALLENGE_FILE = "challenge.json"
@@ -208,10 +210,9 @@ def _settings(root: Path) -> tuple[str, str | None]:
     if flag_format is not None:
         if not isinstance(flag_format, str) or not flag_format:
             raise BoardError(f'{where}: "flag_format" must be a non-empty string (a regular expression)')
-        try:
-            re.compile(flag_format)
-        except re.error as exc:
-            raise BoardError(f'{where}: "flag_format" does not compile as a regular expression ({_show(exc)})') from None
+        broken = flag_format_problem(flag_format)  # one line, nothing hidden, short, compiles (flagformat.py)
+        if broken is not None:
+            raise BoardError(f'{where}: "flag_format" {broken}')
     return event, flag_format
 
 

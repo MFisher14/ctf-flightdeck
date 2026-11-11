@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck import writeup, writeup_cli
 from ctf_flightdeck.runrecord import load_run
 from fake_model import FakeModelServer, FakeReply, text_reply
-from test_writeup import ALPHA, alpha_run, frozen_of, l1_run, surrogate_run
+from test_writeup import ALPHA, KEY_FLAG, OPENROUTER, alpha_run, frozen_of, l1_run, old_run, surrogate_run
 
 runner = CliRunner()
 
@@ -47,6 +47,15 @@ def test_redact_keeps_the_flag_out_of_every_file(tmp_path):
     assert invoke(record.dir, "--redact").exit_code == 0
     text = (record.dir / "writeups" / "a.md").read_text(encoding="utf-8")
     assert ALPHA not in text and text == writeup.draft(record, "a", redact=True)
+
+
+def test_a_draft_of_an_old_run_folder_has_no_credential_in_it_without_redact(tmp_path):
+    record = old_run(tmp_path)
+    result = invoke(record.dir)
+    assert result.exit_code == 0, result.output
+    text = (record.dir / "writeups" / "k.md").read_text(encoding="utf-8")
+    assert OPENROUTER not in text and "OPENROUTER_API_KEY=[redacted]" in text and KEY_FLAG in text
+    assert OPENROUTER not in result.output
 
 
 def test_writeups_take_the_event_log_the_run_printed_too(tmp_path):

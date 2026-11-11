@@ -625,10 +625,13 @@ def scan(text: str, pattern: re.Pattern[str], deadline: float, found: dict[str, 
     windows of WINDOW that overlap by OVERLAP, so a flag up to OVERLAP characters long is never
     cut. A match counts for the window it starts in (before the overlap), searching resumes
     where the last match ended, as one search over the line would, and the deadline is
-    checked between searches. flightdeck's default format, \\w+\\{...\\}, is quadratic on a run of
-    word characters (a line of hex): a window keeps that to WINDOW squared steps, where one
-    search over a megabyte line would take hours. A search itself cannot be stopped, so a
-    format that backtracks exponentially can still take long on one window."""
+    checked between searches. A format with an unbounded repeat, such as \\w+\\{[^{}\\s]+\\} (a
+    board may set one), is quadratic on a run of word characters (a line of hex): a window
+    keeps that to WINDOW squared steps, where one search over a megabyte line would take
+    hours. flightdeck's own default (core.model.DeckConfig) is bounded, \\w{1,64}\\{...\\}: at
+    most 64 steps from each place a search starts, so it is linear even without windows. A
+    search itself cannot be stopped, so a format that backtracks exponentially can still take
+    long on one window."""
     end = len(text)
     start = 0
     while start <= end:

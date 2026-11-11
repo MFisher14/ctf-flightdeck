@@ -64,6 +64,7 @@ from typing import NamedTuple
 from urllib.parse import SplitResult, urlsplit
 
 from .config import Config, ConfigError
+from .flagformat import problem as flag_format_problem
 from .text import untrusted
 
 
@@ -211,7 +212,7 @@ class Problem:
 
 class ProfileError(Exception):
     """The event profile cannot be used. The message names the file and the key, never a
-    string value from the file."""
+    string value from the file but a bad flag format, escaped and cut short."""
 
 
 # ---------------------------------------------------------------------- policies from the rules
@@ -762,14 +763,14 @@ def _board(path: Path, table: dict) -> Path | None:
 
 
 def _flag_format(path: Path, table: dict) -> str | None:
+    """One line, nothing hidden, short, and a regular expression that compiles (flagformat.py).
+    The error shows the format only escaped and cut short."""
     pattern = _string(path, table, ("event", "flag_format"))
     if pattern is None:
         return None
-    try:
-        re.compile(pattern)
-    except re.error as exc:  # its message may quote part of the pattern, control characters and all
-        where = f" at position {exc.pos}" if exc.pos is not None else ""
-        raise _error(path, ("event", "flag_format"), f"is not a valid regular expression ({_show(exc.msg)}{where})") from None
+    broken = flag_format_problem(pattern)
+    if broken is not None:
+        raise _error(path, ("event", "flag_format"), broken)
     return pattern
 
 

@@ -11,10 +11,11 @@ ctf_flightdeck.text and EscalationSummary).
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+from ..flagformat import check as check_flag_format
 
 ME = "me"
 """Owner name for the player themself (claims, manual solves)."""
@@ -366,4 +367,4 @@ class DeckConfig:
             raise ValueError(
                 f"submit policy {self.submit!r} is not supported yet; known: {', '.join(SUBMIT_POLICIES)}"
             )
-        re.compile(self.flag_format)
+        check_flag_format(self.flag_format, "the deck's flag_format")  # the backstop: every loader checks it first

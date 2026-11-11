@@ -56,6 +56,7 @@ from .workspace import (
     WorkspaceError,
     changed_files,
     open_inside,
+    remove_shell_home,
     take_snapshot,
     write_inside,
 )
@@ -70,7 +71,7 @@ HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (i
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
 INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, as lanes see it (manual is off)
-MAX_IDLE_TURNS = 3  # replies in a row without a tool call before the lane gives up (as agent/external.py's lanes do)
+MAX_IDLE_TURNS = 3  # replies (a CLI lane's turns: agent/external.py) in a row that did nothing before the lane gives up
 MAX_SAID_FLAGS = 3  # candidates taken from one reply's text, at most
 SAID_SCAN = 20_000  # characters of a reply's text searched for flags
 PLANT_SECONDS = 5.0  # the search of the challenge's own text for flags (off the loop) stops after this long, with a note
@@ -140,6 +141,7 @@ class Takeover:
     driver: AgentDriver
     before: Snapshot | None = None
     history: bool = False  # the history file was emptied at the start, so what it holds is this take-over's
+    shell: ShellSpec | None = None  # what begin() gave; finish() removes the folder made for it (its HOME)
 
     @property
     def busy(self) -> bool:
@@ -151,7 +153,7 @@ class Takeover:
         await run.idle.wait()
         if run.closed or self.driver._over(run):
             raise TakeoverRefused(f"{run.lane_id} has ended")
-        shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
+        shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
         root = run.workspace.root
         try:
             await asyncio.to_thread(write_inside, root, HISTORY, b"")
@@ -163,6 +165,10 @@ class Takeover:
 
     def finish(self) -> str:
         run = self.run
+        if self.shell is not None:  # the shell has exited: its HOME goes (the workspace's close tries again)
+            problem = remove_shell_home(self.shell)
+            if problem:
+                self.driver.errors.append(f"{run.lane_id}: {problem}")
         root = run.workspace.root
         changes = changed_files(self.before, take_snapshot(root), root) if self.before is not None else []
         if changes:

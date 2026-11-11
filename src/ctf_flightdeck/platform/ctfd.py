@@ -82,6 +82,7 @@ from urllib.parse import unquote
 import httpx
 
 from .. import __version__
+from ..flagformat import check as check_flag_format
 from ..text import MARK, untrusted
 from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board, tcp_service
 from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
@@ -912,18 +913,13 @@ async def pull(
     no answer, 429 or 5xx after the retries, and the challenge list, asked again, failed
     too); what was written by then stays, and the next pull goes on from there. BoardError
     if the board folder (board.json included) does not load, as after an edit by hand, and
-    OSError if board.json or ctfd.json cannot be written.
+    OSError if board.json or ctfd.json cannot be written. ValueError, before anything is
+    asked, for an empty event or a flag format the board loader would refuse (flagformat.py).
     """
     if event is not None and (not isinstance(event, str) or not event.strip()):
         raise ValueError("event must be a non-empty string (the board's name), or None to keep the board's own")
     if flag_format is not None:
-        bad = False
-        try:
-            re.compile(flag_format)
-        except (re.error, TypeError):
-            bad = True
-        if bad or not flag_format:
-            raise ValueError("flag_format must be a regular expression that compiles")
+        check_flag_format(flag_format, "flag_format")  # what goes into board.json loads as a board's (flagformat.py)
     folder = Path(dest).expanduser()
     if folder.exists() and not folder.is_dir():
         raise CTFdError(f"{_show(folder)}: is not a directory to pull a board into")

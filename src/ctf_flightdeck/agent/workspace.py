@@ -17,7 +17,9 @@ HostWorkspace). A docker lane sees none of that.
 
 One deliberate difference from the M1 contract: the host take-over shell gets the player's
 own TERM, not the allowlist's TERM=dumb, so editors and pagers work in it. The lane's own
-commands still get TERM=dumb.
+commands still get TERM=dumb. The take-over shell also reads no startup file and gets a HOME
+of its own outside the workspace, since a lane can write any file in it
+(HostWorkspace.interactive_shell).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -50,6 +53,7 @@ from a handout and never snapshotted; the host runtime puts it back before each 
 the lane removed or replaced it (restore_private)."""
 
 CONTAINER_ROOT = "/work"
+TAKEOVER_HOME = "flightdeck-takeover-"  # the start of a host take-over shell's HOME, a new folder in the system's temp folder
 OUTPUT_CAP = 10 * 1024 * 1024  # bytes of a command's output kept; the rest is dropped with a note
 NOT_RUN = 126  # the exit status of a command the host runtime could not start (bash's "cannot execute")
 DOCKER_BACKSTOP = 15.0  # seconds past a command's own timeout before the docker exec client is killed
@@ -81,6 +85,7 @@ class ShellSpec:
     argv: list[str]
     cwd: Path | None
     env: dict[str, str] | None  # None: inherit the player's environment
+    home: Path | None = None  # a folder made for this shell alone (the host's HOME): remove_shell_home() once it exits
 
 
 class WorkspaceError(Exception):
@@ -215,9 +220,12 @@ def copy_handout(handout: Path, root: Path) -> None:
 
     Symlinks are skipped (they could point anywhere on this machine), so is anything that is
     not a regular file or a directory, so are __pycache__ folders (pip byte-compiles a packaged
-    handout's .py files at install), and so is a handout's own .flightdeck (a planted
-    .flightdeck/home/.bashrc would run in the player's take-over shell). Each skip is written
-    to root/.flightdeck/prepare.log. Nothing is ever written to the handout.
+    handout's .py files at install), and so is a handout's own .flightdeck (the name is
+    flightdeck's own: the lane's home and tmp, the logs). Skipping it keeps nothing out for
+    good: a lane, or an archive it unpacks, can write the same files there later. What keeps
+    the player's take-over shell from running them is the shell itself (it reads no startup
+    file and its HOME is outside the workspace: HostWorkspace.interactive_shell). Each skip is
+    written to root/.flightdeck/prepare.log. Nothing is ever written to the handout.
     """
     source = Path(handout).resolve()
     if not source.is_dir():
@@ -443,6 +451,24 @@ def absolute_path(raw: str) -> str:
     return os.pathsep.join(entry for entry in raw.split(os.pathsep) if os.path.isabs(entry))
 
 
+def remove_shell_home(spec: ShellSpec) -> str:
+    """Remove the folder made for a take-over shell (spec.home) once the shell has exited:
+    "" when it is gone or the shell had none (a docker lane's), else why not."""
+    return "" if spec.home is None else _remove_home(spec.home)
+
+
+def _remove_home(home: Path) -> str:
+    """Remove a take-over home and whatever the player's programs left in it, never through a
+    symlink, folders they made read-only included (l1.runner.remove_tree): "" when it is gone,
+    else why not."""
+    if not os.path.lexists(home):
+        return ""
+    from ..l1.runner import remove_tree  # l1.runner imports this module, so it is imported here, when needed
+
+    problem = remove_tree(home)
+    return f"could not remove the take-over shell's home folder {home}: {problem}" if problem else ""
+
+
 class HostWorkspace:
     """Runs a lane's commands with bash on this machine, in root (containerized = false, D9).
 
@@ -461,10 +487,11 @@ class HostWorkspace:
     def __init__(self, root: Path, handout: Path, *, shell: str = "bash") -> None:
         self.root = Path(root).absolute()
         self.handout = Path(handout)
-        self.shell = shell
+        self.shell = shell  # the take-over shell: a bash (it gets bash's --noprofile --norc)
         self.workdir = str(self.root)  # root as the lane's commands see it
         self._bash: str | None = None
         self._groups: set[int] = set()  # process groups started here that may still be running
+        self._shell_homes: set[Path] = set()  # take-over homes made here; close() removes those still there
         self._closed = False
 
     async def prepare(self) -> None:
@@ -506,22 +533,56 @@ class HostWorkspace:
         return RunResult(_exit_status(code), output)
 
     async def close(self) -> None:
+        """Kill every process group the lane left running, and remove a take-over's HOME that
+        is still there (its hand-back did not run). WorkspaceError when one cannot be removed."""
         self._closed = True
         self._prune()
         for pgid in sorted(self._groups):
             _kill_group(pgid)
         self._groups.clear()
+        homes, self._shell_homes = self._shell_homes, set()
+        problems = [problem for home in sorted(homes) if (problem := _remove_home(home))]
+        if problems:
+            raise WorkspaceError("; ".join(problems))
 
     def interactive_shell(self) -> ShellSpec:
+        """The player's take-over shell: bash in the workspace, as the player, at the player's
+        terminal. Everything in the workspace is the lane's, and a lane (or an archive it
+        unpacked) can write any file there, so nothing there may run before the player types:
+
+        - bash starts with --noprofile --norc, so it reads no ~/.bash_profile, ~/.bashrc or
+          /etc startup file (a player's own git-aware prompt would run git in the workspace,
+          where a planted .git/config can name a command);
+        - HOME is a folder made for this take-over: owner-only, outside the workspace, with a
+          name the lane cannot know beforehand, and removed once the shell exits
+          (remove_shell_home, at the hand-back) or the workspace closes. Not the lane's HOME:
+          readline reads ~/.inputrc whatever bash's flags say, and a key binding there can make
+          the player's Enter run a command. Not the player's own HOME either, which is the
+          less safe choice: what the player runs in the shell (a script the lane wrote, say)
+          would find the player's credentials and settings through $HOME (~/.netrc, ~/.ssh,
+          the keys file), and could leave something there that outlives the take-over;
+        - the environment is the lane commands' allowlist (_env), so BASH_ENV, ENV,
+          PROMPT_COMMAND, INPUTRC, SHELLOPTS and the like come neither from the player's
+          environment nor from the lane's, with the player's TERM (editors and pagers work)
+          and HISTFILE in .flightdeck, read back at the hand-back (agent/driver.py Takeover).
+        """
         self._ready()
         try:
             restore_private(self.root)
         except OSError:
             pass  # it opens anyway: taking over is how the player repairs what the lane broke
+        try:
+            home = Path(tempfile.mkdtemp(prefix=TAKEOVER_HOME))  # mode 0700
+            self._shell_homes.add(home)
+            (home / "tmp").mkdir(mode=0o700)
+        except OSError as exc:
+            raise WorkspaceError(f"cannot make a home folder for the take-over shell: {exc.strerror or exc}") from None
         env = self._env()
+        env["HOME"] = str(home)
+        env["TMPDIR"] = str(home / "tmp")
         env["TERM"] = os.environ.get("TERM", "dumb")  # the player's own terminal, so editors and pagers work
         env["HISTFILE"] = str(self.root / PRIVATE / "takeover_history")
-        return ShellSpec([self.shell, "-i"], self.root, env)
+        return ShellSpec([self.shell, "--noprofile", "--norc", "-i"], self.root, env, home=home)
 
     def _ready(self) -> str:
         if self._closed:
@@ -782,10 +843,15 @@ class DockerWorkspace:
         self.network = network
 
     def interactive_shell(self) -> ShellSpec:
+        """The take-over shell: bash in the lane's container, which is the boundary (the lane
+        is root in it and could replace bash itself). It still reads no startup file
+        (--noprofile --norc), so a ~/.bashrc the lane planted in its container does not run
+        the moment the player takes over; the history file works all the same."""
         if self._closed or not self._ready:
             raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
         history = f"HISTFILE={CONTAINER_ROOT}/{PRIVATE}/takeover_history"  # what the player ran, for the lane to hear
-        return ShellSpec(["docker", "exec", "-it", "-e", history, "-w", CONTAINER_ROOT, self.name, "bash", "-i"], None, None)
+        argv = ["docker", "exec", "-it", "-e", history, "-w", CONTAINER_ROOT, self.name, "bash", "--noprofile", "--norc", "-i"]
+        return ShellSpec(argv, None, None)
 
     def run_args(self) -> list[str]:
         """The `docker run` arguments that start this lane's container."""

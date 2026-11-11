@@ -104,11 +104,11 @@ def run_command(
     """Run every engine the challenge reaches, each in its own copy of the challenge, and
     print each result as one line of JSON."""
     import asyncio
-    import re
     import tempfile
 
     from ..core.model import DeckConfig
     from ..eventlog import new_run_dir
+    from ..flagformat import problem as flag_format_problem
     from .router import route
     from .runner import remove_tree, run_routed
 
@@ -120,10 +120,9 @@ def run_command(
     else:
         _not_inside(Path(tempfile.gettempdir()), pack, item.handout, "--workdir", default=True)
     if flag_format is not None:
-        try:
-            re.compile(flag_format)
-        except re.error as exc:
-            raise typer.BadParameter(f"does not compile as a regular expression ({exc})", param_hint="--flag-format") from None
+        broken = flag_format_problem(flag_format)  # one line, nothing hidden, short, compiles (flagformat.py)
+        if broken is not None:
+            raise typer.BadParameter(broken, param_hint="--flag-format")
         pattern = flag_format
     elif board.flag_format:
         pattern = board.flag_format

@@ -549,7 +549,7 @@ def test_a_run_notes_models_with_no_known_price_when_the_api_may_not_report_one(
     with FakeModelServer(models=LADDER) as server:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
         run.close()
-    (note,) = run.notes()
+    (note,) = [n for n in run.notes() if not n.startswith("flag format: ")]  # every run says its flag format
     assert "fake/big" in note and "fake/small" not in note  # fake/small has a price in the test config
     assert "asks you once" in note
 
@@ -623,7 +623,7 @@ def test_a_lane_on_a_tcp_service_is_told_of_it_and_reaches_it_from_the_shell_not
         asyncio.run(main())
         run.close()
     first, second = server.chats()[:2]
-    assert "Live instance: tcp://127.0.0.1:1337" in first["json"]["messages"][1]["content"]
+    assert "\nLive instance: tcp://127.0.0.1:1337 (nc 127.0.0.1 1337)\n" in first["json"]["messages"][1]["content"]
     assert "this challenge's instance is not a web server (tcp://127.0.0.1:1337): reach it from the shell" in last_tool_result(second)
 
 
@@ -918,3 +918,78 @@ def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude
         cfg = config(tmp_path, server.base_url, runtime="docker")
         with pytest.raises(RunError, match="the lane image debian:bookworm-slim has no claude CLI.*--host"):
             prepare_run(RunOptions(board=board(tmp_path), config=cfg, agent="claude"))
+
+
+def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_and_transcripts(tmp_path, monkeypatch):
+    """The keys file's values, the [api] and [fallback] keys and the agent's own credential:
+    a host lane can read them (here: a file in the handout holds them all, as the keys file
+    or another process's environment would), and each shows as [NAME] in what the run keeps
+    (agent/external.py takes them out of what the CLI writes, before anything is logged). The
+    [api] and [fallback] keys here are set in the environment only, and a keys-file value the
+    environment overrides is a secret all the same."""
+    from test_external import Fake
+
+    own = "fake-anthropic-credential-for-tests"
+    api, spare = "api-key-from-the-environment-for-tests-55aa", "fallback-key-from-the-environment-for-tests-7d1e"
+    file_only, overridden = "a-value-only-the-keys-file-holds-for-tests-91c4", "keys-file-anthropic-value-for-tests-03"
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"FLIGHTDECK_TEST_FILE_SECRET={file_only}\nANTHROPIC_API_KEY={overridden}\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    monkeypatch.setenv("FLIGHTDECK_TEST_API_KEY", api)
+    monkeypatch.setenv("FLIGHTDECK_TEST_SPARE_KEY", spare)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", own)  # the agent's own credential: the environment wins
+    fake = Fake(tmp_path, {"turns": [{"calls": [{"tools": [{"bash": "cat leak.txt"}]}, {"text": "Read it."}]}]})
+    path = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(fake.bin), *path]))
+    root = board(tmp_path)
+    (root / "note" / "leak.txt").write_text(f"{own}\n{api}\n{spare}\n{file_only}\n{overridden}\n")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[api]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = "FLIGHTDECK_TEST_API_KEY"\n'
+        '[models]\nladder = ["fake/small"]\n'
+        '[fallback]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = "FLIGHTDECK_TEST_SPARE_KEY"\nladder = ["fake/spare"]\n'
+        f'[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+    )
+    try:
+        run = prepare_run(RunOptions(board=root, config=cfg, agent="claude", runtime="host"))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: any(a.text == "$ cat leak.txt" and a.output for a in lane.actions), "the step")
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    finally:
+        fake.kill_leftovers()
+    kept = [run.log.path, *(run.dir / "lanes").iterdir()]
+    assert len(kept) == 2
+    for path in kept:
+        text = path.read_text()
+        for secret in (own, api, spare, file_only, overridden):
+            assert secret not in text, (path.name, secret)
+    shown = next(a.output for a in run.deck.lanes["L01"].actions if a.text == "$ cat leak.txt")
+    assert shown.split() == [
+        "[ANTHROPIC_API_KEY]", "[FLIGHTDECK_TEST_API_KEY]", "[FLIGHTDECK_TEST_SPARE_KEY]", "[FLIGHTDECK_TEST_FILE_SECRET]",
+        "[ANTHROPIC_API_KEY_IN_KEYS_FILE]",
+    ]
+    assert not any(secret in note for note in run.notes() for secret in (own, api, spare, file_only, overridden))
+
+
+def test_the_notes_say_which_flag_format_the_run_checks_and_where_it_came_from(tmp_path):
+    from ctf_flightdeck.core.model import DeckConfig
+
+    with FakeModelServer(models=LADDER) as server:
+        root = board(tmp_path)
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url)))
+        run.close()
+        assert "flag format: " + r"t\{[a-z0-9_]+\}" + f", from the board's board.json in {root}" in run.notes()
+        (root / "board.json").write_text(json.dumps({"event": "Test Event"}))  # no flag format of its own
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url)))
+        run.close()
+    default = DeckConfig(event="x").flag_format
+    assert f"flag format: {default}, from flightdeck's default, since neither the board nor an event profile sets one" in run.notes()
+    assert sum(note.startswith("flag format: ") for note in run.notes()) == 1

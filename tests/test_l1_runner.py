@@ -311,7 +311,8 @@ def test_stderr_is_kept_only_at_its_end_and_never_written_to_disk(pack, handout,
 
 # ---------------------------------------------------------------- the flag search
 
-DEFAULT_FORMAT = DeckConfig(event="x").flag_format  # flightdeck's own, used when a board sets none: quadratic on word runs
+DEFAULT_FORMAT = DeckConfig(event="x").flag_format  # flightdeck's own, used when a board sets none: bounded, so linear on word runs
+UNBOUNDED_FORMAT = r"\w+\{[^{}\s]+\}"  # as a board may set one: one search is quadratic on a run of word characters
 
 
 @pytest.mark.parametrize("fmt", [FLAG, DEFAULT_FORMAT, r"flag\((\w+)\)", r"(?<=key: )t\{\w+\}", r"t\{[a-z0-9_]+"])  # the last: no end mark
@@ -350,13 +351,14 @@ def test_a_flag_across_a_window_boundary_is_found_whole_and_never_as_a_piece():
         assert list(found) == ["flag{across_the_boundary}"], offset  # never "ag{across_the_boundary}" as well
 
 
-def test_a_long_line_of_hex_is_searched_in_bounded_time():
-    # one search over this line with the default format takes tens of seconds (quadratic);
-    # windows keep each search to WINDOW squared steps
+@pytest.mark.parametrize("fmt", [UNBOUNDED_FORMAT, DEFAULT_FORMAT])
+def test_a_long_line_of_hex_is_searched_in_bounded_time(fmt):
+    # one search over this line with the unbounded format takes minutes (quadratic); windows
+    # keep each search to WINDOW squared steps. The default is bounded: linear either way.
     line = "0123456789abcdef" * 12_500 + " t{hidden_at_the_end}"  # 200,000 word characters, then a flag
     found: dict[str, None] = {}
     began = time.monotonic()
-    assert scan(line, re.compile(DEFAULT_FORMAT), time.monotonic() + 60, found)
+    assert scan(line, re.compile(fmt), time.monotonic() + 60, found)
     assert list(found) == ["t{hidden_at_the_end}"] and time.monotonic() - began < 10
 
 

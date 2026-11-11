@@ -39,6 +39,7 @@ from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.runrecord import RunRecord, load_run
 from ctf_flightdeck.text import NEWLINE, untrusted
 from ctf_flightdeck.transcript import TranscriptLog
+from deadline import within
 from fake_model import FakeModelServer, error_reply, text_reply
 
 FLAG_FORMAT = r"t\{[^{}\s]+\}"
@@ -995,6 +996,126 @@ def test_a_cut_that_keeps_only_the_flag_format_is_not_redacted(tmp_path):
     redacted = writeup.draft(run.close(), "p", redact=True)
     assert "s3cr3t" not in redacted
     assert "```text\n$ strings chall | grep picoCTF{\n```\n\n```text\n<flag>\n```" in redacted
+
+
+# ---------------------------------------------------------------------- credentials (the second layer)
+
+
+# Made-up keys, each built from pieces so no line here is shaped like a real one (.githooks/secret_scan.py).
+OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
+ANTHROPIC = "sk-" + "ant-api03-" + "Qx7-" * 20
+AWS_ID = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWRtaW4ifQ.bm90LWEtcmVhbC1zaWduYXR1cmU"
+KEY_FLAG = "t{AUTH_TOKEN=c0ffee}"  # a flag shaped like a credential is still a flag
+HEX_DUMP = "00000000: 7f45 4c46 0201 0100 0000 0000 0000 0000  .ELF............"
+OLD_TEXT = {  # what a host lane printed and wrote, as a run folder from before the fixes holds it
+    "@@ENV@@": f"OPENROUTER_API_KEY={OPENROUTER}",
+    "@@CURL@@": f"curl -s -H 'Authorization: Bearer {JWT}' -H 'Cookie: session=abc123' http://127.0.0.1:8080/admin",
+    "@@FILE_A@@": f"ANTHROPIC_API_KEY={ANTHROPIC}",
+    "@@FILE_B@@": f"AWS_ACCESS_KEY_ID={AWS_ID}",
+}
+
+
+def old_run(tmp_path: Path) -> RunRecord:
+    """A run folder as flightdeck wrote one before it took credentials out of transcripts: a
+    host lane printed the player's environment, sent a forged token in an Authorization
+    header, wrote keys into a file, and found a flag shaped like a credential, beside
+    ordinary CTF content (a JWT it printed, a hex dump). Today's transcript writer takes such
+    values out, so the lane's transcript is written with markers that are then put back as
+    the raw text an older flightdeck kept."""
+    run = Run(tmp_path / "run", [Challenge("k", "Keys", "web", 100)], answers={"k": KEY_FLAG})
+    lane = run.lane("k")
+    run.step(lane, "$ env", f"HOME=/home/player\n@@ENV@@\nTERM=xterm")
+    run.step(lane, "$ python3 forge.py", f"token: {JWT}\n{HEX_DUMP}",
+             files=(change(tmp_path / "work", "keys.txt", "@@FILE_A@@\n@@FILE_B@@\n"),))
+    run.step(lane, "$ @@CURL@@", f"welcome, admin: {KEY_FLAG}")
+    run.step(lane, f"submit {KEY_FLAG}", flag=KEY_FLAG)
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    path = record.dir / "lanes" / f"{lane}.jsonl"
+    text = path.read_text(encoding="ascii")
+    for marker, raw in OLD_TEXT.items():
+        assert marker in text
+        text = text.replace(marker, json.dumps(raw)[1:-1])
+    path.write_text(text, encoding="ascii")
+    assert OPENROUTER in path.read_text(encoding="ascii") and ANTHROPIC in path.read_text(encoding="ascii")
+    return load_run(record.dir)
+
+
+def test_a_draft_takes_credentials_out_of_an_old_run_folder_without_redact(tmp_path):
+    text = writeup.draft(old_run(tmp_path), "k")
+    for secret in (OPENROUTER, ANTHROPIC, AWS_ID[4:], "abc123"):
+        assert secret not in text
+    for shown in ("OPENROUTER_API_KEY=[redacted]", "ANTHROPIC_API_KEY=[redacted]", "AWS_ACCESS_KEY_ID=[redacted]",
+                  "-H 'Authorization: Bearer [redacted]' -H 'Cookie: [redacted]' http://127.0.0.1:8080/admin"):
+        assert shown in text  # the name stays, the value goes
+    # ordinary CTF content stays: what the lane printed, a hex dump, the rest of the environment
+    assert f"token: {JWT}\n{HEX_DUMP}" in text and "HOME=/home/player\nOPENROUTER_API_KEY=[redacted]\nTERM=xterm" in text
+    # the flag is no credential: shown where it was found, and in its own section
+    assert "The flag first shows in the output of turn 3." in text and f"welcome, admin: {KEY_FLAG}" in text
+    assert lines_of(text, "## Flag")[1:4] == ["```text", KEY_FLAG, "```"]
+
+
+def test_redact_hides_the_flag_and_the_credentials_go_either_way(tmp_path):
+    text = writeup.draft(old_run(tmp_path), "k", redact=True)
+    assert KEY_FLAG not in text and "c0ffee" not in text and "welcome, admin: <flag>" in text
+    assert OPENROUTER not in text and "OPENROUTER_API_KEY=[redacted]" in text and f"token: {JWT}" in text
+
+
+def test_a_polished_draft_takes_the_credentials_out_too(tmp_path):
+    record = old_run(tmp_path)
+    reply = {}
+
+    async def go():
+        with FakeModelServer(responder=lambda request: text_reply(reply.setdefault("text", request["json"]["messages"][1]["content"]))) as server:
+            client = ModelClient(server.base_url, None)
+            try:
+                return await writeup.polish(record, "k", client=client, model="fake/m")
+            finally:
+                await client.aclose()
+
+    polished = asyncio.run(go()).markdown
+    assert OPENROUTER not in reply["text"] and OPENROUTER not in polished and "OPENROUTER_API_KEY=[redacted]" in polished
+    assert KEY_FLAG in polished
+
+
+def test_a_flag_an_l1_engine_reported_is_no_credential_either(tmp_path):
+    flag, other = "t{SECRET=delta}", "t{PASSWORD=other}"
+    run = Run(tmp_path / "run", [Challenge("d", "Delta", "cry", 100)], answers={"d": flag})
+    d = run.lane("d")
+    run.clock.advance(1.0)
+    run.deck.record_l1("d", "decode.base64", "solved", flags=[flag, other], seconds=0.4, lane_id=d)
+    run.deck.report(d, TurnReport(turn=False, flag=flag))
+    run.apply(iv.Approve(d))
+    text = writeup.draft(run.close(), "d")
+    assert f"- Flags it reported: `{flag}`, `{other}`" in text
+
+
+def test_files_of_blank_header_values_are_drafted_at_once(tmp_path):
+    """A draft takes credentials out of every file it shows, whole: files of a header's name and
+    a colon followed by tens of thousands of blanks (from a handout, or a page the lane saved)
+    cost time in proportion to their text, when the run ends and when it is drafted."""
+    blanks = {
+        "cookie.txt": "Cookie:" + " " * 60_000 + "\n",
+        "auth.txt": "Authorization:" + "\t" * 60_000 + "\n",
+        "quoted.txt": "cookie:" + " " * 60_000 + '"\n',
+    }
+    run = Run(tmp_path / "run", [Challenge("h", "Headers", "web", 10)], answers={"h": "t{h}"})
+    h = run.lane("h")
+    for name, content in blanks.items():
+        run.step(h, f"$ cat > {name} <<'EOF'", files=(change(tmp_path / "work", name, content),))
+    run.step(h, "$ cat cookie.txt", blanks["cookie.txt"] + "t{h}")
+    run.step(h, "submit t{h}", flag="t{h}")
+    with within(5, "approving the flag, which writes the lane's transcript"):
+        run.apply(iv.Approve(h))
+    record = run.close()
+    with within(5, "drafting the writeup"):
+        text = writeup.draft(record, "h")
+    section = lines_of(text, "## Files the lane wrote")
+    assert [line for line in section if line.startswith("### ")] == [
+        "### `cookie.txt`, added in turn 1, 1 line", "### `auth.txt`, added in turn 2, 1 line",
+        "### `quoted.txt`, added in turn 3, 1 line"]
+    assert "Cookie:" + " " * 60_000 in section
 
 
 # ---------------------------------------------------------------------- hostile text

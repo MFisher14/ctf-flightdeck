@@ -88,7 +88,7 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         FENCE_OPEN,
         f"Challenge: {one(challenge.name)} ({one(challenge.category)}, {challenge.points} points, {challenge.solves} solves)",
         "Files in the workspace: " + (shown if files else "none"),
-        "Live instance: " + (", ".join(one(url) for url in urls) if urls else "none"),
+        "Live instance: " + (", ".join(_instance(url) for url in urls) if urls else "none"),
         *([f"Flag format (a regular expression): {one(flag_format, MAX_FLAG_FORMAT)}"] if flag_format else []),
         "Description:",
         _description(challenge.description),
@@ -97,6 +97,18 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     if approach:
         lines.append(f"The player asked you to take this approach: {untrusted(approach, one_line=True)}")
     return "\n".join(lines)
+
+
+def _instance(url: str) -> str:
+    """One live instance as the brief names it: a TCP service (tcp://host:port, as the board
+    loader writes one) with the command that reaches it, "tcp://host:port (nc host port)"."""
+    shown = one(url)
+    if url.startswith("tcp://"):
+        host, _, port = url.removeprefix("tcp://").rpartition(":")
+        host = host.removeprefix("[").removesuffix("]")  # an IPv6 address: nc takes it bare
+        if host and port.isascii() and port.isdigit():
+            shown += f" (nc {one(host)} {port})"
+    return shown
 
 
 def _description(text: str) -> str:

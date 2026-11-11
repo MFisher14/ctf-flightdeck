@@ -14,6 +14,8 @@ import asyncio
 import hashlib
 import json
 import os
+import pty
+import select
 import shutil
 import stat
 import subprocess
@@ -38,6 +40,7 @@ from ctf_flightdeck.agent.workspace import (
     changed_files,
     docker_unavailable,
     open_inside,
+    remove_shell_home,
     take_snapshot,
     write_inside,
 )
@@ -258,8 +261,8 @@ def test_the_take_over_shell_opens_after_the_lane_broke_flightdeck(lane, tmp_pat
     elsewhere.mkdir()
     run(lane.run(BREAKAGES[breakage].format(elsewhere=elsewhere), timeout=10))
     spec = lane.interactive_shell()
-    assert (spec.argv, spec.cwd) == (["bash", "-i"], lane.root)
-    assert spec.env["HOME"] == str(lane.root / ".flightdeck" / "home")
+    assert (spec.argv, spec.cwd) == (["bash", "--noprofile", "--norc", "-i"], lane.root)
+    assert spec.env["HOME"] == str(spec.home) and not spec.home.is_relative_to(lane.root)
     assert_private_dirs_are_real(lane.root)
     assert list(elsewhere.iterdir()) == []
 
@@ -361,14 +364,91 @@ def test_run_before_prepare_fails_loudly(tmp_path, handout):
 def test_the_host_take_over_shell_opens_in_the_lane_dir_with_the_allowlisted_environment(lane, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_KEY)
     monkeypatch.setenv("TERM", "xterm-256color")
+    for name in ("BASH_ENV", "ENV", "PROMPT_COMMAND", "INPUTRC", "SHELLOPTS", "BASHOPTS", "PS1", "PS4", "CDPATH", "HISTCONTROL"):
+        monkeypatch.setenv(name, f"{lane.root}/planted-{name.lower()}")  # never handed on, whatever the player's environment holds
+    monkeypatch.setenv("BASH_FUNC_ls%%", "() { touch planted; }")
     spec = lane.interactive_shell()
-    assert (spec.argv, spec.cwd) == (["bash", "-i"], lane.root)
-    assert FAKE_KEY not in json.dumps(spec.env)
+    assert (spec.argv, spec.cwd) == (["bash", "--noprofile", "--norc", "-i"], lane.root)
+    assert FAKE_KEY not in json.dumps(spec.env) and "planted" not in json.dumps(spec.env)
     assert set(spec.env) <= ALLOWED | {"HISTFILE"}
     assert spec.env["HISTFILE"] == str(lane.root / ".flightdeck" / "takeover_history")
-    assert spec.env["HOME"] == str(lane.root / ".flightdeck" / "home")
+    home = spec.home
+    assert spec.env["HOME"] == str(home) and spec.env["TMPDIR"] == str(home / "tmp")  # outside the workspace, its own
+    assert not home.resolve().is_relative_to(lane.root.resolve()) and home.name.startswith("flightdeck-takeover-")
+    assert stat.S_IMODE(os.lstat(home).st_mode) == 0o700 and [p.name for p in home.iterdir()] == ["tmp"]
     assert spec.env["TERM"] == "xterm-256color"  # the player's terminal, not the commands' dumb one
-    assert HostWorkspace(lane.root, lane.handout, shell="zsh").shell == "zsh"
+    again = lane.interactive_shell()
+    assert again.home != home  # a new one each take-over
+    assert remove_shell_home(spec) == "" and not os.path.lexists(home) and again.home.is_dir()
+    run(lane.close())
+    assert not os.path.lexists(again.home)  # a take-over whose hand-back never ran: it goes with the workspace
+    assert HostWorkspace(lane.root, lane.handout, shell="/usr/local/bin/bash").shell == "/usr/local/bin/bash"
+
+
+def in_terminal(spec: ShellSpec, lines: list[bytes], timeout: float = 30.0) -> tuple[int | None, bytes]:
+    """Run a take-over shell as the console does, in its own session at a terminal (here a
+    pseudo-terminal), typing each line once the shell shows a new prompt ("$ " or "# "): its
+    exit status (None if it had to be killed) and everything it printed."""
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(spec.argv, cwd=spec.cwd, env=spec.env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    out, pending, mark = b"", list(lines), 0
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.05)
+            if ready:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:  # EIO: the shell has gone, and the terminal with it
+                    break
+                if not chunk:
+                    break
+                out += chunk
+            if pending and out[mark:].endswith((b"$ ", b"# ")):  # readline is reading: keys reach it as typed
+                mark = len(out)
+                os.write(master, pending.pop(0))
+        try:
+            return proc.wait(timeout=max(1.0, deadline - time.monotonic())), out
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            return None, out
+    finally:
+        os.close(master)
+
+
+PLANTED = {  # what a lane, or an archive it unpacked, can write in its workspace: each touches a mark if it runs
+    ".flightdeck/home/.bashrc": "touch {marks}/home-bashrc\n",
+    ".flightdeck/home/.bash_profile": "touch {marks}/home-bash_profile\n",
+    ".flightdeck/home/.profile": "touch {marks}/home-profile\n",
+    ".flightdeck/home/.inputrc": '"\\C-m": " ; touch {marks}/home-inputrc\\C-j"\n',  # Enter runs a command too
+    ".bashrc": "touch {marks}/workspace-bashrc\n",
+    ".bash_profile": "touch {marks}/workspace-bash_profile\n",
+    ".inputrc": '"\\C-m": " ; touch {marks}/workspace-inputrc\\C-j"\n',
+}
+
+
+def test_the_host_take_over_shell_runs_nothing_the_lane_planted_and_keeps_its_history(lane, tmp_path, monkeypatch):
+    """Review finding 3: the shell runs as the player at the player's terminal, so no file the
+    lane can write may run in it: no startup file, no ~/.inputrc (a key binding can make the
+    player's Enter run a command), nothing named by a variable in the player's environment."""
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    for rel, text in PLANTED.items():
+        (lane.root / rel).write_text(text.format(marks=marks))
+    monkeypatch.setenv("BASH_ENV", str(lane.root / ".bashrc"))  # read by every non-interactive bash, a script's
+    monkeypatch.setenv("ENV", str(lane.root / ".bashrc"))
+    monkeypatch.setenv("INPUTRC", str(lane.root / ".inputrc"))
+    monkeypatch.setenv("PROMPT_COMMAND", f"touch {marks}/prompt-command")
+    history = lane.root / ".flightdeck" / "takeover_history"
+    history.write_text("")  # as the take-over's begin() leaves it
+    spec = lane.interactive_shell()
+    code, out = in_terminal(spec, [b"echo took-$((6*7))\r", b"bash -c 'echo child-$((6*7))'\r", b"exit\r"])
+    assert code == 0 and b"took-42" in out and b"child-42" in out, out
+    assert sorted(p.name for p in marks.iterdir()) == []
+    assert history.read_text().splitlines() == ["echo took-$((6*7))", "bash -c 'echo child-$((6*7))'", "exit"]
+    assert remove_shell_home(spec) == "" and not os.path.lexists(spec.home)
 
 
 # ---------------------------------------------------------------- flightdeck's own reads and writes
@@ -736,7 +816,7 @@ def _docker_skip_reason() -> str | None:
 def docker_ready():
     reason = _docker_skip_reason()
     if reason:
-        pytest.skip(reason)
+        pytest.skip(f"not run: {reason}")
 
 
 @pytest.fixture
@@ -869,7 +949,21 @@ def test_an_image_without_python3_is_noted_for_the_python_tool_and_in_prepare_lo
 
 def test_the_docker_take_over_shell_is_docker_exec_in_work(box):
     history = "HISTFILE=/work/.flightdeck/takeover_history"
-    assert box.interactive_shell() == ShellSpec(["docker", "exec", "-it", "-e", history, "-w", "/work", box.name, "bash", "-i"], None, None)
+    argv = ["docker", "exec", "-it", "-e", history, "-w", "/work", box.name, "bash", "--noprofile", "--norc", "-i"]
+    assert box.interactive_shell() == ShellSpec(argv, None, None)
+
+
+def test_the_docker_take_over_shell_runs_no_startup_file_the_lane_planted_and_keeps_its_history(box):
+    planted = (
+        "echo 'touch /work/ran-root-bashrc' >> /root/.bashrc && echo 'touch /work/ran-root-profile' >> /root/.profile"
+        " && echo 'touch /work/ran-etc-bashrc' >> /etc/bash.bashrc && echo 'touch /work/ran-etc-profile' >> /etc/profile"
+    )
+    assert run(box.run(planted, timeout=30)).exit_code == 0  # the lane is root in its container
+    (box.root / ".flightdeck" / "takeover_history").write_text("")  # as the take-over's begin() leaves it
+    code, out = in_terminal(box.interactive_shell(), [b"echo took-$((6*7))\r", b"exit\r"])
+    assert code == 0 and b"took-42" in out, out
+    assert sorted(p.name for p in box.root.iterdir() if p.name.startswith("ran-")) == []
+    assert (box.root / ".flightdeck" / "takeover_history").read_text().splitlines() == ["echo took-$((6*7))", "exit"]
 
 
 def test_a_snapshot_never_follows_a_symlink_the_container_planted(box):
