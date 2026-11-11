@@ -39,7 +39,14 @@ class _Refused(Exception):
 @app.command("writeups")
 def writeups(
     run_dir: Annotated[Path, typer.Argument(help="A run folder (the one holding events.jsonl).")],
-    redact: Annotated[bool, typer.Option("--redact", help="Write `<flag>` in place of every copy of the flag.")] = False,
+    redact: Annotated[
+        bool,
+        typer.Option(
+            "--redact",
+            help="Write `<flag>` in place of the flag wherever the run's text holds it: whole, cut short, "
+            "folded, or the part inside its braces.",
+        ),
+    ] = False,
     board: Annotated[
         Path | None, typer.Option("--board", file_okay=False, help="The board folder, for names and points the run log lacks.")
     ] = None,

@@ -65,12 +65,13 @@ class Run:
     """A deck, its event log and its lane transcripts, in one run folder."""
 
     def __init__(self, folder: Path, challenges: list[Challenge], *, answers: dict[str, str],
-                 models: tuple[str, ...] = ("small", "mid"), submit: str = "confirm") -> None:
+                 models: tuple[str, ...] = ("small", "mid"), submit: str = "confirm",
+                 flag_format: str = FLAG_FORMAT) -> None:
         self.folder = folder
         self.clock = ManualClock(0.0)
         self.driver = RecordingDriver()
         verify = lambda cid, flag: (answers[cid] == flag) if cid in answers else None  # noqa: E731
-        config = DeckConfig(event="test", flag_format=FLAG_FORMAT, submit=submit, models=models)
+        config = DeckConfig(event="test", flag_format=flag_format, submit=submit, models=models)
         self.deck = Deck(config, self.driver, self.clock, verify)
         self.log = EventLog(folder / "events.jsonl")
         self.log.attach(self.deck)
@@ -798,13 +799,91 @@ def test_redact_replaces_every_copy_of_the_flag(tmp_path):
     assert "t{a" not in redacted  # not even the part a cut would have left
     assert "```python\nprint('<flag>')\n```" in redacted
     assert lines_of(redacted, "## Flag")[1:4] == ["```text", "<flag>", "```"]
-    assert "Redacted: every copy of the flag in this draft reads `<flag>`." in redacted
+    assert ("Redacted: `<flag>` stands for the flag wherever the run's text held it: whole, cut short, with characters "
+            "folded, or the part inside its braces.") in redacted
     assert "- Turn 1, hint: `is it <flag>?`" in redacted
 
 
 def test_redact_covers_an_l1_solve_too(tmp_path):
     text = writeup.draft(l1_run(tmp_path), "d", redact=True)
     assert "t{delta}" not in text and "- Flags it reported: `<flag>`, `t{other}`" in text
+
+
+CLIPPED = "t{redact_me_please_0123456789}"
+
+
+def test_redact_finds_the_flag_the_toolbox_cut_short_in_an_output(tmp_path):
+    shell = tool(tmp_path, "shell", {"command": "python3 solve.py"}, f"decoded: {'A' * 260} {CLIPPED} (2 layers)\n".encode())
+    assert shell.output.endswith(CLIPPED[:-1] + "…")  # the Toolbox kept all of it but the closing brace
+    run = Run(tmp_path / "run", [Challenge("c", "Clip", "misc", 50)], answers={"c": CLIPPED})
+    lane = run.lane("c")
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, f"submit {CLIPPED}", flag=CLIPPED)
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    section = lines_of(writeup.draft(record, "c"), "## Steps that mattered")
+    assert section[1] == "The flag first shows, cut short, in the output of turn 1."
+    redacted = writeup.draft(record, "c", redact=True)
+    assert "t{redact" not in redacted and "redact_me" not in redacted
+    assert f"decoded: {'A' * 260} <flag>…" in redacted
+
+
+def test_redact_finds_the_flag_cut_short_in_how_a_lane_found_it(tmp_path):
+    how = "it printed it at the very end of its padding, " + "z" * 230 + " " + CLIPPED
+    submit = tool(tmp_path, "submit_flag", {"flag": CLIPPED, "how": how})
+    assert submit.output.endswith("…") and CLIPPED not in submit.output and "t{redact_me" in submit.output
+    run = Run(tmp_path / "run", [Challenge("c", "Clip", "misc", 50)], answers={"c": CLIPPED})
+    lane = run.lane("c")
+    run.step(lane, "$ ls", "solve.py")
+    run.step(lane, submit.action, submit.output, flag=submit.flag)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "c", redact=True)
+    assert "t{redact" not in redacted and "redact_me" not in redacted
+    assert "z" * 230 + " <flag>…" in redacted
+
+
+def test_redact_finds_the_flag_the_toolbox_folded(tmp_path):
+    emoji = "t{i_❤️_ctf}"  # a heart and variation selector 16, which untrusted() makes U+FFFD
+    submit = tool(tmp_path, "submit_flag", {"flag": emoji, "how": "decoded note.txt"})
+    assert submit.action == "submit t{i_❤�_ctf}" and submit.flag == emoji
+    run = Run(tmp_path / "run", [Challenge("e", "Emoji", "misc", 50)], answers={"e": emoji})
+    lane = run.lane("e")
+    run.step(lane, "$ cat note.txt", "the note says hi")
+    run.step(lane, submit.action, submit.output, flag=submit.flag)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "e", redact=True)
+    assert "t{i_" not in redacted and "_ctf" not in redacted
+    assert "```text\nsubmit <flag>\n```" in redacted
+
+
+def test_the_part_inside_the_braces_is_a_copy_of_the_flag(tmp_path):
+    body = "s3cr3t_x0r_k3y_found"
+    shell = tool(tmp_path, "shell", {"command": "python3 xor.py"}, f"key found: {body}\n".encode())
+    run = Run(tmp_path / "run", [Challenge("k", "Key", "cry", 50)], answers={"k": f"t{{{body}}}"})
+    lane = run.lane("k")
+    run.step(lane, "$ ls", "xor.py")
+    run.step(lane, shell.action, shell.output)  # the solver prints the key; the lane wraps it in t{...}
+    run.step(lane, f"submit t{{{body}}}", "wrapped the key in the flag format", flag=f"t{{{body}}}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    section = lines_of(writeup.draft(record, "k"), "## Steps that mattered")
+    assert section[1] == ("The part inside the flag's braces first shows in the output of turn 2. Here it is with "
+                          "the 1 step before it.")
+    redacted = writeup.draft(record, "k", redact=True)
+    assert body not in redacted and "```text\nkey found: <flag>\n```" in redacted
+
+
+def test_a_cut_that_keeps_only_the_flag_format_is_not_redacted(tmp_path):
+    flag = "picoCTF{s3cr3t_x0r}"
+    run = Run(tmp_path / "run", [Challenge("p", "Pico", "for", 50)], answers={"p": flag},
+              flag_format=r"picoCTF\{[^{}\s]+\}")
+    lane = run.lane("p")
+    run.step(lane, "$ strings chall | grep picoCTF{", flag)  # the command ends with the format, not the flag
+    run.step(lane, f"submit {flag}", flag=flag)
+    run.apply(iv.Approve(lane))
+    redacted = writeup.draft(run.close(), "p", redact=True)
+    assert "s3cr3t" not in redacted
+    assert "```text\n$ strings chall | grep picoCTF{\n```\n\n```text\n<flag>\n```" in redacted
 
 
 # ---------------------------------------------------------------------- hostile text

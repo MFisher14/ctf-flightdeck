@@ -249,4 +249,4 @@ def test_the_main_cli_can_mount_it_at_the_top_level():
     result = runner.invoke(main, ["writeups", "--help"])
     assert result.exit_code == 0 and "--redact" in result.stdout and "--polish" in result.stdout
     flat = " ".join(re.sub(r"[\u2502\u256d\u256e\u2570\u256f\u2500]", " ", result.stdout).split())  # no box lines
-    assert "Write <flag> in place of every copy of the flag." in flat  # not eaten as HTML by the Markdown help
+    assert "Write <flag> in place of the flag wherever" in flat  # not eaten as HTML by the Markdown help

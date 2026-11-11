@@ -12,14 +12,24 @@ Solved means accepted: a submit event with `correct` true. A flag an L1 engine f
 never accepted is not a solve ("flag found" is never "accepted"). A solve is L1's when the
 accepted flag is one an `l1` event on that challenge reported before it was accepted.
 
-The steps that mattered: the first step whose output holds the flag; failing that, the last
-step that ran a file the lane wrote (a shell command naming it, not one that only shows or
-edits it, nor a line inside a heredoc; a newline the transcript folded splits commands as a
-real one does); failing that, the last step before the flag was accepted. The draft says
-which rule picked it, and shows it with the 5 steps before it: each command in a fenced block
-(a multi-line one with its lines back), each output in another, cut to 20 lines. A plan the
-lane stated is not a step: it is in the approach (a turn that set the plan and also submitted
-a flag stays a step).
+Where the run's text holds the flag. A transcript holds more than exact copies of it:
+agent/tools.py folds every action with text.untrusted() (an invisible character in the flag
+becomes U+FFFD there) and cuts long text short with a "…", and a solver often prints only the
+part inside the braces, which the lane then wraps in the flag format. So a copy of the flag is
+any of: the flag as found or folded; its start, at least CUT_MIN characters and past its
+opening brace, cut short at a "…" or at the end of a line; and, when the flag reads
+prefix{body} with a body of at least CUT_MIN characters, that body, whole or cut short at a
+"…". `redact` writes <flag> in place of every copy; a copy a tool encoded or split over lines
+is not found, and the draft says so.
+
+The steps that mattered: the first step whose output holds a copy of the flag; failing that,
+the last step that ran a file the lane wrote (a shell command naming it, not one that only
+shows or edits it, nor a line inside a heredoc; a newline the transcript folded splits
+commands as a real one does); failing that, the last step before the flag was accepted. The
+draft says which rule picked it, and shows it with the 5 steps before it: each command in a
+fenced block (a multi-line one with its lines back), each output in another, cut to 20 lines.
+A plan the lane stated is not a step: it is in the approach (a turn that set the plan and also
+submitted a flag stays a step).
 
 The files: those with something to show (an added text file under 200 lines, a diff that
 short) are shown whole, at most 10, files a step ran first; every other file is listed with
@@ -79,10 +89,12 @@ OUTPUT_LINES = 20  # lines of a step's output shown
 LINE_CHARS = 500  # characters of one output line shown
 FILE_LINES = 200  # a file the lane added is shown whole when it has fewer lines than this
 WHOLE_FILES = 10  # files shown whole at most; the rest are listed, one line each
+CUT_MIN = 6  # a cut copy of the flag, or the part inside its braces alone, has at least this many characters
 REDACTED = "<flag>"
 
 PLAN = "plan: "  # agent/tools.py: a turn that only set the plan
 NEW_PLAN = "new plan: "  # core/deck.py: the player's redirect
+CLIP = "…"  # agent/tools.py: where it cut text short
 
 _PLAIN_MARKS = frozenset(" ,'\"-()?!%+/;")
 _NUMBERED = re.compile(r"\d+\)")  # "1) x" would start an ordered list
@@ -90,6 +102,9 @@ _TICKS = re.compile(r"`+")
 _LANG = re.compile(r"[a-z]*")
 _SURROGATE = re.compile("[\ud800-\udfff]")  # half of a UTF-16 pair: JSON allows one alone; UTF-8 cannot hold it
 _MORE = re.compile(r"  \(\+(\d+) more\)$")  # agent/driver.py: a turn with several tool calls
+_BODY = re.compile(r"[^{}]*\{(.+)\}", re.DOTALL)
+_CLIP_ENDS = re.compile(CLIP)
+_LINE_ENDS = re.compile(CLIP + "|$", re.MULTILINE)
 _SEPARATORS = re.compile(r"&&|\|\||[;|&\n]")
 _REDIRECT = re.compile(r"\d*(?:>>?|<<?<?)\s*(?:'[^']*'|\"[^\"]*\"|\S+)")  # > out.txt, < in.txt, <<'EOF'
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(?:'([^']*)'|\"([^\"]*)\"|\\?([^\s;&|<>()'\"]+))")  # not <<< (a here-string)
@@ -122,6 +137,12 @@ _INTERVENTIONS = (  # the deck's own wording for what the player did (core/deck.
     ("paused by the player", "pause"),
     ("resumed by the player", "resume"),
 )
+
+_SHOWS = {  # why the step that mattered was picked, by what its output holds of the flag
+    "whole": "The flag first shows in the output of turn {turn}.",
+    "cut": "The flag first shows, cut short, in the output of turn {turn}.",
+    "body": "The part inside the flag's braces first shows in the output of turn {turn}.",
+}
 
 
 class WriteupError(Exception):
@@ -186,8 +207,8 @@ def solves(record: RunRecord) -> dict[str, Solve]:
 
 def draft(record: RunRecord, challenge_id: str, *, board: Board | None = None, redact: bool = False) -> str:
     """The Markdown draft for one solved challenge. `board` gives names and points the run
-    log lacks; `redact` writes <flag> in place of every copy of the flag. WriteupError when
-    the run did not solve it."""
+    log lacks; `redact` writes <flag> in place of every copy of the flag (see the module
+    docstring for what counts as one). WriteupError when the run did not solve it."""
     return _Writer(record, _solve(record, challenge_id), board=board, redact=redact).markdown()
 
 
@@ -299,6 +320,85 @@ def _plain(text: str) -> bool:
     if not (text[0].isalnum() or text[0] in "\"'("):
         return False
     return all(ch.isalnum() or ch in _PLAIN_MARKS for ch in text)
+
+
+# ---------------------------------------------------------------------- copies of the flag
+
+
+class _Copies:
+    """The accepted flag, and the forms the run's text can hold it in (see the module docstring)."""
+
+    def __init__(self, flag: str) -> None:
+        self.whole = _forms(flag)
+        body = _BODY.fullmatch(flag)
+        self.body = _forms(body.group(1)) if body and len(body.group(1)) >= CUT_MIN else ()
+
+    def kind(self, text: str) -> str | None:
+        """What `text` holds of the flag: "whole" (as found or folded), "cut" (its start, cut
+        short), "body" (the part inside its braces, whole or cut short), or None."""
+        if any(form in text for form in self.whole):
+            return "whole"
+        if any(_cut_spans(text, form, _cut_min(form), line_ends=True) for form in self.whole):
+            return "cut"
+        if any(form in text for form in self.body) or any(
+            _cut_spans(text, form, CUT_MIN, line_ends=False) for form in self.body
+        ):
+            return "body"
+        return None
+
+    def redact(self, text: str) -> str:
+        """`text` with <flag> in place of every copy: whole ones first, so a body is never
+        left between the flag's braces."""
+        for form in self.whole:
+            text = text.replace(form, REDACTED)
+        for form in self.whole:
+            text = _replaced(text, _cut_spans(text, form, _cut_min(form), line_ends=True))
+        for form in self.body:
+            text = text.replace(form, REDACTED)
+        for form in self.body:
+            text = _replaced(text, _cut_spans(text, form, CUT_MIN, line_ends=False))
+        return text
+
+
+def _forms(text: str) -> tuple[str, ...]:
+    """`text` as found, and folded as the run's tools fold text (agent/tools.py runs every
+    action through text.untrusted(), one line), and as a draft folds it."""
+    folds = (text, untrusted(text), untrusted(text, one_line=True), _fold(text), _fold(text, one_line=True))
+    return tuple(form for form in dict.fromkeys(folds) if form)
+
+
+def _cut_min(form: str) -> int:
+    """How much of the flag a cut copy keeps, at least: CUT_MIN characters, and one past the
+    opening brace (a cut that keeps only "picoCTF{" says nothing of the flag)."""
+    brace = form.find("{")
+    return max(CUT_MIN, brace + 2) if brace >= 0 else CUT_MIN
+
+
+def _cut_spans(text: str, form: str, minimum: int, *, line_ends: bool) -> list[tuple[int, int]]:
+    """Where `text` holds the start of `form`, at least `minimum` characters of it but not all,
+    right before a clip mark ("…") or, with line_ends, at the end of a line."""
+    if len(form) <= minimum or form[:minimum] not in text:
+        return []
+    spans: list[tuple[int, int]] = []
+    last = 0
+    for mark in (_LINE_ENDS if line_ends else _CLIP_ENDS).finditer(text):
+        end = mark.start()
+        for size in range(min(len(form) - 1, end - last), minimum - 1, -1):
+            if text.startswith(form[:size], end - size):
+                spans.append((end - size, end))
+                last = end
+                break
+    return spans
+
+
+def _replaced(text: str, spans: list[tuple[int, int]]) -> str:
+    if not spans:
+        return text
+    out, at = [], 0
+    for start, end in spans:
+        out += [text[at:start], REDACTED]
+        at = end
+    return "".join(out) + text[at:]
 
 
 # ---------------------------------------------------------------------- reading a transcript
@@ -427,7 +527,7 @@ class _Runs:
 def _same_plan(listed: str, final: str) -> bool:
     """Whether `final` is the plan already listed (a plan step's text is cut with a …)."""
     a, b = _fold(listed, one_line=True), _fold(final, one_line=True)
-    return a == b or (a.endswith("…") and b.startswith(a[:-1]))
+    return a == b or (a.endswith(CLIP) and b.startswith(a[:-1]))
 
 
 def _intervention(action: ActionLine) -> tuple[str, str]:
@@ -467,7 +567,8 @@ class _Writer:
         self.record = record
         self.solve = solve
         self.lane = record.lanes.get(solve.lane) if solve.lane else None
-        self.secret = solve.flag if redact and solve.flag else ""
+        self.copies = _Copies(solve.flag) if solve.flag else None
+        self.redact = redact and self.copies is not None
         self.board = next((b.challenge for b in board.challenges if b.challenge.id == solve.challenge), None) if board else None
         self.held = held
         self.nonce = secrets.token_hex(4)
@@ -484,7 +585,7 @@ class _Writer:
 
     def _clean(self, text: str) -> str:
         """Redacted, before any folding or cutting (so a cut never leaves part of the flag)."""
-        return text.replace(self.secret, REDACTED) if self.secret else text
+        return self.copies.redact(text) if self.redact and self.copies is not None else text
 
     def _piece(self, markdown: str, *, block: bool = False) -> str:
         if self.held is None:
@@ -657,11 +758,11 @@ class _Writer:
 
     def _key(self, lane: LaneRecord, steps: list[ActionLine]) -> tuple[int, str, str]:
         """The step that mattered, why, and how its heading marks it."""
-        flag = self.solve.flag
-        if flag:
+        if self.copies is not None:
             for i, step in enumerate(steps):
-                if flag in step.output:
-                    return i, f"The flag first shows in the output of turn {step.turn}.", "the flag shows here"
+                kind = self.copies.kind(step.output)
+                if kind is not None:
+                    return i, _SHOWS[kind].format(turn=step.turn), "the flag shows here"
         runs = self.runs(lane)
         for i in range(len(steps) - 1, -1, -1):
             path = runs.of(steps[i])
@@ -783,8 +884,10 @@ class _Writer:
             self.out("The run log does not hold the accepted flag.", "")
         else:
             self.block(solve.flag)
-            if self.secret:
-                self.out(f"Redacted: every copy of the flag in this draft reads {self.ours(REDACTED)}.", "")
+            if self.redact:
+                self.out(f"Redacted: {self.ours(REDACTED)} stands for the flag wherever the run's text held it: whole, "
+                         "cut short, with characters folded, or the part inside its braces. A copy a tool encoded or "
+                         "split over lines is not found, so read the draft before you publish it.", "")
         where = f" on lane {self.t(solve.lane)}" if solve.lane else ""
         how = {"platform": ": the board checked it", "player": ": you said the platform accepted it"}.get(solve.judged_by, "")
         self.out(f"Accepted at {fmt.clock(solve.at)}{where}{how}.", "")
