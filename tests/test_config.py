@@ -17,10 +17,12 @@ from ctf_flightdeck.config import (
     ApiConfig,
     Config,
     ConfigError,
+    FallbackConfig,
     LaneConfig,
     api_key,
     default_config_path,
     example_config,
+    fallback_key,
     load_config,
 )
 from ctf_flightdeck.pricing import Price
@@ -108,6 +110,32 @@ dir = "/srv/flightdeck runs"
     )
     assert isinstance(config.lanes.dollar_cap, float)
     assert config.run_dir == Path("/srv/flightdeck runs")
+
+
+def test_the_openai_dialect_is_the_default_and_anthropic_brings_its_own_url_and_key_variable(tmp_path):
+    assert load_config(write(tmp_path, LADDER)).api.provider == "openai"
+    config = load_config(write(tmp_path, LADDER + '[api]\nprovider = "anthropic"\n'))
+    assert config.api == ApiConfig(base_url="https://api.anthropic.com", key_env="ANTHROPIC_API_KEY", provider="anthropic")
+    assert config.fallback is None
+    other = load_config(write(tmp_path, LADDER + '[api]\nprovider = "anthropic"\nbase_url = "https://proxy.example"\nkey_env = "MY_CLAUDE_KEY"\n'))
+    assert (other.api.base_url, other.api.key_env) == ("https://proxy.example", "MY_CLAUDE_KEY")
+
+
+def test_a_fallback_table_is_read_with_its_ladder_and_its_providers_defaults(tmp_path):
+    text = (
+        '[api]\nprovider = "anthropic"\n'
+        '[models]\nladder = ["claude-haiku-5-5", "claude-opus-5-5"]\n'
+        '[fallback]\nladder = ["anthropic/claude-haiku-5.5", "anthropic/claude-opus-5.5"]\n'
+    )
+    config = load_config(write(tmp_path, text))
+    assert config.fallback == FallbackConfig(
+        provider="openai", base_url="https://openrouter.ai/api/v1", key_env="OPENROUTER_API_KEY",
+        ladder=("anthropic/claude-haiku-5.5", "anthropic/claude-opus-5.5"),
+    )
+    spare = load_config(write(tmp_path, LADDER + '[fallback]\nprovider = "anthropic"\nladder = ["m1", "m1"]\n')).fallback
+    # another provider's defaults; two models may share one fallback model
+    assert (spare.provider, spare.base_url, spare.key_env, spare.ladder) == (
+        "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", ("m1", "m1"))
 
 
 def test_false_disables_a_cap_and_an_absent_cap_keeps_its_default(tmp_path):
@@ -201,8 +229,9 @@ def test_a_directory_is_not_a_config_file(tmp_path):
         ('[models]\nladder = ["vendor/small"]\ndefault = "vendor/small"\n', "models.default"),
         (LADDER + '[prices."vendor/small"]\ninput = 1\noutput = 2\ninptu = 3\n', 'prices."vendor/small".inptu'),
         (LADDER + '[run]\npath = "/tmp/runs"\n', "run.path"),
+        (LADDER + '[fallback]\nladder = ["a", "b"]\nmodels = ["a", "b"]\n', "fallback.models"),
     ],
-    ids=["table", "top-level key", "lanes key", "api key", "models key", "price key", "run key"],
+    ids=["table", "top-level key", "lanes key", "api key", "models key", "price key", "run key", "fallback key"],
 )
 def test_an_unknown_table_or_key_is_an_error_naming_the_file_and_key(tmp_path, text, key):
     path = write(tmp_path, text)
@@ -275,6 +304,22 @@ BAD_VALUES = {
     "run dir relative": (LADDER + '[run]\ndir = "runs"\n', "run.dir"),
     "run dir not a string": (LADDER + "[run]\ndir = 5\n", "run.dir"),
     "run dir empty": (LADDER + '[run]\ndir = ""\n', "run.dir"),
+    "provider not known": (LADDER + '[api]\nprovider = "claude"\n', "api.provider"),
+    "provider in capitals": (LADDER + '[api]\nprovider = "Anthropic"\n', "api.provider"),
+    "anthropic without a key": (LADDER + '[api]\nprovider = "anthropic"\nkey_env = ""\n', "api.key_env"),
+    "anthropic base_url with /v1": (LADDER + '[api]\nprovider = "anthropic"\nbase_url = "https://api.anthropic.com/v1"\n', "api.base_url"),
+    "fallback without a ladder": (LADDER + '[fallback]\nkey_env = "OPENROUTER_API_KEY"\n', "fallback.ladder"),
+    "fallback ladder too short": (LADDER + '[fallback]\nladder = ["other/small"]\n', "fallback.ladder"),
+    "fallback ladder too long": (LADDER + '[fallback]\nladder = ["a/1", "a/2", "a/3"]\n', "fallback.ladder"),
+    "fallback ladder not a list": (LADDER + '[fallback]\nladder = "a/1"\n', "fallback.ladder"),
+    "fallback ladder entry empty": (LADDER + '[fallback]\nladder = ["a/1", ""]\n', "fallback.ladder[1]"),
+    "fallback ladder entry padded": (LADDER + '[fallback]\nladder = ["a/1", "a/2 "]\n', "fallback.ladder[1]"),
+    "fallback provider not known": (LADDER + '[fallback]\nprovider = "x"\nladder = ["a/1", "a/2"]\n', "fallback.provider"),
+    "fallback base_url ftp": (LADDER + '[fallback]\nbase_url = "ftp://x.example/v1"\nladder = ["a/1", "a/2"]\n', "fallback.base_url"),
+    "fallback key_env lower case": (LADDER + '[fallback]\nkey_env = "my_key"\nladder = ["a/1", "a/2"]\n', "fallback.key_env"),
+    "fallback anthropic without a key": (
+        LADDER + '[fallback]\nprovider = "anthropic"\nkey_env = ""\nladder = ["a/1", "a/2"]\n', "fallback.key_env"),
+    "fallback not a table": ("fallback = 1\n" + LADDER, "fallback"),
 }
 
 
@@ -307,6 +352,10 @@ STRING_VALUES = {
     "ladder not a list": (f'[models]\nladder = "{SENTINEL}"\n', "models.ladder"),
     "price": (LADDER + f'[prices."vendor/small"]\ninput = "{SENTINEL}"\noutput = 1\n', 'prices."vendor/small".input'),
     "run dir": (LADDER + f'[run]\ndir = "{SENTINEL}"\n', "run.dir"),
+    "provider": (LADDER + f'[api]\nprovider = "{SENTINEL}"\n', "api.provider"),
+    "fallback key_env holding a key": (LADDER + f'[fallback]\nkey_env = "sk-{SENTINEL}"\nladder = ["a", "b"]\n', "fallback.key_env"),
+    "fallback ladder entry": (LADDER + f'[fallback]\nladder = ["a", " {SENTINEL}"]\n', "fallback.ladder[1]"),
+    "fallback base_url": (LADDER + f'[fallback]\nbase_url = "{SENTINEL}"\nladder = ["a", "b"]\n', "fallback.base_url"),
 }
 
 
@@ -395,6 +444,45 @@ def test_api_key_never_shows_a_key_pasted_into_key_env(monkeypatch, pasted):
     assert pasted not in str(caught.value)
 
 
+FALLBACK = '[fallback]\nkey_env = "FLIGHTDECK_SPARE_KEY"\nladder = ["other/small", "other/big"]\n'
+
+
+def test_fallback_key_reads_its_own_variable_and_none_without_a_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLIGHTDECK_SPARE_KEY", f" {FAKE_KEY} ")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "the-primary-value")
+    assert fallback_key(load_config(write(tmp_path, LADDER + FALLBACK))) == FAKE_KEY
+    assert fallback_key(load_config(write(tmp_path, LADDER))) is None
+
+
+def test_fallback_key_comes_from_the_keys_file_too(monkeypatch, tmp_path):
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"FLIGHTDECK_SPARE_KEY={FAKE_KEY}\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    monkeypatch.delenv("FLIGHTDECK_SPARE_KEY", raising=False)
+    assert fallback_key(load_config(write(tmp_path, LADDER + FALLBACK))) == FAKE_KEY
+
+
+def test_a_missing_fallback_key_names_its_variable_and_the_way_out(monkeypatch, tmp_path):
+    monkeypatch.delenv("FLIGHTDECK_SPARE_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_KEY)
+    config = load_config(write(tmp_path, LADDER + FALLBACK))
+    with pytest.raises(ConfigError) as caught:
+        fallback_key(config)
+    message = str(caught.value)
+    assert "fallback.key_env names the variable FLIGHTDECK_SPARE_KEY, which is not set" in message
+    assert "or remove [fallback] from the config" in message and FAKE_KEY not in message
+
+
+def test_a_missing_anthropic_key_never_suggests_running_without_one(monkeypatch, tmp_path):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(ConfigError) as caught:
+        api_key(load_config(write(tmp_path, LADDER + '[api]\nprovider = "anthropic"\n')))
+    message = str(caught.value)
+    assert "api.key_env names the variable ANTHROPIC_API_KEY, which is not set" in message
+    assert 'key_env = ""' not in message  # the Anthropic API needs a key
+
+
 @pytest.mark.parametrize("name", ["OPENROUTER_API_KEY", "HF_TOKEN", "_KEY", "KEY2", "K" * 64])
 def test_upper_case_variable_names_are_taken(monkeypatch, tmp_path, name):
     monkeypatch.setenv(name, FAKE_KEY)
@@ -455,9 +543,19 @@ def test_the_example_shows_every_key(tmp_path):
     text = example_config()
     for table in ("[api]", "[models]", "[prices.", "[lanes]", "[run]"):
         assert table in text
-    for key in ("base_url", "key_env", "ladder", "input", "output", "cached_input", "max_lanes", "runtime",
+    for key in ("provider", "base_url", "key_env", "ladder", "input", "output", "cached_input", "max_lanes", "runtime",
                 "image", "token_cap", "dollar_cap", "submit", "dir"):
         assert re.search(rf"^(# )?{key} = ", text, flags=re.M), key
+    assert "# [fallback]" in text
+
+
+def test_the_example_fallback_block_loads_once_uncommented(tmp_path):
+    text, n = re.subn(r"^# (\[fallback\]|provider = .*|base_url = .*|key_env = .*|ladder = .*)$", r"\1",
+                      filled(example_config()), flags=re.M)
+    assert n == 5
+    config = load_config(write(tmp_path, text))
+    assert config.fallback == FallbackConfig("openai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
+                                             ("vendor/small-model", "vendor/big-model"))
 
 
 def test_the_example_price_block_loads_once_uncommented(tmp_path):
