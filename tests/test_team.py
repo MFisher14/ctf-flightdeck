@@ -11,8 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -39,6 +41,7 @@ from ctf_flightdeck.team import (
     MAX_ENTRIES,
     MAX_MARK_BYTES,
     MAX_NOTE,
+    REPORT_PER_FOLDER,
     STALE_AFTER,
     Mark,
     TeamChannel,
@@ -414,6 +417,54 @@ def test_a_concurrent_reader_never_sees_a_partial_file(folder):
     assert sorted(p.name for p in path.parent.iterdir()) == ["c0.json"]
 
 
+@pytest.mark.parametrize(
+    ("umask", "folder_mode", "file_mode"),
+    [(0o002, 0o775, 0o664), (0o022, 0o755, 0o644), (0o077, 0o700, 0o600)],
+    ids=["umask-002-shared-by-group", "umask-022", "umask-077"],
+)
+def test_folders_and_marks_take_their_modes_from_the_umask(tmp_path, umask, folder_mode, file_mode):
+    # a folder shared by group (umask 002) must let every teammate's account write in it
+    old = os.umask(umask)
+    try:
+        team = init_folder(tmp_path / "team")
+        shutil.rmtree(team / "solves")  # made again by the first solve
+        alpha = TeamChannel(team, "alpha")
+        alpha.claim("c0")
+        alpha.hold_box("c0")
+        alpha.solved("c1")
+    finally:
+        os.umask(old)
+
+    def mode(path: Path) -> int:
+        return os.lstat(path).st_mode & 0o777
+
+    assert [mode(team / kind) for kind in ("", "claims", "boxes", "solves")] == [folder_mode] * 4
+    assert [mode(team / name) for name in (MARKER, "claims/c0.json", "boxes/c0.json", "solves/c1.json")] == [file_mode] * 4
+
+
+def test_a_write_goes_through_a_hidden_temp_file_in_the_marks_own_folder(folder, monkeypatch):
+    # A temp file anywhere else (the system's temp folder, say) cannot be renamed onto a
+    # network share (EXDEV), and is made unreadable to teammates (mkstemp's 0600).
+    alpha = TeamChannel(folder, "alpha")
+    seen: list[dict[str, list[str]]] = []
+    real_fsync = os.fsync
+
+    def fsync(fd: int) -> None:  # the real fsync, after noting what each kind folder holds then
+        seen.append({kind: sorted(os.listdir(folder / kind)) for kind in ("claims", "boxes", "solves")})
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    alpha.claim("c0")
+    alpha.hold_box("c1")
+    first, second = seen  # one flush per write, each while its temp file waits in the mark's folder
+    (temp,) = first["claims"]
+    assert re.fullmatch(r"\.c0\.json\.[0-9a-f]{12}\.tmp", temp) and first["boxes"] == first["solves"] == []
+    (temp,) = second["boxes"]
+    assert re.fullmatch(r"\.c1\.json\.[0-9a-f]{12}\.tmp", temp)
+    assert second["claims"] == ["c0.json"] and second["solves"] == []
+    assert sorted(os.listdir(folder / "claims")) == ["c0.json"] and sorted(os.listdir(folder / "boxes")) == ["c1.json"]
+
+
 def test_each_write_replaces_the_file_whole(folder):
     alpha, _ = pair(folder)
     alpha.claim("c0")
@@ -456,6 +507,7 @@ BAD_BYTES = {
     "at-huge-int": b'{"who": "bravo", "at": ' + b"9" * 400 + b"}",
     "nested-deep": b"[" * 2000 + b"]" * 2000,
     "empty": b"",
+    "note-lone-surrogate": b'{"who": "bravo", "at": 1800000000, "note": "\\udc9b2J"}',  # valid JSON, not text
 }
 
 
@@ -497,6 +549,48 @@ def test_a_file_not_named_by_a_challenge_id_is_reported_without_reading_it(folde
     assert "\x1b" not in problem
     if "\x1b" in name:
         assert "^[" in problem  # made visible, never sent to the terminal as an escape
+
+
+def test_a_path_that_is_not_utf8_shows_its_bytes_as_escapes(tmp_path):
+    folder = tmp_path / "\udc9b2J"  # how Python spells a name holding the byte 0x9b, which is not UTF-8
+    for call in (lambda: TeamChannel(folder, "alpha"), lambda: read_state(folder), lambda: TeamChannel(tmp_path, "\udc9b")):
+        with pytest.raises(TeamError) as caught:
+            call()
+        message = str(caught.value)
+        message.encode("utf-8")  # strict: no lone surrogate is left to crash a terminal, or reach it as a raw byte
+        assert "\\x9b" in message
+    odd = tmp_path / "\x1b[2J"
+    odd.mkdir()  # a folder, but not a team folder: the message suggests `flightdeck team init <it>`
+    message = str(pytest.raises(TeamError, TeamChannel, odd, "alpha").value)
+    assert "flightdeck team init" in message and "\x1b" not in message
+
+
+def not_utf8_file(folder: Path) -> None:
+    """A file in claims/ whose name holds the byte 0x9b (the 8-bit escape that starts a
+    control sequence), which is not UTF-8; skips where the filesystem refuses one."""
+    try:
+        with open(os.fsencode(folder / "claims") + b"/\x9b2J\x9b31mred.json", "wb"):
+            pass
+    except OSError as exc:  # APFS on macOS, for one, refuses such a name
+        pytest.skip(f"this filesystem refuses a file name that is not UTF-8 ({exc.strerror}); Linux allows one")
+
+
+def test_a_file_name_that_is_not_utf8_is_reported_with_its_bytes_escaped(folder, wall):
+    not_utf8_file(folder)
+    alpha, _ = pair(folder, wall)
+    (problem,) = alpha.state().problems
+    assert problem == "claims/\\x9b2J\\x9b31mred.json: is not named <challenge id>.json; ignored"
+
+
+def test_cli_shows_a_name_that_is_not_utf8_with_its_bytes_escaped(folder, tmp_path):
+    not_utf8_file(folder)
+    result = CliRunner().invoke(team_cli.app, ["status", str(folder)])
+    assert result.exit_code == 0, result.output
+    assert b"\x9b" not in result.stdout_bytes and "ignored: claims/\\x9b2J\\x9b31mred.json" in result.output
+    named = os.fsdecode(os.fsencode(tmp_path) + b"/team-\x9b")
+    result = CliRunner().invoke(team_cli.app, ["init", named])
+    assert result.exit_code == 0, result.output
+    assert b"\x9b" not in result.stdout_bytes and "team-\\x9b" in result.output
 
 
 def test_hidden_files_are_skipped_without_a_word(folder, wall):
@@ -813,21 +907,126 @@ def test_our_claims_follow_the_deck(folder, wall):
     assert reports == []
 
 
-def test_our_box_holds_follow_our_lanes(folder, wall):
-    deck, _ = make_deck(max_lanes=1)
+LIVE_BOX = Pending(PendingKind.LIVE_BOX, "use the live box")
+
+
+def test_our_box_holds_follow_our_lanes_allowed_on_the_box(folder, wall):
+    deck, _ = make_deck(max_lanes=2)  # c0 and c1 run, c2 waits
     w, reports = watcher(folder, deck, wall)
     alpha = w.channel
-    alpha.hold_box("c0", note="L01")  # c0 has our lane L01
+    mirror(alpha, deck, report=reports.append)
     alpha.hold_box("c2", note="L09")  # left over from an earlier run: no lane of ours on it
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+    assert deck.apply(iv.Approve(lane.id)).ok
     w.poll()
     assert alpha.current("boxes", "c2") is None
+    assert alpha.current("boxes", "c0") == Mark("alpha", T0, lane.id)
     wall.t += STALE_AFTER / 2 + 1
     w.poll()
-    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, "L01")
-    deck.apply(iv.Kill(lane_on(deck, "c0").id, requeue=False))
+    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, lane.id)  # renewed before it goes stale
+    (folder / "boxes" / "c0.json").unlink()  # lost, say by a sync tool
+    wall.t += 60
     w.poll()
-    assert alpha.current("boxes", "c0") is None
+    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, lane.id)  # written again
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
+    assert alpha.current("boxes", "c0") is None  # freed by the mirror as the lane ended
+    alpha.hold_box("c0", note=lane.id)  # as if that free had failed
+    w.poll()
+    assert alpha.current("boxes", "c0") is None  # no lane allowed on that box is at work any more
     assert reports == []
+
+
+def test_a_hold_is_freed_once_its_lane_ends_even_after_the_mirror_stopped_listening(folder, wall):
+    deck, _ = make_deck(("c0", "c1"), max_lanes=2)
+    w, reports = watcher(folder, deck, wall)
+    unsubscribe = mirror(w.channel, deck, report=reports.append)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    for lane in (first, second):
+        deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+        assert deck.apply(iv.Approve(lane.id)).ok
+    unsubscribe()  # the mirror no longer sees lanes end
+    assert deck.apply(iv.Kill(first.id, requeue=False)).ok
+    w.poll()
+    assert w.channel.current("boxes", "c0") is None  # its lane ended: freed by the watcher
+    assert w.channel.current("boxes", "c1") == Mark("alpha", T0, second.id)  # its lane is still at work
+    assert reports == []
+
+
+def test_a_hold_left_by_an_earlier_run_is_freed_though_our_lane_works_the_challenge(folder, wall):
+    TeamChannel(folder, "alpha", clock=wall).hold_box("c0", note="L03")  # our flightdeck before a restart
+    deck, _ = make_deck(("c0",), max_lanes=1)
+    w, reports = watcher(folder, deck, wall)
+    mirror(w.channel, deck, report=reports.append)
+    lane = lane_on(deck, "c0")  # this run's L01 works c0 ...
+    deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+    assert deck.apply(iv.Decline(lane.id)).ok  # ... but the player keeps it off the live box
+    w.poll()
+    assert w.channel.current("boxes", "c0") is None
+    bravo = TeamChannel(folder, "bravo", clock=wall)
+    assert bravo.hold_box("c0") is True
+    for _ in range(3):
+        wall.t += STALE_AFTER / 2 + 1
+        w.poll()
+        assert bravo.current("boxes", "c0").who == "bravo" and bravo.hold_box("c0")
+    assert lane.state is LaneState.RUNNING and reports == []
+
+
+def test_a_box_hold_whose_write_failed_is_written_by_the_watcher_while_the_lane_works(folder, wall):
+    deck, _ = make_deck(("c0",), max_lanes=1)
+    w, reports = watcher(folder, deck, wall)
+    alpha, bravo = w.channel, TeamChannel(folder, "bravo", clock=wall)
+    mirror(alpha, deck, report=reports.append)
+    (folder / "boxes" / "c0.json").mkdir()  # something squats on the hold's name: its write fails
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert alpha.current("boxes", "c0") is None
+    (report,) = reports
+    assert report.startswith("team: could not hold the live box of c0: ") and report.endswith("cannot write it (Is a directory)")
+    (folder / "boxes" / "c0.json").rmdir()
+    assert bravo.hold_box("c0", note="theirs")  # bravo takes the box before our watcher polls
+    w.poll()
+    w.poll()
+    assert bravo.current("boxes", "c0") == Mark("bravo", T0, "theirs")  # theirs is never overwritten
+    assert reports[1:] == [f"team: bravo holds the live box of c0, which {lane.id} was allowed on"]
+    bravo.free_box("c0")
+    wall.t += 60
+    w.poll()
+    assert alpha.current("boxes", "c0") == Mark("alpha", wall.t, lane.id)  # our approved lane is still on the box
+    assert bravo.hold_box("c0") is False
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
+    assert alpha.current("boxes", "c0") is None and len(reports) == 2
+
+
+def test_a_solve_whose_write_failed_is_written_by_the_watcher_and_our_claim_waits_for_it(folder, wall):
+    deck, _ = make_deck(max_lanes=1)
+    w, reports = watcher(folder, deck, wall)
+    alpha, bravo = w.channel, TeamChannel(folder, "bravo", clock=wall)
+    mirror(alpha, deck, report=reports.append)
+    assert deck.apply(iv.Claim("c0")).ok
+    (folder / "solves" / "c0.json").mkdir()  # something squats on the solve's name: its write fails
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="cat flag", flag="t{c0}"))
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert deck.challenges["c0"].status is ChallengeStatus.SOLVED
+    w.poll()
+    w.poll()
+    assert bravo.current("solves", "c0") is None
+    assert bravo.current("claims", "c0").who == "alpha"  # until the solve is recorded, our claim keeps teammates off c0
+    (folder / "solves" / "c0.json").rmdir()
+    wall.t += 60
+    w.poll()
+    assert bravo.current("solves", "c0") == Mark("alpha", wall.t, lane.id)
+    assert bravo.current("claims", "c0") is None  # released once the solve is in the folder
+    assert all(b"t{" not in data for data in tree(folder).values() if data)
+    assert [r.split(": ")[1] for r in reports] == [
+        "could not record the solve of c0",
+        "solves/c0.json",  # the folder in its place is reported as ignored
+        "could not write our solve of c0 to the team folder (it is tried again at each poll)",
+    ]
+    w.poll()
+    assert len(reports) == 3
 
 
 def test_problems_are_reported_once_while_they_last_and_again_if_they_return(folder):
@@ -842,6 +1041,27 @@ def test_problems_are_reported_once_while_they_last_and_again_if_they_return(fol
     put(folder, "claims", "c1.json", {"who": "../../x", "at": 1})
     w.poll()
     assert len(reports) == 2 and reports[0] == reports[1]
+
+
+def test_a_flood_of_bad_files_reaches_the_report_as_a_few_lines_per_folder(folder):
+    deck, _ = make_deck(max_lanes=1)
+    for kind in ("claims", "boxes", "solves"):
+        for i in range(40):
+            put(folder, kind, f"x{i:02d}.json", b"{")
+    w, reports = watcher(folder, deck)
+    w.poll()
+    assert len(w.latest.problems) == 120  # all of them stay in the state, for `flightdeck team status`
+    assert len(reports) == 3 * (REPORT_PER_FOLDER + 1)
+    for kind in ("claims", "boxes", "solves"):
+        lines = [r for r in reports if r.startswith(f"team folder: {kind}/")]
+        assert lines[:-1] == [f"team folder: {kind}/x{i:02d}.json: is not valid JSON; ignored" for i in range(REPORT_PER_FOLDER)]
+        assert lines[-1].startswith(f"team folder: {kind}/: {40 - REPORT_PER_FOLDER} more problems; `flightdeck team status ")
+    w.poll()
+    assert len(reports) == 3 * (REPORT_PER_FOLDER + 1)  # nothing new
+    put(folder, "boxes", "x99.json", b"{")
+    w.poll()
+    assert len(reports) == 3 * (REPORT_PER_FOLDER + 1) + 1
+    assert reports[-1].startswith(f"team folder: boxes/: {41 - REPORT_PER_FOLDER} more problems;")
 
 
 def test_a_hostile_solve_file_stops_nothing(folder):
@@ -918,6 +1138,57 @@ def test_watch_keeps_the_deck_in_step_while_it_runs_and_returns_once_stopped(fol
     assert reports == ['team folder: claims/c2.json: "who" is not a team handle (1 to 40 letters, digits and _ . -, and not \'me\'); ignored']
 
 
+def test_called_as_contract_d_writes_them_mirror_and_watch_warn_on_the_deck(folder):
+    # mirror(channel, deck) and watch(channel, deck, interval=..., stop=...): with no `report`,
+    # each problem is a WARNING event on the deck, which the console shows and the run log keeps
+    deck, _ = make_deck(max_lanes=1)
+    alpha = TeamChannel(folder, "alpha")
+    unsubscribe = mirror(alpha, deck)
+    shutil.rmtree(folder / "claims")
+    (folder / "claims").write_text("not a folder")
+    assert deck.apply(iv.Claim("c1")).ok  # the deck carries on; the failed write is a warning
+    (folder / "claims").unlink()
+    put(folder, "claims", "c2.json", {"who": "bad handle", "at": 1})
+
+    async def main() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(watch(alpha, deck, interval=0.01, stop=stop))
+        await until(lambda: len(events(deck, EventKind.WARNING)) >= 2 and alpha.current("claims", "c1") is not None)
+        stop.set()
+        await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(main())
+    unsubscribe()
+    warnings = events(deck, EventKind.WARNING)
+    assert [w.text.split(": ")[0:2] for w in warnings] == [["team", "could not claim c1 in the team folder"], ["team folder", "claims/c2.json"]]
+    assert "claims: is not a folder" in warnings[0].text and warnings[0].data == {"source": "team"}
+    assert warnings[1].text.endswith("is not a team handle (1 to 40 letters, digits and _ . -, and not 'me'); ignored")
+    assert alpha.current("claims", "c1").who == "alpha"  # and the watcher wrote the claim the mirror could not
+
+
+def test_the_default_warning_refuses_another_thread_like_any_deck_call(folder, tmp_path):
+    deck, _ = make_deck(max_lanes=1)
+    w = TeamWatcher(TeamChannel(folder, "alpha"), deck)
+    folder.rename(tmp_path / "away")
+    folder.mkdir()  # the drive went away: the poll has a problem to report
+    failed: list[BaseException] = []
+
+    def poll() -> None:
+        try:
+            w.poll()
+        except BaseException as exc:  # checked below
+            failed.append(exc)
+
+    worker = threading.Thread(target=poll)
+    worker.start()
+    worker.join()
+    (exc,) = failed
+    assert isinstance(exc, RuntimeError) and "another thread" in str(exc)
+    assert events(deck, EventKind.WARNING) == []  # nothing added to the deck from the wrong thread
+    w.poll()
+    assert "is not a team folder" in events(deck, EventKind.WARNING)[0].text
+
+
 def test_watch_refuses_a_poll_interval_that_is_not_positive(folder):
     deck, _ = make_deck()
     alpha = TeamChannel(folder, "alpha")
@@ -957,6 +1228,15 @@ def test_mirror_writes_nothing_for_a_claim_the_deck_refused(folder):
     assert tree(folder) == before and reports == []
 
 
+def test_mirror_leaves_our_claim_alone_when_the_deck_refuses_a_release(folder):
+    deck, _ = make_deck()
+    TeamChannel(folder, "alpha").claim("c1")  # ours from before a restart; this deck does not hold it (yet)
+    alpha, _, reports = mirrored(folder, deck)
+    before = tree(folder)
+    assert not deck.apply(iv.Release("c1")).ok  # "Chall c1 is not claimed by you"
+    assert tree(folder) == before and reports == []
+
+
 def test_mirror_records_a_correct_flag_as_our_solve_and_never_writes_the_flag(folder):
     deck, _ = make_deck()
     alpha, _, reports = mirrored(folder, deck)
@@ -993,6 +1273,20 @@ def test_mirror_holds_the_live_box_while_an_approved_lane_works_it(folder):
     assert alpha.current("boxes", "c0") is not None  # the fork is still on the box
     deck.apply(iv.Kill(second.id, requeue=False))
     assert alpha.current("boxes", "c0") is None
+    assert reports == []
+
+
+def test_only_a_live_box_approval_holds_the_box(folder):
+    deck, _ = make_deck(("c0",), max_lanes=1)
+    alpha, _, reports = mirrored(folder, deck)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="guess", flag="t{wrong}"))
+    assert deck.apply(iv.Approve(lane.id)).ok  # a flag, approved and rejected: the lane carries on
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.BUDGET, "raise the cap")))
+    assert deck.apply(iv.Approve(lane.id)).ok  # more budget
+    TeamWatcher(alpha, deck, report=reports.append).poll()  # the watcher holds nothing for it either
+    assert lane.state is LaneState.RUNNING
+    assert alpha.current("boxes", "c0") is None and list((folder / "boxes").iterdir()) == []
     assert reports == []
 
 
@@ -1050,6 +1344,16 @@ def test_cli_init_then_status_shows_the_folder(tmp_path):
     assert "c1" in result.output and "bravo" in result.output and "c2" in result.output
     assert "\x1b" not in result.output and "^[[2Jsneaky" in result.output
     assert "boxes/UPPER.json" in result.output
+
+
+def test_cli_status_reports_a_note_with_a_lone_surrogate_instead_of_crashing(folder):
+    put(folder, "claims", "c1.json", b'{"who": "bravo", "at": %d, "note": "\\udc9b2J"}' % int(time.time()))
+    result = CliRunner().invoke(team_cli.app, ["status", str(folder)])
+    assert result.exit_code == 0, result.exception
+    assert result.output == (
+        "claims: none\nlive boxes: none\nsolves: none\n"
+        f'ignored: claims/c1.json: "note" is not text of at most {MAX_NOTE} characters; ignored\n'
+    )
 
 
 def test_cli_status_of_a_folder_that_is_not_a_team_folder_fails_with_the_reason(tmp_path):

@@ -20,8 +20,10 @@ with access to the folder may have written it. A handle must match HANDLE (and i
 "me", the deck's word for the player), an id the board's id rule, and a file that is
 malformed, too big or odd (a symlink, a FIFO, a folder) is ignored and reported in
 TeamState.problems: never followed, never run, never read past MAX_MARK_BYTES. A note is
-data, shown only through text.untrusted(). Nothing secret is written: no flags, keys or
-tokens (a solve's note names the lane that found it).
+data, and a note holding a lone surrogate is not text: that mark is ignored too. Names,
+notes and paths are shown only through printable() (text.untrusted(), plus lone surrogates
+made visible). Nothing secret is written: no flags, keys or tokens (a solve's note names the
+lane that found it).
 
 Claims and box holds are advisory and the last write wins: two flightdecks that claim one
 challenge at the same moment can each believe they hold it until the next poll shows the
@@ -48,6 +50,7 @@ import secrets
 import shlex
 import stat
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,6 +75,7 @@ FUTURE_SLACK = 600.0  # seconds a mark may be dated ahead of this machine's cloc
 MAX_MARK_BYTES = 4096
 MAX_NOTE = 200
 MAX_ENTRIES = 2000  # entries read per kind folder; the rest are reported, not read
+REPORT_PER_FOLDER = 5  # a watcher reports this many problems of a kind folder one by one, and counts the rest
 POLL_SECONDS = 5.0
 
 MARKER_TEXT = """\
@@ -82,6 +86,7 @@ drive, Syncthing, a shared mount). Put nothing else here and nothing secret: no 
 keys or tokens.
 """
 
+_SURROGATE = re.compile("[\ud800-\udfff]")  # a lone surrogate: half of a pair, never text on its own
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC  # a FIFO must not block the read
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -126,11 +131,11 @@ def init_folder(folder: Path) -> Path:
     try:
         folder.mkdir(exist_ok=True)
     except FileNotFoundError:
-        raise TeamError(f"{_show(folder)}: its parent folder does not exist (is the shared drive mounted?)") from None
+        raise TeamError(f"{printable(folder)}: its parent folder does not exist (is the shared drive mounted?)") from None
     except FileExistsError:
-        raise TeamError(f"{_show(folder)}: is not a folder") from None
+        raise TeamError(f"{printable(folder)}: is not a folder") from None
     except OSError as exc:
-        raise TeamError(f"{_show(folder)}: cannot create it ({exc.strerror})") from None
+        raise TeamError(f"{printable(folder)}: cannot create it ({exc.strerror})") from None
     marker = folder / MARKER
     try:
         with open(marker, "x", encoding="ascii") as out:
@@ -138,7 +143,7 @@ def init_folder(folder: Path) -> Path:
     except FileExistsError:
         pass
     except OSError as exc:
-        raise TeamError(f"{_show(marker)}: cannot write it ({exc.strerror})") from None
+        raise TeamError(f"{printable(marker)}: cannot write it ({exc.strerror})") from None
     _check_marker(folder)
     for kind in KINDS:
         os.close(_open_dir(folder, kind, create=True))
@@ -264,7 +269,7 @@ class TeamChannel:
         except FileNotFoundError:
             pass
         except OSError as exc:
-            raise TeamError(f"{_show(self.folder / kind / name)}: cannot remove it ({exc.strerror})") from None
+            raise TeamError(f"{printable(self.folder / kind / name)}: cannot remove it ({exc.strerror})") from None
         finally:
             os.close(dfd)
 
@@ -290,7 +295,7 @@ class TeamChannel:
         try:
             _atomic_write(dfd, name, data)
         except OSError as exc:
-            raise TeamError(f"{_show(self.folder / kind / name)}: cannot write it ({exc.strerror})") from None
+            raise TeamError(f"{printable(self.folder / kind / name)}: cannot write it ({exc.strerror})") from None
         finally:
             os.close(dfd)
 
@@ -311,18 +316,28 @@ class TeamWatcher:
     - our own marks follow the deck: a claim of ours in the folder for a challenge the
       watcher sees on the deck for the first time is taken back (Claim, as the player made it
       before a restart); after that, a claim the deck holds is renewed before it goes stale
-      (and written again if it went missing) and one it does not hold is released; a box
-      hold is renewed while a lane of ours is on that challenge, and freed once none is;
-    - problems (ignored files, failed writes) -> report(), each once while it lasts.
+      (and written again if it went missing) and one it does not hold is released;
+    - a solve of this run that the folder lacks (its write failed, or the file was lost) is
+      written again, and our claim on that challenge stays until the solve is recorded, so
+      teammates never see a challenge we solved as neither claimed nor solved;
+    - a box hold of ours is kept (written if it is missing, renewed before it goes stale)
+      while a lane of ours that the player allowed on that live box is at work (mirror()
+      records each approval), and freed when none is: a hold left by an earlier run, or by
+      a free that failed, is not kept alive by a lane that was never allowed on the box;
+    - problems (ignored files, failed writes) -> report(), each once while it lasts; with no
+      `report`, each becomes a WARNING event on the deck (the console shows it, the run log
+      keeps it). Of a kind folder's ignored files, the first REPORT_PER_FOLDER are reported
+      one by one and the rest in one line, so a flooded folder cannot bury every other
+      warning (TeamState.problems, and `flightdeck team status`, have them all).
     A mark is never applied twice. Marks for challenges that are not on the deck wait
     until they are (a later wave).
     """
 
-    def __init__(self, channel: TeamChannel, deck: Deck, *, report: Callable[[str], None]) -> None:
+    def __init__(self, channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | None = None) -> None:
         _need_team(deck, "the team watcher")
         self.channel = channel
         self.deck = deck
-        self.report = report
+        self.report = report if report is not None else _deck_warnings(deck)
         self.latest: TeamState | None = None  # the last state read, e.g. for box holders
         self._solves: set[tuple[str, str]] = set()  # (challenge id, who) applied
         self._clashes: dict[str, str] = {}  # challenge id -> teammate who claimed what we hold
@@ -341,7 +356,7 @@ class TeamWatcher:
         return state
 
     def apply(self, state: TeamState) -> None:
-        messages = [f"team folder: {problem}" for problem in state.problems]
+        messages = self._problems(state.problems)
         self.latest = state
         self._apply_solves(state, messages)
         self._apply_claims(state, messages)
@@ -422,6 +437,7 @@ class TeamWatcher:
         deck, channel = self.deck, self.channel
         me, now = channel.me, channel.clock()
         renew_after = channel.stale_after / 2
+        unrecorded = self._record_solves(state, messages)
         ours = {cid: mark for cid, mark in state.claims.items() if mark.who == me}
         for cid, mark in ours.items():
             ch = deck.challenges.get(cid)
@@ -431,6 +447,8 @@ class TeamWatcher:
                 outcome = self._do(messages, f"take back our claim on {cid}", deck.apply, Claim(cid))
                 if outcome is not _FAILED and outcome.ok:  # type: ignore[union-attr]
                     continue
+            if cid in unrecorded:
+                continue  # our solve is not in the folder yet: until it is, the claim keeps teammates off it
             if ch.closed or ch.claimed_by != ME:
                 self._do(messages, f"release our old claim on {cid}", channel.release, cid)
             elif now - mark.at > renew_after:
@@ -441,15 +459,52 @@ class TeamWatcher:
             won = self._do(messages, f"write our claim on {ch.id}", channel.claim, ch.id)
             if won is False:
                 messages.append(f"team: {_holder(channel, 'claims', ch.id)} claimed {ch.id} in the team folder; ours is only on this deck")
-        for cid, mark in state.boxes.items():
-            if mark.who != me:
+        self._follow_boxes(state, messages, now - renew_after)
+
+    def _record_solves(self, state: TeamState, messages: list[str]) -> set[str]:
+        """Write each solve of this run (a lane of this deck solved it) that the folder lacks.
+        Returns the ids still not recorded."""
+        deck, unrecorded = self.deck, set()
+        for ch in deck.challenges.values():
+            if ch.status is not ChallengeStatus.SOLVED or ch.solved_by not in deck.lanes or ch.id in state.solves:
                 continue
-            if not deck.lanes_on(cid):
+            what = f"write our solve of {ch.id} to the team folder (it is tried again at each poll)"
+            if self._do(messages, what, self.channel.solved, ch.id, note=ch.solved_by) is _FAILED:
+                unrecorded.add(ch.id)
+        return unrecorded
+
+    def _follow_boxes(self, state: TeamState, messages: list[str], renew_before: float) -> None:
+        deck, channel, me = self.deck, self.channel, self.channel.me
+        using = _boxes_in_use(deck)
+        for cid, mark in state.boxes.items():
+            if mark.who == me and cid not in using:  # no lane of ours allowed on that box is at work
                 self._do(messages, f"free our hold on the live box of {cid}", channel.free_box, cid)
-            elif now - mark.at > renew_after:
-                self._do(messages, f"renew our hold on the live box of {cid}", channel.hold_box, cid, note=mark.note)
+        for cid, lane_id in using.items():
+            mark = state.boxes.get(cid)
+            if mark is not None and mark.who == me and mark.at >= renew_before:
+                continue  # ours, and not due for renewal yet
+            # missing (its write failed, or it went stale), due, or a teammate's
+            held = self._do(messages, f"hold the live box of {cid} for {lane_id}", channel.hold_box, cid, note=lane_id)
+            if held is False:  # a teammate's fresh hold, which is never overwritten
+                messages.append(f"team: {_holder(channel, 'boxes', cid)} holds the live box of {cid}, which {lane_id} was allowed on")
 
     # ------------------------------------------------------------------ helpers
+
+    def _problems(self, problems: tuple[str, ...]) -> list[str]:
+        """The folder's problems as messages: per kind folder the first REPORT_PER_FOLDER,
+        then one line that counts the rest."""
+        count: dict[str, int] = {}
+        messages = []
+        for problem in problems:
+            kind = problem.partition("/")[0]  # each problem starts with its kind folder
+            count[kind] = count.get(kind, 0) + 1
+            if count[kind] <= REPORT_PER_FOLDER:
+                messages.append(f"team folder: {problem}")
+        status = f"flightdeck team status {printable(shlex.quote(str(self.channel.folder)))}"
+        for kind, n in count.items():
+            if n > REPORT_PER_FOLDER:
+                messages.append(f"team folder: {kind}/: {n - REPORT_PER_FOLDER} more problems; `{status}` lists them all")
+        return messages
 
     def _do(self, messages: list[str], what: str, fn: Callable[..., object], *args: object, **kwargs: object) -> object:
         """Call `fn`; a failure becomes a message (team sync goes on) and _FAILED."""
@@ -476,26 +531,30 @@ async def watch(
     *,
     interval: float = POLL_SECONDS,
     stop: asyncio.Event,
-    report: Callable[[str], None],
+    report: Callable[[str], None] | None = None,
 ) -> None:
     """Poll the team folder and keep the deck in step with it (TeamWatcher) until `stop`
-    is set. Run it on the deck's event loop. `report` gets each problem once, on the
-    deck's thread (the console's warn(), say)."""
+    is set. Run it on the deck's event loop. Each problem is reported once, on the deck's
+    thread: to `report` if given, else as a WARNING event on the deck."""
     await TeamWatcher(channel, deck, report=report).run(interval=interval, stop=stop)
 
 
-def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None]) -> Callable[[], None]:
+def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | None = None) -> Callable[[], None]:
     """Write our claims, solves and live-box holds to the folder as the deck makes them:
     - a claim or release the deck accepted (OUTCOME, ok) -> claim() or release();
     - a correct flag (SUBMIT, correct) -> solved(), noted with the lane, never the flag;
     - a live-box approval the deck accepted -> hold_box(); freed when that lane ends (and
-      no other lane of ours on the challenge was allowed on the box).
+      no other lane of ours on the challenge was allowed on the box). The approval is
+      remembered for the deck's watcher even when the write fails, and the watcher writes
+      the hold then (and a solve whose write failed).
     It writes on the deck's thread, inside the event, and never raises into the deck: a
-    failed write or a clash with a teammate goes to `report`. Returns the unsubscribe
-    function."""
+    failed write or a clash with a teammate goes to `report`, or with no `report` becomes a
+    WARNING event on the deck. Returns the unsubscribe function."""
     _need_team(deck, "mirror")
+    if report is None:
+        report = _deck_warnings(deck)
     approving: dict[str, PendingKind | None] = {}  # lane id -> what an approval in progress approves
-    on_box: dict[str, str] = {}  # lane id -> challenge id: our lanes allowed on a live box
+    on_box = _box_lanes(deck)  # lane id -> challenge id: our lanes allowed on a live box (shared with the watcher)
 
     def attempt(what: str, fn: Callable[..., object], *args: object, **kwargs: object) -> object:
         try:
@@ -516,10 +575,9 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None]) -
         if lane is None:
             return
         cid = lane.challenge_id
+        on_box[lane_id] = cid  # first: a hold that fails to write now is the watcher's to write later
         held = attempt(f"hold the live box of {cid}", channel.hold_box, cid, note=lane_id)
-        if held is True:
-            on_box[lane_id] = cid
-        elif held is False:
+        if held is False:
             who = _holder(channel, "boxes", cid)
             report(f"team: {who} holds the live box of {cid}; {lane_id} was allowed on it all the same: ask {who}, or tell {lane_id} to stay off it")
 
@@ -543,7 +601,7 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None]) -
                 attempt(f"record the solve of {event.challenge}", channel.solved, event.challenge, note=event.lane or "")
         elif event.kind is EventKind.LANE_END and event.lane in on_box:
             cid = on_box.pop(event.lane)
-            if cid not in on_box.values():
+            if cid not in _boxes_in_use(deck):
                 attempt(f"free the live box of {cid}", channel.free_box, cid)
 
     return deck.subscribe(listener)
@@ -576,15 +634,15 @@ def _check_marker(folder: Path) -> None:
     except (FileNotFoundError, NotADirectoryError):
         if not folder.is_dir():
             what = "is not a folder" if folder.exists() else "no such folder"
-            raise TeamError(f"{_show(folder)}: {what} (is the shared drive mounted?)") from None
+            raise TeamError(f"{printable(folder)}: {what} (is the shared drive mounted?)") from None
         raise TeamError(
-            f"{_show(folder)}: is not a team folder (it has no {MARKER}): check that the shared drive is "
-            f"mounted and synced, or make it one with `flightdeck team init {shlex.quote(str(folder))}`"
+            f"{printable(folder)}: is not a team folder (it has no {MARKER}): check that the shared drive is "
+            f"mounted and synced, or make it one with `flightdeck team init {printable(shlex.quote(str(folder)))}`"
         ) from None
     except OSError as exc:
-        raise TeamError(f"{_show(folder)}: cannot read it ({exc.strerror})") from None
+        raise TeamError(f"{printable(folder)}: cannot read it ({exc.strerror})") from None
     if not stat.S_ISREG(info.st_mode):
-        raise TeamError(f"{_show(marker)}: is not a regular file")
+        raise TeamError(f"{printable(marker)}: is not a regular file")
 
 
 def _check_id(challenge_id: object) -> None:
@@ -593,8 +651,14 @@ def _check_id(challenge_id: object) -> None:
 
 
 def _check_note(note: object) -> None:
-    if not isinstance(note, str) or len(note) > MAX_NOTE:
+    if not _is_note(note):
         raise TeamError(f"a note must be text of at most {MAX_NOTE} characters")
+
+
+def _is_note(value: object) -> bool:
+    """Text of at most MAX_NOTE characters. A lone surrogate is not text: JSON can carry one
+    as a \\udXXX escape, and no terminal can be sent it as it is."""
+    return isinstance(value, str) and len(value) <= MAX_NOTE and _SURROGATE.search(value) is None
 
 
 def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
@@ -610,11 +674,11 @@ def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
     except OSError as exc:
         raise _dir_error(path, exc) from None
     try:
-        os.mkdir(path, 0o755)
+        os.mkdir(path, 0o777)  # the umask decides, as for mkdir (002 for a folder shared by group)
     except FileExistsError:
         pass
     except OSError as exc:
-        raise TeamError(f"{_show(path)}: cannot create it ({exc.strerror})") from None
+        raise TeamError(f"{printable(path)}: cannot create it ({exc.strerror})") from None
     try:
         return os.open(path, _DIR)
     except OSError as exc:
@@ -624,8 +688,8 @@ def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
 def _dir_error(path: Path, exc: OSError) -> TeamError:
     if exc.errno in (errno.ENOTDIR, errno.ELOOP):
         what = "a symlink" if path.is_symlink() else "not a folder"
-        return TeamError(f"{_show(path)}: is {what}; the team folder's claims, boxes and solves must be real folders")
-    return TeamError(f"{_show(path)}: cannot open it ({exc.strerror})")
+        return TeamError(f"{printable(path)}: is {what}; the team folder's claims, boxes and solves must be real folders")
+    return TeamError(f"{printable(path)}: cannot open it ({exc.strerror})")
 
 
 def _scan(folder: Path, kind: str, now: float, stale_after: float, problems: list[str]) -> dict[str, Mark]:
@@ -643,11 +707,11 @@ def _scan(folder: Path, kind: str, now: float, stale_after: float, problems: lis
                         break
                     names.append(entry.name)
         except OSError as exc:
-            raise TeamError(f"{_show(folder / kind)}: cannot list it ({exc.strerror})") from None
+            raise TeamError(f"{printable(folder / kind)}: cannot list it ({exc.strerror})") from None
         for name in sorted(names):
             if name.startswith("."):  # temp files, and what the OS and sync tools keep
                 continue
-            where = f"{kind}/{_show(name)}"
+            where = f"{kind}/{printable(name)}"
             cid = name.removesuffix(".json")
             if cid == name or not valid_id(cid):
                 problems.append(f"{where}: is not named <challenge id>.json; ignored")
@@ -736,7 +800,7 @@ def _parse(data: bytes) -> Mark | str:
     if not (math.isfinite(when) and when >= 0):
         return '"at" is not a time (seconds since 1970)'
     note = value.get("note", "")
-    if not isinstance(note, str) or len(note) > MAX_NOTE:
+    if not _is_note(note):
         return f'"note" is not text of at most {MAX_NOTE} characters'
     return Mark(value["who"], when, note)
 
@@ -747,7 +811,7 @@ def _atomic_write(dfd: int, name: str, data: bytes) -> None:
     for _ in range(8):
         temp = f".{name}.{secrets.token_hex(6)}.tmp"
         try:
-            fd = os.open(temp, _CREATE, 0o644, dir_fd=dfd)
+            fd = os.open(temp, _CREATE, 0o666, dir_fd=dfd)  # the umask decides, as for any file
             break
         except FileExistsError:
             continue
@@ -777,15 +841,62 @@ def _holder(channel: TeamChannel, kind: str, challenge_id: str) -> str:
     return mark.who if mark is not None else "a teammate"
 
 
+_BOX_LANES: weakref.WeakKeyDictionary[Deck, dict[str, str]] = weakref.WeakKeyDictionary()
+
+
+def _box_lanes(deck: Deck) -> dict[str, str]:
+    """Our lanes on `deck` that the player allowed on a live box, lane id -> challenge id.
+    mirror() records each approval here before it writes the hold, so a hold whose write
+    failed is not forgotten; the watcher keeps the holds these lanes need and frees the
+    others (lane ids in a hold's note cannot tell: they start again at L01 each run). Kept
+    per deck, so mirror() and watch() share it however they are called."""
+    return _BOX_LANES.setdefault(deck, {})
+
+
+def _boxes_in_use(deck: Deck) -> dict[str, str]:
+    """Challenge id -> the first lane of ours allowed on its live box that is still at work."""
+    using: dict[str, str] = {}
+    for lane_id, cid in _box_lanes(deck).items():
+        lane = deck.lanes.get(lane_id)
+        if lane is not None and not lane.finished:
+            using.setdefault(cid, lane_id)
+    return using
+
+
+def _deck_warnings(deck: Deck) -> Callable[[str], None]:
+    """The default `report`: each message becomes a WARNING event on the deck, which the
+    console shows and the run log keeps. Like any deck call, on the deck's thread only."""
+
+    def warn(text: str) -> None:
+        # The deck has no public way to raise a warning yet (Deck.warn() is proposed); these
+        # are the two calls its own warnings make.
+        deck._on_thread("_emit")
+        deck._emit(EventKind.WARNING, text, data={"source": "team"})
+
+    return warn
+
+
 def _need_team(deck: Deck, what: str) -> None:
     if not deck.config.team:
         raise TeamError(f"{what} needs a deck in team mode (DeckConfig.team is False)")
 
 
-def _show(value: object) -> str:
-    return untrusted(str(value), one_line=True)
+def printable(value: object) -> str:
+    """`value` (a path, a file name, a note) as one line that is safe to print: untrusted()
+    makes control and invisible characters visible, and a lone surrogate shows as an escape.
+    Linux allows any bytes in a file name, and Python lists the ones that are not UTF-8 as
+    surrogate escapes (PEP 383). Printed as they are, they crash a strict UTF-8 terminal or
+    reach a lenient one as raw bytes (0x9b starts a control sequence), and untrusted() leaves
+    them alone, so an escaped byte shows as \\xNN and any other lone surrogate as \\uNNNN."""
+    text = str(value)
+    if _SURROGATE.search(text) is not None:
+        try:
+            text = text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+        except UnicodeEncodeError:  # a lone surrogate that is not an escaped byte
+            text = text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return untrusted(text, one_line=True)
 
 
 def _quote(value: object) -> str:
-    safe = untrusted(value if isinstance(value, str) else repr(value), one_line=True)
+    safe = printable(value if isinstance(value, str) else repr(value))
     return json.dumps(safe if len(safe) <= 60 else safe[:57] + "...", ensure_ascii=False)
