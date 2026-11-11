@@ -473,6 +473,27 @@ def test_no_key_or_a_key_no_header_can_carry_is_refused_without_showing_it(bad):
     assert KEY not in str(info.value)
 
 
+def test_lanes_can_share_one_client_at_the_same_time():
+    import threading
+
+    together = threading.Barrier(4, timeout=5)  # answered only once all four are in flight
+
+    def echo(record: dict) -> dict:
+        together.wait()
+        return text_message(f"for {record['json']['messages'][0]['content'][0]['text']}")
+
+    async def run() -> list[Reply]:
+        async with AnthropicClient(server.base_url, KEY, max_retries=0) as client:
+            return await asyncio.gather(*(
+                client.chat("claude-haiku-5-5", [{"role": "user", "content": f"lane {n}"}], [], session_id=f"s{n}")
+                for n in range(4)
+            ))
+
+    with FakeAnthropicServer(responder=echo) as server:
+        replies = asyncio.run(run())
+    assert [r.content for r in replies] == [f"for lane {n}" for n in range(4)]
+
+
 def test_a_closed_client_refuses_to_call():
     async def run() -> None:
         client = AnthropicClient("http://127.0.0.1:9", KEY)
