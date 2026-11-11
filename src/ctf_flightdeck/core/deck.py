@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass, replace
 from .. import fmt
 from ..text import untrusted
 from .attention import attention_key
-from .driver import Clock, LaneDriver, TurnReport, Verifier
+from .driver import Clock, LaneDriver, TurnReport, Verifier, spend_only
 from .interventions import (
     Approve,
     Claim,
@@ -356,37 +356,23 @@ class Deck:
     # ------------------------------------------------------------------ lane reports
 
     def report(self, lane_id: str, rep: TurnReport) -> None:
-        """Apply what a lane did. Called by the driver after each step."""
+        """Apply what a lane did. Called by the driver after each step. Once the lane has
+        ended, only spend counts (driver.spend_only): a coding-agent CLI reports a turn's cost
+        when the turn ends, often after its lane has (solved mid-turn, killed), and that cost
+        is the lane's and the run's all the same. Anything else in a late report (a step that
+        raced a kill) is dropped."""
         self._on_thread("report")
         lane = self.lanes[lane_id]
         if lane.finished:
-            # A step that completed after the lane ended (a real lane can race a kill).
+            if spend_only(rep):
+                self._spend(lane, rep)
             return
         now = self.now
         if rep.turn:
             lane.turns += 1
         if rep.hints_taken:
             del lane.hints[: rep.hints_taken]
-        lane.tokens += rep.tokens
-        lane.cached_tokens += rep.cached_tokens
-        if rep.dollars is None:
-            lane.unpriced += 1
-            if lane.dollars is not None and lane.dollar_cap:
-                self._unpriced(lane)
-            lane.dollars = None
-        else:
-            lane.known_dollars += rep.dollars
-            if lane.dollars is not None:
-                lane.dollars += rep.dollars
-        if not rep.turn and (rep.tokens or rep.dollars):
-            self._emit(
-                EventKind.SPEND,
-                f"{lane.id} spent {rep.tokens} tokens outside a turn" + (f": {rep.why}" if rep.why else ""),
-                lane.id,
-                lane.challenge_id,
-                data={"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": rep.dollars,
-                      "model": rep.model or lane.model, "why": rep.why},
-            )
+        self._spend(lane, rep)
         lane.last_active_at = now
         if rep.action:
             lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE, ActionKind.STEP))
@@ -1102,6 +1088,33 @@ class Deck:
                     ),
                 ),
             )
+
+    def _spend(self, lane: Lane, rep: TurnReport) -> None:
+        """Count what a report spent, on the lane and so on the run (totals()), and log what
+        was spent outside a turn as a SPEND event, with the model that spent it and why. A
+        lane that has ended counts it all the same and asks for nothing: no cap is left to
+        enforce."""
+        lane.tokens += rep.tokens
+        lane.cached_tokens += rep.cached_tokens
+        if rep.dollars is None:
+            lane.unpriced += 1
+            if not lane.finished and lane.dollars is not None and lane.dollar_cap:
+                self._unpriced(lane)
+            lane.dollars = None
+        else:
+            lane.known_dollars += rep.dollars
+            if lane.dollars is not None:
+                lane.dollars += rep.dollars
+        if rep.turn or not (rep.tokens or rep.cached_tokens or rep.dollars != 0.0):
+            return
+        self._emit(
+            EventKind.SPEND,
+            f"{lane.id} spent {rep.tokens} tokens outside a turn" + (f": {rep.why}" if rep.why else ""),
+            lane.id,
+            lane.challenge_id,
+            data={"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": rep.dollars,
+                  "model": rep.model or lane.model, "why": rep.why},
+        )
 
     def _unpriced(self, lane: Lane) -> None:
         """A dollar-capped lane just had a turn with no price: the cap can no longer be enforced."""

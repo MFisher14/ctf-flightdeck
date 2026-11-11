@@ -55,3 +55,22 @@ def test_lanes_still_open_are_written_when_the_run_closes(tmp_path):
     log.close()
     assert sorted(p.name for p in (tmp_path / "lanes").iterdir()) == ["L01.jsonl", "L02.jsonl"]
     assert read(tmp_path / "lanes" / "L02.jsonl")[0]["state"] == "run"
+
+
+def test_spend_after_a_lane_ended_rewrites_its_header_with_the_final_totals(tmp_path):
+    # a coding-agent CLI reports a turn's cost when the turn ends, here after its lane solved mid-turn
+    deck = deck_with_two_lanes()
+    log = TranscriptLog(tmp_path / "lanes")
+    log.attach(deck)
+    a, b = deck.lanes_on("a")[0], deck.lanes_on("b")[0]
+    deck.report(a.id, TurnReport(action="submit t{a}", flag="t{a}", tokens=20, dollars=0.01))
+    deck.apply(iv.Approve(a.id))
+    path = tmp_path / "lanes" / f"{a.id}.jsonl"
+    assert read(path)[0]["dollars"] == 0.01
+    deck.report(a.id, TurnReport(turn=False, tokens=300, cached_tokens=100, dollars=0.04, why="the turn it was stopped in"))
+    head, *rest = read(path)
+    assert (head["state"], head["turns"], head["tokens"], head["cached_tokens"]) == ("solved", 1, 320, 100)
+    assert head["dollars"] == head["known_dollars"] == 0.05
+    assert any(x.get("kind") == "note" and "correct" in x["text"] for x in rest)  # the rest is still there
+    deck.report(b.id, TurnReport(turn=False, tokens=10, dollars=0.01))  # an open lane: written when the run closes
+    assert not (tmp_path / "lanes" / f"{b.id}.jsonl").exists()

@@ -99,7 +99,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from ..core.driver import TakeoverRefused, TurnReport
+from ..core.driver import TakeoverRefused, TurnReport, spend_only
 from ..core.summary import lane_summary
 from ..core.model import (
     Challenge,
@@ -598,15 +598,6 @@ def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float)
     return set(found), True
 
 
-def _spend_only(rep: TurnReport) -> bool:
-    """A report of tokens or dollars spent outside a turn, and of nothing else."""
-    return (
-        not rep.turn and bool(rep.tokens or rep.dollars) and rep.plan is None
-        and not (rep.action or rep.output or rep.artifacts or rep.files or rep.alerts or rep.clear or rep.pending
-                 or rep.flag is not None or rep.gave_up is not None or rep.hints_taken)
-    )
-
-
 def _blocks(content: Any) -> list[dict]:
     if isinstance(content, list):
         return [block for block in content if isinstance(block, dict)]
@@ -1033,9 +1024,9 @@ class _Run:
     def report(self, rep: TurnReport) -> None:
         rep = self.driver.redact.scrub(rep)  # a second guard: text arrives redacted
         if self.over():
-            if self.lane() is not None and _spend_only(rep):
+            if self.lane() is not None and spend_only(rep):
                 # a CLI reports a turn's cost when the turn ends, often after the lane has (solved
-                # mid-turn, killed): what was spent goes to the deck, which says what it counts for
+                # mid-turn, killed): what was spent goes to the deck, which counts it on the lane
                 self.driver.deck.report(self.lane_id, rep)
             return
         self.driver.deck.report(self.lane_id, rep)

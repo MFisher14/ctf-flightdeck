@@ -6,6 +6,7 @@ are collaborators that note what the deck asked of them. The deck itself is neve
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import re
 import threading
@@ -591,6 +592,63 @@ def test_a_late_report_after_the_lane_ended_changes_nothing():
     assert deck.challenges["c0"].status is ChallengeStatus.PARKED
     assert deck.verify.calls == []
     assert len(deck.events) == n_events and driver.calls == calls
+
+
+CUT = "what the CLI reported for a turn it was stopped in"
+
+
+def test_spend_reported_after_the_lane_ended_counts_for_the_lane_and_the_run_and_is_logged():
+    # a coding-agent CLI reports a turn's cost when the turn ends: here, after its lane solved mid-turn
+    deck, driver, _ = make_deck(n=2, dollar_cap=2.0)
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    deck.report(lane.id, TurnReport(action="ls", tokens=1000, dollars=0.25))
+    deck.report(other.id, TurnReport(action="ls", tokens=100, dollars=0.01))
+    assert solve(deck, lane).ok and lane.state is LaneState.SOLVED
+    mark, calls, actions = len(deck.events), list(driver.calls), list(lane.actions)
+    deck.report(lane.id, TurnReport(turn=False, tokens=500, cached_tokens=200, dollars=0.5, why=CUT, model="small"))
+    assert (lane.tokens, lane.cached_tokens, lane.turns) == (1510, 200, 2)  # no turn added
+    assert lane.dollars == pytest.approx(0.75) and lane.known_dollars == pytest.approx(0.75)
+    tokens, dollars, unpriced = deck.totals()
+    assert (tokens, unpriced) == (1610, False) and dollars == pytest.approx(0.76)
+    (spend,) = deck.events[mark:]
+    assert (spend.kind, spend.lane, spend.challenge) == (EventKind.SPEND, lane.id, "c0")
+    assert spend.data == {"tokens": 500, "cached_tokens": 200, "dollars": 0.5, "model": "small", "why": CUT}
+    assert driver.calls == calls and lane.actions == actions and lane.state is LaneState.SOLVED
+    # with no price: the lane's total becomes unknown, what was known stays, and nothing is asked
+    deck.report(lane.id, TurnReport(turn=False, tokens=40, dollars=None, model="big"))
+    assert (lane.dollars, lane.unpriced, lane.tokens) == (None, 1, 1550) and lane.known_dollars == pytest.approx(0.75)
+    assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.SOLVED
+    assert deck.totals()[0] == 1650 and deck.totals()[2] is True
+    assert [e.data["model"] for e in events(deck, EventKind.SPEND, since=mark)] == ["small", "big"]
+    assert [e.kind for e in deck.events[mark:]] == [EventKind.SPEND, EventKind.SPEND]
+
+
+LATE_EXTRAS = {
+    "a turn": {"turn": True},
+    "an action": {"action": "cat flag"},
+    "output": {"output": "t{c0}"},
+    "a plan": {"plan": "new plan"},
+    "artifacts": {"artifacts": ("found.txt",)},
+    "files": {"files": (FileChange("a.py", "+x", "added"),)},
+    "alerts": {"alerts": (Alert(AlertKind.LOOP, "x"),)},
+    "clear": {"clear": (AlertKind.STALL,)},
+    "an approval": {"pending": Pending(PendingKind.LIVE_BOX, "box")},
+    "a flag": {"flag": good_flag("c0")},
+    "giving up": {"gave_up": "done"},
+    "hints taken": {"hints_taken": 1},
+}
+
+
+@pytest.mark.parametrize("extra", LATE_EXTRAS.values(), ids=LATE_EXTRAS.keys())
+def test_a_late_report_with_spend_and_anything_else_is_dropped_whole(extra):
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, alerts=(Alert(AlertKind.STALL, "idle"),)))
+    deck.apply(iv.Kill(lane.id, requeue=False))
+    before, n_events, calls = copy.deepcopy(lane), len(deck.events), list(driver.calls)
+    deck.report(lane.id, TurnReport(**{"turn": False, "tokens": 500, "dollars": 1.0, **extra}))
+    assert lane == before and lane.tokens == 0
+    assert len(deck.events) == n_events and driver.calls == calls and deck.verify.calls == []
 
 
 def test_each_turn_report_emits_a_turn_event_with_its_numbers():

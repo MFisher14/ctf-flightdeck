@@ -60,6 +60,19 @@ class TurnReport:
     model: str | None = None  # the model that took this turn, when it is not the lane's model now (escalated meanwhile)
 
 
+def spend_only(rep: TurnReport) -> bool:
+    """A report of spend outside a turn and of nothing else: tokens, cached tokens or dollars
+    (None: spent at an unknown price), with no action, output, plan, artifacts, files,
+    alerts, clear, approval, flag, hints or giving up. Once a lane has ended, the deck still
+    counts such a report (a CLI reports a turn's cost when the turn ends, often after its
+    lane has) and drops everything else."""
+    spent = rep.tokens or rep.cached_tokens or rep.dollars or rep.dollars is None
+    return not rep.turn and bool(spent) and not (
+        rep.action or rep.output or rep.plan is not None or rep.artifacts or rep.files or rep.alerts or rep.clear
+        or rep.pending is not None or rep.flag is not None or rep.gave_up is not None or rep.hints_taken
+    )
+
+
 class TakeoverRefused(Exception):
     """Raised by a driver's optional takeover(lane) when the player cannot have the lane's
     shell now; the message says why ("L01's workspace is not ready yet")."""

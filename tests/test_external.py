@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from ctf_flightdeck import postflight
 from ctf_flightdeck.agent import external
 from ctf_flightdeck.agent.external import (
     NUDGE,
@@ -54,8 +55,9 @@ from ctf_flightdeck.core.model import (
     PendingKind,
 )
 from ctf_flightdeck.pricing import Price
+from ctf_flightdeck.runrecord import load_run
 
-FAKE = Path(__file__).with_name("fake_agent_cli.py")
+FAKE =Path(__file__).with_name("fake_agent_cli.py")
 FLAG = r"t\{[a-z0-9_]+\}"
 KEY = "fake-anthropic-credential-for-tests"
 CODEX_SECRET = "fake-codex-credential-for-tests"
@@ -843,22 +845,59 @@ class SpendAfterEnd(Deck):
         super().report(lane_id, rep)
 
 
-def test_spend_a_cli_reports_after_its_lane_has_ended_goes_to_the_deck_never_dropped(tmp_path):
+def test_what_claude_reports_after_its_lane_solved_mid_turn_counts_for_the_lane_the_run_and_the_reports(tmp_path):
     # solved in the middle of a turn: claude reports that turn's cost only once it is stopped
     script = {"turns": [{"calls": [{"tools": [bash("echo t{note}")], "usage": [100, 10, 0, 0], "cost": 0.02}, {"think": 30.0}]}]}
+    folder = tmp_path / "run"
 
     async def main():
         lab = Lab(tmp_path, script, deck_class=SpendAfterEnd)
+        log = EventLog(folder / "events.jsonl")
+        log.attach(lab.deck)
+        transcripts = TranscriptLog(folder / "lanes")
+        transcripts.attach(lab.deck)
         try:
             lab.release()
             lane = lab.lane()
             await until(lambda: lane.pending is not None, "the candidate")
             assert lab.deck.apply(iv.Approve(lane.id)).ok
-            assert lane.state is LaneState.SOLVED
+            assert lane.state is LaneState.SOLVED and lane.dollars == 0.0  # its step carried none of the turn's cost
             await until(lambda: lab.deck.after_end, "what claude reported once it was stopped")
             (late,) = lab.deck.after_end
             assert (late.turn, late.dollars, late.model, late.flag, late.action) == (False, pytest.approx(0.02), "small", None, "")
             assert late.why == external.CUT_TURN.format(kind="claude")
+            # the lane's row and the header count it
+            assert lane.dollars == pytest.approx(0.02) and lane.tokens == 110 and lane.state is LaneState.SOLVED
+            assert lab.deck.totals() == (110, pytest.approx(0.02), False)
+            (spent,) = spends(lab.deck)
+            assert (spent["dollars"], spent["model"], spent["why"]) == (pytest.approx(0.02), "small", late.why)
+        finally:
+            await lab.finish()
+            transcripts.close()
+            log.close()
+
+    run(main())
+    head = json.loads((folder / "lanes" / "L01.jsonl").read_text().splitlines()[0])
+    assert (head["state"], head["tokens"], head["dollars"]) == ("solved", 110, pytest.approx(0.02))  # rewritten after the end
+    assert "Spend: 110 tokens (0% cached), $0.02, $0.02 per lane solve" in postflight.summary(load_run(folder)).splitlines()
+
+
+def test_what_codex_reports_after_its_lane_solved_mid_turn_counts_for_the_lane_and_the_run(tmp_path):
+    # under auto the flag codex claims solves the lane before its turn.completed, which alone carries the turn's tokens
+    script = {"turns": [{"items": [{"command": "echo one"}, {"ignore": ["INT"], "message": "FLAG: t{note}"}],
+                         "usage": [300, 100, 50]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", submit="auto", prices={"small": Price(input=1.0, output=10.0)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished, "the solve")
+            assert lane.state is LaneState.SOLVED
+            await until(lambda: spends(lab.deck), "codex's usage, reported once its turn completed")
+            assert (lane.tokens, lane.cached_tokens) == (350, 100)
+            assert lane.dollars == pytest.approx((200 * 1.0 + 100 * 1.0 + 50 * 10.0) / 1e6)
+            assert lab.deck.totals() == (350, pytest.approx(0.0008), False)
         finally:
             await lab.finish()
 

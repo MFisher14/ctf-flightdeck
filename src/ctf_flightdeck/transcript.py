@@ -3,8 +3,9 @@
 The event log (eventlog.py) records what happened across the run, one line per event; a
 step there is one line. Post-flight reports and writeup drafts need more: every step
 with its output, flightdeck's notes, the alerts, and the files a lane changed with their
-diffs. This writes them to `<run>/lanes/<lane id>.jsonl` when a lane ends, and for every
-lane still open when the run closes. Lines are JSON objects (pure ASCII), first a header
+diffs. This writes them to `<run>/lanes/<lane id>.jsonl` when a lane ends (again when
+spend comes in after its end), and for every lane still open when the run closes. Lines
+are JSON objects (pure ASCII), first a header
 for the lane, then one per action, then one per changed file.
 """
 
@@ -29,7 +30,11 @@ class TranscriptLog:
         self._unsubscribe = deck.subscribe(self._event)
 
     def _event(self, event) -> None:
-        if event.kind is EventKind.LANE_END and event.lane and self._deck is not None:
+        # Written when the lane ends, and again for spend that comes after its end (a
+        # coding-agent CLI reports a turn's cost when the turn ends), so the header holds the
+        # lane's final totals.
+        late = event.kind is EventKind.SPEND and event.lane in self.written
+        if (event.kind is EventKind.LANE_END or late) and event.lane and self._deck is not None:
             lane = self._deck.lanes.get(event.lane)
             if lane is not None:
                 self.write(lane)
