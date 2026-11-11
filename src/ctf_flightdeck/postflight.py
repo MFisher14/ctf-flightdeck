@@ -8,7 +8,10 @@
   alerts, interventions and what came of them, flags submitted right or wrong, the solve;
 - where lanes stalled: each alert about a lane's course or budget, when it fired, how it
   was answered and whether the lane then solved within 10 turns (flag-found and teammate
-  alerts are not stalls; they are in the timeline);
+  alerts are not stalls; they are in the timeline). An approve or decline answers a budget
+  alert only when it answered the budget request (or approved more budget with nothing
+  waiting), not a flag's verdict or the live box: the lane's current approval is replayed
+  from its pending events;
 - the hints, redirects, forks and escalations that helped (a lane solved that challenge
   within 10 turns or 15 minutes) and those with no effect seen;
 - spend by model and the five most expensive lanes;
@@ -45,7 +48,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from . import fmt
-from .core.model import FINISHED, ME, AlertKind, EventKind
+from .core.model import FINISHED, ME, AlertKind, EventKind, PendingKind
 from .runrecord import EventLine, LaneRecord, RunRecord
 from .text import untrusted
 
@@ -73,6 +76,9 @@ JUDGED = ("hint", "redirect", "fork", "escalate")
 NOT_STALLS = frozenset({AlertKind.FLAG.value, AlertKind.TEAMMATE.value})
 COURSE_ANSWERS = frozenset({"hint", "redirect", "fork", "escalate", "kill", "takeover"})
 BUDGET_ANSWERS = frozenset({"approve", "decline", "kill", "escalate"})
+VERDICTS = frozenset({"approve", "decline"})
+"""Interventions that answer the lane's current approval, whatever it is."""
+BUDGET = PendingKind.BUDGET.value
 FINISHED_STATES = frozenset(state.value for state in FINISHED)
 ENDED_WITHOUT_FLAG = ("gave up", "killed", "stopped")
 SHOWN_PENDING = frozenset({"budget", "live box"})  # flag approvals show as the flag alert and the submit
@@ -240,6 +246,7 @@ class Step:
     data: Mapping[str, object]
     ok: bool | None = None  # None: no outcome in the log
     message: str = ""
+    answers: str | None = None  # an approve or decline: the kind of approval it answered; None when none waited
 
 
 @dataclass(frozen=True)
@@ -363,6 +370,10 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     by_challenge: dict[str, list[int]] = {}
     unread: Counter[str] = Counter()
     model_spend: dict[str, list[float]] = {}
+    # lane -> the kind of approval it waits on now. The deck logs a pending event each time an
+    # approval becomes the lane's current one ("queued" ones wait behind it); an approve or
+    # decline answers the current one, and the lane's end drops what is left.
+    current: dict[str, str] = {}
 
     def challenge(cid: str) -> ChallengeFacts:
         if cid not in challenges:
@@ -423,6 +434,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             facts = lanes[event.lane]
             facts.end, facts.ended_at = index, event.at
             facts.state, facts.result = _str(data.get("state")), _str(data.get("result"))
+            current.pop(event.lane, None)
         elif kind == EventKind.TURN and event.lane:
             facts = lanes[event.lane]
             facts.turn_index.append(index)
@@ -447,6 +459,8 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
         elif kind == EventKind.INTERVENTION:
             name = _str(data.get("intervention")) or "intervention"
             step = Step(index, event.at, name, event.lane, cid, data)
+            if name in VERDICTS and event.lane:  # logged before its effects: what waits now is what it answers
+                step.answers = current.pop(event.lane, None)
             steps.append(step)
             open_steps.append(step)
         elif kind == EventKind.OUTCOME:
@@ -457,10 +471,15 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
                     ok = data.get("ok")
                     step.ok = ok if isinstance(ok, bool) else None
                     step.message = _str(data.get("message"))
+                    if step.ok is False and step.answers is not None and step.lane:
+                        current[step.lane] = step.answers  # refused, so it changed nothing: it still waits
                     break
             continue  # shown with its intervention
-        elif kind == EventKind.PENDING and _str(data.get("kind")) not in SHOWN_PENDING:
-            continue
+        elif kind == EventKind.PENDING:
+            if event.lane and data.get("queued") is not True:
+                current[event.lane] = _str(data.get("kind"))
+            if _str(data.get("kind")) not in SHOWN_PENDING:
+                continue
         if cid:
             by_challenge[cid].append(index)
 
@@ -571,8 +590,7 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
             continue
         facts = lanes[event.lane]
         kind = event.alert or "?"
-        answers = BUDGET_ANSWERS if kind == AlertKind.BUDGET.value else COURSE_ANSWERS
-        answer = next((s for s in on_lane.get(event.lane, ()) if s.index > index and s.name in answers), None)
+        answer = next((s for s in on_lane.get(event.lane, ()) if s.index > index and _answers(s, kind)), None)
         if answer is not None and facts.end is not None and answer.index > facts.end:
             answer = None
         unanswered = ""
@@ -593,6 +611,17 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
             turn, answer, unanswered, solved_turns, _steps_before(facts.record, event),
         ))
     return out
+
+
+def _answers(step: Step, alert: str) -> bool:
+    """Whether a step of the player's answers an alert of this kind. An approve or decline
+    answers a budget alert only when it answered the budget request, or approved more budget
+    with nothing waiting; not when it was a flag's verdict or the live box's."""
+    if alert != AlertKind.BUDGET.value:
+        return step.name in COURSE_ANSWERS
+    if step.name in VERDICTS:
+        return step.answers in (None, BUDGET)
+    return step.name in BUDGET_ANSWERS
 
 
 def _steps_before(head: LaneRecord | None, alert: EventLine) -> tuple[str, ...]:

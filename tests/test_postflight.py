@@ -596,6 +596,61 @@ def test_solved_within_ten_turns_counts_the_lanes_turns_after_the_alert(tmp_path
     assert stall[3] == f"Solved within 10 turns: {solved}"
 
 
+@pytest.mark.parametrize("budget_approved", [False, True], ids=["left waiting", "approved"])
+def test_a_flags_verdict_does_not_answer_a_budget_alert(tmp_path, budget_approved):
+    run = Script(tmp_path, flags={"x": "t{right}"})
+    run.release([Challenge("x", "X", "misc", 10)], token_cap=10_000)
+    lane = run.lane("x")
+    run.turn(lane, "read the dump", tokens=8500)  # 85% of the cap: a budget alert
+    run.at(40)
+    run.turn(lane, "strings dump", tokens=100, flag="t{wrong}")
+    run.do(iv.Approve(lane))  # the flag's verdict: rejected
+    run.at(80)
+    run.turn(lane, "grep", tokens=100, flag="t{guess}")
+    run.do(iv.Decline(lane))  # a flag's again: not submitted
+    run.at(120)
+    run.turn(lane, "more", tokens=2000)  # past the cap: it waits for more budget
+    if budget_approved:
+        run.at(150)
+        run.do(iv.Approve(lane))  # the budget request itself
+    record = run.close()
+    stall = items(sections(report(record), "### ")["T+00:00:00 \u00b7 L01 on X: Budget"])
+    stalls = next(line for line in summary(record).splitlines() if line.startswith("Stalls"))
+    if budget_approved:
+        assert stall[2] == "Answered: 2m later, you: approve L01 \u2192 L01's cap is now 11k of 15k tokens"
+        assert stalls == "Stalls: 1 alert, 1 answered, 0 then solved within 10 turns"
+    else:
+        assert stall[2] == "Answered: no answer; the lane was still open when the run ended"
+        assert stalls == "Stalls: 1 alert, 0 answered, 0 then solved within 10 turns"
+
+
+def test_a_budget_request_queued_behind_a_flag_is_answered_once_it_comes_up(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{right}"})
+    run.release([Challenge("x", "X", "misc", 10)], token_cap=1000)
+    lane = run.lane("x")
+    run.turn(lane, "cat dump", tokens=1200, flag="t{wrong}")  # over the cap, with a flag: the flag comes first
+    run.at(30)
+    run.do(iv.Approve(lane))  # the flag: rejected; the budget request comes up
+    run.at(60)
+    run.do(iv.Approve(lane))
+    stall = items(sections(report(run.close()), "### ")["T+00:00:00 \u00b7 L01 on X: Budget"])
+    assert stall[2] == "Answered: 1m later, you: approve L01 \u2192 L01's cap is now 1k of 2k tokens"
+
+
+def test_a_refused_approve_leaves_the_flag_waiting_so_the_next_answers_the_flag(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{right}"})
+    run.release([Challenge("x", "X", "misc", 10)], token_cap=10_000)
+    lane = run.lane("x")
+    run.turn(lane, "read the dump", tokens=8500)  # a budget alert, nothing waiting
+    run.turn(lane, "strings dump", tokens=100, flag="t{wrong}")  # now a flag waits
+    run.do(iv.TakeOver(lane))
+    assert not run.do(iv.Approve(lane)).ok  # you have its shell: refused
+    run.do(iv.HandBack(lane))
+    run.do(iv.Approve(lane))  # the flag's verdict, not more budget
+    stall = items(sections(report(run.close()), "### ")["T+00:00:00 \u00b7 L01 on X: Budget"])
+    assert stall[2] == "Answered: no answer; the lane was still open when the run ended"
+
+
 # ---------------------------------------------------------------------- interventions
 
 
