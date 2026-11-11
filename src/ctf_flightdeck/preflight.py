@@ -231,9 +231,10 @@ def defaults(profile: EventProfile) -> Policies:
 
 def lane_network(policies: Policies, urls: Sequence[str]) -> str:
     """The docker network for a lane: "bridge" only when its challenge has a live instance and
-    lanes may reach one (instance auto, or confirm: the lane asks first); "none" otherwise, so
-    the lane cannot reach the instance or anything else. Under manual the player works the
-    instance, not the lane, so that is "none" too."""
+    lanes may reach one (instance auto or confirm); "none" otherwise, so the lane cannot reach
+    the instance or anything else. Under manual the player works the instance, not the lane, so
+    that is "none" too. Bridge is open egress, not only the instance, and a lane gets it when
+    it starts: under confirm nothing holds it back until the player says yes (check() warns)."""
     if policies.instance in (Policy.OFF, Policy.MANUAL) or not urls:
         return "none"
     return "bridge"
@@ -320,6 +321,15 @@ def check(
                 f'the instance policy is "{requested.instance}", but lanes run on this machine (runtime host), '
                 "where a lane's shell can still reach an instance. The docker runtime enforces it (no network)"
             )
+    if agents_on and requested.instance is Policy.CONFIRM:
+        # lane_network() gives a docker lane its network when the lane starts, and nothing in a run
+        # asks the player before a lane's first use of an instance, so confirm is not enforced yet.
+        warn.append(
+            'the instance policy is "confirm", but flightdeck does not yet ask you before a lane first reaches '
+            "a live instance: a lane can reach it from its first turn, and a docker lane gets an open network "
+            "(bridge: any host, not only the instance). Watch the lanes, or set [policies] instance = "
+            '"manual" to keep docker lanes off instances'
+        )
     if profile.flag_format is None:
         warn.append(
             "event.flag_format is not set: lanes take the board's flag format if it has one, else anything "
@@ -445,7 +455,7 @@ _MEANING = {
     },
     "instance": {
         Policy.AUTO: "lanes may reach their challenge's live instance",
-        Policy.CONFIRM: "a lane asks you before it reaches a live instance",
+        Policy.CONFIRM: "lanes can reach their challenge's live instance: asking you first is not enforced yet",
         Policy.MANUAL: "lanes stay off live instances; you work them yourself",
         Policy.OFF: "no lane touches a live instance",
     },
@@ -487,8 +497,8 @@ def describe(profile: EventProfile, policies: Policies, *, environ: Mapping[str,
         elif policy is not limit:
             note = f" (the rules allow {limit})"
         lines.append(f"{stage:<10}{policy.value:<9}{_MEANING[stage][policy]}{note}")
-    if policies.instance in USES_PLATFORM:
-        lines.append("network   a docker lane gets a network only if its challenge has a live instance")
+    if policies.instance in (Policy.AUTO, Policy.CONFIRM):
+        lines.append("network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none")
     else:
         lines.append(f'network   docker lanes get no network (instance "{policies.instance}")')
     return lines

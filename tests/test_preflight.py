@@ -131,6 +131,15 @@ def warnings(problems: list[Problem]) -> list[str]:
     return [p.message for p in problems if not p.refuse]
 
 
+def passing(chosen: Policies) -> list[Problem]:
+    """What check() says of policies that break no rule: nothing, but for the warning that
+    instance "confirm" is not enforced yet whenever lanes would run under it (tested on its own
+    in test_instance_confirm_warns_that_nothing_enforces_it_yet)."""
+    if chosen.instance is CONFIRM and chosen.agents is not OFF:
+        return [Problem(False, CONFIRM_NOT_ENFORCED)]
+    return []
+
+
 def model_config(tmp_path: Path, *, key_env: str = "TEST_MODEL_KEY", extra: str = "") -> Config:
     path = tmp_path / "config.toml"
     path.write_text(f'[api]\nkey_env = "{key_env}"\n[models]\nladder = ["fake/small"]\n{extra}', encoding="utf-8")
@@ -303,7 +312,7 @@ def test_a_policy_looser_than_the_rules_allow_is_refused_naming_the_rule(tmp_pat
     message = refusals(problems)[0]
     assert f'the {stage} policy "{policy}" is looser than the rules allow' in message
     assert rule in message
-    assert check(event, chosen, max_lanes=4, environ={}) == []  # the derived policies pass
+    assert check(event, chosen, max_lanes=4, environ={}) == passing(chosen)  # the derived policies pass
 
 
 @pytest.mark.parametrize("rules", [{}, {"ai_allowed": False}, {"platform_automation": False}, {"live_targets": "confirm"}, {"live_targets": "off"}])
@@ -313,7 +322,7 @@ def test_any_policy_as_strict_as_the_rules_allow_or_stricter_passes(tmp_path, ru
     limit = getattr(allowed(event), stage)
     for policy in ORDER[ORDER.index(limit):]:
         chosen = Policies(**{**dict(defaults(event).items()), stage: policy})
-        assert check(event, chosen, max_lanes=4, environ={}) == [], (stage, policy)
+        assert check(event, chosen, max_lanes=4, environ={}) == passing(chosen), (stage, policy)
 
 
 @pytest.mark.parametrize("missing, key", [("url", "event.url"), ("token_env", "event.token_env")])
@@ -437,6 +446,20 @@ def test_keeping_lanes_off_instances_by_choice_on_the_host_is_a_warning(instance
     assert refusals(problems) == []
     assert len(warnings(problems)) == 1 and f'the instance policy is "{instance}"' in warnings(problems)[0]
     assert check(profile(), policies(instance=instance), max_lanes=4, environ=TOKEN_SET, runtime="docker") == []
+
+
+@pytest.mark.parametrize("runtime", ["docker", "host", None])
+@pytest.mark.parametrize("agents", LANES_START)
+def test_instance_confirm_warns_that_nothing_enforces_it_yet(agents, runtime):
+    # A lane gets the instance (and a docker lane its bridge network) when it starts, and nothing
+    # asks the player first, so neither runtime keeps a lane waiting for a yes.
+    for rules in ("confirm", "allowed"):  # required by the rules, or chosen
+        event = profile(live_targets=rules)
+        problems = check(event, policies(agents=agents, instance=CONFIRM), max_lanes=4, environ=TOKEN_SET, runtime=runtime)
+        assert problems == [Problem(False, CONFIRM_NOT_ENFORCED)], rules
+        assert check(event, policies(agents=OFF, instance=CONFIRM), max_lanes=4, environ=TOKEN_SET, runtime=runtime) == []  # no lanes
+    for instance in (AUTO, MANUAL, OFF):
+        assert check(profile(), policies(agents=agents, instance=instance), max_lanes=4, environ=TOKEN_SET, runtime="docker") == []
 
 
 def test_an_unknown_runtime_is_a_programming_error():
@@ -861,11 +884,15 @@ def test_describe_shows_every_stage_with_its_meaning_and_what_the_rules_would_al
     assert "flags     hl\\{[^}]+\\}" in lines
     assert "l1        off      no L1 solvers (the rules allow auto)" in lines
     assert "submit    confirm  each flag is submitted after you approve it (the rules allow auto)" in lines
-    assert "instance  confirm  a lane asks you before it reaches a live instance" in lines
+    # confirm is not enforced yet (no ask before a lane's first use of an instance), and bridge is open egress
+    assert "instance  confirm  lanes can reach their challenge's live instance: asking you first is not enforced yet" in lines
+    assert lines[-1] == "network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
     assert [line.split()[0] for line in lines[4:9]] == list(STAGES)
     loose = describe(event, policies(instance=AUTO), environ=TOKEN_SET)
     assert "instance  auto     lanes may reach their challenge's live instance (looser than the rules allow: at most confirm)" in loose
+    assert loose[-1] == lines[-1]
     assert describe(event, policies(instance=OFF), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "off")'
+    assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "manual")'
 
 
 def test_describe_draws_a_hostile_profile_safely(tmp_path):
@@ -996,15 +1023,17 @@ def test_preflight_without_a_profile_is_a_usage_error(env):
     assert "name the event profile to check, or use --example to print one" in flat(result.output)
 
 
-def test_the_example_profile_loads_and_passes_but_for_the_unset_token(tmp_path, env, monkeypatch):
+def test_the_example_profile_loads_and_passes_warning_only_of_the_unset_token_and_confirm(tmp_path, env, monkeypatch):
     result = invoke("--example")
     assert result.exit_code == 0 and result.stdout == example_profile()
     loaded, chosen = load_profile(write(tmp_path, result.stdout))
     assert (loaded.name, loaded.platform, loaded.token_env) == ("Example CTF", "ctfd", "CTFD_TOKEN")
     assert re.fullmatch(loaded.flag_format, "example{x}")
     assert as_tuple(chosen) == ("auto", "auto", "auto", "confirm", "confirm")
-    assert check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN}) == []
-    assert len(check(loaded, chosen, max_lanes=4, environ={})) == 1
+    assert check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN}) == [Problem(False, CONFIRM_NOT_ENFORCED)]
+    unset = check(loaded, chosen, max_lanes=4, environ={})
+    assert refusals(unset) == [] and len(warnings(unset)) == 2
+    assert warnings(unset)[0].startswith("the CTFd token variable CTFD_TOKEN (event.token_env) is not set")
 
 
 def test_preflight_mounts_as_one_command_with_options_after_the_profile(tmp_path, env):
