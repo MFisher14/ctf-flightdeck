@@ -41,7 +41,7 @@ from ctf_flightdeck.platform.ctfd import (
     slugify,
 )
 from ctf_flightdeck.platform.manual import load_board
-from fake_ctfd import FLAG_FORMAT, HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply, sample
+from fake_ctfd import FLAG_FORMAT, HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply, make_tls, sample
 
 
 def client(fake: FakeCTFd, *, token: str = TOKEN, **options) -> CTFdClient:
@@ -319,13 +319,66 @@ def test_a_file_url_to_another_host_is_refused_without_a_request(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_download_redirected_to_another_host_is_refused(tmp_path):
+def test_a_download_redirected_to_another_host_over_plain_http_is_refused(tmp_path):
     with FakeCTFd(sample()) as fake, FakeCTFd(sample()) as elsewhere:
         url = fake.file_url(1, "hello.txt")
-        fake.script("GET", url.split("?")[0], Reply(302, None, {"Location": elsewhere.base_url + url}))
+        signed = f"{elsewhere.base_url}{url.split('?')[0]}?X-Amz-Signature=s3cr3t-signature"
+        fake.script("GET", url.split("?")[0], Reply(302, None, {"Location": signed}))
         error = failure(fake, lambda c: c.download(url, tmp_path))
         assert elsewhere.requests == []
-    assert "another host" in str(error) and list(tmp_path.iterdir()) == []
+    assert "another host" in str(error) and "only over https" in str(error) and elsewhere.base_url in str(error)
+    assert "s3cr3t-signature" not in str(error) and list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture(scope="session")
+def tls_files(tmp_path_factory):
+    try:
+        return make_tls(tmp_path_factory.mktemp("tls"))
+    except FileNotFoundError:
+        pytest.skip("not run: the openssl command is not installed, and this test needs it to make a test certificate")
+
+
+@pytest.fixture
+def tls(tls_files, monkeypatch):
+    """The test certificates, with httpx trusting their authority (SSL_CERT_FILE) in this test."""
+    monkeypatch.setenv("SSL_CERT_FILE", str(tls_files.ca))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    return tls_files
+
+
+def redirect_to_storage(fake: FakeCTFd, storage: FakeCTFd, number: int, name: str, *, serve: bool = True) -> str:
+    """Script CTFd on S3: the file's URL answers with a redirect to a signed URL on the storage's host
+    (and a session cookie, as CTFd may set one), and the storage serves the file there."""
+    path = fake.file_url(number, name).split("?")[0]
+    signed = f"{storage.base_url}/bucket{path}?X-Amz-Signature=s3cr3t-signature&X-Amz-Expires=3600"
+    fake.script("GET", path, Reply(302, None, {"Location": signed, "Set-Cookie": "session=ctfd-session; Path=/"}))
+    if serve:
+        storage.script("GET", f"/bucket{path}", Reply(200, fake.challenges[number].files[name]))
+    return f"/bucket{path}"
+
+
+def test_a_file_ctfd_sends_to_object_storage_is_fetched_there_without_the_token_or_a_cookie(tmp_path, tls):
+    with FakeCTFd(sample()) as fake, FakeCTFd([], tls=tls) as storage:
+        for number, name in ((1, "hello.txt"), (2, "out.txt"), (4, "echo.bin")):
+            redirect_to_storage(fake, storage, number, name)
+        result = pulled(fake, tmp_path / "board")
+        fetched = list(storage.requests)
+    assert result.problems == () and len(result.board.challenges) == 4
+    assert (tmp_path / "board" / "baby-rsa" / "out.txt").read_bytes() == b"n = 3233\ne = 3\nc = 2201\n"
+    assert sorted(r.route.rsplit("/", 1)[1] for r in fetched) == ["echo.bin", "hello.txt", "out.txt"]
+    for request in fetched:  # the 127.0.0.1 cookie would go to any port; the token and JSON header are CTFd's
+        assert {"authorization", "cookie", "content-type"}.isdisjoint(request.headers)
+        assert request.headers["user-agent"].startswith("ctf-flightdeck/") and "X-Amz-Signature=" in request.path
+
+
+def test_a_file_host_that_refuses_the_download_is_named_and_its_signed_url_is_not(tmp_path, tls):
+    with FakeCTFd(sample()) as fake, FakeCTFd([], tls=tls) as storage:
+        where = redirect_to_storage(fake, storage, 1, "hello.txt", serve=False)
+        storage.script("GET", where, Reply(403, "<Error><Code>AccessDenied</Code></Error>"))
+        error = failure(fake, lambda c: c.download(fake.file_url(1, "hello.txt"), tmp_path))
+    assert f"the file host {storage.base_url}" in str(error) and "HTTP 403" in str(error)
+    assert "token was refused" not in str(error) and "s3cr3t-signature" not in str(error)
+    assert error.endpoint.startswith("GET /files/") and list(tmp_path.iterdir()) == []
 
 
 def test_a_download_redirect_on_the_same_origin_is_followed(tmp_path):

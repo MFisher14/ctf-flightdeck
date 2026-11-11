@@ -23,6 +23,11 @@ fake behaves as CTFd 3.x does:
 
 Tests script replies ahead of these for one method and path (errors, 429 with Retry-After,
 redirects, bodies that are not JSON, a hang-up), and read back every request in `requests`.
+
+With `tls` (from make_tls(), which needs the openssl command) it answers https instead, with
+a certificate for 127.0.0.1 from a throwaway authority: a client trusts it through
+SSL_CERT_FILE. It stands for a CTFd on https, or for the object storage a CTFd sends file
+downloads to.
 """
 
 from __future__ import annotations
@@ -31,14 +36,18 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import socket
 import socketserver
+import ssl
+import subprocess
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token has this shape
@@ -115,6 +124,52 @@ class Request:
             return None
 
 
+@dataclass(frozen=True)
+class TLS:
+    """A throwaway certificate authority, and a server certificate for 127.0.0.1 it signed."""
+
+    ca: Path  # what a client must trust: point SSL_CERT_FILE at it
+    cert: Path
+    key: Path
+
+
+_OPENSSL_CONFIG = """\
+[req]
+distinguished_name = dn
+[dn]
+[ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+"""
+
+
+def make_tls(folder: Path) -> TLS:
+    """Make the certificates in `folder` with the openssl command (OpenSSL or LibreSSL). Raises
+    FileNotFoundError when openssl is not installed, CalledProcessError when it fails."""
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        raise FileNotFoundError("openssl")
+    (folder / "openssl.cnf").write_text(_OPENSSL_CONFIG)
+    for args in (
+        ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+         "-subj", "/CN=ctf-flightdeck test CA", "-config", "openssl.cnf", "-extensions", "ca"],
+        ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
+         "-subj", "/CN=127.0.0.1", "-config", "openssl.cnf"],
+        ["x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-set_serial", "1",
+         "-out", "server.pem", "-days", "2", "-extfile", "openssl.cnf", "-extensions", "server"],
+    ):
+        subprocess.run([openssl, *args], cwd=folder, check=True, capture_output=True, timeout=120)
+    return TLS(folder / "ca.pem", folder / "server.pem", folder / "server.key")
+
+
 def not_found() -> Reply:
     return Reply(404, {"message": "The requested URL was not found on the server."})
 
@@ -135,6 +190,7 @@ class FakeCTFd:
         team_mode: bool = True,
         page_size: int | None = None,
         name: str = "Fake CTF",
+        tls: TLS | None = None,
     ) -> None:
         self.challenges: dict[int, FakeChallenge] = {c.id: c for c in challenges}
         self.token = token
@@ -149,8 +205,8 @@ class FakeCTFd:
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
         self._lock = threading.Lock()
-        self._httpd = _Server(self)
-        self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
+        self._httpd = _Server(self, tls)
+        self.base_url = f"{'https' if tls else 'http'}://127.0.0.1:{self._httpd.server_address[1]}"
         self._thread: threading.Thread | None = None
 
     def __enter__(self) -> FakeCTFd:
@@ -372,17 +428,43 @@ class _Server(ThreadingHTTPServer):
     """The HTTP server. It tracks its connections and request threads, so stopping can hang
     up on clients and wait for the threads, and `requests` is final once it has."""
 
-    def __init__(self, fake: FakeCTFd) -> None:
+    def __init__(self, fake: FakeCTFd, tls: TLS | None) -> None:
         self.fake = fake
         self._open: set[socket.socket] = set()
         self._workers: list[threading.Thread] = []
         self._track = threading.Lock()
+        self._tls = None
+        if tls is not None:
+            self._tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            self._tls.load_cert_chain(tls.cert, tls.key)
         super().__init__(("127.0.0.1", 0), _Handler)
 
     def server_bind(self) -> None:
         # HTTPServer.server_bind looks up the host's full name, which can stall on some networks.
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]
+
+    def finish_request(self, request, client_address) -> None:
+        if self._tls is None:
+            super().finish_request(request, client_address)
+            return
+        request.settimeout(10)
+        try:
+            secure = self._tls.wrap_socket(request, server_side=True)  # the handshake, in this request's thread
+        except (ssl.SSLError, OSError):
+            return  # a client that does not speak TLS (plain http sent here), or hung up
+        with self._track:
+            self._open.discard(request)
+            self._open.add(secure)
+        try:
+            self.RequestHandlerClass(secure, client_address, self)
+        finally:
+            with self._track:
+                self._open.discard(secure)
+            try:
+                secure.close()
+            except OSError:
+                pass
 
     def process_request(self, request, client_address) -> None:
         worker = threading.Thread(

@@ -31,9 +31,12 @@ is reported as it went, and the player decides.
 Secrets: the token goes in the Authorization header and nowhere else: not in a repr, an
 error or an exception chain (no httpx error is chained: its request holds the header). Text
 from the server has the token cut out before it is shown. A redirect is never followed with
-the token: an API redirect is an error, and a download follows one only on the CTFd's own
-origin. The per-file token CTFd puts in each file URL (?token=...) is a credential too, so a
-file is named by its path, never its query.
+the token off the CTFd's own origin: an API redirect is an error, and a download follows one
+with the token only on that origin. A download redirected to another host (CTFd keeping its
+files on S3 answers with a signed URL on the storage's host) is followed only over https,
+by a second client that sends no token, no cookie and no JSON header. The per-file token
+CTFd puts in each file URL (?token=...) and a signed URL's query are credentials too, so a
+file is named by its path, and another host by its origin, never by a query.
 
 Untrusted data: everything from CTFd (names, descriptions, connection info, file names,
 messages) is data, shown only through text.untrusted() and cut short. A file URL must stay on
@@ -187,6 +190,7 @@ class _Answer:
     headers: httpx.Headers
     body: bytes
     tries: int = 1
+    host: str | None = None  # the origin of the file host that answered, when it was not CTFd (a download)
 
 
 @dataclass(frozen=True)
@@ -205,7 +209,9 @@ class CTFdClient:
     httpx pools connections per event loop, so keep a client on the loop that first uses it
     and `aclose()` it when done (or use `async with`). `timeout` bounds each try, in seconds
     (connecting gets at most CONNECT_TIMEOUT of it). A GET makes at most `max_retries + 1`
-    tries; a flag attempt makes one. With `transport` given, httpx ignores proxy variables.
+    tries; a flag attempt makes one. With `transport` given, httpx ignores proxy variables;
+    it carries the requests to the CTFd only (a file on another host goes through httpx's
+    own, see download()).
     """
 
     def __init__(
@@ -241,6 +247,7 @@ class CTFdClient:
             transport=transport,
             follow_redirects=False,  # a redirect is an answer, not a new place to send the token
         )
+        self._elsewhere: httpx.AsyncClient | None = None  # for files on another host: made when first needed
         self._closed = False
 
     @property
@@ -260,6 +267,8 @@ class CTFdClient:
     async def aclose(self) -> None:
         self._closed = True
         await self._http.aclose()
+        if self._elsewhere is not None:
+            await self._elsewhere.aclose()
 
     # ------------------------------------------------------------------ endpoints
 
@@ -291,11 +300,15 @@ class CTFdClient:
     async def download(self, url: str, dest: Path) -> Path:
         """Fetch one URL from a challenge's "files" into the directory `dest`; the file written.
 
-        The URL is resolved against base_url and must stay on the CTFd's origin (scheme,
-        host and port), and so must any redirect. The file is named after the URL's last path
-        segment, which must be a plain file name. A file already there is never overwritten:
-        the new one is named name-2.ext, name-3.ext, ... (and challenge.json is never used).
-        The download streams to disk, at most max_file_bytes; a failed one leaves no file.
+        The URL is resolved against base_url and must be on the CTFd's origin (scheme, host
+        and port). A redirect on that origin is followed with the token. A redirect to another
+        host is followed only over https, and from then on without the token, CTFd's cookies
+        or the JSON header: CTFd keeping its files on S3 (or other object storage) answers a
+        file with a redirect to a signed URL on the storage's host. At most MAX_REDIRECTS
+        redirects in all. The file is named after the CTFd URL's last path segment, which must
+        be a plain file name. A file already there is never overwritten: the new one is named
+        name-2.ext, name-3.ext, ... (and challenge.json is never used, in any case). The
+        download streams to disk, at most max_file_bytes; a failed one leaves no file.
         """
         target = self._file_url(url)
         name = _file_name(target, self._site)
@@ -482,30 +495,40 @@ class CTFdClient:
         return target
 
     async def _fetch(self, url: httpx.URL, folder: Path, name: str, endpoint: str) -> Path | _Again:
-        """One try at a download, following same-origin redirects."""
+        """One try at a download, following redirects (see download())."""
         failure = None
         hops = 0
+        host = None  # the other host's origin, once a redirect has left the CTFd's: the token stays behind
         try:
             while True:
-                async with self._http.stream("GET", url) as response:
+                http = self._http if host is None else self._files_elsewhere()
+                async with http.stream("GET", url) as response:
                     status = response.status_code
                     if 300 <= status < 400:
                         hops += 1
-                        url = self._redirect(url, response.headers.get("location"), endpoint, status, hops)
+                        url = self._redirect(url, response.headers.get("location"), endpoint, status, hops, host)
+                        if host is not None or not _same_origin(url, self._site.base):
+                            host = _origin_text(url)
                         continue
                     if _retryable(status):
                         body = await _read(response, 64 * 1024) or b""
-                        return _Again(_Answer(endpoint, status, response.headers, body), None, response.headers.get("retry-after"))
+                        answer = _Answer(endpoint, status, response.headers, body, host=host)
+                        return _Again(answer, None, response.headers.get("retry-after"), host)
                     if not 200 <= status < 300:
                         body = await _read(response, 64 * 1024) or b""
-                        raise self._site.refused(_Answer(endpoint, status, response.headers, body))
+                        raise self._site.refused(_Answer(endpoint, status, response.headers, body, host=host))
                     return await self._save(response, folder, name, endpoint)
         except httpx.HTTPError as exc:
             failure = _describe(exc)
-        return _Again(None, failure, None)
+        return _Again(None, failure, None, host)
 
-    def _redirect(self, current: httpx.URL, location: str | None, endpoint: str, status: int, hops: int) -> httpx.URL:
-        where = f"CTFd at {self._site.root} answered {endpoint} with a redirect (HTTP {status})"
+    def _redirect(
+        self, current: httpx.URL, location: str | None, endpoint: str, status: int, hops: int, host: str | None
+    ) -> httpx.URL:
+        """Where a download's redirect leads, if flightdeck may follow it; CTFdError if not.
+        `host` is the other host the download is on already (None: still on the CTFd's origin)."""
+        who = f"CTFd at {self._site.root}" if host is None else f"the file host {host}"
+        where = f"{who} answered {endpoint} with a redirect (HTTP {status})"
         if not location:
             raise self._site.error(f"{where} that names no place", endpoint=endpoint, status=status)
         target, bad = None, False
@@ -513,18 +536,38 @@ class CTFdClient:
             target = current.join(location)
         except httpx.InvalidURL:
             bad = True
-        if bad or target is None:
+        if bad or target is None or not target.host:
             raise self._site.error(f"{where} to a URL that is not valid", endpoint=endpoint, status=status)
-        if not _same_origin(target, self._site.base) or target.userinfo:
+        if hops > MAX_REDIRECTS:
+            raise self._site.error(f"{where}, more than {MAX_REDIRECTS} times", endpoint=endpoint, status=status)
+        if target.userinfo:
             raise self._site.error(
-                f"{where} to another host ({_origin_text(target)}); flightdeck downloads only from the CTFd's own "
-                "origin, so fetch this file by hand",
+                f"{where} to a URL with a user name or password in it, which flightdeck does not use; fetch this file "
+                "by hand",
                 endpoint=endpoint,
                 status=status,
             )
-        if hops > MAX_REDIRECTS:
-            raise self._site.error(f"{where}, more than {MAX_REDIRECTS} times", endpoint=endpoint, status=status)
+        if host is None and _same_origin(target, self._site.base):
+            return target  # still the CTFd's own origin: the token goes along
+        if target.scheme != "https":
+            raise self._site.error(
+                f"{where} to another host ({_origin_text(target)}); flightdeck follows a download to another host only "
+                "over https, so fetch this file by hand",
+                endpoint=endpoint,
+                status=status,
+            )
         return target
+
+    def _files_elsewhere(self) -> httpx.AsyncClient:
+        """The client for a file on another host (object storage): no token, no cookie from
+        CTFd, no JSON header; nothing but what a browser following the redirect would send."""
+        if self._elsewhere is None:
+            self._elsewhere = httpx.AsyncClient(
+                headers={"User-Agent": f"ctf-flightdeck/{__version__}"},
+                timeout=self._http.timeout,
+                follow_redirects=False,
+            )
+        return self._elsewhere
 
     async def _save(self, response: httpx.Response, folder: Path, name: str, endpoint: str) -> Path:
         length = response.headers.get("content-length", "")
@@ -555,7 +598,7 @@ class CTFdClient:
 
     def _gave_up(self, endpoint: str, outcome: _Again, tries: int) -> CTFdError:
         if outcome.failure is not None:
-            return self._site.no_answer(endpoint, outcome.failure, tries)
+            return self._site.no_answer(endpoint, outcome.failure, tries, host=outcome.host)
         assert outcome.answer is not None
         outcome.answer.tries = tries
         return self._site.refused(outcome.answer)
@@ -568,6 +611,7 @@ class _Again:
     answer: _Answer | None
     failure: _Failure | None
     retry_after: str | None
+    host: str | None = None  # the other host the download was on, when it was not CTFd's
 
 
 # ---------------------------------------------------------------------- the deck's verifier
@@ -1237,7 +1281,13 @@ class _Site:
         said = self.short(_message(doc)) if isinstance(doc, dict) else ""
         says = f" (CTFd says: {said})" if said else ""
         where = f"CTFd at {self.root}"
-        if 300 <= status < 400:
+        if answer.host is not None:  # a file host CTFd sent a download to: the token never went there
+            says = f" (it says: {said})" if said else ""
+            text = (
+                f"the file host {answer.host}, where CTFd at {self.root} sent {endpoint}, answered HTTP {status}"
+                f"{_phrase(status)}{says}"
+            )
+        elif 300 <= status < 400:
             location = answer.headers.get("location")
             target = None
             if location:
@@ -1266,8 +1316,16 @@ class _Site:
             text += f"; gave up after {answer.tries} tries"
         return self.error(text, endpoint=endpoint, status=status, retryable=_retryable(status))
 
-    def no_answer(self, endpoint: str, failure: _Failure, tries: int, *, submit: bool = False) -> CTFdError:
-        text = f"no answer from CTFd at {self.root} to {endpoint}: {self.short(failure.what)}"
+    def no_answer(
+        self, endpoint: str, failure: _Failure, tries: int, *, submit: bool = False, host: str | None = None
+    ) -> CTFdError:
+        if host is None:
+            text = f"no answer from CTFd at {self.root} to {endpoint}: {self.short(failure.what)}"
+        else:
+            text = (
+                f"no answer from the file host {host}, where CTFd at {self.root} sent {endpoint}: "
+                f"{self.short(failure.what)}"
+            )
         if tries > 1:
             text += f"; gave up after {tries} tries"
         if submit:
