@@ -19,8 +19,14 @@ login and models instead (`[agents]` in your config). Which models fit your mach
 | `custom` | Any OpenAI-compatible API (`--base-url`, `--key-env`) | yours |
 
 A model on your own machine costs nothing, so `init` writes no dollar cap for it, and no
-provider's safety classifier stands in front of it. `flightdeck models ID` prints the config
-lines for a model from its catalog.
+provider's safety classifier stands in front of it. For Ollama and an MLX server, `init` suggests
+a ladder from a benchmark on one machine (`gpt-oss:20b` on Ollama,
+`mlx-community/Qwen3.5-9B-MLX-4bit` on MLX): the default at its prompt, and named in its message
+away from a terminal, never written unless you choose it. For any server on this machine it
+writes a longer wait and a larger reply cap (below), and for MLX it prints the command that
+starts the server with thinking off and replies of up to 8192 tokens (`mlx_lm.server --model
+... --max-tokens 8192 --chat-template-args '{"enable_thinking":false}'`). `flightdeck models ID`
+prints the config lines for a model from its catalog.
 
 Your `[models]` ladder lists model ids weakest first: lanes start on the first, and escalating
 moves one step up. `flightdeck config --example` shows every key.
@@ -32,7 +38,9 @@ from its environment first, then from `~/.config/ctf-flightdeck/keys.env` (or th
 `$FLIGHTDECK_KEYS` names), which must be readable by you only (chmod 600). flightdeck never
 prints, logs or stores a key. A lane's commands get an environment built from an allowlist, so
 no key is handed to them; on the host runtime a lane still runs as you and can read your files
-(see [`--host` in the README](../README.md#play-a-board)). `flightdeck doctor` checks that each
+(see [`--host` in the README](../README.md#play-a-board)). A coding-agent lane is different: its
+CLI gets its own credential, and the commands the agent runs can read it, in Docker too, so give
+it a key you can revoke, with a low spending limit. `flightdeck doctor` checks that each
 variable is set, never its value.
 
 ## Before a run
@@ -43,6 +51,21 @@ an OpenAI-style API through its model list, the Anthropic API through its Models
 key, a model it does not serve (with the closest ids it does), a model Anthropic has retired, or
 no server up stops the run with what to fix. An API that does not list its models, or any other
 answer, is a note and the run goes on. Listing models costs nothing, and nothing is retried.
+
+## Time and reply length
+
+Each try of a lane's model call may take `[api] timeout` seconds (180 by default, 600 with the
+Anthropic API, at most 3600); a reply not complete by then is given up and tried again, with the
+usual retries and waits between them. `[api] max_tokens` is the most tokens a lane's reply may
+hold (1 to 1,000,000). Left unset, it is 8192 for an OpenAI-compatible server on this machine
+(127.0.0.1, localhost or ::1), whose own default can be far lower (mlx_lm.server's is 512, which
+cuts off a model that reasons first); nothing is sent to any other OpenAI-compatible API
+(OpenAI's own refuses `max_tokens` on its reasoning models, so leave it unset there), and the
+Anthropic API gets 16000. For a server on this machine, `init` writes `timeout = 600` and
+`max_tokens = 8192`: a local model can take minutes for one reply. A `[fallback]` table takes
+both for its own API. `flightdeck doctor` says what a lane's calls to a server on this machine
+send and how long each try may take, and where each comes from (`lane calls`, and `fallback
+calls` for a fallback there).
 
 ## The Anthropic API
 
@@ -62,11 +85,12 @@ answer.
 
 ## A fallback API
 
-Any config can have a `[fallback]` table: a second API, with the same keys as `[api]` and a
-ladder of one model per `[models]` entry, in the same order and in the fallback API's own
-naming. A lane whose calls to `[api]` keep failing (rate limits, overload, an outage, no answer,
-after every retry) moves to the fallback's model at the same rung for the rest of its context,
-and its transcript says so: the two APIs never mix inside one context. Escalating the lane, or
+Any config can have a `[fallback]` table: a second API, with `provider`, `base_url`, `key_env`,
+`timeout` and `max_tokens` as in `[api]` (not `fast`, which is for `[api]` only), and a ladder of
+one model per `[models]` entry, in the same order and in the fallback API's own naming. A lane
+whose calls to `[api]` keep failing (rate limits, overload, an outage, no answer, after every
+retry) moves to the fallback's model at the same rung for the rest of its context, and its
+transcript says so: the two APIs never mix inside one context. Escalating the lane, or
 the long-context refresh, tries `[api]` again. A refusal, a bad request or a refused key never
 moves a lane: another API would not change the answer, or should not.
 
