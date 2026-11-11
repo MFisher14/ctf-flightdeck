@@ -31,6 +31,7 @@ from .hints import (
     named_techniques,
     top_technique,
 )
+from .judge import HintJudge, Judgement
 from .watch import Watch
 
 __all__ = [
@@ -45,6 +46,8 @@ __all__ = [
     "StallDetector",
     "default_detectors",
     "Watch",
+    "HintJudge",
+    "Judgement",
     "Lexicon",
     "LexiconError",
     "Technique",
