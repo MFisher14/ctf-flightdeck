@@ -135,6 +135,7 @@ def test_a_docker_run_labels_its_lanes_and_l1_engines_with_the_run_and_the_fligh
     with FakeModelServer() as server:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url, runtime="docker"),
                                      pack=pack))
+        assert record_of(run.dir)["docker"] is True  # a sweep from a host run looks in Docker for this run's containers
         run.close()
     me = leftovers.process(os.getpid())
     assert me is not None
@@ -438,6 +439,27 @@ def test_a_flightdeck_pid_now_held_by_another_process_counts_as_gone(tmp_path):
     swept = sweep(runs, docker=None, clean=True)
     assert len(swept.done) == 1 and f"its process group {proc.pid}" in swept.done[0]
     assert killed(proc)
+
+
+def test_a_flightdeck_that_has_exited_but_is_not_reaped_yet_counts_as_gone(tmp_path):
+    runs = tmp_path / "runs"
+    exited = subprocess.Popen(["sleep", "300"])
+    try:
+        seen = leftovers.process(exited.pid)
+        assert seen is not None
+        os.kill(exited.pid, signal.SIGKILL)  # not waited for until the end: a zombie meanwhile
+        wait_until(lambda: ps_state(exited.pid).startswith("Z"), "the process to be a zombie")
+        record = killed_run(runs, owner=Owner(host_id(), os.getuid(), exited.pid, seen.started))
+        proc = lane_command(record)
+        swept = sweep(runs, docker=None, clean=True)
+        assert len(swept.done) == 1 and f"its process group {proc.pid}" in swept.done[0]
+        assert killed(proc)
+    finally:
+        exited.wait()
+
+
+def ps_state(pid: int) -> str:
+    return subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
 
 
 def test_runs_of_another_machine_or_user_are_never_touched(tmp_path, monkeypatch):
