@@ -564,6 +564,7 @@ async def written(path: Path, what: str, timeout: float = 60.0) -> str:
 
 
 def test_a_claude_lane_reports_steps_tokens_once_per_message_and_cost_and_a_flag_waits_frozen_for_approval(tmp_path):
+    gate = tmp_path / "answer"  # never made: the model's last answer has not come when the flag is raised
     script = {"turns": [
         {"calls": [
             {"text": "Looking at the files.", "tools": [bash("cat note.txt")], "usage": [100, 20, 0, 50]},
@@ -572,7 +573,7 @@ def test_a_claude_lane_reports_steps_tokens_once_per_message_and_cost_and_a_flag
         ], "cost": 0.01},
         {"calls": [
             {"tools": [bash("tr 'a-z' 'n-za-m' < note.txt")], "usage": [20, 10, 170, 0]},
-            {"think": 1.0, "text": "That is the flag."},
+            {"until": str(gate), "text": "That is the flag."},
         ], "cost": 0.02},
     ]}
 
@@ -1657,7 +1658,8 @@ def test_a_hint_ends_the_agents_turn_and_goes_in_as_its_next_message(tmp_path):
 
 
 def test_pause_freezes_the_cli_and_resume_lets_it_go_on(tmp_path):
-    script = {"turns": [{"calls": [{"tools": [bash("echo one")]}, {"think": 0.8, "tools": [bash("echo two")]}]}]}
+    gate = tmp_path / "answer"
+    script = {"turns": [{"calls": [{"tools": [bash("echo one")]}, {"until": str(gate), "tools": [bash("echo two")]}]}]}
 
     async def main():
         lab = Lab(tmp_path, script)
@@ -1668,6 +1670,7 @@ def test_pause_freezes_the_cli_and_resume_lets_it_go_on(tmp_path):
             assert lab.deck.apply(iv.Pause(lane.id)).ok
             pid = lab.pid(lane)
             await until(lambda: stopped(pid), "the CLI stopped")
+            gate.touch()  # the answer it waited for comes while it is frozen
             await asyncio.sleep(1.2)
             assert "$ echo two" not in steps(lane)
             assert lab.deck.apply(iv.Resume(lane.id)).ok
@@ -1801,8 +1804,9 @@ def test_a_hint_the_old_model_had_not_finished_a_turn_on_goes_to_the_stronger_mo
 
 
 def test_a_take_over_waits_for_the_agents_command_freezes_the_cli_and_tells_it_what_changed(tmp_path):
+    gate = tmp_path / "answer"
     script = {"turns": [
-        {"calls": [{"tools": [bash("sleep 1 && touch lane-a.txt")]}, {"think": 0.5, "tools": [bash("touch lane-b.txt")]}]},
+        {"calls": [{"tools": [bash("sleep 1 && touch lane-a.txt")]}, {"until": str(gate), "tools": [bash("touch lane-b.txt")]}]},
         {"calls": [{"tools": [bash("echo back")]}]},
     ]}
 
@@ -1820,7 +1824,8 @@ def test_a_take_over_waits_for_the_agents_command_freezes_the_cli_and_tells_it_w
             assert shell.cwd == work
             assert (work / "lane-a.txt").exists() and "lane-a.txt" in lane.files
             pid = lab.pid(lane)
-            assert stopped(pid)
+            await until(lambda: stopped(pid), "the CLI frozen")
+            gate.touch()  # the answer it waited for comes while the player has the shell
             await asyncio.sleep(0.8)
             assert not (work / "lane-b.txt").exists()  # nothing runs while the player has the shell
             (work / "player.txt").write_text("mine\n")
@@ -1846,23 +1851,29 @@ def test_the_take_over_shell_opens_only_once_the_step_of_the_command_it_waited_f
     after a look at the workspace, in a thread a loaded machine can hold up (here for half a
     second). The shell waits for that step: the file the command made is on the lane as the
     agent's before the player can change anything, so no change of the player's can be
-    taken for one of the agent's."""
+    taken for one of the agent's. The agent's next answer comes during that look: the CLI
+    froze when its command ended, before the look, so the step it chooses does not run."""
     real = external.take_snapshot
-
-    def held_up(root):
-        if (Path(root) / "lane-a.txt").exists():  # the look after the agent's command
-            time.sleep(0.5)
-        return real(root)
-
-    monkeypatch.setattr(external, "take_snapshot", held_up)
+    gate = tmp_path / "answer"
     command = "sleep 0.5 && touch lane-a.txt"
     if kind == "claude":
-        script = {"turns": [{"calls": [{"tools": [bash(command)]}, {"think": 30.0}]}]}
+        script = {"turns": [{"calls": [{"tools": [bash(command)]}, {"until": str(gate), "tools": [bash("touch lane-b.txt")]}]}]}
     else:
-        script = {"turns": [{"items": [{"command": command}, {"sleep": 30.0}]}]}
+        script = {"turns": [{"items": [{"command": command}, {"until": str(gate)}, {"command": "touch lane-b.txt"}]}]}
 
     async def main():
         lab = Lab(tmp_path, script, kind=kind)
+
+        def held_up(root):
+            if (Path(root) / "lane-a.txt").exists() and not gate.exists():  # the look after the agent's command
+                pid, end = lab.pid(lane), time.monotonic() + 2
+                while not stopped(pid) and time.monotonic() < end:
+                    time.sleep(0.01)
+                gate.touch()  # its next answer comes now: a CLI not frozen yet goes on with it
+                time.sleep(0.5)
+            return real(root)
+
+        monkeypatch.setattr(external, "take_snapshot", held_up)
         try:
             lab.release()
             lane = lab.lane()
@@ -1872,6 +1883,7 @@ def test_the_take_over_shell_opens_only_once_the_step_of_the_command_it_waited_f
             await asyncio.wait_for(session.begin(), 10)
             assert "lane-a.txt" in lane.files and lane.files["lane-a.txt"].by == "lane"
             assert steps(lane) == ["$ sleep 0.5 && touch lane-a.txt"]
+            assert not (lab.work(lane) / "lane-b.txt").exists()  # frozen when its command ended
             session.finish()
         finally:
             await lab.finish()
@@ -1981,8 +1993,9 @@ def test_killing_or_escalating_a_frozen_cli_interrupts_it_before_it_runs_again(t
 
 
 def test_a_budget_cap_freezes_the_cli_until_the_player_approves_more(tmp_path):
+    gate = tmp_path / "answer"
     script = {"turns": [
-        {"calls": [{"tools": [bash("echo one")], "usage": [400, 10, 0, 0]}, {"think": 0.3, "tools": [bash("echo two")]}]},
+        {"calls": [{"tools": [bash("echo one")], "usage": [400, 10, 0, 0]}, {"until": str(gate), "tools": [bash("echo two")]}]},
         {"calls": [{"tools": [bash("echo three")]}]},
     ]}
 
@@ -1995,6 +2008,7 @@ def test_a_budget_cap_freezes_the_cli_until_the_player_approves_more(tmp_path):
             assert lane.pending.kind is PendingKind.BUDGET
             pid = lab.pid(lane)
             await until(lambda: stopped(pid), "the CLI frozen at its cap")
+            gate.touch()  # the answer it waited for comes while it is frozen
             await asyncio.sleep(0.6)
             assert "$ echo two" not in steps(lane)
             assert lab.deck.apply(iv.Approve(lane.id)).ok
@@ -2120,10 +2134,11 @@ def test_a_codex_login_keeps_the_players_own_codex_home(tmp_path):
 
 
 def test_a_codex_lane_runs_a_process_per_turn_resumes_its_thread_and_counts_the_usage_it_grew_by(tmp_path):
+    gate = tmp_path / "answer"  # never made: codex is still on its turn when the flag is raised
     script = {"turns": [
         {"items": [{"command": "cat note.txt"}, {"message": "Looks like rot13."}], "usage": [300, 100, 50]},
         {"items": [{"command": "echo two"}], "usage": [200, 80, 40]},
-        {"items": [{"command": "tr 'a-z' 'n-za-m' < note.txt"}, {"sleep": 1.0}, {"message": "done"}], "usage": [10, 0, 1]},
+        {"items": [{"command": "tr 'a-z' 'n-za-m' < note.txt"}, {"until": str(gate)}, {"message": "done"}], "usage": [10, 0, 1]},
     ]}
 
     async def main():
