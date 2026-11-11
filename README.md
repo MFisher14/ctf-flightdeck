@@ -8,8 +8,31 @@ wrong way: a hint, a redirect, a fork, a kill, or taking over yourself.
 
 Bring what you have: an API key, an OpenRouter account, a coding-agent CLI, a folder of Python scripts.
 
-> **Status: pre-alpha.** Milestone M0, a clickable console mock with fake data, is ready for review.
-> Nothing talks to a model or a CTF yet. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: pre-alpha, milestone M1.** Agent lanes play a folder of challenges against an
+> OpenAI-compatible API (OpenRouter by default), in Docker or on the host, from the M0 console.
+> No platform adapters yet (CTFd is M2). See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## Play a board (M1)
+
+A board is a folder of challenge folders, each with a `challenge.json` and its handout files
+(format in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). The repo ships a synthetic practice set
+in [`practice/`](practice/README.md).
+
+```sh
+uv run flightdeck config --example > ~/.config/ctf-flightdeck/config.toml   # then fill in the model ladder
+export OPENROUTER_API_KEY=...                  # or whatever [api] key_env names; never put it in the file
+uv run flightdeck config                       # checks the config; says whether the key is set, never shows it
+uv run flightdeck play practice --docker       # each lane in its own container (the image is never pulled for you)
+uv run flightdeck play ~/ctf/some-board --host --max-lanes 4 --team
+```
+
+`play` spends tokens: every lane is a model conversation, capped per lane by `token_cap` and
+`dollar_cap` (at 80% you get an alert, at 100% the lane waits for your approval). Lanes start
+cheapest-first. A flag a lane finds waits for you: `a` or `1` submits it, `d` or `0` declines. With
+an `answers.sha256.json` (practice) flightdeck checks flags itself; without one you submit by hand
+and tell it how it went. `t` takes over a lane's shell; exit the shell to hand it back. Every run
+writes an append-only `events.jsonl` under the run folder. `--host` runs lane commands as you, on
+this machine: use a disposable VM, or Docker.
 
 ## Try the mock (M0)
 
@@ -24,7 +47,8 @@ uv run flightdeck mock --screenshot .flightdeck/shots   # headless: SVGs of the 
 
 Two views. The **fleet** shows the board and every lane, sorted by what needs you; keys act on the
 selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill, `e` escalate, `t` take over,
-`a` approve, `c` claim (team), `/` commands, `s` sort, `?` help, `q` quit. **Enter** opens a lane full
+`a` approve, `d` decline, `1`-`9`/`0` quick answers, `c` claim (team), `/` commands, `s` sort, `?`
+help, `q` quit. **Enter** opens a lane full
 screen: its transcript, the files it changed with diffs, and a chat box (plain text is a message to
 the lane; `/redirect`, `/approve`, `/diff` and the rest are commands; `esc` goes back). In the mock,
 `space` freezes the clock and `.` steps it. All challenges, teammates and flags are invented.

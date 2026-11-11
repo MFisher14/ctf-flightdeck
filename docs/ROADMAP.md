@@ -78,3 +78,18 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 
 M0 to M2 done, docs and quickstart, secret scan `--all` clean, history reviewed, MIT license, a
 recorded demo.
+
+**Easy to run (the player's requirement: people won't use it if it's hard).** A new player gets from
+nothing to a running console in a few minutes, without reading the architecture:
+
+- One-line install or no install: `pip install ctf-flightdeck` (in a virtual environment),
+  `pipx install ctf-flightdeck` or `uv tool install ctf-flightdeck`, or `uvx ctf-flightdeck` to try
+  it; each tested from the built wheel in a clean environment (publishing to PyPI is the player's
+  call at release time). Python 3.12+; macOS and Linux (Windows through WSL).
+- `flightdeck` with no setup offers the next step instead of an error; `flightdeck init` asks a few
+  questions (provider, models, Docker or host) and writes the config; `flightdeck doctor` checks
+  Python, Docker, the lane image, the key variable and the config, and says how to fix each problem.
+- The mock and the practice set ship inside the package: `flightdeck mock` and `flightdeck practice`
+  work right after installing, with no clone.
+- A lane image that works out of the box, built or pulled only by a command the player runs.
+- A three-command quickstart at the top of the README, tested on a clean machine.

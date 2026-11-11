@@ -44,6 +44,29 @@ The console never talks to lanes directly. It reads a `Deck` and sends it interv
 M0 plugs in `mock.script.ScriptedDriver` and a manual clock (`mock.world.FakeWorld`); M1 replaces them
 with an agent loop per lane behind the same `LaneDriver` protocol.
 
+## The working slice (built in M1)
+
+| Piece | Where | Job |
+|---|---|---|
+| Folder board | `platform/manual.py` | A folder of challenge folders (format below); `answers.sha256.json` checks flags by hash; without it the player submits by hand and confirms (the deck's `CONFIRM` approval). |
+| Config | `config.py` | `~/.config/ctf-flightdeck/config.toml`: API base URL, the name of the key's environment variable (never the key), the model ladder, prices, lane defaults, the run folder. Unknown keys fail loudly. |
+| Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx; a stable `session_id` per lane for OpenRouter's sticky prompt caching; never `provider.order`; retries with backoff; usage incl. cached tokens and the reported cost. |
+| Workspaces | `agent/workspace.py` | A copy of the handout per lane: on the host (an allowlisted environment, no keys) or in a container per lane (`--pull never`); snapshots and diffs of the files a lane changes; the take-over shell. |
+| Tools | `agent/tools.py` | `shell`, `read_file`, `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
+| Agent driver | `agent/driver.py`, `agent/prompts.py` | One asyncio task per lane on the console's loop (the deck's single thread). A turn is one model call; tool results go back into the context; the deck gets a `TurnReport` per turn. A small fixed prefix, then the challenge brief (challenge text fenced as data). Escalation starts a fresh context with the deck's summary. |
+| Run | `run.py` | Checks config, board, key, Docker and the image before anything starts; wires the deck, driver, event log and console; releases the board on the console's loop. |
+| Event log | `eventlog.py` | Append-only `events.jsonl` per run: every deck event, flushed per line. |
+
+Board format: a folder; each subfolder with a `challenge.json` is a challenge:
+`{"name", "category", "points", "solves"?, "description"?, "files"?, "urls"?, "id"?}` (unknown keys
+are an error). Optional `board.json`: `{"event", "flag_format"}`. Optional `answers.sha256.json`:
+`{"<challenge id>": "<sha256 of the flag>"}`, outside the challenge folders.
+
+What keeps challenge text from steering the harness is the harness, not the prompt: tools are fenced
+to the workspace and the challenge's own URLs, lane processes never see the API key, a flag reaches
+the platform only through the deck's approval (or the `auto` policy), and nothing a model writes
+changes a setting.
+
 ## Agent loop principles (from measured experience)
 
 These come from analysing about 300k agent responses across four 2026 CTFs:
