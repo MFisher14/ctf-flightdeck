@@ -508,11 +508,15 @@ def test_any_other_failing_status_fails_at_once_with_the_servers_message(status)
 
 
 def test_the_servers_error_text_is_made_safe_and_cut_to_300_characters():
-    message = "line one\nline two \x1b]0;title\x07 " + "A" * 1000
+    # right-to-left override and pop, zero-width space, left-to-right isolate and pop
+    invisible = "\u202e\u202c\u200b\u2066\u2069"
+    message = "line one\nline two \x1b]0;title\x07 \u202edesrever\u202c zero\u200bwidth \u2066isolated\u2069 " + "A" * 1000
     with FakeModelServer([error_reply(400, message)]) as server:
         err = fails(server.base_url)
     text = str(err)
     assert "\n" not in text and "\x1b" not in text and "\x07" not in text
+    assert not any(ch in text for ch in invisible)
+    assert text.count("\ufffd") == len(invisible)  # each one shows as a mark, as text.untrusted() makes it
     servers_part = text.split(": ", 1)[1]
     assert servers_part.startswith("line one")
     assert len(servers_part) <= 300
