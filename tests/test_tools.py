@@ -139,6 +139,16 @@ def test_long_output_is_cut_to_its_head_and_tail_and_saved_in_full(lane):
     assert (lane.root / ".flightdeck" / "out" / "turn7-2.txt").read_text() == full
 
 
+def test_even_the_smallest_max_chars_keeps_results_within_it(lane):
+    with pytest.raises(ValueError, match="max_chars must be at least 200"):
+        Toolbox(lane, max_chars=199)
+    box = Toolbox(lane, max_chars=200)
+    shell = call(box, "shell", {"command": "seq 1 5000"})
+    assert len(shell.content) <= 200 and "characters cut; full output in .flightdeck/out/turn1-0.txt" in shell.content
+    read = call(box, "read_file", {"path": "notes.txt"})
+    assert len(read.content) <= 200 and read.content.startswith("line 1\n") and "read on with start_line=" in read.content
+
+
 def test_output_that_fits_is_not_cut_and_not_saved(lane):
     box = Toolbox(lane, max_chars=1000)
     assert call(box, "shell", {"command": "seq 1 100"}, turn=8, index=0).content == "exit 0\n" + "".join(f"{i}\n" for i in range(1, 101))

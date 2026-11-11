@@ -27,6 +27,8 @@ import httpx
 from ..text import untrusted
 from .workspace import OUTPUT_CAP, PRIVATE, SNIFF, RunResult, Workspace, open_inside, write_inside
 
+MIN_CHARS = 200  # the smallest max_chars that still leaves room for a cut marker or a footer
+FOOTER_CHARS = 160  # room read_file keeps for its "[lines a-b of n; ...]" footer
 CONSOLE_CHARS = 300  # ToolResult.output
 ACTION_CHARS = 400  # ToolResult.action
 PLAN_CHARS = 500
@@ -146,8 +148,8 @@ class Toolbox:
         max_timeout: float = 300.0,
         http_allow: tuple[str, ...] = (),
     ) -> None:
-        if max_chars < 1000:
-            raise ValueError(f"max_chars must be at least 1000, got {max_chars}")
+        if max_chars < MIN_CHARS:
+            raise ValueError(f"max_chars must be at least {MIN_CHARS}, got {max_chars}")
         if not 0 < default_timeout <= max_timeout:
             raise ValueError(f"need 0 < default_timeout <= max_timeout, got {default_timeout} and {max_timeout}")
         self.workspace = workspace
@@ -330,7 +332,7 @@ class Toolbox:
             return self._lines(f, path, action, start, count)
 
     def _lines(self, f: Any, path: str, action: str, start: int, count: int) -> ToolResult:
-        budget = self.max_chars - 200  # room for the footer
+        budget = max(MIN_CHARS - FOOTER_CHARS, self.max_chars - FOOTER_CHARS)
         limit = budget * 4 + 4  # bytes enough for `budget` characters
         lines: list[str] = []
         used = number = 0
@@ -367,7 +369,7 @@ class Toolbox:
             shown = f"{len(lines)} lines" if start == 1 else f"lines {start}-{last}"
             return ToolResult(text, _one_line(action), shown)
         total = _count_lines(f)
-        notes = [f"lines {start}-{last} of {total}"]
+        notes = [f"lines {start}-{last} of {total}" if total is not None else f"lines {start}-{last} of a {os.fstat(f.fileno()).st_size}-byte file"]
         if cut:
             notes.append(f"line {last} is cut; use shell (cut, head -c) for the rest of it")
         if more:
@@ -559,17 +561,16 @@ def _read_line(f: Any, limit: int) -> tuple[bytes | None, bool]:
             return chunk, False
 
 
-def _count_lines(f: Any) -> str:
-    """How many lines the whole file has, or "more" when it is too big to count cheaply."""
-    size = os.fstat(f.fileno()).st_size
-    if size > 64 * 1024 * 1024:
-        return "more"
+def _count_lines(f: Any) -> int | None:
+    """How many lines the whole file has, or None when it is too big to count cheaply."""
+    if os.fstat(f.fileno()).st_size > 64 * 1024 * 1024:
+        return None
     f.seek(0)
     newlines, last = 0, b""
     while chunk := f.read(1024 * 1024):
         newlines += chunk.count(b"\n")
         last = chunk[-1:]
-    return str(newlines + (1 if last and last != b"\n" else 0))
+    return newlines + (1 if last and last != b"\n" else 0)
 
 
 # ---------------------------------------------------------------- http
