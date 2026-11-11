@@ -233,8 +233,9 @@ def play(
         typer.echo(f"flightdeck: {host_warning()}", err=True)
     for note in run.notes():
         typer.echo(f"flightdeck: {note}", err=True)
+    console = run.app()
     try:
-        run.app().run()
+        console.run()
     finally:
         run.close()
         card = run.scorecard()
@@ -243,6 +244,9 @@ def play(
         typer.echo(f"run log: {run.log.path}")
         for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
+    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
+        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(128 + console.stopped_by)
 
 
 def _ask(question: str) -> bool:

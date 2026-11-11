@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import html
+import os
 import re
+import signal
 
 import pytest
 from rich.cells import cell_len
@@ -2237,6 +2239,62 @@ def test_quitting_awaits_the_runs_shutdown_before_the_console_exits(how):
         assert not app.is_running
 
     drive(app, script)
+
+
+@pytest.fixture
+def stop_signals_default():
+    """SIGHUP and SIGTERM as a terminal starts flightdeck (their default action); put back after."""
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGHUP, signal.SIGTERM)}
+    for sig in saved:
+        signal.signal(sig, signal.SIG_DFL)
+    yield
+    for sig, handler in saved.items():
+        signal.signal(sig, handler)
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP], ids=["SIGTERM", "SIGHUP"])
+def test_a_sigterm_or_a_hang_up_stops_the_run_as_quitting_does_without_asking(stop_signals_default, sig):
+    world = FakeWorld(scenarios.get("sstv"))
+    calls = []
+
+    async def on_exit():
+        calls.append("started")
+        await asyncio.sleep(0.01)
+        calls.append("done")
+
+    app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        # the console catches it; if it did not, the signal would end this test run
+        assert signal.getsignal(sig) not in (signal.SIG_DFL, signal.SIG_IGN, None)
+        os.kill(os.getpid(), sig)
+        for _ in range(100):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["started", "done"] and not app.is_running  # nobody had to say yes
+        assert app.stopped_by == sig
+
+    drive(app, script)
+    assert signal.getsignal(sig) is signal.SIG_DFL  # given back when the console exits
+
+
+def test_a_stop_signal_ignored_when_flightdeck_started_stays_ignored(stop_signals_default):
+    """Under nohup, a hang-up is meant to leave the run going."""
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    world = FakeWorld(scenarios.get("sstv"))
+
+    async def on_exit():
+        pass
+
+    app = FlightdeckApp(world.deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        assert signal.getsignal(signal.SIGHUP) is signal.SIG_IGN
+        assert signal.getsignal(signal.SIGTERM) not in (signal.SIG_DFL, signal.SIG_IGN, None)
+
+    drive(app, script)
+    assert signal.getsignal(signal.SIGHUP) is signal.SIG_IGN
 
 
 def test_take_over_with_a_shell_hands_the_lane_back_when_the_console_cannot_let_go_of_the_terminal():
