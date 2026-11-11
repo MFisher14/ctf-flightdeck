@@ -696,12 +696,12 @@ def test_when_the_last_try_runs_out_of_time_the_error_says_so_and_is_retryable()
 
     with RawServer(trickles) as server:
         start = time.monotonic()
-        err = fails(server.base_url, key=KEY, timeout=0.3, max_retries=0)
+        err = fails(server.base_url, key=KEY, timeout=0.25, max_retries=0)
         elapsed = time.monotonic() - start
     assert err.status is None and err.retryable is True
-    assert "timed out after 0.3 s" in str(err) and KEY not in str(err)
+    assert "timed out after 0.25 s" in str(err) and KEY not in str(err)
     assert err.__cause__ is None and err.__context__ is None
-    assert elapsed < 2.0
+    assert 0.25 <= elapsed < 0.45  # the deadline is the timeout itself, not a multiple of it
 
 
 def test_a_refused_connection_is_tried_again_after_the_same_waits_then_fails_as_retryable():
