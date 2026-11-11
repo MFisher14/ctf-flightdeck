@@ -4,9 +4,11 @@ runs a challenge file: the handouts hold invented text and bytes."""
 
 from __future__ import annotations
 
+import asyncio
 import json
-import re
 import os
+import random
+import re
 import shutil
 import subprocess
 import sys
@@ -16,20 +18,24 @@ from pathlib import Path
 import pytest
 
 from ctf_flightdeck.agent.workspace import HostWorkspace
+from ctf_flightdeck.core.model import DeckConfig
 from ctf_flightdeck.l1.manifest import load
 from ctf_flightdeck.l1.router import Hit
 from ctf_flightdeck.l1.runner import (
     BOOT,
     HEAD_BYTES,
     NO_SAFE_PATH,
+    OVERLAP,
     STDERR_TAIL,
     TAIL_BYTES,
+    WINDOW,
     challenge_id_of,
     command,
     missing_tools,
     run_engine,
     run_routed,
     safe_path,
+    scan,
 )
 
 from l1_kit import FLAG, challenge_dir, cli_engine, python_engine, run, tree, write_manifest
@@ -300,6 +306,98 @@ def test_stderr_is_kept_only_at_its_end_and_never_written_to_disk(pack, handout,
     assert r.status == "unsure" and r.notes.startswith("exited 1: ") and r.notes.endswith("wwwlast words")
     sizes = [p.stat().st_size for p in (tmp_path / "work").rglob("*") if p.is_file()]
     assert max(sizes) < 1_000_000  # 30 MB of stderr went nowhere
+
+
+# ---------------------------------------------------------------- the flag search
+
+DEFAULT_FORMAT = DeckConfig(event="x").flag_format  # flightdeck's own, used when a board sets none: quadratic on word runs
+
+
+@pytest.mark.parametrize("fmt", [FLAG, DEFAULT_FORMAT, r"flag\((\w+)\)", r"(?<=key: )t\{\w+\}", r"t\{[a-z0-9_]+"])  # the last: no end mark
+def test_the_windowed_search_finds_what_one_search_per_line_finds(fmt):
+    rng = random.Random(fmt)
+    pattern = re.compile(fmt)
+    for _ in range(40):
+        words = []
+        for _ in range(rng.choice([5, 200, 1500])):  # short lines and lines many windows long
+            roll = rng.random()
+            if roll < 0.05:
+                words.append(rng.choice(["t", "key: t", "flag("]) + "{" + "".join(rng.choices("abc_019", k=rng.randint(1, 120))) + "}")
+            elif roll < 0.08:
+                words.append("flag(" + "".join(rng.choices("xyz", k=rng.randint(1, 40))) + ")")
+            elif roll < 0.1:
+                words.append("\n")
+            else:
+                words.append("".join(rng.choices("abcdef0123", k=rng.randint(1, 12))))
+        text = " ".join(words)
+        expected = {}
+        for line in text.split("\n"):
+            for match in pattern.finditer(line):
+                if match.group(0).strip():
+                    expected.setdefault(match.group(0))
+        found: dict[str, None] = {}
+        assert scan(text, pattern, time.monotonic() + 60, found)
+        assert list(found) == list(expected)
+
+
+def test_a_flag_across_a_window_boundary_is_found_whole_and_never_as_a_piece():
+    pattern = re.compile(DEFAULT_FORMAT)
+    for offset in range(WINDOW - OVERLAP - 40, WINDOW - OVERLAP + 40):  # around where the first window's own part ends
+        text = "-" * offset + " flag{across_the_boundary} " + "-" * 3000
+        found: dict[str, None] = {}
+        assert scan(text, pattern, time.monotonic() + 60, found)
+        assert list(found) == ["flag{across_the_boundary}"], offset  # never "ag{across_the_boundary}" as well
+
+
+def test_a_long_line_of_hex_is_searched_in_bounded_time():
+    # one search over this line with the default format takes tens of seconds (quadratic);
+    # windows keep each search to WINDOW squared steps
+    line = "0123456789abcdef" * 12_500 + " t{hidden_at_the_end}"  # 200,000 word characters, then a flag
+    found: dict[str, None] = {}
+    began = time.monotonic()
+    assert scan(line, re.compile(DEFAULT_FORMAT), time.monotonic() + 60, found)
+    assert list(found) == ["t{hidden_at_the_end}"] and time.monotonic() - began < 10
+
+
+LONG_LINES = "head -c {size} /dev/zero | tr '\\0' a | fold -w 2000\necho\n"  # lines of 2000 word characters
+
+
+def test_the_flag_search_never_holds_up_the_event_loop(pack, handout, tmp_path):
+    # 2 MB of 2000-character word lines: seconds of searching with the default format, in a
+    # thread; the loop (other engines' timeouts, the console) keeps running all along
+    m = cli_engine(pack, "dump", LONG_LINES.format(size=2_000_000) + "echo t{found_at_last}\n")
+
+    async def main():
+        gaps: list[float] = []
+        done = asyncio.Event()
+
+        async def tick():
+            last = time.monotonic()
+            while not done.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        ticker = asyncio.create_task(tick())
+        result = await run_engine(load(m), handout, workdir=tmp_path / "work", flag_format=DEFAULT_FORMAT)
+        done.set()
+        await ticker
+        return result, max(gaps)
+
+    r, worst = asyncio.run(main())
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{found_at_last}",), "")  # searched to the end
+    assert worst < 0.5, f"the event loop stood still for {worst:.2f}s"
+
+
+def test_a_flag_search_that_runs_out_of_time_stops_and_is_never_none(pack, handout, tmp_path):
+    slow = cli_engine(pack, "dump", LONG_LINES.format(size=6_000_000))
+    r = run(run_engine(load(slow), handout, workdir=tmp_path / "w1", flag_format=DEFAULT_FORMAT, timeout=1))
+    assert (r.status, r.flags) == ("unsure", ())
+    assert r.notes == "flag search stopped after 1s, before the end of its output"
+    early = cli_engine(pack, "dump_early", "echo t{first_line}\n" + LONG_LINES.format(size=6_000_000))
+    r = run(run_engine(load(early), handout, workdir=tmp_path / "w2", flag_format=DEFAULT_FORMAT, timeout=1))
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{first_line}",), "flag search stopped after 1s, before the end of its output")
 
 
 # ---------------------------------------------------------------- cli engines

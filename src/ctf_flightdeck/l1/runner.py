@@ -94,6 +94,8 @@ NO_SAFE_PATH = (
     "of the challenge), so no program can be looked up safely; nothing ran"
 )
 LINE_TAIL = 120  # characters of a last line that was not a result, kept in the notes
+WINDOW = 2048  # characters of a line the flag search looks at in one search
+OVERLAP = 512  # windows overlap by this much: a flag up to this long is never cut
 _CAPTURE_KEYS = ("capture", "status", "stdout", "head", "tail", "stderr", "stderr_kept")
 if HEAD_BYTES + TAIL_BYTES + STDERR_BYTES + 4096 > OUTPUT_CAP:  # the record must reach the runner whole
     raise RuntimeError("the capture's record would not fit in a workspace's output cap")
@@ -313,7 +315,10 @@ async def _run_in(
     except WorkspaceError as exc:
         return SolverResult("blocked", notes=f"its workspace could not run it: {_safe(str(exc))}"), time.monotonic() - begun
     seconds = time.monotonic() - begun
-    return _interpret(manifest, run, workspace.root, name, pattern, limit), seconds
+    # reading the record and searching megabytes of output: never on the event loop, where it
+    # would hold up every other engine's timeout (and, in a lane, the console)
+    result = await asyncio.to_thread(_interpret, manifest, run, workspace.root, name, pattern, limit)
+    return result, seconds
 
 
 @dataclass(frozen=True)
@@ -378,7 +383,7 @@ def _interpret(manifest: Manifest, run: RunResult, root: Path, name: str, patter
             f"{manifest.entry.function}() returned nothing; a result engine returns a SolverResult "
             '(output = "text" is for an engine that prints its findings)'
         ))
-    flags, unsearched = _search(out, pattern)
+    flags, unsearched = _search(out, pattern, limit)
     if flags:
         evidence = Evidence("match", f"{len(flags)} distinct flag-format match{'es' if len(flags) > 1 else ''} in its output")
         notes = [f"exited {code}"] if code else []
@@ -434,13 +439,62 @@ def _result_file(root: Path, name: str, label: str) -> tuple[SolverResult | None
         return None, f"{label} is not a SolverResult ({_safe(str(exc))})"
 
 
-def _search(out: Captured, pattern: re.Pattern[str]) -> tuple[tuple[str, ...], list[str]]:
-    """(the flags in what was kept of stdout, notes on what was not searched)."""
-    if out.dropped == 0:
-        return _flags((out.head + out.tail).decode("utf-8", "replace"), pattern), []
-    found = _flags(out.head.decode("utf-8", "replace"), pattern) + _flags(out.tail.decode("utf-8", "replace"), pattern)
-    kept = (HEAD_BYTES + TAIL_BYTES) // MB
-    return tuple(dict.fromkeys(found)), [f"output over {kept} MB: {out.dropped} bytes in the middle not searched"]
+def _search(out: Captured, pattern: re.Pattern[str], limit: float) -> tuple[tuple[str, ...], list[str]]:
+    """(the flags in what was kept of stdout, in order, deduplicated; notes on what was not
+    searched). The search stops after `limit` seconds, the engine's own time limit."""
+    deadline = time.monotonic() + limit
+    found: dict[str, None] = {}
+    notes: list[str] = []
+    parts = [out.head + out.tail] if out.dropped == 0 else [out.head, out.tail]  # head and tail meet only when nothing was dropped
+    for part in parts:
+        if not scan(part.decode("utf-8", "replace"), pattern, deadline, found):
+            notes.append(f"flag search stopped after {limit:g}s, before the end of its output")
+            break
+    if out.dropped:
+        notes.append(f"output over {(HEAD_BYTES + TAIL_BYTES) // MB} MB: {out.dropped} bytes in the middle not searched")
+    return tuple(found), notes
+
+
+def scan(text: str, pattern: re.Pattern[str], deadline: float, found: dict[str, None]) -> bool:
+    """Add every flag-format match in `text` to `found`, in order; False if time.monotonic()
+    passed `deadline` before the end (what was found so far stays in `found`).
+
+    The cost of one search is bounded whatever the text or the format: each line is searched
+    on its own (a flag never spans a line break), and a line longer than WINDOW characters in
+    windows of WINDOW that overlap by OVERLAP, so a flag up to OVERLAP characters long is never
+    cut. A match counts for the window it starts in (before the overlap), searching resumes
+    where the last match ended, as one search over the line would, and the deadline is
+    checked between searches. flightdeck's default format, \\w+\\{...\\}, is quadratic on a run of
+    word characters (a line of hex): a window keeps that to WINDOW squared steps, where one
+    search over a megabyte line would take hours. A search itself cannot be stopped, so a
+    format that backtracks exponentially can still take long on one window."""
+    end = len(text)
+    start = 0
+    while start <= end:
+        if time.monotonic() > deadline:
+            return False
+        stop = text.find("\n", start)
+        if stop < 0:
+            stop = end
+        window = start
+        resume = start
+        while True:
+            last = min(window + WINDOW, stop)
+            own = last if last == stop else window + WINDOW - OVERLAP  # matches from here on belong to the next window
+            for match in pattern.finditer(text, max(window, resume), last):
+                if match.start() >= own:
+                    break
+                if match.end() > match.start():
+                    if match.group(0).strip():
+                        found.setdefault(match.group(0))
+                    resume = match.end()
+            if last == stop:
+                break
+            window += WINDOW - OVERLAP
+            if time.monotonic() > deadline:
+                return False
+        start = stop + 1
+    return True
 
 
 def _read_upto(fd: int, limit: int) -> bytes:
@@ -462,11 +516,6 @@ def _last_line(text: str) -> str | None:
         if line.strip():
             return line.strip()
     return None
-
-
-def _flags(text: str, pattern: re.Pattern[str]) -> tuple[str, ...]:
-    found = (m.group(0) for m in pattern.finditer(text))
-    return tuple(dict.fromkeys(flag for flag in found if flag.strip()))
 
 
 def _exited(code: int, stderr: str) -> str:
