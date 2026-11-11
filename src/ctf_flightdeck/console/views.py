@@ -7,9 +7,11 @@ rich Text, never parsed as markup, so "[@click=app.quit]" or an escape sequence 
 literally and cannot steer the console.
 
 What a lane did is shown as its transcript keeps it (lane_text): its steps and their output,
-flightdeck's notes and alerts, its plan, its result and the diffs of the files it changed have
-the value of anything shaped like a credential taken out (credentials.py), and the flags the
-run knows for its challenge stay. A screen is shared or screenshotted like a run folder.
+flightdeck's notes and alerts, the commands an alert suggests (a loop's hint quotes the
+command it repeats), the hints it has not read yet, its plan, its result and the diffs of the
+files it changed have the value of anything shaped like a credential taken out
+(credentials.py), and the flags the run knows for its challenge stay. A screen is shared or
+screenshotted like a run folder.
 """
 
 from __future__ import annotations
