@@ -22,7 +22,9 @@ import io
 import json
 import os
 import re
+import shutil
 import struct
+import subprocess
 import urllib.parse
 import zipfile
 import zlib
@@ -33,7 +35,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-PRACTICE = REPO / "practice"
+PRACTICE = REPO / "src" / "ctf_flightdeck" / "practice"  # inside the package, so it ships in the wheel
 
 
 def load_json(path: Path):
@@ -521,7 +523,7 @@ def test_the_reference_solver_recovers_the_flag_from_the_handout(folder):
 def repository_files() -> list[Path]:
     """The repository's own files: what is committed or about to be (no venv, caches or .git)."""
     found = [p for p in REPO.iterdir() if p.is_file()]
-    for top in ("practice", "tests", "src", "docs", ".githooks"):
+    for top in ("tests", "src", "docs", ".githooks"):
         found += [p for p in files_under(REPO / top) if "__pycache__" not in p.parts]
     return found
 
@@ -578,8 +580,37 @@ def test_each_handout_is_under_1_mb_and_the_whole_set_under_2_mb():
     assert sum(p.stat().st_size for p in files_under(PRACTICE)) < 2_000_000
 
 
+def test_the_wheel_ships_every_file_of_the_set_byte_for_byte(tmp_path):
+    """`flightdeck practice` must work right after `pip install`, with no clone of the repository."""
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed, and building the wheel needs it")
+    build = subprocess.run(
+        [uv, "build", "--wheel", "--offline", "--out-dir", str(tmp_path), str(REPO)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+    )
+    if build.returncode != 0 and "network was disabled" in build.stderr:
+        pytest.skip("uv cannot build the wheel offline here: the build backend is not in uv's cache")
+    assert build.returncode == 0, f"uv build failed:\n{build.stderr}"
+    (wheel,) = tmp_path.glob("*.whl")
+    missing, changed, executable = [], [], []
+    with zipfile.ZipFile(wheel) as archive:
+        for path in files_under(PRACTICE):
+            name = "ctf_flightdeck/practice/" + path.relative_to(PRACTICE).as_posix()
+            try:
+                info = archive.getinfo(name)
+            except KeyError:
+                missing.append(name)
+                continue
+            if archive.read(info) != path.read_bytes():
+                changed.append(name)
+            if (info.external_attr >> 16) & 0o111:
+                executable.append(name)
+    assert (missing, changed, executable) == ([], [], [])
+
+
 def test_the_readme_says_how_to_play_and_that_honest_practice_uses_docker():
     readme = (PRACTICE / "README.md").read_text(encoding="utf-8")
-    assert "flightdeck play practice" in readme
+    assert "flightdeck practice" in readme
     assert "host runtime" in readme and "docker runtime" in readme
     assert "tests/test_practice.py" in readme  # where the spoilers are

@@ -29,13 +29,14 @@ one step. Real CTFs plant decoys, and so does this set.
 ## Play
 
 ```sh
-flightdeck play practice
+flightdeck practice
 ```
 
-The `play` command is still being built (milestone M1). It loads this folder as a board: each
-directory is one challenge (`challenge.json` plus the handout files it lists), `board.json` names
-the event and the flag format, and `answers.sha256.json` lets flightdeck check a flag without
-knowing it.
+The command is still being built (milestone M1). The set ships inside the installed package, as
+`ctf_flightdeck/practice/` (`src/ctf_flightdeck/practice/` in the repository), so playing it needs
+no clone. flightdeck loads this folder as a board: each directory is one challenge
+(`challenge.json` plus the handout files it lists), `board.json` names the event and the flag
+format, and `answers.sha256.json` lets flightdeck check a flag without knowing it.
 
 ## Honest practice uses the docker runtime
 
@@ -64,14 +65,16 @@ hint" alert.
 
 ## Tests (spoilers)
 
-`uv run pytest tests/test_practice.py` checks every `challenge.json` against the folder-board
-format, that nothing here is executable, the size limits, and that a reference solver recovers
-each flag from its handout and matches the answers file. The solvers read the files and undo the
-transformation; they never run handout code. Read that file after you have played.
+In a clone of the repository, `uv run pytest tests/test_practice.py` checks every `challenge.json`
+against the folder-board format, that nothing here is executable, the size limits, and that a
+reference solver recovers each flag from its handout and matches the answers file. The solvers read
+the files and undo the transformation; they never run handout code. Read that file after you have
+played. The installed package does not include it.
 
 ## Adding a challenge
 
-1. Add a directory with `challenge.json` and the handout files, all listed in `files`.
+1. Add a directory to `src/ctf_flightdeck/practice/` with `challenge.json` and the handout files,
+   all listed in `files`.
 2. Put the SHA-256 of the flag in `answers.sha256.json`, never the flag itself.
 3. Add a reference solver to `tests/test_practice.py` that recovers the flag from the handout with
    the standard library, without running handout code.
