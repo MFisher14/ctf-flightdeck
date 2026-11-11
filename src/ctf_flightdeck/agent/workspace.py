@@ -39,10 +39,12 @@ from ..text import untrusted
 
 PRIVATE = ".flightdeck"
 """flightdeck's own directory in a workspace (home, tmp, logs, tool output). Never copied
-from a handout and never snapshotted."""
+from a handout and never snapshotted; the host runtime puts it back before each command if
+the lane removed or replaced it (restore_private)."""
 
 CONTAINER_ROOT = "/work"
 OUTPUT_CAP = 10 * 1024 * 1024  # bytes of a command's output kept; the rest is dropped with a note
+NOT_RUN = 126  # the exit status of a command the host runtime could not start (bash's "cannot execute")
 DOCKER_BACKSTOP = 15.0  # seconds past a command's own timeout before the docker exec client is killed
 DOCKER_CALL_TIMEOUT = 60.0  # seconds for docker's own housekeeping calls (run, inspect, rm)
 
@@ -154,6 +156,37 @@ def write_inside(root: Path, relative: str, data: bytes) -> None:
         os.close(dir_fd)
     with open(fd, "wb") as out:
         out.write(data)
+
+
+def restore_private(root: Path) -> None:
+    """Make root/.flightdeck and its home/ and tmp/ real directories again, for a lane that
+    deleted them or put something else there (by extracting an archive, say). .flightdeck is
+    flightdeck's own name, so a file, a symlink or a FIFO there is unlinked, never followed,
+    and the directory made anew. OSError when that cannot be done."""
+    top = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        _own_dir(top, PRIVATE)
+        private = os.open(PRIVATE, _DIR, dir_fd=top)
+    finally:
+        os.close(top)
+    try:
+        for sub in ("home", "tmp"):
+            _own_dir(private, sub)
+    finally:
+        os.close(private)
+
+
+def _own_dir(dir_fd: int, name: str) -> None:
+    """dir_fd/name as a directory: made if missing, and anything else there unlinked first."""
+    try:
+        info = os.lstat(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        info = None
+    if info is not None and stat.S_ISDIR(info.st_mode):
+        return
+    if info is not None:
+        os.unlink(name, dir_fd=dir_fd)  # a symlink itself goes, never what it points at
+    os.mkdir(name, dir_fd=dir_fd)
 
 
 def _quoted(text: str) -> str:
@@ -405,12 +438,20 @@ class HostWorkspace:
         self._bash = bash
 
     async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:
+        """Run one command. Whatever the lane did to its .flightdeck, this never raises for
+        it: the directories are put back, and if even that fails the command is not run and
+        the result says why (exit status NOT_RUN)."""
         bash = self._ready()
         _check_call(command, timeout)
         try:
-            env = self._env()
+            restore_private(self.root)
         except OSError as exc:
-            raise WorkspaceError(f"cannot set up {PRIVATE}/home and {PRIVATE}/tmp in {self.root}: {exc}") from None
+            note = (
+                f"flightdeck: cannot set up {PRIVATE}/home and {PRIVATE}/tmp: {exc}; the command was not run. "
+                f"{PRIVATE} is flightdeck's own directory: the player can take over the lane to repair it.\n"
+            )
+            return RunResult(NOT_RUN, note.encode())
+        env = self._env()
         self._prune()
         try:
             code, output, timed_out = await _execute(
@@ -435,9 +476,10 @@ class HostWorkspace:
     def interactive_shell(self) -> ShellSpec:
         self._ready()
         try:
-            env = self._env()
-        except OSError as exc:
-            raise WorkspaceError(f"cannot set up {PRIVATE}/home and {PRIVATE}/tmp in {self.root}: {exc}") from None
+            restore_private(self.root)
+        except OSError:
+            pass  # it opens anyway: taking over is how the player repairs what the lane broke
+        env = self._env()
         env["TERM"] = os.environ.get("TERM", "dumb")  # the player's own terminal, so editors and pagers work
         env["HISTFILE"] = str(self.root / PRIVATE / "takeover_history")
         return ShellSpec([self.shell, "-i"], self.root, env)
@@ -451,12 +493,12 @@ class HostWorkspace:
 
     def _env(self) -> dict[str, str]:
         """The allowlist, built fresh for each command: nothing else of this machine's
-        environment (no API keys, no tokens). HOME and TMPDIR are the lane's own."""
+        environment (no API keys, no tokens). HOME and TMPDIR are the lane's own, which
+        restore_private() makes sure are there."""
         env = {name: os.environ[name] for name in _ALLOWED_ENV if name in os.environ}
         env["TERM"] = "dumb"
-        for name, sub in (("HOME", "home"), ("TMPDIR", "tmp")):
-            os.close(open_dir(self.root, [PRIVATE, sub], create=True))  # the lane may have deleted it
-            env[name] = str(self.root / PRIVATE / sub)
+        env["HOME"] = str(self.root / PRIVATE / "home")
+        env["TMPDIR"] = str(self.root / PRIVATE / "tmp")
         return env
 
     def _started(self, proc: asyncio.subprocess.Process) -> None:

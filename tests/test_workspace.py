@@ -225,6 +225,59 @@ def test_home_and_tmp_come_back_if_the_lane_deletes_them(lane):
     assert run(lane.run('touch "$HOME/h" "$TMPDIR/t" && echo ok', timeout=10)).output == b"ok\n"
 
 
+BREAKAGES = {
+    "a file at .flightdeck": "rm -rf .flightdeck && touch .flightdeck",
+    "a symlink at .flightdeck": "rm -rf .flightdeck && ln -s {elsewhere} .flightdeck",
+    "a file at .flightdeck/home": "rm -rf .flightdeck/home && echo x > .flightdeck/home",
+    "a symlink at .flightdeck/tmp": "rm -rf .flightdeck/tmp && ln -s {elsewhere} .flightdeck/tmp",
+    "a fifo at .flightdeck/home": "rm -rf .flightdeck/home && mkfifo .flightdeck/home",
+}
+
+
+def assert_private_dirs_are_real(root: Path) -> None:
+    for sub in (".flightdeck", ".flightdeck/home", ".flightdeck/tmp"):
+        assert stat.S_ISDIR(os.lstat(root / sub).st_mode), sub
+
+
+@pytest.mark.parametrize("breakage", list(BREAKAGES))
+def test_a_lane_that_puts_something_else_at_flightdeck_gets_the_directories_back(lane, tmp_path, breakage):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert run(lane.run(BREAKAGES[breakage].format(elsewhere=elsewhere), timeout=10)).exit_code == 0
+    assert run(lane.run('touch "$HOME/h" "$TMPDIR/t" && echo ok', timeout=10)) == RunResult(0, b"ok\n")
+    assert_private_dirs_are_real(lane.root)
+    assert list(elsewhere.iterdir()) == []  # the symlink itself went; nothing was made where it pointed
+
+
+@pytest.mark.parametrize("breakage", ["a file at .flightdeck", "a symlink at .flightdeck"])
+def test_the_take_over_shell_opens_after_the_lane_broke_flightdeck(lane, tmp_path, breakage):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    run(lane.run(BREAKAGES[breakage].format(elsewhere=elsewhere), timeout=10))
+    spec = lane.interactive_shell()
+    assert (spec.argv, spec.cwd) == (["bash", "-i"], lane.root)
+    assert spec.env["HOME"] == str(lane.root / ".flightdeck" / "home")
+    assert_private_dirs_are_real(lane.root)
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_flightdeck_that_cannot_be_repaired_gives_an_error_result_and_the_take_over_still_opens(lane):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions, so this cannot make the repair fail")
+    run(lane.run("chmod 000 .flightdeck", timeout=10))
+    try:
+        result = run(lane.run("touch ran.txt", timeout=10))
+        spec = lane.interactive_shell()
+    finally:
+        os.chmod(lane.root / ".flightdeck", 0o755)
+    assert (result.exit_code, result.timed_out) == (126, False)
+    assert result.output.startswith(b"flightdeck: cannot set up .flightdeck/home and .flightdeck/tmp: [Errno 13] Permission denied")
+    assert b"the command was not run" in result.output and b"take over the lane" in result.output
+    assert not (lane.root / "ran.txt").exists()
+    assert spec.cwd == lane.root
+    assert run(lane.run("echo ok", timeout=10)) == RunResult(0, b"ok\n")  # and it works again once it can be repaired
+
+
 def test_a_timeout_kills_the_whole_process_group_and_keeps_the_partial_output(lane):
     started = time.monotonic()
     result = run(lane.run("sleep 300 & echo $! > bg.pid; echo partial; sleep 300", timeout=1))
