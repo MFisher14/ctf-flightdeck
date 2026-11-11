@@ -759,6 +759,50 @@ def test_two_alerts_of_a_kind_on_a_lane_each_have_their_own_turn_and_steps(tmp_p
     assert [t.content for t in walk(text) if t.type == "fence"] == ["ls\nls\n", "ls\nls -a\nls -a\n"]
 
 
+# Made-up keys, built from pieces so no line here is shaped like a real one (.githooks/secret_scan.py).
+OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
+GITHUB = "ghp" + "_" + "a1B2" * 9
+PLANTED = "PLANTED-HERE"
+
+
+def planted(folder: Path, text: str) -> Path:
+    """The run folder as a run wrote it before its log and its transcripts were cleaned as
+    they were written: `text` as it was wherever this run wrote PLANTED."""
+    for path in [folder / "events.jsonl", *(folder / "lanes").glob("*.jsonl")]:
+        path.write_text(path.read_text().replace(PLANTED, text))
+    return folder
+
+
+def test_a_report_quotes_an_older_run_folder_without_its_credentials(tmp_path):
+    """An older run folder holds a host lane's commands and outputs as they were. The report
+    reads it with each credential's value taken out (credentials.py), as a writeup does: the
+    steps a stall quotes, the alert's reason (which quotes an output) and the lane's result
+    keep each name and lose each value. The flags the run names stay whole, one shaped like a
+    credential too."""
+    flag = "t{TOKEN=c0ffee}"
+    run = Script(tmp_path, flags={"x": "t{right}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, f"cat keys.env  # {PLANTED}")
+    run.turn(lane, f"submit {flag}", flag=flag)
+    run.do(iv.Approve(lane))  # the platform says it is wrong
+    run.turn(lane, f"cat keys.env  # {PLANTED}", alerts=(Alert(AlertKind.LOOP, f"The same output came back twice: {PLANTED}"),))
+    run.turn(lane, "ls", gave_up=f"nothing more to try; {PLANTED}")
+    run.close()
+    record = load_run(planted(tmp_path, f"OPENROUTER_API_KEY={OPENROUTER} GITHUB_TOKEN={GITHUB}"))
+    assert OPENROUTER in record.lanes[lane].actions[0].text and OPENROUTER in (tmp_path / "events.jsonl").read_text()
+    text = report(record)
+    assert "5f" * 32 not in text and "a1B2" * 9 not in text
+    cleaned = "OPENROUTER_API_KEY=[redacted] GITHUB_TOKEN=[redacted]"
+    assert [t.content for t in walk(text) if t.type == "fence"] == [
+        f"cat keys.env  # {cleaned}\nsubmit {flag}\ncat keys.env  # {cleaned}\n",
+    ]
+    lines = [shown(t) for t in walk(text) if t.type == "inline"]
+    assert f"Why: The same output came back twice: {cleaned}" in lines
+    assert any(line.endswith(f"L01 submitted {flag}: wrong") for line in lines)
+    assert any(line.endswith(f"nothing more to try; {cleaned}") for line in lines)
+
+
 @pytest.mark.parametrize("budget_approved", [False, True], ids=["left waiting", "approved"])
 def test_a_flags_verdict_does_not_answer_a_budget_alert(tmp_path, budget_approved):
     run = Script(tmp_path, flags={"x": "t{right}"})

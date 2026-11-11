@@ -62,6 +62,12 @@ character Markdown reads as syntax is backslash-escaped, so it shows as itself: 
 links or images, no emphasis, no extra table cells, no headings. Flags are inline code and
 commands are fenced code blocks, each fence longer than any backtick run inside. Nothing a
 run holds is ever emitted as raw HTML.
+
+Nor is a credential: the report reads the run with the value of anything shaped like one taken
+out of the text of its log and its transcripts (credentials.py), as a writeup does, so the
+steps a stall quotes, an alert's reason (which can quote a command or its output), a lane's
+result or a hint never show a key. A run folder written before the log and the transcripts
+were cleaned as they were written still holds them. The flags the run names stay as they are.
 """
 
 from __future__ import annotations
@@ -70,10 +76,10 @@ import re
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from . import fmt
+from . import credentials, fmt
 from .core.model import FINISHED, ME, ActionKind, Actor, AlertKind, EventKind, PendingKind
 from .runrecord import (
     L1, LANE, PLAYER, TEAM, TEAMMATE, YOUR_TEAM, Credit, EventLine, LaneRecord, RunRecord, Solve, finite, l1_flags, run_time,
@@ -452,8 +458,34 @@ def _known_dollars(lanes) -> tuple[float, int]:
     return known, unpriced
 
 
+def _without_credentials(record: RunRecord) -> RunRecord:
+    """The run as a report quotes it: the text of every event (its text and each string in
+    its data) and of every lane's transcript (its result, its plan, each entry's text and
+    output) with the value of anything shaped like a credential taken out (credentials.py).
+    Every flag the run's log names stays as it is."""
+    keep = tuple(dict.fromkeys(flag for event in record.events for flag in credentials.named_flags(event.data)))
+
+    def clean(text: str) -> str:
+        return credentials.redact(text, keep=keep)
+
+    events = tuple(
+        replace(event, text=clean(event.text), data=credentials.redact_data(dict(event.data), keep=keep))
+        for event in record.events
+    )
+    lanes = {
+        lid: replace(
+            head, result=clean(head.result), plan=clean(head.plan),
+            actions=tuple(replace(action, text=clean(action.text), output=clean(action.output)) for action in head.actions),
+        )
+        for lid, head in record.lanes.items()
+    }
+    return replace(record, events=events, lanes=lanes)
+
+
 def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
-    """Work out the facts of a run; report() and summary() render them."""
+    """Work out the facts of a run, read without its credentials (_without_credentials);
+    report() and summary() render them."""
+    record = _without_credentials(record)
     events = record.events
     notes = list(record.problems)
     challenges: dict[str, ChallengeFacts] = {}
