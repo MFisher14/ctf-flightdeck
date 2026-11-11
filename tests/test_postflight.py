@@ -11,6 +11,7 @@ checked with a CommonMark parser (markdown-it, which the console already depends
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from pathlib import Path
@@ -22,6 +23,7 @@ from typer.testing import CliRunner
 
 from ctf_flightdeck import postflight_cli, writeup
 from ctf_flightdeck.agent.l1stage import FLAG_STATUSES
+from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -85,9 +87,9 @@ class RecordingDriver:
 class Script:
     """A run played by script; the real deck, EventLog and TranscriptLog write its folder."""
 
-    def __init__(self, folder: Path, *, flags=None, models=MODELS, team=True, max_lanes=8) -> None:
+    def __init__(self, folder: Path, *, flags=None, models=MODELS, team=True, max_lanes=8, clock=None) -> None:
         self.folder = folder
-        self.clock = ManualClock(0.0)
+        self.clock = clock if clock is not None else ManualClock(0.0)
         self.driver = RecordingDriver()
         self.flags = dict(flags or {})
         self.models = models
@@ -561,6 +563,27 @@ def test_warnings_and_budget_requests_are_on_the_timeline(tmp_path):
     x = entries(timeline["X (misc, 10 pts): not solved"])
     assert "L01 asked for approval: raise the cap by 50% (now 1k of 1k tokens)" in x
     assert "- Points: 0 of at least 10 (1 challenge with no known points)" in text.splitlines()
+
+
+def test_the_release_comes_first_on_a_clock_that_moves_on_every_read(tmp_path):
+    ticks = itertools.count()
+    run = Script(tmp_path, clock=RunClock(lambda: float(next(ticks))))  # a second per read, so no two events share a time
+    run.driver.fail["y"] = "no container runtime"
+    run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "misc", 20)])
+    run.turn(run.lane("x"), "ls", flag="t{x}")
+    record = run.close()
+    kinds = [e.kind for e in record.events]
+    assert kinds.index("lane.start") < kinds.index("warning") < kinds.index("release")  # as the deck logs a release
+    timeline = sections(report(record), "### ")
+    x = items(timeline["X (misc, 10 pts): not solved"])
+    y = items(timeline["y (category unknown, points unknown): not solved"])
+    assert [re.sub(r"^T\+\S+ · ", "", item) for item in x[:2]] == ["released (Board)", "L01 started on small"]
+    assert [re.sub(r"^T\+\S+ · ", "", item) for item in y] == [
+        "released (Board)", "warning: could not start a lane on Y: no container runtime",
+    ]
+    x_clocks, y_clocks = ([item.split(" · ")[0] for item in lines] for lines in (x, y))
+    assert x_clocks == sorted(x_clocks) and y_clocks == sorted(y_clocks)  # the clock never runs backwards
+    assert x_clocks[0] == x_clocks[1] == y_clocks[0] < y_clocks[1]  # the release, shown when it began: L01's start
 
 
 # ---------------------------------------------------------------------- where lanes stalled

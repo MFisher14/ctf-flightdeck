@@ -858,6 +858,7 @@ def _timeline(flight: Flight) -> list[str]:
         return out + ["No challenges in this run.", ""]
     events = flight.record.events
     steps = {step.index: step for step in flight.steps}
+    began = _release_began(events, flight.by_challenge)
     for cid, info in flight.challenges.items():
         solve = flight.solves.get(cid)
         name = md_text(info.name or cid)
@@ -878,18 +879,40 @@ def _timeline(flight: Flight) -> list[str]:
         else:
             out.append("No lanes.")
         out.append("")
-        # In time order. The deck logs a release after the lanes it starts, so at the same
-        # moment the release goes first.
-        shown = sorted(
-            flight.by_challenge.get(cid, ()),
-            key=lambda i: (events[i].at, events[i].kind != EventKind.RELEASE, i),
-        )
-        for index in shown:
+        for index, at in _in_order(events, flight.by_challenge.get(cid, ()), began):
             line = _entry(flight, index, events[index], solve, steps)
             if line:
-                out.append(f"- {_clock(events[index].at)} · {line}")
+                out.append(f"- {_clock(at)} · {line}")
         out.append("")
     return out
+
+
+def _first_release(events: Sequence[EventLine], indices: Sequence[int]) -> int | None:
+    return next((i for i in sorted(indices) if events[i].kind == EventKind.RELEASE), None)
+
+
+def _release_began(events: Sequence[EventLine], by_challenge: Mapping[str, Sequence[int]]) -> dict[int, float]:
+    """When each release began, by its event index. The deck logs a release after the lanes
+    it started and the warnings it raised, a little later on a real clock; the events of its
+    challenges logged before it are those (a challenge has nothing before its release), and
+    the first of them is when it began."""
+    began: dict[int, float] = {}
+    for indices in by_challenge.values():
+        release = _first_release(events, indices)
+        if release is not None:
+            first = min(events[i].at for i in indices if i <= release)
+            began[release] = min(began.get(release, first), first)
+    return began
+
+
+def _in_order(events: Sequence[EventLine], indices: Sequence[int], began: Mapping[int, float]) -> list[tuple[int, float]]:
+    """A challenge's events in the order they were logged (the deck's clock only moves on),
+    each with the time to show, except its release, which goes first, at the time it began."""
+    order = sorted(indices)
+    release = _first_release(events, order)
+    if release is None:
+        return [(i, events[i].at) for i in order]
+    return [(release, began.get(release, events[release].at))] + [(i, events[i].at) for i in order if i != release]
 
 
 def _entry(flight: Flight, index: int, event: EventLine, solve: Solve | None, steps: Mapping[int, Step]) -> str:
