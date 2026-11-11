@@ -64,6 +64,15 @@ def test_a_wave_re_pull_keeps_the_boards_event_and_flag_format(tmp_path):
     assert (board.event, board.flag_format) == ("Spring CTF", FLAG_FORMAT)
 
 
+def test_a_name_with_a_lone_surrogate_does_not_stop_the_pull(tmp_path):
+    # "\ud800" is valid JSON, but no encoding can print it: the progress line stopped the pull with exit 2
+    with FakeCTFd([FakeChallenge(1, "Bad \ud800 Name", files={"a.txt": b"a"})] + sample()[1:]) as fake:
+        result = pull(fake.base_url, str(tmp_path / "board"), "--token-env", TOKEN_VAR, env={TOKEN_VAR: TOKEN})
+    assert result.exit_code == 0, result.output
+    assert 'added bad-name: "Bad � Name" (misc, 100 points, 1 file)' in result.stdout
+    assert "4 challenges, 4 new" in result.stdout
+
+
 def test_pull_without_the_token_variable_fails_naming_it(tmp_path):
     with FakeCTFd(sample()) as fake:
         unset = pull(fake.base_url, str(tmp_path / "b"), "--token-env", TOKEN_VAR, env={TOKEN_VAR: ""})

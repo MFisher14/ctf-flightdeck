@@ -663,6 +663,28 @@ def test_origins_are_taken_from_urls_in_the_connection_info():
     assert origins_in("ftp://files.example.org http://bad_port.example.org:99999 http://") == ()
 
 
+def test_text_from_ctfd_with_a_lone_surrogate_is_made_valid_before_it_is_kept_or_shown(tmp_path):
+    # "\ud800" is valid JSON, and nothing can encode it: not print(), a terminal, a log or a file
+    board = [FakeChallenge(1, "Bad \ud800 Name", category="Mi\udc00sc", description="De\ud83dsc",
+                           connection_info="nc a.example.org 1 \udfff"),
+             FakeChallenge(2, "Far \ud800", file_urls=["https://cdn.example.org/far.zip"])]
+    incorrect = {"success": True, "data": {"status": "incorrect", "message": "No \ud800 way"}}
+    with FakeCTFd(board) as fake:
+        result = pulled(fake, tmp_path / "board")
+        fake.script("POST", "/api/v1/challenges/attempt", Reply(200, incorrect))
+        attempt = call(fake, lambda c: c.attempt(1, "test{x}"))
+        fake.script("GET", "/api/v1/challenges", Reply(403, {"message": "closed \ud800 now"}))
+        error = failure(fake, lambda c: c.challenges())
+    (item,) = result.board.challenges
+    shown = (item.challenge.name, item.challenge.category, item.challenge.description)
+    assert shown == ("Bad � Name", "mi�sc", "De�sc\n\nConnection info: nc a.example.org 1 �")
+    (problem,) = result.problems
+    assert problem.startswith('challenge 2 ("Far �"): ') and attempt.message == "No � way"
+    assert "closed � now" in str(error)
+    for text in (*shown, problem, attempt.message, str(error)):
+        text.encode("utf-8")  # strict: raises on a lone surrogate
+
+
 def test_slugs_are_board_ids_and_unique(tmp_path):
     board = [FakeChallenge(3, "Warmup"), FakeChallenge(7, "Warmup", category="Crypto"), FakeChallenge(8, "???"),
              FakeChallenge(9, "Café Crème – Part 1"), FakeChallenge(10, "A" * 100),

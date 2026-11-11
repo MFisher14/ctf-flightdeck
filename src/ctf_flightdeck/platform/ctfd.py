@@ -79,7 +79,7 @@ from urllib.parse import unquote
 import httpx
 
 from .. import __version__
-from ..text import untrusted
+from ..text import MARK, untrusted
 from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board
 from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
 from .manual import _settings as _board_json  # board.json's event and flag format, read as the board loader reads them
@@ -116,6 +116,7 @@ _SECONDS = re.compile(r"\s*(\d{1,10}(?:\.\d{1,6})?)\s*")
 _URL = re.compile(r"https?://[^\s<>\"'`\\]+", re.IGNORECASE)
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _FILE_TOKEN = re.compile(r"([?&]token=)[^&#\s]*", re.IGNORECASE)
+_SURROGATE = re.compile(r"[\ud800-\udfff]")  # in a str only as a lone half of a pair: valid JSON, unprintable
 _NOT_JSON = object()
 _LATE = object()  # an answer that was not all in by the deadline
 _TRANSIENT = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
@@ -1140,6 +1141,7 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
     name = field("name")
     if not isinstance(name, str) or not name.strip():
         raise _Unusable("it has no name")
+    name = _valid(name)
     category = field("category")
     if category is None:
         category = ""
@@ -1168,6 +1170,7 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
         files = []
     if not isinstance(files, list) or not all(isinstance(url, str) for url in files):
         raise _Unusable("its files are not a list of URLs")
+    category, description, connection = _valid(category), _valid(description), _valid(connection)
     extra: list[str] = []  # what the folder board has no field for, after CTFd's description
     connection = connection.strip()
     if connection and connection not in description:
@@ -1201,7 +1204,7 @@ def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:
         return text, None
     path, fd = _create(stage, DESCRIPTION_FILE)
     with os.fdopen(fd, "wb") as out:
-        out.write(text.encode("utf-8", "replace"))
+        out.write(text.encode("utf-8"))  # _spec made every part valid text
     note = (
         "Note from flightdeck: this description is too long for the board, so it is cut short; the whole of it is in "
         f"the file {path.name}."
@@ -1409,14 +1412,14 @@ class _Site:
 
     def short(self, text: str) -> str:
         """The server's words, safe to show: no token or file token, one line, cut short."""
-        text = _FILE_TOKEN.sub(r"\1[file token]", text.replace(self._token, "[token]"))
+        text = _FILE_TOKEN.sub(r"\1[file token]", _valid(text).replace(self._token, "[token]"))
         text = untrusted(text[: MAX_SHOWN * 4], one_line=True).strip()
         return text if len(text) <= MAX_SHOWN else text[: MAX_SHOWN - 3] + "..."
 
     def error(
         self, message: str, *, endpoint: str | None = None, status: int | None = None, retryable: bool = False
     ) -> CTFdError:
-        text = _FILE_TOKEN.sub(r"\1[file token]", message.replace(self._token, "[token]"))
+        text = _FILE_TOKEN.sub(r"\1[file token]", _valid(message).replace(self._token, "[token]"))
         return CTFdError(untrusted(text, one_line=True), endpoint=endpoint, status=status, retryable=retryable)
 
     def refused(self, answer: _Answer) -> CTFdError:
@@ -1686,13 +1689,19 @@ def _label(number: int, name: object) -> str:
 
 
 def _show(value: object) -> str:
-    return untrusted(str(value), one_line=True)
+    return untrusted(_valid(str(value)), one_line=True)
 
 
 def _quote(text: str) -> str:
     """Untrusted text quoted for a message: made safe, and cut short."""
-    safe = untrusted(text, one_line=True)
+    safe = untrusted(_valid(text), one_line=True)
     return json.dumps(safe if len(safe) <= 60 else safe[:57] + "...", ensure_ascii=False)
+
+
+def _valid(text: str) -> str:
+    """`text` with each lone surrogate (valid in JSON, and in a Python str, but not in any
+    encoding: printing it raises) made the replacement mark."""
+    return _SURROGATE.sub(MARK, text)
 
 
 def _phrase(code: int) -> str:
