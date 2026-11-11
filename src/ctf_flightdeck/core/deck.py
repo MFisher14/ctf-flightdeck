@@ -939,8 +939,8 @@ class Deck:
         driver is told to stop it (LaneDriver.stop, as at a lane's end) before this returns,
         so before anything else can run (the run's shutdown awaits its background tasks
         next). A driver reports no step of a lane it stopped, so no step lands on the closing
-        deck to be dropped whole: what a step under way spent comes with the driver's report
-        of spend (a coding-agent CLI's cost of the turn quitting cut, that step's tokens in it).
+        deck to be dropped whole: what a step under way spent counts when the driver reports
+        it as spend (a coding-agent CLI's cost of the turn quitting cut, that step's tokens in it).
         From now on nothing raises an alert, asks the player, notes a lane or starts one, and an
         intervention is refused. What a lane reports counts as after a lane's end: its spend
         only, on the lane and so the run, with its spend event, so the totals, the transcripts
