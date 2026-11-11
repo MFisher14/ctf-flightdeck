@@ -104,8 +104,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 | `f` | `/fork [approach]` | Start a sibling lane on the same challenge with a different approach or model |
 | `k` | `/kill [park]` | Kill the lane; the challenge goes back to the queue (fresh) or is parked |
 | `e` | `/escalate` | Hand a compact state summary to a stronger model |
-| `t` | `/takeover` | Drop to a shell in the lane's workspace; hand back when done (placeholder in M0) |
-| `a` | `/approve` | Approve the pending action (submit, more budget, live-box access) |
+| `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Other lanes keep running meanwhile. |
+| `a`, `1` | `/approve` | Approve the pending action (submit, more budget, live-box access); on a board that cannot check flags, "accepted" |
+| `d`, `0` | `/decline` | Say no: the flag is not submitted (or, after a hand submit, was rejected), the live box stays off, no more budget (the lane stops) |
+| `1`-`9` | | Quick answers: the numbers in the why line and the needs-you card; one key, no enter (focus view: only while the chat box is empty) |
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 |  | `/diff [file]` | Show the files the lane changed |
