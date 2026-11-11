@@ -102,12 +102,14 @@ def closed_port() -> int:
 
 
 class CountingTransport(httpx.AsyncBaseTransport):
-    """httpx's real transport, counting the requests it is asked to send and when."""
+    """httpx's real transport, counting the requests it is asked to send and when, and
+    noting when its connection pool is closed."""
 
     def __init__(self) -> None:
         self.inner = httpx.AsyncHTTPTransport()
         self.sent = 0
         self.times: list[float] = []  # time.monotonic() as each request set off
+        self.closed = False
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self.sent += 1
@@ -115,6 +117,7 @@ class CountingTransport(httpx.AsyncBaseTransport):
         return await self.inner.handle_async_request(request)
 
     async def aclose(self) -> None:
+        self.closed = True
         await self.inner.aclose()
 
 
@@ -298,6 +301,34 @@ def test_a_closed_client_refuses_to_call():
 
     with pytest.raises(RuntimeError, match="closed"):
         asyncio.run(run())
+
+
+@pytest.mark.parametrize("how", ["aclose", "async with"])
+def test_closing_the_client_closes_its_connection_pool(how):
+    transport = CountingTransport()
+
+    async def run() -> None:
+        if how == "aclose":
+            client = ModelClient(server.base_url, None, transport=transport)
+            await client.chat("fake/model", MESSAGES, [], session_id=SESSION)
+            assert not transport.closed
+            await client.aclose()
+        else:
+            async with ModelClient(server.base_url, None, transport=transport) as client:
+                await client.chat("fake/model", MESSAGES, [], session_id=SESSION)
+                assert not transport.closed
+
+    with FakeModelServer([text_reply("a")]) as server:
+        asyncio.run(run())
+    assert transport.closed
+
+
+def test_a_client_built_with_the_defaults_has_the_documented_timeout_retries_and_backoff():
+    client = ModelClient("http://127.0.0.1:9/v1", None)
+    try:
+        assert (client.timeout, client.max_retries, client.backoff) == (180.0, 4, 1.0)
+    finally:
+        asyncio.run(client.aclose())
 
 
 def test_lanes_can_share_one_client_at_the_same_time():
@@ -572,6 +603,20 @@ def test_no_retries_means_one_try():
         err = fails(server.base_url, max_retries=0)
         assert len(server.requests) == 1
     assert err.status == 429 and err.retryable is True
+
+
+def test_a_client_built_with_the_defaults_makes_five_tries():
+    busy = error_reply(500, "busy", headers={"Retry-After": "0"})  # no wait, whatever the backoff
+
+    async def run() -> None:
+        async with ModelClient(server.base_url, None) as client:
+            await client.chat("fake/model", MESSAGES, [], session_id=SESSION)
+
+    with FakeModelServer([busy] * 5 + [text_reply("one try too many")]) as server:
+        with pytest.raises(ModelError) as info:
+            asyncio.run(run())
+        assert len(server.requests) == 5
+    assert info.value.retryable is True and "5 tries" in str(info.value)
 
 
 def test_a_retry_after_header_sets_the_wait_instead_of_the_backoff():
