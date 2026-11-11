@@ -482,9 +482,9 @@ def test_the_files_list_names_every_handout_file_and_nothing_else(folder):
 def test_descriptions_are_short_and_hold_nothing_in_the_flag_format():
     for folder in CHALLENGES:
         description = challenge(folder)["description"]
-        assert 0 < len(description) <= 250, folder.name
+        assert 0 < len(description) <= 250, f"{folder.name}: a description of {len(description)} characters"
         # a flag-shaped string here would be a candidate flag for any lane that reads it
-        assert not FLAG.search(description), folder.name
+        assert not FLAG.search(description), f"{folder.name}: the description holds a flag-shaped string"
 
 
 EXPLICIT_HINTS = {"fine-print": "text chunks", "harbour-memo": "XOR", "signal-lamp": "Morse code"}
