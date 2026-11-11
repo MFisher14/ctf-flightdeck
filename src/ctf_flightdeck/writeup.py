@@ -3,15 +3,17 @@
 `draft(record, challenge_id)` writes up one solve from a run folder (runrecord.load_run):
 
 - solved by a lane: from that lane's transcript (lanes/<id>.jsonl), the approach (its plan
-  changes and your redirects, in order), the steps that mattered, the files it wrote, your
+  changes and your redirects, in order), the steps that mattered, the files it wrote and
+  those you wrote in a take-over (apart: the transcript says who changed each file), your
   interventions, and the flag;
 - solved by L1: a no-model solver found the flag, which then went through a lane's approval
   like any candidate (Deck.record_l1), or was submitted at once when submit is "auto". The
   draft names the engine and what it recorded.
 
 Solved means accepted: a submit event with `correct` true. A flag an L1 engine found that was
-never accepted is not a solve ("flag found" is never "accepted"). A solve is L1's when the
-accepted flag is one an `l1` event on that challenge reported before it was accepted.
+never accepted is not a solve ("flag found" is never "accepted"). Who it goes to is the rule
+every report uses (runrecord.Credit): a solve is L1's when the accepted flag is one an `l1`
+event on that challenge reported before it was accepted.
 
 Where the run's text holds the flag. A transcript holds more than exact copies of it:
 agent/tools.py folds every action with text.untrusted() (an invisible character in the flag
@@ -24,17 +26,17 @@ prefix{body} with a body of at least CUT_MIN characters, that body, whole or cut
 is not found, and the draft says so.
 
 The steps that mattered: the first step whose output holds a copy of the flag; failing that,
-the last step that ran a file the lane wrote (a shell command naming it, not one that only
-shows or edits it, nor a line inside a heredoc; a newline the transcript folded splits
-commands as a real one does); failing that, the last step before the flag was accepted. The
-draft says which rule picked it, and shows it with the 5 steps before it: each command in a
-fenced block (a multi-line one with its lines back), each output in another, cut to 20 lines.
-A plan the lane stated is not a step: it is in the approach (a turn that set the plan and also
-submitted a flag stays a step).
+the last step that ran a file the lane wrote, or you wrote in a take-over (a shell command
+naming it, not one that only shows or edits it, nor a line inside a heredoc; a newline the
+transcript folded splits commands as a real one does); failing that, the last step before
+the flag was accepted. The draft says which rule picked it, and shows it with the 5 steps
+before it: each command in a fenced block (a multi-line one with its lines back), each output
+in another, cut to 20 lines. A plan the lane stated is not a step: it is in the approach (a
+turn that set the plan and also submitted a flag stays a step).
 
-The files: those with something to show (an added text file under 200 lines, a diff that
-short) are shown whole, at most 10, files a step ran first; every other file is listed with
-one line on what it is.
+The files, the lane's and yours apart: those with something to show (an added text file under
+200 lines, a diff that short) are shown whole, at most 10, files a step ran first; every other
+file is listed with one line on what it is.
 
 What the transcript cannot tell. A lane's plan change shows up only when it was the first
 thing the lane did in that turn and nothing else acted (a "plan: ..." step); otherwise only
@@ -77,12 +79,13 @@ from __future__ import annotations
 import re
 import secrets
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 from . import fmt
-from .runrecord import ActionLine, EventLine, FileLine, LaneRecord, RunRecord
+from .runrecord import L1, ActionLine, EventLine, FileLine, LaneRecord, RunRecord
+from .runrecord import solves as _first_solves
 from .text import MARK, NEWLINE, untrusted
 
 if TYPE_CHECKING:
@@ -195,20 +198,20 @@ class Solve:
 
 
 def solves(record: RunRecord) -> dict[str, Solve]:
-    """Every challenge the run solved, by id, in the order they were solved."""
-    runs: dict[str, list[L1Result]] = {}
+    """Every challenge the run solved with an accepted flag, by id, in the order they were
+    solved, credited by the rule every report uses (runrecord.Credit)."""
+    runs: dict[str, list[tuple[int, L1Result]]] = {}  # challenge -> (event index, result), in log order
+    for index, event in enumerate(record.events):
+        if event.kind == "l1" and event.challenge:
+            runs.setdefault(event.challenge, []).append((index, _l1_result(event)))
     found: dict[str, Solve] = {}
-    for event in record.events:
-        cid = event.challenge
-        if not cid:
-            continue
-        if event.kind == "l1":
-            runs.setdefault(cid, []).append(_l1_result(event))
-        elif event.kind == "submit" and event.data.get("correct") is True and cid not in found:
-            flag = _str(event.data.get("flag"))
-            source = next((run for run in runs.get(cid, ()) if flag and flag in run.flags), None)
-            found[cid] = Solve(cid, flag, event.at, event.lane, _str(event.data.get("by")), source)
-    return {cid: replace(solve, l1_runs=tuple(runs.get(cid, ()))) for cid, solve in found.items()}
+    for cid, credit in _first_solves(record.events, flags_only=True).items():
+        event = record.events[credit.index]
+        on = runs.get(cid, [])
+        source = next((result for index, result in on if index == credit.found), None) if credit.by == L1 else None
+        found[cid] = Solve(cid, credit.flag or "", event.at, event.lane, _str(event.data.get("by")), source,
+                           tuple(result for _, result in on))
+    return found
 
 
 def draft(record: RunRecord, challenge_id: str, *, board: Board | None = None, redact: bool = False) -> str:
@@ -649,7 +652,8 @@ class _Writer:
         return "\n".join(self.lines).rstrip("\n") + "\n"
 
     def _facts(self) -> tuple[str, str, int | None]:
-        """Name, category and points: from the run's lanes on the challenge, else the board."""
+        """Name, category and points: from the run's lanes on the challenge, else its release
+        (a format 2 log names each challenge), else the board."""
         cid = self.solve.challenge
         lanes = ([self.lane] if self.lane else []) + [
             lane for lane in self.record.lanes.values() if lane.challenge == cid and lane is not self.lane
@@ -657,6 +661,9 @@ class _Writer:
         for lane in lanes:
             if lane.name:
                 return lane.name, lane.category, lane.points
+        released = self.record.board.get(cid)
+        if released is not None and released.name:
+            return released.name, released.category, released.points
         if self.board is not None:
             return self.board.name, self.board.category, self.board.points
         return cid, "", None
@@ -787,23 +794,34 @@ class _Writer:
                 if kind is not None:
                     return i, _SHOWS[kind].format(turn=step.turn), "the flag shows here"
         runs = self.runs(lane)
+        yours = {f.file for f in lane.files if f.by == "player"}
         for i in range(len(steps) - 1, -1, -1):
             path = runs.of(steps[i])
             if path is not None:
-                why = (f"No step's output shows the flag; the last step that ran a file the lane "
-                       f"wrote is turn {steps[i].turn}, which ran {self.t(path)}.")
-                return i, why, "this ran a file the lane wrote"
-        why = ("No step's output shows the flag and no step ran a file the lane wrote, so this is the "
+                who = "you wrote in a take-over" if path in yours else "the lane wrote"
+                why = (f"No step's output shows the flag; the last step that ran a file {who} "
+                       f"is turn {steps[i].turn}, which ran {self.t(path)}.")
+                return i, why, f"this ran a file {who}"
+        writers = "the lane or you wrote" if yours else "the lane wrote"
+        why = (f"No step's output shows the flag and no step ran a file {writers}, so this is the "
                "last step before the flag was accepted.")
         return len(steps) - 1, why, "the last step"
 
     def _files(self, lane: LaneRecord, steps: list[ActionLine]) -> None:
         self.out("## Files the lane wrote", "")
-        written = [f for f in lane.files if f.status != "deleted"]
-        deleted = [f for f in lane.files if f.status == "deleted"]
-        if not written and not deleted:
+        theirs = [f for f in lane.files if f.by != "player"]
+        if not theirs:
             self.out("None: the lane changed no files in its workspace.", "")
-            return
+        else:
+            self._file_list(lane, steps, theirs)
+        yours = [f for f in lane.files if f.by == "player"]
+        if yours:
+            self.out("## Files you wrote in a take-over", "")
+            self._file_list(lane, steps, yours)
+
+    def _file_list(self, lane: LaneRecord, steps: list[ActionLine], files: list[FileLine]) -> None:
+        written = [f for f in files if f.status != "deleted"]
+        deleted = [f for f in files if f.status == "deleted"]
         runs = self.runs(lane)
         ran = {path for step in steps if (path := runs.of(step)) is not None}
         written.sort(key=lambda f: (f.file not in ran, f.turn, f.file))

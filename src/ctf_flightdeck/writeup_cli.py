@@ -38,7 +38,7 @@ class _Refused(Exception):
 
 @app.command("writeups")
 def writeups(
-    run_dir: Annotated[Path, typer.Argument(help="A run folder (the one holding events.jsonl).")],
+    run_dir: Annotated[Path, typer.Argument(help="A run folder (the one holding events.jsonl), or its events.jsonl.")],
     redact: Annotated[
         bool,
         typer.Option(
@@ -65,10 +65,10 @@ def writeups(
 ) -> None:
     """Draft a writeup for every challenge the run solved, in RUN_DIR/writeups/."""
     from . import writeup
-    from .runrecord import RunFolderError, load_run
+    from .runrecord import RunFolderError, load_run, run_folder
 
-    run_dir = run_dir.expanduser()
     try:
+        run_dir = run_folder(run_dir.expanduser())
         record = load_run(run_dir)
     except RunFolderError as exc:
         _fail(str(exc))

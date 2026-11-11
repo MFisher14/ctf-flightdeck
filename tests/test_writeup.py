@@ -19,6 +19,7 @@ import asyncio
 import json
 import re
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -627,6 +628,29 @@ def test_an_escalated_lane_names_both_models_and_a_take_over_shows_as_an_interve
     ]
 
 
+def test_files_you_wrote_in_a_take_over_are_listed_as_yours_not_the_lanes(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("t", "Take", "misc", 10)], answers={"t": "t{take}"})
+    lane = run.lane("t")
+    run.step(lane, "$ cat note.txt", "xor key 0x2a", files=(change(tmp_path / "work", "notes.md", "key 0x2a\n"),))
+    run.apply(iv.TakeOver(lane))
+    yours = replace(change(tmp_path / "work", "solve.sh", "printf 't{take}'\n"), by="player")
+    run.deck.report(lane, TurnReport(turn=False, files=(yours,)))  # as Takeover.finish() reports the player's changes
+    run.apply(iv.HandBack(lane, "changed solve.sh (added)"))
+    run.step(lane, "$ sh solve.sh", "done")
+    run.step(lane, "submit t{take}", flag="t{take}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    assert [(f.file, f.by) for f in record.lanes[lane].files] == [("notes.md", "lane"), ("solve.sh", "player")]
+    text = writeup.draft(record, "t")
+    theirs = lines_of(text, "## Files the lane wrote")
+    assert "### `notes.md`, added in turn 1, 1 line" in theirs and not any("solve.sh" in line for line in theirs)
+    assert "### `solve.sh`, added in turn 1, 1 line" in lines_of(text, "## Files you wrote in a take-over")
+    section = lines_of(text, "## Steps that mattered")
+    assert section[1] == ("No step's output shows the flag; the last step that ran a file you wrote in a take-over is "
+                          "turn 2, which ran `solve.sh`. Here it is with the 1 step before it.")
+    assert "### Turn 2 (this ran a file you wrote in a take-over)" in section
+
+
 def test_a_re_queued_attempt_says_so(tmp_path):
     run = Run(tmp_path / "run", [Challenge("k", "Kappa", "misc", 10)], answers={"k": "t{k}"})
     first = run.lane("k")
@@ -757,16 +781,25 @@ def test_an_l1_solve_whose_lane_transcript_is_missing_does_not_guess_the_approva
 # ---------------------------------------------------------------------- what the run folder lacks
 
 
-def test_a_missing_transcript_is_said_and_the_board_gives_the_name(tmp_path):
+def test_a_missing_transcript_is_said_and_the_release_or_the_board_gives_the_name(tmp_path):
     record = alpha_run(tmp_path)
     (record.dir / "lanes" / "L01.jsonl").unlink()
     (record.dir / "lanes" / "L02.jsonl").unlink()
     record = load_run(record.dir)
     text = writeup.draft(record, "a")
-    assert text.startswith("# a\n") and "- Category: unknown (not in the run log)" in text
-    assert "- Points: unknown (not in the run log)" in text
+    assert text.startswith("# Alpha\n") and "- Category: misc" in text and "- Points: 50" in text  # its release named it
     assert ("The run folder has no transcript for lane L01 (`lanes/L01.jsonl` is missing or could not be read), so "
             "its approach, steps, files and your interventions are not known.") in text
+    path = record.dir / "events.jsonl"  # an older log: its releases name no challenge
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    for line in lines:
+        if line["kind"] == "release":
+            line["data"].pop("board")
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    record = load_run(record.dir)
+    text = writeup.draft(record, "a")
+    assert text.startswith("# a\n") and "- Category: unknown (not in the run log)" in text
+    assert "- Points: unknown (not in the run log)" in text
     board = tmp_path / "board"
     (board / "a").mkdir(parents=True)
     (board / "a" / "challenge.json").write_text(json.dumps({"name": "Alpha (board)", "category": "Crypto", "points": 75}))
