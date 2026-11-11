@@ -114,7 +114,7 @@ from ..l1.runner import scan
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
-from .driver import Takeover, WorkspaceFactory
+from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
@@ -150,7 +150,6 @@ MAX_LINE = 8 * 1024 * 1024  # one event line; a longer one is dropped with a not
 STDERR_CAP = 4 * 1024 * 1024  # bytes of the CLI's stderr kept in the log
 OUTPUT_CHARS = 300  # a step's output on the console
 ACTION_CHARS = 400  # a step's action on the console
-MAX_IDLE_TURNS = 3  # turns in a row that did nothing before the lane gives up
 MAX_FILES_PER_STEP = 50
 MAX_NEW_FLAGS = 10  # new candidates raised from one step, and held at once; a decoy list must not flood the player
 FLAG_SCAN = 1024 * 1024  # characters of one output scanned for flags

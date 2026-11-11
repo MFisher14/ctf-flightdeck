@@ -437,7 +437,7 @@ def test_a_lane_on_a_tcp_service_is_told_of_it_and_reaches_it_from_the_shell_not
         asyncio.run(main())
         run.close()
     first, second = server.chats()[:2]
-    assert "Live instance: tcp://127.0.0.1:1337" in first["json"]["messages"][1]["content"]
+    assert "\nLive instance: tcp://127.0.0.1:1337 (nc 127.0.0.1 1337)\n" in first["json"]["messages"][1]["content"]
     assert "this challenge's instance is not a web server (tcp://127.0.0.1:1337): reach it from the shell" in last_tool_result(second)
 
 

@@ -15,6 +15,16 @@ def test_the_brief_names_the_handout_and_fences_the_description():
     assert text.rstrip().endswith("The player asked you to take this approach: read the source")
 
 
+def test_the_brief_names_a_tcp_service_with_the_nc_command_that_reaches_it():
+    urls = ["http://127.0.0.1:8080", "tcp://127.0.0.1:1337", "tcp://[::1]:31337", "tcp://chall.example.org:9001"]
+    text = brief(Challenge("c", "Echo", "pwn", 100), [], urls)
+    line = next(x for x in text.splitlines() if x.startswith("Live instance:"))
+    assert line == (
+        "Live instance: http://127.0.0.1:8080, tcp://127.0.0.1:1337 (nc 127.0.0.1 1337), tcp://[::1]:31337 (nc ::1 31337), "
+        "tcp://chall.example.org:9001 (nc chall.example.org 9001)"
+    )
+
+
 def test_a_handout_with_many_files_lists_the_first_ones_and_says_how_many_more():
     files = [f"vendor/lib{i}.py" for i in range(500)]
     text = brief(Challenge("c", "Big", "rev", 100), files, [])
