@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -352,6 +354,84 @@ def test_a_model_api_error_ends_the_lane_with_the_reason(tmp_path):
             assert lane.state is LaneState.GAVE_UP
             assert "model API error" in lane.result and "no such model: small" in lane.result
             assert "sk-test-not-a-real-key" not in lane.result
+            await lab.finish()
+
+    run(main())
+
+
+def five_challenges(tmp_path: Path) -> dict[str, Path]:
+    return {f"c{i}": handout(tmp_path, f"c{i}") for i in range(5)}
+
+
+@pytest.mark.parametrize(
+    "reply, advice",
+    [
+        (FakeReply(401, {"error": {"message": "No auth credentials found"}}), "check the API key"),
+        (FakeReply(402, {"error": {"message": "Insufficient credits"}}), "check the account's credits"),
+        (FakeReply(404, {"error": {"message": 'model "small" not found'}}), "check the model id"),
+        (FakeReply(400, {"error": {"message": "small is not a valid model ID"}}), "no lane has had an answer from small yet"),
+    ],
+    ids=["refused-key", "no-credits", "unknown-model", "bad-request-before-any-answer"],
+)
+def test_a_model_api_failure_every_lane_would_hit_holds_the_queue_and_says_why(tmp_path, reply, advice):
+    """Finding 14: a bad key or model id ended lane after lane, and the whole board was
+    parked in a second. The lanes that hit it end; no more start; one warning says why."""
+    server = FakeModelServer(responder=lambda record: reply)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=2)
+            lab.release()
+            await until(lambda: len(lab.deck.lanes) == 2 and all(lane.finished for lane in lab.deck.lanes.values()),
+                        "the first two lanes to end")
+            await asyncio.sleep(0.3)  # time enough for a third lane to start, if one were going to
+            assert len(lab.deck.lanes) == 2 and calls_to(server) == 2
+            assert [entry.challenge for entry in lab.deck.queue] == ["c2", "c3", "c4"]  # still queued, not parked
+            held = [e for e in lab.deck.events if e.kind is EventKind.WARNING and e.data.get("held")]
+            assert len(held) == 1 and advice in held[0].text and str(reply.status) in held[0].text
+            assert "sk-test-not-a-real-key" not in held[0].text
+            assert all("model API error" in lane.result for lane in lab.deck.lanes.values())
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_model_api_that_does_not_answer_holds_the_queue(tmp_path):
+    with socket.socket() as probe:  # a port on this machine that nothing listens on
+        probe.bind(("127.0.0.1", 0))
+        dead = f"http://127.0.0.1:{probe.getsockname()[1]}/v1"
+
+    async def main():
+        lab = Lab(tmp_path, SimpleNamespace(base_url=dead), handouts=five_challenges(tmp_path), max_lanes=2)
+        lab.release()
+        await until(lambda: len(lab.deck.lanes) == 2 and all(lane.finished for lane in lab.deck.lanes.values()),
+                    "the first two lanes to end")
+        await asyncio.sleep(0.3)
+        assert len(lab.deck.lanes) == 2 and len(lab.deck.queue) == 3
+        assert "the model API does not answer" in lab.deck.held and "is it running" in lab.deck.held
+        await lab.finish()
+
+    run(main())
+
+
+def test_a_lanes_own_api_error_ends_that_lane_and_the_queue_goes_on(tmp_path):
+    """A 400 once the model has answered (this lane's context was refused, say) is the lane's:
+    it ends, and the next challenge starts."""
+    def responder(record):
+        if calls_to(server) == 2:
+            return FakeReply(400, {"error": {"message": "prompt is too long"}})
+        return tool_call_reply("shell", {"command": "ls"}) if calls_to(server) == 1 else tool_call_reply("submit_flag", {"flag": "t{x}"})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=1)
+            lab.release()
+            await until(lambda: len(lab.deck.lanes) == 2, "the next lane to start")
+            first, second = sorted(lab.deck.lanes.values(), key=lambda lane: lane.id)
+            assert first.state is LaneState.GAVE_UP and "prompt is too long" in first.result
+            assert lab.deck.held == "" and second.challenge_id == "c1"
             await lab.finish()
 
     run(main())

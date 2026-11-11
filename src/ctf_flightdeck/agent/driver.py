@@ -56,6 +56,13 @@ HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (i
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
 INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, as lanes see it (manual is off)
+EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, and what the player should check
+    401: "check the API key",
+    402: "check the account's credits",
+    403: "check that the key may use this model",
+    404: "check the model id in the [models] ladder, and base_url",
+    405: "check base_url",
+}
 
 
 def _set_event() -> asyncio.Event:
@@ -190,6 +197,7 @@ class AgentDriver:
         self.instance = instance  # may lanes reach a challenge's live instance: auto, confirm (ask first), off
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
+        self.answered: set[str] = set()  # the models that have answered a lane in this run
         self.deck = None
 
     # ------------------------------------------------------------------ LaneDriver
@@ -357,6 +365,7 @@ class AgentDriver:
                     continue
                 self._failed(run, exc, model, len(hints))
                 return
+            self.answered.add(model)
             if reply.notice:
                 self.deck.note(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
             if not await self._until_running(run, generation) and self._over(run):
@@ -443,7 +452,15 @@ class AgentDriver:
 
     def _failed(self, run: _Run, error: ModelError, model: str, hints_taken: int) -> None:
         """The model call failed for good: the lane ends with the reason. A model that declined
-        (a refusal) is not an API error, and its call was paid for: its tokens count."""
+        (a refusal) is not an API error, and its call was paid for: its tokens count.
+
+        A failure every lane would get alike (a refused key, an unknown model, an API that does
+        not answer: _every_lane) first holds the deck's queue, saying why and what to check,
+        so the next challenges stay queued instead of each starting a lane that fails the same
+        way. The lanes already running end as this one does when they hit it."""
+        check = self._every_lane(error, model)
+        if check:
+            self.deck.hold_queue(f"{run.lane_id}'s call to {model} failed in a way every lane would ({check}): {error}")
         usage = error.usage
         tokens = usage.total if usage else 0
         cached = usage.cached_tokens if usage else 0
@@ -457,6 +474,25 @@ class AgentDriver:
             action, gave_up = f"model call to {model} failed", f"model API error: {error}"
         self._report(run, TurnReport(turn=False, action=action, output=str(error), tokens=tokens, cached_tokens=cached,
                                      dollars=dollars, hints_taken=hints_taken, gave_up=gave_up))
+
+    def _every_lane(self, error: ModelError, model: str) -> str:
+        """What the player should check when every lane would fail as this call did, else "".
+
+        That is: no answer at all (nothing listens at base_url, or it never answers in time);
+        a status that is about the key, the account, the model id or the URL (EVERY_LANE); or
+        any failure before any lane has had an answer from this model in this run (an unknown
+        model id is a 400 on some APIs). A model that declined answered, and a failure once
+        the model has answered may be this lane's own (its context too long) or may pass (a
+        rate limit, an overload): those end only this lane."""
+        if error.declined:
+            return ""
+        if error.status is None:
+            return "the model API does not answer: is it running, and is base_url right?"
+        if error.status in EVERY_LANE:
+            return EVERY_LANE[error.status]
+        if model not in self.answered:
+            return f"no lane has had an answer from {model} yet: check the model id and base_url"
+        return ""
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
                    reply: Reply | None = None, model: str = "") -> None:
