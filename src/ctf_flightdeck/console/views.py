@@ -760,7 +760,7 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
         for s in alert.suggestions:
             if s.key in ("a", "d") and lane.pending is not None:
                 continue  # the approval lines below say it
-            command = suggestion_command(s.key, s.text, lane.id, show_lane=False)
+            command = suggestion_command(s.key, lane_text(deck, lane, s.text), lane.id, show_lane=False)
             number = numbered.get((s.key, s.text)) if alert is top else None
             line = Text("   ")
             line.append_text(_number(number))
@@ -780,7 +780,7 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
         for later in lane.waiting:
             rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
     for hint in lane.hints:
-        rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(hint, one_line=True), theme.ACCENT)))
+        rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(lane_text(deck, lane, hint), one_line=True), theme.ACCENT)))
     if not rows:
         return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
     if border:

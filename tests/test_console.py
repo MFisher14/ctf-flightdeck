@@ -56,6 +56,7 @@ from ctf_flightdeck.core.model import (
     PendingKind,
     Suggestion,
 )
+from ctf_flightdeck.detect import DetectConfig, LoopDetector, Watch
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.scenarios import DEEP_ARCHIVE, ReleaseAt, Scenario, Spec
 from ctf_flightdeck.mock.world import FakeWorld, ManualClock
@@ -1846,6 +1847,70 @@ def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh(monkeypatch):
     assert len(why.plain) < 4 * views.LINE_CHARS  # a line's worth, with each newline shown as " ⏎ "
     assert "5f" * 32 not in why.plain + cells["last"].plain + diff.code
     assert diff.code.count("OPENROUTER_API_KEY=[redacted]\n") == keys.count("\n")
+
+
+def test_a_loops_suggested_hint_and_a_hint_not_read_yet_are_shown_without_credentials():
+    """The loop detector quotes the command a lane repeats in the hint it suggests. Wherever
+    the console shows that hint (the needs-you card's numbered command, the / menu in the
+    fleet and in the focus view, the bar that h fills in) and once it is sent and waits for
+    the lane to read it, as a hint the player typed does, it shows each credential's name and
+    not its value, as the lane's transcript keeps it. The deck keeps the suggestion and the
+    hint as they were: answer 1 sends the lane's model its own command as it ran it."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    Watch(deck, [LoopDetector(DetectConfig())]).attach()
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    token, cookie = "ab12cd34" * 4, "9e" * 20
+    for _ in range(3):
+        deck.report(lane.id, TurnReport(action=f"CTFD_TOKEN={token} python3 solve.py", output="no"))
+    (alert,) = lane.alerts
+    assert alert.kind is AlertKind.LOOP and token in alert.suggestions[0].text  # the deck's own, as the detector quoted it
+    hint = "You are repeating CTFD_TOKEN=[redacted] python3 solve.py: it gives the same result. Try something else."
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    def nothing_raw(stop: str) -> None:
+        frame = terminal_frame(app)
+        assert token not in frame and cookie not in frame, f"{stop}: a credential's value is drawn"
+
+    def card() -> str:
+        console = rich.console.Console(width=300, record=True, color_system=None, file=io.StringIO())
+        console.print(views.now_card(deck, lane))
+        return console.export_text()
+
+    assert f"1  /hint {hint}   hint" in card()
+    assert app.command_suggestions(lane.id, with_lane=True)[0] == (f"/hint {lane.id} {hint}", "loop")
+    assert app.suggested(lane, "h") == hint
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        nothing_raw("fleet")
+        await press(pilot, "slash")
+        nothing_raw("fleet menu")
+        assert [c.text for c in bar(app).completions if c.suggested][0] == f"/hint {lane.id} {hint}"
+        await press(pilot, "escape", "escape", "h")
+        nothing_raw("fleet h")
+        assert bar(app).field.value == f"/hint {lane.id} {hint} "
+        await press(pilot, "escape", "escape")
+        await open_focus(pilot, app, lane.id)
+        nothing_raw("focus")
+        await press(pilot, "slash")
+        nothing_raw("focus menu")
+        assert [c.text for c in bar(app).completions if c.suggested][0] == f"/hint {hint}"
+        await press(pilot, "escape", "escape")
+        await open_focus(pilot, app, lane.id)
+        await press(pilot, "1")  # the chat box is empty: 1 sends the suggested hint
+        assert lane.hints == [alert.suggestions[0].text] and isinstance(app.screen, FocusScreen)
+        await send(pilot, app, f"log in with Cookie: session={cookie}")  # a hint the player typed
+        app.refresh_view()
+        await pilot.pause()
+        nothing_raw("focus, two hints sent")
+        assert lane.hints[1] == f"log in with Cookie: session={cookie}"
+        assert f"› sent, not read yet: {hint}" in card()
+        assert "› sent, not read yet: log in with Cookie: [redacted]" in card()
+        assert "sent, not read yet: log in with Cookie: [redacted]" in region_text(app, "#now")
+
+    drive(app, script)
 
 
 # ---------------------------------------------------------------------- review fixes: the fleet

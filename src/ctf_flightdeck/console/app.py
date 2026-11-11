@@ -303,11 +303,13 @@ class FlightdeckApp(App[None]):
         return outcome
 
     def suggested(self, lane: Lane, key: str) -> str:
-        """The text an alert suggests for `key` (to prefill a field), made safe to draw."""
+        """The text an alert suggests for `key` (to prefill a field), as the console shows
+        what the lane did (views.lane_text: a loop's hint quotes its command) and made safe
+        to draw. A field sends what it shows."""
         for alert in lane.alerts:
             for suggestion in alert.suggestions:
                 if suggestion.key == key and suggestion.text:
-                    return untrusted(suggestion.text, one_line=True)
+                    return untrusted(views.lane_text(self.deck, lane, suggestion.text), one_line=True)
         return ""
 
     def command_suggestions(self, lane_id: str | None, *, with_lane: bool) -> tuple[tuple[str, str], ...]:
@@ -323,7 +325,7 @@ class FlightdeckApp(App[None]):
             out.append(("/approve" + (f" {lane.id}" if with_lane else ""), untrusted(lane.pending.detail, one_line=True)))
         for alert in sorted(lane.alerts, key=lambda a: views.ALERT_URGENCY[a.kind]):
             for s in alert.suggestions:
-                command = views.suggestion_command(s.key, s.text, lane.id, show_lane=with_lane)
+                command = views.suggestion_command(s.key, views.lane_text(self.deck, lane, s.text), lane.id, show_lane=with_lane)
                 if command:
                     command = untrusted(command, one_line=True)
                 if command and all(command != c for c, _ in out):
