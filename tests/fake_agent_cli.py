@@ -65,7 +65,9 @@ process, in order across processes. When the turns run out, the fake answers not
   "raw": [lines], "stderr": line, "spawn": [{"cmd": [...], "session": bool}], "exit": status,
   "ignore": ["INT", "TERM"] (from then on those signals are ignored: a hung CLI),
   "text": text, "tools": [{"bash": cmd} | {"read": path} | {"write": [path, text]} |
-  {"tool": name, "input": {...}}], "usage": [input, output, cache_read, cache_creation]}.
+  {"tool": name, "input": {...}}], "usage": [input, output, cache_read, cache_creation],
+  "cost": dollars of that model call (counted once the call is made, so the result of a
+  turn cut short includes it: ASSUMED, claude adds each API call's cost as it comes)}.
 - codex TURN: {"items": [ITEM, ...], "usage": [input, cached, output] added to the thread,
   "fail": message}. ITEM: {"command": cmd} | {"message": text} | {"reasoning": text} |
   {"file": [path, text]} | {"todo": [[text, done], ...]} | {"warning": text} (an error item)
@@ -312,6 +314,7 @@ def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[st
                 usage = {"input_tokens": fresh, "cache_creation_input_tokens": created, "cache_read_input_tokens": read, "output_tokens": out}
                 for key, value in usage.items():
                     total[key] += value
+                state["cost"] += call.get("cost", 0.0)
                 mid = "msg_" + uuid.uuid4().hex[:24]
                 blocks: list[dict] = []
                 if call.get("text"):

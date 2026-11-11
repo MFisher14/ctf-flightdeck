@@ -22,7 +22,12 @@ user message on stdin). Codex runs one `codex exec` process per turn: the prompt
 then stdin closed; later turns resume the thread (`codex exec ... resume <thread id>`).
 For the deck, each tool call is a turn (lane.turns counts them). When the agent's turn
 ends with nothing waiting for it, it is nudged to carry on; an agent that ends
-MAX_IDLE_TURNS turns in a row without a tool call or a candidate flag gives up.
+MAX_IDLE_TURNS turns in a row without a tool call or a candidate flag gives up. A CLI
+reports a turn's cost (codex: its tokens too) only when the turn ends, so its steps carry
+none of it: that report goes to the deck as spend outside a turn, with why and the model
+that spent it (an escalated lane's old model too), also when it comes after the lane has
+ended (solved or killed mid-turn), and each lane says at its start that its caps are
+checked only then.
 
 How the player's controls reach the CLI:
 - pause: SIGSTOP to the CLI's process group; resume: SIGCONT. A take-over first lets the
@@ -167,6 +172,12 @@ NUDGE = (
     "Note from flightdeck: your turn ended. Carry on with the challenge; when you have the flag, "
     "write it in your reply on a line of its own as FLAG: <the flag>."
 )
+
+# What spend reported outside a turn was (TurnReport.why): a CLI reports its cost (codex: its
+# tokens too) only when a turn ends, so its steps (the lane's turns) carry none of it.
+TURN_END = "what {kind} reported when its turn ended: the turn's cost, and tokens no step carried"
+CUT_TURN = "what {kind} reported for a turn it was stopped in (an escalation, or the lane's end)"
+LEFTOVER = "tokens {kind} counted after its last step, when it exited"
 
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,199}")
 _CLAIM = re.compile(r"(?:[*+-][ \t]+)?(?:\*\*|__)?flag(?:\*\*|__)?[ \t]*:(?:\*\*|__)?", re.IGNORECASE)
@@ -585,6 +596,15 @@ def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float)
         if not scan(text[:FLAG_SCAN], pattern, deadline, found):
             return set(found), False
     return set(found), True
+
+
+def _spend_only(rep: TurnReport) -> bool:
+    """A report of tokens or dollars spent outside a turn, and of nothing else."""
+    return (
+        not rep.turn and bool(rep.tokens or rep.dollars) and rep.plan is None
+        and not (rep.action or rep.output or rep.artifacts or rep.files or rep.alerts or rep.clear or rep.pending
+                 or rep.flag is not None or rep.gave_up is not None or rep.hints_taken)
+    )
 
 
 def _blocks(content: Any) -> list[dict]:
@@ -1011,9 +1031,14 @@ class _Run:
         return proc is self.proc and proc.generation == self.generation and proc.ending is None and not self.over()
 
     def report(self, rep: TurnReport) -> None:
+        rep = self.driver.redact.scrub(rep)  # a second guard: text arrives redacted
         if self.over():
+            if self.lane() is not None and _spend_only(rep):
+                # a CLI reports a turn's cost when the turn ends, often after the lane has (solved
+                # mid-turn, killed): what was spent goes to the deck, which says what it counts for
+                self.driver.deck.report(self.lane_id, rep)
             return
-        self.driver.deck.report(self.lane_id, self.driver.redact.scrub(rep))  # a second guard: text arrives redacted
+        self.driver.deck.report(self.lane_id, rep)
         self.sync()
 
     def note(self, text: str) -> None:
@@ -1193,6 +1218,7 @@ class _Run:
             self.report(TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         self.ready = True
+        self.cap_note()
         root = self.workspace.root
         try:
             await asyncio.to_thread(restore_private, root)
@@ -1209,6 +1235,19 @@ class _Run:
                 raise WorkspaceError(f"cannot make {home} for {self.kind}'s own configuration: {exc.strerror or exc}") from None
             self.homes = {AGENT_HOME[self.kind]: str(home)}
         await self.session()
+
+    def cap_note(self) -> None:
+        """Say when this lane's caps are checked: a CLI reports its cost (codex: its tokens
+        too) only when a turn ends, so a long turn can go past a cap before the deck sees it."""
+        lane = self.lane()
+        if lane is None:
+            return
+        late = (["token"] if self.kind == "codex" and lane.token_cap else []) + (["dollar"] if lane.dollar_cap else [])
+        if late:
+            what = "its tokens and its cost" if self.kind == "codex" else "its cost"
+            caps, them = (" and ".join(late) + " caps are", "them") if len(late) > 1 else (late[0] + " cap is", "it")
+            self.note(f"{self.kind} reports {what} only when a turn ends, so this lane's {caps} checked then: "
+                      f"a long turn can go past {them}")
 
     async def session(self) -> None:
         raise NotImplementedError
@@ -1465,7 +1504,8 @@ class _Run:
         self.release_held()  # its turn is over (codex: one process per turn), whether it ended or was cut short
         tokens, cached = self.take_tokens()
         if tokens:
-            self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached))
+            self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, why=LEFTOVER.format(kind=self.kind),
+                                   model=proc.model))
 
     def exit_reason(self, proc: _Proc) -> str:
         """How a run of the CLI ended: its exit status and its last stderr line."""
@@ -1812,8 +1852,9 @@ class _ClaudeRun(_Run):
             proc.cost = total
         self.turn_tokens = [0, 0, 0]
         tokens, cached = self.take_tokens()
-        if not current:  # an old model's last turn, or one being stopped: only its cost counts
-            self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars))
+        if not current:  # an old model's last turn, or one being stopped: only its cost counts, as that model's
+            self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
+                                   why=CUT_TURN.format(kind=self.kind), model=proc.model))
             return
         proc.interrupted = False
         self.busy = False
@@ -1827,7 +1868,8 @@ class _ClaudeRun(_Run):
                 self.report_text(text, *self.sort_out(*last), show=False)
             self.release_held()  # the turn is over: what it never claimed goes to the player
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
-                                   action=f"says: {_one_line(said, 200)}" if said and not failed else ""))
+                                   action=f"says: {_one_line(said, 200)}" if said and not failed else "",
+                                   why=TURN_END.format(kind=self.kind), model=proc.model))
             if failed:
                 why = _one_line(text, 300)
                 self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})"
@@ -2023,7 +2065,8 @@ class _CodexRun(_Run):
         fresh, cached, out = (n - b for n, b in zip(now, base))
         self.usage_base, self.usage_thread = now, thread
         dollars = call_cost(None, self.driver.prices.get(proc.model), fresh, out, cached)
-        self.report(TurnReport(turn=False, tokens=fresh + out, cached_tokens=cached, dollars=dollars))
+        self.report(TurnReport(turn=False, tokens=fresh + out, cached_tokens=cached, dollars=dollars,
+                               why=TURN_END.format(kind=self.kind), model=proc.model))
 
 
 class _Takeover(Takeover):
