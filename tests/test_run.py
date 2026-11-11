@@ -7,6 +7,9 @@ import asyncio
 import hashlib
 import json
 import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -574,6 +577,74 @@ def test_a_run_with_a_coding_agent_needs_no_api_key_and_uses_the_agents_ladder(t
     assert any(note.startswith("lanes are claude on sonnet") for note in notes)
     assert any("claude lanes start on sonnet and escalate to opus" in note for note in notes)
     assert "fake-anthropic-credential-for-tests" not in " ".join(notes)
+
+
+FAKE_CLI = Path(__file__).with_name("fake_agent_cli.py")  # plays claude and codex: never the real tools
+
+
+@pytest.fixture
+def scripted_claude(tmp_path, monkeypatch):
+    """tests/fake_agent_cli.py as `claude`, first on PATH (no folder holding a real one stays
+    there): call it with the script it plays. Whatever it left running is killed afterwards."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    record = tmp_path / "agent-record.jsonl"
+
+    def play(script: dict) -> None:
+        (tmp_path / "agent-script.json").write_text(json.dumps(script))
+        env = {"FAKE_AGENT_SCRIPT": str(tmp_path / "agent-script.json"), "FAKE_AGENT_RECORD": str(record),
+               "FAKE_AGENT_STATE": str(tmp_path / "agent-state.json")}
+        exe = bin_dir / "claude"
+        exe.write_text(f"#!{sys.executable} -I\nimport os, sys\nos.environ.update({env!r})\n"
+                       f"os.execv(sys.executable, [sys.executable, '-I', {str(FAKE_CLI)!r}, 'claude', *sys.argv[1:]])\n")
+        exe.chmod(0o755)
+
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-credential-for-tests")
+    yield play
+    lines = record.read_text().splitlines() if record.exists() else []
+    for pid in {json.loads(line).get("pid") for line in lines if line.strip()}:
+        command = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+        if isinstance(pid, int) and "fake_agent_cli" in command:
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_what_claude_reports_after_its_lane_solved_is_in_the_scorecard_play_prints_and_in_post_flight(tmp_path, scripted_claude):
+    """A coding-agent CLI reports a turn's cost when the turn ends, here after the lane solved
+    in the middle of it: on the way out (the console's on_exit) that cost reaches the deck,
+    the run log and the transcripts, so every summary of the run counts it."""
+    from ctf_flightdeck import postflight
+    from ctf_flightdeck.core import interventions as iv
+    from ctf_flightdeck.runrecord import load_run
+
+    scripted_claude({"turns": [{"calls": [
+        {"tools": [{"bash": "cat note.txt"}], "usage": [100, 10, 0, 0], "cost": 0.02},
+        {"text": f"FLAG: {FLAG}", "usage": [50, 5, 0, 0], "cost": 0.01},
+        {"think": 30.0},  # its turn goes on after the flag
+    ]}]})
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="claude",
+                                     runtime="host"))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the flag claude claimed")
+            assert run.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            assert lane.dollars_later and lane.dollars == 0.0  # solved mid-turn: claude has not reported its cost yet
+            await run.shutdown()  # as play does on the way out
+
+        asyncio.run(main())
+        run.close()
+    lane = run.deck.lanes["L01"]
+    assert (lane.tokens, lane.dollars, lane.dollars_later) == (165, pytest.approx(0.03), False)
+    assert run.deck.totals() == (165, pytest.approx(0.03), False)  # the console's header
+    card = run.scorecard()
+    assert card is not None and "Spent 165 tokens · $0.03 · $0.03 per solve" in card.splitlines(), card
+    summary = postflight.summary(load_run(run.dir))
+    assert "Spend: 165 tokens (0% cached), $0.03, $0.03 per lane solve" in summary.splitlines(), summary
 
 
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude):

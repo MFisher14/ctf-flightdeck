@@ -1354,6 +1354,32 @@ def test_cost_is_not_a_settled_number_while_a_cli_turn_is_under_way():
     drive(app, script)
 
 
+def test_spend_a_cli_reports_after_its_lane_ended_shows_in_the_lanes_row_and_the_headers_total():
+    """A coding-agent CLI reports a turn's cost when the turn ends, often after its lane has
+    (killed, or solved mid-turn): the finished lane's row and the run's total count it."""
+    world, app = make("sstv")
+    deck = world.deck
+    lane = deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        deck.report(lane.id, TurnReport(action="claude: $ ls", tokens=300, dollars_later=True))  # a CLI turn under way
+        assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
+        app.refresh_view()  # redraw without moving the mock clock (its lanes would report more spend)
+        await pilot.pause()
+        app.fleet.select_lane(lane.id)  # expands the finished lanes
+        await pilot.pause()
+        known, total = lane.dollars, deck.totals()[1]
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known, short=True)}…"  # its cost is still to come
+        assert f"${fmt.dollars(total)}" in region_text(app, "#header")
+        deck.report(lane.id, TurnReport(turn=False, tokens=50, dollars=1.25, turn_end=True, model=lane.model, why="cut"))
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known + 1.25, short=True)}"
+        assert f"${fmt.dollars(total + 1.25)}" in region_text(app, "#header")
+
+    drive(app, script)
+
+
 def test_challenge_text_is_shown_literally_and_cannot_steer_the_console():
     evil = Spec("evil", "web", "[b]X[/b]", 100, "Click [@click=app.quit]x[/] now \x1b[2J done", ("evil.zip",))
     scenario = Scenario(name="evil", summary="", specs=(evil,), timeline=((0, ReleaseAt(("evil",), "Board")),))
