@@ -178,6 +178,37 @@ def test_a_run_records_its_flightdeck_and_the_record_goes_when_the_run_ends_clea
     assert not (run.dir / RECORD).exists() and run.errors == []
 
 
+def test_a_record_that_cannot_be_kept_current_never_stops_the_run_and_is_said_when_it_ends(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a folder's mode does not stop a write to it")
+    with FakeModelServer() as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+        assert run.processes is not None and run.errors == []
+        work = run.dir / "l01" / "work"
+        proc = start(["sleep", "300"], work)
+        os.chmod(run.dir, 0o500)  # the run folder can no longer take a new file
+        try:
+            run.processes.add(proc.pid, work, "a lane command")  # no exception: only the backstop is lost
+        finally:
+            os.chmod(run.dir, 0o700)
+        run.close()
+    assert run.errors == [f"could not keep {run.dir / RECORD} current (Permission denied): if flightdeck is killed, what "
+                          "this run left running on this machine will not be found by the next start"]
+
+
+def test_a_run_whose_record_cannot_be_written_does_not_start(tmp_path, monkeypatch):
+    from ctf_flightdeck.run import RunError
+
+    def failing(path: Path, data: bytes) -> None:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(leftovers, "_write_atomically", failing)
+    with FakeModelServer() as server, pytest.raises(RunError) as caught:
+        prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+    (run_dir,) = (tmp_path / "runs").iterdir()
+    assert str(caught.value) == f"cannot write {run_dir / RECORD}: Input/output error"
+
+
 def test_a_host_lanes_command_is_in_the_record_while_it_may_run_with_what_it_left_running(tmp_path):
     runs = tmp_path / "runs"
     record = killed_run(runs, owner=Owner.this())
