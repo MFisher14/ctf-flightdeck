@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -396,6 +397,72 @@ def test_the_last_run_of_a_file_the_lane_wrote_is_the_one_that_mattered(tmp_path
     section = lines_of(writeup.draft(run.close(), "r"), "## Steps that mattered")
     assert section[1].startswith("No step's output shows the flag; the last step that ran a file the lane wrote is "
                                  "turn 4, which ran `solve.py`.")
+
+
+SOLVER = "for i in range(4):\n    print('round', i)\nprint('t{x}')\n"
+
+
+def test_a_solver_written_and_run_in_one_command_is_seen_in_the_folded_line_a_transcript_holds(tmp_path):
+    command = "cat > solve.py <<'EOF'\n" + SOLVER + "EOF\npython3 solve.py"
+    shell = tool(tmp_path, "shell", {"command": command}, b"round 0\nround 1\nround 2\nround 3\nt{x}\n")
+    assert NEWLINE in shell.action and "\n" not in shell.action  # one line, as the transcript keeps it
+    assert shell.output == "round 0\nround 1\nround 2"  # the first lines only: the flag is not in it
+    run = Run(tmp_path / "run", [Challenge("x", "Ex", "rev", 100)], answers={"x": "t{x}"})
+    lane = run.lane("x")
+    run.step(lane, "$ file chall", "ELF 64-bit LSB executable")
+    run.step(lane, shell.action, shell.output, files=(change(tmp_path / "work", "solve.py", SOLVER),))
+    run.step(lane, "$ ls", "chall solve.py")
+    run.step(lane, "submit t{x}", "the solver printed it", flag="t{x}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "x"), "## Steps that mattered")
+    assert section[1] == ("No step's output shows the flag; the last step that ran a file the lane wrote is turn 2, "
+                          "which ran `solve.py`. Here it is with the 1 step before it.")
+
+
+def test_a_line_inside_a_heredoc_is_not_a_command(tmp_path):
+    script = "#!/bin/sh\n./helper.sh\n"  # run.sh would run helper.sh, but nothing runs run.sh
+    shell = tool(tmp_path, "shell", {"command": "cat > run.sh <<'EOF'\n" + script + "EOF"})
+    run = Run(tmp_path / "run", [Challenge("h", "Here", "misc", 10)], answers={"h": "t{h}"})
+    lane = run.lane("h")
+    run.step(lane, "$ cat > helper.sh <<'EOF'", files=(change(tmp_path / "work", "helper.sh", "echo hi\n"),))
+    run.step(lane, shell.action, shell.output, files=(change(tmp_path / "work", "run.sh", script),))
+    run.step(lane, "$ ls", "helper.sh run.sh")
+    run.step(lane, "submit t{h}", "guessed", flag="t{h}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "h"), "## Steps that mattered")
+    assert section[1].startswith("No step's output shows the flag and no step ran a file the lane wrote")
+
+
+def test_a_command_run_after_a_folded_newline_is_a_command(tmp_path):
+    shell = tool(tmp_path, "shell", {"command": "chmod +x x.sh\n./x.sh"}, b"ok\n")
+    assert shell.action == f"$ chmod +x x.sh{NEWLINE}./x.sh"
+    run = Run(tmp_path / "run", [Challenge("c", "Chmod", "misc", 10)], answers={"c": "t{c}"})
+    lane = run.lane("c")
+    run.step(lane, "$ cat > x.sh <<'EOF'", files=(change(tmp_path / "work", "x.sh", "echo ok\n"),))
+    run.step(lane, shell.action, shell.output)
+    run.step(lane, "submit t{c}", "x.sh said ok", flag="t{c}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "c"), "## Steps that mattered")
+    assert "the last step that ran a file the lane wrote is turn 2, which ran `x.sh`" in section[1]
+
+
+def test_a_long_lane_with_many_files_is_drafted_quickly(tmp_path):
+    """300 steps and 600 files (an unpacked handout): each step is checked against each file,
+    which must not cost a regex compiled per pair (it took over ten seconds)."""
+    run = Run(tmp_path / "run", [Challenge("c", "Long", "misc", 10)], answers={"c": "t{c}"})
+    lane = run.lane("c")
+    for n in range(300):
+        files = tuple(FileChange(f"extracted/dir{k // 50}/file{k:04d}.dat", "binary file, 10 bytes", "added")
+                      for k in (2 * n, 2 * n + 1))
+        run.step(lane, f"$ ./tool --input data/file{n % 97}.dat --verbose", "ok", files=files)
+    run.step(lane, "submit t{c}", flag="t{c}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    assert len(record.lanes[lane].files) == 600
+    start = time.perf_counter()
+    text = writeup.draft(record, "c")
+    assert time.perf_counter() - start < 2.0
+    assert "600 files, not shown here" in text
 
 
 def test_long_outputs_are_cut_to_twenty_lines_and_long_lines_short_and_the_draft_says_so(tmp_path):

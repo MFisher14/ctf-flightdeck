@@ -14,11 +14,12 @@ accepted flag is one an `l1` event on that challenge reported before it was acce
 
 The steps that mattered: the first step whose output holds the flag; failing that, the last
 step that ran a file the lane wrote (a shell command naming it, not one that only shows or
-edits it); failing that, the last step before the flag was accepted. The draft says which
-rule picked it, and shows it with the 5 steps before it: each command in a fenced block (a
-multi-line one with its lines back), each output in another, cut to 20 lines. A plan the lane
-stated is not a step: it is in the approach (a turn that set the plan and also submitted a
-flag stays a step).
+edits it, nor a line inside a heredoc; a newline the transcript folded splits commands as a
+real one does); failing that, the last step before the flag was accepted. The draft says
+which rule picked it, and shows it with the 5 steps before it: each command in a fenced block
+(a multi-line one with its lines back), each output in another, cut to 20 lines. A plan the
+lane stated is not a step: it is in the approach (a turn that set the plan and also submitted
+a flag stays a step).
 
 The files: those with something to show (an added text file under 200 lines, a diff that
 short) are shown whole, at most 10, files a step ran first; every other file is listed with
@@ -91,6 +92,8 @@ _SURROGATE = re.compile("[\ud800-\udfff]")  # half of a UTF-16 pair: JSON allows
 _MORE = re.compile(r"  \(\+(\d+) more\)$")  # agent/driver.py: a turn with several tool calls
 _SEPARATORS = re.compile(r"&&|\|\||[;|&\n]")
 _REDIRECT = re.compile(r"\d*(?:>>?|<<?<?)\s*(?:'[^']*'|\"[^\"]*\"|\S+)")  # > out.txt, < in.txt, <<'EOF'
+_HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(?:'([^']*)'|\"([^\"]*)\"|\\?([^\s;&|<>()'\"]+))")  # not <<< (a here-string)
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=\S*")
 _VIEWERS = frozenset(
     "cat less more head tail nano vi vim nvim emacs ed echo printf tee wc file ls stat xxd hexdump od "
     "strings grep egrep fgrep rg diff cmp cp mv rm touch mkdir chmod chown ln sed awk sort uniq cut tr "
@@ -367,26 +370,58 @@ def _command(step: ActionLine) -> str | None:
     return _without_more(step.text)[0][2:]
 
 
-def _ran(step: ActionLine, paths: Sequence[str]) -> str | None:
-    """The first of `paths` this step ran: a simple command in its shell line names the file
-    (or its base name) outside a redirect, and does not start with a command that only shows,
-    edits or moves files."""
-    command = _command(step)
-    if command is None:
-        return None
-    for part in _SEPARATORS.split(command):
-        part = _REDIRECT.sub(" ", part)
-        words = [w for w in part.split() if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=\S*", w)]
-        if not words or PurePosixPath(words[0]).name in _VIEWERS:
+def _simple_commands(command: str) -> list[str]:
+    """The simple commands of a shell command line, in order, with no heredoc's lines. A newline
+    the transcript folded (text.NEWLINE: agent/tools.py keeps each action on one line) splits
+    commands as a raw one does."""
+    parts: list[str] = []
+    heredocs: list[tuple[str, bool]] = []  # opened and not yet closed: (the word that ends it, <<- so indented)
+    for line in command.replace(NEWLINE, "\n").split("\n"):
+        if heredocs:
+            word, indented = heredocs[0]
+            if (line.lstrip(" \t") if indented else line) == word:  # <<- strips tabs: folding made them spaces
+                heredocs.pop(0)
             continue
+        for match in _HEREDOC.finditer(line):
+            word = next(group for group in match.groups()[1:] if group is not None)
+            heredocs.append((word, bool(match.group(1))))
+        parts.extend(_SEPARATORS.split(line))
+    return parts
+
+
+class _Runs:
+    """Which file the lane wrote each step ran. Made once per draft: a long lane has hundreds
+    of steps and files, and each step is looked at for each file."""
+
+    def __init__(self, paths: Iterable[str]) -> None:
+        self.names: list[tuple[str, str, re.Pattern[str]]] = []  # (what a command names, the path, a pattern for it)
         for path in paths:
-            if _names(part, path) or _names(part, PurePosixPath(path).name):
-                return path
-    return None
+            for name in dict.fromkeys((path, PurePosixPath(path).name)):
+                if name:
+                    self.names.append((name, path, re.compile(r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])")))
+        self.seen: dict[ActionLine, str | None] = {}
 
+    def of(self, step: ActionLine) -> str | None:
+        """The first of the paths this step ran: a simple command in its shell line names the
+        file (or its base name) outside a redirect, and does not start with a command that only
+        shows, edits or moves files."""
+        if step not in self.seen:
+            self.seen[step] = self._ran(step)
+        return self.seen[step]
 
-def _names(text: str, path: str) -> bool:
-    return bool(path) and re.search(r"(?<![\w.-])" + re.escape(path) + r"(?![\w.-])", text) is not None
+    def _ran(self, step: ActionLine) -> str | None:
+        command = _command(step)
+        if command is None or not self.names:
+            return None
+        for part in _simple_commands(command):
+            part = _REDIRECT.sub(" ", part)
+            words = [w for w in part.split() if not _ASSIGNMENT.fullmatch(w)]
+            if not words or PurePosixPath(words[0]).name in _VIEWERS:
+                continue
+            for name, path, pattern in self.names:
+                if name in part and pattern.search(part):
+                    return path
+        return None
 
 
 def _same_plan(listed: str, final: str) -> bool:
@@ -438,6 +473,12 @@ class _Writer:
         self.nonce = secrets.token_hex(4)
         self.blocks: list[str] = []  # placeholders of held blocks, in order
         self.lines: list[str] = []
+        self._runs: _Runs | None = None
+
+    def runs(self, lane: LaneRecord) -> _Runs:
+        if self._runs is None:
+            self._runs = _Runs(f.file for f in lane.files if f.status != "deleted")
+        return self._runs
 
     # ------------------------------------------------------------ pieces
 
@@ -621,9 +662,9 @@ class _Writer:
             for i, step in enumerate(steps):
                 if flag in step.output:
                     return i, f"The flag first shows in the output of turn {step.turn}.", "the flag shows here"
-        written = [f.file for f in lane.files if f.status in ("added", "modified")]
+        runs = self.runs(lane)
         for i in range(len(steps) - 1, -1, -1):
-            path = _ran(steps[i], written)
+            path = runs.of(steps[i])
             if path is not None:
                 why = (f"No step's output shows the flag; the last step that ran a file the lane "
                        f"wrote is turn {steps[i].turn}, which ran {self.t(path)}.")
@@ -639,8 +680,8 @@ class _Writer:
         if not written and not deleted:
             self.out("None: the lane changed no files in its workspace.", "")
             return
-        paths = [f.file for f in written]
-        ran = {path for step in steps if (path := _ran(step, paths)) is not None}
+        runs = self.runs(lane)
+        ran = {path for step in steps if (path := runs.of(step)) is not None}
         written.sort(key=lambda f: (f.file not in ran, f.turn, f.file))
         shown: list[tuple[FileLine, tuple[str, str]]] = []
         rest: list[FileLine] = []
