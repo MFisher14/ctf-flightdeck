@@ -3056,3 +3056,20 @@ def test_doctor_measures_team_modes_key_line_with_claim_as_the_console_draws_it(
         assert (left == []) is (columns >= team) and team == solo + len("  c claim")
 
     drive(app, script, size=(columns, 30))
+
+
+@pytest.mark.parametrize("lanes, docker", [(1, False), (2, False), (4, True), (8, True)])
+def test_doctors_size_has_room_for_the_dollars_of_a_coding_agent_run_whose_cli_turn_is_under_way(lanes, docker):
+    """While a coding-agent CLI's turn is under way the header's dollars end in …: at the size
+    doctor says leaves nothing out, with an event name as long as it says fits, the header
+    still shows every piece then, and with one character more it does not."""
+    from dataclasses import replace
+
+    fit = room.room(200, 50, max_lanes=lanes, containerized=docker)
+    busy = room.busy_header(max_lanes=lanes, containerized=docker)
+    width = fit.columns - room.HEADER_MARGIN
+    for later in (False, True):
+        _, left = views.fit_header(replace(busy, event="E" * fit.event, later=later), width)
+        assert left == [], (later, left)
+    _, left = views.fit_header(replace(busy, event="E" * (fit.event + 1), later=True), width)
+    assert left != []
