@@ -245,7 +245,9 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
 # (`flightdeck l1 import` makes the manifests for a folder of scripts). A lane runs the engines
 # routed to its challenge before its first model call; a flag one finds waits for your approval.
-# They run on this machine, as you (they are your code), each in a copy of the handout.
+# Each works in a copy of the handout. When lanes run in Docker, so do they: each in a container
+# of the lane image, your pack mounted read-only, with no network unless lanes may reach the
+# challenge's live instance at once. On the host runtime they run on this machine, as you.
 # pack = "~/ctf/solvers"        # no pack: no L1 stage
 concurrency = 4                 # engines run at once on one challenge
 """

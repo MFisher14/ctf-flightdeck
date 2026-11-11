@@ -171,7 +171,13 @@ class Run:
         lanes = self.config.lanes
         l1 = getattr(self.driver, "l1", None)
         if l1 is not None:
-            where = " (on this machine, as you, even though lanes run in Docker)" if self.runtime == "docker" else ""
+            if getattr(l1, "image", None) is not None:
+                where = (
+                    f", each in a container of the lane image {l1.image} with your pack mounted read-only, and no network "
+                    "unless lanes may reach the challenge's live instance at once (instance auto)"
+                )
+            else:
+                where = ", on this machine, as you"
             out.append(f"L1: {len(l1.manifests)} engine(s) from your pack run first on each challenge{where}")
         unpriced = [m for m in self.config.models if m not in self.config.prices]
         if self.client is not None and lanes.dollar_cap and unpriced and "openrouter.ai" not in self.config.api.base_url:
@@ -493,7 +499,10 @@ def prepare_run(options: RunOptions) -> Run:
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
     if manifests is not None:
-        l1 = L1Stage(manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency)
+        l1 = L1Stage(
+            manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
+            image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
+        )
     try:
         client = build_client(config, key, spare_key) if agent is None else None
     except ValueError as exc:  # a key no HTTP header can carry; never shown

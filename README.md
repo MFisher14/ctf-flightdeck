@@ -104,11 +104,13 @@ challenge a teammate solved.
 
 Point flightdeck at a folder of your no-model solvers and every lane runs the ones that fit its
 challenge before its first model call; a flag one finds waits for your approval, so a solve can
-cost no tokens at all.
+cost no tokens at all. When lanes run in Docker, so do your solvers: each in a container of the
+lane image, your pack mounted read-only, with no network unless the live-instance policy is `auto`
+and the challenge has an instance. With `--host` they run on this machine, as you.
 
 ```sh
 flightdeck l1 import ~/ctf/solvers        # manifests for a folder of plain scripts (the scripts are never changed)
-flightdeck l1 route ~/ctf/solvers ~/ctf/some-board/crab-walk   # which engines a challenge reaches, and why
+flightdeck l1 route ~/ctf/solvers ~/ctf/some-board/crab-walk   # which engines a challenge reaches, and why (or why not)
 flightdeck play ~/ctf/some-board --pack ~/ctf/solvers          # or set [l1] pack in your config
 ```
 

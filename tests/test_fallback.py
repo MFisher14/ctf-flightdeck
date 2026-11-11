@@ -260,7 +260,7 @@ def test_a_lane_on_anthropic_reads_the_handout_and_hands_over_a_flag(tmp_path):
             await until(lambda: lane.pending is not None or lane.finished, "the candidate flag")
             assert lane.pending is not None, lane.result
             first, second = (r["json"] for r in claude.requests)
-            assert first["system"] == [{"type": "text", "text": system_prompt(FLAG), "cache_control": {"type": "ephemeral"}}]
+            assert first["system"] == [{"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}]
             assert [m["role"] for m in first["messages"]] == ["user"]
             assert "Challenge: Note (misc, 50 points, 10 solves)" in first["messages"][0]["content"][0]["text"]
             assistant, results = second["messages"][1], second["messages"][2]
@@ -337,7 +337,8 @@ def test_after_a_529_the_lane_moves_to_openrouter_says_so_and_stays_there(tmp_pa
 def test_escalating_a_moved_lane_tries_anthropic_again_on_the_stronger_model(tmp_path):
     claude = FakeAnthropicServer([OVERLOADED, OVERLOADED, tool_message("submit_flag", {"flag": "t{big}"},
                                                                        model="claude-sonnet-5-5")])
-    router = FakeModelServer([tool_call_reply("shell", {"command": "echo on openrouter"})], responder=lambda r: text_reply("waiting"))
+    router = FakeModelServer([tool_call_reply("shell", {"command": "echo on openrouter"})],
+                             responder=lambda r: tool_call_reply("set_plan", {"plan": "waiting"}))  # busy until the escalation
 
     async def main():
         with claude, router:

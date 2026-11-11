@@ -113,6 +113,25 @@ def test_the_reason_names_each_condition_that_held(handout):
     assert hit.reason == "category cry, keyword 'base64', file 'sub/deeper/archive.bin' (magic:PK)"
 
 
+def test_a_miss_names_the_nearest_route_and_every_condition_of_it_that_failed(handout):
+    from ctf_flightdeck.l1.router import misses
+
+    manifests = [
+        engine("hit", Route(keywords=("rot13",))),
+        engine("far-and-near", Route(category=("web",), keywords=("sqli",), priority=90),
+               Route(category=("cry",), keywords=("caesar", "vigenere"), priority=20)),
+        engine("files", Route(files=("ext:.pcap", "magic:0x0a0d0d0a"))),
+    ]
+    found = misses(manifests, challenge("Rotations", category="cry", description="Think rot13."), handout)
+    assert [(m.manifest.id, m.failed, m.held) for m in found] == [
+        ("far-and-near", ("no keyword 'caesar' | 'vigenere' in its name or description",), ("category cry",)),
+        ("files", ("no file of the handout matches ext:.pcap | magic:0x0a0d0d0a",), ()),
+    ]  # the engine it reaches is not a miss; of two routes, the one with fewer failures, whatever its priority
+    assert found[0].route.priority == 20
+    [web] = misses([manifests[1]], challenge("Login", category="pwn", description="sqli"), handout)
+    assert web.failed == ("its category 'pwn' is not web",) and web.held == ("keyword 'sqli'",)
+
+
 def test_symlinks_in_a_handout_are_never_followed(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

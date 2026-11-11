@@ -85,7 +85,12 @@ def test_route_lists_the_hits_best_first_with_reasons(pack, board):
         " 30  text.grep  keyword 'note'",
     ]
     quiet = invoke("route", pack, board / "other")
-    assert quiet.exit_code == 0 and quiet.stdout == "" and "no engine" in quiet.stderr
+    assert quiet.exit_code == 0 and "no engine" in quiet.stderr
+    assert quiet.stdout.splitlines() == [
+        "  -  never  not reached: its category 'misc' is not pwn",
+        "  -  read.note  not reached: no file of the handout matches name:note.txt",
+        "  -  text.grep  not reached: no keyword 'note' in its name or description",
+    ]
 
 
 def test_run_prints_one_json_result_per_engine_using_the_boards_flag_format(pack, board, tmp_path):
@@ -209,12 +214,55 @@ def test_import_writes_manifests_and_lists_what_it_skipped(tmp_path):
     assert result.exit_code == 0, result.stderr
     assert result.stdout.splitlines() == [
         "wrote .flightdeck/generated/crypto/rsa_wiener.py.manifest.toml",
+        "    priority 20: category cry, and keywords rsa | wiener",
         "skipped tools/solve.py: no category from its folder name and no keyword from its file name, "
         "so a route would never match; write a manifest for it",
     ]
     assert "1 generated manifest, 1 skipped" in result.stderr
     listed = invoke("list", folder)
     assert listed.stdout.startswith("imported.crypto.rsa_wiener.py [imported]: cli: python3 ./crypto/rsa_wiener.py")
+
+
+def test_import_shows_the_route_it_made_and_how_to_route_a_script_another_way(tmp_path):
+    """Finding 23: a route comes from a script's folder and file name only, so say so, and
+    say how to change it."""
+    folder = tmp_path / "scripts"
+    (folder / "crypto").mkdir(parents=True)
+    (folder / "crypto" / "caesar_bruteforce.py").write_text('if __name__ == "__main__":\n    print("x")\n')
+    result = invoke("import", folder)
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines()[1] == "    priority 20: category cry, and keywords caesar | bruteforce"
+    said = flat(result.stderr)
+    assert "a route comes from the script's folder (its category) and its file name (its keywords)" in said
+    assert "write <script>.manifest.toml next to the script" in said and "the import leaves that script alone" in said
+    write_manifest(folder / "crypto", "caesar_bruteforce.py", """
+        id = "caesar"
+        entry = "cli:python3 ./caesar_bruteforce.py"
+        output = "text"
+        [[routes]]
+        category = ["cry"]
+        keywords = ["caesar", "rot13", "rotation"]
+        """)
+    again = invoke("import", folder)
+    assert "skipped crypto/caesar_bruteforce.py: already run by the manifest crypto/caesar_bruteforce.py.manifest.toml" in again.stdout
+
+
+def test_route_says_why_a_challenge_reaches_no_engine(tmp_path):
+    folder = tmp_path / "scripts"
+    (folder / "crypto").mkdir(parents=True)
+    (folder / "crypto" / "caesar_bruteforce.py").write_text('if __name__ == "__main__":\n    print("x")\n')
+    assert invoke("import", folder).exit_code == 0
+    cli_engine(folder, "pcap", "true\n", engine_id="net.pcap", route='files = ["ext:.pcap"]\n[[routes]]\ncategory = ["for"]\nkeywords = ["capture"]')
+    board = tmp_path / "board"
+    challenge_dir(board, "cipher", {"msg.txt": "uryyb\n"}, category="crypto", description="A classic rotation. Think rot13.")
+    result = invoke("route", folder, board / "cipher")
+    assert result.exit_code == 0, result.stderr
+    assert "no engine in" in result.stderr and "routes cipher" in result.stderr
+    assert result.stdout.splitlines() == [
+        "  -  imported.crypto.caesar_bruteforce.py  not reached: no keyword 'caesar' | 'bruteforce' in its name or "
+        "description (category cry held)",
+        "  -  net.pcap  not reached: no file of the handout matches ext:.pcap",
+    ]
 
 
 def test_import_of_a_folder_with_a_broken_manifest_fails_loudly(tmp_path):

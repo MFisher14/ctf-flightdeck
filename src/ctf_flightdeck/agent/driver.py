@@ -7,8 +7,13 @@ context, and the turn is reported to the deck (tokens, cost, the step, changed f
 candidate flag). The deck applies the rules (approvals, caps, the flag format); the loop
 calls the model, and runs a tool call, only while the lane is RUNNING, and waits otherwise.
 
-Each lane starts with a fresh context: the fixed system prompt, then the challenge brief.
-Escalation starts a fresh context too, on the stronger model, with the deck's summary.
+Each lane starts with a fresh context: the fixed system prompt, then the challenge brief (and,
+once its L1 engines have run, what they found). Escalation starts a fresh context too, on the
+stronger model, with the deck's summary; so does the refresh of a context grown too long.
+
+A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call. A model call that
+fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
+queue before the lane ends, so the next challenges are not started only to fail the same way.
 
 Escalation and take-over are turn boundaries. Each bumps the lane's generation, and a reply
 asked for in an older generation runs no further tool call. After an escalation none of
@@ -56,6 +61,16 @@ HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (i
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
 INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, as lanes see it (manual is off)
+MAX_IDLE_TURNS = 3  # replies in a row without a tool call before the lane gives up (as agent/external.py's lanes do)
+MAX_SAID_FLAGS = 3  # candidates taken from one reply's text, at most
+SAID_SCAN = 20_000  # characters of a reply's text searched for flags
+EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, and what the player should check
+    401: "check the API key",
+    402: "check the account's credits",
+    403: "check that the key may use this model",
+    404: "check the model id in the [models] ladder, and base_url",
+    405: "check base_url",
+}
 
 
 def _set_event() -> asyncio.Event:
@@ -80,6 +95,7 @@ class _Run:
     model: str
     session: str
     messages: list[dict] = field(default_factory=list)
+    l1_message: dict | None = None  # what the L1 engines found: after the brief in every fresh context of the lane
     notes: list[str] = field(default_factory=list)  # flightdeck's notes for the next turn
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     idle: asyncio.Event = field(default_factory=_set_event)  # cleared while a turn runs its tool calls
@@ -91,6 +107,8 @@ class _Run:
     instance: str = ""  # the live instance under the confirm policy: asked, allowed, open, declined, failed
     escalations: int = 0
     generation: int = 0  # bumped at escalation and take-over: a reply asked for before must not run
+    idle_turns: int = 0  # replies in a row with no tool call (and no new flag in their text) since the player last spoke
+    said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
 
 
 @dataclass
@@ -189,6 +207,7 @@ class AgentDriver:
         self.instance = instance  # may lanes reach a challenge's live instance: auto, confirm (ask first), off
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
+        self.answered: set[str] = set()  # the models that have answered a lane in this run
         self.deck = None
 
     # ------------------------------------------------------------------ LaneDriver
@@ -247,6 +266,7 @@ class AgentDriver:
         run.model = model
         run.escalations += 1
         run.generation += 1
+        run.idle_turns = 0  # the stronger model gets its own chances
         run.session = self._session(lane.id, run.escalations)
         text = lane_summary(self.deck, lane, before=summary)
         run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(text)}]
@@ -335,8 +355,9 @@ class AgentDriver:
             assert lane is not None
             hints = list(lane.hints)
             notes, run.notes = run.notes, []
-            if hints or notes:
+            if hints or notes:  # the player spoke (or flightdeck on their behalf): a reply to it starts the count again
                 run.messages.append({"role": "user", "content": prompts.player_message(hints, notes)})
+                run.idle_turns = 0
             generation, model, messages = run.generation, run.model, run.messages
             try:
                 reply = await self.client.chat(
@@ -356,6 +377,7 @@ class AgentDriver:
                     continue
                 self._failed(run, exc, model, len(hints))
                 return
+            self.answered.add(model)
             if reply.notice:
                 self.deck.note(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
             if not await self._until_running(run, generation) and self._over(run):
@@ -372,10 +394,14 @@ class AgentDriver:
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
-        lane's candidate; what they all found goes in the lane's context."""
+        lane's candidate (claimed, unless the runner found it in what a text engine printed);
+        what they all found goes in the lane's context. In Docker an engine is online only
+        when the lane may reach the challenge's instance at once (instance auto): it runs
+        before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
+        online = bool(self.urls.get(run.challenge.id)) and self.instance == "auto"
         try:
-            runs = await self.l1.run(run.lane_id, run.challenge)
+            runs = await self.l1.run(run.lane_id, run.challenge, online=online)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
@@ -394,9 +420,11 @@ class AgentDriver:
         for engine in runs:
             if engine.result.status in FLAG_STATUSES:
                 for flag in engine.result.flags:
-                    self._report(run, TurnReport(turn=False, flag=flag))
+                    # a match in what a text engine printed may be the challenge's decoy: it waits for the player
+                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped))
         if not self._over(run):
-            run.messages.append({"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])})
+            run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
+            run.messages.append(dict(run.l1_message))
 
     async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:
         """The player allowed the live instance: connect a docker lane's container to the
@@ -436,7 +464,15 @@ class AgentDriver:
 
     def _failed(self, run: _Run, error: ModelError, model: str, hints_taken: int) -> None:
         """The model call failed for good: the lane ends with the reason. A model that declined
-        (a refusal) is not an API error, and its call was paid for: its tokens count."""
+        (a refusal) is not an API error, and its call was paid for: its tokens count.
+
+        A failure every lane would get alike (a refused key, an unknown model, an API that does
+        not answer: _every_lane) first holds the deck's queue, saying why and what to check,
+        so the next challenges stay queued instead of each starting a lane that fails the same
+        way. The lanes already running end as this one does when they hit it."""
+        check = self._every_lane(error, model)
+        if check:
+            self.deck.hold_queue(f"{run.lane_id}'s call to {model} failed in a way every lane would ({check}): {error}")
         usage = error.usage
         tokens = usage.total if usage else 0
         cached = usage.cached_tokens if usage else 0
@@ -450,6 +486,25 @@ class AgentDriver:
             action, gave_up = f"model call to {model} failed", f"model API error: {error}"
         self._report(run, TurnReport(turn=False, action=action, output=str(error), tokens=tokens, cached_tokens=cached,
                                      dollars=dollars, hints_taken=hints_taken, gave_up=gave_up))
+
+    def _every_lane(self, error: ModelError, model: str) -> str:
+        """What the player should check when every lane would fail as this call did, else "".
+
+        That is: no answer at all (nothing listens at base_url, or it never answers in time);
+        a status that is about the key, the account, the model id or the URL (EVERY_LANE); or
+        any failure before any lane has had an answer from this model in this run (an unknown
+        model id is a 400 on some APIs). A model that declined answered, and a failure once
+        the model has answered may be this lane's own (its context too long) or may pass (a
+        rate limit, an overload): those end only this lane."""
+        if error.declined:
+            return ""
+        if error.status is None:
+            return "the model API does not answer: is it running, and is base_url right?"
+        if error.status in EVERY_LANE:
+            return EVERY_LANE[error.status]
+        if model not in self.answered:
+            return f"no lane has had an answer from {model} yet: check the model id and base_url"
+        return ""
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
                    reply: Reply | None = None, model: str = "") -> None:
@@ -503,16 +558,25 @@ class AgentDriver:
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
         for flag in flags:
-            if not self._flag_re().fullmatch(flag):
-                notes.append(f"{prompts.one(flag, 200)} does not match the flag format {self.deck.config.flag_format}; it was not submitted.")
+            if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
+                notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
         skipped = len(reply.tool_calls) - len(results)
+        said: list[str] = []  # flags the model wrote in a reply with no tool call: candidates it did not submit
+        idle = False  # the last of MAX_IDLE_TURNS replies in a row that did nothing: the lane gives up
+        if same and run.generation == generation:
+            if reply.tool_calls:
+                run.idle_turns = 0
+            else:
+                said = self._flags_said(run, reply.content)
+                run.idle_turns = 0 if said else run.idle_turns + 1
+                idle = run.idle_turns >= MAX_IDLE_TURNS
         if same:
             messages.append(reply.message)
             for call, result in zip(reply.tool_calls, results):
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": result.content})
             for call in reply.tool_calls[len(results):]:
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": NOT_RUN})
-            if not reply.tool_calls and run.generation == generation:
+            if not reply.tool_calls and run.generation == generation and not idle:
                 messages.append({"role": "user", "content": prompts.NUDGE})
             run.notes.extend(notes)
         action, output = _step(results, reply)
@@ -537,6 +601,28 @@ class AgentDriver:
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag))
+        for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
+            self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
+        if idle:
+            run.idle_turns = 0
+            last = prompts.one(reply.content, 200) if reply.content.strip() else "(nothing)"
+            self._report(run, TurnReport(
+                turn=False, gave_up=f"the model answered {MAX_IDLE_TURNS} times in a row without calling a tool; it last said: {last}",
+            ))
+
+    def _flags_said(self, run: _Run, text: str) -> list[str]:
+        """Matches of the flag format in what the model wrote, new to this lane, at most
+        MAX_SAID_FLAGS of them (a model that lists made-up flags asks the player a few times,
+        not a hundred)."""
+        found: list[str] = []
+        for match in self._flag_re().finditer(text[:SAID_SCAN]):
+            flag = match.group(0)
+            if flag and flag not in run.said and flag not in found:
+                found.append(flag)
+                if len(found) == MAX_SAID_FLAGS:
+                    break
+        run.said.update(found)
+        return found
 
     def _refresh_if_long(self, run: _Run, prompt_tokens: int) -> None:
         """Past compact_at prompt tokens, continue in a fresh context: the same prefix and
@@ -551,16 +637,22 @@ class AgentDriver:
     # ------------------------------------------------------------------ helpers
 
     def _fresh(self, run: _Run, approach: str) -> list[dict]:
-        """A new context: the system prompt and the brief. `approach` is the player's own
-        direction (lane.approach), never the model's plan."""
+        """A new context: the system prompt, the brief, and what the L1 engines found (once
+        they have run: an escalation or a refresh keeps it, so the model never pays to redo
+        what they did or ruled out). `approach` is the player's own direction (lane.approach),
+        never the model's plan."""
         challenge = run.challenge
-        return [
-            {"role": "system", "content": prompts.system_prompt(self.deck.config.flag_format)},
+        messages = [
+            {"role": "system", "content": prompts.system_prompt()},
             {
                 "role": "user",
-                "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()), approach),
+                "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
+                                         approach, flag_format=self.deck.config.flag_format),
             },
         ]
+        if run.l1_message is not None:
+            messages.append(dict(run.l1_message))
+        return messages
 
     def _dollars(self, model: str, reply: Reply) -> float | None:
         usage = reply.usage

@@ -70,6 +70,63 @@ def route(manifests: Sequence[Manifest], challenge: Challenge, handout: Path) ->
     return hits
 
 
+@dataclass(frozen=True)
+class Miss:
+    """An engine a challenge does not reach, and why: its nearest route (the fewest
+    conditions that failed, then the most that held, then the highest priority)."""
+
+    manifest: Manifest
+    route: Route
+    failed: tuple[str, ...]  # e.g. "no keyword 'caesar' | 'bruteforce' in its name or description"
+    held: tuple[str, ...]  # e.g. "category cry"
+
+
+def misses(manifests: Sequence[Manifest], challenge: Challenge, handout: Path) -> list[Miss]:
+    """The engines `challenge` does not reach, by id, each with its nearest route and the
+    conditions of it that failed (and those that held). `route` says which it does reach."""
+    handout = Path(handout)
+    if not handout.is_dir():
+        raise ValueError(f"handout {untrusted(str(handout), one_line=True)} is not a directory")
+    files = HandoutFiles(handout)
+    text = f"{challenge.name} {challenge.description}".lower()
+    category = category_code(challenge.category)
+    reached = {hit.manifest.id for hit in route(manifests, challenge, handout)}
+    out: list[Miss] = []
+    for manifest in sorted(manifests, key=lambda m: m.id):
+        if manifest.id in reached:
+            continue
+        checked = [(rule, *_check(rule, category, text, files)) for rule in manifest.routes]
+        rule, held, failed = min(checked, key=lambda c: (len(c[2]), -len(c[1]), -c[0].priority))
+        out.append(Miss(manifest, rule, tuple(failed), tuple(held)))
+    return out
+
+
+def _check(rule: Route, category: str, text: str, files: HandoutFiles) -> tuple[list[str], list[str]]:
+    """(the conditions of `rule` that held, those that failed), each as a phrase; unlike
+    _match it looks at every condition."""
+    held: list[str] = []
+    failed: list[str] = []
+    if rule.category:
+        if category in rule.category:
+            held.append(f"category {category}")
+        else:
+            failed.append(f"its category {_quote(category or 'none')} is not {' | '.join(rule.category)}")
+    if rule.keywords:
+        keyword = next((k for k in rule.keywords if k in text), None)
+        if keyword is not None:
+            held.append(f"keyword {_quote(keyword)}")
+        else:
+            failed.append(f"no keyword {' | '.join(_quote(k) for k in rule.keywords)} in its name or description")
+    if rule.files:
+        found = files.match(rule.files)
+        if found is not None:
+            pattern, rel = found
+            held.append(f"file {_quote(rel)} ({pattern})")
+        else:
+            failed.append(f"no file of the handout matches {' | '.join(rule.files)}")
+    return held, failed
+
+
 def _match(rule: Route, category: str, text: str, files: HandoutFiles) -> list[str] | None:
     """Why `rule` matches (one phrase per condition), or None if a condition fails."""
     reasons: list[str] = []

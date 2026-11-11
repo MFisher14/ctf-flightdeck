@@ -4,6 +4,24 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+### Lanes and L1
+
+- When lanes run in Docker, your L1 solvers do too: each engine in a container of the lane image,
+  your pack mounted read-only, with no network unless the event lets lanes reach the challenge's
+  instance at once. Under `confirm`, `manual` and `off` no engine can reach the instance. On the
+  host runtime they run as before.
+- A flag found in what a text-output engine printed waits for you even under auto submit.
+- Escalation and the long-context refresh keep what your L1 solvers found; that message is capped.
+- A model that answers three times in a row without calling a tool gives up, quoting what it last
+  said; a flag it writes in such a reply waits for you.
+- A model API failure every lane would hit (no answer, a refused key, no credits, an unknown
+  model) holds the queue and says what to check, instead of parking the whole board.
+- The flag format, which comes from the board or the event profile, is shown in the challenge
+  brief as data, never in the system prompt.
+- A cancelled engine run (a lane killed, a quit) removes its copy of the challenge.
+- `flightdeck l1 import` shows the route each script got and how to change it; `flightdeck l1
+  route` says why a challenge reaches no engine.
+
 ### Model APIs
 
 - The Anthropic API for flightdeck's own lanes: `flightdeck init --provider anthropic` (Claude
