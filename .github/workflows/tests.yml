@@ -6,6 +6,7 @@ name: tests
 on:
   push:
   pull_request:
+  workflow_dispatch:  # run it by hand: gh workflow run tests
 
 permissions:
   contents: read
