@@ -34,7 +34,8 @@ everything (Python, the config, the key variables, a local model server and its 
 light model, Docker, the lane image, your terminal's size) and says how to fix each problem.
 Before the console opens, `play` and `practice` ask the model API whether it takes your key and
 serves every model in your ladder, and stop with what to fix if not. No setup at all:
-`flightdeck mock` opens the console on scripted data and spends nothing.
+`flightdeck mock` opens the console on scripted data and spends nothing, and
+`uvx ctf-flightdeck mock` does it without installing anything.
 
 ## Keys and model APIs
 

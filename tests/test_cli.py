@@ -406,6 +406,7 @@ def test_pyproject_installs_both_command_names():
     scripts = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
     assert scripts["flightdeck"] == "ctf_flightdeck.cli:main"
     assert scripts["ctfdeck"] == "ctf_flightdeck.cli:main"
+    assert scripts["ctf-flightdeck"] == "ctf_flightdeck.cli:main"  # uvx runs the command named like the package
 
 
 def test_main_runs_the_cli_under_the_name_it_was_started_as(monkeypatch, capsys):

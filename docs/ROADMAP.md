@@ -110,7 +110,7 @@ M0 to M4 built (M5, Autopilot, comes after v0.1.0: below), docs and quickstart, 
 nothing to a running console in a few minutes, without reading the architecture:
 
 - One-line install or no install: `pip install ctf-flightdeck` (in a virtual environment),
-  `pipx install ctf-flightdeck` or `uv tool install ctf-flightdeck`, or `uvx ctf-flightdeck` to try
+  `pipx install ctf-flightdeck` or `uv tool install ctf-flightdeck`, or `uvx ctf-flightdeck mock` to try
   it; each tested from the built wheel in a clean environment (publishing to PyPI is the player's
   call at release time). Python 3.12+; macOS and Linux (Windows through WSL).
 - `flightdeck` with no setup offers the next step instead of an error; `flightdeck init` asks a few
