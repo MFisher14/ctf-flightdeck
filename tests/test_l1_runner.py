@@ -428,7 +428,7 @@ def test_words_of_a_cli_entry_that_name_pack_files_become_absolute_paths(pack, h
         keywords = ["demo"]
         """)
     manifest = load(m)
-    assert command(manifest) == [shutil.which("bash", path=safe_path()), str(pack / "tools" / "args.sh"), "--mode", "two words", str(pack / "tools" / "words.txt"), "missing.txt", "."]
+    assert command(manifest) == [os.path.abspath(shutil.which("bash", path=safe_path())), str(pack / "tools" / "args.sh"), "--mode", "two words", str(pack / "tools" / "words.txt"), "missing.txt", "."]
     assert go(m, handout, tmp_path / "work").flags == ("t{ran}",)
 
 
@@ -453,7 +453,7 @@ def test_a_pack_file_gone_since_the_pack_was_read_blocks_the_engine_and_never_ru
 
 def test_the_python_command_is_the_boot_script_in_isolated_mode(pack):
     manifest = load(python_engine(pack, "x", "def solve(d):\n    return None\n"))
-    assert command(manifest) == [shutil.which("python3", path=safe_path()), "-I", str(BOOT), str(pack / "x.py"), "solve", "."]
+    assert command(manifest) == [os.path.abspath(shutil.which("python3", path=safe_path())), "-I", str(BOOT), str(pack / "x.py"), "solve", "."]
     assert BOOT.is_file() and BOOT.is_absolute()
 
 
