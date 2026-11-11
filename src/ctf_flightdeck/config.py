@@ -123,7 +123,17 @@ def default_config_path() -> Path:
 def load_config(path: Path | None = None) -> Config:
     """Read and check the config file (default: default_config_path())."""
     path = default_config_path() if path is None else expand(Path(path))
-    doc = _parse(path)
+    return _config(path, _parse(path))
+
+
+def parse_config(text: str, source: Path) -> Config:
+    """Check a config given as text, as load_config() checks a file, without writing it
+    anywhere: `source` is the file it is for, which every error names (flightdeck init
+    checks what it is about to write)."""
+    return _config(source, _toml(text, source))
+
+
+def _config(path: Path, doc: dict) -> Config:
     _known(path, (), doc, _TABLES)
     ladder = _ladder(path, _table(path, doc, "models"))
     return Config(
@@ -281,9 +291,15 @@ def _parse(path: Path) -> dict:
     except OSError as exc:
         raise ConfigError(f"{path}: cannot read it ({exc.strerror})") from None
     try:
-        return tomllib.loads(raw.decode("utf-8"))
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise ConfigError(f"{path}: is not UTF-8 text") from None
+    return _toml(text, path)
+
+
+def _toml(text: str, path: Path) -> dict:
+    try:
+        return tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: is not valid TOML: {untrusted(str(exc), one_line=True)}") from None
     except (ValueError, RecursionError) as exc:  # a number too long to read, tables nested too deep

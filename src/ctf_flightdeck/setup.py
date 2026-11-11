@@ -3,15 +3,20 @@
 Both exist so a new player gets from install to a running console without reading the
 architecture (the v0.1.0 requirement). Neither ever asks for, reads out or stores the API
 key itself: the config names the environment variable that holds it.
+
+init checks each answer as it is given (the *_answer functions: a bad one is asked again
+at a terminal, and named by its option away from one), then checks the whole config in
+memory before writing it, so an error names the file asked for and nothing half-made is
+ever written. No message shows an answer: one may be a key typed in the wrong place.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,8 +30,11 @@ PROVIDERS = {
     "local": ("http://127.0.0.1:11434/v1", ""),  # Ollama's OpenAI-compatible endpoint; no key
     "mlx": ("http://127.0.0.1:8080/v1", ""),  # an MLX server on this Mac (mlx_lm.server's default port); no key
 }
+PROVIDER_CHOICES = ("openrouter", "anthropic", "openai", "local", "mlx", "custom")
+PROVIDER_ALIASES = {"ollama": "local"}  # the local provider is Ollama's endpoint
 LOCAL_PROVIDERS = ("local", "mlx")  # nothing to spend: no dollar cap
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+RUNTIMES = ("docker", "host")
 
 # `init --provider anthropic`: the Anthropic Messages API (config [api] provider = "anthropic").
 ANTHROPIC = ("https://api.anthropic.com", "ANTHROPIC_API_KEY")
@@ -77,7 +85,7 @@ class Answers:
 
 def render(answers: Answers) -> str:
     """The config file for `answers`, with comments a player can follow."""
-    models = ", ".join(f'"{m}"' for m in answers.models)
+    models = ", ".join(_toml(m) for m in answers.models)
     token_cap = str(answers.token_cap) if answers.token_cap else "false"
     dollar_cap = f"{answers.dollar_cap:g}" if answers.dollar_cap else "false"
     provider = (
@@ -88,8 +96,8 @@ def render(answers: Answers) -> str:
         "\n"
         "[api]\n"
         + provider
-        + f'base_url = "{answers.base_url}"\n'
-        f'key_env = "{answers.key_env}"   # the environment variable holding your key (never the key)\n'
+        + f"base_url = {_toml(answers.base_url)}\n"
+        f"key_env = {_toml(answers.key_env)}   # the environment variable holding your key (never the key)\n"
         "\n"
         "[models]\n"
         f"ladder = [{models}]   # weakest first; escalation moves right\n"
@@ -98,7 +106,7 @@ def render(answers: Answers) -> str:
         + _fallback(answers.fallback)
         + "[lanes]\n"
         f"max_lanes = {answers.max_lanes}\n"
-        f'runtime = "{answers.runtime}"\n'
+        f"runtime = {_toml(answers.runtime)}\n"
         + (f'image = "{_lane_image()}"   # build it with `flightdeck image build`\n' if answers.runtime == "docker" else "")
         +
         f"token_cap = {token_cap}\n"
@@ -107,12 +115,17 @@ def render(answers: Answers) -> str:
     )
 
 
+def _toml(text: str) -> str:
+    """`text` as a TOML basic string: a quote or backslash in it cannot end the string early."""
+    return json.dumps(text, ensure_ascii=False)
+
+
 def _prices(prices: Mapping[str, Price]) -> str:
     if not prices:
         return ""
     out = "# Dollars per million tokens: input, output, and cached_input for cache reads (a cache write counts as input).\n"
     for model, price in prices.items():
-        out += f'[prices."{model}"]\ninput = {price.input:g}\noutput = {price.output:g}\n'
+        out += f"[prices.{_toml(model)}]\ninput = {price.input:g}\noutput = {price.output:g}\n"
         if price.cached_input is not None:
             out += f"cached_input = {price.cached_input:g}\n"
         out += "\n"
@@ -122,16 +135,85 @@ def _prices(prices: Mapping[str, Price]) -> str:
 def _fallback(spare: FallbackAnswers | None) -> str:
     if spare is None:
         return ""
-    ladder = ", ".join(f'"{m}"' for m in spare.ladder)
+    ladder = ", ".join(_toml(m) for m in spare.ladder)
     return (
         "[fallback]\n"
         + (f"# {spare.comment}\n" if spare.comment else "")
-        + f'provider = "{spare.provider}"\n'
-        f'base_url = "{spare.base_url}"\n'
-        f'key_env = "{spare.key_env}"\n'
+        + f"provider = {_toml(spare.provider)}\n"
+        f"base_url = {_toml(spare.base_url)}\n"
+        f"key_env = {_toml(spare.key_env)}\n"
         f"ladder = [{ladder}]   # one per [models] ladder entry, in order\n"
         "\n"
     )
+
+
+# ---------------------------------------------------------------------- init's answers, one at a time
+
+
+class AnswerError(ValueError):
+    """An answer init cannot use. The message says what is wanted and never shows the answer."""
+
+
+def provider_answer(text: str) -> str:
+    """The provider asked for: one of PROVIDER_CHOICES ("ollama" is the local provider)."""
+    name = text.strip().lower()
+    name = PROVIDER_ALIASES.get(name, name)
+    if name not in PROVIDER_CHOICES:
+        raise AnswerError("choose one of openrouter, anthropic, openai, local (Ollama), mlx or custom")
+    return name
+
+
+def models_answer(text: str) -> tuple[str, ...]:
+    """Model ids, weakest first, comma-separated: at least one, each once, none with spaces."""
+    from .config import _plain
+
+    ladder = tuple(part.strip() for part in text.split(",") if part.strip())
+    if not ladder:
+        raise AnswerError("give at least one model id, weakest first, comma-separated (like vendor/small,vendor/big)")
+    for n, model in enumerate(ladder, 1):
+        if not _plain(model):
+            raise AnswerError(f"model id {n} has a space or a control character in it; a model id has none")
+        if model in ladder[: n - 1]:
+            raise AnswerError(f"model id {n} repeats model id {ladder.index(model) + 1}; give each model once")
+    return ladder
+
+
+def runtime_answer(text: str) -> str:
+    """Where lanes run: docker or host."""
+    runtime = text.strip().lower()
+    if runtime not in RUNTIMES:
+        raise AnswerError("give docker (a container per lane) or host (lanes on this machine)")
+    return runtime
+
+
+def key_env_answer(text: str, *, empty: bool = True) -> str:
+    """The name of the variable that will hold the key ("" for none, when `empty`), never the key."""
+    from .config import _is_env_name
+
+    name = text.strip()
+    if not name and empty:
+        return ""
+    if not _is_env_name(name):
+        raise AnswerError(
+            "give the name of an environment variable, like OPENROUTER_API_KEY (upper-case letters, digits and _), "
+            "not the key itself" + (", or leave it empty for a server that needs no key" if empty else "")
+        )
+    return name
+
+
+def base_url_answer(text: str, *, anthropic: bool = False) -> str:
+    """An API's base URL: http(s), a host, no user name or password, no spaces."""
+    from .config import _plain, _split_url
+
+    url = text.strip()
+    parts = _split_url(url) if url and _plain(url) else None
+    if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+        raise AnswerError("give the API's address: http:// or https://, a host, and its path (often ending in /v1)")
+    if parts.username is not None or parts.password is not None:
+        raise AnswerError("give the address without a user name or password: the key goes in its environment variable")
+    if anthropic and parts.path.rstrip("/").endswith("/v1"):
+        raise AnswerError("leave /v1 off: the Anthropic SDK adds /v1/messages itself")
+    return url
 
 
 def anthropic_fallback(models: Sequence[str]) -> FallbackAnswers | None:
@@ -154,14 +236,14 @@ def _lane_image() -> str:
 
 
 def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
-    """Validate the config by loading it, then write it. Refuses to overwrite unless force."""
-    from .config import load_config
+    """Check the config in memory, then write it. Refuses to overwrite unless force.
+
+    A ConfigError names `path` and what is wrong; nothing is written before the check, so
+    a key typed in the wrong place never reaches a file."""
+    from .config import parse_config
 
     text = render(answers)
-    with tempfile.TemporaryDirectory() as tmp:
-        trial = Path(tmp) / "config.toml"
-        trial.write_text(text, encoding="utf-8")
-        load_config(trial)  # ConfigError says what is wrong before anything is written
+    parse_config(text, path)
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
