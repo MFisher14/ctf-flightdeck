@@ -23,8 +23,8 @@ and backslashes escaped), so where it ends is plain and no flag text can pass fo
 verdict. A model gets the summary inside agent/prompts.fenced(), which marks all of it
 as data and removes anything that reads as a fence marker.
 
-The whole summary stays within max_chars: the oldest steps go first; if the
-other lines alone are still too long, the longest of them are cut to fair shares.
+The whole summary stays within max_chars: the oldest steps go first, down to the newest
+KEEP_STEPS; if the lines are still too long, the longest of them are cut to fair shares.
 
 What became of a lane's candidate flags is read from its log, in order: the deck's own
 notes (a lane's steps, which a model writes, are never read for it) and the player's
@@ -50,7 +50,8 @@ if TYPE_CHECKING:
     from .deck import Deck
 
 STEPS = 6  # the newest steps shown
-MIN_CHARS = 300  # less cannot hold the eight lines' labels
+KEEP_STEPS = 2  # the newest steps kept when the summary is too long: the other lines are cut first
+MIN_CHARS = 300  # a shorter summary would be little more than its labels
 CUT = "…"  # marks text that was shortened
 
 # Longest shown, in characters after folding: one field each.
@@ -99,7 +100,10 @@ def lane_summary(
     the summary says which model took the turns and which one has the lane now.
     """
     if max_chars < MIN_CHARS:
-        raise ValueError(f"max_chars must be at least {MIN_CHARS} to hold the summary's labels, got {max_chars}")
+        raise ValueError(
+            f"max_chars must be at least {MIN_CHARS}, got {max_chars}: a shorter summary would be "
+            "little more than its labels"
+        )
     if before is not None and before.lane != lane.id:
         raise ValueError(f"`before` is the summary of {before.lane}, not of {lane.id}")
     challenge = deck.challenges[lane.challenge_id]
@@ -120,10 +124,10 @@ def lane_summary(
     while True:
         lines = [*head, _steps_header(len(steps), len(every_step)), *steps, *tail]
         text = "\n".join(lines)
-        if len(text) <= max_chars or not steps:
+        if len(text) <= max_chars or len(steps) <= KEEP_STEPS:
             break
-        steps.pop(0)  # the oldest step goes first
-    if len(text) > max_chars:  # no steps left, and the other lines alone are too long
+        steps.pop(0)  # the oldest step goes first, down to the newest KEEP_STEPS
+    if len(text) > max_chars:  # still too long: the longest lines are cut to fair shares
         text = "\n".join(_fair_cut(lines, max_chars - (len(lines) - 1)))
     return text
 
@@ -168,11 +172,7 @@ def _so_far_line(deck: Deck, lane: Lane) -> str:
 
 
 def _steps_header(shown: int, total: int) -> str:
-    if total == 0:
-        return "Last steps: none yet"
-    if shown == 0:
-        return f"Last steps: {total}, none shown (cut to fit)"
-    return f"Last steps ({shown} of {total}):"
+    return f"Last steps ({shown} of {total}):" if total else "Last steps: none yet"
 
 
 def _step_line(turn: int, command: str, output: str) -> str:

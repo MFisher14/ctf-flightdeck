@@ -17,6 +17,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import (
+    COURSE_ALERTS,
     Action,
     ActionKind,
     Actor,
@@ -37,6 +38,10 @@ FLAG_FORMAT = r"t\{\w+\}"
 MODELS = ("small", "mid", "big")
 RIGHT = "t{right}"
 LABELS = ("Challenge: ", "Plan: ", "So far: ", "Last steps", "Files changed", "Candidate flags", "Open alerts", "Player's messages")
+ALL_LABELS = (  # with the line a summary has only when there is something to say
+    "Challenge: ", "Plan: ", "So far: ", "Last steps", "Files changed", "Candidate flags", "Not the flag",
+    "Open alerts", "Player's messages",
+)
 
 
 class Driver:
@@ -552,39 +557,82 @@ def test_the_size_cap_drops_the_oldest_steps_first_and_no_more():
     assert not_steps(text) == not_steps(whole)  # the rest is whole
 
 
-def test_lines_too_long_without_any_step_are_cut_to_fair_shares():
+def test_a_summary_that_just_fits_is_whole_and_one_less_drops_the_oldest_step():
+    deck, lane = busy_lane()
+    whole = lane_summary(deck, lane, max_chars=20_000)
+    assert lane_summary(deck, lane, max_chars=len(whole)) == whole
+    less = lane_summary(deck, lane, max_chars=len(whole) - 1)
+    assert step_lines(less) == step_lines(whole)[1:] and line(less, "Last steps") == "Last steps (5 of 6):"
+    assert not_steps(less) == not_steps(whole)
+
+
+def loaded_lane():
+    """A lane as a player escalates it: a big handout, a long plan, six steps that changed
+    twelve files, six long hints and four course alerts."""
+    handout = tuple(f"src/app/routes/handler_{i:02d}.py" for i in range(12))
+    deck, lane, _ = make(Challenge("w", "Paper Trail", "web", 400, solves=9, files=handout))
+    plan = "Probe the export endpoint for template injection through the template field, then read export.py. " * 4
+    for i in range(1, 7):
+        step(deck, lane, f"$ curl -s -X POST http://127.0.0.1:8080/api/export/{i} -d '{{\"template\": \"{{{{7*{i}}}}}\"}}'",
+             f"HTTP/1.1 500 Internal Server Error; jinja2.exceptions.TemplateSyntaxError; request id {i:04d}",
+             tokens=6000, plan=plan if i == 1 else None,
+             files=(FileChange(f"work/requests/export_probe_{i:02d}_template_injection_attempt.json", "", "added"),
+                    FileChange(f"work/responses/export_probe_{i:02d}_server_error_traceback.txt", "", "added")))
+    for i in range(6):
+        deck.apply(iv.Hint(lane.id, f"hint {i}: read export.py before you send anything else, the sink is elsewhere. " * 2))
+    reason = "the same command shape ran again and its output repeats; read the source in the handout first. " * 3
+    deck.report(lane.id, TurnReport(turn=False, alerts=tuple(
+        Alert(kind, reason) for kind in (AlertKind.EFFORT, AlertKind.DIRECTION, AlertKind.LOOP, AlertKind.STALL)
+    )))
+    return deck, lane
+
+
+def test_a_loaded_lane_keeps_its_newest_steps_at_the_default_size():
+    deck, lane = loaded_lane()
+    whole = lane_summary(deck, lane, max_chars=50_000)
+    assert len("\n".join(not_steps(whole))) > 3000  # the other lines alone are too long
+    text = lane_summary(deck, lane)
+    assert len(text) <= 3000
+    assert line(text, "Last steps") == "Last steps (2 of 6):"
+    assert step_lines(text) == step_lines(whole)[-2:]  # whole: the other lines were cut instead
+    for label in ("Files changed", "Open alerts", "Player's messages"):
+        assert line(text, label).endswith(CUT), label
+
+
+def test_lines_still_too_long_are_cut_to_fair_shares():
     deck, lane = busy_lane(steps=1)
     long = "why " * 60
-    kinds = (AlertKind.EFFORT, AlertKind.HINT, AlertKind.DIRECTION, AlertKind.LOOP, AlertKind.STALL)
-    deck.report(lane.id, TurnReport(turn=False, alerts=tuple(Alert(kind, long) for kind in kinds)))
+    deck.report(lane.id, TurnReport(turn=False, alerts=tuple(Alert(kind, long) for kind in COURSE_ALERTS)))
     deck.report(lane.id, TurnReport(turn=False, files=tuple(FileChange(f"{'d' * 80}/{i}", "", "added") for i in range(20))))
     whole = lines(lane_summary(deck, lane, max_chars=20_000))
     max_chars = 1000
     text = lane_summary(deck, lane, max_chars=max_chars)
     cut = lines(text)
-    assert len(text) <= max_chars and len(cut) == 8
-    assert [ln[: len(label)] for ln, label in zip(cut, LABELS)] == list(LABELS)
-    assert cut[3] == "Last steps: 1, none shown (cut to fit)"
-    by_label = dict(zip(LABELS, cut))
-    whole_by_label = {label: ln for label in LABELS for ln in whole if ln.startswith(label)}
-    for label in ("Challenge: ", "Plan: ", "So far: ", "Candidate flags", "Player's messages"):
-        assert by_label[label] == whole_by_label[label]  # short lines stay whole
-    for label in ("Files changed", "Open alerts"):
-        assert by_label[label].endswith(CUT) and whole_by_label[label].startswith(by_label[label][:-1])
-    assert abs(len(by_label["Files changed"]) - len(by_label["Open alerts"])) <= 1  # equal shares
+    assert len(cut) == len(whole) == 9 and [ln[: len(label)] for ln, label in zip(labels(text), LABELS)] == list(LABELS)
+    assert max_chars - len(cut) < len(text) <= max_chars  # what the cut leaves is used, but for rounding
+    kept = {ln[:13] for ln, full in zip(cut, whole) if ln == full}  # lines shorter than a fair share stay whole
+    assert kept == {"Challenge: St", "Plan: (none)", "So far: 1 tur", "Last steps (1", "  turn 1: $ .", "Candidate fla",
+                    "Player's mess"}
+    files, alerts = line(text, "Files changed"), line(text, "Open alerts")
+    for shortened in (files, alerts):  # the longest ones are cut, and say so
+        assert shortened.endswith(CUT) and any(full.startswith(shortened[:-1]) for full in whole)
+    assert abs(len(files) - len(alerts)) <= 1  # equal shares
 
 
 def test_the_smallest_size_still_fits_and_keeps_every_label():
     deck, lane = busy_lane()
+    step(deck, lane, "submit_flag t{w}", flag="t{w}")
+    assert deck.apply(iv.Approve(lane.id)).ok  # the platform says no: known not to be it
     deck.report(lane.id, TurnReport(turn=False, alerts=(Alert(AlertKind.STALL, "x" * 200),)))
     text = lane_summary(deck, lane, max_chars=MIN_CHARS)
     assert len(text) <= MIN_CHARS
-    assert [ln[: len(label)] for ln, label in zip(lines(text), LABELS)] == list(LABELS)
+    assert [ln[: len(label)] for ln, label in zip(labels(text), ALL_LABELS)] == list(ALL_LABELS)
+    assert [ln[:10] for ln in step_lines(text)] == ["  turn 6: ", "  turn 7: "]  # the newest two steps
 
 
 def test_a_size_too_small_for_the_labels_is_refused():
     deck, lane = busy_lane()
-    with pytest.raises(ValueError, match=f"at least {MIN_CHARS}"):
+    with pytest.raises(ValueError, match=f"at least {MIN_CHARS}, got {MIN_CHARS - 1}: a shorter summary"):
         lane_summary(deck, lane, max_chars=MIN_CHARS - 1)
 
 
