@@ -730,6 +730,43 @@ def test_spend_outside_a_turn_with_no_price_makes_the_lanes_cost_unknown(tmp_pat
         assert "Spent 4k tokens · $0.03+ · $0.03+ per solve" in scorecard(result).splitlines()
 
 
+def cli_lane(tmp_path) -> Played:
+    """L01 as a coding-agent CLI lane: its steps carry no cost (dollars_later), and the CLI
+    reports each turn's cost when the turn ends (turn_end), the last one after the solve."""
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=500, dollars_later=True, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))  # solved in the middle of its turn
+    deck.report("L01", TurnReport(turn=False, tokens=300, dollars=0.07, turn_end=True, why="the cut turn's cost"))
+    return played
+
+
+def test_a_cli_lanes_cost_is_what_its_cli_reported_at_each_turns_end_after_the_solve_too(tmp_path):
+    played = cli_lane(tmp_path)
+    result = score(played.close(), played.board)
+    lane = played.deck.lanes["L01"]
+    assert result.lanes["L01"].tokens == lane.tokens == 2000 and result.lanes["L01"].turns == 2
+    assert result.lanes["L01"].dollars == pytest.approx(lane.dollars) and lane.dollars == pytest.approx(0.10)
+    assert result.unpriced == () and result.known_dollars == pytest.approx(0.10)
+    assert not any("no price" in note or "never reported" in note for note in result.notes)  # its steps were not unpriced
+
+
+def test_a_log_that_ends_inside_a_cli_turn_gives_that_lane_no_settled_cost(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    deck.report("L01", TurnReport(action="cat note", tokens=400, dollars_later=True))  # the run stops in this turn
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].dollars is None and result.unpriced == ("L01",)
+    assert result.known_dollars == pytest.approx(0.03)  # what came is still counted
+    assert ("L01's coding-agent CLI never reported what its last turn cost, so its cost is not fully known: the dollars "
+            "count only what had a price.") in result.notes
+    assert "Spent 2k tokens · $0.03+" in scorecard(result).splitlines()
+
+
 def test_a_transcript_that_differs_from_the_turns_only_by_rounding_adds_nothing(played):
     path = played.close()
     whole = score(path, played.board)

@@ -1324,6 +1324,36 @@ def test_cost_shows_a_dash_when_the_price_is_unknown():
     drive(app, script)
 
 
+def test_cost_is_not_a_settled_number_while_a_cli_turn_is_under_way():
+    """A coding-agent CLI reports what a turn cost only when the turn ends: until then the lane's
+    cost cell and its focus view say more is to come, rather than show a settled $0.00."""
+    world, app = make("sstv")
+    deck = world.deck
+    lane = deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        known = lane.dollars
+        deck.report(lane.id, TurnReport(action="claude: $ ls", tokens=300, dollars_later=True))
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known, short=True)}…"
+        screen = await open_focus(pilot, app, lane.id)
+        assert f"${fmt.dollars(known)}… (this turn's cost comes when it ends)" in str(screen.query_one("#talk-pane").border_title)
+        app.show_fleet()
+        await pilot.pause()
+        deck.report(lane.id, TurnReport(turn=False, tokens=50, dollars=0.25, turn_end=True))  # the CLI's report at the turn's end
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known + 0.25, short=True)}"
+        lane.dollars, lane.known_dollars = None, 0.5  # some spend had no price, and another turn is under way
+        deck.report(lane.id, TurnReport(action="claude: $ cat", dollars_later=True))
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == "$.50+…"
+
+    drive(app, script)
+
+
 def test_challenge_text_is_shown_literally_and_cannot_steer_the_console():
     evil = Spec("evil", "web", "[b]X[/b]", 100, "Click [@click=app.quit]x[/] now \x1b[2J done", ("evil.zip",))
     scenario = Scenario(name="evil", summary="", specs=(evil,), timeline=((0, ReleaseAt(("evil",), "Board")),))

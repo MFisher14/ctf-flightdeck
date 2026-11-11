@@ -385,20 +385,17 @@ class Deck:
             lane.files.pop(change.path, None)
             lane.files[change.path] = replace(change, turn=lane.turns, at=now)
         if rep.turn:
-            self._emit(
-                EventKind.TURN,
-                f"{lane.id} turn {lane.turns}: {rep.action}",
-                lane.id,
-                lane.challenge_id,
-                data={
-                    "turn": lane.turns,
-                    "model": rep.model or lane.model,
-                    "tokens": rep.tokens,
-                    "cached_tokens": rep.cached_tokens,
-                    "dollars": rep.dollars,
-                    "action": rep.action,
-                },
-            )
+            data: dict[str, object] = {
+                "turn": lane.turns,
+                "model": rep.model or lane.model,
+                "tokens": rep.tokens,
+                "cached_tokens": rep.cached_tokens,
+                "dollars": None if rep.dollars_later else rep.dollars,
+                "action": rep.action,
+            }
+            if rep.dollars_later:  # not unknown, and not $0.00: the turn_end spend event has its cost
+                data["dollars_later"] = True
+            self._emit(EventKind.TURN, f"{lane.id} turn {lane.turns}: {rep.action}", lane.id, lane.challenge_id, data=data)
         for kind in rep.clear:
             self._clear(lane, kind)
         for alert in rep.alerts:
@@ -1093,10 +1090,15 @@ class Deck:
         """Count what a report spent, on the lane and so on the run (totals()), and log what
         was spent outside a turn as a SPEND event, with the model that spent it and why. A
         lane that has ended counts it all the same and asks for nothing: no cap is left to
-        enforce."""
+        enforce. A coding-agent CLI's step (dollars_later) leaves the lane's dollars unsettled
+        until the CLI reports what the turn cost (turn_end), which is logged as a SPEND event
+        marked turn_end: the CLI's own cost of its turn, not spend outside a turn."""
+        due = lane.dollars_later  # a turn_end that settles it is logged even when it adds nothing: the log says so too
         lane.tokens += rep.tokens
         lane.cached_tokens += rep.cached_tokens
-        if rep.dollars is None:
+        if rep.dollars_later:
+            lane.dollars_later = True
+        elif rep.dollars is None:
             lane.unpriced += 1
             if not lane.finished and lane.dollars is not None and lane.dollar_cap:
                 self._unpriced(lane)
@@ -1105,16 +1107,19 @@ class Deck:
             lane.known_dollars += rep.dollars
             if lane.dollars is not None:
                 lane.dollars += rep.dollars
-        if rep.turn or not (rep.tokens or rep.cached_tokens or rep.dollars != 0.0):
+        if rep.turn_end:
+            lane.dollars_later = False
+        dollars = None if rep.dollars_later else rep.dollars
+        spent = rep.tokens or rep.cached_tokens or (not rep.dollars_later and dollars != 0.0)
+        if rep.turn or not (spent or (rep.turn_end and due)):
             return
-        self._emit(
-            EventKind.SPEND,
-            f"{lane.id} spent {rep.tokens} tokens outside a turn" + (f": {rep.why}" if rep.why else ""),
-            lane.id,
-            lane.challenge_id,
-            data={"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": rep.dollars,
-                  "model": rep.model or lane.model, "why": rep.why},
-        )
+        data: dict[str, object] = {"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": dollars,
+                                   "model": rep.model or lane.model, "why": rep.why}
+        if rep.turn_end:
+            data["turn_end"] = True
+        where = "in a turn of its CLI" if rep.turn_end else "outside a turn"  # a turn_end's why says when it was reported
+        self._emit(EventKind.SPEND, f"{lane.id} spent {rep.tokens} tokens {where}" + (f": {rep.why}" if rep.why else ""),
+                   lane.id, lane.challenge_id, data=data)
 
     def _unpriced(self, lane: Lane) -> None:
         """A dollar-capped lane just had a turn with no price: the cap can no longer be enforced."""

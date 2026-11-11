@@ -58,15 +58,17 @@ class TurnReport:
     hints_taken: int = 0  # how many queued hints this turn read (oldest first)
     why: str = ""  # for spend outside a turn: what it was ("a reply dropped at escalation")
     model: str | None = None  # the model that took this turn, when it is not the lane's model now (escalated meanwhile)
+    dollars_later: bool = False  # a coding-agent CLI's step: the CLI reports what it cost only when its turn ends (turn_end), so `dollars` is not known yet, rather than $0.00
+    turn_end: bool = False  # what a coding-agent CLI reported for a turn that ended (or was cut short, or that it exited in): the turn's own cost, which its steps (dollars_later) did not carry
 
 
 def spend_only(rep: TurnReport) -> bool:
-    """A report of spend outside a turn and of nothing else: tokens, cached tokens or dollars
-    (None: spent at an unknown price), with no action, output, plan, artifacts, files,
-    alerts, clear, approval, flag, hints or giving up. Once a lane has ended, the deck still
-    counts such a report (a CLI reports a turn's cost when the turn ends, often after its
-    lane has) and drops everything else."""
-    spent = rep.tokens or rep.cached_tokens or rep.dollars or rep.dollars is None
+    """A report of spend and of nothing else: not a turn; tokens, cached tokens or dollars
+    (None: spent at an unknown price), or a coding-agent CLI's turn_end; and no action,
+    output, plan, artifacts, files, alerts, clear, approval, flag, hints or giving up. Once a
+    lane has ended, the deck still counts such a report (a CLI reports a turn's cost when the
+    turn ends, often after its lane has) and drops everything else."""
+    spent = rep.tokens or rep.cached_tokens or rep.dollars or rep.dollars is None or rep.turn_end
     return not rep.turn and bool(spent) and not (
         rep.action or rep.output or rep.plan is not None or rep.artifacts or rep.files or rep.alerts or rep.clear
         or rep.pending is not None or rep.flag is not None or rep.gave_up is not None or rep.hints_taken

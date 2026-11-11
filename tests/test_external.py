@@ -799,12 +799,12 @@ def test_what_claude_reports_when_a_turn_ends_is_logged_with_why_and_the_model_t
             await until(lambda: len(lab.fake.messages()) == 2 and lab.run(lane).pending_tokens, "the second turn under way")
             assert lab.deck.apply(iv.Escalate(lane.id)).ok  # the small model is stopped in the middle of that turn
             await until(lambda: "$ echo big" in steps(lane), "the stronger model's step")
-            await until(lambda: len(spends(lab.deck)) == 2, "the cut turn's spend")
-            ended, cut = spends(lab.deck)
-            assert (ended["model"], ended["tokens"], ended["dollars"]) == ("small", 44, pytest.approx(0.01))
+            await until(lambda: len(spends(lab.deck)) >= 2, "the cut turn's spend")
+            ended, cut = spends(lab.deck)[:2]
+            assert (ended["model"], ended["tokens"], ended["dollars"], ended["turn_end"]) == ("small", 44, pytest.approx(0.01), True)
             assert ended["why"] == external.TURN_END.format(kind="claude")
             # reported after the escalation, while the lane runs "big": still the small model's
-            assert (cut["model"], cut["tokens"], cut["dollars"]) == ("small", 33, pytest.approx(0.005))
+            assert (cut["model"], cut["tokens"], cut["dollars"], cut["turn_end"]) == ("small", 33, pytest.approx(0.005), True)
             assert cut["why"] == external.CUT_TURN.format(kind="claude") and lane.model == "big"
         finally:
             await lab.finish()
@@ -822,10 +822,12 @@ def test_what_codex_reports_when_a_turn_ends_is_logged_with_why_and_the_model_th
             lane = lab.lane()
             await until(lambda: spends(lab.deck), "the turn's usage")
             (spent,) = spends(lab.deck)
-            assert (spent["model"], spent["tokens"], spent["cached_tokens"]) == ("small", 350, 100)
+            assert (spent["model"], spent["tokens"], spent["cached_tokens"], spent["turn_end"]) == ("small", 350, 100, True)
             assert spent["why"] == external.TURN_END.format(kind="codex")
             turns = [e.data for e in lab.deck.events if e.kind is EventKind.TURN]
-            assert [t["tokens"] for t in turns] == [0]  # the step itself carries none of it
+            # the step itself carries none of it, and says its cost comes with the turn's end (not $0.00)
+            assert [(t["tokens"], t["dollars"], t["dollars_later"]) for t in turns] == [(0, None, True)]
+            assert not lane.dollars_later and lane.unpriced == 1  # settled: no price for "small" in this lab
         finally:
             await lab.finish()
 
@@ -898,6 +900,98 @@ def test_what_codex_reports_after_its_lane_solved_mid_turn_counts_for_the_lane_a
             assert (lane.tokens, lane.cached_tokens) == (350, 100)
             assert lane.dollars == pytest.approx((200 * 1.0 + 100 * 1.0 + 50 * 10.0) / 1e6)
             assert lab.deck.totals() == (350, pytest.approx(0.0008), False)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_claude_step_leaves_the_lanes_dollars_open_until_claude_reports_what_the_turn_cost(tmp_path):
+    script = {"turns": [{"calls": [{"tools": [bash("echo one")], "usage": [100, 10, 0, 0], "cost": 0.02}, {"think": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the step")
+            assert lane.dollars_later and (lane.dollars, lane.tokens) == (0.0, 110)  # its turn is under way: the cost is to come
+            (turn,) = [e.data for e in lab.deck.events if e.kind is EventKind.TURN]
+            assert (turn["tokens"], turn["dollars"], turn["dollars_later"]) == (110, None, True)
+            assert lab.deck.apply(iv.Hint(lane.id, "try rot13")).ok  # ends claude's turn, which reports its cost
+            await until(lambda: not lane.dollars_later, "the turn's cost")
+            assert lane.dollars == pytest.approx(0.02) and lane.unpriced == 0
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("priced", [True, False], ids=["priced", "no price"])
+def test_a_claude_that_exits_in_a_turn_settles_it_at_the_config_price_or_as_unknown_never_zero(tmp_path, priced):
+    script = {"turns": [{"calls": [
+        {"tools": [bash("echo one")], "usage": [1000, 100, 0, 0]}, {"text": "hmm", "usage": [500, 50, 0, 0]}, {"exit": 1},
+    ]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, prices={"small": Price(input=2.0, output=10.0)} if priced else {})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished, "the lane's end: claude exited with no result")
+            assert lane.state is LaneState.GAVE_UP and not lane.dollars_later and lane.tokens == 1650
+            (spent,) = spends(lab.deck)
+            assert (spent["tokens"], spent["turn_end"], spent["why"]) == (550, True, external.LEFTOVER.format(kind="claude"))
+            if priced:  # the whole turn's tokens (its step's too), at the config price
+                assert lane.dollars == spent["dollars"] == pytest.approx((1500 * 2.0 + 150 * 10.0) / 1e6)
+            else:
+                assert (lane.dollars, spent["dollars"], lane.unpriced) == (None, None, 1)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_lane_killed_mid_turn_never_gets_that_turns_cost_so_it_is_unknown_not_zero(tmp_path):
+    script = {"turns": [{"items": [{"command": "echo one"}, {"sleep": 30.0}], "usage": [300, 100, 50]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", prices={"small": Price(input=1.0, output=10.0)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the step")
+            assert lane.dollars_later and lane.dollars == 0.0
+            assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            await until(lambda: not lane.dollars_later, "the turn settled once codex stopped")
+            assert (lane.dollars, lane.known_dollars, lane.unpriced) == (None, 0.0, 1)
+            (spent,) = spends(lab.deck)
+            assert (spent["tokens"], spent["dollars"], spent["turn_end"]) == (0, None, True)
+            assert spent["why"] == external.LEFTOVER.format(kind="codex")
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_turn_cut_short_to_hand_it_a_message_is_paid_with_the_threads_next_usage(tmp_path):
+    script = {"turns": [
+        {"items": [{"command": "echo one"}, {"sleep": 30.0}], "usage": [300, 100, 50]},
+        {"items": [{"command": "echo two"}], "usage": [200, 0, 20]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", prices={"small": Price(input=1.0, output=10.0)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the first step")
+            assert lab.deck.apply(iv.Hint(lane.id, "look at the note")).ok  # codex exits to take it
+            await until(lambda: spends(lab.deck), "the next turn's usage, in the same thread")
+            (spent,) = spends(lab.deck)  # the cut turn was never settled as unknown: the thread's usage counts it
+            assert (spent["tokens"], spent["turn_end"]) == (220, True) and spent["dollars"] == pytest.approx(0.0004)
+            assert not lane.dollars_later and lane.dollars == pytest.approx(0.0004) and lane.unpriced == 0
+            assert len(lab.fake.prompts()) == 2 and "$ echo two" in steps(lane)
         finally:
             await lab.finish()
 

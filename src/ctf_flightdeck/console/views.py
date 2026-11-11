@@ -295,14 +295,25 @@ def attention_cell(lane: Lane) -> Text:
     return Text("")
 
 
+LATER = "…"  # after a lane's dollars: a coding-agent CLI's turn is under way, and it reports the cost when the turn ends
+
+
+def lane_dollars(lane: Lane, *, short: bool = False) -> str:
+    """The lane's dollars: $0.42; $0.42+ when some of its spend has no price (what is known,
+    as "at least"), "-" when none of it has; and LATER after it while a coding-agent CLI's
+    turn is under way, whose cost comes when the turn ends: never a settled number then."""
+    if lane.dollars is not None:
+        cost = f"${fmt.dollars(lane.dollars, short=short)}"
+    else:
+        cost = f"${fmt.dollars(lane.known_dollars, short=short)}+" if lane.known_dollars else "-"
+    return cost + LATER if lane.dollars_later else cost
+
+
 def lane_cells(deck: Deck, lane: Lane, selected: bool = False) -> dict[str, Text]:
     ch = deck.challenges[lane.challenge_id]
     dim = theme.MUTED if lane.finished else ""
     idle = lane.idle(deck.now)
-    if lane.dollars is not None:
-        cost = f"${fmt.dollars(lane.dollars, short=True)}"
-    else:  # some spend has no price: show what is known, as "at least"
-        cost = f"${fmt.dollars(lane.known_dollars, short=True)}+" if lane.known_dollars else "-"
+    cost = lane_dollars(lane, short=True)
     return {
         "bar": Text("▌", style=theme.ACCENT) if selected else Text(" "),
         "!": attention_cell(lane),
@@ -485,8 +496,8 @@ def focus_title(deck: Deck, lane: Lane) -> Text:
     out.append(untrusted(lane.model, one_line=True), theme.CYAN)
     out.append(" · ")
     out.append(lane.state.value, STATE_COLOR[lane.state])
-    spent = fmt.dollars(lane.dollars) if lane.dollars is not None else (f"{fmt.dollars(lane.known_dollars)}+" if lane.known_dollars else "-")
-    out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · ${spent}", theme.MUTED)
+    spent = lane_dollars(lane) + (" (this turn's cost comes when it ends)" if lane.dollars_later else "")
+    out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · {spent}", theme.MUTED)
     if not lane.finished:
         out.append(f" · idle {fmt.duration(lane.idle(deck.now))}", theme.MUTED)
     return out

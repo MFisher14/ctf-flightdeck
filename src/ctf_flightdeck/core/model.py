@@ -247,6 +247,7 @@ class Lane:
     dollars: float | None = 0.0  # None once any turn had no known price (the total is then not known)
     known_dollars: float = 0.0  # every priced amount, turn or not, also after a turn with no price
     unpriced: int = 0  # reports that had no known price
+    dollars_later: bool = False  # a coding-agent CLI's turn is under way: its cost comes when the turn ends, so `dollars` is not settled
     token_cap: int | None = None
     dollar_cap: float | None = None
     started_at: float = 0.0

@@ -51,6 +51,7 @@ class TranscriptLog:
             "turns": lane.turns, "tokens": lane.tokens, "cached_tokens": lane.cached_tokens, "dollars": lane.dollars, "known_dollars": lane.known_dollars,
             "started_at": lane.started_at, "ended_at": lane.ended_at, "parent": lane.parent, "attempt": lane.attempt,
             "plan": lane.plan,
+            "dollars_later": lane.dollars_later,  # a CLI's turn was under way: its cost had not come yet, so dollars is not all of it
         }]
         lines += [{
             "at": a.at, "turn": a.turn, "kind": a.kind.value, "by": a.by.value, "text": a.text, "output": a.output,

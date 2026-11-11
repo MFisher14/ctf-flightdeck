@@ -1056,6 +1056,36 @@ def test_tokens_counted_outside_a_turn_get_their_own_row(tmp_path):
     assert rows[2] == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "$0.04"]
 
 
+@pytest.mark.parametrize("transcripts", [True, False], ids=["with transcripts", "log only"])
+def test_a_cli_turn_whose_cost_never_came_leaves_the_lanes_dollars_unknown_not_settled(tmp_path, transcripts):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls", dollars_later=True)  # a coding-agent CLI's step: the cost comes when its turn ends
+    run.deck.report(lane, TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    run.turn(lane, "cat note", dollars_later=True)  # the run stops in this turn: its cost never comes
+    run.close()
+    if not transcripts:
+        for path in (tmp_path / "lanes").iterdir():
+            path.unlink()
+    text = report(load_run(tmp_path))
+    assert "- Dollars: unknown (at least $0.03; the lane had a turn with no price)" in text.splitlines()
+    assert ["L01", "X", "small", "2", "2,200", "23%", "unknown", "still open"] in table_rows(text)
+    notes = items(sections(text)["Problems reading the run"])
+    assert "L01's coding-agent CLI never reported what its last turn cost: its dollars are not fully known" in notes
+
+
+def test_a_cli_lanes_steps_are_not_turns_with_no_price(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls", dollars_later=True)
+    run.deck.report(lane, TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    text = report(run.close())
+    assert "- Dollars: $0.03" in text.splitlines()
+    assert ["L01", "X", "small", "1", "1,200", "21%", "$0.03", "still open"] in table_rows(text)
+
+
 def test_spend_outside_a_turn_keeps_its_price_after_a_turn_with_none(tmp_path):
     run = Script(tmp_path)
     run.release([Challenge("x", "X", "misc", 10)])

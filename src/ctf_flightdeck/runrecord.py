@@ -94,6 +94,7 @@ class LaneRecord:
     actions: tuple[ActionLine, ...]
     files: tuple[FileLine, ...]
     known_dollars: float | None = None  # every priced amount, also after one with no price; None: not in the transcript
+    dollars_later: bool = False  # written while a coding-agent CLI's turn was under way: its cost never came, so dollars is not all of it
 
 
 @dataclass(frozen=True)
@@ -327,6 +328,7 @@ def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] 
         attempt=count("attempt", 1), plan=_text(head.get("plan")),
         actions=actions, files=files,
         known_dollars=known if known is not None and known >= 0 else None,
+        dollars_later=head.get("dollars_later") is True,
     )
 
 

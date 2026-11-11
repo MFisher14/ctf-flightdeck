@@ -227,6 +227,7 @@ class LaneFacts:
     spend_cached: int = 0
     spend_dollars: float = 0.0
     spend_unpriced: int = 0
+    cost_due: bool = False  # its coding-agent CLI's last turn (dollars_later steps) never reported its cost
 
     @property
     def finished(self) -> bool:
@@ -489,7 +490,9 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             spend[0] += 1
             spend[1] += tokens
             spend[2] += cached
-            if dollars is None:
+            if dollars is None and data.get("dollars_later") is True:
+                facts.cost_due = True  # a coding-agent CLI's step: its turn_end spend event has the cost
+            elif dollars is None:
                 facts.turn_unpriced += 1
                 spend[4] += 1
             else:
@@ -499,6 +502,8 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
         elif kind == EventKind.SPEND and event.lane:  # summed, and listed: a reply dropped on escalation cost something
             facts = lanes[event.lane]
             dollars = _num(data.get("dollars"))
+            if data.get("turn_end") is True:
+                facts.cost_due = False  # the CLI's cost of the turn its steps were in
             facts.spends += 1
             facts.spend_tokens += _int(data.get("tokens"))
             facts.spend_cached += _int(data.get("cached_tokens"))
@@ -557,6 +562,9 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             info.points = head.points if info.points is None else info.points
         facts.turns, facts.tokens, facts.cached = head.turns, head.tokens, head.cached_tokens
         facts.dollars = _num(head.dollars)  # None stays unknown, and so does a price that is not a number
+        if head.dollars_later:  # written while its CLI's turn was under way, and that turn's cost never came
+            facts.dollars = None
+            notes.append(f"{lid}'s coding-agent CLI never reported what its last turn cost: its dollars are not fully known")
         facts.add_model(head.model)
         facts.plan = head.plan
         if facts.end is None:
@@ -570,9 +578,11 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
         if facts.record is None:
             facts.turns = len(facts.turn_index)
             facts.tokens, facts.cached = facts.turn_tokens + facts.spend_tokens, facts.turn_cached + facts.spend_cached
-            unpriced = facts.turn_unpriced or facts.spend_unpriced
+            unpriced = facts.turn_unpriced or facts.spend_unpriced or facts.cost_due
             facts.dollars = None if unpriced else facts.turn_dollars + facts.spend_dollars
             notes.append(f"{lid} has no transcript in lanes/ (the run did not close cleanly?): its numbers come from the event log")
+            if facts.cost_due:
+                notes.append(f"{lid}'s coding-agent CLI never reported what its last turn cost: its dollars are not fully known")
 
     event_name, event_from = record.event, "the run log"
     if board is not None:

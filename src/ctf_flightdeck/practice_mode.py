@@ -367,6 +367,7 @@ class _Lane:
     spends: int = 0  # spend events: what it spent outside a turn
     unpriced_spends: int = 0  # spend events with no price
     unpriced_spend: int = 0  # the tokens they spent
+    cost_due: bool = False  # its coding-agent CLI's last turn (dollars_later steps) has no turn_end spend event yet
 
 
 @dataclass(frozen=True)
@@ -442,10 +443,13 @@ def score(events_jsonl: Path, board: Board) -> Score:
             tokens = get.data("tokens", _is_count, f"a token count (a whole number from 0 to {MAX_COUNT:,})")
             dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
             dollars = None if dollars is None else float(dollars)
+            later = get.data("dollars_later", _is_bool, "dollars_later: true or false", default=False)
             acc = lanes.setdefault(lane, _Lane(cid))
             acc.turns += 1
             acc.tokens += tokens
-            if dollars is None:
+            if dollars is None and later:
+                acc.cost_due = True  # a coding-agent CLI's step: the turn_end spend event has its cost
+            elif dollars is None:
                 acc.dollars = None
                 acc.unpriced_turn = True
             else:
@@ -468,6 +472,8 @@ def score(events_jsonl: Path, board: Board) -> Score:
             tokens = get.data("tokens", _is_count, f"a token count (a whole number from 0 to {MAX_COUNT:,})")
             dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
             acc = lanes.setdefault(lane, _Lane(cid))
+            if get.data("turn_end", _is_bool, "turn_end: true or false", default=False):
+                acc.cost_due = False  # the CLI's cost of the turn its steps were in
             acc.tokens += tokens
             acc.spends += 1
             if dollars is None:
@@ -524,6 +530,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
             "score it against the board it played (--board)"
         )
     spent_outside = _add_transcripts(path.parent / LANES, lanes, log_format)  # before the sums below, so they hold it
+    for acc in lanes.values():
+        if acc.cost_due:  # the log ends inside a turn of its CLI: that turn's cost never came
+            acc.dollars = None
 
     verifier = AnswerVerifier(board.answers) if board.answers is not None else None
     per: dict[str, ChallengeScore] = {}
@@ -583,6 +592,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
     for lane, acc in lanes.items():
         if acc.unpriced_turn:
             notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only what had a price.")
+        if acc.cost_due:
+            notes.append(f"{lane}'s coding-agent CLI never reported what its last turn cost, so its cost is not fully known: "
+                         "the dollars count only what had a price.")
         if acc.unpriced_spends:
             spent = f"{fmt.tokens(acc.unpriced_spend)} tokens" if acc.unpriced_spend else "something"
             notes.append(
