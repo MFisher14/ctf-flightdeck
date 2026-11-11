@@ -142,6 +142,30 @@ def test_an_api_elsewhere_gets_neither_field_unless_the_player_turns_thinking_of
     assert "reasoning_effort" not in body and "chat_template_kwargs" not in body
 
 
+THINKING_NOTE = "; thinking off: each request asks it to answer without reasoning first ([light] thinking)"
+
+
+@pytest.mark.parametrize("base_url, setting, said", [
+    (LOCAL, "", True),  # on this machine: off unless the player says otherwise
+    (LOCAL, "thinking = false\n", True),
+    (LOCAL, "thinking = true\n", False),
+    ("https://openrouter.ai/api/v1", "", False),  # elsewhere: nothing is asked unless the player sets it
+    ("https://openrouter.ai/api/v1", "thinking = false\n", True),
+])
+def test_the_runs_light_model_note_says_thinking_off_only_when_it_is_asked_for(tmp_path, base_url, setting, said):
+    from ctf_flightdeck.detect.judge import from_config
+
+    config = load_config(write(tmp_path, LADDER + f'[light]\nengine = "openai"\nmodel = "light/m"\nbase_url = "{base_url}"\n'
+                                          f'key_env = ""\n{setting}'))
+    judge, note = from_config(config)  # nothing is contacted: no job is asked
+    try:
+        assert note.startswith("light model: openai light/m judges")
+        assert (THINKING_NOTE in note) is said, note
+        assert (judge.light.client.extra_body == L.THINKING_OFF) is said  # the note says what each request carries
+    finally:
+        asyncio.run(judge.aclose())
+
+
 def test_in_a_run_the_hint_judge_on_this_machine_is_asked_for_thinking_off_and_the_run_says_so(tmp_path):
     from ctf_flightdeck.run import RunOptions, prepare_run
 
@@ -175,7 +199,7 @@ def test_in_a_run_the_hint_judge_on_this_machine_is_asked_for_thinking_off_and_t
     assert asked and all(body["reasoning_effort"] == "none" for body in asked)
     assert all(body["chat_template_kwargs"] == {"enable_thinking": False} for body in asked)
     (note,) = [note for note in run.notes() if note.startswith("light model: openai light/m judges")]
-    assert note.endswith("; thinking off: each request asks it to answer without reasoning first ([light] thinking)")
+    assert note.endswith(THINKING_NOTE)
 
 
 # ---------------------------------------------------------------------- eval-local

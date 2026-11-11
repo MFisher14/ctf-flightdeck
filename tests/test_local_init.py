@@ -97,6 +97,18 @@ def test_an_api_elsewhere_gets_no_timeout_or_reply_cap_from_init(tmp_path, monke
         assert "timeout" not in target.read_text().split("[models]")[0] and "lane calls:" not in result.output
 
 
+def test_an_anthropic_api_on_this_machine_keeps_its_clients_own_timeout_and_reply_cap(tmp_path, monkeypatch):
+    """8192 tokens and 600 s are for an OpenAI-compatible server: the Anthropic client sends its
+    own max_tokens and already waits 600 s a try, so init writes neither for it, even here."""
+    result, target = init(monkeypatch, tmp_path, "--provider", "anthropic", "--base-url", "http://127.0.0.1:8090",
+                          "--no-fallback", "--host")
+    assert result.exit_code == 0, result.output
+    config = load_config(target)
+    assert (config.api.provider, config.api.base_url) == ("anthropic", "http://127.0.0.1:8090")
+    assert (config.api.timeout, config.api.max_tokens) == (None, None)
+    assert "timeout" not in target.read_text().split("[models]")[0] and "lane calls:" not in result.output
+
+
 def test_a_custom_server_on_this_machine_gets_them_too(tmp_path, monkeypatch):
     result, target = init(monkeypatch, tmp_path, "--provider", "custom", "--base-url", "http://localhost:8000/v1",
                           "--key-env", "", "--models", "m", "--host")
