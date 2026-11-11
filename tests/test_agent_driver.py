@@ -421,6 +421,34 @@ def test_under_auto_a_submitted_flag_the_handout_holds_waits_for_the_player_and_
     run(main())
 
 
+def test_a_flag_from_the_handout_the_player_declined_is_not_said_to_wait_for_them_when_submitted_again(tmp_path):
+    server = FakeModelServer([
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),  # again, after the player said no
+        text_reply("ok"),
+    ])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording([]))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: len(server.requests) >= 3, "the call after the second submission")
+            told = last_user(server.requests[2])
+            assert "Note from flightdeck: The player did not submit t{note}: they think it is not the flag." in told
+            assert "it waits for the player" not in told  # nothing waits: the deck has said why not
+            assert lane.pending is None
+            said = [a.text for a in lane.actions]
+            assert said[-1] != f"t{{note}} {OWN_TEXT}, so it waits for you, though the lane submitted it"
+            assert said.count(f"t{{note}} {OWN_TEXT}, so it waits for you, though the lane submitted it") == 1
+            assert "candidate t{note} again; not asked: the player declined to submit it" in said
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_a_flag_from_the_description_or_any_handout_file_waits_for_the_player(tmp_path):
     """The description, a binary (searched as Latin-1, as `strings` would show it) and a text
     file too big to keep in a snapshot (read from the workspace) all count as the challenge's

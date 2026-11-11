@@ -600,10 +600,13 @@ class AgentDriver:
             notes.append(f"That turn changed {len(changes)} files; the console lists the first {MAX_FILES_PER_TURN}.")
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
+        # the challenge hands these out: often decoys, so the player decides; not one known not to be
+        # the flag already (declined, rejected): the deck tells the model that instead
+        planted = {flag for flag in flags if flag in run.planted and self.deck.not_flag(run.challenge.id, flag) is None}
         for flag in flags:
             if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
                 notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
-            elif flag in run.planted:  # the challenge hands it out: often a decoy, so the player decides
+            elif flag in planted:
                 notes.append(f"{prompts.one(flag, 200)} is written in the challenge's own text (its description or a handout "
                              "file), so it is not submitted on its own: it waits for the player. A flag a challenge hands "
                              "out is often a decoy; keep going until you hear it was correct.")
@@ -649,7 +652,7 @@ class AgentDriver:
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in run.planted))
-        for flag in dict.fromkeys(flag for flag in flags if flag in run.planted):
+        for flag in dict.fromkeys(flag for flag in flags if flag in planted):
             self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a handout "
                                         "file), so it waits for you, though the lane submitted it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
