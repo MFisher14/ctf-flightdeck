@@ -218,6 +218,11 @@ def region_text(app: FlightdeckApp, selector: str) -> str:
     return "\n".join(lines[y][region.x : region.right].rstrip() for y in range(region.y, region.bottom))
 
 
+def prompt_text(app: FlightdeckApp) -> str:
+    """What the open modal says, as one line: its border, buttons' edges and line breaks left out."""
+    return " ".join(re.sub(r"[│╭╮╰╯─▔▁]", " ", region_text(app, "Vertical")).split())
+
+
 def status_line(app: FlightdeckApp) -> str:
     return region_text(app, "#status")
 
@@ -675,6 +680,50 @@ def test_question_mark_opens_help_that_scrolls_and_escape_closes_it():
         assert body.scroll_y > 0
         await press(pilot, "escape")
         assert isinstance(app.screen, FleetScreen)
+
+    drive(app, script)
+
+
+def test_in_a_run_help_and_the_command_menu_say_what_take_over_and_decline_do_and_they_do_it():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), flag_format=r"t\{[a-z]+\}"))
+    deck.release([Challenge("alpha", "Alpha", "misc", 50), Challenge("bravo", "Bravo", "misc", 50)],
+                 [QueueEntry("alpha", "glm"), QueueEntry("bravo", "glm")])
+    flagged, costly = deck.lanes_on("alpha")[0], deck.lanes_on("bravo")[0]
+    deck.report(flagged.id, TurnReport(flag="t{alpha}"))
+    deck.report(costly.id, TurnReport(pending=Pending(PendingKind.BUDGET, "raise the cap by 50%")))
+
+    async def on_exit():
+        pass
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)  # a run's console: no mock clock
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        text = prompt_text(app)
+        assert "placeholder" not in text
+        assert ("Take over: a shell in the lane's workspace (its container in Docker); exit it to hand back, "
+                "and the lane hears what you changed") in text
+        assert ("Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; "
+                "refusing more budget stops the lane") in text
+        await press(pilot, "escape")
+        for typed, shown in (("/take", "/takeover a shell in the lane's workspace; exit it to hand the lane back"),
+                             ("/decl", "/decline say no: not submitted, or off the box (the lane carries on); no more budget (it stops)")):
+            bar(app).start(typed)
+            await pilot.pause()
+            assert shown in " ".join(region_text(app, "#bar").split())
+            await press(pilot, "escape")
+        assert deck.apply(iv.Decline(flagged.id)).ok and flagged.state is LaneState.RUNNING  # carries on
+        assert deck.apply(iv.Decline(costly.id)).ok and costly.state is LaneState.STOPPED  # stops
+
+    drive(app, script)
+
+
+def test_in_the_mock_help_says_take_over_is_a_placeholder_there():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)" in prompt_text(app)
 
     drive(app, script)
 
@@ -2254,11 +2303,6 @@ def open_run(*, queued: int = 0) -> tuple[Deck, list]:
     assert deck.apply(iv.Pause(second.id)).ok
     calls: list[str] = []
     return deck, calls
-
-
-def prompt_text(app: FlightdeckApp) -> str:
-    """What the open prompt says, as one line: its border, buttons' edges and line breaks left out."""
-    return " ".join(re.sub(r"[│╭╮╰╯─▔▁]", " ", region_text(app, "Vertical")).split())
 
 
 @pytest.mark.parametrize("size", [SIZE, (80, 24)], ids=["160x46", "80x24"])

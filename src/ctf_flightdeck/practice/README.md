@@ -32,7 +32,7 @@ one step. Real CTFs plant decoys, and so does this set.
 flightdeck practice
 ```
 
-The command is still being built (milestone M1). The set ships inside the installed package, as
+It spends tokens like `flightdeck play`. The set ships inside the installed package, as
 `ctf_flightdeck/practice/` (`src/ctf_flightdeck/practice/` in the repository), so playing it needs
 no clone. flightdeck loads this folder as a board: each directory is one challenge
 (`challenge.json` plus the handout files it lists), `board.json` names the event and the flag

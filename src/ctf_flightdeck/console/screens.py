@@ -279,9 +279,9 @@ KEY_HELP = (
     ("f", "Fork: a sibling lane on the same challenge, another approach or model"),
     ("k", "Kill the lane: re-queue the challenge fresh, or park it"),
     ("e", "Escalate: hand a compact summary to the next stronger model"),
-    ("t", "Take over: a shell in the lane's workspace (placeholder in M0)"),
+    ("t", "Take over: a shell in the lane's workspace (its container in Docker); exit it to hand back, and the lane hears what you changed"),
     ("a", "Approve what the lane waits for: submit, more budget, live-box access"),
-    ("d", "Decline it: do not submit, stay off the box, no more budget (the lane stops)"),
+    ("d", "Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; refusing more budget stops the lane"),
     ("1-9, 0", "Quick answers, no enter: the numbers in the why line and the needs-you card (0 says no)"),
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
@@ -297,6 +297,7 @@ MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
 )
+MOCK_KEY_HELP = {"t": "Take over: in the mock, a placeholder screen (a real run opens a shell in the lane's workspace)"}
 ALERT_HELP = (
     (AlertKind.EFFORT, "Turns or tokens are high for a low-point challenge with many solves"),
     (AlertKind.HINT, "The description hints at something the lane is not doing"),
@@ -333,7 +334,7 @@ class HelpScreen(ModalScreen[None]):
         keys.add_column(style="bold", no_wrap=True)
         keys.add_column()
         for key, text in KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
-            keys.add_row(Text(key), Text(text))
+            keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
         commands = Table.grid(padding=(0, 2))
         commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
         commands.add_column()

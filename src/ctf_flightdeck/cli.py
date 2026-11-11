@@ -491,7 +491,9 @@ def config_command(
     priced = [m for m in loaded.models if m in loaded.prices]
     typer.echo(f"prices from config: {', '.join(priced) or 'none (the API reports cost, or it shows as unknown)'}")
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))
-    typer.echo(f"caps per lane: {lanes.token_cap or 'no'} tokens, ${lanes.dollar_cap if lanes.dollar_cap else 'no cap'}; submit {lanes.submit}")
+    tokens = f"{lanes.token_cap} tokens" if lanes.token_cap else "no token cap"
+    dollars = f"${lanes.dollar_cap:g}" if lanes.dollar_cap else "no dollar cap"
+    typer.echo(f"caps per lane: {tokens}, {dollars}; submit {lanes.submit}")
     typer.echo(f"runs go to: {loaded.run_dir}")
 
 
