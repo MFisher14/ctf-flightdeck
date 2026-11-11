@@ -37,6 +37,12 @@ from fake_model import FakeModelServer, error_reply, text_reply
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def no_player_config(tmp_path, monkeypatch):
+    """eval-local reads [light] thinking from the player's config: here, a file that does not exist."""
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "no-config-here.toml"))
+
+
 def run_eval(base_url: str, cases, *, model: str = "local/m", timeout: float = 5.0) -> lm.EvalReport:
     """One evaluation of the openai engine through a fresh client on a fresh loop."""
 
@@ -568,7 +574,7 @@ def test_cli_shows_each_engine_in_its_own_column(tmp_path):
         result = invoke(server.base_url, cases)
     assert result.exit_code == 0, result.output
     rows = table(result.output)
-    assert rows["cases"] == ["rules", "openai local/m"]
+    assert rows["cases"] == ["rules", "openai local/m (thinking off)"]  # a server on this machine: thinking off
     assert rows["hint"] == ["3", "2/3 67%", "3/3 100%"]
     assert rows["judge"] == ["1", "0/1 0%", "1/1 100%"]
     assert rows["summary"] == ["1", "n/a", "0/1 0%"]
@@ -604,7 +610,7 @@ def test_cli_compares_several_engines_and_says_what_a_paid_one_will_spend(tmp_pa
     assert ("anthropic claude-haiku-5-5 is a paid API: at most 2 calls, one per case (no retries), each with at most "
             "1024 output tokens; priced at Anthropic's list price for claude-haiku-5-5") in result.output
     rows = table(result.output)
-    assert rows["cases"] == ["rules", "anthropic claude-haiku-5-5", "openai local/m"]
+    assert rows["cases"] == ["rules", "anthropic claude-haiku-5-5", "openai local/m (thinking off)"]
     assert rows["refused"] == ["-", "1/2 50%", "0/2 0%"]
     assert rows["overall"] == ["2", "2/2 100%", "1/2 50%", "2/2 100%"]
     assert "fake-anthropic-key-0451" not in result.output
@@ -720,7 +726,8 @@ def test_cli_fails_when_most_replies_hold_no_answer(tmp_path):
         most = invoke(server.base_url, cases)
     assert most.exit_code == 1
     assert table(most.output)["no answer"] == ["-", "2/3 67%"]  # the scorecard is still shown
-    assert "flightdeck: openai local/m: 2 of 3 replies were cut off at the token cap, empty, or not exactly one" in most.output
+    assert ("flightdeck: openai local/m (thinking off): 2 of 3 replies were cut off at the token cap, empty, or not "
+            "exactly one") in most.output
     with FakeModelServer([cut_off("<think>\nThe description"), text_reply("xor"), text_reply("none")]) as server:
         some = invoke(server.base_url, cases)
     assert some.exit_code == 0, some.output
@@ -732,7 +739,7 @@ def test_cli_fails_when_most_jobs_are_declined_and_says_why_a_local_model_helps(
     with FakeModelServer([text_reply("I'm sorry, I can't help with that.")] * 2) as server:
         result = invoke(server.base_url, cases)
     assert result.exit_code == 1
-    assert "openai local/m declined 2 of 2 jobs" in result.output
+    assert "openai local/m (thinking off) declined 2 of 2 jobs" in result.output
     assert "an open-weight model on your own machine has no such classifier in front of it" in result.output
 
 

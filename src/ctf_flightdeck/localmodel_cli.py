@@ -15,6 +15,10 @@ the light role falls back to):
 - `--engine rules`: the rules alone.
 - `--compare SPEC`, as often as you like: another column, `rules`, `cactus`,
   `anthropic:MODEL` or `openai:MODEL@BASE_URL` (a server with no key).
+- `--thinking on|off`: whether an openai column's model may reason before it answers, as
+  [light] thinking says in a run (off sends light.THINKING_OFF with each request). Default:
+  [light] thinking as your config sets it, else off for a server on this machine and on for
+  any other (config.light_thinking()). Each openai column's label says which.
 
 Before any call the cases are checked and the rules scored (no network): a missing lexicon, or
 a case that names an id it lacks, stops the command before anything is spent. A paid API
@@ -96,11 +100,21 @@ def eval_local(
         Path | None,
         typer.Option("--cases", exists=True, dir_okay=False, help="Case file (default: the set bundled with flightdeck)."),
     ] = None,
+    thinking: Annotated[
+        str | None,
+        typer.Option("--thinking", metavar="on|off",
+                     help="Whether an openai model may reason before it answers; off asks for thinking off with each "
+                          "request. Default: [light] thinking from your config, else off for a server on this machine.")
+    ] = None,
 ) -> None:
     """Score light models and the rules side by side on hints, hint judging and lane summaries."""
     if not math.isfinite(timeout) or timeout <= 0:
         _fail("--timeout must be a positive number of seconds")
+    think = _thinking_option(thinking) if thinking is not None else None
     specs = [_main_spec(engine, base_url, model, key_env)] + [_compare_spec(text) for text in compare or ()]
+    if think is not None and not any(spec.engine == "openai" for spec in specs):
+        _fail("--thinking is for an openai engine (a model on an OpenAI-compatible server); give --engine openai or "
+              "--compare openai:MODEL@BASE_URL")
     priced = _price(price) if price is not None else None
 
     try:
@@ -119,16 +133,16 @@ def eval_local(
     for spec in specs:
         if spec.engine != "rules" and spec not in columns:
             columns.append(spec)
+    thinks = _thinks(columns, think)
     keys = {spec: _key(spec) for spec in columns}
     for spec in columns:
         notice = _spend_notice(spec, loaded, priced if spec == specs[0] else None)
         if notice:
             typer.echo(f"flightdeck: {notice}", err=True)
 
-    reports = asyncio.run(_run(columns, keys, loaded, priced if specs[0] in columns else None, specs[0], timeout))
-    reports = [rules, *reports]
-    typer.echo(localmodel.format_scorecard(reports), nl=False)
-    worst = [message for report in reports[1:] if (message := _unmeasured(report))]
+    reports = asyncio.run(_run(columns, keys, loaded, priced if specs[0] in columns else None, specs[0], timeout, thinks))
+    typer.echo(localmodel.format_scorecard([rules, *reports]), nl=False)
+    worst = [message for spec, report in zip(columns, reports) if (message := _unmeasured(report, thinks.get(spec)))]
     for message in worst:
         typer.echo(f"flightdeck: {message}", err=True)
     if worst:
@@ -177,6 +191,50 @@ def _compare_spec(text: str) -> Spec:
             return Spec("openai", rest[:at], url, "")
     _fail("--compare takes rules, cactus, anthropic:MODEL or openai:MODEL@BASE_URL "
           f"(e.g. openai:some-model@{EXAMPLE_URL})")
+
+
+def _thinking_option(text: str) -> bool:
+    """--thinking: True for on, False for off."""
+    value = text.strip().lower()
+    if value not in ("on", "off"):
+        _fail("--thinking must be on or off")
+    return value == "on"
+
+
+def _thinks(columns: list[Spec], think: bool | None) -> dict[Spec, bool]:
+    """Whether each openai column's model may reason before it answers: --thinking when given,
+    else what [light] would say for that server: its thinking as your config sets it, or the
+    default for the server (config.light_thinking(): off on this machine, on elsewhere)."""
+    openai = [spec for spec in columns if spec.engine == "openai"]
+    if think is not None:
+        return {spec: think for spec in openai}
+    if not openai:
+        return {}
+    from .config import LightConfig, light_thinking
+
+    configured, where = _configured_thinking()
+    if configured is not None:
+        typer.echo(f"flightdeck: thinking {'on' if configured else 'off'}, as [light] thinking in {where} says "
+                   "(--thinking on|off overrides it)", err=True)
+    return {spec: light_thinking(LightConfig("openai", spec.model, spec.base_url, spec.key_env, thinking=configured))
+            for spec in openai}
+
+
+def _configured_thinking() -> tuple[bool | None, Path | None]:
+    """[light] thinking as the player's config sets it (None when it sets none, or there is
+    no config file), and the file. A config that cannot be read stops here, named: its value
+    is not guessed."""
+    from .config import ConfigError, default_config_path, load_config
+
+    try:
+        path = default_config_path()
+        if not path.exists():
+            return None, None
+        light = load_config(path).light
+    except (ConfigError, OSError) as exc:
+        _fail(f"--thinking takes its default from [light] thinking in your config, which cannot be read: {exc}. "
+              "Fix it, or give --thinking on or off")
+    return (light.thinking if light.engine == "openai" else None), path
 
 
 def _key_env(name: str) -> str:
@@ -246,18 +304,21 @@ def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | Non
             f"{max(tokens.values())} output tokens; {how}")
 
 
-def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float) -> L.Light:
+def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float, thinks: bool = True) -> L.Light:
     if spec.engine == "cactus":
         return L.CactusLight(timeout)
     if spec.engine == "openai":
         from .agent.client import ModelClient
 
         try:
-            client = ModelClient(spec.base_url, key, timeout=timeout, max_retries=0)
+            client = ModelClient(spec.base_url, key, timeout=timeout, max_retries=0,
+                                 extra_body=None if thinks else L.THINKING_OFF)
         except ValueError:  # _check_url checks the same; the client's words may quote parts of the URL
             raise localmodel.LocalModelError(f"--base-url cannot be used as a model endpoint, e.g. {EXAMPLE_URL}") from None
-        return L.ModelLight("openai", client, spec.model, price=price, timeout=timeout, tokens=L.OPENAI_TOKENS,
-                            temperature=0.0, free=L.on_this_machine(spec.base_url))
+        light = L.ModelLight("openai", client, spec.model, price=price, timeout=timeout, tokens=L.OPENAI_TOKENS,
+                             temperature=0.0, free=L.on_this_machine(spec.base_url))
+        light.label = f"{light.label} (thinking {'on' if thinks else 'off'})"  # the column says how it was asked
+        return light
     from .agent.anthropic_client import AnthropicClient
 
     try:
@@ -269,11 +330,11 @@ def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float) 
 
 
 async def _run(columns: list[Spec], keys: dict, cases: list[localmodel.Case], price: L.Price | None, main: Spec,
-               timeout: float) -> list[localmodel.EvalReport]:
+               timeout: float, thinks: dict[Spec, bool]) -> list[localmodel.EvalReport]:
     reports = []
     for spec in columns:
         try:
-            engine = _engine(spec, keys[spec], price if spec == main else None, timeout)
+            engine = _engine(spec, keys[spec], price if spec == main else None, timeout, thinks.get(spec, True))
         except (L.LightError, localmodel.LocalModelError) as exc:
             _fail(str(exc))
         try:
@@ -295,8 +356,9 @@ def _failed(spec: Spec, why: str) -> str:
     return f"Cactus Needle failed: {why}"
 
 
-def _unmeasured(report: localmodel.EvalReport) -> str:
-    """Why this engine's score does not measure it (most of its jobs held no answer), or ""."""
+def _unmeasured(report: localmodel.EvalReport, thinks: bool | None = None) -> str:
+    """Why this engine's score does not measure it (most of its jobs held no answer), or "".
+    `thinks`: an openai column's thinking setting (None for another engine)."""
     if not report.total or 2 * report.unanswered <= report.total:
         return ""
     refused = report.count(L.REFUSED)
@@ -310,9 +372,16 @@ def _unmeasured(report: localmodel.EvalReport) -> str:
     if failed >= blank:
         return (f"{report.label} failed or timed out on {failed} {of} jobs, so this score does not measure the "
                 "model: check the server, or give it a longer --timeout.")
-    return (f"{report.label}: {blank} {of} replies were cut off at the token cap, empty, or not exactly one of the "
+    text = (f"{report.label}: {blank} {of} replies were cut off at the token cap, empty, or not exactly one of the "
             "options, so this score does not measure the model. Check that it answers with the option alone: a "
-            "model that reasons at length before it answers needs that switched off for this evaluation.")
+            "model that reasons at length before it answers needs that switched off for this evaluation")
+    if thinks is True:
+        return text + " (--thinking off asks for it)."
+    if thinks is False:
+        return text + (" (it was asked to: check that its server reads reasoning_effort, as Ollama does, or "
+                       "chat_template_kwargs, as mlx_lm.server does)."
+                       )
+    return text + "."
 
 
 # ---------------------------------------------------------------------- URLs and the secrets they may carry

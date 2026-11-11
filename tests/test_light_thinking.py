@@ -175,3 +175,118 @@ def test_in_a_run_the_hint_judge_on_this_machine_is_asked_for_thinking_off_and_t
     assert all(body["chat_template_kwargs"] == {"enable_thinking": False} for body in asked)
     (note,) = [note for note in run.notes() if note.startswith("light model: openai light/m judges")]
     assert note.endswith("; thinking off: each request asks it to answer without reasoning first ([light] thinking)")
+
+
+# ---------------------------------------------------------------------- eval-local
+
+
+def eval_local(tmp_path: Path, *args: str):
+    """`flightdeck eval-local` over one hint case, with the options given."""
+    import typer
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import localmodel_cli
+
+    case = {"kind": "hint", "input": {"name": "C", "category": "misc", "description": "a slow scan tv signal"},
+            "expected": "sstv"}
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text(json.dumps(case) + "\n")
+    root = typer.Typer()
+    root.add_typer(localmodel_cli.app)
+    return CliRunner().invoke(root, ["eval-local", "--cases", str(cases), *args])
+
+
+def columns(output: str) -> list[str]:
+    """The scorecard's column labels after the rules' (cells are 2+ spaces apart)."""
+    for line in output.splitlines():
+        cells = re.split(r"\s{2,}", line.strip())
+        if cells[0] == "cases":
+            return cells[2:]
+    raise AssertionError(f"no scorecard in: {output}")
+
+
+def cut_off(content: str) -> dict:
+    reply = text_reply(content)
+    reply["choices"][0]["finish_reason"] = "length"
+    return reply
+
+
+def test_eval_local_asks_a_model_on_this_machine_for_thinking_off_and_its_column_says_so(tmp_path):
+    with FakeModelServer([text_reply("sstv")]) as server:
+        result = eval_local(tmp_path, "--base-url", server.base_url, "--model", "qwen3.5:9b")
+        body = server.chats()[0]["json"]
+    assert result.exit_code == 0, result.output
+    assert columns(result.output) == ["openai qwen3.5:9b (thinking off)"]
+    assert body["reasoning_effort"] == "none" and body["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_thinking_on_sends_neither_field_and_its_column_says_so(tmp_path):
+    with FakeModelServer([text_reply("sstv")]) as server:
+        result = eval_local(tmp_path, "--base-url", server.base_url, "--model", "qwen3.5:9b", "--thinking", "on")
+        body = server.chats()[0]["json"]
+    assert result.exit_code == 0, result.output
+    assert columns(result.output) == ["openai qwen3.5:9b (thinking on)"]
+    assert "reasoning_effort" not in body and "chat_template_kwargs" not in body
+
+
+def test_every_openai_column_gets_the_option(tmp_path):
+    with FakeModelServer([text_reply("sstv")]) as one, FakeModelServer([text_reply("sstv")]) as two:
+        result = eval_local(tmp_path, "--base-url", one.base_url, "--model", "a", "--compare", f"openai:b@{two.base_url}",
+                            "--thinking", "OFF")
+        sent = [one.chats()[0]["json"], two.chats()[0]["json"]]
+    assert result.exit_code == 0, result.output
+    assert columns(result.output) == ["openai a (thinking off)", "openai b (thinking off)"]
+    assert all(body["reasoning_effort"] == "none" for body in sent)
+
+
+def test_a_server_elsewhere_is_left_thinking_unless_asked(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "on_this_machine", lambda url: False)  # the fake server, as if it were elsewhere
+    with FakeModelServer([text_reply("sstv"), text_reply("sstv")]) as server:
+        default = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m")
+        asked = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m", "--thinking", "off")
+        first, second = (request["json"] for request in server.chats())
+    assert columns(default.output) == ["openai m (thinking on)"] and "reasoning_effort" not in first
+    assert columns(asked.output) == ["openai m (thinking off)"] and second["reasoning_effort"] == "none"
+
+
+def test_by_default_eval_local_measures_with_light_thinking_as_the_players_config_sets_it(tmp_path, monkeypatch):
+    config = write(tmp_path, LADDER + OPENAI_LIGHT + "thinking = true\n")
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    with FakeModelServer([text_reply("sstv"), text_reply("sstv")]) as server:
+        default = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m")
+        overridden = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m", "--thinking", "off")
+        first, second = (request["json"] for request in server.chats())
+    assert default.exit_code == 0, default.output
+    assert columns(default.output) == ["openai m (thinking on)"] and "reasoning_effort" not in first
+    assert f"flightdeck: thinking on, as [light] thinking in {config} says (--thinking on|off overrides it)" in default.output
+    assert columns(overridden.output) == ["openai m (thinking off)"] and second["reasoning_effort"] == "none"
+    assert "as [light] thinking in" not in overridden.output
+
+
+def test_a_config_that_cannot_be_read_stops_eval_local_before_any_call_unless_thinking_is_given(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(write(tmp_path, "[models]\nladder = []\n")))
+    with FakeModelServer([text_reply("sstv")]) as server:
+        stopped = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m")
+        assert server.chats() == []
+        given = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m", "--thinking", "off")
+    assert stopped.exit_code == 2
+    assert "--thinking takes its default from [light] thinking in your config, which cannot be read" in stopped.output
+    assert "models.ladder is empty" in stopped.output and "give --thinking on or off" in stopped.output
+    assert given.exit_code == 0, given.output
+
+
+def test_a_bad_thinking_option_or_one_without_an_openai_engine_is_refused(tmp_path):
+    bad = eval_local(tmp_path, "--base-url", LOCAL, "--model", "m", "--thinking", "maybe")
+    assert bad.exit_code == 2 and "--thinking must be on or off" in bad.output
+    rules = eval_local(tmp_path, "--engine", "rules", "--thinking", "off")
+    assert rules.exit_code == 2 and "--thinking is for an openai engine" in rules.output
+
+
+def test_a_model_that_answers_nothing_is_pointed_at_the_thinking_setting(tmp_path):
+    with FakeModelServer([cut_off("<think>\nThe description"), cut_off("<think>\nHmm")]) as server:
+        on = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m", "--thinking", "on")
+        off = eval_local(tmp_path, "--base-url", server.base_url, "--model", "m")
+    assert on.exit_code == off.exit_code == 1
+    assert "for this evaluation (--thinking off asks for it)." in on.output
+    assert ("(it was asked to: check that its server reads reasoning_effort, as Ollama does, or chat_template_kwargs, "
+            "as mlx_lm.server does).") in off.output
