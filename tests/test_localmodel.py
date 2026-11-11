@@ -213,6 +213,31 @@ def test_an_answer_outside_the_options_never_scores_on_a_none_case():
     assert good.correct and good.predicted == "none"
 
 
+class Mute:
+    """A broken engine: it says it answered, and names no option."""
+
+    engine, model, label = "openai", "mute", "openai mute"
+
+    def does(self, job):
+        return job in ("hint", "judge")
+
+    async def ask_technique(self, description, choices):
+        return L.Answer(None, text="")
+
+    async def judge_hint(self, technique, description, steps, outputs=()):
+        return L.Answer(None, text="")
+
+    async def aclose(self):
+        return None
+
+
+def test_an_engine_that_names_no_option_never_scores_on_a_none_case():
+    cases = [hint_case("none", "welcome"), judge_case("no", "sstv", "slow scan", [("ls", "")])]
+    report = asyncio.run(lm.evaluate_engine(Mute(), cases))
+    assert [r.correct for r in report.results] == [False, False]
+    assert [r.failure for r in report.results] == [L.OUTSIDE, L.OUTSIDE]
+
+
 def test_evaluate_sums_tokens_and_cost():
     cases = [hint_case("sstv", "slow scan"), hint_case("xor", "repeating key")]
     with FakeModelServer([

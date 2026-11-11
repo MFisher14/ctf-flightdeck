@@ -365,8 +365,10 @@ def _score(case: Case, answer: Answer) -> CaseResult:
     if case.kind == SUMMARY:
         correct, detail = _summary_score(answer.text, case.expected)
         return CaseResult(SUMMARY, expected, shown(answer.text), correct, detail=detail, seconds=answer.seconds)
-    predicted = answer.choice or ""
-    return CaseResult(case.kind, expected, predicted, predicted == expected, seconds=answer.seconds)
+    if answer.choice is None:  # an engine that says it answered but named no option: no answer, never "none"
+        return CaseResult(case.kind, expected, shown(answer.text), False, detail="no answer: no option named",
+                          answered=False, failure=OUTSIDE, seconds=answer.seconds)
+    return CaseResult(case.kind, expected, answer.choice, answer.choice == expected, seconds=answer.seconds)
 
 
 async def evaluate_engine(engine: Light, cases: Sequence[Case], *, stop_after: int = STOP_AFTER) -> EvalReport:
