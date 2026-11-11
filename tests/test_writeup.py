@@ -298,6 +298,32 @@ def test_with_neither_the_last_step_before_the_flag_matters_and_the_draft_says_w
     ]
 
 
+def test_the_flag_is_found_in_the_first_output_that_holds_it_not_a_later_one(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("f", "First", "misc", 10)], answers={"f": "t{f}"})
+    lane = run.lane("f")
+    run.step(lane, "$ ls", "solve.py")
+    run.step(lane, "$ python3 solve.py", "t{f}")
+    run.step(lane, "$ echo done", "done")
+    run.step(lane, "submit t{f}", "solve.py printed t{f}", flag="t{f}")  # how it was found repeats it
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "f"), "## Steps that mattered")
+    assert section[1] == "The flag first shows in the output of turn 2. Here it is with the 1 step before it."
+
+
+def test_the_last_run_of_a_file_the_lane_wrote_is_the_one_that_mattered(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("r", "Rerun", "rev", 10)], answers={"r": "t{r}"})
+    lane = run.lane("r")
+    run.step(lane, "$ cat > solve.py <<'EOF'", files=(change(tmp_path / "work", "solve.py", "print(1)\n"),))
+    run.step(lane, "$ python3 solve.py", "Traceback: KeyError")
+    run.step(lane, "$ sed -i s/1/2/ solve.py", "", files=(change(tmp_path / "work", "solve.py", "print(2)\n"),))
+    run.step(lane, "$ python3 solve.py", "decoded the key")
+    run.step(lane, "submit t{r}", "from the key", flag="t{r}")
+    run.apply(iv.Approve(lane))
+    section = lines_of(writeup.draft(run.close(), "r"), "## Steps that mattered")
+    assert section[1].startswith("No step's output shows the flag; the last step that ran a file the lane wrote is "
+                                 "turn 4, which ran `solve.py`.")
+
+
 def test_long_outputs_are_cut_to_twenty_lines_and_long_lines_short_and_the_draft_says_so(tmp_path):
     run = Run(tmp_path / "run", [Challenge("o", "Output", "misc", 10)], answers={"o": "t{o}"})
     o = run.lane("o")
@@ -516,6 +542,22 @@ def test_an_l1_flag_nobody_accepted_is_not_a_solve(tmp_path):
     run.deck.report(u, TurnReport(turn=False, flag="t{nope}"))
     run.apply(iv.Approve(u))  # wrong: the lane carries on
     assert writeup.solves(run.close()) == {}
+
+
+def test_a_wrong_l1_candidate_then_a_lane_solve_is_the_lanes_solve(tmp_path):
+    run = Run(tmp_path / "run", [Challenge("c", "Gamma", "cry", 100)], answers={"c": "t{right}"})
+    lane = run.lane("c")
+    run.deck.record_l1("c", "decode.rot13", "candidate", flags=["t{wrong}"], seconds=0.1, lane_id=lane)
+    run.deck.report(lane, TurnReport(turn=False, flag="t{wrong}"))
+    run.apply(iv.Approve(lane))  # the platform rejects it; the lane carries on
+    run.step(lane, "$ python3 solve.py", "t{right}")
+    run.step(lane, "submit t{right}", flag="t{right}")
+    run.apply(iv.Approve(lane))
+    record = run.close()
+    assert writeup.solves(record)["c"].l1 is None
+    text = writeup.draft(record, "c")
+    assert f"- Solved by: lane {lane} at" in text and "## Steps that mattered" in text
+    assert "with no model" not in text
 
 
 # ---------------------------------------------------------------------- what the run folder lacks
