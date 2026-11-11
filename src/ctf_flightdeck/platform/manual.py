@@ -60,6 +60,7 @@ CATEGORY_CODES = {
 """Category names to the console's short codes. Any other name is kept, lower-cased."""
 
 _HOST = re.compile(r"[a-z0-9_.-]+")
+_NUMBER = re.compile(r"[0-9]+|0x[0-9a-f]*")  # a last label a browser reads as part of an IPv4 address
 _MISSING = object()
 
 
@@ -287,7 +288,8 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
         if url is None:
             raise BoardError(
                 f'{_show(path)}: "urls"[{i}] must be an http:// or https:// origin: scheme://host[:port], '
-                "in printable ASCII with no spaces, and with no path, query or user name"
+                "in printable ASCII with no spaces, and with no path, query or user name; a host that ends "
+                "in a number must be an IPv4 address, four numbers from 0 to 255"
             )
         if url in urls:
             raise BoardError(f'{_show(path)}: "urls" lists {url} twice')
@@ -322,7 +324,21 @@ def _origin(value: object) -> str | None:
         host = f"[{host}]"
     elif not _HOST.fullmatch(host):
         return None
+    elif _NUMBER.fullmatch(host.removesuffix(".").rpartition(".")[2]) and not _ipv4(host):
+        # read as an IPv4 address, so only a valid one in the usual form is taken: the lane's
+        # tools refuse 10.0.0.256 (it would fail only when a lane starts), and 127.1 or
+        # 2130706433 is 127.0.0.1 in disguise
+        return None
     return f"{url.scheme}://{host}" + ("" if port is None else f":{port}")
+
+
+def _ipv4(host: str) -> bool:
+    """`host` is an IPv4 address written as four numbers from 0 to 255, with no leading zeros."""
+    try:
+        ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------- answers

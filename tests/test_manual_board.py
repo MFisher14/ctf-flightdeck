@@ -188,6 +188,10 @@ def test_category_names_map_to_the_console_codes(board, given, code):
         ("https://instance.example", "https://instance.example"),
         ("http://[::1]:9000", "http://[::1]:9000"),
         ("http://box_1.local:31337", "http://box_1.local:31337"),
+        ("http://10.0.0.255:8080", "http://10.0.0.255:8080"),
+        ("http://0.0.0.0", "http://0.0.0.0"),
+        ("http://box-10:8080", "http://box-10:8080"),
+        ("http://10.0.0.7.example", "http://10.0.0.7.example"),
     ],
 )
 def test_urls_become_origins_in_one_form(board, given, origin):
@@ -333,6 +337,16 @@ BAD_SPECS = {
     "url with a space in front": (spec(urls=[" http://127.0.0.1:8080"]), '"urls"[0] must be'),
     "url with a control character in front": (spec(urls=["\u0001http://127.0.0.1:8080"]), '"urls"[0] must be'),
     "url with a Kelvin sign": (spec(urls=["http://Kali.example:8080"]), '"urls"[0] must be'),
+    # a host that ends in a number is an IPv4 address: a valid one, in the usual form
+    "url bad IPv4": (spec(urls=["http://10.0.0.256:8080"]), "a host that ends in a number must be an IPv4 address"),
+    "url IPv4 with leading zeros": (spec(urls=["http://127.000.000.001:8080"]), '"urls"[0] must be'),
+    "url IPv4 in two parts": (spec(urls=["http://127.1:8080"]), '"urls"[0] must be'),
+    "url IPv4 in three parts": (spec(urls=["http://1.2.3:8080"]), '"urls"[0] must be'),
+    "url IPv4 in five parts": (spec(urls=["http://127.0.0.1.5:8080"]), '"urls"[0] must be'),
+    "url IPv4 as one number": (spec(urls=["http://2130706433:8080"]), '"urls"[0] must be'),
+    "url IPv4 with a dot at the end": (spec(urls=["http://127.0.0.1.:8080"]), '"urls"[0] must be'),
+    "url IPv4 in hex": (spec(urls=["http://0x7f.1:8080"]), '"urls"[0] must be'),
+    "url host ending in hex": (spec(urls=["http://box.0x1f"]), '"urls"[0] must be'),
     "url not a string": (spec(urls=[8080]), '"urls"[0] must be'),
     "url twice": (spec(urls=["http://box.local:1", "HTTP://BOX.local:1/"]), 'lists http://box.local:1 twice'),
     "nesting too deep": ('{"name": ' + "[" * 100_000, "nesting too deep"),
