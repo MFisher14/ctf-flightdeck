@@ -16,7 +16,8 @@ Rules the deck enforces:
   (core/driver.py), which only queues it: the lane carries on (sending() names its flags on
   their way), and the answer comes back through platform_verdict(). One flag at a time goes
   to the platform per challenge; another waits its turn. A lane that gives up meanwhile
-  ends once the answer is in;
+  ends once the answer is in. A flag that goes back to the player instead (no verdict, or
+  tries counted) waits on each lane that sent it and is still at work;
 - when that platform counts the tries at a challenge's flag (Challenge.limited: the board
   says so, or the platform did), a flag for it waits for the player under "auto" too, so
   flightdeck never spends one of those tries on its own; each approval says how many are
@@ -106,11 +107,13 @@ NOT_FLAG_RANK = {DECLINED: 1, SAID_REJECTED: 2, REJECTED: 3}  # how sure: a stro
 @dataclass
 class _ToPlatform:
     """A flag for the platform, handed to the submitter (`sent`) or waiting its turn on its
-    challenge. `lanes`: the lanes that sent it, in order; it goes out for the first one."""
+    challenge. `lanes`: the lanes that sent it, in order; it goes out for the first one.
+    `approved`: the player said yes to it (else it went out on its own, under auto)."""
 
     flag: str
     lanes: list[str]
     sent: bool = False
+    approved: bool = False
 
     @property
     def lane(self) -> str:
@@ -358,7 +361,9 @@ class Deck:
         meanwhile (by another lane, a teammate, or as the platform lists it), the answer is
         recorded and nothing reopens. Then the next flag waiting its turn on the challenge
         goes out, unless the player must decide: after an answer that is no verdict, or once
-        the tries are counted, each one goes back to its lane as an approval."""
+        the tries are counted, each one goes back to the lanes that sent it as an approval
+        (one the player said yes to still goes on its turn, unless it would spend the last
+        try). See _next_to_platform and _back_to_player."""
         self._on_thread("platform_verdict")
         lane = self.lanes[lane_id]
         ch = self.challenges[lane.challenge_id]
@@ -1181,10 +1186,12 @@ class Deck:
         if approved is not None:
             self._resolve(lane)
             self.driver.approved(lane, approved)
-        if self._on_its_way(lane, flag):
+        item = self._on_its_way(lane, flag)
+        if item is not None:
+            item.approved = item.approved or approved is not None  # the player's yes holds for it now
             return Outcome(True, f"{flag} is already on its way to the platform for {ch.name}")
         line = self._lines.setdefault(ch.id, [])
-        line.append(_ToPlatform(flag, [lane.id]))
+        line.append(_ToPlatform(flag, [lane.id], approved=approved is not None))
         if len(line) > 1:
             first = line[0]
             self._note(lane, f"waits its turn to go to the platform: {flag} (after {first.flag}, from {first.lane}: "
@@ -1195,16 +1202,14 @@ class Deck:
             return Outcome(True, f"{flag} could not go to the platform: submit it by hand, then say if it was accepted")
         return Outcome(True, f"Submitting {flag} for {ch.name}; the platform's answer comes back on its own")
 
-    def _on_its_way(self, lane: Lane, flag: str) -> bool:
-        """Whether `flag` is on its way to the platform for the lane's challenge already (sent,
-        or waiting its turn): then the lane hears its answer too, and nothing is sent again."""
+    def _on_its_way(self, lane: Lane, flag: str) -> _ToPlatform | None:
+        """`flag` on its way to the platform for the lane's challenge already (sent, or waiting
+        its turn), else None: then the lane hears its answer too, and nothing is sent again."""
         item = next((item for item in self._lines.get(lane.challenge_id, ()) if item.flag == flag), None)
-        if item is None:
-            return False
-        if lane.id not in item.lanes:
+        if item is not None and lane.id not in item.lanes:
             item.lanes.append(lane.id)
             self._note(lane, f"already on its way to the platform, from {item.lane}: {flag}")
-        return True
+        return item
 
     def _hand_over(self, ch: Challenge) -> bool:
         """The first flag in the challenge's line goes to the submitter. False if the
@@ -1226,13 +1231,13 @@ class Deck:
 
     def _no_verdict(self, item: _ToPlatform, ch: Challenge, detail: str) -> None:
         """The platform did not judge a flag, or its answer is not known: the player submits it
-        by hand and says how it went (a CONFIRM approval), on the first lane that sent it and
-        is still open. With none open, a warning says so."""
+        by hand and says how it went (a CONFIRM approval), on the lanes that sent it as
+        _back_to_player says. With none open, a warning says so."""
         lanes = [self.lanes[lane_id] for lane_id in item.lanes]
         for lane in lanes:
             self._note(lane, f"no verdict from the platform on {item.flag}: {detail or 'no reason given'}")
-        ask = next((lane for lane in lanes if not lane.finished), None)
-        if ask is None:
+        confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {item.flag}? (you submit it)", flag=item.flag)
+        if not self._back_to_player(item, confirm):
             self._emit(
                 EventKind.WARNING,
                 f"no verdict from the platform on {item.flag} for {ch.name}, and {', '.join(item.lanes)} has ended: "
@@ -1240,43 +1245,71 @@ class Deck:
                 challenge=ch.id,
                 data={"flag": item.flag, "lanes": list(item.lanes)},
             )
-            return
-        self._ask(ask, Pending(PendingKind.CONFIRM, f"did the platform accept {item.flag}? (you submit it)", flag=item.flag))
+
+    def _back_to_player(self, item: _ToPlatform, pending: Pending, why: str = "") -> list[Lane]:
+        """`item`'s flag, on its way to the platform no more, waits for the player as `pending`:
+        on each lane that sent it and is still at work, as each would hold it had it never been
+        on its way, so each hears what becomes of it. A lane that sent it and gave up ends
+        instead (unless something else of it still waits), its flag waiting on those; when
+        every lane that sent it gave up, the first one still open holds it. `why`: why it did
+        not go to the platform. Returns the lanes it waits on (none when they have all ended)."""
+        lanes = [self.lanes[lane_id] for lane_id in item.lanes if not self.lanes[lane_id].finished]
+        holders = [lane for lane in lanes if not lane.gave_up_later] or lanes[:1]
+        for lane in holders:
+            if why:
+                self._note(lane, f"back to you: {item.flag} did not go to the platform ({why})")
+            if not any(p.flag == item.flag for p in ([lane.pending] if lane.pending else []) + lane.waiting):
+                self._ask(lane, pending)
+        ids = ", ".join(lane.id for lane in holders)
         for lane in lanes:
-            if lane is not ask:
+            if lane not in holders:
+                self._note(lane, f"{item.flag} waits for you on {ids}" + (f": it did not go to the platform ({why})" if why else ""))
                 self._end_if_gave_up(lane)
+        return holders
 
     def _next_to_platform(self, ch: Challenge, ok: bool | None) -> None:
-        """After an answer, the next flag waiting its turn on `ch` goes out, unless the player
-        must decide: after no verdict (the platform may not judge this one either), or once the
-        platform counts the tries (flightdeck never spends one on its own). Then each flag
-        waiting goes back to the first of its lanes as an approval. A flag known wrong by now
-        never goes out; on a solved challenge none does."""
+        """After an answer, the next flag waiting its turn on `ch` goes out. A flag known not to
+        be the flag by now never goes out, and its lanes hear why; on a solved challenge none
+        does. The player decides instead, each flag going back as an approval
+        (_back_to_player): after no verdict (the platform may not judge it either), and once
+        the platform counts the tries, a flag the player has not said yes to (flightdeck never
+        spends a try on its own) or one whose turn would spend the last try."""
         line = self._lines.get(ch.id)
         if not line:
             return
-        if ch.closed or ok is None or ch.limited:
+        if ch.closed:
             del self._lines[ch.id]
-            why = (f"{ch.name} is solved" if ch.closed else "the platform gave no verdict on the flag before it"
-                   if ok is None else "the platform counts the tries at this challenge's flag")
-            for item in line:
-                lane = next((self.lanes[i] for i in item.lanes if not self.lanes[i].finished), None)
-                if lane is None or ch.closed:
-                    continue
-                self._note(lane, f"back to you: {item.flag} did not go to the platform ({why})")
-                self._ask(lane, Pending(PendingKind.SUBMIT, _submit_detail(ch, item.flag), flag=item.flag))
             return
-        while line and (why := self.not_flag(ch.id, line[0].flag)) is not None:
-            item = line.pop(0)
+        last = ch.tries_left is not None and ch.tries_left <= 1
+        keep: list[_ToPlatform] = []
+        wrong: list[tuple[_ToPlatform, str]] = []
+        back: list[tuple[_ToPlatform, str]] = []
+        for item in line:
+            if (known := self.not_flag(ch.id, item.flag)) is not None:
+                wrong.append((item, known))
+            elif ok is None:
+                back.append((item, "the platform gave no verdict on the flag before it"))
+            elif ch.limited and not item.approved:
+                back.append((item, "the platform counts the tries at this challenge's flag"))
+            elif last:
+                back.append((item, f"the platform now says {_tries_text(ch)}"))
+            else:
+                keep.append(item)
+        if keep:  # the line is as it stays before any lane hears: a lane's flags still in it keep it open
+            self._lines[ch.id] = keep
+        else:
+            del self._lines[ch.id]
+        for item, known in wrong:
             for lane in (self.lanes[i] for i in item.lanes):
                 if not lane.finished:
-                    self._note(lane, f"not sent to the platform: {item.flag} ({why})")
-                    self._tell_not_flag(lane, item.flag, why)
+                    self._note(lane, f"not sent to the platform: {item.flag} ({known})")
+                    self._tell_not_flag(lane, item.flag, known)
                     self._end_if_gave_up(lane)
-        if not line:
-            self._lines.pop(ch.id, None)
-            return
-        self._hand_over(ch)
+        for item, why in back:
+            self._back_to_player(item, Pending(PendingKind.SUBMIT, _submit_detail(ch, item.flag), flag=item.flag), why)
+        line = self._lines.get(ch.id)
+        if line and not line[0].sent:
+            self._hand_over(ch)
 
     def _leave_line(self, lane: Lane) -> None:
         """An ended lane's flags still waiting their turn for the platform do not go out (one

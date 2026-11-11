@@ -63,6 +63,11 @@ def notes(lane) -> list[str]:
     return [action.text for action in lane.actions]
 
 
+def asked(lane) -> list[tuple[PendingKind, str]]:
+    """The flags the lane waits on the player for, in order."""
+    return [(p.kind, p.flag) for p in ([lane.pending] if lane.pending else []) + lane.waiting]
+
+
 # ---------------------------------------------------------------------- the answer comes later
 
 
@@ -301,6 +306,107 @@ def test_a_lane_that_ends_takes_its_flags_waiting_their_turn_with_it():
     assert submitter.flags() == ["t{a}"] and deck.submitting("c0") == ()
 
 
+# ---------------------------------------------------------------------- a flag that more than one lane sent
+
+HANDED_BACK = [  # answers after which the flags waiting their turn go back to the player
+    pytest.param({"ok": None, "detail": "CTFd is paused, so it did not check the flag"}, id="no verdict"),
+    pytest.param({"ok": False, "detail": "Incorrect. You have 2 tries remaining.", "tries_left": 2}, id="tries counted"),
+]
+
+
+@pytest.mark.parametrize("answer", HANDED_BACK)
+def test_a_lane_that_gave_up_on_a_flag_waiting_its_turn_ends_once_that_flag_is_back_with_the_player(answer):
+    deck, driver, submitter = platform_deck()
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{x}"))  # on its way
+    deck.report(lane.id, TurnReport(flag="t{y}"))  # waits its turn
+    sibling = fork(deck, lane)
+    deck.report(sibling.id, TurnReport(flag="t{y}"))  # the same flag: its answer would be the sibling's too
+    deck.report(sibling.id, TurnReport(turn=False, gave_up="the model gave up"))
+    assert not sibling.finished and deck.sending(sibling.id) == ("t{y}",)
+    deck.platform_verdict(lane.id, "t{x}", **answer)
+    assert (PendingKind.SUBMIT, "t{y}") in asked(lane)  # back to the player, on the lane still at work
+    assert (sibling.state, sibling.result) == (LaneState.GAVE_UP, "the model gave up")  # its max_lanes slot is free
+    assert ("stop", sibling.id) in driver.calls and sibling not in deck.active_lanes()
+    assert any(n.startswith(f"t{{y}} waits for you on {lane.id}") for n in notes(sibling))
+    assert submitter.flags() == ["t{x}"]
+
+
+@pytest.mark.parametrize("answer", HANDED_BACK)
+def test_each_lane_at_work_that_sent_a_flag_waiting_its_turn_gets_it_back_and_hears_what_the_player_decides(answer):
+    deck, driver, submitter = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(lane.id, TurnReport(flag="t{x}"))
+    deck.report(lane.id, TurnReport(flag="t{y}"))
+    deck.report(sibling.id, TurnReport(flag="t{y}"))
+    deck.platform_verdict(lane.id, "t{x}", **answer)
+    assert asked(sibling) == [(PendingKind.SUBMIT, "t{y}")] and sibling.state is LaneState.WAITING
+    assert any(n.startswith("back to you: t{y} did not go to the platform") for n in notes(sibling))
+    while lane.pending.flag != "t{y}":
+        assert deck.apply(iv.Decline(lane.id)).ok  # no verdict: the player says t{x} was rejected
+    assert deck.apply(iv.Decline(lane.id)).ok  # t{y}, on the lane that sent it first: not the flag
+    assert (sibling.id, PendingKind.SUBMIT, "t{y}") in driver.named("declined")  # the sibling hears it
+    assert sibling.pending is None and sibling.state is LaneState.RUNNING
+    assert submitter.flags() == ["t{x}"]
+
+
+def test_a_lane_that_gave_up_after_sending_a_flag_another_lane_sent_first_ends_with_its_answer():
+    deck, driver, _ = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(lane.id, TurnReport(flag="t{x}"))
+    deck.report(sibling.id, TurnReport(flag="t{x}"))  # already on its way: its answer is the sibling's too
+    deck.report(sibling.id, TurnReport(turn=False, gave_up="the model gave up"))
+    assert not sibling.finished
+    deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
+    assert (sibling.state, sibling.result) == (LaneState.GAVE_UP, "the model gave up")
+    assert (sibling.id, "t{x}") in driver.named("rejected") and lane.state is LaneState.RUNNING
+
+
+@pytest.mark.parametrize("quitter", ["first", "second"])
+def test_no_verdict_on_a_flag_two_lanes_sent_goes_to_the_one_at_work_and_the_one_that_gave_up_ends(quitter):
+    deck, _, _ = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(lane.id, TurnReport(flag="t{x}"))
+    deck.report(sibling.id, TurnReport(flag="t{x}"))
+    gave_up, at_work = (lane, sibling) if quitter == "first" else (sibling, lane)
+    deck.report(gave_up.id, TurnReport(turn=False, gave_up="the model gave up"))
+    deck.platform_verdict(lane.id, "t{x}", None, "CTFd is paused, so it did not check the flag")
+    assert asked(at_work) == [(PendingKind.CONFIRM, "t{x}")] and at_work.state is LaneState.WAITING
+    assert (gave_up.state, gave_up.result) == (LaneState.GAVE_UP, "the model gave up")
+    assert notes(gave_up)[-1] == f"t{{x}} waits for you on {at_work.id}"
+
+
+def test_no_verdict_on_a_flag_two_lanes_at_work_sent_asks_on_each_and_one_answer_settles_both():
+    deck, driver, _ = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(lane.id, TurnReport(flag="t{x}"))
+    deck.report(sibling.id, TurnReport(flag="t{x}"))
+    deck.platform_verdict(lane.id, "t{x}", None, "CTFd is paused, so it did not check the flag")
+    assert asked(lane) == asked(sibling) == [(PendingKind.CONFIRM, "t{x}")]
+    assert deck.apply(iv.Decline(lane.id)).ok  # the player: the platform rejected it
+    assert lane.pending is None and sibling.pending is None
+    assert driver.named("rejected") == [(lane.id, "t{x}"), (sibling.id, "t{x}")]  # each hears it, once
+
+
+@pytest.mark.parametrize("answer", HANDED_BACK)
+def test_a_flag_the_player_declined_while_it_waited_its_turn_is_never_asked_again(answer):
+    deck, driver, submitter = platform_deck()
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(sibling.id, TurnReport(flag="t{y}", claimed=False))  # scraped: it waits for the player
+    deck.report(lane.id, TurnReport(flag="t{x}"))  # claimed: on its way
+    deck.report(lane.id, TurnReport(flag="t{y}"))  # claimed: waits its turn behind t{x}
+    assert deck.apply(iv.Decline(sibling.id)).ok  # the player: t{y} is not the flag
+    deck.platform_verdict(lane.id, "t{x}", **answer)
+    assert (PendingKind.SUBMIT, "t{y}") not in asked(lane)
+    assert f"not sent to the platform: t{{y}} ({DECLINED})" in notes(lane)
+    assert (lane.id, PendingKind.SUBMIT, "t{y}") in driver.named("declined") and submitter.flags() == ["t{x}"]
+
+
 # ---------------------------------------------------------------------- failures said loudly
 
 
@@ -435,6 +541,35 @@ def test_under_confirm_a_waiting_approval_follows_the_platforms_count_of_tries()
     assert sibling.pending.detail == "submit t{b} (4 tries left of 5)"  # what the player answers is the count now
     assert "4 tries left of 5" in sibling.alert(AlertKind.FLAG).reason
     assert submitter.flags() == ["t{a}"]  # nothing else went out
+
+
+@pytest.mark.parametrize("submit", ["confirm", "auto"])
+def test_a_flag_the_player_approved_while_another_was_on_its_way_goes_out_on_its_turn_without_asking_again(submit):
+    deck, driver, submitter = platform_deck(chall("c0", max_attempts=5), submit=submit)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.report(lane.id, TurnReport(flag="t{b}"))
+    assert deck.apply(iv.Approve(lane.id)).ok  # t{a}: on its way
+    out = deck.apply(iv.Approve(lane.id))  # t{b}: the player's yes, given knowing the tries are counted
+    assert out.message == "t{b} goes to the platform once the answer to t{a} is in (one flag at a time on Chall 0)"
+    deck.platform_verdict(lane.id, "t{a}", False, "Incorrect. You have 4 tries remaining.", tries_left=4)
+    assert submitter.flags() == ["t{a}", "t{b}"] and lane.pending is None and lane.state is LaneState.RUNNING
+    assert len(driver.named("approved")) == 2  # one yes per flag: nothing was asked twice
+    assert not any(n.startswith("back to you") for n in notes(lane))
+
+
+def test_a_flag_the_player_approved_comes_back_when_its_turn_would_spend_the_last_try():
+    deck, _, submitter = platform_deck(chall("c0", max_attempts=5), submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.report(lane.id, TurnReport(flag="t{b}"))
+    deck.apply(iv.Approve(lane.id))
+    deck.apply(iv.Approve(lane.id))  # approved when how many tries are left was not known yet
+    deck.platform_verdict(lane.id, "t{a}", False, "Incorrect. You have 1 try remaining.", tries_left=1)
+    assert submitter.flags() == ["t{a}"]  # flightdeck never spends the last try on an approval given before it knew
+    assert (lane.pending.kind, lane.pending.detail) == (PendingKind.SUBMIT, "submit t{b} (1 try left of 5: the last one)")
+    assert "back to you: t{b} did not go to the platform (the platform now says 1 try left of 5: the last one)" in notes(lane)
+    assert deck.apply(iv.Approve(lane.id)).ok and submitter.flags() == ["t{a}", "t{b}"]
 
 
 def test_out_of_tries_the_approval_says_the_platform_checks_no_more_flags():
