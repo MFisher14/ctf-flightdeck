@@ -334,6 +334,28 @@ def test_the_models_mistakes_come_back_as_errors_it_can_read(box, name, argument
     assert len(result.output) <= 300
 
 
+HUGE = "1" + "0" * 4000  # a 4001-digit JSON integer: valid JSON, far too big for a float
+
+
+@pytest.mark.parametrize(
+    "name, arguments, content",
+    [
+        ("shell", '{"command": "echo hi", "timeout_seconds": %s}' % HUGE, "exit 0\nhi\n"),
+        ("shell", '{"command": "echo hi", "timeout_seconds": -%s}' % HUGE, "exit 0\nhi\n"),
+        ("python", '{"code": "print(1)", "timeout_seconds": %s}' % HUGE, "exit "),
+        ("python", '{"code": "print(1)", "timeout_seconds": -%s}' % HUGE, "exit "),
+        ("read_file", '{"path": "notes.txt", "start_line": %s}' % HUGE, "error: start_line 10000000000000000000000000000… is past the end: notes.txt has 1000 lines"),
+        ("read_file", '{"path": "notes.txt", "start_line": -%s}' % HUGE, "error: start_line counts from 1"),
+        ("read_file", '{"path": "notes.txt", "max_lines": %s}' % HUGE, "line 1\nline 2\n"),
+        ("read_file", '{"path": "notes.txt", "max_lines": -%s}' % HUGE, "error: max_lines must be at least 1"),
+    ],
+)
+def test_a_huge_integer_in_any_numeric_argument_is_clamped_or_refused_never_raised(box, name, arguments, content):
+    result = run(box.call(name, arguments, turn=1, index=0))
+    assert result.content.startswith(content), result.content
+    assert len(result.content) <= box.max_chars
+
+
 # ---------------------------------------------------------------- flags and plans
 
 

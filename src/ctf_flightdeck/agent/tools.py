@@ -362,7 +362,7 @@ class Toolbox:
         if not lines:
             if number == 0:
                 return ToolResult("(empty file)", _one_line(action), "empty file")
-            raise _Mistake(f"start_line {start} is past the end: {path} has {number} lines", action)
+            raise _Mistake(f"start_line {_clip(str(start), 30)} is past the end: {path} has {number} lines", action)
         last = start + len(lines) - 1
         text = "".join(lines)
         if not (more or cut):
@@ -497,10 +497,12 @@ def _optional(args: dict[str, Any], key: str) -> str | None:
 
 
 def _number(args: dict[str, Any], key: str) -> float | None:
+    """A JSON number, or None when absent. An integer can be far too big for a float (JSON
+    allows 4000 digits), so it is never turned into one here: callers compare and clamp it."""
     value = args.get(key)
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)):
         raise _Mistake(f"{key} must be a number")
     return value
 
