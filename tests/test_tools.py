@@ -475,6 +475,17 @@ def test_http_sends_the_method_body_and_headers_it_is_given(lane, web):
     assert (web.requests[0]["method"], web.requests[0]["body"]) == ("POST", b"a=1")
 
 
+@pytest.mark.parametrize("declared, body", [("99", "abc"), ("1", "abc"), ("5", None)])  # too long, too short, no body
+def test_a_content_length_that_disagrees_with_the_body_is_an_error_the_model_can_read(lane, web, declared, body):
+    box = Toolbox(lane, http_allow=(origin(web),))
+    args = {"method": "POST", "url": origin(web) + "/login", "headers": {"Content-Length": declared}}
+    result = call(box, "http", args | ({"body": body} if body is not None else {}))
+    assert result.error, result.content
+    assert result.content.startswith("error: the request could not be sent as given: LocalProtocolError: ")
+    assert "Content-Length" in result.content
+    assert result.action == f"POST {origin(web)}/login"
+
+
 def test_http_refuses_every_other_origin_without_connecting(lane, web, silent):
     box = Toolbox(lane, http_allow=(origin(web),))
     for url in (

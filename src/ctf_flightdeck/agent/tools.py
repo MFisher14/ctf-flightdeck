@@ -416,6 +416,12 @@ class Toolbox:
             raise _Mistake(f"the request failed: {type(exc).__name__}: {_clip(str(exc), 200)}", action) from None
         except (ValueError, UnicodeError) as exc:
             raise _Mistake(f"the request was not sent: {_clip(str(exc), 200)}", action) from None
+        except Exception as exc:
+            # The HTTP stack refused what the model asked for in a way httpx does not wrap: h11
+            # raises its own LocalProtocolError while writing a body that disagrees with a
+            # Content-Length header the model set. Cancellation is not an Exception, so it
+            # still goes through.
+            raise _Mistake(f"the request could not be sent as given: {type(exc).__name__}: {_clip(str(exc), 200)}", action) from None
         return self._answer(action, response, raw, complete, turn, index)
 
     def _answer(self, action: str, response: httpx.Response, raw: bytes, complete: bool, turn: int, index: int) -> ToolResult:
