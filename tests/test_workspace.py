@@ -3,7 +3,9 @@
 The host runtime always runs. The docker runtime runs only when docker answers and the image
 debian:bookworm-slim is already on this machine (tests never pull, and use no other image);
 otherwise those tests are skipped with the reason, so they report as not run. Every
-container a test starts is removed afterwards, even when the test fails.
+container a test starts is removed afterwards, even when the test fails. A few tests drive
+DockerWorkspace against a fake docker script instead (FAKE_DOCKER): they start no
+container and run everywhere.
 """
 
 from __future__ import annotations

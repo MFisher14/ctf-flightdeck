@@ -1,8 +1,9 @@
 """The toolbox, driven through Toolbox.call() against a real host workspace in tmp_path.
 
-The http tool talks to a local http.server each test starts on 127.0.0.1. An origin it must
-refuse is a socket that listens but never accepts: any connection attempt would be left
-pending on it, so "no pending connection" proves the tool never connected.
+The http tool talks to a local http.server each test starts on 127.0.0.1, or to a raw socket
+server there for answers http.server will not send. An origin it must refuse is a socket
+that listens but never accepts: any connection attempt would be left pending on it, so "no
+pending connection" proves the tool never connected.
 """
 
 from __future__ import annotations
