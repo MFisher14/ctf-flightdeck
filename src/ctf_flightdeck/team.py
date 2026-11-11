@@ -75,6 +75,7 @@ FUTURE_SLACK = 600.0  # seconds a mark may be dated ahead of this machine's cloc
 MAX_MARK_BYTES = 4096
 MAX_NOTE = 200
 MAX_ENTRIES = 2000  # entries read per kind folder; the rest are reported, not read
+REPORT_PER_FOLDER = 5  # a watcher reports this many problems of a kind folder one by one, and counts the rest
 POLL_SECONDS = 5.0
 
 MARKER_TEXT = """\
@@ -325,7 +326,9 @@ class TeamWatcher:
       a free that failed, is not kept alive by a lane that was never allowed on the box;
     - problems (ignored files, failed writes) -> report(), each once while it lasts; with no
       `report`, each becomes a WARNING event on the deck (the console shows it, the run log
-      keeps it).
+      keeps it). Of a kind folder's ignored files, the first REPORT_PER_FOLDER are reported
+      one by one and the rest in one line, so a flooded folder cannot bury every other
+      warning (TeamState.problems, and `flightdeck team status`, have them all).
     A mark is never applied twice. Marks for challenges that are not on the deck wait
     until they are (a later wave).
     """
@@ -353,7 +356,7 @@ class TeamWatcher:
         return state
 
     def apply(self, state: TeamState) -> None:
-        messages = [f"team folder: {problem}" for problem in state.problems]
+        messages = self._problems(state.problems)
         self.latest = state
         self._apply_solves(state, messages)
         self._apply_claims(state, messages)
@@ -486,6 +489,22 @@ class TeamWatcher:
                 messages.append(f"team: {_holder(channel, 'boxes', cid)} holds the live box of {cid}, which {lane_id} was allowed on")
 
     # ------------------------------------------------------------------ helpers
+
+    def _problems(self, problems: tuple[str, ...]) -> list[str]:
+        """The folder's problems as messages: per kind folder the first REPORT_PER_FOLDER,
+        then one line that counts the rest."""
+        count: dict[str, int] = {}
+        messages = []
+        for problem in problems:
+            kind = problem.partition("/")[0]  # each problem starts with its kind folder
+            count[kind] = count.get(kind, 0) + 1
+            if count[kind] <= REPORT_PER_FOLDER:
+                messages.append(f"team folder: {problem}")
+        status = f"flightdeck team status {printable(shlex.quote(str(self.channel.folder)))}"
+        for kind, n in count.items():
+            if n > REPORT_PER_FOLDER:
+                messages.append(f"team folder: {kind}/: {n - REPORT_PER_FOLDER} more problems; `{status}` lists them all")
+        return messages
 
     def _do(self, messages: list[str], what: str, fn: Callable[..., object], *args: object, **kwargs: object) -> object:
         """Call `fn`; a failure becomes a message (team sync goes on) and _FAILED."""

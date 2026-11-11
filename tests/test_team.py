@@ -41,6 +41,7 @@ from ctf_flightdeck.team import (
     MAX_ENTRIES,
     MAX_MARK_BYTES,
     MAX_NOTE,
+    REPORT_PER_FOLDER,
     STALE_AFTER,
     Mark,
     TeamChannel,
@@ -1031,6 +1032,27 @@ def test_problems_are_reported_once_while_they_last_and_again_if_they_return(fol
     put(folder, "claims", "c1.json", {"who": "../../x", "at": 1})
     w.poll()
     assert len(reports) == 2 and reports[0] == reports[1]
+
+
+def test_a_flood_of_bad_files_reaches_the_report_as_a_few_lines_per_folder(folder):
+    deck, _ = make_deck(max_lanes=1)
+    for kind in ("claims", "boxes", "solves"):
+        for i in range(40):
+            put(folder, kind, f"x{i:02d}.json", b"{")
+    w, reports = watcher(folder, deck)
+    w.poll()
+    assert len(w.latest.problems) == 120  # all of them stay in the state, for `flightdeck team status`
+    assert len(reports) == 3 * (REPORT_PER_FOLDER + 1)
+    for kind in ("claims", "boxes", "solves"):
+        lines = [r for r in reports if r.startswith(f"team folder: {kind}/")]
+        assert lines[:-1] == [f"team folder: {kind}/x{i:02d}.json: is not valid JSON; ignored" for i in range(REPORT_PER_FOLDER)]
+        assert lines[-1].startswith(f"team folder: {kind}/: {40 - REPORT_PER_FOLDER} more problems; `flightdeck team status ")
+    w.poll()
+    assert len(reports) == 3 * (REPORT_PER_FOLDER + 1)  # nothing new
+    put(folder, "boxes", "x99.json", b"{")
+    w.poll()
+    assert len(reports) == 3 * (REPORT_PER_FOLDER + 1) + 1
+    assert reports[-1].startswith(f"team folder: boxes/: {41 - REPORT_PER_FOLDER} more problems;")
 
 
 def test_a_hostile_solve_file_stops_nothing(folder):
