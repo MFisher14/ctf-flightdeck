@@ -418,6 +418,26 @@ def test_a_download_never_overwrites_and_never_writes_challenge_json(tmp_path):
     assert (tmp_path / "hello.txt").read_text() == "the player's own" and not (tmp_path / "challenge.json").exists()
 
 
+def test_a_handout_named_like_challenge_json_in_another_case_gets_a_name_of_its_own(tmp_path):
+    # on a case-insensitive file system (macOS, WSL's drvfs) "Challenge.json" IS challenge.json, which the pull
+    # writes over it; here every file system gets the same names
+    handout = b'{"api": "the challenge\'s own schema"}\n'
+    board = [FakeChallenge(1, "Json Thing", category="Web", files={"Challenge.json": handout}),
+             FakeChallenge(2, "Others", files={"CHALLENGE.JSON": b"upper", "challenge.jſon": b"long s"})]
+    with FakeCTFd(board) as fake:
+        result = pulled(fake, tmp_path / "board")
+        direct = []
+        for n, name in enumerate(("CHALLENGE.JSON", "challenge.jſon")):  # a folder each: what else is taken differs
+            (tmp_path / f"direct-{n}").mkdir()
+            direct.append(call(fake, lambda c, name=name, n=n: c.download(fake.file_url(2, name), tmp_path / f"direct-{n}")).name)
+    found = {item.challenge.id: item for item in result.board.challenges}
+    thing = found["json-thing"]
+    assert result.problems == () and thing.challenge.files == ("Challenge-2.json",)
+    assert (thing.handout / "Challenge-2.json").read_bytes() == handout
+    assert json.loads((thing.handout / "challenge.json").read_text())["name"] == "Json Thing"
+    assert direct == ["CHALLENGE-2.JSON", "challenge-2.jſon"]
+
+
 def test_a_failed_download_names_the_file_but_never_its_file_token(tmp_path):
     with FakeCTFd(sample()) as fake:
         url = fake.file_url(1, "hello.txt")

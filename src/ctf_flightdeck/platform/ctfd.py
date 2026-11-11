@@ -1366,13 +1366,15 @@ def _write_json(path: Path, data: object) -> None:
 
 def _create(folder: Path, name: str) -> tuple[Path, int]:
     """A new file in `folder` named `name`, or name-2.ext, name-3.ext, ... if taken; never
-    challenge.json, never through a symlink. Returns its path and an open descriptor."""
+    challenge.json in any case or form (on a case-insensitive file system, as macOS's and
+    WSL's drives are, Challenge.json is the file challenge.json is written over), never
+    through a symlink. Returns its path and an open descriptor."""
     dot = name.find(".", 1)
     stem, ext = (name, "") if dot == -1 else (name[:dot], name[dot:])
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
     for n in range(1, 100):
         candidate = name if n == 1 else f"{stem}-{n}{ext}"
-        if candidate == CHALLENGE_FILE:
+        if unicodedata.normalize("NFKC", candidate).casefold() == CHALLENGE_FILE:
             continue
         path = folder / candidate
         try:
