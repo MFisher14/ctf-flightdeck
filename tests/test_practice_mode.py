@@ -1122,7 +1122,7 @@ def test_the_scorecard_shows_the_totals_and_one_row_per_challenge(played):
     alpha, bravo, charlie, delta = (row.split() for row in rows)
     assert alpha[2:] == ["cry", "50", "solved", "L01", "T+00:02:10", "2m", "1", "2k", "$0.01", "1"]
     assert bravo[2:] == ["web", "200", "solved", "L03", "T+00:15:00", "15m", "2", "7k", "-", "4", "1"]
-    assert charlie[2:] == ["misc", "100", "tried", "(killed)", "1", "300", "$0.00", "1"]
+    assert charlie[2:] == ["misc", "100", "tried", "(killed)", "1", "300", "$0.0010", "1"]  # a tiny spend, not $0.00
     assert delta[2:] == ["rev", "300", "not", "released"]
     assert lines[header + 5] == "took: release to solve · iv: your interventions · wrong: wrong flags submitted"
     assert "- L02 had turns with no price, so its cost is not fully known: the dollars count only priced turns." in lines

@@ -166,3 +166,10 @@ def test_a_lone_surrogate_shows_as_an_escape_and_never_reaches_the_terminal_raw(
     assert shown == "report\\x9b2J.txt"
     assert untrusted("a\ud800b") == "a\\ud800b"
     shown.encode("utf-8")  # strict UTF-8: no lone surrogate is left
+
+
+def test_a_tiny_spend_never_shows_as_nothing():
+    from ctf_flightdeck import fmt
+
+    assert fmt.dollars(0.0007) == "0.0007" and fmt.dollars(0.0007, short=True) == "<.01"
+    assert fmt.dollars(0.0) == "0.00" and fmt.dollars(0.006) == "0.01"

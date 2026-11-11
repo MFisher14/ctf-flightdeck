@@ -168,7 +168,7 @@ def test_polish_writes_the_tidied_draft_and_what_it_cost(tmp_path):
     assert result.exit_code == 0, result.output
     text = (record.dir / "writeups" / "a.md").read_text(encoding="utf-8")
     assert text == writeup.draft(record, "a").replace("## Approach", "## How it went")
-    assert result.stdout.splitlines()[-1] == "polish: 1 of 1 drafts with fake/model, 120 tokens, $0.00"
+    assert result.stdout.splitlines()[-1] == "polish: 1 of 1 drafts with fake/model, 120 tokens, $0.0015"
     (request,) = server.requests
     assert request["json"]["model"] == "fake/model" and ALPHA not in json.dumps(request["json"])
 

@@ -18,6 +18,8 @@ def dollars(x: float | None, *, short: bool = False) -> str:
         return "-"
     if round(x, 2) >= 100:
         return f"{x:.0f}"
+    if 0 < x < 0.005:  # a real spend that would round to 0.00: say so rather than show nothing
+        return "<.01" if short else f"{x:.4f}"
     text = f"{x:.2f}"
     return text[1:] if short and text.startswith("0.") else text
 
