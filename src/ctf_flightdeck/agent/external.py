@@ -47,6 +47,10 @@ the key is in its process all the same, and in the host runtime its commands run
 player and can read the player's files (a saved login too). So every command the agent
 runs can read the agent's own key. Prefer the docker runtime, and give the CLI a key or
 token you can revoke, with a low spending limit. find_agent() says so in its warnings.
+What flightdeck keeps never holds that key: its value (and any other secret given to the
+driver) becomes [NAME] in everything the CLI writes, its events, its stderr and the files
+its lane changes, before anything is cut, shown, logged or put in a transcript, so a lane
+that runs `env` does not put the key in a writeup draft (_Secrets).
 Nothing else of the player's environment is passed: the CLI gets the allowlist
 HostWorkspace gives a lane's commands (no other keys, no platform tokens), its own auth
 variable, and flightdeck's settings that switch off the CLI's telemetry and self-update.
@@ -77,7 +81,7 @@ import subprocess
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -117,6 +121,8 @@ KINDS = ("claude", "codex")
 CLAUDE_TOOLS = ("Bash", "Read", "Edit", "Write", "Glob", "Grep")
 CLAUDE_AUTH = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")  # the CLI's own order: in -p mode the API key wins
 CODEX_KEY = "CODEX_API_KEY"
+SECRET_NAMES = (*CLAUDE_AUTH, CODEX_KEY)  # the agent's credentials (CODEX_HOME, a login's folder, is a path, not one)
+MIN_SECRET = 8  # a secret shorter than this is not looked for in what the CLI writes: it would hide too much
 CLI_ENV: Mapping[str, Mapping[str, str]] = {
     # flightdeck's own settings for the CLI process (not secrets): no telemetry, no self-update mid-run
     "claude": {"DISABLE_TELEMETRY": "1", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
@@ -692,9 +698,55 @@ class _Lines:
                 self.dropping = True
 
 
-def _decode(raw: bytes) -> dict | str | None:
-    """An event; a str saying why the line is not one; None for a blank line."""
+class _Secrets:
+    """Secret values flightdeck knows (the agent's own credential above all, which the
+    commands it runs can read and print), each replaced by [NAME] in text the CLI wrote.
+    Applied where that text first arrives, before anything cuts it: a key cut in two would
+    keep its first part. Never shows a value, in its repr either."""
+
+    def __init__(self, named: Mapping[str, str]) -> None:
+        pairs: dict[str, str] = {}
+        for name, value in named.items():
+            if not isinstance(value, str) or len(value) < MIN_SECRET:
+                continue
+            for form in (value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]):  # as JSON writes it
+                pairs.setdefault(form, f"[{name}]")
+        self.pairs = sorted(pairs.items(), key=lambda pair: -len(pair[0]))  # a longer one first: it may hold a shorter
+
+    def __call__(self, text: str) -> str:
+        for value, label in self.pairs:
+            if value in text:
+                text = text.replace(value, label)
+        return text
+
+    def __bool__(self) -> bool:
+        return bool(self.pairs)
+
+    def __repr__(self) -> str:
+        return f"_Secrets({len({label for _, label in self.pairs})} names)"
+
+    def scrub(self, rep: TurnReport) -> TurnReport:
+        """`rep` with every secret out of its text (never its flag: that is what would be submitted)."""
+        if not self.pairs:
+            return rep
+        return replace(
+            rep,
+            action=self(rep.action),
+            output=self(rep.output),
+            plan=None if rep.plan is None else self(rep.plan),
+            gave_up=None if rep.gave_up is None else self(rep.gave_up),
+            files=tuple(replace(change, path=self(change.path), diff=self(change.diff)) for change in rep.files),
+            artifacts=tuple(self(item) for item in rep.artifacts),
+            why=self(rep.why),
+        )
+
+
+def _decode(raw: bytes, redact: _Secrets | None = None) -> dict | str | None:
+    """An event; a str saying why the line is not one; None for a blank line. `redact`
+    takes secrets out of the line before it is read."""
     text = raw.decode("utf-8", "replace").strip()
+    if redact:
+        text = redact(text)
     if not text:
         return None
     try:
@@ -935,12 +987,12 @@ class _Run:
     def report(self, rep: TurnReport) -> None:
         if self.over():
             return
-        self.driver.deck.report(self.lane_id, rep)
+        self.driver.deck.report(self.lane_id, self.driver.redact.scrub(rep))  # a second guard: text arrives redacted
         self.sync()
 
     def note(self, text: str) -> None:
         if not self.over():
-            self.driver.deck.note(self.lane_id, text)
+            self.driver.deck.note(self.lane_id, self.driver.redact(text))
 
     def track(self, future: asyncio.Future[Any]) -> None:
         self.tasks.add(future)
@@ -1102,7 +1154,7 @@ class _Run:
         except WorkspaceError as exc:  # the workspace broke under the lane
             self.report(TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"the workspace failed: {exc}"))
         except Exception as exc:  # a flightdeck bug: end the lane loudly, never let its task die quietly
-            self.driver.errors.append(f"{self.lane_id}: {type(exc).__name__}: {exc}")
+            self.driver.errors.append(self.driver.redact(f"{self.lane_id}: {type(exc).__name__}: {exc}"))
             self.report(TurnReport(turn=False, action="flightdeck error", output=f"{type(exc).__name__}: {exc}",
                                    gave_up=f"flightdeck error: {type(exc).__name__}: {exc}"))
         finally:
@@ -1288,10 +1340,11 @@ class _Run:
                     if number.isdigit():
                         proc.inner.set_result(int(number))
                         continue
+                shown = self.driver.redact(text)
                 if self.log is not None:
-                    self.log.write(raw + b"\n")
-                if text.strip():
-                    proc.tail = _one_line(text, 300)
+                    self.log.write((raw if shown == text else shown.encode("utf-8", "replace")) + b"\n")
+                if shown.strip():
+                    proc.tail = _one_line(shown, 300)
         finally:
             if not proc.inner.done():
                 proc.inner.set_result(None)
@@ -1325,7 +1378,7 @@ class _Run:
             if raw is None:
                 self.problem(proc, f"a line over {MAX_LINE // (1024 * 1024)} MB (dropped)")
                 continue
-            event = _decode(raw)
+            event = _decode(raw, self.driver.redact)
             if event is None:
                 continue
             if isinstance(event, str):
@@ -1391,7 +1444,7 @@ class _Run:
             try:
                 await proc.end(self.driver.stop_grace, self.driver.errors)
             except Exception as exc:
-                self.driver.errors.append(f"{self.lane_id}: stopping {self.kind} failed: {exc}")
+                self.driver.errors.append(self.driver.redact(f"{self.lane_id}: stopping {self.kind} failed: {exc}"))
         self.proc = None
         self.update_idle()
         for task in list(self.tasks):
@@ -1403,7 +1456,7 @@ class _Run:
         try:
             await self.workspace.close()
         except Exception as exc:  # reported when the console exits; a lane's end is not held up
-            self.driver.errors.append(f"{self.lane_id}: closing its workspace failed: {exc}")
+            self.driver.errors.append(self.driver.redact(f"{self.lane_id}: closing its workspace failed: {exc}"))
 
     # ------------------------------------------------------------------ steps, text, tokens
 
@@ -1963,12 +2016,18 @@ class ExternalDriver:
         files: Mapping[str, Sequence[str]] | None = None,
         urls: Mapping[str, Sequence[str]] | None = None,
         prices: Mapping[str, Price] | None = None,
+        secrets: Mapping[str, str] | None = None,
         stop_grace: float = STOP_GRACE,
         takeover_wait: float = TAKEOVER_WAIT,
     ) -> None:
+        """`secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
+        Like the agent's own credential, which is always one, a value is shown as [name]
+        wherever a lane's CLI writes it."""
         if agent.kind not in KINDS:
             raise ValueError(f"unknown agent kind {agent.kind!r}")
         self.agent = agent
+        own = {name: value for name, value in agent.extra_env.items() if name in SECRET_NAMES}
+        self.redact = _Secrets({**own, **(secrets or {})})
         self.workspaces = workspaces
         self.run_id = run_id
         self.files = dict(files or {})  # challenge id -> handout file names, for the brief

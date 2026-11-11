@@ -39,6 +39,8 @@ from ctf_flightdeck.agent.workspace import (
     docker_unavailable,
 )
 from ctf_flightdeck.clock import RunClock
+from ctf_flightdeck.eventlog import EventLog
+from ctf_flightdeck.transcript import TranscriptLog
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import (
@@ -168,7 +170,7 @@ class Lab:
     def __init__(self, tmp_path: Path, script: dict, *, kind: str = "claude", submit: str = "confirm", verify=None,
                  handouts: dict[str, Path] | None = None, environ: dict[str, str] | None = None,
                  prices: dict[str, Price] | None = None, token_cap: int | None = None, takeover_wait: float = 10.0,
-                 flag_format: str = FLAG) -> None:
+                 flag_format: str = FLAG, secrets: dict[str, str] | None = None) -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -183,6 +185,7 @@ class Lab:
             run_id="run1",
             files={cid: sorted(p.name for p in path.iterdir()) for cid, path in self.handouts.items()},
             prices=prices or {},
+            secrets=secrets,
             stop_grace=0.3,
             takeover_wait=takeover_wait,
         )
@@ -597,6 +600,69 @@ def test_the_cli_gets_the_lane_allowlist_and_its_own_key_but_none_of_the_players
             await lab.finish()
 
     run(main())
+
+
+def test_the_agents_key_never_reaches_what_flightdeck_keeps_though_its_commands_print_it(tmp_path):
+    pad = "x" * (external.OUTPUT_CHARS - 12)  # the key straddles the cut of the step's output on the console
+    script = {"turns": [{"calls": [
+        {"tools": [bash("env | sort")]},
+        {"tools": [bash("env > env.txt")]},
+        {"tools": [bash(f"printf %s {pad}; printenv ANTHROPIC_API_KEY")]},
+        {"stderr": f"debug: using {KEY}", "tools": [bash("true")]},
+        {"text": f"The key is {KEY}; never mind it."},
+    ]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        events = EventLog(tmp_path / "run" / "events.jsonl")
+        events.attach(lab.deck)
+        transcripts = TranscriptLog(tmp_path / "run" / "lanes")
+        transcripts.attach(lab.deck)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: any(s.startswith("says: The key is") for s in steps(lane)), "the turn's end")
+            assert f"ANTHROPIC_API_KEY={KEY}" in (lab.work(lane) / "env.txt").read_text()  # the commands did print it
+            shown = [f"{a.text}\n{a.output}" for a in lane.actions] + [c.diff for c in lane.files.values()]
+            assert not any(KEY in text for text in shown)
+            assert any("ANTHROPIC_API_KEY=[ANTHROPIC_API_KEY]" in a.output for a in lane.actions)
+            assert "+ANTHROPIC_API_KEY=[ANTHROPIC_API_KEY]" in lane.files["env.txt"].diff
+            straddled = next(a.output for a in lane.actions if a.text.startswith("$ printf"))
+            assert straddled.startswith(pad + "[ANTHROPIC") and KEY[:8] not in straddled  # cut after, never through, the key
+            assert "says: The key is [ANTHROPIC_API_KEY]; never mind it." in steps(lane)
+            transcripts.write(lane)
+            for kept in (tmp_path / "run" / "events.jsonl", tmp_path / "run" / "lanes" / f"{lane.id}.jsonl",
+                         lab.work(lane) / ".flightdeck" / "agent-stderr.log"):
+                assert KEY not in kept.read_text(), kept
+            assert "debug: using [ANTHROPIC_API_KEY]" in (lab.work(lane) / ".flightdeck" / "agent-stderr.log").read_text()
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_other_secrets_given_to_the_driver_are_kept_out_too_and_never_shown_by_its_repr(tmp_path):
+    token = "ctfd-token-value-for-tests-0123"
+    script = {"turns": [{"items": [{"command": "cat token.txt"}, {"sleep": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", handouts={"note": handout(tmp_path, files={"token.txt": f"t{{x}} {token}\n"})},
+                  secrets={"CTFD_TOKEN": token})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the step")
+            assert any(a.output == "t{x} [CTFD_TOKEN]" for a in lane.actions)
+        finally:
+            await lab.finish()
+
+    run(main())
+    driver = ExternalDriver(CliAgent("codex", "/x/codex", "m", {"CODEX_API_KEY": CODEX_SECRET}),
+                            lambda lane, ch: None, run_id="r", secrets={"CTFD_TOKEN": token})
+    assert driver.redact(f"{CODEX_SECRET} {token}") == "[CODEX_API_KEY] [CTFD_TOKEN]"
+    assert CODEX_SECRET not in repr(driver.redact) and token not in repr(driver.redact)
+    login = ExternalDriver(CliAgent("codex", "/x/codex", "m", {"CODEX_HOME": "/home/p/.codex"}), lambda lane, ch: None, run_id="r")
+    assert login.redact("/home/p/.codex") == "/home/p/.codex"  # a login's folder is a path, not a secret
 
 
 def test_the_clis_stderr_goes_to_the_lanes_log_and_its_death_ends_the_lane_with_the_status_and_last_line(tmp_path):
