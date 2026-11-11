@@ -399,12 +399,13 @@ ONE_LINE = "head -c {size} /dev/zero | tr '\\0' a\necho\n"  # one line of word c
 
 def test_a_flag_search_that_runs_out_of_time_stops_and_is_never_none(pack, handout, tmp_path):
     # each engine must have printed all of it within its time for the search to be what runs
-    # out, and a loaded machine can take seconds to start one: with 2 s each, one after the
-    # other, they did not make it 4 times in 40 (6 MB in short lines) and twice in 20 (3 MB
-    # in one line). So each has 4 s, and the two run at once. 6 MB in one line prints in well
-    # under a second, and searching it with this format takes several times 4 s (the windows
-    # of a long line cost the most, and the two searches share the CPU)
-    limit = 4
+    # out, and a loaded machine can take seconds to start one and print megabytes: with 2 s
+    # each, one after the other, 6 MB in short lines did not make it 25 times in 80 (all 20 of
+    # one stretch, while the machine was swapping), and with 4 s each, at once, 6 MB in one
+    # line twice in 40. So each has 5 s, and the two run at once. Searching 6 MB in one line
+    # with this format takes several times 5 s even on a fast idle machine (the windows of a
+    # long line cost the most, and the two searches share the CPU).
+    limit = 5
     slow = cli_engine(pack, "dump", ONE_LINE.format(size=6_000_000))
     early = cli_engine(pack, "dump_early", "echo t{first_line}\n" + ONE_LINE.format(size=6_000_000))
 
