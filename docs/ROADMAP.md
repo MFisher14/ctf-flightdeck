@@ -1,6 +1,6 @@
 # Roadmap
 
-## M0: clickable mock (now)
+## M0: clickable mock (built)
 
 A Textual console with **fake, scripted data**: no models, no network, no real challenges.
 
@@ -14,7 +14,7 @@ A Textual console with **fake, scripted data**: no models, no network, no real c
 
 **Exit:** the player reviews the mock and signs off on layout and controls (changes go in DECISIONS.md).
 
-## M1: thin working slice
+## M1: thin working slice (built)
 
 Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible endpoint (OpenRouter).
 
