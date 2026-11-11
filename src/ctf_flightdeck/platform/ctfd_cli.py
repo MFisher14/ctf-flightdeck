@@ -39,20 +39,30 @@ def pull(
     token_env: Annotated[
         str, typer.Option("--token-env", help="The environment variable that holds your CTFd API token (its name, not the token).")
     ] = "CTFD_TOKEN",
-    event: Annotated[str | None, typer.Option("--event", help="The event's name for board.json (default: the folder's name).")] = None,
+    event: Annotated[
+        str | None,
+        typer.Option("--event", help="The event's name for board.json (default: the board's own; the folder's name for a new board)."),
+    ] = None,
     flag_format: Annotated[
-        str | None, typer.Option("--flag-format", help="The event's flag format, a regular expression, for board.json.")
+        str | None,
+        typer.Option(
+            "--flag-format",
+            help="The event's flag format, a regular expression, for board.json (a re-pull keeps the board's, and refuses another).",
+        ),
     ] = None,
 ) -> None:
     """Pull the board from CTFd: a folder per challenge with its challenge.json and files.
 
     Exit status 1 when some challenges could not be pulled (each is named, with the reason;
-    pull again to retry them), 2 when nothing could be.
+    pull again to retry them). 2 when the pull could not start or finish (a refused token,
+    CTFd not answering, nothing to pull, a flag format other than the board's): what was
+    written stays, each challenge left out so far is named, and pulling again goes on from
+    there.
     """
     import asyncio
 
     from ..text import untrusted
-    from .ctfd import CTFdClient, CTFdError
+    from .ctfd import CTFdClient, CTFdError, PullStopped
     from .ctfd import pull as pull_board
     from .manual import BoardError
 
@@ -70,13 +80,15 @@ def pull(
 
     async def run():
         async with CTFdClient(url, token) as client:
-            return await pull_board(
-                client, dest, event=event or dest.resolve().name, flag_format=flag_format, progress=typer.echo
-            )
+            return await pull_board(client, dest, event=event, flag_format=flag_format, progress=typer.echo)
 
     problem = None
     try:
         result = asyncio.run(run())
+    except PullStopped as exc:
+        for line in exc.problems:
+            typer.echo(f"not pulled: {line}", err=True)
+        problem = exc.reason
     except (CTFdError, BoardError, ValueError) as exc:
         problem = str(exc)
     except OSError as exc:

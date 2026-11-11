@@ -6,11 +6,13 @@ environment variable --token-env names. No real CTFd is contacted.
 
 from __future__ import annotations
 
+import json
+
 from typer.testing import CliRunner
 
 from ctf_flightdeck.platform import ctfd_cli
 from ctf_flightdeck.platform.manual import load_board
-from fake_ctfd import FLAG_FORMAT, TOKEN, FakeChallenge, FakeCTFd, sample
+from fake_ctfd import FLAG_FORMAT, TOKEN, FakeChallenge, FakeCTFd, Reply, sample
 
 TOKEN_VAR = "FLIGHTDECK_TEST_CTFD_TOKEN"
 runner = CliRunner()
@@ -39,6 +41,38 @@ def test_the_event_name_defaults_to_the_folders(tmp_path):
     assert load_board(tmp_path / "spring-ctf").event == "spring-ctf"
 
 
+def test_a_wave_re_pull_keeps_the_boards_event_and_flag_format(tmp_path):
+    dest = tmp_path / "board"
+    env = {TOKEN_VAR: TOKEN}
+    with FakeCTFd(sample()) as fake:
+        first = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--event", "Spring CTF 2026",
+                     "--flag-format", FLAG_FORMAT, env=env)
+        fake.add(FakeChallenge(5, "Second Wave", value=150))
+        wave = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, env=env)  # as the help says: run it again
+        after_wave = json.loads((dest / "board.json").read_text())
+        asked = len(fake.requests)
+        other = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--flag-format", r"flag\{\w+\}", env=env)
+        assert len(fake.requests) == asked  # refused before CTFd was asked anything
+        same = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--flag-format", FLAG_FORMAT, env=env)
+        renamed = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--event", "Spring CTF", env=env)
+    assert first.exit_code == 0 and wave.exit_code == 0 and "5 challenges, 1 new" in wave.stdout
+    assert after_wave == {"event": "Spring CTF 2026", "flag_format": FLAG_FORMAT}
+    assert other.exit_code == 2 and "the board's flag format is test\\{\\w+\\}, not flag\\{\\w+\\}" in other.stderr
+    assert "change it in board.json first" in other.stderr
+    assert same.exit_code == 0 and renamed.exit_code == 0  # the same format again is fine; a new name is the player's
+    board = load_board(dest)
+    assert (board.event, board.flag_format) == ("Spring CTF", FLAG_FORMAT)
+
+
+def test_a_name_with_a_lone_surrogate_does_not_stop_the_pull(tmp_path):
+    # "\ud800" is valid JSON, but no encoding can print it: the progress line stopped the pull with exit 2
+    with FakeCTFd([FakeChallenge(1, "Bad \ud800 Name", files={"a.txt": b"a"})] + sample()[1:]) as fake:
+        result = pull(fake.base_url, str(tmp_path / "board"), "--token-env", TOKEN_VAR, env={TOKEN_VAR: TOKEN})
+    assert result.exit_code == 0, result.output
+    assert 'added bad-name: "Bad � Name" (misc, 100 points, 1 file)' in result.stdout
+    assert "4 challenges, 4 new" in result.stdout
+
+
 def test_pull_without_the_token_variable_fails_naming_it(tmp_path):
     with FakeCTFd(sample()) as fake:
         unset = pull(fake.base_url, str(tmp_path / "b"), "--token-env", TOKEN_VAR, env={TOKEN_VAR: ""})
@@ -63,3 +97,20 @@ def test_pull_with_challenges_left_out_exits_1_and_names_them(tmp_path):
     assert partial.exit_code == 1 and 'not pulled: challenge 5 ("Far Away")' in partial.stderr
     assert "4 challenges, 4 new" in partial.stdout
     assert refused.exit_code == 2 and "refused the API token" in refused.stderr and "wrong-token" not in refused.output
+
+
+def test_a_pull_that_stops_partway_exits_2_and_names_each_challenge_it_left_out(tmp_path):
+    down = Reply(503, "down", {"Retry-After": "0"})  # retried at once, so the test stays fast
+    with FakeCTFd(sample()) as fake:
+        fake.challenges[2].file_urls = ["https://cdn.example.org/x/far.zip"]
+        # the list comes through, then CTFd goes down for challenge 3 and for the list asked again
+        fake.script("GET", "/api/v1/challenges", Reply(200, fake.listing()), *[down] * 4)
+        fake.script("GET", "/api/v1/challenges/3", *[down] * 4)
+        result = pull(fake.base_url, str(tmp_path / "board"), "--token-env", TOKEN_VAR, env={TOKEN_VAR: TOKEN})
+    assert result.exit_code == 2 and "added warmup" in result.stdout
+    lines = result.stderr.splitlines()
+    assert lines[0].startswith('not pulled: challenge 2 ("Baby RSA"): ') and "another host" in lines[0]
+    assert lines[1].startswith('not pulled: challenge 3 ("Login Portal"): ') and "HTTP 503" in lines[1]
+    assert lines[2].startswith("flightdeck: ") and lines[2].endswith(
+        "the pull stopped there, with 1 new challenge written: pull again to go on")
+    assert len(lines) == 3

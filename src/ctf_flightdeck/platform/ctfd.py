@@ -17,7 +17,9 @@ CTFd's API (v1), as this module uses it:
   followed when a server does. A challenge locked behind another is listed as type "hidden",
   name "???": it is left out until a later pull finds it unlocked.
 - POST /api/v1/challenges/attempt puts a status in its data whatever the HTTP status: paused
-  comes as 403, ratelimited as 429 or 403, and a challenge out of tries as 403.
+  comes as 403, ratelimited as 429 or 403. A challenge out of tries comes as "incorrect" with
+  403, sent before CTFd looks at the flag (the last real try is "incorrect" with 200): this
+  module calls that "locked_out", since the flag was not checked and may be right.
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
   403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead.
 
@@ -29,9 +31,12 @@ is reported as it went, and the player decides.
 Secrets: the token goes in the Authorization header and nowhere else: not in a repr, an
 error or an exception chain (no httpx error is chained: its request holds the header). Text
 from the server has the token cut out before it is shown. A redirect is never followed with
-the token: an API redirect is an error, and a download follows one only on the CTFd's own
-origin. The per-file token CTFd puts in each file URL (?token=...) is a credential too, so a
-file is named by its path, never its query.
+the token off the CTFd's own origin: an API redirect is an error, and a download follows one
+with the token only on that origin. A download redirected to another host (CTFd keeping its
+files on S3 answers with a signed URL on the storage's host) is followed only over https,
+by a second client that sends no token, no cookie and no JSON header. The per-file token
+CTFd puts in each file URL (?token=...) and a signed URL's query are credentials too, so a
+file is named by its path, and another host by its origin, never by a query.
 
 Untrusted data: everything from CTFd (names, descriptions, connection info, file names,
 messages) is data, shown only through text.untrusted() and cut short. A file URL must stay on
@@ -60,6 +65,8 @@ import secrets
 import shutil
 import stat
 import tempfile
+import threading
+import time
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -72,26 +79,34 @@ from urllib.parse import unquote
 import httpx
 
 from .. import __version__
-from ..text import untrusted
-from .manual import BOARD_FILE, CHALLENGE_FILE, Board, BoardError, load_board
+from ..text import MARK, untrusted
+from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board
+from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
+from .manual import _settings as _board_json  # board.json's event and flag format, read as the board loader reads them
 
 API = "/api/v1"
 STATE_FILE = "ctfd.json"
 """In the board folder: the CTFd's URL and the CTFd id of each board id pulled."""
 
-ATTEMPT_STATUSES = ("correct", "incorrect", "already_solved", "paused", "ratelimited", "partial")
-"""CTFd's answers to a flag. "partial": part of a multi-part answer was right (CTFd 3.8+)."""
+ATTEMPT_STATUSES = ("correct", "incorrect", "already_solved", "paused", "ratelimited", "partial", "locked_out")
+"""CTFd's answers to a flag. "partial": part of a multi-part answer was right (CTFd 3.8+).
+"locked_out": CTFd's "incorrect" sent with HTTP 403, which means this account has no tries
+left on the challenge: CTFd did not check the flag."""
 
 MAX_WAIT = 30.0  # seconds: the longest pause between tries, whatever Retry-After asks for
 CONNECT_TIMEOUT = 10.0  # seconds: a connection that takes longer is not coming
 MAX_API_BYTES = 20_000_000  # an API answer bigger than this is refused
+MAX_ATTEMPT_BYTES = 64 * 1024  # the verifier's limit for an answer to a flag (CTFd's is a few hundred bytes)
 MAX_FILE_BYTES = 1 << 30  # a handout file bigger than this is refused (1 GiB); fetch it by hand
 MAX_STATE_BYTES = 1_000_000  # a ctfd.json bigger than this is refused
 MAX_PAGES = 500  # pages of one listing; more means a server that never stops
-MAX_REDIRECTS = 3  # same-origin redirects a download follows
+MAX_REDIRECTS = 3  # redirects a download follows, on the CTFd's origin and to a file host in all
 MAX_SHOWN = 200  # characters of the server's own words kept in a message
 MAX_ID = 2**53  # CTFd ids are database ids; anything bigger is not one
 SLUG_MAX = 40  # characters of a name kept in its slug; room for "-<id>-<n>" within 64
+DESCRIPTION_MAX_BYTES = MAX_JSON_BYTES // 5  # a description bigger as JSON is cut short; challenge.json stays loadable
+DESCRIPTION_FILE = "description.md"  # where the whole of a description cut short goes, beside the handout
+MAX_PARAGRAPH = 2_000  # characters of a paragraph flightdeck adds (the connection info) kept beside a cut description
 
 _LOCK = ".ctfd-pull.lock"
 _STAGING = ".ctfd-pull-"
@@ -101,7 +116,9 @@ _SECONDS = re.compile(r"\s*(\d{1,10}(?:\.\d{1,6})?)\s*")
 _URL = re.compile(r"https?://[^\s<>\"'`\\]+", re.IGNORECASE)
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _FILE_TOKEN = re.compile(r"([?&]token=)[^&#\s]*", re.IGNORECASE)
+_SURROGATE = re.compile(r"[\ud800-\udfff]")  # in a str only as a lone half of a pair: valid JSON, unprintable
 _NOT_JSON = object()
+_LATE = object()  # an answer that was not all in by the deadline
 _TRANSIENT = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
 _UNSENT = (httpx.ConnectError, httpx.ConnectTimeout)  # the request never left this machine
 
@@ -111,8 +128,8 @@ class CTFdError(Exception):
     naming the endpoint and the HTTP status when there was one. It never holds the token.
 
     `retryable` is True when the failure was of a kind that passes (no answer, 429, 5xx):
-    trying again later may work. A pull stops at such an error, and at a refused token,
-    instead of meeting it again for every challenge left.
+    trying again later may work. A pull stops at a refused token, and at such an error when
+    CTFd's challenge list fails too, instead of meeting it again for every challenge left.
     """
 
     def __init__(
@@ -129,7 +146,7 @@ class Attempt:
     """CTFd's answer to a flag. `status` is one of ATTEMPT_STATUSES; `message` is CTFd's
     own words, made safe to show (one line, control characters visible, cut short)."""
 
-    status: str  # correct | incorrect | already_solved | paused | ratelimited | partial
+    status: str  # correct | incorrect | already_solved | paused | ratelimited | partial | locked_out
     message: str
 
 
@@ -154,6 +171,25 @@ class PullIncomplete(CTFdError):
         self.pull = pull
 
 
+class PullStopped(CTFdError):
+    """pull() stopped partway: CTFd refused the token, or stopped answering (a challenge failed
+    in a way that passes, and the challenge list, asked again, failed too). What was written
+    stays, and the next pull goes on from there. `reason` says why it stopped, `added` holds
+    the board ids this pull wrote, and `problems` a line per challenge it left out so far;
+    the message holds all three. endpoint, status and retryable are those of the cause."""
+
+    def __init__(self, cause: CTFdError, added: tuple[str, ...], problems: tuple[str, ...]) -> None:
+        count = len(added)
+        self.reason = (
+            f"{cause}; the pull stopped there, with {count} new challenge{'' if count == 1 else 's'} written: "
+            "pull again to go on"
+        )
+        self.added = added
+        self.problems = problems
+        text = self.reason + (". Not pulled so far: " + "; ".join(problems) if problems else "")
+        super().__init__(text, endpoint=cause.endpoint, status=cause.status, retryable=cause.retryable)
+
+
 # ---------------------------------------------------------------------- the API client
 
 
@@ -164,6 +200,7 @@ class _Answer:
     headers: httpx.Headers
     body: bytes
     tries: int = 1
+    host: str | None = None  # the origin of the file host that answered, when it was not CTFd (a download)
 
 
 @dataclass(frozen=True)
@@ -182,7 +219,9 @@ class CTFdClient:
     httpx pools connections per event loop, so keep a client on the loop that first uses it
     and `aclose()` it when done (or use `async with`). `timeout` bounds each try, in seconds
     (connecting gets at most CONNECT_TIMEOUT of it). A GET makes at most `max_retries + 1`
-    tries; a flag attempt makes one. With `transport` given, httpx ignores proxy variables.
+    tries; a flag attempt makes one. With `transport` given, httpx ignores proxy variables;
+    it carries the requests to the CTFd only (a file on another host goes through httpx's
+    own, see download()).
     """
 
     def __init__(
@@ -218,6 +257,7 @@ class CTFdClient:
             transport=transport,
             follow_redirects=False,  # a redirect is an answer, not a new place to send the token
         )
+        self._elsewhere: httpx.AsyncClient | None = None  # for files on another host: made when first needed
         self._closed = False
 
     @property
@@ -237,6 +277,8 @@ class CTFdClient:
     async def aclose(self) -> None:
         self._closed = True
         await self._http.aclose()
+        if self._elsewhere is not None:
+            await self._elsewhere.aclose()
 
     # ------------------------------------------------------------------ endpoints
 
@@ -268,11 +310,15 @@ class CTFdClient:
     async def download(self, url: str, dest: Path) -> Path:
         """Fetch one URL from a challenge's "files" into the directory `dest`; the file written.
 
-        The URL is resolved against base_url and must stay on the CTFd's origin (scheme,
-        host and port), and so must any redirect. The file is named after the URL's last path
-        segment, which must be a plain file name. A file already there is never overwritten:
-        the new one is named name-2.ext, name-3.ext, ... (and challenge.json is never used).
-        The download streams to disk, at most max_file_bytes; a failed one leaves no file.
+        The URL is resolved against base_url and must be on the CTFd's origin (scheme, host
+        and port). A redirect on that origin is followed with the token. A redirect to another
+        host is followed only over https, and from then on without the token, CTFd's cookies
+        or the JSON header: CTFd keeping its files on S3 (or other object storage) answers a
+        file with a redirect to a signed URL on the storage's host. At most MAX_REDIRECTS
+        redirects in all. The file is named after the CTFd URL's last path segment, which must
+        be a plain file name. A file already there is never overwritten: the new one is named
+        name-2.ext, name-3.ext, ... (and challenge.json is never used, in any case). The
+        download streams to disk, at most max_file_bytes; a failed one leaves no file.
         """
         target = self._file_url(url)
         name = _file_name(target, self._site)
@@ -459,30 +505,40 @@ class CTFdClient:
         return target
 
     async def _fetch(self, url: httpx.URL, folder: Path, name: str, endpoint: str) -> Path | _Again:
-        """One try at a download, following same-origin redirects."""
+        """One try at a download, following redirects (see download())."""
         failure = None
         hops = 0
+        host = None  # the other host's origin, once a redirect has left the CTFd's: the token stays behind
         try:
             while True:
-                async with self._http.stream("GET", url) as response:
+                http = self._http if host is None else self._files_elsewhere()
+                async with http.stream("GET", url) as response:
                     status = response.status_code
                     if 300 <= status < 400:
                         hops += 1
-                        url = self._redirect(url, response.headers.get("location"), endpoint, status, hops)
+                        url = self._redirect(url, response.headers.get("location"), endpoint, status, hops, host)
+                        if host is not None or not _same_origin(url, self._site.base):
+                            host = _origin_text(url)
                         continue
                     if _retryable(status):
                         body = await _read(response, 64 * 1024) or b""
-                        return _Again(_Answer(endpoint, status, response.headers, body), None, response.headers.get("retry-after"))
+                        answer = _Answer(endpoint, status, response.headers, body, host=host)
+                        return _Again(answer, None, response.headers.get("retry-after"), host)
                     if not 200 <= status < 300:
                         body = await _read(response, 64 * 1024) or b""
-                        raise self._site.refused(_Answer(endpoint, status, response.headers, body))
+                        raise self._site.refused(_Answer(endpoint, status, response.headers, body, host=host))
                     return await self._save(response, folder, name, endpoint)
         except httpx.HTTPError as exc:
             failure = _describe(exc)
-        return _Again(None, failure, None)
+        return _Again(None, failure, None, host)
 
-    def _redirect(self, current: httpx.URL, location: str | None, endpoint: str, status: int, hops: int) -> httpx.URL:
-        where = f"CTFd at {self._site.root} answered {endpoint} with a redirect (HTTP {status})"
+    def _redirect(
+        self, current: httpx.URL, location: str | None, endpoint: str, status: int, hops: int, host: str | None
+    ) -> httpx.URL:
+        """Where a download's redirect leads, if flightdeck may follow it; CTFdError if not.
+        `host` is the other host the download is on already (None: still on the CTFd's origin)."""
+        who = f"CTFd at {self._site.root}" if host is None else f"the file host {host}"
+        where = f"{who} answered {endpoint} with a redirect (HTTP {status})"
         if not location:
             raise self._site.error(f"{where} that names no place", endpoint=endpoint, status=status)
         target, bad = None, False
@@ -490,18 +546,38 @@ class CTFdClient:
             target = current.join(location)
         except httpx.InvalidURL:
             bad = True
-        if bad or target is None:
+        if bad or target is None or not target.host:
             raise self._site.error(f"{where} to a URL that is not valid", endpoint=endpoint, status=status)
-        if not _same_origin(target, self._site.base) or target.userinfo:
+        if hops > MAX_REDIRECTS:
+            raise self._site.error(f"{where}, more than {MAX_REDIRECTS} times", endpoint=endpoint, status=status)
+        if target.userinfo:
             raise self._site.error(
-                f"{where} to another host ({_origin_text(target)}); flightdeck downloads only from the CTFd's own "
-                "origin, so fetch this file by hand",
+                f"{where} to a URL with a user name or password in it, which flightdeck does not use; fetch this file "
+                "by hand",
                 endpoint=endpoint,
                 status=status,
             )
-        if hops > MAX_REDIRECTS:
-            raise self._site.error(f"{where}, more than {MAX_REDIRECTS} times", endpoint=endpoint, status=status)
+        if host is None and _same_origin(target, self._site.base):
+            return target  # still the CTFd's own origin: the token goes along
+        if target.scheme != "https":
+            raise self._site.error(
+                f"{where} to another host ({_origin_text(target)}); flightdeck follows a download to another host only "
+                "over https, so fetch this file by hand",
+                endpoint=endpoint,
+                status=status,
+            )
         return target
+
+    def _files_elsewhere(self) -> httpx.AsyncClient:
+        """The client for a file on another host (object storage): no token, no cookie from
+        CTFd, no JSON header; nothing but what a browser following the redirect would send."""
+        if self._elsewhere is None:
+            self._elsewhere = httpx.AsyncClient(
+                headers={"User-Agent": f"ctf-flightdeck/{__version__}"},
+                timeout=self._http.timeout,
+                follow_redirects=False,
+            )
+        return self._elsewhere
 
     async def _save(self, response: httpx.Response, folder: Path, name: str, endpoint: str) -> Path:
         length = response.headers.get("content-length", "")
@@ -532,7 +608,7 @@ class CTFdClient:
 
     def _gave_up(self, endpoint: str, outcome: _Again, tries: int) -> CTFdError:
         if outcome.failure is not None:
-            return self._site.no_answer(endpoint, outcome.failure, tries)
+            return self._site.no_answer(endpoint, outcome.failure, tries, host=outcome.host)
         assert outcome.answer is not None
         outcome.answer.tries = tries
         return self._site.refused(outcome.answer)
@@ -545,6 +621,7 @@ class _Again:
     answer: _Answer | None
     failure: _Failure | None
     retry_after: str | None
+    host: str | None = None  # the other host the download was on, when it was not CTFd's
 
 
 # ---------------------------------------------------------------------- the deck's verifier
@@ -553,16 +630,23 @@ class _Again:
 class CTFdVerifier:
     """The deck's verify() for a CTFd board: submits a flag and says whether it was right.
 
-    True for correct (or already solved), False for incorrect, None when CTFd did not judge
-    it (paused, rate-limited, a partial answer) or the outcome is unknown (no answer, an
-    error): the deck then asks the player to submit by hand and confirm. `last_error` says
-    why for the console; `last_attempt` holds CTFd's answer when there was one.
+    True for correct, False for incorrect, None when CTFd did not judge the flag (already
+    solved, paused, rate-limited, out of tries, a partial answer) or the outcome is unknown
+    (no answer, an error): the deck then asks the player to submit by hand and confirm.
+    `last_error` says why for the console; `last_attempt` holds CTFd's answer when there was
+    one, and its status tells a caller what to do next: "already_solved" means the account
+    (the team) solved the challenge already, without that flag being checked, and
+    "locked_out" that no flag for it can be checked any more.
 
     The deck calls it synchronously on the console's event loop, so it never touches asyncio:
     one request with its own httpx.Client, which blocks the console for that round trip (a
-    rare, player-approved action). It never retries: a retried submit could count twice.
-    `ids` maps board ids (slugs) to CTFd ids: Pull.ids, or load_ids(board folder); after a
-    wave, add the new ones to `verifier.ids`.
+    rare, player-approved action), and never longer than `timeout` seconds in all. httpx's
+    timeouts bound each step of a request only (a server that sends a byte now and then
+    never trips them), so the request runs in a worker thread the call waits for; one
+    still going when the time is up is left to end on its own, and the answer is unknown.
+    It never retries: a retried submit could count twice. `ids` maps board ids (slugs) to
+    CTFd ids: Pull.ids, or load_ids(board folder); after a wave, add the new ones to
+    `verifier.ids`.
     """
 
     def __init__(
@@ -582,6 +666,7 @@ class CTFdVerifier:
             if not isinstance(key, str) or not _is_number(value):
                 raise ValueError("ids must map board ids (strings) to CTFd challenge ids (whole numbers, 1 or more)")
             self.ids[key] = value
+        self.timeout = timeout
         self.last_error: str | None = None
         self.last_attempt: Attempt | None = None
         self._http = httpx.Client(
@@ -615,17 +700,13 @@ class CTFdVerifier:
             return None
         endpoint = f"POST {API}/challenges/attempt"
         content = json.dumps({"challenge_id": number, "submission": flag}, ensure_ascii=True).encode("ascii")
-        answer, failure = None, None
-        try:
-            with self._http.stream("POST", self._site.root + API + "/challenges/attempt", content=content) as response:
-                body = _read_sync(response, MAX_API_BYTES)
-                answer = _Answer(endpoint, response.status_code, response.headers, body if body is not None else b"")
-        except httpx.HTTPError as exc:
-            failure = _describe(exc)
-        if failure is not None:
-            self.last_error = str(self._site.no_answer(endpoint, failure, 1, submit=True))
+        answer = self._submit(content, endpoint)
+        if isinstance(answer, CTFdError):
+            self.last_error = str(answer)
             return None
-        assert answer is not None
+        if isinstance(answer, _Failure):
+            self.last_error = str(self._site.no_answer(endpoint, answer, 1, submit=True))
+            return None
         error = None
         try:
             attempt = _attempt(self._site, answer)
@@ -635,20 +716,72 @@ class CTFdVerifier:
             self.last_error = error
             return None
         self.last_attempt = attempt
-        if attempt.status in ("correct", "already_solved"):
+        if attempt.status == "correct":
             return True
         if attempt.status == "incorrect":
             return False
         self.last_error = _unjudged(attempt)
         return None
 
+    def _submit(self, content: bytes, endpoint: str) -> _Answer | _Failure | CTFdError:
+        """The submission's one request, in a worker thread the call waits for, at most
+        `timeout` seconds from now: CTFd's answer, the failure that left none, or the error
+        that says none came in time (or one too big to be CTFd's)."""
+        deadline = time.monotonic() + self.timeout
+        unknown = "; the flag may have reached CTFd: check the challenge there before submitting it again"
+        late = self._site.error(
+            f"no complete answer from CTFd at {self._site.root} to {endpoint} within {self.timeout:g} s{unknown}",
+            endpoint=endpoint,
+        )
+        box: list[_Answer | _Failure | CTFdError | BaseException] = []
+
+        def exchange() -> None:
+            try:
+                with self._http.stream("POST", self._site.root + API + "/challenges/attempt", content=content) as response:
+                    body = _read_sync(response, MAX_ATTEMPT_BYTES, deadline)
+                    if isinstance(body, bytes):
+                        box.append(_Answer(endpoint, response.status_code, response.headers, body))
+                    elif body is None:
+                        box.append(
+                            self._site.error(
+                                f"CTFd at {self._site.root} answered {endpoint} with more than {MAX_ATTEMPT_BYTES:,} "
+                                f"bytes, which is not an answer to a flag{unknown}",
+                                endpoint=endpoint,
+                                status=response.status_code,
+                            )
+                        )
+                    else:
+                        box.append(late)
+            except httpx.HTTPError as exc:
+                box.append(_describe(exc))  # the error itself is dropped: its request holds the token
+            except BaseException as exc:  # a bug: raised again in the caller's thread, never lost
+                box.append(exc)
+
+        worker = threading.Thread(target=exchange, name="ctfd-submit", daemon=True)
+        worker.start()
+        worker.join(max(0.0, deadline - time.monotonic()))
+        if not box:
+            return late  # the worker ends when the server answers, gives up or hangs up; its result is dropped
+        outcome = box[0]
+        if isinstance(outcome, BaseException) and not isinstance(outcome, CTFdError):
+            raise outcome
+        return outcome
+
 
 def _unjudged(attempt: Attempt) -> str:
     said = f" (CTFd says: {attempt.message})" if attempt.message else ""
+    if attempt.status == "already_solved":
+        # CTFd answers so for any submission once the account has a solve: this flag may be wrong
+        return f"CTFd says this challenge is already solved (by you or a teammate){said}; it did not check this flag"
     if attempt.status == "paused":
         return f"CTFd is paused, so it did not check the flag{said}. Submit it by hand when CTFd runs again"
     if attempt.status == "ratelimited":
         return f"CTFd rate-limited the submission and did not check the flag{said}. Wait, then submit it by hand"
+    if attempt.status == "locked_out":
+        return (
+            f"CTFd did not check the flag: this account has no tries left on this challenge{said}, so CTFd checks "
+            "no more flags for it. The flag is not known to be wrong"
+        )
     return f"CTFd says the flag is only part of the answer{said}; the challenge is not solved yet"
 
 
@@ -661,6 +794,9 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
     if isinstance(status, str):
         message = data.get("message")
         said = site.short(message) if isinstance(message, str) else ""
+        if status == "incorrect" and answer.status == 403:
+            # CTFd's answer when the account has no tries left, sent before it checks the flag
+            return Attempt("locked_out", said)
         if status in ATTEMPT_STATUSES:
             return Attempt(status, said)
         if status == "authentication_required":
@@ -698,7 +834,7 @@ async def pull(
     client: CTFdClient,
     dest: Path,
     *,
-    event: str,
+    event: str | None = None,
     flag_format: str | None,
     progress: Callable[[str], None] | None = None,
 ) -> Pull:
@@ -706,19 +842,27 @@ async def pull(
 
     `dest` must be empty, or a board pulled from this same CTFd before: then the folders there
     are kept as they are and only challenges new on CTFd are added (a wave). A challenge that
-    cannot be pulled (its details, a file, a value CTFd got wrong) is left out with the
-    reason in Pull.problems, and tried again by the next pull. `progress` gets one line per
-    challenge added, safe to print.
+    cannot be pulled (its details or a file keep failing, a value CTFd got wrong) is left out
+    with the reason in Pull.problems, and tried again by the next pull. `progress` gets one
+    line per challenge added, safe to print.
 
-    Raises CTFdError when the pull cannot go on: `dest` not usable, the listing failing, the
-    token refused, or CTFd no longer answering (a retryable error that outlasted the
-    retries); what was written by then stays, and the next pull goes on from there. Also
-    when the board would be empty (it says why: nothing listed, all locked, the reasons).
-    BoardError if the board folder does not load (a folder edited by hand), and OSError if
-    board.json or ctfd.json cannot be written.
+    board.json gets `event` (the board's name) and `flag_format`. None keeps what a board
+    pulled before has in its board.json; on a new board, None names it after the folder and
+    sets no flag format. A flag format other than the one a board has already is refused:
+    a wave must not loosen the check that keeps decoy flags from being submitted (change it
+    in board.json first if it is wrong).
+
+    Raises CTFdError when the pull cannot start (`dest` not usable, a flag format the board
+    does not have, the listing failing, the token refused) or the board would be empty (it
+    says why: nothing listed, all locked, the reasons). PullStopped, a CTFdError, when it
+    stops partway: the token refused, or CTFd no longer answering (a challenge failed with
+    no answer, 429 or 5xx after the retries, and the challenge list, asked again, failed
+    too); what was written by then stays, and the next pull goes on from there. BoardError
+    if the board folder (board.json included) does not load, as after an edit by hand, and
+    OSError if board.json or ctfd.json cannot be written.
     """
-    if not isinstance(event, str) or not event.strip():
-        raise ValueError("event must be a non-empty string: the board's name")
+    if event is not None and (not isinstance(event, str) or not event.strip()):
+        raise ValueError("event must be a non-empty string (the board's name), or None to keep the board's own")
     if flag_format is not None:
         bad = False
         try:
@@ -742,6 +886,7 @@ async def pull(
     with _locked(root):
         _clear_staging(root)
         known = _read_state(root, client.base_url)
+        event, flag_format = _settings(root, known, event, flag_format)
         listing = await client.challenges()
         # The folder is this CTFd's board from here on, even if no challenge comes through.
         _write_state(root, client.base_url, known)
@@ -774,18 +919,23 @@ async def pull(
                 try:
                     slug, line = await _pull_one(client, root, stage_root, number, item, slug, taken, ids)
                 except CTFdError as exc:
-                    if exc.retryable or exc.status == 401:
-                        fatal = exc  # it would only happen again for every challenge left
+                    if exc.status == 401:
+                        fatal = exc  # the token was refused: so it would be for every challenge left
                     else:
                         reason = str(exc).replace(str(stage_root), str(root))
+                        if exc.retryable:
+                            # no answer, 429 or 5xx after the retries: this challenge's own trouble (a plugin that
+                            # fails, a file the proxy cannot serve) unless CTFd no longer answers its list either
+                            fatal = await _not_answering(client)
                 except (BoardError, _Unusable) as exc:
                     reason = str(exc).replace(str(stage_root), str(root))
                 except OSError as exc:
                     reason = f"cannot write it ({exc.strerror or type(exc).__name__})"
+                if reason is not None:
+                    problems.append(f"{_label(number, item.get('name'))}: {reason}")
                 if fatal is not None:
                     break
                 if reason is not None:
-                    problems.append(f"{_label(number, item.get('name'))}: {reason}")
                     continue
                 by_ctfd[number] = slug
                 added.append(slug)
@@ -794,19 +944,36 @@ async def pull(
         finally:
             shutil.rmtree(stage_root, ignore_errors=True)
         if fatal is not None:
-            count = len(added)
-            raise CTFdError(
-                f"{fatal}; the pull stopped there, with {count} new challenge{'' if count == 1 else 's'} written: "
-                "pull again to go on",
-                endpoint=fatal.endpoint,
-                status=fatal.status,
-                retryable=fatal.retryable,
-            )
+            raise PullStopped(fatal, tuple(added), tuple(problems))
         if not any(_is_challenge_folder(entry) for entry in root.iterdir()):
             raise CTFdError(_empty_board(client.base_url, len(listing), hidden, problems))
         board = load_board(root)
     mapped = {item.challenge.id: ids[item.challenge.id] for item in board.challenges if item.challenge.id in ids}
     return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden)
+
+
+def _settings(root: Path, known: Mapping[str, int], event: str | None, flag_format: str | None) -> tuple[str, str | None]:
+    """board.json's event and flag format after this pull (see pull())."""
+    if not known:  # a new board, or one whose first pull got no challenge through: nothing played yet
+        return (root.name if event is None else event), flag_format
+    stored_event, stored_format = _board_json(root)
+    if flag_format is not None and stored_format is not None and flag_format != stored_format:
+        raise CTFdError(
+            f"{_show(root / BOARD_FILE)}: the board's flag format is {_show(stored_format)}, not {_show(flag_format)}; "
+            "leave the flag format out to keep the board's, or change it in board.json first"
+        )
+    return (stored_event if event is None else event), (stored_format if flag_format is None else flag_format)
+
+
+async def _not_answering(client: CTFdClient) -> CTFdError | None:
+    """After a challenge failed in a way that passes: None if CTFd still answers its challenge
+    list (asked with the client's retries), so the failure was that challenge's own; else the
+    error that says CTFd does not answer."""
+    try:
+        await client.challenges()
+    except CTFdError as exc:
+        return exc
+    return None
 
 
 def _is_challenge_folder(entry: Path) -> bool:
@@ -825,7 +992,7 @@ def _empty_board(url: str, listed: int, hidden: int, problems: list[str]) -> str
     return text + (": " + "; ".join(problems) if problems else "")
 
 
-async def pull_board(client: CTFdClient, dest: Path, *, event: str, flag_format: str | None) -> Board:
+async def pull_board(client: CTFdClient, dest: Path, *, event: str | None = None, flag_format: str | None) -> Board:
     """pull(), for a caller that wants the whole board or an error: the board, or
     PullIncomplete (whose .pull holds what was written and why the rest was left out).
     The CTFd ids of the board's challenges are in dest/ctfd.json: load_ids(dest)."""
@@ -846,13 +1013,17 @@ def load_ids(dest: Path) -> dict[str, int]:
 
 def origins_in(text: str | None) -> tuple[str, ...]:
     """The http(s) origins (scheme://host[:port], lower case) of the URLs in `text`, in
-    order, each once. A URL with no usable host is left out, and so is anything else
-    (`nc host port` has no URL in it)."""
+    order, each once. Only origins a board's challenge.json takes are kept (the folder
+    board's own rule: a host that ends in a number must be a plain IPv4 address, so 127.1
+    or 2130706433 is left out); a URL with no usable host is left out, and so is anything
+    else (`nc host port` has no URL in it)."""
     if not text:
         return ()
     found: list[str] = []
     for match in _URL.finditer(text):
         origin = _origin(_trim(match.group(0)))
+        if origin is not None:
+            origin = _board_origin(origin)
         if origin is not None and origin not in found:
             found.append(origin)
     return tuple(found)
@@ -876,7 +1047,8 @@ class _Spec:
     category: str
     points: int
     solves: int
-    description: str
+    description: str  # CTFd's own
+    extra: tuple[str, ...]  # paragraphs flightdeck adds after it: the connection info, notes
     urls: tuple[str, ...]
     files: tuple[str, ...]  # the file URLs, as CTFd sent them
 
@@ -895,7 +1067,7 @@ async def _pull_one(
     the staging folder and checked with load_board() first, so it appears complete or not
     at all. The mapping is written before the folder moves into place: a crash in between
     leaves a mapped slug with no folder, which the next pull fills in."""
-    spec = _spec(number, item, await client.challenge(number))
+    spec = _spec(number, item, await client.challenge(number), client._site.base)
     if slug is None:
         slug = _new_slug(spec.name, number, taken)
     stage_root.mkdir(exist_ok=True)
@@ -903,6 +1075,9 @@ async def _pull_one(
     stage.mkdir()
     try:
         names = [(await client.download(url, stage)).name for url in spec.files]
+        description, whole = _description(spec, stage)
+        if whole is not None:
+            names.append(whole)
         _write_json(
             stage / CHALLENGE_FILE,
             {
@@ -910,7 +1085,7 @@ async def _pull_one(
                 "category": spec.category,
                 "points": spec.points,
                 "solves": spec.solves,
-                "description": spec.description,
+                "description": description,
                 "files": names,
                 "urls": list(spec.urls),
                 "id": slug,
@@ -933,9 +1108,10 @@ async def _pull_one(
         raise
     taken.add(slug)
     count = len(names)
+    cut = "" if whole is None else f"; its description is cut short, the whole of it is in {whole}"
     line = (
         f"added {slug}: {_quote(spec.name)} ({untrusted(spec.category, one_line=True) or 'no category'}, "
-        f"{spec.points} points, {count} file{'' if count == 1 else 's'})"
+        f"{spec.points} points, {count} file{'' if count == 1 else 's'}{cut})"
     )
     return slug, line
 
@@ -953,7 +1129,7 @@ def _numbered(listing: list[dict], problems: list[str]) -> Iterator[tuple[int, d
         yield number, seen[number]
 
 
-def _spec(number: int, item: dict, detail: dict) -> _Spec:
+def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
     """challenge.json's fields from CTFd's details (the listing fills in what they lack)."""
     if detail.get("id") != number:
         raise _Unusable("CTFd answered with the details of another challenge")
@@ -964,6 +1140,7 @@ def _spec(number: int, item: dict, detail: dict) -> _Spec:
     name = field("name")
     if not isinstance(name, str) or not name.strip():
         raise _Unusable("it has no name")
+    name = _valid(name)
     category = field("category")
     if category is None:
         category = ""
@@ -992,11 +1169,83 @@ def _spec(number: int, item: dict, detail: dict) -> _Spec:
         files = []
     if not isinstance(files, list) or not all(isinstance(url, str) for url in files):
         raise _Unusable("its files are not a list of URLs")
+    category, description, connection = _valid(category), _valid(description), _valid(connection)
+    extra: list[str] = []  # what the folder board has no field for, after CTFd's description
     connection = connection.strip()
     if connection and connection not in description:
-        # the folder board has no field for it: `nc host port` must still reach the lane
-        description = (description.rstrip() + "\n\n" if description.strip() else "") + f"Connection info: {connection}"
-    return _Spec(name, category, points, solves, description, origins_in(connection), tuple(files))
+        extra.append(f"Connection info: {connection}")  # `nc host port` must still reach the lane
+    urls = origins_in(connection)
+    platform = [origin for origin in urls if _on_ctfd(origin, ctfd)]
+    if platform:
+        # an instancer page on CTFd, a link to the scoreboard: a lane's instance is the one place its
+        # tools may send requests to, and CTF infrastructure is never a target
+        urls = tuple(origin for origin in urls if origin not in platform)
+        extra.append(
+            f"Note from flightdeck: the connection info points at CTFd itself ({', '.join(platform)}), which lanes "
+            "never get as an instance."
+        )
+    tries = detail.get("max_attempts")  # 0 (or absent) when CTFd allows any number
+    if _is_number(tries):
+        # the player and the lane should know that every wrong flag costs one
+        extra.append(
+            f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
+            "then checks no more."
+        )
+    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files))
+
+
+def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:
+    """challenge.json's description: CTFd's, then the paragraphs flightdeck adds. One too long
+    for challenge.json (an image pasted into it) is written whole to a file in `stage`, and
+    cut short where the board shows it. Returns it and that file's name, if one was written."""
+    text = _paragraphs(spec.description, spec.extra)
+    if len(json.dumps(text, ensure_ascii=True)) <= DESCRIPTION_MAX_BYTES:
+        return text, None
+    path, fd = _create(stage, DESCRIPTION_FILE)
+    with os.fdopen(fd, "wb") as out:
+        out.write(text.encode("utf-8"))  # _spec made every part valid text
+    note = (
+        "Note from flightdeck: this description is too long for the board, so it is cut short; the whole of it is in "
+        f"the file {path.name}."
+    )
+    # CTFd's own text gets half the room; flightdeck's paragraphs (the connection info) stay in view
+    kept = [part if len(part) <= MAX_PARAGRAPH else part[: MAX_PARAGRAPH - 3] + "..." for part in spec.extra]
+    return _paragraphs(_cut(spec.description, DESCRIPTION_MAX_BYTES // 2), (note, *kept)), path.name
+
+
+def _paragraphs(text: str, paragraphs: tuple[str, ...]) -> str:
+    """`paragraphs` after `text`, with a blank line before each."""
+    for paragraph in paragraphs:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + paragraph
+    return text
+
+
+def _cut(text: str, budget: int) -> str:
+    """The longest start of `text` that takes at most `budget` bytes as JSON (ASCII, as
+    challenge.json is written: a character takes 1 to 12 bytes there)."""
+    low, high = 0, min(len(text), budget)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(json.dumps(text[:middle], ensure_ascii=True)) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _on_ctfd(origin: str, ctfd: httpx.URL) -> bool:
+    """`origin` (scheme://host[:port]) is the CTFd's own: its host on its port, whatever the
+    scheme, or on either default port when CTFd is on one (http:// to an https CTFd is the
+    same site). Another port on that host is another service."""
+    url = httpx.URL(origin)
+    if url.raw_host.lower().rstrip(b".") != ctfd.raw_host.lower().rstrip(b"."):
+        return False
+    port = url.port or _DEFAULT_PORTS.get(url.scheme)
+    own = ctfd.port or _DEFAULT_PORTS.get(ctfd.scheme)
+    return port == own or (port in (80, 443) and own in (80, 443))
 
 
 def _new_slug(name: str, number: int, taken: set[str]) -> str:
@@ -1119,13 +1368,15 @@ def _write_json(path: Path, data: object) -> None:
 
 def _create(folder: Path, name: str) -> tuple[Path, int]:
     """A new file in `folder` named `name`, or name-2.ext, name-3.ext, ... if taken; never
-    challenge.json, never through a symlink. Returns its path and an open descriptor."""
+    challenge.json in any case or form (on a case-insensitive file system, as macOS's and
+    WSL's drives are, Challenge.json is the file challenge.json is written over), never
+    through a symlink. Returns its path and an open descriptor."""
     dot = name.find(".", 1)
     stem, ext = (name, "") if dot == -1 else (name[:dot], name[dot:])
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
     for n in range(1, 100):
         candidate = name if n == 1 else f"{stem}-{n}{ext}"
-        if candidate == CHALLENGE_FILE:
+        if unicodedata.normalize("NFKC", candidate).casefold() == CHALLENGE_FILE:
             continue
         path = folder / candidate
         try:
@@ -1160,14 +1411,14 @@ class _Site:
 
     def short(self, text: str) -> str:
         """The server's words, safe to show: no token or file token, one line, cut short."""
-        text = _FILE_TOKEN.sub(r"\1[file token]", text.replace(self._token, "[token]"))
+        text = _FILE_TOKEN.sub(r"\1[file token]", _valid(text).replace(self._token, "[token]"))
         text = untrusted(text[: MAX_SHOWN * 4], one_line=True).strip()
         return text if len(text) <= MAX_SHOWN else text[: MAX_SHOWN - 3] + "..."
 
     def error(
         self, message: str, *, endpoint: str | None = None, status: int | None = None, retryable: bool = False
     ) -> CTFdError:
-        text = _FILE_TOKEN.sub(r"\1[file token]", message.replace(self._token, "[token]"))
+        text = _FILE_TOKEN.sub(r"\1[file token]", _valid(message).replace(self._token, "[token]"))
         return CTFdError(untrusted(text, one_line=True), endpoint=endpoint, status=status, retryable=retryable)
 
     def refused(self, answer: _Answer) -> CTFdError:
@@ -1177,7 +1428,13 @@ class _Site:
         said = self.short(_message(doc)) if isinstance(doc, dict) else ""
         says = f" (CTFd says: {said})" if said else ""
         where = f"CTFd at {self.root}"
-        if 300 <= status < 400:
+        if answer.host is not None:  # a file host CTFd sent a download to: the token never went there
+            says = f" (it says: {said})" if said else ""
+            text = (
+                f"the file host {answer.host}, where CTFd at {self.root} sent {endpoint}, answered HTTP {status}"
+                f"{_phrase(status)}{says}"
+            )
+        elif 300 <= status < 400:
             location = answer.headers.get("location")
             target = None
             if location:
@@ -1206,8 +1463,16 @@ class _Site:
             text += f"; gave up after {answer.tries} tries"
         return self.error(text, endpoint=endpoint, status=status, retryable=_retryable(status))
 
-    def no_answer(self, endpoint: str, failure: _Failure, tries: int, *, submit: bool = False) -> CTFdError:
-        text = f"no answer from CTFd at {self.root} to {endpoint}: {self.short(failure.what)}"
+    def no_answer(
+        self, endpoint: str, failure: _Failure, tries: int, *, submit: bool = False, host: str | None = None
+    ) -> CTFdError:
+        if host is None:
+            text = f"no answer from CTFd at {self.root} to {endpoint}: {self.short(failure.what)}"
+        else:
+            text = (
+                f"no answer from the file host {host}, where CTFd at {self.root} sent {endpoint}: "
+                f"{self.short(failure.what)}"
+            )
         if tries > 1:
             text += f"; gave up after {tries} tries"
         if submit:
@@ -1293,13 +1558,17 @@ async def _read(response: httpx.Response, limit: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def _read_sync(response: httpx.Response, limit: int) -> bytes | None:
+def _read_sync(response: httpx.Response, limit: int, deadline: float) -> bytes | None | object:
+    """The body; None when it is longer than `limit` bytes; _LATE when it is not all in by
+    `deadline` (a time.monotonic() value): then the reading stops, and the connection with it."""
     chunks, size = [], 0
     for chunk in response.iter_bytes():
         size += len(chunk)
         if size > limit:
             return None
         chunks.append(chunk)
+        if time.monotonic() > deadline:
+            return _LATE
     return b"".join(chunks)
 
 
@@ -1419,13 +1688,19 @@ def _label(number: int, name: object) -> str:
 
 
 def _show(value: object) -> str:
-    return untrusted(str(value), one_line=True)
+    return untrusted(_valid(str(value)), one_line=True)
 
 
 def _quote(text: str) -> str:
     """Untrusted text quoted for a message: made safe, and cut short."""
-    safe = untrusted(text, one_line=True)
+    safe = untrusted(_valid(text), one_line=True)
     return json.dumps(safe if len(safe) <= 60 else safe[:57] + "...", ensure_ascii=False)
+
+
+def _valid(text: str) -> str:
+    """`text` with each lone surrogate (valid in JSON, and in a Python str, but not in any
+    encoding: printing it raises) made the replacement mark."""
+    return _SURROGATE.sub(MARK, text)
 
 
 def _phrase(code: int) -> str:

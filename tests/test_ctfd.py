@@ -4,7 +4,9 @@ Nothing is mocked: each test starts a FakeCTFd on 127.0.0.1 with invented challe
 scripts what it needs, and reads back what the adapter sent and wrote. No real CTFd is
 contacted. pytest has no async support here, so each call runs on a fresh event loop with
 asyncio.run(). Backoffs are a millisecond so retries stay fast; the tests about waiting use
-waits that are short but long enough to measure.
+waits that are short but long enough to measure. The tests that need https (CTFd on https,
+object storage a download is sent to) make a throwaway certificate authority with the
+openssl command, and are reported as not run without it.
 """
 
 from __future__ import annotations
@@ -19,13 +21,15 @@ import stat
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import ChallengeStatus, DeckConfig, PendingKind
+from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, EventKind, PendingKind
 from ctf_flightdeck.platform.ctfd import (
+    MAX_REDIRECTS,
     STATE_FILE,
     Attempt,
     CTFdClient,
@@ -33,14 +37,15 @@ from ctf_flightdeck.platform.ctfd import (
     CTFdVerifier,
     Pull,
     PullIncomplete,
+    PullStopped,
     load_ids,
     origins_in,
     pull,
     pull_board,
     slugify,
 )
-from ctf_flightdeck.platform.manual import load_board
-from fake_ctfd import FLAG_FORMAT, HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply, sample
+from ctf_flightdeck.platform.manual import BoardError, load_board
+from fake_ctfd import FLAG_FORMAT, HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply, make_tls, sample
 
 
 def client(fake: FakeCTFd, *, token: str = TOKEN, **options) -> CTFdClient:
@@ -318,13 +323,66 @@ def test_a_file_url_to_another_host_is_refused_without_a_request(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_download_redirected_to_another_host_is_refused(tmp_path):
+def test_a_download_redirected_to_another_host_over_plain_http_is_refused(tmp_path):
     with FakeCTFd(sample()) as fake, FakeCTFd(sample()) as elsewhere:
         url = fake.file_url(1, "hello.txt")
-        fake.script("GET", url.split("?")[0], Reply(302, None, {"Location": elsewhere.base_url + url}))
+        signed = f"{elsewhere.base_url}{url.split('?')[0]}?X-Amz-Signature=s3cr3t-signature"
+        fake.script("GET", url.split("?")[0], Reply(302, None, {"Location": signed}))
         error = failure(fake, lambda c: c.download(url, tmp_path))
         assert elsewhere.requests == []
-    assert "another host" in str(error) and list(tmp_path.iterdir()) == []
+    assert "another host" in str(error) and "only over https" in str(error) and elsewhere.base_url in str(error)
+    assert "s3cr3t-signature" not in str(error) and list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture(scope="session")
+def tls_files(tmp_path_factory):
+    try:
+        return make_tls(tmp_path_factory.mktemp("tls"))
+    except FileNotFoundError:
+        pytest.skip("not run: the openssl command is not installed, and this test needs it to make a test certificate")
+
+
+@pytest.fixture
+def tls(tls_files, monkeypatch):
+    """The test certificates, with httpx trusting their authority (SSL_CERT_FILE) in this test."""
+    monkeypatch.setenv("SSL_CERT_FILE", str(tls_files.ca))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    return tls_files
+
+
+def redirect_to_storage(fake: FakeCTFd, storage: FakeCTFd, number: int, name: str, *, serve: bool = True) -> str:
+    """Script CTFd on S3: the file's URL answers with a redirect to a signed URL on the storage's host
+    (and a session cookie, as CTFd may set one), and the storage serves the file there."""
+    path = fake.file_url(number, name).split("?")[0]
+    signed = f"{storage.base_url}/bucket{path}?X-Amz-Signature=s3cr3t-signature&X-Amz-Expires=3600"
+    fake.script("GET", path, Reply(302, None, {"Location": signed, "Set-Cookie": "session=ctfd-session; Path=/"}))
+    if serve:
+        storage.script("GET", f"/bucket{path}", Reply(200, fake.challenges[number].files[name]))
+    return f"/bucket{path}"
+
+
+def test_a_file_ctfd_sends_to_object_storage_is_fetched_there_without_the_token_or_a_cookie(tmp_path, tls):
+    with FakeCTFd(sample()) as fake, FakeCTFd([], tls=tls) as storage:
+        for number, name in ((1, "hello.txt"), (2, "out.txt"), (4, "echo.bin")):
+            redirect_to_storage(fake, storage, number, name)
+        result = pulled(fake, tmp_path / "board")
+        fetched = list(storage.requests)
+    assert result.problems == () and len(result.board.challenges) == 4
+    assert (tmp_path / "board" / "baby-rsa" / "out.txt").read_bytes() == b"n = 3233\ne = 3\nc = 2201\n"
+    assert sorted(r.route.rsplit("/", 1)[1] for r in fetched) == ["echo.bin", "hello.txt", "out.txt"]
+    for request in fetched:  # the 127.0.0.1 cookie would go to any port; the token and JSON header are CTFd's
+        assert {"authorization", "cookie", "content-type"}.isdisjoint(request.headers)
+        assert request.headers["user-agent"].startswith("ctf-flightdeck/") and "X-Amz-Signature=" in request.path
+
+
+def test_a_file_host_that_refuses_the_download_is_named_and_its_signed_url_is_not(tmp_path, tls):
+    with FakeCTFd(sample()) as fake, FakeCTFd([], tls=tls) as storage:
+        where = redirect_to_storage(fake, storage, 1, "hello.txt", serve=False)
+        storage.script("GET", where, Reply(403, "<Error><Code>AccessDenied</Code></Error>"))
+        error = failure(fake, lambda c: c.download(fake.file_url(1, "hello.txt"), tmp_path))
+    assert f"the file host {storage.base_url}" in str(error) and "HTTP 403" in str(error)
+    assert "token was refused" not in str(error) and "s3cr3t-signature" not in str(error)
+    assert error.endpoint.startswith("GET /files/") and list(tmp_path.iterdir()) == []
 
 
 def test_a_download_redirect_on_the_same_origin_is_followed(tmp_path):
@@ -334,6 +392,41 @@ def test_a_download_redirect_on_the_same_origin_is_followed(tmp_path):
         fake.script("GET", moved, Reply(301, None, {"Location": real}))
         path = call(fake, lambda c: c.download(moved, tmp_path))
     assert path.read_bytes() == b"hello\n" and path.name == "hello.txt"
+
+
+def test_an_https_ctfd_never_sends_the_token_in_clear_to_its_own_host_and_port(tmp_path):
+    with FakeCTFd(sample()) as fake:  # it answers plain http on 127.0.0.1:<port>
+        port = fake.base_url.rsplit(":", 1)[1]
+        plain = f"http://127.0.0.1:{port}" + fake.file_url(1, "hello.txt")
+
+        async def run():
+            async with CTFdClient(f"https://127.0.0.1:{port}", TOKEN, backoff=0.001, max_retries=0) as c:
+                return await c.download(plain, tmp_path)  # the CTFd as given is https; the file entry says http
+
+        with pytest.raises(CTFdError) as caught:
+            asyncio.run(run())
+        assert fake.requests == []  # nothing went out, the token least of all
+    assert f"is on another host (http://127.0.0.1:{port})" in str(caught.value) and list(tmp_path.iterdir()) == []
+
+
+def test_an_https_ctfd_redirecting_a_download_to_plain_http_on_its_own_host_is_not_followed(tmp_path, tls):
+    with FakeCTFd(sample(), tls=tls) as fake:
+        url = fake.file_url(1, "hello.txt")
+        downgraded = fake.base_url.replace("https://", "http://") + url  # the same host and port
+        fake.script("GET", url.split("?")[0], Reply(302, None, {"Location": downgraded}))
+        error = failure(fake, lambda c: c.download(url, tmp_path))
+        assert len(fake.requests) == 1  # the redirect, and nothing after it
+    assert "another host" in str(error) and "only over https" in str(error) and list(tmp_path.iterdir()) == []
+
+
+def test_a_redirect_loop_on_ctfds_own_origin_is_cut_off(tmp_path):
+    with FakeCTFd(sample()) as fake:
+        url = fake.file_url(1, "hello.txt")
+        fake.script("GET", url.split("?")[0], *[Reply(302, None, {"Location": url})] * 50)
+        error = failure(fake, lambda c: c.download(url, tmp_path), max_retries=0)
+        asked = len(fake.to(url.split("?")[0]))
+    assert f"more than {MAX_REDIRECTS} times" in str(error) and asked == MAX_REDIRECTS + 1
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_file_over_the_size_cap_is_refused_and_leaves_nothing(tmp_path):
@@ -361,6 +454,26 @@ def test_a_download_never_overwrites_and_never_writes_challenge_json(tmp_path):
         again = call(fake, lambda c: c.download(fake.file_url(9, "archive.tar.gz"), tmp_path)).name
     assert names == ["hello-2.txt", "challenge-2.json", "archive.tar.gz"] and again == "archive-2.tar.gz"
     assert (tmp_path / "hello.txt").read_text() == "the player's own" and not (tmp_path / "challenge.json").exists()
+
+
+def test_a_handout_named_like_challenge_json_in_another_case_gets_a_name_of_its_own(tmp_path):
+    # on a case-insensitive file system (macOS, WSL's drvfs) "Challenge.json" IS challenge.json, which the pull
+    # writes over it; here every file system gets the same names
+    handout = b'{"api": "the challenge\'s own schema"}\n'
+    board = [FakeChallenge(1, "Json Thing", category="Web", files={"Challenge.json": handout}),
+             FakeChallenge(2, "Others", files={"CHALLENGE.JSON": b"upper", "challenge.jſon": b"long s"})]
+    with FakeCTFd(board) as fake:
+        result = pulled(fake, tmp_path / "board")
+        direct = []
+        for n, name in enumerate(("CHALLENGE.JSON", "challenge.jſon")):  # a folder each: what else is taken differs
+            (tmp_path / f"direct-{n}").mkdir()
+            direct.append(call(fake, lambda c, name=name, n=n: c.download(fake.file_url(2, name), tmp_path / f"direct-{n}")).name)
+    found = {item.challenge.id: item for item in result.board.challenges}
+    thing = found["json-thing"]
+    assert result.problems == () and thing.challenge.files == ("Challenge-2.json",)
+    assert (thing.handout / "Challenge-2.json").read_bytes() == handout
+    assert json.loads((thing.handout / "challenge.json").read_text())["name"] == "Json Thing"
+    assert direct == ["CHALLENGE-2.JSON", "challenge-2.jſon"]
 
 
 def test_a_failed_download_names_the_file_but_never_its_file_token(tmp_path):
@@ -394,9 +507,11 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them():
                        (6, "test{two}"), (7, "test{half}"))
         fake.paused = True
         got += statuses((2, "test{rsa}"))
-    assert [a.status for a in got] == ["incorrect", "correct", "already_solved", "incorrect", "incorrect", "incorrect",
+    # out of tries, CTFd answers "incorrect" with HTTP 403 before it checks the flag: here the right one
+    assert [a.status for a in got] == ["incorrect", "correct", "already_solved", "incorrect", "incorrect", "locked_out",
                                        "partial", "paused"]
-    assert got[3].message == "Incorrect. You have 1 try remaining." and got[5].message == "You have 0 tries remaining"
+    assert got[3].message == "Incorrect. You have 1 try remaining." and got[4].message == "Incorrect. You have 0 tries remaining."
+    assert got[5] == Attempt("locked_out", "You have 0 tries remaining") and 6 not in fake.solved
     assert got[7] == Attempt("paused", "Fake CTF is paused")
 
 
@@ -418,6 +533,18 @@ def test_a_failed_attempt_is_never_retried_and_says_the_outcome_is_unknown():
         error = failure(fake, lambda c: c.attempt(1, "test{hello}"), max_retries=3)
         assert len(fake.to("/api/v1/challenges/attempt")) == 1
     assert error.status == 502 and "may have reached CTFd" in str(error)
+
+
+def test_a_submit_cut_off_after_it_was_sent_says_the_flag_may_have_reached_ctfd():
+    # CTFd got the flag (and may have counted the try), then the connection dropped: never "not submitted"
+    with FakeCTFd(sample()) as fake:
+        fake.script("POST", "/api/v1/challenges/attempt", HANG_UP, HANG_UP)
+        error = failure(fake, lambda c: c.attempt(1, "test{hello}"))
+        with CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}) as verify:
+            assert verify("warmup", "test{hello}") is None
+        assert len(fake.to("/api/v1/challenges/attempt")) == 2  # both arrived, once each
+    for said in (str(error), verify.last_error):
+        assert "no answer from CTFd" in said and "may have reached CTFd" in said and "not submitted" not in said
 
 
 def test_an_attempt_status_flightdeck_does_not_know_is_an_error():
@@ -497,6 +624,83 @@ def test_connection_info_gives_the_live_origins_and_joins_the_description(tmp_pa
     assert found["warmup"].urls == () and found["warmup"].challenge.description == "Say hello."
 
 
+def test_a_challenge_with_capped_tries_says_so_in_its_description(tmp_path):
+    board = [FakeChallenge(1, "Capped", description="Guess well.", max_attempts=3), FakeChallenge(2, "One Shot", max_attempts=1),
+             FakeChallenge(3, "Free", description="Any number of tries."), FakeChallenge(4, "Unsaid", max_attempts=None)]
+    with FakeCTFd(board) as fake:
+        found = {item.challenge.id: item.challenge for item in pulled(fake, tmp_path / "board").board.challenges}
+    assert found["capped"].description == (
+        "Guess well.\n\nNote from flightdeck: CTFd allows 3 attempts at this challenge's flag, then checks no more.")
+    assert found["one-shot"].description == (
+        "Note from flightdeck: CTFd allows 1 attempt at this challenge's flag, then checks no more.")
+    assert found["free"].description == "Any number of tries." and found["unsaid"].description == ""
+
+
+def test_connection_info_that_points_at_ctfd_itself_never_makes_ctfd_a_lanes_instance(tmp_path):
+    # an instancer page served by a CTFd plugin: the lane must not get the platform as its target
+    with FakeCTFd([]) as fake:
+        on_https = fake.base_url.replace("http://", "https://")  # the same host and port, the other scheme
+        fake.add(FakeChallenge(1, "Note Keeper", connection_info=f"Start your instance at {fake.base_url}/plugins/i/1"),
+                 FakeChallenge(2, "Same Host", connection_info=f"http://127.0.0.1:31337/ or {on_https}/x"))
+        found = {item.challenge.id: item for item in pulled(fake, tmp_path / "board").board.challenges}
+    keeper, same = found["note-keeper"], found["same-host"]
+    assert keeper.urls == () and not keeper.challenge.live
+    assert keeper.challenge.description == (
+        f"Connection info: Start your instance at {fake.base_url}/plugins/i/1\n\nNote from flightdeck: the connection "
+        f"info points at CTFd itself ({fake.base_url}), which lanes never get as an instance.")
+    assert same.urls == ("http://127.0.0.1:31337",)  # another port on CTFd's host is an instance like any other
+    assert f"points at CTFd itself ({on_https})" in same.challenge.description
+
+
+def test_ctfds_own_host_on_the_other_default_port_is_ctfd_too():
+    from ctf_flightdeck.platform.ctfd import _on_ctfd  # CTFd on port 80 or 443 cannot be faked here
+
+    ctfd = httpx.URL("https://ctf.example.org/")
+    assert _on_ctfd("https://ctf.example.org", ctfd) and _on_ctfd("http://ctf.example.org", ctfd)
+    assert _on_ctfd("https://ctf.example.org:443", ctfd) and _on_ctfd("http://CTF.example.org:80", ctfd)
+    assert not _on_ctfd("http://ctf.example.org:8080", ctfd) and not _on_ctfd("https://chal.ctf.example.org", ctfd)
+    odd = httpx.URL("http://10.0.0.1:8000/ctf/")
+    assert _on_ctfd("https://10.0.0.1:8000", odd) and not _on_ctfd("http://10.0.0.1", odd)
+
+
+def test_a_connection_url_the_board_would_refuse_is_left_in_the_text_not_in_the_urls(tmp_path):
+    disguised = ("http://127.1:8080/", "http://2130706433/", "http://1.2.3.4.5/", "http://0x7f.1/", "http://10.0.0.256/")
+    assert origins_in(" ".join(disguised)) == ()  # each a loopback address in disguise, or no address at all
+    board = [FakeChallenge(1, "Short Form", connection_info="Instance: http://127.1:8080/ (or nc 127.0.0.1 9001)")]
+    with FakeCTFd(board) as fake:
+        result = pulled(fake, tmp_path / "board")
+    (item,) = result.board.challenges
+    assert result.problems == () and item.urls == ()
+    assert item.challenge.description == "Connection info: Instance: http://127.1:8080/ (or nc 127.0.0.1 9001)"
+
+
+def test_a_description_too_long_for_challenge_json_is_cut_short_and_kept_whole_in_a_file(tmp_path):
+    inline = "![diagram](data:image/png;base64," + "A" * 1_100_000 + ")"  # an image pasted into the description
+    wide = "暗号" * 100_000  # 200,000 characters, six bytes each in challenge.json
+    board = [FakeChallenge(1, "Big Image", description=inline, connection_info="nc chal.example.org 1337",
+                           files={"description.md": b"the challenge's own file"}),
+             FakeChallenge(2, "Wide Text", description=wide), FakeChallenge(3, "Small", description="x" * 150_000)]
+    lines: list[str] = []
+    with FakeCTFd(board) as fake:
+        result = call(fake, lambda c: pull(c, tmp_path / "board", event="Fake CTF", flag_format=None, progress=lines.append))
+    assert result.problems == () and len(result.board.challenges) == 3
+    found = {item.challenge.id: item for item in result.board.challenges}
+    big, wide_one, small = found["big-image"], found["wide-text"], found["small"]
+    assert big.challenge.files == ("description.md", "description-2.md")
+    assert (big.handout / "description.md").read_bytes() == b"the challenge's own file"
+    assert (big.handout / "description-2.md").read_text(encoding="utf-8") == (
+        inline + "\n\nConnection info: nc chal.example.org 1337")
+    shown = big.challenge.description
+    assert shown.startswith("![diagram](data:image/png;base64,AAAA") and len(shown) < 120_000
+    assert shown.endswith("\n\nNote from flightdeck: this description is too long for the board, so it is cut short; "
+                          "the whole of it is in the file description-2.md.\n\nConnection info: nc chal.example.org 1337")
+    assert (wide_one.handout / "description.md").read_text(encoding="utf-8") == wide
+    assert wide_one.challenge.description.startswith(wide[:1000]) and len(wide_one.challenge.description) < 20_000
+    assert small.challenge.description == "x" * 150_000 and small.challenge.files == ()  # long, but it fits: whole
+    assert lines[0] == ('added big-image: "Big Image" (misc, 100 points, 2 files; its description is cut short, '
+                        "the whole of it is in description-2.md)")
+
+
 def test_origins_are_taken_from_urls_in_the_connection_info():
     assert origins_in(None) == () and origins_in("") == () and origins_in("nc chal.example.org 31337") == ()
     assert origins_in("http://web.example.org:8080") == ("http://web.example.org:8080",)
@@ -507,6 +711,28 @@ def test_origins_are_taken_from_urls_in_the_connection_info():
     assert origins_in("http://guest:guest@web.example.org/") == ("http://web.example.org",)
     assert origins_in("http://[::1]:8080/ and http://10.0.0.5:5000/") == ("http://[::1]:8080", "http://10.0.0.5:5000")
     assert origins_in("ftp://files.example.org http://bad_port.example.org:99999 http://") == ()
+
+
+def test_text_from_ctfd_with_a_lone_surrogate_is_made_valid_before_it_is_kept_or_shown(tmp_path):
+    # "\ud800" is valid JSON, and nothing can encode it: not print(), a terminal, a log or a file
+    board = [FakeChallenge(1, "Bad \ud800 Name", category="Mi\udc00sc", description="De\ud83dsc",
+                           connection_info="nc a.example.org 1 \udfff"),
+             FakeChallenge(2, "Far \ud800", file_urls=["https://cdn.example.org/far.zip"])]
+    incorrect = {"success": True, "data": {"status": "incorrect", "message": "No \ud800 way"}}
+    with FakeCTFd(board) as fake:
+        result = pulled(fake, tmp_path / "board")
+        fake.script("POST", "/api/v1/challenges/attempt", Reply(200, incorrect))
+        attempt = call(fake, lambda c: c.attempt(1, "test{x}"))
+        fake.script("GET", "/api/v1/challenges", Reply(403, {"message": "closed \ud800 now"}))
+        error = failure(fake, lambda c: c.challenges())
+    (item,) = result.board.challenges
+    shown = (item.challenge.name, item.challenge.category, item.challenge.description)
+    assert shown == ("Bad � Name", "mi�sc", "De�sc\n\nConnection info: nc a.example.org 1 �")
+    (problem,) = result.problems
+    assert problem.startswith('challenge 2 ("Far �"): ') and attempt.message == "No � way"
+    assert "closed � now" in str(error)
+    for text in (*shown, problem, attempt.message, str(error)):
+        text.encode("utf-8")  # strict: raises on a lone surrogate
 
 
 def test_slugs_are_board_ids_and_unique(tmp_path):
@@ -542,6 +768,30 @@ def test_a_wave_re_pull_keeps_every_folder_and_adds_the_new_ones(tmp_path):
     assert (dest / "warmup" / "challenge.json").read_bytes() == before
     assert (dest / "warmup" / "notes.txt").read_text() == "the player's notes"
     assert len(result.board.challenges) == 5 and dict(result.ids)["second-wave"] == 5 and load_ids(dest)["warmup"] == 1
+
+
+def test_a_re_pull_keeps_board_json_and_may_add_a_flag_format_it_lacked(tmp_path):
+    with FakeCTFd(sample()) as fake:
+        new = pulled(fake, tmp_path / "spring", event=None, flag_format=None)
+        first = pulled(fake, tmp_path / "board", event="Spring CTF", flag_format=None)
+        kept = pulled(fake, tmp_path / "board", event=None, flag_format=None)
+        added = pulled(fake, tmp_path / "board", event=None, flag_format=FLAG_FORMAT)
+    assert (new.board.event, new.board.flag_format) == ("spring", None)  # a new board: the folder's name
+    assert (first.board.event, kept.board.event, kept.board.flag_format) == ("Spring CTF", "Spring CTF", None)
+    assert (added.board.event, added.board.flag_format) == ("Spring CTF", FLAG_FORMAT)
+
+
+def test_a_re_pull_into_a_board_whose_board_json_was_broken_by_hand_says_so_first(tmp_path):
+    dest = tmp_path / "board"
+    with FakeCTFd(sample()) as fake:
+        pulled(fake, dest)
+        (dest / "board.json").write_text('{"event": "Fake CTF", "flag_format": "(unclosed"}')
+        asked = len(fake.requests)
+        with pytest.raises(BoardError) as caught:
+            pulled(fake, dest, event=None, flag_format=None)
+        assert len(fake.requests) == asked  # nothing asked of CTFd, and board.json left for the player to fix
+    assert "board.json" in str(caught.value) and "flag_format" in str(caught.value)
+    assert json.loads((dest / "board.json").read_text())["flag_format"] == "(unclosed"
 
 
 def test_a_challenge_that_cannot_be_pulled_is_left_out_and_retried_next_time(tmp_path):
@@ -584,16 +834,52 @@ def test_pull_board_is_the_whole_board_or_pull_incomplete(tmp_path):
     assert str(caught.value).startswith("1 challenge not pulled: ")
 
 
+def test_a_challenge_that_keeps_failing_is_left_out_and_the_ones_after_it_are_pulled(tmp_path):
+    # a challenge plugin that crashes, or one handout the proxy cannot serve, while CTFd itself answers
+    for where in ("details", "file"):
+        dest = tmp_path / where
+        with FakeCTFd(sample()) as fake:
+            route = "/api/v1/challenges/2" if where == "details" else fake.file_url(2, "out.txt").split("?")[0]
+            fake.script("GET", route, *[Reply(500, {"message": "Internal Server Error"})] * 20)
+            first = pulled(fake, dest, max_retries=1)
+            again = pulled(fake, dest, max_retries=1)
+            assert [len(fake.to(f"/api/v1/challenges/{n}")) for n in (3, 4)] == [1, 1]  # pulled once, then kept
+            assert len(fake.to("/api/v1/challenges")) == 4  # each pull lists, then asks again after the failure
+        assert first.added == ("warmup", "login-portal", "echo-service") and again.added == ()
+        (problem,) = first.problems
+        assert problem.startswith('challenge 2 ("Baby RSA"): ') and "HTTP 500" in problem and again.problems == (problem,)
+        assert load_ids(dest) == {"warmup": 1, "login-portal": 3, "echo-service": 4}
+
+
 def test_a_pull_stops_when_ctfd_stops_answering_and_the_next_one_goes_on(tmp_path):
     dest = tmp_path / "board"
     with FakeCTFd(sample()) as fake:
-        fake.script("GET", "/api/v1/challenges/2", *[Reply(503, "down")] * 2)
-        error = failure(fake, lambda c: pull(c, dest, event="Fake CTF", flag_format=None), max_retries=1)
-        assert fake.to("/api/v1/challenges/3") == []  # it stopped instead of failing every challenge left
-        assert error.retryable and "pull again to go on" in str(error) and "1 new challenge written" in str(error)
+        fake.challenges[2].file_urls = ["https://cdn.example.org/x/far.zip"]  # a problem before CTFd goes down
+        # the list comes through, then CTFd goes down: challenge 3's details fail, and so does the list asked again
+        fake.script("GET", "/api/v1/challenges", Reply(200, fake.listing()), *[Reply(503, "down")] * 2)
+        fake.script("GET", "/api/v1/challenges/3", *[Reply(503, "down")] * 2)
+        with pytest.raises(PullStopped) as caught:
+            call(fake, lambda c: pull(c, dest, event="Fake CTF", flag_format=None), max_retries=1)
+        error = caught.value
+        assert fake.to("/api/v1/challenges/4") == []  # it stopped instead of failing every challenge left
+        assert error.retryable and error.endpoint == "GET /api/v1/challenges" and error.added == ("warmup",)
+        rsa, web = error.problems  # the problems met so far are kept, the one it stopped at included
+        assert rsa.startswith('challenge 2 ("Baby RSA"): ') and web.startswith('challenge 3 ("Login Portal"): ')
+        assert rsa in str(error) and web in str(error) and "HTTP 503" in error.reason
+        assert "pull again to go on" in error.reason and "1 new challenge written" in error.reason
         assert load_ids(dest) == {"warmup": 1}
+        fake.challenges[2].file_urls = None
         result = pulled(fake, dest)
     assert result.added == ("baby-rsa", "login-portal", "echo-service") and len(result.board.challenges) == 4
+
+
+def test_a_token_refused_partway_stops_the_pull_at_once(tmp_path):
+    with FakeCTFd(sample()) as fake:
+        fake.script("GET", "/api/v1/challenges/2", Reply(401, {"message": "Your access token is invalid"}))
+        with pytest.raises(PullStopped) as caught:
+            pulled(fake, tmp_path / "board")
+        assert len(fake.to("/api/v1/challenges")) == 1 and fake.to("/api/v1/challenges/3") == []
+    assert caught.value.status == 401 and caught.value.added == ("warmup",) and "refused the API token" in str(caught.value)
 
 
 def test_a_pull_into_a_folder_that_is_not_a_ctfd_board_is_refused(tmp_path):
@@ -685,8 +971,8 @@ def test_the_verifier_answers_true_false_or_none_with_the_reason():
         verify = CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1, "baby-rsa": 2, "two-parts": 7})
         assert verify("warmup", "test{nope}") is False and verify.last_attempt.status == "incorrect"
         assert verify.last_error is None
-        assert verify("warmup", "test{hello}") is True and verify("warmup", "test{hello}") is True
-        assert verify.last_attempt.status == "already_solved"
+        assert verify("warmup", "test{hello}") is True and verify.last_error is None
+        assert verify("warmup", "test{hello}") is None and verify.last_attempt.status == "already_solved"
         assert verify("two-parts", "test{half}") is None and "only part of the answer" in verify.last_error
         fake.script("POST", "/api/v1/challenges/attempt",
                     Reply(429, {"success": True, "data": {"status": "ratelimited", "message": "Slow down."}}))
@@ -708,6 +994,26 @@ def test_the_verifier_never_retries_and_keeps_the_reason():
         assert len(fake.to("/api/v1/challenges/attempt")) == 1
     assert "HTTP 503" in verify.last_error and "may have reached CTFd" in verify.last_error
     assert TOKEN not in verify.last_error
+
+
+def test_the_verifier_never_blocks_the_console_much_longer_than_its_timeout():
+    # httpx's timeouts bound each read; a server that sends a byte now and then never trips them
+    incorrect = {"success": True, "data": {"status": "incorrect", "message": "Incorrect"}}
+    with FakeCTFd(sample()) as fake, CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}, timeout=1.0) as verify:
+        for stalled in (Reply(200, incorrect, drip=0.2), Reply(200, incorrect, drip=0.2, drip_head=True)):
+            fake.script("POST", "/api/v1/challenges/attempt", stalled)  # 14 s for the body; 30 s with the head
+            started = time.monotonic()
+            assert verify("warmup", "test{hello}") is None
+            assert time.monotonic() - started < 2.5
+            assert "no complete answer from CTFd" in verify.last_error and "within 1 s" in verify.last_error
+            assert "may have reached CTFd" in verify.last_error and verify.last_attempt is None
+
+
+def test_the_verifier_refuses_an_answer_too_big_to_be_ctfds():
+    with FakeCTFd(sample()) as fake, CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}) as verify:
+        fake.script("POST", "/api/v1/challenges/attempt", Reply(200, b"x" * 100_000))
+        assert verify("warmup", "test{hello}") is None
+    assert "more than 65,536 bytes" in verify.last_error and "may have reached CTFd" in verify.last_error
 
 
 def test_the_verifier_with_ctfd_unreachable_says_the_flag_was_not_submitted():
@@ -783,3 +1089,50 @@ def test_a_pulled_board_plays_on_the_deck_with_the_ctfd_verifier(tmp_path):
     sent = [r.json for r in fake.to("/api/v1/challenges/attempt")]
     assert sent == [{"challenge_id": 2, "submission": "test{wrong}"}, {"challenge_id": 2, "submission": "test{rsa}"},
                     {"challenge_id": 1, "submission": "test{hello}"}]
+
+
+def one_lane_deck(verify, challenge: Challenge, driver: Driver, **config) -> tuple[Deck, object]:
+    """A deck with one lane on `challenge`, submitting through `verify` after the player approves."""
+    config.setdefault("submit", "confirm")
+    deck = Deck(DeckConfig(event="Fake CTF", flag_format=FLAG_FORMAT, models=("m",), **config), driver, Clock(),
+                verify=verify)
+    deck.release([challenge], [QueueEntry(challenge.id, "m")])
+    (lane,) = deck.lanes_on(challenge.id)
+    return deck, lane
+
+
+def test_a_flag_ctfd_did_not_check_for_want_of_tries_is_not_remembered_as_wrong():
+    # Out of tries, CTFd answers {"status": "incorrect"} with HTTP 403 before it looks at the flag.
+    with FakeCTFd([FakeChallenge(1, "One Try", category="Crypto", flag="test{right}", max_attempts=1)]) as fake:
+        with CTFdVerifier(fake.base_url, TOKEN, {"one-try": 1}) as verify:
+            assert verify("one-try", "test{wrong}") is False  # the last real try: CTFd checked it
+            assert verify.last_attempt == Attempt("incorrect", "Incorrect. You have 0 tries remaining.")
+            driver = Driver()
+            deck, lane = one_lane_deck(verify, Challenge(id="one-try", name="One Try", category="cry", points=100), driver)
+            deck.report(lane.id, TurnReport(action="solve", flag="test{right}"))
+            deck.apply(iv.Approve(lane.id))
+            assert verify.last_attempt == Attempt("locked_out", "You have 0 tries remaining")
+            assert "did not check the flag" in verify.last_error and "no tries left" in verify.last_error
+            assert "You have 0 tries remaining" in verify.last_error
+            assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM  # the player says how it went
+            assert deck.not_flag("one-try", "test{right}") is None and driver.rejected_flags == []
+            assert deck.summary(lane).not_flags == ()
+        assert len(fake.to("/api/v1/challenges/attempt")) == 2
+
+
+def test_a_flag_for_a_challenge_already_solved_on_ctfd_is_not_counted_correct():
+    # CTFd answers already_solved as soon as the account (the team) has a solve, without checking the flag
+    with FakeCTFd(sample()) as fake:
+        fake.solved = {2}  # a teammate solved Baby RSA, whose flag is test{rsa}
+        with CTFdVerifier(fake.base_url, TOKEN, {"baby-rsa": 2}) as verify:
+            events = []
+            deck, lane = one_lane_deck(verify, Challenge(id="baby-rsa", name="Baby RSA", category="cry", points=100),
+                                       Driver(), team=True)
+            deck.subscribe(events.append)
+            deck.report(lane.id, TurnReport(action="solve", flag="test{a_wrong_guess}"))
+            deck.apply(iv.Approve(lane.id))
+            assert verify.last_attempt == Attempt("already_solved", "You already solved this")
+            assert "already solved" in verify.last_error and "did not check this flag" in verify.last_error
+            assert deck.challenges["baby-rsa"].status is not ChallengeStatus.SOLVED
+            assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM
+            assert [e for e in events if e.kind is EventKind.SUBMIT] == []  # no flag recorded as the solution

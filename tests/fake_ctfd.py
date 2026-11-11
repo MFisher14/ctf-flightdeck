@@ -15,13 +15,19 @@ fake behaves as CTFd 3.x does:
   /files/<dir>/<name>?token=<file token>, as CTFd's are;
 - GET /files/<dir>/<name>: the file (the file token or the API token lets it through);
 - POST /api/v1/challenges/attempt: a status in the data whatever the HTTP status: correct,
-  incorrect (with the tries left when max_attempts is set), already_solved, partial,
-  paused (403) and, out of tries, incorrect with 403;
+  incorrect (with the tries left when max_attempts is set), already_solved (for any flag,
+  once solved), partial, paused (403) and, out of tries, incorrect with 403 (both of the
+  last two sent before the flag is looked at);
 - GET /api/v1/teams/me/solves (404 in users mode, 403 when `no_team`) and
   GET /api/v1/users/me/solves.
 
 Tests script replies ahead of these for one method and path (errors, 429 with Retry-After,
 redirects, bodies that are not JSON, a hang-up), and read back every request in `requests`.
+
+With `tls` (from make_tls(), which needs the openssl command) it answers https instead, with
+a certificate for 127.0.0.1 from a throwaway authority: a client trusts it through
+SSL_CERT_FILE. It stands for a CTFd on https, or for the object storage a CTFd sends file
+downloads to.
 """
 
 from __future__ import annotations
@@ -30,14 +36,18 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import socket
 import socketserver
+import ssl
+import subprocess
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token has this shape
@@ -89,6 +99,8 @@ class Reply:
     headers: dict[str, str] = field(default_factory=dict)
     hang_up: bool = False  # close the connection without answering
     until_close: bool = False  # no Content-Length: the body ends when the connection closes
+    drip: float = 0.0  # seconds between the bytes of the body, sent one at a time (a server that stalls)
+    drip_head: bool = False  # with drip: the status line and headers too
 
 
 HANG_UP = Reply(hang_up=True)
@@ -114,6 +126,52 @@ class Request:
             return None
 
 
+@dataclass(frozen=True)
+class TLS:
+    """A throwaway certificate authority, and a server certificate for 127.0.0.1 it signed."""
+
+    ca: Path  # what a client must trust: point SSL_CERT_FILE at it
+    cert: Path
+    key: Path
+
+
+_OPENSSL_CONFIG = """\
+[req]
+distinguished_name = dn
+[dn]
+[ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+"""
+
+
+def make_tls(folder: Path) -> TLS:
+    """Make the certificates in `folder` with the openssl command (OpenSSL or LibreSSL). Raises
+    FileNotFoundError when openssl is not installed, CalledProcessError when it fails."""
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        raise FileNotFoundError("openssl")
+    (folder / "openssl.cnf").write_text(_OPENSSL_CONFIG)
+    for args in (
+        ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+         "-subj", "/CN=ctf-flightdeck test CA", "-config", "openssl.cnf", "-extensions", "ca"],
+        ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
+         "-subj", "/CN=127.0.0.1", "-config", "openssl.cnf"],
+        ["x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-set_serial", "1",
+         "-out", "server.pem", "-days", "2", "-extfile", "openssl.cnf", "-extensions", "server"],
+    ):
+        subprocess.run([openssl, *args], cwd=folder, check=True, capture_output=True, timeout=120)
+    return TLS(folder / "ca.pem", folder / "server.pem", folder / "server.key")
+
+
 def not_found() -> Reply:
     return Reply(404, {"message": "The requested URL was not found on the server."})
 
@@ -134,6 +192,7 @@ class FakeCTFd:
         team_mode: bool = True,
         page_size: int | None = None,
         name: str = "Fake CTF",
+        tls: TLS | None = None,
     ) -> None:
         self.challenges: dict[int, FakeChallenge] = {c.id: c for c in challenges}
         self.token = token
@@ -148,8 +207,8 @@ class FakeCTFd:
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
         self._lock = threading.Lock()
-        self._httpd = _Server(self)
-        self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
+        self._httpd = _Server(self, tls)
+        self.base_url = f"{'https' if tls else 'http'}://127.0.0.1:{self._httpd.server_address[1]}"
         self._thread: threading.Thread | None = None
 
     def __enter__(self) -> FakeCTFd:
@@ -188,6 +247,11 @@ class FakeCTFd:
         """The URL CTFd would list for a challenge's file (with its file token)."""
         folder = _folder(challenge_id, name)
         return f"/files/{folder}/{quote(name, safe='')}?token={_file_token(folder)}"
+
+    def listing(self) -> dict:
+        """The answer CTFd would give GET /api/v1/challenges now, unpaged (to script it ahead of failures)."""
+        with self._lock:
+            return {"success": True, "data": self._entries()}
 
     # ------------------------------------------------------------------ answering
 
@@ -252,8 +316,11 @@ class FakeCTFd:
             "template": "/plugins/challenges/assets/view.html", "script": "/plugins/challenges/assets/view.js",
         }
 
+    def _entries(self) -> list[dict]:
+        return [self._entry(c) for c in sorted(self.challenges.values(), key=lambda c: (c.value, c.id))]
+
     def _list(self, query: dict) -> Reply:
-        entries = [self._entry(c) for c in sorted(self.challenges.values(), key=lambda c: (c.value, c.id))]
+        entries = self._entries()
         if self.page_size is None:
             return Reply(200, {"success": True, "data": entries})
         page = int(query.get("page", ["1"])[0])
@@ -318,8 +385,8 @@ class FakeCTFd:
         c = self.challenges.get(number) if isinstance(number, int) else None
         if c is None or c.type == "hidden":
             return not_found()
-        if number in self.solved:
-            return Reply(200, {"success": True, "data": {"status": "already_solved", "message": "Correct but you already solved this"}})
+        if number in self.solved:  # answered before the flag is looked at, as CTFd does
+            return Reply(200, {"success": True, "data": {"status": "already_solved", "message": "You already solved this"}})
         fails = self.fails.get(number, 0)
         if c.max_attempts and fails >= c.max_attempts:
             return Reply(403, {"success": True, "data": {"status": "incorrect", "message": "You have 0 tries remaining"}})
@@ -363,17 +430,43 @@ class _Server(ThreadingHTTPServer):
     """The HTTP server. It tracks its connections and request threads, so stopping can hang
     up on clients and wait for the threads, and `requests` is final once it has."""
 
-    def __init__(self, fake: FakeCTFd) -> None:
+    def __init__(self, fake: FakeCTFd, tls: TLS | None) -> None:
         self.fake = fake
         self._open: set[socket.socket] = set()
         self._workers: list[threading.Thread] = []
         self._track = threading.Lock()
+        self._tls = None
+        if tls is not None:
+            self._tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            self._tls.load_cert_chain(tls.cert, tls.key)
         super().__init__(("127.0.0.1", 0), _Handler)
 
     def server_bind(self) -> None:
         # HTTPServer.server_bind looks up the host's full name, which can stall on some networks.
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]
+
+    def finish_request(self, request, client_address) -> None:
+        if self._tls is None:
+            super().finish_request(request, client_address)
+            return
+        request.settimeout(10)
+        try:
+            secure = self._tls.wrap_socket(request, server_side=True)  # the handshake, in this request's thread
+        except (ssl.SSLError, OSError):
+            return  # a client that does not speak TLS (plain http sent here), or hung up
+        with self._track:
+            self._open.discard(request)
+            self._open.add(secure)
+        try:
+            self.RequestHandlerClass(secure, client_address, self)
+        finally:
+            with self._track:
+                self._open.discard(secure)
+            try:
+                secure.close()
+            except OSError:
+                pass
 
     def process_request(self, request, client_address) -> None:
         worker = threading.Thread(
@@ -443,6 +536,9 @@ class _Handler(BaseHTTPRequestHandler):
         headers.update(reply.headers)
         if reply.until_close:
             headers["Connection"] = "close"
+        if reply.drip:
+            self._drip(reply, headers, data)
+            return
         try:
             self.send_response(reply.status)
             for name, value in headers.items():
@@ -455,6 +551,25 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         if reply.until_close:
             self.close_connection = True
+
+    def _drip(self, reply: Reply, headers: dict[str, str], data: bytes) -> None:
+        """The answer a byte at a time, `reply.drip` seconds apart (each read gets a byte in time,
+        so no per-read timeout ever fires)."""
+        lines = [f"HTTP/1.1 {reply.status} {self.responses.get(reply.status, ('',))[0]}"]
+        lines += [f"{name}: {value}" for name, value in headers.items()]
+        if not any(name.lower() == "content-length" for name in headers):
+            lines.append(f"Content-Length: {len(data)}")
+        head = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
+        self.close_connection = True
+        try:
+            if not reply.drip_head:
+                self.wfile.write(head)
+                head = b""
+            for byte in head + data:
+                self.wfile.write(bytes([byte]))
+                time.sleep(reply.drip)
+        except OSError:
+            pass  # the client gave up, or the fake is stopping
 
     def log_message(self, format: str, *args: object) -> None:
         pass
