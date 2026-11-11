@@ -16,10 +16,14 @@
 
 `summary()` is the same run in a few plain lines for the terminal.
 
-Who solved a challenge is the first solve in the log: a lane's flag the platform (or the
-player) accepted, an L1 engine's "solved" result (unless a submit says its flag was wrong),
-a teammate's solve, or the player's own (a submit with no lane, or a solve recorded for
-"me"). `solves()` gives them, one per challenge.
+Who solved a challenge is the first solve in the log: a flag accepted (a submit event with
+`correct` true: the platform checked it, or the player said it accepted it), a teammate's
+solve, or the player's own (a solve recorded for "me"). An accepted flag is L1's when an
+earlier `l1` event on that challenge reported it, whatever that event's status and whether
+or not a lane submitted it; otherwise it is the submitting lane's (yours, with no lane).
+An L1 result alone is never a solve: "solved" there means found, and only the platform
+accepts a flag (l1/result.py). writeup.solves() credits accepted flags by the same rule.
+`solves()` gives them, one per challenge.
 
 Everything read from a run is untrusted: challenge names, alert reasons, hints, flags,
 commands, model names, even lane ids. In the Markdown, untrusted text is one line with
@@ -152,6 +156,12 @@ def _int(value: object, default: int = 0) -> int:
     return int(number) if number is not None else default
 
 
+def _flags(data: Mapping[str, object]) -> list[str]:
+    """An L1 event's flags: the non-empty strings in its list (none when it is not a list)."""
+    flags = data.get("flags")
+    return [f for f in flags if isinstance(f, str) and f] if isinstance(flags, list) else []
+
+
 @dataclass(frozen=True)
 class Solve:
     """Who solved a challenge, and when."""
@@ -159,9 +169,10 @@ class Solve:
     challenge: str
     by: str  # "lane", "l1", "teammate" or "player"
     who: str  # the lane id, the L1 engine, the teammate's handle, or "me"
-    at: float
+    at: float | None  # None: the log's time for it is not a number
     index: int  # the event's position in the run log
     flag: str | None = None
+    lane: str | None = None  # the lane that submitted the accepted flag (an L1 flag goes through one)
 
 
 @dataclass
@@ -519,37 +530,33 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
 
 
 def solves(record: RunRecord) -> dict[str, Solve]:
-    """Who solved each solved challenge: the first solve in the log, by challenge id."""
-    rejected: dict[str, set[str]] = {}
-    for event in record.of(EventKind.SUBMIT.value):
-        if event.challenge and event.data.get("correct") is False:
-            rejected.setdefault(event.challenge, set()).add(_str(event.data.get("flag")))
-    l1_flags: dict[str, dict[str, str]] = {}  # challenge -> flag -> engine
+    """Who solved each solved challenge: the first solve in the log, by challenge id.
+
+    A solve is an accepted flag (a submit event with `correct` true), a teammate's solve or
+    the player's own. An accepted flag that an earlier `l1` event on the challenge reported
+    (any status) is L1's, as writeup.solves() has it; an L1 result alone is never a solve."""
+    l1_flags: dict[str, dict[str, str]] = {}  # challenge -> flag -> the first engine that reported it
     found: dict[str, Solve] = {}
     for index, event in enumerate(record.events):
         cid, data = event.challenge, event.data
         if not cid or cid in found:
             continue
-        if event.kind == L1 and _str(data.get("status")) == "solved":
+        at = _num(event.at)
+        if event.kind == L1:
             engine = _str(data.get("engine")) or "?"
-            flags = [f for f in data.get("flags") or () if isinstance(f, str)] if isinstance(data.get("flags"), list) else []
-            for flag in flags:
+            for flag in _flags(data):
                 l1_flags.setdefault(cid, {}).setdefault(flag, engine)
-            good = [f for f in flags if f not in rejected.get(cid, set())]
-            if flags and not good:
-                continue  # every flag it found was submitted and rejected
-            found[cid] = Solve(cid, "l1", engine, event.at, index, good[0] if good else None)
         elif event.kind == EventKind.SUBMIT and data.get("correct") is True:
             flag = _str(data.get("flag"))
-            if event.lane:
-                found[cid] = Solve(cid, "lane", event.lane, event.at, index, flag)
-            elif flag in l1_flags.get(cid, {}):
-                found[cid] = Solve(cid, "l1", l1_flags[cid][flag], event.at, index, flag)
+            if flag and flag in l1_flags.get(cid, {}):
+                found[cid] = Solve(cid, "l1", l1_flags[cid][flag], at, index, flag, event.lane)
+            elif event.lane:
+                found[cid] = Solve(cid, "lane", event.lane, at, index, flag, event.lane)
             else:
-                found[cid] = Solve(cid, "player", ME, event.at, index, flag)
+                found[cid] = Solve(cid, "player", ME, at, index, flag)
         elif event.kind == EventKind.TEAMMATE and data.get("solved") is True:
             who = _str(data.get("who"))
-            found[cid] = Solve(cid, "player" if who == ME else "teammate", who, event.at, index)
+            found[cid] = Solve(cid, "player" if who == ME else "teammate", who, at, index)
     return found
 
 
@@ -612,8 +619,9 @@ def _judged(steps: Sequence[Step], lanes: Mapping[str, LaneFacts], solved: Mappi
             continue
         solver = lanes.get(solve.who)
         turns = solver.turns_between(step.index, solve.index) if solver else 0
-        seconds = solve.at - step.at
-        out.append(Judged(step, solve, turns, seconds, turns <= HELP_TURNS or seconds <= HELP_SECONDS))
+        seconds = solve.at - step.at if solve.at is not None and step.at is not None else None
+        helped = turns <= HELP_TURNS or (seconds is not None and seconds <= HELP_SECONDS)
+        out.append(Judged(step, solve, turns, seconds, helped))
     return out
 
 
@@ -782,15 +790,15 @@ def _entry(flight: Flight, index: int, event: EventLine, solve: Solve | None, st
     mark = " (the solve)" if solve is not None and solve.index == index else ""
     if kind == EventKind.RELEASE:
         return f"released ({md_text(data.get('label') or 'release')})"
-    if kind == L1:
-        flags = [f for f in data.get("flags") or () if isinstance(f, str)] if isinstance(data.get("flags"), list) else []
+    if kind == L1:  # never the solve itself: its flag is, once accepted
+        flags = _flags(data)
         seconds = _num(data.get("seconds"))
         text = f"L1 {md_text(data.get('engine') or '?')}: {md_text(data.get('status') or '?')}"
         text += f" in {seconds:.1f}s" if seconds is not None else ""
         if flags:
             text += ", " + ", ".join(md_code(f) for f in flags[:3]) + (f" and {len(flags) - 3} more" if len(flags) > 3 else "")
         notes = _str(data.get("notes"))
-        return text + (f": {md_text(notes)}" if notes else "") + mark
+        return text + (f": {md_text(notes)}" if notes else "")
     if kind == EventKind.LANE_START:
         facts = flight.lanes.get(event.lane or "")
         text = f"{lane} started on {md_text(data.get('model') or '?')}"
@@ -823,6 +831,8 @@ def _entry(flight: Flight, index: int, event: EventLine, solve: Solve | None, st
         how = " (you said the platform accepted it)" if ok is True and data.get("by") == "player" else ""
         how = " (you said the platform rejected it)" if ok is False and data.get("by") == "player" else how
         who = lane if event.lane else "you"
+        if mark and solve is not None and solve.by == "l1":
+            mark = f" (the solve: the flag L1 engine {md_text(solve.who)} found)"
         return f"{who} submitted {md_code(data.get('flag'))}: {verdict}{how}{mark}"
     if kind == EventKind.TEAMMATE:
         who = md_text(data.get("who") or "a teammate")
