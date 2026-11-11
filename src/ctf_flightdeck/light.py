@@ -82,6 +82,13 @@ MAX_ANSWER = 200  # characters a reply that names one option can have, wrapping 
 OPENAI_TOKENS = {HINT: 256, JUDGE: 256, SUMMARY: 512}
 ANTHROPIC_TOKENS = {HINT: 1024, JUDGE: 1024, SUMMARY: 1024}
 
+# Thinking off, with each request of an openai engine whose [light] thinking is false
+# (config.light_thinking()): a model that reasons first fills those caps with its reasoning and
+# answers nothing. Ollama's OpenAI-compatible /v1 reads reasoning_effort "none" and ignores
+# chat_template_kwargs; mlx_lm.server (0.32) reads chat_template_kwargs per request, over its
+# --chat-template-args, and ignores reasoning_effort. A model with no thinking ignores both.
+THINKING_OFF = {"reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False}}
+
 _ANSWER = re.compile(r"[\s\"'`*_]*([a-z0-9]+(?:[ _-]+[a-z0-9]+)*)[\s\"'`*_]*[.!]?[\s\"'`*_]*")
 _WORD = re.compile(r"[a-z0-9]+")
 _THINK = re.compile(r"\s*<think>.*?</think>", re.S | re.I)
@@ -589,8 +596,10 @@ def build(config: LightConfig, key: str | None, *, cactus: ModuleType | None = N
     try:
         if engine == OPENAI:
             from .agent.client import ModelClient
+            from .config import light_thinking
 
-            client = ModelClient(config.base_url, key, timeout=config.timeout, max_retries=0)
+            client = ModelClient(config.base_url, key, timeout=config.timeout, max_retries=0,
+                                 extra_body=None if light_thinking(config) else THINKING_OFF)
             return ModelLight(OPENAI, client, config.model, price=config.price, timeout=config.timeout,
                               tokens=OPENAI_TOKENS, temperature=0.0, free=on_this_machine(config.base_url))
         if engine == ANTHROPIC:
