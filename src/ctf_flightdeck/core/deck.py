@@ -110,6 +110,8 @@ class Deck:
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
+        self.listener_errors: list[str] = []  # listeners that raised (shown when the run ends)
+        self._warning_listener_failure = False
         self._flag_re = re.compile(config.flag_format)
         self._thread = threading.get_ident()
         driver.attach(self)
@@ -142,8 +144,8 @@ class Deck:
     def totals(self) -> tuple[int, float, bool]:
         """Tokens and known dollars over all lanes, and whether any lane has no known price."""
         lanes = self.lanes.values()
-        known = [lane.dollars for lane in lanes if lane.dollars is not None]
-        return sum(lane.tokens for lane in lanes), sum(known), len(known) < len(lanes)
+        return (sum(lane.tokens for lane in lanes), sum(lane.known_dollars for lane in lanes),
+                any(lane.dollars is None for lane in lanes))
 
     def subscribe(self, listener: Callable[[Event], None]) -> Callable[[], None]:
         """Call `listener` with every new event. Returns a function that unsubscribes."""
@@ -364,11 +366,23 @@ class Deck:
         lane.tokens += rep.tokens
         lane.cached_tokens += rep.cached_tokens
         if rep.dollars is None:
+            lane.unpriced += 1
             if lane.dollars is not None and lane.dollar_cap:
                 self._unpriced(lane)
             lane.dollars = None
-        elif lane.dollars is not None:
-            lane.dollars += rep.dollars
+        else:
+            lane.known_dollars += rep.dollars
+            if lane.dollars is not None:
+                lane.dollars += rep.dollars
+        if not rep.turn and (rep.tokens or rep.dollars):
+            self._emit(
+                EventKind.SPEND,
+                f"{lane.id} spent {rep.tokens} tokens outside a turn" + (f": {rep.why}" if rep.why else ""),
+                lane.id,
+                lane.challenge_id,
+                data={"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": rep.dollars,
+                      "model": rep.model or lane.model, "why": rep.why},
+            )
         lane.last_active_at = now
         if rep.action:
             lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE, ActionKind.STEP))
@@ -1138,7 +1152,23 @@ class Deck:
         event = Event(self.now, kind, text, lane, challenge, alert, data or {})
         self.events.append(event)
         for listener in list(self._listeners):
-            listener(event)
+            try:
+                listener(event)
+            except Exception as exc:  # a listener that fails (the run log on a full disk) must not break
+                self._listener_failed(listener, exc)  # the deck, or the lane whose report this was
+
+    def _listener_failed(self, listener: Callable[[Event], None], exc: Exception) -> None:
+        name = getattr(listener, "__qualname__", type(listener).__name__)
+        problem = f"{name}: {type(exc).__name__}: {exc}"
+        self.listener_errors.append(problem)
+        if self._warning_listener_failure:  # the warning itself failed in a listener: never loop
+            return
+        self._warning_listener_failure = True
+        try:
+            self._emit(EventKind.WARNING, f"something that follows the run failed and missed events: {problem}",
+                       data={"listener": name})
+        finally:
+            self._warning_listener_failure = False
 
 
 def summary_lines(summary: EscalationSummary) -> list[str]:

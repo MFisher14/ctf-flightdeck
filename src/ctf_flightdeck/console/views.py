@@ -299,7 +299,10 @@ def lane_cells(deck: Deck, lane: Lane, selected: bool = False) -> dict[str, Text
     ch = deck.challenges[lane.challenge_id]
     dim = theme.MUTED if lane.finished else ""
     idle = lane.idle(deck.now)
-    cost = f"${fmt.dollars(lane.dollars, short=True)}" if lane.dollars is not None else "-"
+    if lane.dollars is not None:
+        cost = f"${fmt.dollars(lane.dollars, short=True)}"
+    else:  # some spend has no price: show what is known, as "at least"
+        cost = f"${fmt.dollars(lane.known_dollars, short=True)}+" if lane.known_dollars else "-"
     return {
         "bar": Text("▌", style=theme.ACCENT) if selected else Text(" "),
         "!": attention_cell(lane),
@@ -438,7 +441,8 @@ def focus_title(deck: Deck, lane: Lane) -> Text:
     out.append(untrusted(lane.model, one_line=True), theme.CYAN)
     out.append(" · ")
     out.append(lane.state.value, STATE_COLOR[lane.state])
-    out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · ${fmt.dollars(lane.dollars)}", theme.MUTED)
+    spent = fmt.dollars(lane.dollars) if lane.dollars is not None else (f"{fmt.dollars(lane.known_dollars)}+" if lane.known_dollars else "-")
+    out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · ${spent}", theme.MUTED)
     if not lane.finished:
         out.append(f" · idle {fmt.duration(lane.idle(deck.now))}", theme.MUTED)
     return out

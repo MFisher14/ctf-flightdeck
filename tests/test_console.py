@@ -1257,8 +1257,14 @@ def test_cost_shows_a_dash_when_the_price_is_unknown():
         await step(pilot, app, 2)
         assert cell(app, "lanes", lane.id, "cost").startswith("$")
         lane.dollars = None
-        await step(pilot, app)
-        assert cell(app, "lanes", lane.id, "cost") == "-"
+        lane.known_dollars = 0.0
+        app.refresh_view()  # redraw without moving the mock clock (its lane would report more spend)
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == "-"  # nothing known
+        lane.known_dollars = 0.5
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == "$.50+"  # the known part, and more unpriced
         assert re.search(r"\$\d+\.\d\d\+", region_text(app, "#header"))  # the total says it is partial
 
     drive(app, script)

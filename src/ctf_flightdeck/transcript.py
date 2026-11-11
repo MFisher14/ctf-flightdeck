@@ -43,7 +43,7 @@ class TranscriptLog:
         lines = [{
             "lane": lane.id, "challenge": challenge.id, "name": challenge.name, "category": challenge.category,
             "points": challenge.points, "model": lane.model, "state": lane.state.value, "result": lane.result,
-            "turns": lane.turns, "tokens": lane.tokens, "cached_tokens": lane.cached_tokens, "dollars": lane.dollars,
+            "turns": lane.turns, "tokens": lane.tokens, "cached_tokens": lane.cached_tokens, "dollars": lane.dollars, "known_dollars": lane.known_dollars,
             "started_at": lane.started_at, "ended_at": lane.ended_at, "parent": lane.parent, "attempt": lane.attempt,
             "plan": lane.plan,
         }]

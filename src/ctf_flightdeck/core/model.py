@@ -243,7 +243,9 @@ class Lane:
     turns: int = 0
     tokens: int = 0
     cached_tokens: int = 0  # prompt tokens the API served from its cache
-    dollars: float | None = 0.0  # None once any turn had no known price
+    dollars: float | None = 0.0  # None once any turn had no known price (the total is then not known)
+    known_dollars: float = 0.0  # every priced amount, turn or not, also after a turn with no price
+    unpriced: int = 0  # reports that had no known price
     token_cap: int | None = None
     dollar_cap: float | None = None
     started_at: float = 0.0
@@ -313,6 +315,7 @@ class EventKind(StrEnum):
     BOARD = "board"
     WARNING = "warning"  # something did not happen as asked, with the reason
     L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
+    SPEND = "spend"  # tokens or dollars spent outside a turn (a reply dropped at escalation, a judge): why, model
 
 
 @dataclass(frozen=True)

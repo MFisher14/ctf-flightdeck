@@ -12,7 +12,7 @@ import pytest
 from ctf_flightdeck.agent.client import ModelClient
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import AlertKind, Challenge, DeckConfig, PendingKind
+from ctf_flightdeck.core.model import AlertKind, Challenge, DeckConfig, EventKind, PendingKind
 from ctf_flightdeck.detect.base import DetectConfig
 from ctf_flightdeck.detect.detectors import default_detectors
 from ctf_flightdeck.detect.hints import lexicon
@@ -384,8 +384,10 @@ def test_a_watch_with_a_judge_needs_the_decks_event_loop():
             deck, _watch = gate(client)
             for i in range(1, 5):
                 turn(deck, i)
-            with pytest.raises(RuntimeError, match="event loop"):
-                turn(deck, 5)  # the first HINT signal: the judge must be asked, and no loop runs here
+            turn(deck, 5)  # the first HINT signal: the judge must be asked, and no loop runs here
+            # the deck survives a failing listener: the error is kept and said as a warning
+            assert any("RuntimeError" in e and "event loop" in e for e in deck.listener_errors)
+            assert any(ev.kind is EventKind.WARNING and "event loop" in ev.text for ev in deck.events)
             assert server.requests == []
         finally:
             asyncio.run(client.aclose())

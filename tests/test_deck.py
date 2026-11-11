@@ -543,7 +543,9 @@ def test_totals_add_every_lanes_tokens_and_known_dollars_and_flag_an_unknown_pri
     deck.report(b.id, TurnReport(tokens=500, dollars=0.5))
     assert deck.totals() == (1500, 0.75, False)
     deck.report(b.id, TurnReport(tokens=100, dollars=None))
-    assert deck.totals() == (1600, 0.25, True)
+    assert deck.totals() == (1600, 0.75, True)  # what is known stays counted; the total is flagged partial
+    deck.report(b.id, TurnReport(tokens=100, dollars=0.25))  # a priced turn after it still counts
+    assert deck.totals() == (1700, 1.0, True) and (b.dollars, b.known_dollars, b.unpriced) == (None, 0.75, 1)
 
 
 def test_hints_stay_queued_until_a_turn_reads_them_oldest_first():

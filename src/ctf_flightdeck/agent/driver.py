@@ -453,6 +453,8 @@ class AgentDriver:
                 cached_tokens=usage.cached_tokens if usage else 0,
                 dollars=self._dollars(model, reply) if reply is not None else 0.0,
                 hints_taken=len(hints) if same else 0,
+                why="a reply dropped: the lane was escalated or taken over while the model answered",
+                model=model or None,
             ),
         )
 
