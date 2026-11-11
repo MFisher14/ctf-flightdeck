@@ -47,6 +47,7 @@ from .workspace import (
     WorkspaceError,
     changed_files,
     open_inside,
+    remove_shell_home,
     take_snapshot,
     write_inside,
 )
@@ -127,6 +128,7 @@ class Takeover:
     driver: AgentDriver
     before: Snapshot | None = None
     history: bool = False  # the history file was emptied at the start, so what it holds is this take-over's
+    shell: ShellSpec | None = None  # what begin() gave; finish() removes the folder made for it (its HOME)
 
     @property
     def busy(self) -> bool:
@@ -138,7 +140,7 @@ class Takeover:
         await run.idle.wait()
         if run.closed or self.driver._over(run):
             raise TakeoverRefused(f"{run.lane_id} has ended")
-        shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
+        shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
         root = run.workspace.root
         try:
             await asyncio.to_thread(write_inside, root, HISTORY, b"")
@@ -150,6 +152,10 @@ class Takeover:
 
     def finish(self) -> str:
         run = self.run
+        if self.shell is not None:  # the shell has exited: its HOME goes (the workspace's close tries again)
+            problem = remove_shell_home(self.shell)
+            if problem:
+                self.driver.errors.append(f"{run.lane_id}: {problem}")
         root = run.workspace.root
         changes = changed_files(self.before, take_snapshot(root), root) if self.before is not None else []
         if changes:

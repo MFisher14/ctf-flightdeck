@@ -8,8 +8,10 @@ the deck to reach a state (bounded, ~10 s at most).
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import socket
+import stat
 import threading
 import time
 from pathlib import Path
@@ -1132,6 +1134,40 @@ def test_the_hand_back_never_follows_a_symlink_planted_at_the_history(tmp_path):
             session.finish()
             assert "SECRET-HOST-LINE" not in lab.driver.runs[lane.id].notes[-1]
             await lab.finish()
+
+    run(main())
+
+
+def test_each_take_over_shell_gets_a_home_of_its_own_outside_the_workspace_gone_at_the_hand_back(tmp_path):
+    """Review finding 3: never the lane's HOME (.flightdeck/home, which the lane writes), never
+    the player's; a new owner-only folder per take-over, removed once the shell has exited, or
+    with the workspace when the hand-back never ran."""
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            homes = []
+            for _ in range(2):
+                session = take_over(lab, lane)
+                shell = await asyncio.wait_for(session.begin(), 10)
+                home = Path(shell.env["HOME"])
+                assert shell.home == home and shell.env["TMPDIR"] == str(home / "tmp")
+                assert not home.resolve().is_relative_to(lab.work(lane).resolve()) and home.is_dir()
+                assert stat.S_IMODE(os.lstat(home).st_mode) == 0o700 and home not in homes
+                (home / ".python_history").write_text("what the player typed\n")  # as a program the player ran would
+                session.finish()
+                assert not os.path.lexists(home) and lab.driver.errors == []
+                assert lab.deck.apply(iv.HandBack(lane.id, "done")).ok
+                homes.append(home)
+            session = take_over(lab, lane)
+            left = (await asyncio.wait_for(session.begin(), 10)).home  # the console could not hand the terminal over: no finish()
+            assert left.is_dir()
+            await lab.finish()
+            assert not os.path.lexists(left)  # it went with the workspace
 
     run(main())
 
