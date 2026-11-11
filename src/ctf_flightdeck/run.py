@@ -463,6 +463,10 @@ def prepare_run(options: RunOptions) -> Run:
             primary = api_name(config.api.provider, config.api.base_url)
             spare = api_name(config.fallback.provider, config.fallback.base_url)
             plan.notes.append(f"a lane whose calls to {primary} keep failing moves to {spare} for the rest of its context")
+        if config.api.fast:
+            from .agent.fastmode import fast_note
+
+            plan.notes.append(fast_note(config.api.fast))
     if runtime == "docker":
         _check_docker(config.lanes.image)
         if agent is not None:

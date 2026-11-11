@@ -74,6 +74,21 @@ def fast_problem(model: str, on: date | None = None) -> str | None:
     return None
 
 
+def fast_note(models: tuple[str, ...] | list[str]) -> str:
+    """What a run says before it starts about the models it calls in fast mode."""
+    parts = []
+    for model in models:
+        mode = FAST_MODES[model]
+        part = f"{model} (${mode.price.input:g} / ${mode.price.output:g} per million tokens"
+        if mode.access:
+            part += "; your account needs access from Anthropic"
+        if mode.until is not None:
+            part += f"; until {mode.until.isoformat()}"
+        parts.append(part + ")")
+    return (f"fast mode: {', '.join(parts)}. It has its own rate limit: on a 429 the lane goes on at standard "
+            "speed for the rest of its session, and says so")
+
+
 def listed(on: date | None = None) -> str:
     """The models with fast mode on day `on` (default today), as a phrase."""
     when = on or today()

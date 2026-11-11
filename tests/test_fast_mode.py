@@ -231,3 +231,55 @@ def test_effort_goes_out_only_to_models_that_take_it_and_server_fallback_can_be_
 def test_an_unknown_effort_is_refused():
     with pytest.raises(ValueError, match="effort must be one of low, medium, high, xhigh, max"):
         AnthropicClient("http://127.0.0.1:9", KEY, effort="lowest")
+
+
+# ---------------------------------------------------------------------- a lane in fast mode, in a run
+
+
+def test_a_run_names_its_fast_models_and_a_lane_says_when_it_drops_to_standard_speed(tmp_path, monkeypatch):
+    import json
+
+    from ctf_flightdeck.run import RunOptions, prepare_run
+    from fake_anthropic import tool_message
+
+    monkeypatch.setenv("FLIGHTDECK_TEST_ANTHROPIC_KEY", KEY)
+    root = tmp_path / "board"
+    (root / "note").mkdir(parents=True)
+    (root / "note" / "note.txt").write_text("nothing here\n")
+    (root / "note" / "challenge.json").write_text(json.dumps({"name": "Note", "category": "misc", "points": 50,
+                                                              "description": "Read the note."}))
+    (root / "board.json").write_text(json.dumps({"event": "Fast Test", "flag_format": r"t\{[a-z0-9_]+\}"}))
+    first = []
+
+    def responder(record):
+        if not first:
+            first.append(record)
+            return RATE_LIMITED
+        return tool_message("shell", {"command": "ls"}, model="claude-opus-5-5", speed="standard")
+
+    with FakeAnthropicServer(responder=responder) as server:
+        path = tmp_path / "config.toml"
+        path.write_text(
+            f'[api]\nprovider = "anthropic"\nbase_url = "{server.base_url}"\nkey_env = "FLIGHTDECK_TEST_ANTHROPIC_KEY"\n'
+            'fast = ["claude-opus-5-5"]\n[models]\nladder = ["claude-opus-5-5"]\n'
+            '[lanes]\nruntime = "host"\nmax_lanes = 1\ndollar_cap = false\ntoken_cap = false\n'
+            f'[run]\ndir = "{tmp_path / "runs"}"\n'
+        )
+        run = prepare_run(RunOptions(board=root, config=path))
+        assert any(n.startswith("fast mode: claude-opus-5-5 ($8 / $40 per million tokens)") for n in run.notes())
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            for _ in range(2000):
+                if lane.turns >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            await run.shutdown()
+            return lane
+
+        lane = asyncio.run(main())
+        run.close()
+        speeds = [r["json"].get("speed") for r in server.requests]
+    assert speeds[:3] == ["fast", None, None]  # the 429 moved the lane to standard speed, and it stayed there
+    assert any("fast mode's own rate limit was reached (HTTP 429)" in a.text for a in lane.actions)
