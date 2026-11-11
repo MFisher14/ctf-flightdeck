@@ -1638,10 +1638,21 @@ def test_what_l1_found_is_capped_in_the_lanes_context(tmp_path):
     run(main())
 
 
+MAKES = """
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        word = (challenge_dir / "word.txt").read_text().strip()
+        return SolverResult("solved", flags=["t{" + word + "}"], evidence=[Evidence("decode", "the word, in braces", "word.txt", 0)])
+    """
+
+
 def test_under_auto_submit_an_engines_own_flag_goes_at_once_and_one_found_in_its_output_waits(tmp_path):
     """D17: a flag matched in what a text engine printed is not claimed by the engine (it may
     be the challenge's decoy, which the engine just read out), so auto submit waits for the
-    player; a flag an engine returns as its result is claimed, and goes at once."""
+    player; a flag an engine returns as its result is claimed, and goes at once. The handout
+    holds no flag (each engine makes t{note} from word.txt), so only that rule decides: a flag
+    the handout holds waits whichever way an engine found it (the next tests)."""
     from ctf_flightdeck.agent.l1stage import L1Stage
     from ctf_flightdeck.l1.manifest import discover
 
@@ -1656,14 +1667,15 @@ def test_under_auto_submit_an_engines_own_flag_goes_at_once_and_one_found_in_its
 
     async def main():
         with server:
-            handouts = {"note": handout(tmp_path)}
-            cli_engine(tmp_path / "pack", "say", "cat note.txt\n", route='keywords = ["about"]')
+            handouts = {"note": handout(tmp_path, files={"word.txt": "note\n"})}
+            cli_engine(tmp_path / "pack", "say", 'echo "t{$(cat word.txt)}"\n', route='keywords = ["about"]')
             stage = L1Stage(discover(tmp_path / "pack"), handouts, tmp_path / "runs", FLAG)
             lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=verify)
             lab.release()
             lane = lab.lane()
             await until(lambda: lane.pending is not None, "the scraped flag's approval", timeout=30)
             assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}") and tried == []
+            assert lab.driver.runs[lane.id].planted == frozenset()  # not the handout's: only the scraping held it
             await lab.finish()
 
     run(main())
@@ -1673,8 +1685,8 @@ def test_under_auto_submit_an_engines_own_flag_goes_at_once_and_one_found_in_its
 
     async def claimed():
         with server2:
-            handouts = {"note": handout(tmp_path2)}
-            lab = Lab(tmp_path2, server2, handouts=handouts, l1=l1_stage(tmp_path2, handouts, {"reader": SOLVES}), submit="auto",
+            handouts = {"note": handout(tmp_path2, files={"word.txt": "note\n"})}
+            lab = Lab(tmp_path2, server2, handouts=handouts, l1=l1_stage(tmp_path2, handouts, {"reader": MAKES}), submit="auto",
                       verify=verify)
             lab.release()
             lane = lab.lane()
@@ -1683,6 +1695,82 @@ def test_under_auto_submit_an_engines_own_flag_goes_at_once_and_one_found_in_its
             await lab.finish()
 
     run(claimed())
+
+
+READS_FLAG_TXT = """
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        flag = (challenge_dir / "flag.txt").read_text().strip()
+        return SolverResult("solved", flags=[flag], evidence=[Evidence("read", "flag.txt says so", "flag.txt", 0)])
+    """
+STAND_IN = {"flag.txt": "t{stand_in}\n"}  # shipped with the challenge for local testing: the real flag is on the server
+WAITS = f"t{{stand_in}} {OWN_TEXT}, so it waits for you, though your L1 engine reader gave it as its flag"
+
+
+def test_under_auto_an_l1_engines_flag_that_a_flag_txt_shipped_with_the_challenge_holds_waits_and_the_lane_says_why(tmp_path):
+    """The model's submit_flag rule, for an L1 engine's result too: a flag the challenge's own
+    text holds (here the flag.txt it ships with, usually a stand-in) is not claimed, so under
+    auto it waits for the player, and the lane says why. Only the engine that gave it as its
+    result is named: a text engine that printed it never claimed it. The model's own flag still
+    goes at once."""
+    from ctf_flightdeck.agent.l1stage import L1Stage
+    from ctf_flightdeck.l1.manifest import discover
+
+    from l1_kit import cli_engine, python_engine
+
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{real}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files=STAND_IN)}
+            pack = tmp_path / "pack"  # engines report in id order, so reader's claim comes before say's scrape
+            python_engine(pack, "reader", READS_FLAG_TXT, route='keywords = ["about"]')
+            cli_engine(pack, "say", "cat flag.txt\n", route='keywords = ["about"]')
+            stage = L1Stage(discover(pack), handouts, tmp_path / "runs", FLAG)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=recording(tried))
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the L1 flag's approval", timeout=30)
+            assert (lane.pending.kind, lane.pending.flag, lane.waiting, tried) == (PendingKind.SUBMIT, "t{stand_in}", [], [])
+            l1 = [(e.data["engine"], e.data["status"], e.data["flags"]) for e in lab.deck.events if e.kind is EventKind.L1]
+            assert l1 == [("reader", "solved", ["t{stand_in}"]), ("say", "candidate", ["t{stand_in}"])]
+            assert [a.text for a in lane.actions if OWN_TEXT in a.text] == [WAITS]
+            assert server.requests == []  # the lane waits for the player before any model call
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: lane.finished, "the model's own flag")
+            told = last_user(server.requests[0])
+            assert "Note from flightdeck: The player did not submit t{stand_in}: they think it is not the flag." in told
+            assert lane.state is LaneState.SOLVED and tried == ["t{real}"]  # the model's, not the handout's: sent at once
+            await lab.finish()
+
+    run(main())
+
+
+def test_an_l1_flag_from_the_handout_the_player_declined_is_not_said_to_wait_on_a_fresh_lane(tmp_path):
+    """A fresh lane's engine finds the stand-in again: the deck says it is not asked (the
+    player declined it), and the lane does not say it waits for them."""
+    server = FakeModelServer(responder=lambda record: text_reply("still looking"))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files=STAND_IN)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"reader": READS_FLAG_TXT}),
+                      submit="auto", verify=recording([]))
+            lab.release()
+            first = lab.lane()
+            await until(lambda: first.pending is not None, "the L1 flag's approval", timeout=30)
+            assert WAITS in [a.text for a in first.actions]
+            assert lab.deck.apply(iv.Decline(first.id)).ok
+            assert lab.deck.apply(iv.Kill(first.id)).ok  # re-queued: a fresh lane starts, and its engines run again
+            (fresh,) = [lane for lane in lab.deck.lanes.values() if not lane.finished]
+            again = "candidate t{stand_in} again; not asked: the player declined to submit it"
+            await until(lambda: again in [a.text for a in fresh.actions], "the stand-in on the fresh lane", timeout=30)
+            assert fresh.pending is None and not [a.text for a in fresh.actions if OWN_TEXT in a.text]
+            await lab.finish()
+
+    run(main())
 
 
 def l1_in_fake_docker(tmp_path: Path, handouts: dict[str, Path]):
