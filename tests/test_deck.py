@@ -595,6 +595,16 @@ def test_each_turn_report_emits_a_turn_event_with_its_numbers():
     ]
 
 
+def test_a_turn_with_no_action_text_still_emits_its_turn_event_and_a_non_turn_never_does():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(tokens=700, dollars=0.1, plan="read the source"))  # a turn that only plans
+    deck.report(lane.id, TurnReport(action="note to self", tokens=5, turn=False))  # not a model turn
+    turns = [dict(e.data) for e in events(deck, EventKind.TURN, since=mark)]
+    assert turns == [{"turn": 1, "tokens": 700, "dollars": 0.1, "action": ""}]
+
+
 def test_a_turn_that_auto_submits_the_right_flag_still_emits_its_turn_event():
     deck, _, _ = make_deck(n=1, submit="auto")
     lane = lane_on(deck, "c0")
@@ -697,6 +707,32 @@ def test_two_candidates_in_a_row_are_both_kept_in_order():
     assert "2 more candidates" in lane.alert(AlertKind.FLAG).reason
 
 
+def test_the_candidate_already_waiting_for_approval_is_not_queued_again():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    deck.report(lane.id, TurnReport(flag="t{one}"))  # the lane reports the same candidate again
+    assert lane.pending.flag == "t{one}" and lane.waiting == []
+    assert "more" not in lane.alert(AlertKind.FLAG).reason
+    deck.apply(iv.Approve(lane.id))  # wrong: nothing else comes up, and it was submitted once
+    assert lane.pending is None and lane.state is LaneState.RUNNING
+    assert deck.verify.calls == [("c0", "t{one}")]
+
+
+def test_the_flag_alert_counts_only_the_candidates_behind_it():
+    deck, _, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    assert [p.kind for p in lane.waiting] == [PendingKind.LIVE_BOX]
+    assert "more" not in lane.alert(AlertKind.FLAG).reason  # a live-box request is not a candidate
+    deck.report(lane.id, TurnReport(tokens=1000, turn=False))  # a budget request waits too
+    deck.report(lane.id, TurnReport(flag="t{two}", turn=False))
+    assert [p.kind for p in lane.waiting] == [PendingKind.SUBMIT, PendingKind.LIVE_BOX, PendingKind.BUDGET]
+    reason = lane.alert(AlertKind.FLAG).reason
+    assert re.search(r"\b1 more candidate waits\b", reason), reason
+
+
 def test_approving_a_wrong_first_candidate_brings_up_the_second():
     deck, _, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
@@ -774,6 +810,25 @@ def test_a_budget_request_waits_behind_a_pending_submit_and_is_never_duplicated(
     assert lane.pending.kind is PendingKind.BUDGET and lane.waiting == []
     deck.apply(iv.Approve(lane.id))
     assert lane.state is LaneState.RUNNING and lane.pending is None and lane.token_cap == 1500
+
+
+def test_an_unpriced_turn_at_the_token_cap_asks_for_one_budget_approval():
+    deck, _, _ = make_deck(n=1, token_cap=1000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=1000, dollars=None))  # at the token cap, and the price unknown
+    assert lane.pending.kind is PendingKind.BUDGET and lane.waiting == []
+    deck.apply(iv.Approve(lane.id))
+    assert lane.pending is None and lane.state is LaneState.RUNNING  # one approval was enough
+
+
+def test_a_report_while_waiting_at_the_cap_does_not_ask_again():
+    deck, _, _ = make_deck(n=1, token_cap=1000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=1000))
+    assert lane.pending.kind is PendingKind.BUDGET
+    deck.report(lane.id, TurnReport(tokens=10, turn=False))  # a step that was already in flight
+    deck.report(lane.id, TurnReport(tokens=10, turn=False))
+    assert lane.pending.kind is PendingKind.BUDGET and lane.waiting == []
 
 
 def test_an_approval_that_arrives_or_is_answered_while_paused_keeps_the_lane_paused():
@@ -941,6 +996,18 @@ def test_a_teammate_solve_of_a_challenge_we_solved_changes_nothing():
     last = deck.events[-1]
     assert (last.kind, last.challenge) == (EventKind.TEAMMATE, "c0") and "also solved" in last.text
     assert dict(last.data) == {"who": "bravo", "solved": True}
+
+
+def test_a_second_teammate_solve_keeps_the_first_record():
+    deck, _, _ = make_deck(n=1, team=True)
+    deck.teammate_solved("c0", "bravo")
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.TEAMMATE, "bravo", 11)
+    deck.teammate_solved("c0", "charlie")
+    deck.teammate_solved("c0", "bravo")  # the same solve seen again on the next poll
+    assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.TEAMMATE, "bravo", 11)
+    texts = [e.text for e in events(deck, EventKind.TEAMMATE)]
+    assert sum("also solved" in text for text in texts) == 2, texts
 
 
 def test_a_teammate_claim_takes_a_queued_challenge_out_of_the_queue():
@@ -1618,6 +1685,25 @@ def test_summary_lines_say_so_when_there_is_nothing_to_report():
         "Found: nothing yet",
         "Alerts: none",
     ]
+
+
+def test_summary_lines_give_points_solves_and_the_work_so_far():
+    summary = EscalationSummary("L02", "Gate", "web", 500, 3, ("app.py",), "p", "mid", 12, 48_000, (), (), ())
+    lines = summary_lines(summary)
+    assert lines[0] == "Challenge: Gate (web, 500 pts, 3 solves); files: app.py"
+    assert lines[2] == "So far: 12 turns, 48k tokens on mid"
+
+
+def test_the_deck_summary_carries_the_challenge_and_the_lane():
+    deck, _, _ = make_deck(n=0)
+    deck.release([Challenge("g", "Gate", "web", 500, solves=3, files=("app.py", "Dockerfile"))], [QueueEntry("g", "small")])
+    lane = lane_on(deck, "g")
+    deck.report(lane.id, TurnReport(action="cat app.py", tokens=900, plan="read the source"))
+    summary = deck.summary(lane)
+    assert (summary.challenge, summary.category, summary.points, summary.solves) == ("Gate", "web", 500, 3)
+    assert summary.files == ("app.py", "Dockerfile")
+    assert (summary.plan, summary.model, summary.turns, summary.tokens) == ("read the source", "small", 1, 900)
+    assert summary.tried == ("cat app.py",)
 
 
 def test_the_escalation_log_entry_cannot_be_forged_by_a_challenge_name_or_a_command():
