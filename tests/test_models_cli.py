@@ -249,7 +249,9 @@ def test_a_model_is_said_to_be_for_the_roles_a_build_of_it_serves(monkeypatch):
     assert json.loads(models("qwen3.5-9b", "--json").output)["roles"] == ["lanes", "light"]
 
 
-def test_a_model_listed_for_one_role_only_and_one_with_no_results_say_so(monkeypatch, tmp_path):
+def test_a_model_the_catalog_lists_for_one_role_only_and_has_not_measured_says_both(monkeypatch, tmp_path):
+    """No shipped model is either now: the lanes list names it with the role it is listed for, and
+    its entry says it has no result yet."""
     (tmp_path / "models.toml").write_text(
         '[[local]]\nid = "small"\nname = "Small"\nfamily = "Test"\nparameters = "1B"\nlicense = "MIT"\nroles = ["light"]\n\n'
         f'[local.ollama]\nmodel = "small:q4"\nsize_bytes = {GIB}\n', encoding="utf-8")
