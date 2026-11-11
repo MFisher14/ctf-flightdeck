@@ -521,11 +521,15 @@ def test_an_error_never_shows_the_key_even_when_the_server_echoes_it(replies):
     assert "invalid key [key]" in str(err)  # the echo was there, and the key was cut out of it
 
 
-def test_an_error_chains_nothing_that_holds_the_request_and_its_header():
+def test_an_error_chains_nothing_that_holds_the_request_or_the_servers_raw_text():
+    # an httpx error holds the request (and its Authorization header); a parse error holds
+    # the server's text before the key was cut out of it
     unreachable = fails(f"http://127.0.0.1:{closed_port()}/v1", key=KEY, max_retries=0)
-    with FakeModelServer([FakeReply(200, "not json")]) as server:
+    replies = [FakeReply(200, f"not json {ECHO}"), FakeReply(200, {"error": {"message": ECHO}})]
+    with FakeModelServer(replies) as server:
         garbled = fails(server.base_url, key=KEY)
-    for err in (unreachable, garbled):
+        reported = fails(server.base_url, key=KEY)
+    for err in (unreachable, garbled, reported):
         assert err.__cause__ is None and err.__context__ is None
 
 
