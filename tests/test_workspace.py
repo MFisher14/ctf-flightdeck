@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from ctf_flightdeck.agent import workspace as workspace_module
 from ctf_flightdeck.agent.workspace import (
     HASH_LIMIT,
     OUTPUT_CAP,
@@ -598,6 +599,52 @@ def test_the_container_is_started_from_a_local_image_only_with_limits(tmp_path, 
         assert args[args.index(flag) + 1] == value
     assert args[args.index("-v") + 1] == f"{(tmp_path / 'lane').resolve()}:/work"
     assert args[args.index("--entrypoint") + 1] == "sleep" and args[-2:] == [IMAGE, "infinity"]
+
+
+FAKE_DOCKER = r"""#!/bin/bash
+# A stand-in for the docker CLI. It answers what DockerWorkspace asks while it prepares; on a
+# lane's command (exec -i) it records its pid and hangs, the way a stuck docker would.
+last=${!#}
+case "$1" in
+  version) echo 99.0.0-fake ;;
+  image) echo sha256:fake ;;
+  container) echo "Error: No such container: $last" >&2; exit 1 ;;
+  run) echo fake-container-id ;;
+  rm) exit 0 ;;
+  exec)
+    if [ "$2" = "-i" ]; then echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300; fi
+    case "$last" in
+      "command -v "*) echo "/usr/bin/${last#command -v }" ;;
+      *) exit 1 ;;
+    esac ;;
+  *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;
+esac
+"""
+
+
+def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(tmp_path, handout, monkeypatch):
+    """The real DockerWorkspace against a fake docker that never returns from a lane's command:
+    the client is killed DOCKER_BACKSTOP seconds after the command's own timeout."""
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "docker").write_text(FAKE_DOCKER)
+    (fake_bin / "docker").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(workspace_module, "DOCKER_BACKSTOP", 1.0)
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name="flightdeck-test-fake-docker")
+
+    async def scenario():
+        await ws.prepare()
+        started = time.monotonic()
+        try:
+            return await asyncio.wait_for(ws.run("sleep 300", timeout=0.5), 10), time.monotonic() - started
+        finally:
+            await ws.close()
+
+    result, took = run(scenario())
+    assert result == RunResult(None, b"", timed_out=True)
+    assert took < 5
+    assert_dies(int((fake_bin / "exec.pid").read_text()), within=2)
 
 
 @pytest.mark.parametrize(
