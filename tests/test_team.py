@@ -415,6 +415,31 @@ def test_a_concurrent_reader_never_sees_a_partial_file(folder):
     assert sorted(p.name for p in path.parent.iterdir()) == ["c0.json"]
 
 
+@pytest.mark.parametrize(
+    ("umask", "folder_mode", "file_mode"),
+    [(0o002, 0o775, 0o664), (0o022, 0o755, 0o644), (0o077, 0o700, 0o600)],
+    ids=["umask-002-shared-by-group", "umask-022", "umask-077"],
+)
+def test_folders_and_marks_take_their_modes_from_the_umask(tmp_path, umask, folder_mode, file_mode):
+    # a folder shared by group (umask 002) must let every teammate's account write in it
+    old = os.umask(umask)
+    try:
+        team = init_folder(tmp_path / "team")
+        shutil.rmtree(team / "solves")  # made again by the first solve
+        alpha = TeamChannel(team, "alpha")
+        alpha.claim("c0")
+        alpha.hold_box("c0")
+        alpha.solved("c1")
+    finally:
+        os.umask(old)
+
+    def mode(path: Path) -> int:
+        return os.lstat(path).st_mode & 0o777
+
+    assert [mode(team / kind) for kind in ("", "claims", "boxes", "solves")] == [folder_mode] * 4
+    assert [mode(team / name) for name in (MARKER, "claims/c0.json", "boxes/c0.json", "solves/c1.json")] == [file_mode] * 4
+
+
 def test_each_write_replaces_the_file_whole(folder):
     alpha, _ = pair(folder)
     alpha.claim("c0")

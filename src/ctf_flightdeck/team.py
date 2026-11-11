@@ -619,7 +619,7 @@ def _open_dir(folder: Path, kind: str, *, create: bool) -> int | None:
     except OSError as exc:
         raise _dir_error(path, exc) from None
     try:
-        os.mkdir(path, 0o755)
+        os.mkdir(path, 0o777)  # the umask decides, as for mkdir (002 for a folder shared by group)
     except FileExistsError:
         pass
     except OSError as exc:
@@ -756,7 +756,7 @@ def _atomic_write(dfd: int, name: str, data: bytes) -> None:
     for _ in range(8):
         temp = f".{name}.{secrets.token_hex(6)}.tmp"
         try:
-            fd = os.open(temp, _CREATE, 0o644, dir_fd=dfd)
+            fd = os.open(temp, _CREATE, 0o666, dir_fd=dfd)  # the umask decides, as for any file
             break
         except FileExistsError:
             continue
