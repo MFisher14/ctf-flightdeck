@@ -1,21 +1,38 @@
 """A finished (or crashed) run, read back from its folder: the event log and the lane
-transcripts. Post-flight reports, the gap report, writeups and scoring all start here.
+transcripts. Post-flight reports, the gap report, writeups and scoring all start here, and
+all of them credit a solve by the one rule here (Credit, solves()).
 
 Everything read is untrusted: the logs hold challenge text, commands, outputs, flags and
 diffs. A line that is not valid JSON (a run that crashed mid-write) is skipped and named
 in `problems`, never silently dropped; a missing event log is an error.
+
+A run folder also holds run.json, written as the run starts (write_run_info): the board
+folder and the answers file the run played, so the commands after a run can find them.
+Those are paths on the player's machine, so they stay out of the event log, which holds the
+deck's events and nothing else.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+import os
+import stat
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .core.model import ME
+
 EVENTS = "events.jsonl"
 LANES = "lanes"
+RUN_INFO = "run.json"
+MAX_RUN_INFO = 64 * 1024  # a run.json bigger than this was not written by a run
+
+# Who solved a challenge (Solve.by).
+LANE, L1, TEAMMATE, PLAYER, TEAM = "lane", "l1", "teammate", "player", "team"
+YOU = "you"  # the platform's word for this account (Deck.platform_solved)
+YOUR_TEAM = "your team"  # ...for its team, as run.py says it; no team handle can be this (it has a space)
 
 
 class RunFolderError(Exception):
@@ -52,6 +69,7 @@ class FileLine:
     turn: int
     at: float
     diff: str
+    by: str = "lane"  # "player": the player changed it in a take-over (a transcript older than the field says nothing)
 
 
 @dataclass(frozen=True)
@@ -75,6 +93,18 @@ class LaneRecord:
     plan: str
     actions: tuple[ActionLine, ...]
     files: tuple[FileLine, ...]
+    known_dollars: float | None = None  # every priced amount, also after one with no price; None: not in the transcript
+
+
+@dataclass(frozen=True)
+class Released:
+    """A challenge as a release put it on the board. A format 2 log names each one; in an
+    older log only the id is known."""
+
+    id: str
+    name: str = ""
+    category: str = ""
+    points: int | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +134,35 @@ class RunRecord:
         times = [e.at for e in self.events if e.kind not in ("run-start", "run-end")]
         return max(times) - min(times) if times else 0.0
 
+    @property
+    def format(self) -> int:
+        """The log's format (eventlog.FORMAT when it was written): 1 for a log older than the field."""
+        start = next((e for e in self.events if e.kind == "run-start"), None)
+        value = start.data.get("format") if start is not None else None
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 1
+
+    @property
+    def event(self) -> str | None:
+        """The event's name, as the last release that named it recorded it (None in an older log)."""
+        for line in reversed(self.events):
+            name = line.data.get("event") if line.kind == "release" else None
+            if isinstance(name, str) and name:
+                return name
+        return None
+
+    @property
+    def board(self) -> dict[str, Released]:
+        """Every challenge a release named, in release order, with the name, category and
+        points the release recorded (none in an older log)."""
+        out: dict[str, Released] = {}
+        for line in self.of("release"):
+            ids = line.data.get("challenges")
+            facts = _facts(line.data.get("board"))
+            for cid in ids if isinstance(ids, list) else ():
+                if isinstance(cid, str) and cid and cid not in out:
+                    out[cid] = facts.get(cid, Released(cid))
+        return out
+
 
 def load_run(run_dir: Path) -> RunRecord:
     """Read a run folder. RunFolderError if it has no event log."""
@@ -111,7 +170,7 @@ def load_run(run_dir: Path) -> RunRecord:
     if not events_path.is_file():
         raise RunFolderError(f"{run_dir}: no {EVENTS} (is this a flightdeck run folder?)")
     problems: list[str] = []
-    events = tuple(_event(raw) for raw in _lines(events_path, problems))
+    events = tuple(event_line(raw) for raw in _lines(events_path, problems))
     lanes: dict[str, LaneRecord] = {}
     folder = run_dir / LANES
     if folder.is_dir():
@@ -123,6 +182,19 @@ def load_run(run_dir: Path) -> RunRecord:
             record = _lane(rows, path.name, problems)
             lanes[record.lane] = record
     return RunRecord(run_dir, events, lanes, tuple(problems))
+
+
+def run_folder(path: Path) -> Path:
+    """The run folder a player named: the folder itself, or the folder of the events.jsonl
+    they gave (the path a run prints when it ends). RunFolderError when it is neither."""
+    path = Path(path)
+    if path.is_dir():
+        return path
+    if path.name == EVENTS and path.is_file():
+        return path.parent
+    if path.exists():
+        raise RunFolderError(f"{path}: not a run folder; give the run folder (the one holding {EVENTS}) or its {EVENTS}")
+    raise RunFolderError(f"{path}: no such run folder or {EVENTS}")
 
 
 def _lines(path: Path, problems: list[str]):
@@ -149,6 +221,24 @@ def _number(value: object, default: float = 0.0) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
+def finite(value: object) -> float | None:
+    """A finite number as a float; None for anything else: not a number, a bool, NaN, an
+    infinity (json reads NaN, Infinity and 1e400 as floats), or an int too large for a float."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def run_time(value: object) -> float | None:
+    """A time in the run (seconds since it started, never negative), or None: unknown."""
+    number = finite(value)
+    return number if number is not None and number >= 0 else None
+
+
 def _count(value: object, default: int = 0, *, where: str = "", problems: list[str] | None = None) -> int:
     """A whole-number count from a log: the default for anything else, NaN, Infinity and
     numbers too big for a float included (int() of those raises), named in `problems`."""
@@ -165,7 +255,8 @@ def _count(value: object, default: int = 0, *, where: str = "", problems: list[s
     return int(number)
 
 
-def _event(raw: Mapping[str, object]) -> EventLine:
+def event_line(raw: Mapping[str, object]) -> EventLine:
+    """One line of an event log as an EventLine: a field of the wrong type reads as nothing."""
     data = raw.get("data")
     return EventLine(
         at=_number(raw.get("at")),
@@ -175,8 +266,29 @@ def _event(raw: Mapping[str, object]) -> EventLine:
         lane=raw.get("lane") if isinstance(raw.get("lane"), str) else None,
         challenge=raw.get("challenge") if isinstance(raw.get("challenge"), str) else None,
         alert=raw.get("alert") if isinstance(raw.get("alert"), str) else None,
-        data=data if isinstance(data, dict) else {},
+        data=(data if isinstance(data, dict) else {}) if raw.get("kind") != "run-start" else _start_data(raw),
     )
+
+
+def _start_data(raw: Mapping[str, object]) -> Mapping[str, object]:
+    """A run-start line keeps its fields at the top (version, format): read as its data."""
+    return {key: value for key, value in raw.items() if key not in ("kind", "wall", "at")}
+
+
+def _facts(value: object) -> dict[str, Released]:
+    """A release's "board" list ({id, name, category, points} per challenge) by id; a value of
+    the wrong type is left out."""
+    out: dict[str, Released] = {}
+    for item in value if isinstance(value, list) else ():
+        if not isinstance(item, Mapping) or not isinstance(item.get("id"), str) or not item["id"]:
+            continue
+        points = item.get("points")
+        name, category = item.get("name"), item.get("category")
+        out[item["id"]] = Released(
+            item["id"], name if isinstance(name, str) else "", category if isinstance(category, str) else "",
+            points if isinstance(points, int) and not isinstance(points, bool) else None,
+        )
+    return out
 
 
 def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] | None = None) -> LaneRecord:
@@ -196,12 +308,14 @@ def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] 
     )
     files = tuple(
         FileLine(file=_text(r.get("file")), status=_text(r.get("status")), turn=_count(r.get("turn")),
-                 at=_number(r.get("at")), diff=_text(r.get("diff")))
+                 at=_number(r.get("at")), diff=_text(r.get("diff")),
+                 by="player" if r.get("by") == "player" else "lane")
         for r in rows[1:]
         if "file" in r
     )
     dollars = head.get("dollars")
     ended = head.get("ended_at")
+    known = finite(head.get("known_dollars"))
     return LaneRecord(
         lane=_text(head.get("lane")), challenge=_text(head.get("challenge")), name=_text(head.get("name")),
         category=_text(head.get("category")), points=count("points"), model=_text(head.get("model")),
@@ -212,4 +326,166 @@ def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] 
         parent=head.get("parent") if isinstance(head.get("parent"), str) else None,
         attempt=count("attempt", 1), plan=_text(head.get("plan")),
         actions=actions, files=files,
+        known_dollars=known if known is not None and known >= 0 else None,
     )
+
+
+# ---------------------------------------------------------------------- who solved what
+
+
+@dataclass(frozen=True)
+class Solve:
+    """Who solved a challenge, and when, as Credit gives it."""
+
+    challenge: str
+    by: str  # LANE, L1, TEAMMATE, PLAYER (you) or TEAM (your team, as the platform lists it)
+    who: str  # the lane id, the L1 engine, the teammate's handle, "me", or the platform's word ("you", "your team")
+    at: float | None  # None: the log's time for it is not a time
+    index: int  # the event's position in the run log
+    flag: str | None = None  # the accepted flag; None for a solve that came with none
+    lane: str | None = None  # the lane that submitted the accepted flag (an L1 flag goes through one)
+    found: int | None = None  # an L1 solve: the position of the l1 event that reported the flag first
+    platform: bool = False  # the platform lists it as solved (it is no flag of this run)
+    before_run: bool = False  # ...and it did when the run started
+
+
+def l1_flags(data: Mapping[str, object]) -> list[str]:
+    """An L1 event's flags: the non-empty strings in its list (none when it is not a list)."""
+    flags = data.get("flags")
+    return [f for f in flags if isinstance(f, str) and f] if isinstance(flags, list) else []
+
+
+class Credit:
+    """Who a solve goes to: the one rule every report uses (the post-flight report, writeups,
+    the gap report and the scorecard), so no two of them give the same solve to different
+    solvers. Read the log in order, see() every event, and ask flag() about an accepted flag
+    and other() about any other event.
+
+    - An accepted flag is L1's when an earlier `l1` event on that challenge reported it,
+      whatever that event's status and whether or not a lane submitted it: it goes to the
+      first engine that reported it. Otherwise it is the submitting lane's, or yours when no
+      lane submitted it (a flag you submitted by hand). An L1 result alone is never a solve:
+      "solved" there means found, and only the platform accepts a flag (l1/result.py).
+    - A `teammate` event with `solved` true is a solve that came with no flag: a teammate's
+      (team mode), or yours when it is recorded for "me". When the platform lists the
+      challenge as solved (`source` "platform", Deck.platform_solved) it is yours if the
+      platform says "you", else your team's on the platform: you or a teammate, the platform
+      cannot say which. An older log wrote those as a teammate called "your team".
+    """
+
+    def __init__(self) -> None:
+        self._found: dict[str, dict[str, tuple[str, int]]] = {}  # challenge -> flag -> (engine, l1 event's index)
+
+    def see(self, index: int, event: EventLine) -> None:
+        """Note what `event` (at `index` in the log) tells about later solves."""
+        if event.kind == L1 and event.challenge:
+            engine = _text(event.data.get("engine")) or "?"
+            for flag in l1_flags(event.data):
+                self._found.setdefault(event.challenge, {}).setdefault(flag, (engine, index))
+
+    def flag(self, index: int, event: EventLine, flag: str) -> Solve:
+        """The solve an accepted flag makes: `event` is its submit (at `index`)."""
+        cid = event.challenge or ""
+        at = run_time(event.at)
+        found = self._found.get(cid, {}).get(flag) if flag else None
+        if found is not None:
+            return Solve(cid, L1, found[0], at, index, flag, event.lane, found=found[1])
+        if event.lane:
+            return Solve(cid, LANE, event.lane, at, index, flag, event.lane)
+        return Solve(cid, PLAYER, ME, at, index, flag)
+
+    @staticmethod
+    def other(index: int, event: EventLine) -> Solve | None:
+        """The solve a teammate or platform event makes; None when `event` is no solve."""
+        if event.kind != "teammate" or event.data.get("solved") is not True or not event.challenge:
+            return None
+        who = _text(event.data.get("who")) if isinstance(event.data.get("who"), str) else ""
+        platform = event.data.get("source") == "platform" or who == YOUR_TEAM
+        if who == ME or (platform and who == YOU):
+            by = PLAYER
+        else:
+            by = TEAM if platform else TEAMMATE
+        return Solve(event.challenge, by, who, run_time(event.at), index, platform=platform,
+                     before_run=platform and event.data.get("before_run") is True)
+
+
+def accepted(event: EventLine) -> bool:
+    """A submit event whose flag was accepted (the platform checked it, or you said it did)."""
+    return event.kind == "submit" and event.data.get("correct") is True
+
+
+def solves(events: Sequence[EventLine], *, flags_only: bool = False) -> dict[str, Solve]:
+    """Who solved each challenge: its first solve in the log, credited by Credit, by challenge
+    id in the order they were solved. With `flags_only`, only accepted flags count (a draft
+    needs one), not a teammate's or the platform's solve."""
+    credit = Credit()
+    found: dict[str, Solve] = {}
+    for index, event in enumerate(events):
+        credit.see(index, event)
+        cid = event.challenge
+        if not cid or cid in found:
+            continue
+        if accepted(event):
+            flag = event.data.get("flag")
+            found[cid] = credit.flag(index, event, flag if isinstance(flag, str) else "")
+        elif not flags_only and (solve := Credit.other(index, event)) is not None:
+            found[cid] = solve
+    return found
+
+
+# ---------------------------------------------------------------------- what the run played
+
+
+@dataclass(frozen=True)
+class RunInfo:
+    """What a run played, from its run.json: local paths, never in the event log."""
+
+    board: Path | None  # the board folder (a CTFd event's: the folder its board was pulled into)
+    answers: Path | None  # the answers file it was given (--answers); None: the board's own, if any
+
+
+def write_run_info(run_dir: Path, *, board: Path | None, answers: Path | None = None) -> Path:
+    """Write RUN_DIR/run.json for a run that is starting: the board folder and answers file,
+    as absolute paths. The run folder is new, so the file is created, never replaced (and so
+    never written through a symlink)."""
+    path = Path(run_dir) / RUN_INFO
+    info = {
+        "board": str(Path(board).resolve()) if board is not None else None,
+        "answers": str(Path(answers).resolve()) if answers is not None else None,
+    }
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+    with os.fdopen(handle, "w", encoding="ascii") as out:
+        out.write(json.dumps(info, ensure_ascii=True) + "\n")
+    return path
+
+
+def read_run_info(run_dir: Path) -> RunInfo | None:
+    """What the run recorded it played; None when it recorded nothing (a run older than
+    run.json). RunFolderError, with the reason, when the file is there but cannot be used."""
+    path = Path(run_dir) / RUN_INFO
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):  # a lane on the host can write in the run folder: no symlink, no FIFO
+            raise RunFolderError(f"{path}: is not a regular file")
+        if info.st_size > MAX_RUN_INFO:
+            raise RunFolderError(f"{path}: is over {MAX_RUN_INFO:,} bytes, too big for what a run writes there")
+        text = path.read_bytes().decode("utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RunFolderError(f"{path}: cannot read it ({exc.strerror or exc})") from None
+    except UnicodeDecodeError:
+        raise RunFolderError(f"{path}: is not text") from None
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        raise RunFolderError(f"{path}: is not JSON") from None
+    if not isinstance(data, dict):
+        raise RunFolderError(f"{path}: is not a JSON object")
+    paths: dict[str, Path | None] = {}
+    for key in ("board", "answers"):
+        value = data.get(key)
+        if value is not None and not (isinstance(value, str) and value and "\x00" not in value):
+            raise RunFolderError(f"{path}: {key} must be a path or null")
+        paths[key] = Path(value) if value is not None else None
+    return RunInfo(paths["board"], paths["answers"])

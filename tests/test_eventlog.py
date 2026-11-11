@@ -18,7 +18,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, Event, EventKind, LaneState
-from ctf_flightdeck.eventlog import EventLog, json_safe, new_run_dir
+from ctf_flightdeck.eventlog import FORMAT, EventLog, json_safe, new_run_dir
 
 EVENT_KEYS = {"at", "wall", "kind", "text", "lane", "challenge", "alert", "data"}
 
@@ -100,8 +100,9 @@ def test_opening_the_log_writes_the_run_start_line(tmp_path):
     log = EventLog(tmp_path / "events.jsonl")
     after = datetime.now(timezone.utc)
     (start,) = records(log.path)
-    assert set(start) == {"kind", "wall", "version"}
+    assert set(start) == {"kind", "wall", "version", "format"}
     assert (start["kind"], start["version"]) == ("run-start", ctf_flightdeck.__version__)
+    assert start["format"] == FORMAT == 2  # what the log holds: spend events, and each release names its board
     assert before - timedelta(milliseconds=1) <= wall(start) <= after
     log.close()
 
@@ -241,7 +242,8 @@ def test_the_log_holds_nothing_from_the_environment_or_the_config(monkeypatch, t
     log.close()
     text = log.path.read_text(encoding="ascii")
     assert secret not in text and "private-config-path" not in text and str(tmp_path) not in text
-    assert set(records(log.path)[0]) == {"kind", "wall", "version"}
+    start = records(log.path)[0]
+    assert set(start) == {"kind", "wall", "version", "format"} and start["format"] == FORMAT  # a constant of the code
 
 
 # ---------------------------------------------------------------------- JSON-safe data

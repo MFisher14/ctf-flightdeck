@@ -637,6 +637,7 @@ def test_taking_over_while_a_tool_runs_stops_the_turn_there_and_the_shell_waits_
             (work / "player.txt").write_text("mine\n")
             note = session.finish()
             assert note == "changed player.txt (added)"
+            assert lane.files["player.txt"].by == "player" and lane.files["lane-a.txt"].by == "lane"  # writeups keep them apart
             assert lab.deck.apply(iv.HandBack(lane.id, note)).ok
             await until(lambda: lane.pending is not None, "the candidate after the hand back")
             messages = server.requests[1]["json"]["messages"]
