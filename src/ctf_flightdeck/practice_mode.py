@@ -13,23 +13,32 @@ An archive is a folder board (platform/manual.py) with, optionally:
 `Release` puts each wave on the deck when the deck's clock reaches its time. It has no
 timer of its own: call tick() from one on the console's event loop (the deck's thread).
 
-`score()` reads a run's events.jsonl and nothing else, so it works on any past run: what
-was solved, when and by which lane, the tokens and dollars of the model turns, the
-player's interventions and the wrong submissions. With an answers file on the board, each
-submitted flag is checked against it again, so a run is scored against the answers and not
-only by what it was told at the time. Tokens and dollars come from the log's turn events: a
-cost the deck was told about outside a turn (a non-turn report) is not in the log, so it is
-not in the score either. `scorecard()` is a score as plain text for the terminal. It never
-shows a flag, and every name in it is folded to one safe line.
+`score()` reads a run's events.jsonl, so it works on any past run: what was solved, when
+and by which lane, the tokens and dollars of the model turns, the player's interventions
+and the wrong submissions. With an answers file on the board, each submitted flag is
+checked against it again, so a run is scored against the answers and not only by what it
+was told at the time.
 
-Everything read from a board, a timeline or a log is untrusted: checked field by field, and
-shown in messages only made safe.
+Tokens and dollars come from the log's turn events, and from the lane transcripts beside
+the log (lanes/<lane id>.jsonl, written by transcript.py as each lane ends): a lane's
+transcript starts with the deck's own totals for it, and those also count what the lane
+spent outside a turn (a model reply dropped on escalation, for one), which no event
+records. A transcript must agree with the log (the same lane, challenge and turns, and no
+less spent), or it is left out with a note. A lane with no transcript counts its turns
+only, and the score says so in a note.
+
+`scorecard()` is a score as plain text for the terminal. It never shows a flag, and every
+name in it is folded to one safe line.
+
+Everything read from a board, a timeline, a log or a transcript is untrusted: checked
+field by field, and shown in messages only made safe.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 import stat
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -43,6 +52,7 @@ from . import fmt
 from .core.deck import Deck, QueueEntry
 from .core.model import ME, EventKind
 from .platform.manual import AnswerVerifier, Board
+from .runrecord import LANES
 from .text import untrusted
 
 TIMELINE_FILE = "timeline.json"
@@ -257,15 +267,15 @@ def _check_covers(timeline: Timeline, ids: list[str]) -> None:
 
 @dataclass(frozen=True)
 class LaneScore:
-    """One lane, from the log: what it worked on and what its model turns cost."""
+    """One lane, from the log and its transcript: what it worked on and what it cost."""
 
     id: str
     challenge: str
     model: str  # the model it started on
     parent: str | None  # the lane it was forked from
     turns: int
-    tokens: int
-    dollars: float | None  # None once any of its turns had no price
+    tokens: int  # its turns, and what its transcript counts outside them
+    dollars: float | None  # the same; None once any of it had no price
     state: str | None  # how it ended (solved, killed, stopped, gave up); None if still open
 
 
@@ -284,7 +294,7 @@ class ChallengeScore:
     lanes: tuple[str, ...]  # the lanes that worked it, in start order
     turns: int
     tokens: int  # every lane on it, forks and killed attempts included
-    dollars: float | None  # the same; None when any of its turns had no price
+    dollars: float | None  # the same; None when any of their cost had no price
     interventions: int
     wrong_submissions: int
     teammate: str | None = None  # team mode: the teammate who solved it
@@ -313,14 +323,14 @@ class Score:
     possible: int  # every challenge on the board
     first_solve_at: float | None
     per_challenge: Mapping[str, ChallengeScore]  # every challenge on the board, in board order
-    tokens: int  # all model turns in the log
-    dollars: float | None  # None when any turn had no price (known_dollars has the priced part)
+    tokens: int  # every lane's tokens: its turns, and what its transcript counts outside them
+    dollars: float | None  # the same in dollars; None when any of it had no price (known_dollars has the priced part)
     interventions: int  # the player's interventions that the deck carried out (not the refused ones)
     wrong_submissions: int
     event: str = ""
     lanes: Mapping[str, LaneScore] = field(default_factory=_empty)  # in start order
-    known_dollars: float = 0.0  # the dollars of every turn that had a price
-    unpriced: tuple[str, ...] = ()  # lanes with a turn that had no price
+    known_dollars: float = 0.0  # every priced turn, and what a priced lane's transcript counts outside its turns
+    unpriced: tuple[str, ...] = ()  # lanes with a cost that had no price (a turn, or something outside one)
     intervention_kinds: Mapping[str, int] = field(default_factory=_empty)  # e.g. {"hint": 2}, most first
     ended_at: float | None = None  # the time of the log's last event
     answers: Path | None = None  # the answers file the flags were checked against
@@ -345,8 +355,10 @@ class _Lane:
     parent: str | None = None
     turns: int = 0
     tokens: int = 0
-    dollars: float | None = 0.0
+    dollars: float | None = 0.0  # None once any of its cost had no price
     state: str | None = None
+    known: float = 0.0  # the part of its cost that had a price
+    unpriced_turn: bool = False  # a turn of it had no price
 
 
 @dataclass(frozen=True)
@@ -369,7 +381,9 @@ class _Asked:
 
 
 def score(events_jsonl: Path, board: Board) -> Score:
-    """Score a run from its event log (events.jsonl) alone, against the board it played.
+    """Score a run from its event log (events.jsonl), against the board it played. The lane
+    transcripts in lanes/ beside the log, when there are any, add what the lanes spent
+    outside their turns.
 
     Raises ScoreError when the file is not a flightdeck event log, holds more than one run,
     has a malformed event, or names challenges that are not on the board.
@@ -392,7 +406,6 @@ def score(events_jsonl: Path, board: Board) -> Score:
     asked: list[_Asked] = []  # interventions waiting for their outcomes (they nest)
     done: list[_Asked] = []  # interventions the deck carried out
     ended_at: float | None = None
-    priced = 0.0
 
     for n, rec in records:
         kind = rec["kind"]
@@ -421,8 +434,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
             acc.tokens += tokens
             if dollars is None:
                 acc.dollars = None
+                acc.unpriced_turn = True
             else:
-                priced += dollars
+                acc.known += dollars
                 if acc.dollars is not None:
                     acc.dollars += dollars
         elif kind == "lane.end":
@@ -475,6 +489,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             f"{where}: the run played challenges that are not on the board {_quote(board.event)}: {names}; "
             "score it against the board it played (--board)"
         )
+    spent_outside = _add_transcripts(path.parent / LANES, lanes)  # before the sums below, so they hold it
 
     verifier = AnswerVerifier(board.answers) if board.answers is not None else None
     per: dict[str, ChallengeScore] = {}
@@ -528,8 +543,11 @@ def score(events_jsonl: Path, board: Board) -> Score:
         )
     solved = tuple(sorted(firsts, key=lambda cid: (firsts[cid].at, firsts[cid].line)))  # log order on a time tie
     unpriced = tuple(lane for lane, acc in lanes.items() if acc.dollars is None)
-    for lane in unpriced:
-        notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only priced turns.")
+    for lane, acc in lanes.items():
+        if acc.unpriced_turn:
+            notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only priced turns.")
+    notes += spent_outside
+    known_dollars = sum(acc.known for acc in lanes.values())
     kinds = Counter(iv.name for iv in done)
     return Score(
         solved=solved,
@@ -538,7 +556,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
         first_solve_at=min((sub.at for sub in firsts.values()), default=None),
         per_challenge=MappingProxyType(per),
         tokens=sum(acc.tokens for acc in lanes.values()),
-        dollars=None if unpriced else priced,
+        dollars=None if unpriced else known_dollars,
         interventions=len(done),
         wrong_submissions=total_wrong,
         event=board.event,
@@ -548,13 +566,125 @@ def score(events_jsonl: Path, board: Board) -> Score:
                 for lane, acc in lanes.items()
             }
         ),
-        known_dollars=priced,
+        known_dollars=known_dollars,
         unpriced=unpriced,
         intervention_kinds=MappingProxyType(dict(sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0])))),
         ended_at=ended_at,
         answers=board.answers,
         notes=tuple(dict.fromkeys(notes)),  # each note once, in order
     )
+
+
+OUTSIDE = "a model reply dropped on escalation, for one"  # what a lane spends outside its turns
+_PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # a lane id that is safe as a file name ("L01")
+
+
+def _add_transcripts(folder: Path, lanes: dict[str, _Lane]) -> list[str]:
+    """Add to each lane what its transcript in `folder` counts that its turns do not, and
+    return the notes that say so. A transcript's header holds the deck's own totals for the
+    lane, which also count what was spent outside a turn; no event records that."""
+    notes: list[str] = []
+    missing: list[str] = []
+    for lane, acc in lanes.items():
+        head, problem = _transcript_header(folder, lane)
+        if head is None and problem is None:
+            missing.append(lane)
+            continue
+        if head is not None:
+            problem = _disagreement(head, lane, acc)
+        if problem is not None:
+            notes.append(f"{LANES}/{lane}.jsonl {problem}, so it is left out: {lane}'s cost is its model turns only.")
+            continue
+        assert head is not None
+        tokens, dollars, unpriced = head["tokens"] - acc.tokens, 0.0, False
+        if acc.dollars is not None:
+            if head["dollars"] is None:  # every turn had a price; something outside them did not
+                acc.dollars, unpriced = None, True
+            elif not _same_money(head["dollars"], acc.dollars):
+                dollars = head["dollars"] - acc.dollars
+                acc.dollars += dollars
+                acc.known += dollars
+        acc.tokens += tokens
+        if tokens or dollars or unpriced:
+            notes.append(_outside_note(lane, tokens, dollars, unpriced))
+    if missing:
+        names = ", ".join(missing[:10]) + (", ..." if len(missing) > 10 else "")
+        its = "its" if len(missing) == 1 else "their"
+        notes.append(
+            f"No transcript beside the log ({LANES}/) for {names}: {its} cost is {its} model turns only, "
+            f"as the event log does not record what is spent outside a turn ({OUTSIDE})."
+        )
+    return notes
+
+
+def _transcript_header(folder: Path, lane: str) -> tuple[dict | None, str | None]:
+    """The first line of `lane`'s transcript: (header, None); (None, None) when there is no
+    transcript; (None, what is wrong) when there is a file but no header can be read from it."""
+    if not _PLAIN_ID.fullmatch(lane):
+        return None, None  # not a lane id flightdeck makes, so never looked up as a file name
+    path = folder / f"{lane}.jsonl"
+    try:
+        info = path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None, None
+    except OSError as exc:
+        return None, f"cannot be read ({exc.strerror})"
+    if not stat.S_ISREG(info.st_mode):
+        return None, "is not a regular file"
+    try:
+        with path.open("rb") as handle:
+            line = handle.readline(MAX_JSON_BYTES + 1)
+    except OSError as exc:
+        return None, f"cannot be read ({exc.strerror})"
+    if len(line) > MAX_JSON_BYTES:
+        return None, f"has a first line over {MAX_JSON_BYTES:,} bytes"
+    if not line.strip():
+        return None, "is empty"
+    try:
+        head = json.loads(line.decode("utf-8"))
+    except UnicodeDecodeError:
+        return None, "is not text"
+    except (ValueError, RecursionError):  # JSONDecodeError is a ValueError
+        return None, "does not start with a lane header (its first line is not JSON)"
+    if not isinstance(head, dict):
+        return None, "does not start with a lane header"
+    return head, None
+
+
+def _disagreement(head: dict, lane: str, acc: _Lane) -> str | None:
+    """Why this transcript header cannot be `lane`'s in this log, or None when it can."""
+    if head.get("lane") != lane:
+        return "is the transcript of another lane"
+    if head.get("challenge") != acc.challenge:
+        return f"is for another challenge than the one {lane} worked in the log"
+    turns, tokens, dollars = head.get("turns"), head.get("tokens"), head.get("dollars", _MISSING)
+    if not (_is_count(turns) and _is_count(tokens) and dollars is not _MISSING and _is_money(dollars)):
+        return "does not have the turns, tokens and dollars of a lane header"
+    if turns != acc.turns:
+        return f"counts {turns} turns where the log has {acc.turns}"
+    if tokens < acc.tokens:
+        return f"counts fewer tokens than {lane}'s turns in the log"
+    if dollars is not None and acc.dollars is None:
+        return f"has a price for all of {lane}'s cost where the log has a turn with none"
+    if dollars is not None and dollars < acc.dollars and not _same_money(dollars, acc.dollars):
+        return f"counts fewer dollars than {lane}'s turns in the log"
+    return None
+
+
+def _same_money(a: float, b: float) -> bool:
+    """The same amount, but for float rounding (the deck and the log add the same prices in another order)."""
+    return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
+
+
+def _outside_note(lane: str, tokens: int, dollars: float, unpriced: bool) -> str:
+    parts = ([f"{fmt.tokens(tokens)} tokens"] if tokens else []) + ([f"${fmt.dollars(dollars)}"] if dollars else [])
+    spent = f"spent {' and '.join(parts)} outside its turns" if parts else "spent something outside its turns"
+    if unpriced:
+        return (
+            f"{lane} {spent} ({OUTSIDE}), and not all of it had a price, so its cost is not fully known: "
+            "the dollars count only its turns."
+        )
+    return f"{lane} {spent} ({OUTSIDE}): counted from its transcript, as the event log does not record it."
 
 
 def _disagrees(name: str, run_said: bool) -> str:

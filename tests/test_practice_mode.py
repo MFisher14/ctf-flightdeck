@@ -1,7 +1,7 @@
 """Practice mode: an archived board with a release timeline, and a run scored from its event log.
 
 Every board is a real folder in tmp_path, loaded with the real board loader; the deck, the
-event log, its file and the answers file are real. The driver is a stand-in that does no
+event log, its file, the lane transcripts and the answers file are real. The driver is a stand-in that does no
 work (lane work is not under test here) and the clock is turned by hand. Names, flags and
 events are synthetic.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import ME, ChallengeStatus, DeckConfig, EventKind
 from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.platform.manual import AnswerVerifier, cannot_check, load_board
+from ctf_flightdeck.transcript import TranscriptLog
 from ctf_flightdeck.practice_mode import (
     MAX_JSON_BYTES,
     NAME_CELLS,
@@ -449,6 +451,8 @@ class Played:
         self.dir = tmp_path / "runs" / "20261110-200000"
         self.log = EventLog(self.dir / "events.jsonl")
         self.log.attach(self.deck)
+        self.transcripts = TranscriptLog(self.dir / "lanes")  # as run.py keeps them: one per lane, when it ends
+        self.transcripts.attach(self.deck)
         self.release = Release(self.deck, self.board, load_timeline(self.board), cheapest_first(self.board))
         self.l02_dollars = 0.02 if all_priced else None  # L02's model has no price unless all_priced
 
@@ -484,6 +488,7 @@ class Played:
         return self
 
     def close(self) -> Path:
+        self.transcripts.close()  # the lanes still open, as Run.close() does
         self.log.close()
         return self.log.path
 
@@ -561,7 +566,8 @@ def test_an_unpriced_lane_makes_its_cost_unknown_and_the_known_part_a_floor(play
     assert result.per_challenge["alpha"].dollars == pytest.approx(0.007)
     assert result.dollars is None and result.cost_per_solve is None
     assert result.known_dollars == pytest.approx(0.004 + 0.003 + 0.05 + 0.001)
-    assert any(note.startswith("L02 had turns with no price") for note in result.notes)
+    assert sorted(path.name for path in (played.dir / "lanes").iterdir()) == ["L01.jsonl", "L02.jsonl", "L03.jsonl", "L04.jsonl"]
+    assert result.notes == ("L02 had turns with no price, so its cost is not fully known: the dollars count only priced turns.",)
 
 
 def test_the_known_dollars_count_every_priced_turn_of_a_lane_whose_cost_became_unknown(tmp_path):
@@ -605,14 +611,183 @@ def test_a_challenge_queue_intervention_counts_for_that_challenge(tmp_path):
     assert result.interventions == 2 and result.per_challenge["charlie"].lanes == ("L03", "L04")
 
 
-def test_scoring_reads_only_the_log_so_a_later_score_is_the_same(played):
+def test_scoring_reads_only_the_closed_run_so_a_later_score_is_the_same(played):
     path = played.close()
     first = score(path, played.board)
-    played.deck.report("L04", TurnReport(action="too late"))  # the deck moves on; the closed log does not
-    copy = path.parent.parent / "copied" / "events.jsonl"
-    copy.parent.mkdir()
-    copy.write_bytes(path.read_bytes())
-    assert score(copy, load_board(played.folder)) == first
+    played.deck.report("L04", TurnReport(action="too late"))  # the deck moves on; the closed run does not
+    copy = path.parent.parent / "copied"
+    shutil.copytree(path.parent, copy)
+    assert score(copy / "events.jsonl", load_board(played.folder)) == first
+
+
+# ---------------------------------------------------------------------- spend outside a turn
+
+
+OUTSIDE_TURNS = "outside its turns (a model reply dropped on escalation, for one)"
+
+
+def test_spend_outside_a_turn_is_counted_from_the_lane_transcript(tmp_path):
+    """A model reply in flight when the player escalates is dropped, and the driver reports
+    its cost outside a turn: the deck counts it and no event records it, but the lane's
+    transcript has the deck's totals."""
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    played.at(10)
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars=0.01))
+    deck.apply(iv.Escalate("L01"))
+    deck.report("L01", TurnReport(turn=False, tokens=40_000, dollars=0.40))  # the dropped reply
+    played.at(30)
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=2000, dollars=0.02, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    path = played.close()
+    assert [e["data"]["tokens"] for e in map(json.loads, lines_of(path)) if e["kind"] == "turn"] == [1000, 2000]
+    result = score(path, played.board)
+    lane = played.deck.lanes["L01"]
+    assert result.lanes["L01"].tokens == lane.tokens == 43_000
+    assert result.lanes["L01"].dollars == pytest.approx(lane.dollars) and lane.dollars == pytest.approx(0.43)
+    alpha = result.per_challenge["alpha"]
+    assert (alpha.tokens, alpha.turns) == (43_000, 2) and alpha.dollars == pytest.approx(0.43)
+    assert result.tokens == 43_000 and result.unpriced == ()
+    assert result.dollars == pytest.approx(0.43) and result.known_dollars == pytest.approx(0.43)
+    assert result.cost_per_solve == pytest.approx(0.43)
+    assert result.notes == (
+        f"L01 spent 40k tokens and $0.40 {OUTSIDE_TURNS}: counted from its transcript, as the event log does not record it.",
+    )
+    card = scorecard(result)
+    assert "Spent 43k tokens · $0.43 · $0.43 per solve" in card.splitlines()
+    assert {cells[0]: cells[-3:] for cells in table(card)}["Alpha Gate"] == ["43k", "$0.43", "2"]  # tokens, cost, iv
+
+
+def test_spend_outside_a_turn_with_no_price_makes_the_lanes_cost_unknown(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars=0.01))
+    deck.report("L01", TurnReport(turn=False, tokens=500, dollars=None))  # outside a turn, on a model with no price
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=2000, dollars=0.02, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].tokens == played.deck.lanes["L01"].tokens == 3500
+    assert result.lanes["L01"].dollars is None and played.deck.lanes["L01"].dollars is None
+    assert result.per_challenge["alpha"].dollars is None
+    assert result.unpriced == ("L01",) and result.dollars is None and result.cost_per_solve is None
+    assert result.known_dollars == pytest.approx(0.03)  # its turns: the part known to have a price
+    assert result.notes == (  # its turns all had a price: no note says they did not
+        f"L01 spent 500 tokens {OUTSIDE_TURNS}, and not all of it had a price, so its cost is not fully known: "
+        "the dollars count only its turns.",
+    )
+    assert "Spent 4k tokens · $0.03+ · $0.03+ per solve" in scorecard(result).splitlines()
+
+
+def test_a_transcript_that_differs_from_the_turns_only_by_rounding_adds_nothing(played):
+    path = played.close()
+    whole = score(path, played.board)
+    transcript = path.parent / "lanes" / "L01.jsonl"
+    head, *rest = transcript.read_text().splitlines(keepends=True)
+    for nudge in (1e-12, -1e-12):
+        header = json.loads(head)
+        transcript.write_text(json.dumps({**header, "dollars": header["dollars"] + nudge}) + "\n" + "".join(rest))
+        result = score(path, played.board)
+        assert result.notes == whole.notes and result.lanes["L01"] == whole.lanes["L01"]
+
+
+def test_a_lane_without_a_transcript_counts_its_turns_and_the_score_says_so(played):
+    path = played.close()
+    whole = score(path, played.board)
+    (path.parent / "lanes" / "L04.jsonl").unlink()  # as if the run had stopped before writing it
+    result = score(path, played.board)
+    assert result.notes[-1] == (
+        "No transcript beside the log (lanes/) for L04: its cost is its model turns only, as the event log does not "
+        "record what is spent outside a turn (a model reply dropped on escalation, for one)."
+    )
+    assert result.tokens == whole.tokens and result.known_dollars == pytest.approx(whole.known_dollars)
+    shutil.rmtree(path.parent / "lanes")
+    result = score(path, played.board)
+    assert result.notes[-1].startswith("No transcript beside the log (lanes/) for L01, L02, L03, L04: their cost is their model turns only")
+    assert result.tokens == whole.tokens
+
+
+MORE = 5000  # tokens a transcript adds if it is wrongly taken in: the score must not show them
+
+
+@pytest.mark.parametrize(
+    ("lane", "change", "problem"),
+    [
+        ("L01", lambda h: {**h, "lane": "L02", "tokens": h["tokens"] + MORE}, "is the transcript of another lane"),
+        ("L01", lambda h: {**h, "challenge": "bravo", "tokens": h["tokens"] + MORE}, "is for another challenge than the one L01 worked in the log"),
+        ("L01", lambda h: {**h, "turns": h["turns"] + 1, "tokens": h["tokens"] + MORE}, "counts 3 turns where the log has 2"),
+        ("L01", lambda h: {**h, "tokens": h["tokens"] - 1}, "counts fewer tokens than L01's turns in the log"),
+        ("L01", lambda h: {**h, "tokens": h["tokens"] + MORE, "dollars": h["dollars"] - 0.001}, "counts fewer dollars than L01's turns in the log"),
+        ("L02", lambda h: {**h, "tokens": h["tokens"] + MORE, "dollars": 0.5}, "has a price for all of L02's cost where the log has a turn with none"),
+        ("L01", lambda h: {**h, "tokens": "lots"}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {**h, "turns": None, "tokens": h["tokens"] + MORE}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {**h, "dollars": -1.0, "tokens": h["tokens"] + MORE}, "does not have the turns, tokens and dollars of a lane header"),
+        ("L01", lambda h: {k: v for k, v in {**h, "tokens": h["tokens"] + MORE}.items() if k != "dollars"}, "does not have the turns, tokens and dollars of a lane header"),
+    ],
+    ids=["lane", "challenge", "turns", "fewer tokens", "fewer dollars", "priced", "tokens type", "turns type", "negative dollars", "no dollars"],
+)
+def test_a_transcript_that_does_not_agree_with_the_log_is_left_out_with_a_note(played, lane, change, problem):
+    path = played.close()
+    whole = score(path, played.board)
+    transcript = path.parent / "lanes" / f"{lane}.jsonl"
+    head, *rest = transcript.read_text().splitlines(keepends=True)
+    transcript.write_text(json.dumps(change(json.loads(head))) + "\n" + "".join(rest))
+    result = score(path, played.board)
+    assert f"lanes/{lane}.jsonl {problem}, so it is left out: {lane}'s cost is its model turns only." in result.notes
+    assert result.lanes[lane] == whole.lanes[lane] and result.tokens == whole.tokens
+
+
+@pytest.mark.parametrize(
+    ("content", "problem"),
+    [
+        (b"", "is empty"),
+        (b"\n", "is empty"),
+        (b"not json\n", "does not start with a lane header (its first line is not JSON)"),
+        (b'{"lane": "L01", "tokens": 9', "does not start with a lane header (its first line is not JSON)"),
+        (b"[1, 2]\n", "does not start with a lane header"),
+        (b'{"lane": "L01", "name": "\xff"}\n', "is not text"),
+        (None, "is not a regular file"),
+    ],
+    ids=["empty", "blank", "not json", "cut short", "not an object", "not utf-8", "a directory"],
+)
+def test_a_transcript_with_no_readable_header_is_left_out_with_a_note(played, content, problem):
+    path = played.close()
+    whole = score(path, played.board)
+    transcript = path.parent / "lanes" / "L01.jsonl"
+    if content is None:
+        transcript.unlink()
+        transcript.mkdir()
+    else:
+        transcript.write_bytes(content)
+    result = score(path, played.board)
+    assert f"lanes/L01.jsonl {problem}, so it is left out: L01's cost is its model turns only." in result.notes
+    assert result.lanes["L01"] == whole.lanes["L01"]
+
+
+def test_a_transcript_header_over_the_size_limit_is_not_read(played):
+    path = played.close()
+    transcript = path.parent / "lanes" / "L01.jsonl"
+    transcript.write_text(" " * (MAX_JSON_BYTES + 1) + "\n")
+    result = score(path, played.board)
+    assert f"lanes/L01.jsonl has a first line over {MAX_JSON_BYTES:,} bytes, so it is left out: L01's cost is its model turns only." in result.notes
+
+
+def test_a_lane_id_that_is_not_a_plain_name_is_never_looked_up_as_a_file(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    run = tmp_path / "run"
+    lane = "../outside"
+    (run / "lanes").mkdir(parents=True)
+    planted = {"lane": lane, "challenge": "alpha", "turns": 1, "tokens": 999_999, "dollars": 9.99}
+    (run / "outside.jsonl").write_text(json.dumps(planted) + "\n")  # where lanes/../outside.jsonl would lead
+    path = write_log(
+        run / "events.jsonl",
+        [
+            {"kind": "lane.start", "at": 0, "lane": lane, "challenge": "alpha", "data": {"model": "small"}},
+            {"kind": "turn", "at": 5, "lane": lane, "challenge": "alpha", "data": {"tokens": 10, "dollars": 0.01}},
+        ],
+    )
+    result = score(path, board)
+    assert result.lanes[lane].tokens == 10 and result.dollars == pytest.approx(0.01)
+    assert result.notes[-1].startswith("No transcript beside the log (lanes/) for ../outside:")
 
 
 @pytest.mark.parametrize("fork", [False, True], ids=["one lane", "a fork after it"])
@@ -835,6 +1010,16 @@ def test_a_note_the_log_gives_reason_for_twice_is_given_once(tmp_path):
     assert result.solved == ("bravo",) and result.per_challenge["bravo"].solved_at == 10.0
     note = "The answers file accepts a flag the run was told was wrong for Bravo Box, so it is counted."
     assert result.notes.count(note) == 1
+
+
+def test_a_submit_from_a_log_older_than_its_by_field_is_the_platforms_verdict(tmp_path):
+    """Before submit events said who judged a flag, only the platform did."""
+    board = load_board(make_board(tmp_path / "archive", answers=None))
+    old = submit(30, "L01", "alpha", FLAGS["alpha"], True)
+    del old["data"]["by"]
+    result = score(write_log(tmp_path / "events.jsonl", [old]), board)
+    assert result.per_challenge["alpha"].checked == "platform"
+    assert {cells[0]: cells[3] for cells in table(scorecard(result))}["Alpha Gate"] == "solved L01 *"
 
 
 def test_a_log_from_another_board_is_an_error_naming_the_strangers(played):
