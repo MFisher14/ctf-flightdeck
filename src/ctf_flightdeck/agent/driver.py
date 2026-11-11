@@ -11,6 +11,10 @@ Each lane starts with a fresh context: the fixed system prompt, then the challen
 once its L1 engines have run, what they found). Escalation starts a fresh context too, on the
 stronger model, with the deck's summary; so does the refresh of a context grown too long.
 
+A flag the model submits that the challenge's own text holds (its description, or a handout
+file as it came: often a decoy) is not claimed: under submit auto too it waits for the
+player, and the model hears why, as agent/external.py's lanes do.
+
 A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call. A model call that
 fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
 queue before the lane ends, so the next challenges are not started only to fail the same way.
@@ -27,12 +31,15 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from ..core.driver import TakeoverRefused, TurnReport
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..core.summary import lane_summary
+from ..l1.runner import scan
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
@@ -64,6 +71,9 @@ INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, 
 MAX_IDLE_TURNS = 3  # replies in a row without a tool call before the lane gives up (as agent/external.py's lanes do)
 MAX_SAID_FLAGS = 3  # candidates taken from one reply's text, at most
 SAID_SCAN = 20_000  # characters of a reply's text searched for flags
+PLANT_SECONDS = 5.0  # the search of the challenge's own text for flags (off the loop) stops after this long, with a note
+PLANT_FILE_BYTES = 1024 * 1024  # of each handout file searched
+PLANT_BYTES = 16 * 1024 * 1024  # of all of them
 EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, and what the player should check
     401: "check the API key",
     402: "check the account's credits",
@@ -115,6 +125,7 @@ class _Run:
     generation: int = 0  # bumped at escalation and take-over: a reply asked for before must not run
     idle_turns: int = 0  # replies in a row with no tool call (and no new flag in their text) since the player last spoke
     said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
+    planted: frozenset[str] = frozenset()  # flag-format matches in the challenge's own text: never claimed when submitted
 
 
 @dataclass
@@ -350,6 +361,7 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         run.ready = True
+        await self._plant(run)
         if self.l1 is not None:
             await self._l1_stage(run)
         urls = self.urls.get(run.challenge.id, ())
@@ -400,6 +412,20 @@ class AgentDriver:
             await self._turn(run, reply, len(hints), generation, model, messages)
             if run.messages is messages:  # not escalated during the turn
                 self._refresh_if_long(run, reply.usage.prompt_tokens)
+
+    async def _plant(self, run: _Run) -> None:
+        """Remember the flag-format matches in the challenge's own text, its description and
+        the handout as it came (the workspace before anything ran in it): a decoy flag.txt, an
+        example in a readme. A flag the model submits that is one of them is not claimed, so
+        it waits for the player under auto too, as agent/external.py does for its agents."""
+        found, done = await asyncio.to_thread(
+            _own_flags, run.workspace.root, run.challenge.description, self._flag_re(), time.monotonic() + PLANT_SECONDS
+        )
+        run.planted = frozenset(found)
+        if not done:
+            self.deck.note(run.lane_id, f"the search of the handout for flags stopped after {PLANT_SECONDS:g} s; a flag "
+                                        "the model submits that is written in the rest of it may be submitted without you "
+                                        "under submit auto")
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
@@ -572,6 +598,10 @@ class AgentDriver:
         for flag in flags:
             if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
                 notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
+            elif flag in run.planted:  # the challenge hands it out: often a decoy, so the player decides
+                notes.append(f"{prompts.one(flag, 200)} is written in the challenge's own text (its description or a handout "
+                             "file), so it is not submitted on its own: it waits for the player. A flag a challenge hands "
+                             "out is often a decoy; keep going until you hear it was correct.")
         skipped = len(reply.tool_calls) - len(results)
         said: list[str] = []  # flags the model wrote in a reply with no tool call: candidates it did not submit
         idle = False  # the last of MAX_IDLE_TURNS replies in a row that did nothing: the lane gives up
@@ -607,12 +637,16 @@ class AgentDriver:
                 plan=plans[-1] if plans else None,
                 files=files,
                 flag=flags[0] if flags else None,
+                claimed=not flags or flags[0] not in run.planted,
                 hints_taken=hints_taken if same else 0,
                 model=model,
             ),
         )
         for flag in flags[1:]:  # more candidates in one reply: each is its own approval
-            self._report(run, TurnReport(turn=False, flag=flag))
+            self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in run.planted))
+        for flag in dict.fromkeys(flag for flag in flags if flag in run.planted):
+            self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a handout "
+                                        "file), so it waits for you, though the lane submitted it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
             self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
         if idle:
@@ -730,6 +764,35 @@ class AgentDriver:
             await asyncio.gather(*tasks, return_exceptions=True)
         for run in self.runs.values():
             await self._close(run)
+
+
+def _own_flags(root: Path, description: str, pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool]:
+    """The flag-format matches in a challenge's own text: its description, and every file of
+    the workspace (the handout, before anything ran in it), a text file as the snapshot keeps
+    it and any other read from root, at most PLANT_FILE_BYTES of each and PLANT_BYTES in all,
+    as Latin-1 (a flag in a binary's strings shows). False when the search stopped at
+    `deadline`. In a thread: it can take a while."""
+    found: dict[str, None] = {}
+    if not scan(description, pattern, deadline, found):
+        return set(found), False
+    snapshot = take_snapshot(root)
+    budget = PLANT_BYTES
+    for path, (size, _, _) in snapshot.files.items():
+        text = snapshot.texts.get(path)
+        if text is None:
+            if budget <= 0:
+                continue
+            try:
+                fd = open_inside(root, path.split("/"))
+                with os.fdopen(fd, "rb") as file:
+                    data = file.read(min(size, PLANT_FILE_BYTES, budget))
+            except OSError:  # gone or unreadable: left out
+                continue
+            budget -= len(data)
+            text = data.decode("latin-1")
+        if not scan(text, pattern, deadline, found):
+            return set(found), False
+    return set(found), True
 
 
 def _step(results: list[ToolResult], reply: Reply) -> tuple[str, str]:

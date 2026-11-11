@@ -242,6 +242,9 @@ def test_submit_manual_never_hands_a_flag_to_the_board_even_one_with_answers(tmp
         async def body(run):
             (lane,) = run.deck.lanes.values()
             await wait_for(lambda: lane.pending is not None, "the flag")
+            # the handout's note.txt holds t{note}, so the lane's flag waits for the player first
+            assert lane.pending.kind is PendingKind.SUBMIT and lane.pending.flag == "t{note}"
+            assert run.deck.apply(iv.Approve(lane.id)).ok
             assert lane.pending.kind is PendingKind.CONFIRM and lane.pending.flag == "t{note}"  # you submit it
 
         play(run, body)
