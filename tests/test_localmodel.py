@@ -17,6 +17,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 import typer
@@ -26,7 +27,7 @@ from ctf_flightdeck import localmodel as lm
 from ctf_flightdeck import localmodel_cli
 from ctf_flightdeck.agent.client import ModelClient
 from ctf_flightdeck.detect import hints
-from fake_model import FakeModelServer, text_reply
+from fake_model import FakeModelServer, error_reply, text_reply
 
 runner = CliRunner()
 ROW_LABELS = ("hint", "summary", "overall")
@@ -558,3 +559,57 @@ def test_cli_fails_before_spending_on_an_id_the_lexicon_lacks(tmp_path):
         assert result.exit_code == 2
         assert result.output.startswith("flightdeck: ") and "'caesar' (case 1)" in result.output
         assert server.requests == []
+
+
+def test_cli_never_shows_credentials_from_the_base_url(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "a slow scan tv signal"))
+    password, token = "fake-pass-7731", "fake-token-5520"  # synthetic, for the redaction check
+    echoed = f"bad credentials: player:{password}, key {token}"  # a server may echo them back
+    with FakeModelServer([error_reply(401, echoed)]) as server:
+        port = urlsplit(server.base_url).port
+        result = invoke(f"http://player:{password}@127.0.0.1:{port}/v1?api_key={token}", cases)
+        sent = server.requests[0]["headers"].get("authorization", "")
+    assert result.exit_code == 2
+    assert f"flightdeck: the local model at http://127.0.0.1:{port}/v1 failed" in result.output
+    assert "HTTP 401" in result.output
+    assert password not in result.output and token not in result.output
+    assert sent.startswith("Basic ")  # the credentials were used, only never shown
+    # nor when the URL cannot be used at all (httpx would quote a bad port back)
+    for bad in (f"player:{password}@127.0.0.1:{port}/v1", f"http://player:{password}/v1"):
+        result = invoke(bad, cases)
+        assert result.exit_code == 2 and result.output.startswith("flightdeck: --base-url")
+        assert password not in result.output
+
+
+def test_cli_names_a_scheme_less_base_url(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "a slow scan tv signal"))
+    result = invoke("127.0.0.1:11434/v1", cases)
+    assert result.exit_code == 2
+    assert result.output.startswith("flightdeck: --base-url must start with http:// or https://")
+
+
+def test_cli_a_server_that_answers_an_error_is_not_called_unreachable(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", hint_case("sstv", "a slow scan tv signal"))
+    with FakeModelServer([error_reply(404, "model 'qwen9' not found")]) as server:
+        result = invoke(server.base_url, cases, model="qwen9")
+    assert result.exit_code == 2
+    assert f"the local model at {server.base_url} failed: the model API answered HTTP 404" in result.output
+    assert "could not be reached" not in result.output
+
+
+def test_cli_fails_when_most_replies_hold_no_answer(tmp_path):
+    cases = write_cases(
+        tmp_path / "cases.jsonl",
+        hint_case("sstv", "a slow scan tv signal"),
+        hint_case("xor", "a repeating single-byte key"),
+        hint_case("none", "Welcome, good luck."),
+    )
+    with FakeModelServer([cut_off("<think>\nThe description"), cut_off("<think>\nHmm"), text_reply("none")]) as server:
+        most = invoke(server.base_url, cases)
+    assert most.exit_code == 1
+    assert "no answer: 2 of 3 model replies" in most.output  # the scorecard is still shown
+    assert "flightdeck: 2 of 3 replies were cut off at the token cap or empty" in most.output
+    with FakeModelServer([cut_off("<think>\nThe description"), text_reply("xor"), text_reply("none")]) as server:
+        some = invoke(server.base_url, cases)
+    assert some.exit_code == 0, some.output
+    assert "no answer: 1 of 3 model replies" in some.output
