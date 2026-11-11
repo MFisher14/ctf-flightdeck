@@ -7,8 +7,13 @@ context, and the turn is reported to the deck (tokens, cost, the step, changed f
 candidate flag). The deck applies the rules (approvals, caps, the flag format); the loop
 calls the model, and runs a tool call, only while the lane is RUNNING, and waits otherwise.
 
-Each lane starts with a fresh context: the fixed system prompt, then the challenge brief.
-Escalation starts a fresh context too, on the stronger model, with the deck's summary.
+Each lane starts with a fresh context: the fixed system prompt, then the challenge brief (and,
+once its L1 engines have run, what they found). Escalation starts a fresh context too, on the
+stronger model, with the deck's summary; so does the refresh of a context grown too long.
+
+A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call. A model call that
+fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
+queue before the lane ends, so the next challenges are not started only to fail the same way.
 
 Escalation and take-over are turn boundaries. Each bumps the lane's generation, and a reply
 asked for in an older generation runs no further tool call. After an escalation none of
