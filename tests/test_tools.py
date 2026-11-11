@@ -121,6 +121,17 @@ def test_shell_timeouts_have_a_default_and_are_clamped(lane):
     assert time.monotonic() - started < 20
 
 
+def test_a_command_too_long_to_start_is_refused_and_one_within_the_limit_runs(box):
+    # 2 MB is past the argument limits of macOS (1 MiB in all) and Linux (128 KiB in one argument).
+    over = call(box, "shell", {"command": "echo " + "x" * 2_000_000})
+    assert over.error
+    assert over.content == "error: the command is 2000005 bytes, over the 100000-byte limit for one command; write long data to a file in parts"
+    assert len(over.action) <= 400
+    at_limit = ": " + "x" * (tools.COMMAND_BYTES - 12) + "; echo ran"
+    assert len(at_limit) == tools.COMMAND_BYTES
+    assert call(box, "shell", {"command": at_limit}).content == "exit 0\nran\n"
+
+
 def test_long_output_is_cut_to_its_head_and_tail_and_saved_in_full(lane):
     box = Toolbox(lane, max_chars=1000)
     full = "".join(f"{i}\n" for i in range(1, 5001))

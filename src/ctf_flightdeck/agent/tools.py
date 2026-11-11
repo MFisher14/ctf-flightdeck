@@ -33,6 +33,7 @@ CONSOLE_CHARS = 300  # ToolResult.output
 ACTION_CHARS = 400  # ToolResult.action
 PLAN_CHARS = 500
 READ_LINES = 400
+COMMAND_BYTES = 100_000  # the longest shell command: it is one argument (bash -c), and Linux takes at most 128 KiB in one
 HTTP_TIMEOUT = 30.0
 HTTP_HEADERS = 30  # response headers shown at most
 SYMLINK_HOPS = 40
@@ -192,6 +193,10 @@ class Toolbox:
         if "\0" in command:
             raise _Mistake("command contains a NUL character", action)
         _sendable(command, "command", action)
+        size = len(command.encode("utf-8"))
+        if size > COMMAND_BYTES:
+            # Past the system's limit, starting bash fails (E2BIG) before the command runs.
+            raise _Mistake(f"the command is {size} bytes, over the {COMMAND_BYTES}-byte limit for one command; write long data to a file in parts", action)
         timeout = self._timeout(args)
         return self._ran(action, await self.workspace.run(command, timeout=timeout), timeout, turn, index)
 
