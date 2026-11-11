@@ -803,6 +803,33 @@ def test_a_report_quotes_an_older_run_folder_without_its_credentials(tmp_path):
     assert any(line.endswith(f"nothing more to try; {cleaned}") for line in lines)
 
 
+CTFD = "ctfd" + "_" + "0f" * 32
+
+
+def test_a_report_cleans_an_older_run_folders_event_text_and_a_result_only_its_transcript_kept(tmp_path):
+    """Two more places an older run folder holds a key as it was: the text of an event (a
+    warning for the whole run, which has nothing else to show) and a lane's transcript, the
+    only place a lane's result is left when the run stopped before its log had the lane's
+    end. The report shows each with the key's name and not its value."""
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.deck.warn(f"could not pull the board with {PLANTED}")
+    run.turn(lane, "ls", gave_up=f"the server wants {PLANTED}")
+    run.close()
+    log = tmp_path / "events.jsonl"
+    log.write_text("".join(line for line in log.read_text().splitlines(keepends=True) if json.loads(line).get("kind") != "lane.end"))
+    record = load_run(planted(tmp_path, f"CTFD_TOKEN={CTFD} OPENROUTER_API_KEY={OPENROUTER}"))
+    assert not [e for e in record.events if e.kind == "lane.end"]
+    assert CTFD in next(e.text for e in record.events if e.kind == "warning") and OPENROUTER in record.lanes[lane].result
+    text = report(record)
+    assert "0f" * 32 not in text and "5f" * 32 not in text
+    cleaned = "CTFD_TOKEN=[redacted] OPENROUTER_API_KEY=[redacted]"
+    lines = [shown(t) for t in walk(text) if t.type == "inline"]
+    assert any(line.endswith(f"· could not pull the board with {cleaned}") for line in lines)  # under the run's warnings
+    assert any(line.startswith(f"{lane} on X gave up") and line.endswith(f": the server wants {cleaned}") for line in lines)
+
+
 @pytest.mark.parametrize("budget_approved", [False, True], ids=["left waiting", "approved"])
 def test_a_flags_verdict_does_not_answer_a_budget_alert(tmp_path, budget_approved):
     run = Script(tmp_path, flags={"x": "t{right}"})
