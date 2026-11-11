@@ -326,6 +326,13 @@ BAD_SPECS = {
     "url bad port": (spec(urls=["http://127.0.0.1:99999"]), '"urls"[0] must be'),
     "url bad host": (spec(urls=["http://a b"]), '"urls"[0] must be'),
     "url bad IPv6": (spec(urls=["http://[::zz]"]), '"urls"[0] must be'),
+    # urlsplit would quietly turn each of these into another origin: refused, never rewritten
+    "url with a tab": (spec(urls=["http://127.0.0.1:80\t80"]), '"urls"[0] must be an http:// or https:// origin'),
+    "url with a newline": (spec(urls=["http://exa\nmple.com"]), '"urls"[0] must be'),
+    "url ending in a newline": (spec(urls=["http://127.0.0.1:8080\n"]), '"urls"[0] must be'),
+    "url with a space in front": (spec(urls=[" http://127.0.0.1:8080"]), '"urls"[0] must be'),
+    "url with a control character in front": (spec(urls=["\u0001http://127.0.0.1:8080"]), '"urls"[0] must be'),
+    "url with a Kelvin sign": (spec(urls=["http://Kali.example:8080"]), '"urls"[0] must be'),
     "url not a string": (spec(urls=[8080]), '"urls"[0] must be'),
     "url twice": (spec(urls=["http://box.local:1", "HTTP://BOX.local:1/"]), 'lists http://box.local:1 twice'),
     "nesting too deep": ('{"name": ' + "[" * 100_000, "nesting too deep"),

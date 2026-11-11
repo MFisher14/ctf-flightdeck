@@ -287,7 +287,7 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
         if url is None:
             raise BoardError(
                 f'{_show(path)}: "urls"[{i}] must be an http:// or https:// origin: scheme://host[:port], '
-                "with no path, query or user name"
+                "in printable ASCII with no spaces, and with no path, query or user name"
             )
         if url in urls:
             raise BoardError(f'{_show(path)}: "urls" lists {url} twice')
@@ -298,7 +298,9 @@ def _urls(path: Path, value: object) -> tuple[str, ...]:
 def _origin(value: object) -> str | None:
     """`value` as an origin with a lower-case scheme and host and no trailing "/", or None if
     it is not an http(s) origin. The tools compare origins, so they must be in one form."""
-    if not isinstance(value, str):
+    if not isinstance(value, str) or not _printable_ascii(value):
+        # urlsplit quietly drops a tab or newline anywhere and spaces and control characters in
+        # front, and lower-cases a Kelvin sign to k: the origin would not be the one written
         return None
     try:
         url = urlsplit(value)
@@ -455,6 +457,11 @@ def _count(value: object) -> bool:
 
 def _valid_id(value: object) -> bool:
     return isinstance(value, str) and len(value) <= MAX_ID and ID.fullmatch(value) is not None
+
+
+def _printable_ascii(text: str) -> bool:
+    """Only the printable ASCII characters, and no space."""
+    return all("!" <= ch <= "~" for ch in text)
 
 
 def _present(path: Path) -> bool:
