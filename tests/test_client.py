@@ -542,12 +542,25 @@ def test_a_429_whose_body_is_nested_too_deep_to_parse_is_still_tried_again():
 
 
 def test_when_every_try_fails_the_error_is_retryable_and_names_the_last_status():
-    replies = [error_reply(500, "upstream exploded")] * 3 + [text_reply("one try too many")]
+    replies = [error_reply(429, "slow down"), error_reply(503, "overloaded"), text_reply("one try too many")]
     with FakeModelServer(replies) as server:
-        err = fails(server.base_url, max_retries=2)
-        assert len(server.requests) == 3
-    assert err.status == 500 and err.retryable is True
-    assert "upstream exploded" in str(err) and "3 tries" in str(err)
+        err = fails(server.base_url, max_retries=1)
+        assert len(server.requests) == 2
+    assert err.status == 503 and err.retryable is True
+    assert "HTTP 503" in str(err) and "overloaded" in str(err) and "2 tries" in str(err)
+    assert "slow down" not in str(err)
+
+
+def test_when_the_last_try_gets_no_answer_the_error_has_no_status_though_an_earlier_one_did():
+    def too_slow(request: dict) -> dict:
+        time.sleep(0.6)  # past the client's timeout
+        return text_reply("too late")
+
+    with FakeModelServer([error_reply(502, "bad gateway")], responder=too_slow) as server:
+        err = fails(server.base_url, timeout=0.25, max_retries=1)
+        assert len(server.requests) == 2
+    assert err.status is None and err.retryable is True
+    assert "bad gateway" not in str(err)
 
 
 def test_no_retries_means_one_try():
