@@ -483,20 +483,32 @@ OPEN_STATE_WORDS = {
     LaneState.PAUSED: "paused",
     LaneState.TAKEOVER: "taken over",
 }
-QUIT_SHOWN = 5  # lanes waiting for the player that the quit prompt names; the rest are counted
+QUIT_SHOWN = 5  # lanes waiting for the player, and flags on their way, that the quit prompt names; the rest are counted
+
+
+def on_their_way(deck: Deck) -> list[tuple[str, str, str, bool]]:
+    """The flags on their way to the platform whose answer is not in yet, as (lane id,
+    challenge id, flag, sent): the one handed over for each challenge (sent), then those
+    waiting their turn behind it (Deck.submitting), challenges in board order. A lane that
+    ended meanwhile still has its flag here: the answer would still count for it."""
+    return [(lane_id, cid, flag, i == 0) for cid in deck.challenges for i, (lane_id, flag) in enumerate(deck.submitting(cid))]
 
 
 def quit_summary(deck: Deck, run_dir: str = "") -> Text:
-    """What quitting would stop: the open lanes, what waits for the player, the queue; and
-    what quitting does."""
+    """What quitting would stop: the open lanes, what waits for the player, the flags on their
+    way to the platform (quitting leaves their answer unknown), the queue; and what quitting
+    does."""
     live = sorted((lane for lane in deck.lanes.values() if not lane.finished), key=lambda lane: lane.number)
     counts: dict[str, int] = {}
     for lane in live:
         word = OPEN_STATE_WORDS[lane.state]
         counts[word] = counts.get(word, 0) + 1
     out = Text()
-    out.append(f"{len(live)} lane{'' if len(live) == 1 else 's'} still open", "bold")
-    out.append(": " + ", ".join(f"{n} {word}" for word, n in counts.items()))
+    if live:
+        out.append(f"{len(live)} lane{'' if len(live) == 1 else 's'} still open", "bold")
+        out.append(": " + ", ".join(f"{n} {word}" for word, n in counts.items()))
+    else:
+        out.append("No lane is still open", "bold")
     waiting = [lane for lane in live if lane.pending is not None]
     for lane in waiting[:QUIT_SHOWN]:
         assert lane.pending is not None
@@ -508,6 +520,20 @@ def quit_summary(deck: Deck, run_dir: str = "") -> Text:
             out.append(f"  (then {len(lane.waiting)} more)", theme.MUTED)
     if len(waiting) > QUIT_SHOWN:
         out.append(f"\n  and {len(waiting) - QUIT_SHOWN} more lanes waiting for you", theme.MUTED)
+    going = on_their_way(deck)
+    if going:
+        one = len(going) == 1
+        out.append(f"\n{len(going)} flag{'' if one else 's'} on {'its' if one else 'their'} way to the platform: "
+                   f"quitting leaves {'its answer' if one else 'their answers'} unknown", "bold")
+        for lane_id, cid, flag, sent in going[:QUIT_SHOWN]:
+            out.append(f"\n  {lane_id} ", "bold")
+            out.append(untrusted(deck.challenges[cid].name, one_line=True), "bold")
+            out.append("  ")
+            out.append(untrusted(flag, one_line=True), theme.CYAN)
+            if not sent:
+                out.append("  (waiting its turn: never sent if you quit)", theme.MUTED)
+        if len(going) > QUIT_SHOWN:
+            out.append(f"\n  and {len(going) - QUIT_SHOWN} more on their way", theme.MUTED)
     if deck.queue:
         out.append(f"\n{len(deck.queue)} challenge{'' if len(deck.queue) == 1 else 's'} queued, not started")
     out.append(

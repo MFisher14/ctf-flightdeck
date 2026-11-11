@@ -2526,6 +2526,88 @@ def test_a_second_q_or_one_meant_for_help_or_a_card_does_not_quit_a_run():
     drive(app, script)
 
 
+def platform_run(names: tuple[str, ...] = ("alpha", "bravo", "charlie")) -> Deck:
+    """A run's deck whose flags go to a platform over the network (a submitter that only takes
+    them: no answer comes back unless a test gives one), under submit confirm."""
+    config = DeckConfig(event="ev", models=("glm",), max_lanes=3, flag_format=r"t\{[a-z]+\}", submit="confirm")
+    deck = Deck(config, QuietDriver(), ManualClock(1000.0), wrong_flag, submitter=lambda lane, challenge, flag: None)
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
+    return deck
+
+
+def send(deck: Deck, lane_id: str, flag: str) -> None:
+    """The lane finds `flag` and the player approves it: it goes to the platform (or waits its turn)."""
+    deck.report(lane_id, TurnReport(flag=flag))
+    assert deck.apply(iv.Approve(lane_id)).ok
+
+
+@pytest.mark.parametrize("size", [SIZE, (80, 24)], ids=["160x46", "80x24"])
+def test_the_quit_prompt_names_each_flag_on_its_way_to_the_platform_and_says_quitting_leaves_its_answer_unknown(size):
+    deck = platform_run(("alpha", "bravo", "charlie", "delta"))  # three lanes at work, one challenge queued
+    alpha, bravo, charlie = (deck.lanes_on(n)[0] for n in ("alpha", "bravo", "charlie"))
+    send(deck, alpha.id, "t{one}")  # handed to the platform
+    send(deck, alpha.id, "t{two}")  # waits its turn behind it: one flag at a time per challenge
+    send(deck, bravo.id, "t{three}")
+    deck.report(charlie.id, TurnReport(flag="t{four}"))  # waits for the player: not on its way
+    calls = []
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit, run_dir="/runs/20261111-093000")
+
+    async def script(pilot):
+        await press(pilot, "q")
+        assert isinstance(app.screen, QuitPrompt)
+        text = prompt_text(app)
+        assert "3 lanes still open: 2 running, 1 waiting for you" in text and "L03 Charlie submit t{four}" in text
+        assert "3 flags on their way to the platform: quitting leaves their answers unknown" in text
+        assert "L01 Alpha t{one} L01 Alpha t{two} (waiting its turn: never sent if you quit) L02 Bravo t{three}" in text
+        assert "1 challenge queued, not started" in text and "Stay (esc) Quit (y)" in text
+        await press(pilot, "escape")
+        assert calls == [] and deck.submitting("alpha") == ((alpha.id, "t{one}"), (alpha.id, "t{two}"))
+
+    drive(app, script, size)
+    plain = views.quit_summary(deck).plain
+    assert "\n  L01 Alpha  t{one}\n  L01 Alpha  t{two}  (waiting its turn: never sent if you quit)\n  L02 Bravo  t{three}\n" in plain
+    deck.platform_verdict(alpha.id, "t{one}", False, "Incorrect")  # its answer is in: t{two} goes out in its place
+    assert "2 flags on their way to the platform" in views.quit_summary(deck).plain
+    assert "L01 Alpha  t{two}\n" in views.quit_summary(deck).plain and "t{one}" not in views.quit_summary(deck).plain
+
+
+def test_quitting_asks_first_while_a_flag_is_on_its_way_though_every_lane_has_ended():
+    """A lane killed after it sent a flag: the platform's answer would still count for it, so
+    quitting asks first and names the flag; once its answer is in, it quits at once."""
+    deck = platform_run(("alpha",))
+    (lane,) = deck.lanes.values()
+    send(deck, lane.id, "t{one}")
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
+    calls = []
+
+    async def on_exit():
+        calls.append("stopped")
+
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=on_exit)
+
+    async def script(pilot):
+        await press(pilot, "q")
+        assert isinstance(app.screen, QuitPrompt)
+        text = prompt_text(app)
+        assert "No lane is still open" in text and "lanes still open" not in text
+        assert "1 flag on its way to the platform: quitting leaves its answer unknown L01 Alpha t{one}" in text
+        await press(pilot, "escape")
+        assert calls == [] and app.is_running
+        deck.platform_verdict(lane.id, "t{one}", False, "Incorrect")
+        await press(pilot, "q")  # nothing is left to lose: no question
+        for _ in range(50):
+            if not app.is_running:
+                break
+            await pilot.pause(0.01)
+        assert calls == ["stopped"] and not app.is_running
+
+    drive(app, script)
+
+
 def test_quitting_does_not_ask_once_every_lane_has_finished_nor_in_the_mock():
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
     deck.release([Challenge("alpha", "Alpha", "misc", 50)], [QueueEntry("alpha", "glm")])

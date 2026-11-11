@@ -119,12 +119,15 @@ class FlightdeckApp(App[None]):
 
     async def action_quit(self) -> None:
         """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
-        While lanes are still open, ask first: quitting stops them all, and a run cannot be
+        While lanes are still open, or a flag is on its way to the platform, ask first:
+        quitting stops them all and leaves that flag's answer unknown, and a run cannot be
         resumed. (A signal does not ask: see _on_signal.)"""
         if self._exiting or isinstance(self.screen, QuitPrompt):
             return
-        if self._on_exit is not None and any(not lane.finished for lane in self.deck.lanes.values()):
-            self.push_screen(QuitPrompt(views.quit_summary(self.deck, self._run_dir)), self._quit_answered)
+        deck = self.deck
+        lanes_open = any(not lane.finished for lane in deck.lanes.values())
+        if self._on_exit is not None and (lanes_open or views.on_their_way(deck)):
+            self.push_screen(QuitPrompt(views.quit_summary(deck, self._run_dir)), self._quit_answered)
             return
         await self._quit_now()
 
