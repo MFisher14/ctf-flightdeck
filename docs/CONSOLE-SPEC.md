@@ -45,11 +45,12 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Fleet**: one compact row per lane, scrolling, **sorted by attention** (below). Finished lanes
   collapse into one row. 40+ rows stay usable; low-value columns drop first on narrow terminals,
   and the challenge name narrows before a column is cut. The list keeps its scroll position. The
-  attention cell (`!`) shows the lane's most urgent alert or approval; with none, `sending` while
-  a flag of the lane is on its way to the platform (there is nothing to answer: the answer comes
-  back on its own). The cost column has room for its markers: `$0.42+` when some spend had no
-  price (what is known, as "at least"), and `…` while a coding-agent CLI's turn is under way (it
-  reports the turn's cost when the turn ends), never a settled `$0.00` then.
+  attention cell (`!`) shows what the lane most urgently needs from you (an alert or an approval);
+  with nothing to answer, `sending` while a flag of the lane is on its way to the platform (its
+  answer comes back on its own), else an informational alert, if any. The cost column has room
+  for its markers: `$0.42+` when some spend had no price (what is known, as "at least"), and `…`
+  while a coding-agent CLI's turn is under way (it reports the turn's cost when the turn ends),
+  never a settled `$0.00` then.
 - **Why line**: under the list, why the selected lane is flagged and the keys that answer it.
 - **Command bar**: acts on the same lane the keys do (the board challenge's only lane when the board
   has focus; refused when the filter hides the selected lane). Its suggestions follow the selection.
