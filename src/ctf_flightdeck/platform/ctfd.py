@@ -80,6 +80,7 @@ from .. import __version__
 from ..text import untrusted
 from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board
 from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
+from .manual import _settings as _board_json  # board.json's event and flag format, read as the board loader reads them
 
 API = "/api/v1"
 STATE_FILE = "ctfd.json"
@@ -783,7 +784,7 @@ async def pull(
     client: CTFdClient,
     dest: Path,
     *,
-    event: str,
+    event: str | None = None,
     flag_format: str | None,
     progress: Callable[[str], None] | None = None,
 ) -> Pull:
@@ -795,16 +796,23 @@ async def pull(
     with the reason in Pull.problems, and tried again by the next pull. `progress` gets one
     line per challenge added, safe to print.
 
-    Raises CTFdError when the pull cannot start (`dest` not usable, the listing failing, the
-    token refused) or the board would be empty (it says why: nothing listed, all locked, the
-    reasons). PullStopped, a CTFdError, when it stops partway: the token refused, or CTFd no
-    longer answering (a challenge failed with no answer, 429 or 5xx after the retries, and
-    the challenge list, asked again, failed too); what was written by then stays, and the
-    next pull goes on from there. BoardError if the board folder does not load (a folder
-    edited by hand), and OSError if board.json or ctfd.json cannot be written.
+    board.json gets `event` (the board's name) and `flag_format`. None keeps what a board
+    pulled before has in its board.json; on a new board, None names it after the folder and
+    sets no flag format. A flag format other than the one a board has already is refused:
+    a wave must not loosen the check that keeps decoy flags from being submitted (change it
+    in board.json first if it is wrong).
+
+    Raises CTFdError when the pull cannot start (`dest` not usable, a flag format the board
+    does not have, the listing failing, the token refused) or the board would be empty (it
+    says why: nothing listed, all locked, the reasons). PullStopped, a CTFdError, when it
+    stops partway: the token refused, or CTFd no longer answering (a challenge failed with
+    no answer, 429 or 5xx after the retries, and the challenge list, asked again, failed
+    too); what was written by then stays, and the next pull goes on from there. BoardError
+    if the board folder (board.json included) does not load, as after an edit by hand, and
+    OSError if board.json or ctfd.json cannot be written.
     """
-    if not isinstance(event, str) or not event.strip():
-        raise ValueError("event must be a non-empty string: the board's name")
+    if event is not None and (not isinstance(event, str) or not event.strip()):
+        raise ValueError("event must be a non-empty string (the board's name), or None to keep the board's own")
     if flag_format is not None:
         bad = False
         try:
@@ -828,6 +836,7 @@ async def pull(
     with _locked(root):
         _clear_staging(root)
         known = _read_state(root, client.base_url)
+        event, flag_format = _settings(root, known, event, flag_format)
         listing = await client.challenges()
         # The folder is this CTFd's board from here on, even if no challenge comes through.
         _write_state(root, client.base_url, known)
@@ -893,6 +902,19 @@ async def pull(
     return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden)
 
 
+def _settings(root: Path, known: Mapping[str, int], event: str | None, flag_format: str | None) -> tuple[str, str | None]:
+    """board.json's event and flag format after this pull (see pull())."""
+    if not known:  # a new board, or one whose first pull got no challenge through: nothing played yet
+        return (root.name if event is None else event), flag_format
+    stored_event, stored_format = _board_json(root)
+    if flag_format is not None and stored_format is not None and flag_format != stored_format:
+        raise CTFdError(
+            f"{_show(root / BOARD_FILE)}: the board's flag format is {_show(stored_format)}, not {_show(flag_format)}; "
+            "leave the flag format out to keep the board's, or change it in board.json first"
+        )
+    return (stored_event if event is None else event), (stored_format if flag_format is None else flag_format)
+
+
 async def _not_answering(client: CTFdClient) -> CTFdError | None:
     """After a challenge failed in a way that passes: None if CTFd still answers its challenge
     list (asked with the client's retries), so the failure was that challenge's own; else the
@@ -920,7 +942,7 @@ def _empty_board(url: str, listed: int, hidden: int, problems: list[str]) -> str
     return text + (": " + "; ".join(problems) if problems else "")
 
 
-async def pull_board(client: CTFdClient, dest: Path, *, event: str, flag_format: str | None) -> Board:
+async def pull_board(client: CTFdClient, dest: Path, *, event: str | None = None, flag_format: str | None) -> Board:
     """pull(), for a caller that wants the whole board or an error: the board, or
     PullIncomplete (whose .pull holds what was written and why the rest was left out).
     The CTFd ids of the board's challenges are in dest/ctfd.json: load_ids(dest)."""

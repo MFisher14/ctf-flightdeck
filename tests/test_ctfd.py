@@ -678,6 +678,17 @@ def test_a_wave_re_pull_keeps_every_folder_and_adds_the_new_ones(tmp_path):
     assert len(result.board.challenges) == 5 and dict(result.ids)["second-wave"] == 5 and load_ids(dest)["warmup"] == 1
 
 
+def test_a_re_pull_keeps_board_json_and_may_add_a_flag_format_it_lacked(tmp_path):
+    dest = tmp_path / "spring"
+    with FakeCTFd(sample()) as fake:
+        first = pulled(fake, dest, event=None, flag_format=None)
+        kept = pulled(fake, dest, event=None, flag_format=None)
+        added = pulled(fake, dest, event=None, flag_format=FLAG_FORMAT)
+    assert (first.board.event, first.board.flag_format) == ("spring", None)  # a new board: the folder's name
+    assert (kept.board.event, kept.board.flag_format) == ("spring", None)
+    assert (added.board.event, added.board.flag_format) == ("spring", FLAG_FORMAT)
+
+
 def test_a_challenge_that_cannot_be_pulled_is_left_out_and_retried_next_time(tmp_path):
     dest = tmp_path / "board"
     board = sample() + [FakeChallenge(5, "Far Away", file_urls=["https://cdn.example.org/files/x/far.zip"])]

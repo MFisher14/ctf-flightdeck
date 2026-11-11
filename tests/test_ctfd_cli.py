@@ -6,6 +6,8 @@ environment variable --token-env names. No real CTFd is contacted.
 
 from __future__ import annotations
 
+import json
+
 from typer.testing import CliRunner
 
 from ctf_flightdeck.platform import ctfd_cli
@@ -37,6 +39,29 @@ def test_the_event_name_defaults_to_the_folders(tmp_path):
         result = pull(fake.base_url, str(tmp_path / "spring-ctf"), "--token-env", TOKEN_VAR, env={TOKEN_VAR: TOKEN})
     assert result.exit_code == 0, result.output
     assert load_board(tmp_path / "spring-ctf").event == "spring-ctf"
+
+
+def test_a_wave_re_pull_keeps_the_boards_event_and_flag_format(tmp_path):
+    dest = tmp_path / "board"
+    env = {TOKEN_VAR: TOKEN}
+    with FakeCTFd(sample()) as fake:
+        first = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--event", "Spring CTF 2026",
+                     "--flag-format", FLAG_FORMAT, env=env)
+        fake.add(FakeChallenge(5, "Second Wave", value=150))
+        wave = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, env=env)  # as the help says: run it again
+        after_wave = json.loads((dest / "board.json").read_text())
+        asked = len(fake.requests)
+        other = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--flag-format", r"flag\{\w+\}", env=env)
+        assert len(fake.requests) == asked  # refused before CTFd was asked anything
+        same = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--flag-format", FLAG_FORMAT, env=env)
+        renamed = pull(fake.base_url, str(dest), "--token-env", TOKEN_VAR, "--event", "Spring CTF", env=env)
+    assert first.exit_code == 0 and wave.exit_code == 0 and "5 challenges, 1 new" in wave.stdout
+    assert after_wave == {"event": "Spring CTF 2026", "flag_format": FLAG_FORMAT}
+    assert other.exit_code == 2 and "the board's flag format is test\\{\\w+\\}, not flag\\{\\w+\\}" in other.stderr
+    assert "change it in board.json first" in other.stderr
+    assert same.exit_code == 0 and renamed.exit_code == 0  # the same format again is fine; a new name is the player's
+    board = load_board(dest)
+    assert (board.event, board.flag_format) == ("Spring CTF", FLAG_FORMAT)
 
 
 def test_pull_without_the_token_variable_fails_naming_it(tmp_path):

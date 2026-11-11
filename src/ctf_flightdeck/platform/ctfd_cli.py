@@ -39,9 +39,16 @@ def pull(
     token_env: Annotated[
         str, typer.Option("--token-env", help="The environment variable that holds your CTFd API token (its name, not the token).")
     ] = "CTFD_TOKEN",
-    event: Annotated[str | None, typer.Option("--event", help="The event's name for board.json (default: the folder's name).")] = None,
+    event: Annotated[
+        str | None,
+        typer.Option("--event", help="The event's name for board.json (default: the board's own; the folder's name for a new board)."),
+    ] = None,
     flag_format: Annotated[
-        str | None, typer.Option("--flag-format", help="The event's flag format, a regular expression, for board.json.")
+        str | None,
+        typer.Option(
+            "--flag-format",
+            help="The event's flag format, a regular expression, for board.json (a re-pull keeps the board's, and refuses another).",
+        ),
     ] = None,
 ) -> None:
     """Pull the board from CTFd: a folder per challenge with its challenge.json and files.
@@ -72,9 +79,7 @@ def pull(
 
     async def run():
         async with CTFdClient(url, token) as client:
-            return await pull_board(
-                client, dest, event=event or dest.resolve().name, flag_format=flag_format, progress=typer.echo
-            )
+            return await pull_board(client, dest, event=event, flag_format=flag_format, progress=typer.echo)
 
     problem = None
     try:
