@@ -1,7 +1,9 @@
-"""The console's look: colors, chips and the slanted header segments.
+"""The console's look: colors, chips and the header segments.
 
-Only plain Unicode is used (╱ cuts, ▐▌ chip caps, ╭╮ rounded borders), so it works in
-any terminal font; no Nerd Font is needed.
+Only plain Unicode is used (╱ between header segments, ╭╮ rounded borders), so it works
+in any terminal font; no Nerd Font is needed. Every colored shape is whole cells of
+background color: no half-block caps or glyph edges whose size depends on the font, so
+no color shows past a corner.
 """
 
 from __future__ import annotations
@@ -42,12 +44,8 @@ def alert_colors(kind: AlertKind) -> tuple[str, str]:
 
 
 def chip(text: str, fg: str, bg: str) -> Text:
-    """A small label with half-block caps: ▐flag▌."""
-    out = Text(no_wrap=True)
-    out.append("▐", Style(color=bg))
-    out.append(text, Style(color=fg, bgcolor=bg, bold=True))
-    out.append("▌", Style(color=bg))
-    return out
+    """A small solid label, one cell of padding each side: ` flag `."""
+    return Text(f" {text} ", style=Style(color=fg, bgcolor=bg, bold=True), no_wrap=True)
 
 
 def key_chip(key: str) -> Text:
@@ -55,10 +53,12 @@ def key_chip(key: str) -> Text:
 
 
 def segments(parts: list[tuple[str, str, str, bool]]) -> Text:
-    """Header pieces (text, fg, bg, bold) as slanted segments cut apart by ╱."""
+    """Header pieces (text, fg, bg, bold) as solid segments with a ╱ between them.
+
+    The ╱ sits on the page, not on either segment, so each segment is a clean block."""
     out = Text(no_wrap=True, overflow="ellipsis")
     for i, (text, fg, bg, bold) in enumerate(parts):
+        if i:
+            out.append("╱", Style(color=BORDER))
         out.append(f" {text} ", Style(color=fg, bgcolor=bg, bold=bold))
-        following = parts[i + 1][2] if i + 1 < len(parts) else None
-        out.append("╱", Style(color=PAGE, bgcolor=following))
     return out

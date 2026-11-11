@@ -35,7 +35,7 @@ class FlightdeckApp(App[None]):
     TITLE = "flightdeck"
     ENABLE_COMMAND_PALETTE = False
     CSS = f"""
-    Screen {{ background: {theme.PAGE}; }}
+    FleetScreen, FocusScreen {{ background: {theme.PAGE}; }}
     .panel {{
         border: round {theme.BORDER}; border-title-color: $text; border-subtitle-color: {theme.MUTED};
         padding: 0 1; margin: 0 1;
@@ -45,7 +45,6 @@ class FlightdeckApp(App[None]):
     DataTable > .datatable--header {{ background: transparent; color: {theme.MUTED}; text-style: bold; }}
     DataTable > .datatable--cursor {{ background: {theme.SELECTED}; text-style: bold; }}
     DataTable:focus > .datatable--cursor {{ background: #22324a; }}
-    Footer {{ background: transparent; }}
     """
 
     def __init__(
@@ -64,6 +63,7 @@ class FlightdeckApp(App[None]):
         self._tick_seconds = tick_seconds
         self._refresh_seconds = refresh_seconds
         self.frozen = False
+        self.status_clock: Callable[[], float] = time.monotonic  # when a status line expires
         self._fleet = FleetScreen()
         self._status: tuple[str, str, float] | None = None  # (text, severity, when)
         self._redraw_queued = False
@@ -96,24 +96,28 @@ class FlightdeckApp(App[None]):
             if isinstance(screen, (FleetScreen, FocusScreen)):
                 screen.refresh_view()
 
-    def header_text(self, width: int) -> Text:
+    def header_text(self, width: int, *, clock_keys: bool = True) -> Text:
+        """The header; `clock_keys` says how to freeze the mock clock (only where space does)."""
         note = ""
         if self._ticker is not None:
-            note = "⏸ frozen: space resumes, . steps" if self.frozen else "▶ live: space freezes"
+            if clock_keys:
+                note = "⏸ frozen: space resumes, . steps" if self.frozen else "▶ live: space freezes"
+            else:
+                note = "⏸ frozen" if self.frozen else "▶ live"
         return views.header(self.deck, mock=self.mock, note=note, width=width)
 
     def status_text(self) -> Text:
         if self._status is None:
             return Text("")
         text, severity, when = self._status
-        if self._refresh_seconds and time.monotonic() - when > STATUS_SECONDS:
+        if self._refresh_seconds and self.status_clock() - when > STATUS_SECONDS:
             return Text("")
         color = {"warning": theme.YELLOW, "error": theme.RED}.get(severity, theme.ACCENT)
         return Text.assemble(("● ", color), (untrusted(text, one_line=True), theme.TEXT if severity == "information" else color))
 
     def say(self, text: str, severity: str = "information") -> None:
         """One line above the command bar: the latest outcome or event."""
-        self._status = (text, severity, time.monotonic())
+        self._status = (text, severity, self.status_clock())
         if not self.is_running:
             return
         for screen in self.screen_stack:
@@ -199,6 +203,8 @@ class FlightdeckApp(App[None]):
                 self.apply(iv.Queue(challenge_id))
             elif choice == "claim":
                 self.claim_toggle(challenge_id)
+            elif choice and choice.startswith("open:"):
+                self.open_lane(choice.removeprefix("open:"))
 
         self.push_screen(ChallengeCard(ch, [lane.id for lane in lanes], own, deck.config.team), done)
 
@@ -214,10 +220,11 @@ class FlightdeckApp(App[None]):
         return outcome
 
     def suggested(self, lane: Lane, key: str) -> str:
+        """The text an alert suggests for `key` (to prefill a field), made safe to draw."""
         for alert in lane.alerts:
             for suggestion in alert.suggestions:
                 if suggestion.key == key and suggestion.text:
-                    return suggestion.text
+                    return untrusted(suggestion.text, one_line=True)
         return ""
 
     def command_suggestions(self, lane_id: str | None, *, with_lane: bool) -> tuple[tuple[str, str], ...]:
@@ -227,10 +234,12 @@ class FlightdeckApp(App[None]):
             return ()
         out: list[tuple[str, str]] = []
         if lane.pending is not None:
-            out.append(("/approve" + (f" {lane.id}" if with_lane else ""), lane.pending.detail))
+            out.append(("/approve" + (f" {lane.id}" if with_lane else ""), untrusted(lane.pending.detail, one_line=True)))
         for alert in sorted(lane.alerts, key=lambda a: views.ALERT_URGENCY[a.kind]):
             for s in alert.suggestions:
                 command = views.suggestion_command(s.key, s.text, lane.id if with_lane else None)
+                if command:
+                    command = untrusted(command, one_line=True)
                 if command and all(command != c for c, _ in out):
                     out.append((command, alert.kind.label.lower()))
         return tuple(out)
@@ -333,6 +342,7 @@ class FlightdeckApp(App[None]):
             self._fleet.set_filter(arg)
         elif name == "sort":
             modes = {mode.value: mode for mode in SortMode}
+            arg = arg.lower()
             if arg and arg not in modes:
                 self.warn(f"/sort takes one of: {', '.join(modes)}")
                 return
@@ -369,8 +379,11 @@ class FlightdeckApp(App[None]):
         elif name == "takeover":
             self.take_over(lane)
         elif name == "diff":
+            if not lane.files:
+                self.warn(f"{lane.id} has not changed any files yet")
+                return
             if arg and arg not in lane.files:
-                self.warn(f"{lane.id} has not changed {arg}")
+                self.warn(f"{lane.id} has not changed {untrusted(arg, one_line=True)}")
                 return
             self.open_lane(lane.id, file=arg)
         elif name == "open":
@@ -385,12 +398,14 @@ class FlightdeckApp(App[None]):
         return lane
 
     def _challenge_arg(self, arg: str, lane_id: str | None) -> str | None:
-        """A challenge named by id or name; else the board selection or the lane's challenge."""
+        """A challenge named by id or name; else the board selection (in the fleet) or the
+        lane's challenge (the open lane, in the focus view)."""
         deck = self.deck
         arg = arg.strip()
         if not arg:
-            if self._fleet.board_focused and self._fleet.selected_challenge:
-                return self._fleet.selected_challenge
+            fleet = self._fleet
+            if self.screen is fleet and fleet.board_focused and fleet.selected_challenge:
+                return fleet.selected_challenge
             lane = deck.lanes.get(lane_id or "")
             if lane is not None:
                 return lane.challenge_id

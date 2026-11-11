@@ -1,4 +1,8 @@
-"""The command bar: plain text messages a lane, `/` runs a command with a completion menu."""
+"""The command bar: plain text messages a lane, `/` runs a command with a completion menu.
+
+Menu entries can carry lane text (a suggested redirect, a candidate flag), so they are
+drawn through text.untrusted() like everything else from a lane.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from textual.message import Message
 from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
+from ..text import untrusted
 from . import theme
 from .commands import BY_NAME, Completion, complete
 
@@ -35,7 +40,7 @@ class CommandBar(Vertical):
     ]
 
     class Submitted(Message):
-        """The player pressed enter on a message or a complete command."""
+        """The player pressed enter on a message or a complete command ("" for an empty bar)."""
 
         def __init__(self, bar: CommandBar, value: str) -> None:
             super().__init__()
@@ -83,6 +88,14 @@ class CommandBar(Vertical):
         self.field.value = ""
         self.hide_menu()
 
+    def set_suggestions(self, suggestions: tuple[tuple[str, str], ...]) -> None:
+        """New suggestions (the lane's changed, or another lane is selected); an open menu follows."""
+        if suggestions == self.suggestions:
+            return
+        self.suggestions = suggestions
+        if self.menu_open:
+            self.refresh_menu()
+
     def refresh_menu(self) -> None:
         self.completions = complete(self.field.value, self.suggestions)[:8]
         menu = self.menu
@@ -91,10 +104,10 @@ class CommandBar(Vertical):
             self.hide_menu()
             return
         for completion in self.completions:
-            label = Text(completion.label, style="bold" if completion.suggested else "", no_wrap=True, overflow="ellipsis")
+            label = Text(untrusted(completion.label, one_line=True), style="bold" if completion.suggested else "", no_wrap=True, overflow="ellipsis")
             if completion.suggested:
                 label.append("   suggested", style=f"italic {theme.ACCENT}")
-            label.append(f"   {completion.help}", style=theme.MUTED)
+            label.append(f"   {untrusted(completion.help, one_line=True)}", style=theme.MUTED)
             menu.add_option(Option(label))
         menu.highlighted = 0
         menu.add_class("-open")
@@ -116,8 +129,7 @@ class CommandBar(Vertical):
             self.action_accept()
             return
         self.clear()
-        if value:
-            self.post_message(self.Submitted(self, value))
+        self.post_message(self.Submitted(self, value))
 
     @on(OptionList.OptionSelected, "#menu")
     def _picked(self, event: OptionList.OptionSelected) -> None:
@@ -130,8 +142,9 @@ class CommandBar(Vertical):
         return value.startswith("/") and value[1:].partition(" ")[0].lower() not in BY_NAME
 
     def _fill(self, completion: Completion) -> None:
-        self.field.value = completion.text
-        self.field.cursor_position = len(completion.text)
+        text = untrusted(completion.text, one_line=True)
+        self.field.value = text
+        self.field.cursor_position = len(text)
         self.field.focus()
 
     def action_menu(self, step: int) -> None:

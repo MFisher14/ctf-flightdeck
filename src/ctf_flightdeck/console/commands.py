@@ -56,7 +56,7 @@ KEY_COMMAND = {
 
 
 class CommandError(ValueError):
-    """The text starts with a slash but is not a known command."""
+    """The text starts with a slash but is not a known command, or its arguments do not fit."""
 
 
 @dataclass(frozen=True)
@@ -83,9 +83,14 @@ def parse(text: str) -> Parsed:
     rest = rest.strip()
     first, _, tail = rest.partition(" ")
     named = lane_id(first) if command.lane else None
-    if named is not None:
-        return Parsed(command, named, tail.strip())
-    return Parsed(command, None, rest)
+    arg = tail.strip() if named is not None else rest
+    if arg and not command.args:
+        # a stray word must not fall back to the selected lane: /approve 2 is not L02
+        where = f"; name a lane like /{command.name} L02" if command.lane else ""
+        raise CommandError(f"/{command.name} takes no argument{where}")
+    if arg and command.name == "open":
+        raise CommandError("/open takes a lane, like /open L02")
+    return Parsed(command, named, arg)
 
 
 @dataclass(frozen=True)

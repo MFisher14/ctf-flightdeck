@@ -21,10 +21,10 @@ import pytest
 from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
-from textual.widgets import DataTable, Select, Static
+from textual.widgets import DataTable, RichLog, Select, Static
 
 from ctf_flightdeck import fmt
-from ctf_flightdeck.console import theme
+from ctf_flightdeck.console import theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
@@ -33,10 +33,26 @@ from ctf_flightdeck.console.views import FINISHED_ROW
 from ctf_flightdeck.console.widgets import CommandBar
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.attention import SortMode
-from ctf_flightdeck.core.model import ME, ActionKind, AlertKind, ChallengeStatus, EventKind, LaneState, PendingKind
+from ctf_flightdeck.core.deck import Deck, QueueEntry
+from ctf_flightdeck.core.driver import TurnReport
+from ctf_flightdeck.core.model import (
+    ME,
+    ActionKind,
+    Alert,
+    AlertKind,
+    Challenge,
+    ChallengeStatus,
+    DeckConfig,
+    EventKind,
+    FileChange,
+    LaneState,
+    Pending,
+    PendingKind,
+    Suggestion,
+)
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.scenarios import DEEP_ARCHIVE, ReleaseAt, Scenario, Spec
-from ctf_flightdeck.mock.world import FakeWorld
+from ctf_flightdeck.mock.world import FakeWorld, ManualClock
 
 SIZE = (160, 46)
 NARROW = (120, 36)
@@ -860,6 +876,16 @@ def _log(lane) -> list[str]:
     return [shown[a.kind] + a.text for a in lane.actions if a.kind in shown]
 
 
+def assert_whole_transcript(focus: FocusScreen, lane) -> None:
+    """The transcript holds every step and message of `lane`, once and in order, scrolled
+    out of view or not (a long entry wraps: its first line starts it)."""
+    lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
+    got = [line for line in lines if line.startswith(("⏺ ", "› you  "))]
+    want = _log(lane)
+    assert len(got) == len(want), (len(got), len(want))
+    assert all(w.startswith(g) for g, w in zip(got, want)), list(zip(got, want))
+
+
 def test_plain_text_in_the_chat_is_a_hint_and_the_transcript_shows_it():
     world, app = make("sstv")
     deck = world.deck
@@ -985,7 +1011,12 @@ def test_needs_you_card_shows_the_alert_and_its_redirect_until_it_is_answered():
     drive(app, script)
 
 
-def test_the_others_strip_lists_lanes_needing_you_and_ctrl_n_opens_the_first():
+def _strip_lanes(app: FlightdeckApp) -> list[str]:
+    """The lanes named by the chips in the focus view's others strip, left to right."""
+    return re.findall(r"\b(L\d\d) [a-z]+\b", region_text(app, "#others"))
+
+
+def test_the_others_strip_lists_lanes_needing_you_and_ctrl_n_visits_each_in_turn():
     world, app = make("default")
     deck = world.deck
 
@@ -994,19 +1025,46 @@ def test_the_others_strip_lists_lanes_needing_you_and_ctrl_n_opens_the_first():
         assert lane.needs_you
         app.fleet.select_lane(deck.lanes_on("second-guess")[0].id)  # the fleet looks elsewhere
         await open_focus(pilot, app, lane.id)
-        strip = region_text(app, "#others")
-        listed = re.findall(r"▐(L\d+) ", strip)
-        assert set(listed) == {x.id for x in deck.active_lanes() if x.needs_you and x is not lane}
-        assert len(listed) == 2 and lane.id not in listed
-        first = deck.lanes[listed[0]]
-        assert first.pending is not None and first.pending.kind is PendingKind.SUBMIT  # a flag first
-        await press(pilot, "ctrl+n")
-        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == first.id
-        assert f"{first.id} · Ticket Desk" in screen_text(app)
-        assert lane.id in re.findall(r"▐(L\d+) ", region_text(app, "#others"))
+        need = [x.id for x in deck.needing()]
+        assert len(need) == 3 and need.index(lane.id) == 1  # one lane more urgent, one less
+        assert _strip_lanes(app) == [x for x in need if x != lane.id]  # attention order, this lane left out
+        flag = deck.lanes[need[0]]
+        assert flag.pending is not None and flag.pending.kind is PendingKind.SUBMIT  # a flag first
+        # ctrl+n goes on from the open lane in attention order and wraps round to the first,
+        # so it reaches every lane, not just the two most urgent
+        visited = []
+        for _ in need:
+            await press(pilot, "ctrl+n")
+            assert isinstance(app.screen, FocusScreen)
+            visited.append(app.screen.lane_id)
+            if app.screen.lane_id == flag.id:
+                assert f"{flag.id} · Ticket Desk" in screen_text(app)
+                assert lane.id in _strip_lanes(app)
+        assert visited == [need[2], need[0], need[1]]
         await press(pilot, "escape")  # back in the fleet, the lane last open is the selected one
         assert isinstance(app.screen, FleetScreen)
-        assert app.fleet.selected_lane == first.id and cursor_key(app) == first.id
+        assert app.fleet.selected_lane == lane.id and cursor_key(app) == lane.id
+
+    drive(app, script)
+
+
+def test_ctrl_n_on_the_most_urgent_lane_moves_on_and_says_so_when_no_other_lane_needs_you():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        need = [x.id for x in deck.needing()]
+        await open_focus(pilot, app, need[0])
+        await press(pilot, "ctrl+n")
+        assert app.screen.lane_id == need[1]  # never the lane already open
+        for other in need[1:]:  # answer the others (both are course alerts): only the flag lane is left
+            assert deck.lanes[other].pending is None
+            assert app.apply(iv.Redirect(other, "read the handout again")).ok
+        assert [x.id for x in deck.needing()] == need[:1]
+        await open_focus(pilot, app, need[0])
+        await press(pilot, "ctrl+n")
+        assert app.screen.lane_id == need[0]
+        assert "No other lane needs you right now" in status_line(app)
 
     drive(app, script)
 
@@ -1321,5 +1379,669 @@ def test_the_console_redraws_on_its_own_timer_when_lanes_report_without_it():
         world.tick()
         header = app.fleet.query_one("#header", Static)
         await redrawn(pilot, lambda: fmt.clock(world.deck.now) in str(header.content))
+
+    drive(app, script)
+
+
+# ---------------------------------------------------------------------- untrusted text, end to end
+
+
+def terminal_frame(app: FlightdeckApp) -> str:
+    """Everything the driver would write to a real terminal to draw the current screen,
+    escape sequences included (a full update, rendered the way Textual's driver gets it)."""
+    update = app.screen._compositor.render_update(full=True, screen_stack=app._background_screens)
+    return update.render_segments(app.console)
+
+
+OSC = "\x1b]0;"  # the start of an operating system command: set title, write the clipboard
+
+
+def osc(tag: str) -> str:
+    """A payload a real terminal would act on; untrusted() shows it as ^[]0;<tag>^[\\."""
+    return f"{OSC}{tag}\x1b\\"
+
+
+def shown(tag: str) -> str:
+    return f"^[]0;{tag}"
+
+
+def wrong_flag(challenge_id: str, flag: str) -> bool:
+    """A platform that rejects every flag."""
+    return False
+
+
+def quiet_deck(config: DeckConfig) -> Deck:
+    return Deck(config, QuietDriver(), ManualClock(1000.0), wrong_flag)
+
+
+class QuietDriver:
+    """A lane driver that does no work: the test reports the lanes' turns itself."""
+
+    def attach(self, deck): ...
+    def start(self, lane, challenge): ...
+    def pause(self, lane): ...
+    def resume(self, lane): ...
+    def hint(self, lane, text): ...
+    def redirect(self, lane, text): ...
+    def escalate(self, lane, model, summary): ...
+    def approved(self, lane, pending): ...
+    def rejected(self, lane, flag): ...
+    def stop(self, lane): ...
+
+
+def test_lane_and_challenge_text_never_reaches_the_terminal_raw_anywhere_it_is_drawn():
+    """Every field a platform, a lane or a model can fill carries its own escape-sequence
+    payload. At each stop (fleet, menu, prefilled bar and prompts, card, focus view, diff)
+    the frame sent to the terminal has none of them raw, and the stop shows them, made
+    visible."""
+    deck = quiet_deck(DeckConfig(event="ev", team=True, models=("glm", "big")))
+    evil = Challenge(
+        "evil", "Evil " + osc("nm"), "web" + osc("ct"), 100, solves=5,
+        description="desc " + osc("ds"), files=("f" + osc("fl"),), note="note " + osc("nt"),
+    )
+    calm = Challenge("calm", "Calm", "misc", 50)
+    loud = Challenge("loud", "Loud", "misc", 50)
+    deck.release([evil, calm, loud], [QueueEntry("evil", "glm"), QueueEntry("calm", "glm"), QueueEntry("loud", "glm")])
+    lane, other, third = deck.lanes_on("evil")[0], deck.lanes_on("calm")[0], deck.lanes_on("loud")[0]
+    deck.report(lane.id, TurnReport(
+        action="run " + osc("ac"), output="out " + osc("ou"), plan="plan " + osc("pl"),
+        files=(FileChange("solve" + osc("pa") + ".py", "+++ b/solve.py\n+x " + osc("df") + "\n", status="odd" + osc("st")),),
+        alerts=(Alert(AlertKind.HINT, "why " + osc("rs"), (
+            Suggestion("r", "Redirect " + osc("rl"), "decode it " + osc("rt") + "\nnext row"),
+            Suggestion("h", "Hint " + osc("hl"), "think " + osc("ht")),
+            Suggestion("f", "Fork " + osc("fk"), "fork it " + osc("ft")),
+            Suggestion("", "Or wait " + osc("wl")),
+        )),),
+        flag="flag{" + osc("fg") + "}",
+    ))
+    deck.report(other.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect " + osc("bx"))))
+    deck.report(third.id, TurnReport(alerts=(Alert(AlertKind.LOOP, "again " + osc("r2"), (
+        Suggestion("h", "Hint " + osc("l2"), "stop"),
+        Suggestion("", "Or wait " + osc("w2")),
+    )),)))
+    assert lane.pending.kind is PendingKind.SUBMIT  # the candidate fits the default flag format
+    app = FlightdeckApp(deck, refresh_seconds=None)
+    deck.teammate_claim("calm", "mate" + osc("tm"))  # its event goes to the status line
+
+    async def check(pilot, stop: str, *tags: str) -> None:
+        await pilot.pause()
+        raw = terminal_frame(app)
+        assert OSC not in raw, f"{stop}: a payload reached the terminal raw"
+        text = screen_text(app)
+        missing = [tag for tag in tags if shown(tag) not in text]
+        assert not missing, f"{stop}: {missing} not shown"
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        await check(pilot, "fleet", "fg", "tm")  # the flag in the why line; the claim in the status line
+        await press(pilot, "slash")
+        await check(pilot, "fleet menu", "rt", "fg", "ht", "ft")
+        menu = [line.strip(" │") for line in region_text(app, "#menu").splitlines()]
+        assert not [line for line in menu if line.startswith("next row")]  # a newline makes no row of its own
+        for key, tag in (("r", "rt"), ("h", "ht")):
+            await press(pilot, "escape", "escape", key)
+            assert shown(tag) in bar(app).field.value and "\x1b" not in bar(app).field.value
+            await check(pilot, f"fleet {key}", tag)
+        await press(pilot, "escape", "escape", "f")
+        assert isinstance(app.screen, ForkPrompt)
+        await check(pilot, "fork prompt", "ft")
+        await press(pilot, "escape")
+        app.fleet.select_lane(other.id)
+        await check(pilot, "fleet, live-box lane", "bx")
+        app.fleet.select_lane(third.id)  # no approval: the why line lists the alert's answers
+        await check(pilot, "fleet, alert lane", "r2", "l2", "w2")
+        assert app.apply(iv.Fork(lane.id, approach="a second look")).ok  # two lanes: enter shows the card
+        app.fleet.select_challenge("evil")
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ChallengeCard)
+        await check(pilot, "card", "nm", "ct", "ds", "fl", "nt")
+        await press(pilot, "escape")
+        await open_focus(pilot, app, lane.id)
+        await check(pilot, "focus", "nm", "ct", "ac", "ou", "pl", "rs", "rl", "wl", "pa", "st")
+        await press(pilot, "slash")
+        await check(pilot, "focus menu", "rt", "fg")
+        await press(pilot, "escape", "escape")
+        await send(pilot, app, "/diff")
+        await check(pilot, "diff", "df", "pa")
+
+    drive(app, script)
+
+
+def test_model_names_in_the_fork_prompt_are_text_not_markup():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm", "[b]bold[/b]", "[@click=app.quit]x[/]")))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        await press(pilot, "f")
+        prompt = app.screen
+        assert isinstance(prompt, ForkPrompt)
+        assert "[b]bold[/b]" in screen_text(app)  # the default fork model, shown as typed
+        select = prompt.query_one(Select)
+        await press(pilot, "tab", "enter")  # open the model list
+        assert select.expanded
+        text = screen_text(app)
+        assert "[@click=app.quit]x[/]" in text and "[b]bold[/b]" in text
+
+    drive(app, script)
+
+
+# ---------------------------------------------------------------------- review fixes: the fleet
+
+
+def _board_cursor(app: FlightdeckApp) -> str | None:
+    board = table(app, "board")
+    return board.coordinate_to_cell_key(board.cursor_coordinate).row_key.value if board.row_count else None
+
+
+def _queue_keys(app: FlightdeckApp, *keys: str) -> None:
+    """Queue key presses the way one terminal read delivers them: all before the first is handled."""
+    for key in keys:
+        app._driver.send_message(events.Key(key, "\r" if key == "enter" else key))
+
+
+@pytest.mark.parametrize("where", ["lanes", "board"])
+def test_two_enters_that_arrive_together_open_the_lane_once_and_do_not_crash(where):
+    world, app = make("default")
+    deck = world.deck
+    lane = deck.lanes_on("paper-trail")[0]  # its challenge has one lane, so enter on the board opens it
+
+    async def script(pilot):
+        if where == "lanes":
+            app.fleet.select_lane(lane.id)
+        else:
+            app.fleet.select_challenge("paper-trail")
+        await pilot.pause()
+        _queue_keys(app, "enter", "enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert app.is_running
+        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == lane.id
+        assert sum(isinstance(s, FocusScreen) for s in app.screen_stack) == 1
+        assert_whole_transcript(app.screen, lane)  # drawn in full, once
+
+    drive(app, script)
+
+
+def test_arrow_keys_on_the_lanes_move_the_board_to_that_lanes_challenge():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        first = cursor_key(app)
+        assert _board_cursor(app) == deck.lanes[first].challenge_id
+        await press(pilot, "down")
+        lane = deck.lanes[cursor_key(app)]
+        assert lane.id != first and lane.challenge_id != deck.lanes[first].challenge_id
+        assert app.fleet.selected_challenge == lane.challenge_id == _board_cursor(app)
+        await press(pilot, "tab", "tab")  # bar, board: the why line is about that challenge
+        assert app.fleet.board_focused
+        assert deck.challenges[lane.challenge_id].name in region_text(app, "#why")
+
+    drive(app, script)
+
+
+def test_the_lane_list_keeps_its_scroll_position_when_its_rows_are_rebuilt():
+    world, app = make("wave")
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: world.deck.challenges, "the wave drops", limit=5)
+        lanes = table(app, "lanes")
+        assert lanes.max_scroll_y > 0  # 16 rows do not fit 24 lines
+        await press(pilot, *["down"] * 16)  # to the end of the list...
+        await press(pilot, *["up"] * 9)  # ...then back up: the cursor sits high in a scrolled list
+        y = lanes.scroll_y
+        assert y > 0 and lanes.cursor_coordinate.row < 16 - 9 + 1
+        app.fleet.set_filter("")  # rebuilds every row
+        await pilot.pause()
+        assert lanes.scroll_y == y
+
+    drive(app, script, size=(160, 24))
+
+
+def test_going_back_to_the_fleet_from_a_lane_the_filter_hides_clears_the_filter_and_selects_it():
+    world, app = make("default")
+    lane = world.deck.lanes_on("static-hiss")[0]
+
+    async def script(pilot):
+        app.fleet.set_filter("zzz")
+        await pilot.pause()
+        assert lane.id not in lane_rows(app)
+        await open_focus(pilot, app, lane.id)
+        await press(pilot, "escape")
+        assert app.is_running and isinstance(app.screen, FleetScreen)
+        assert app.fleet.filter_text == ""
+        assert app.fleet.selected_lane == lane.id and cursor_key(app) == lane.id
+
+    drive(app, script)
+
+
+def test_the_lanes_title_counts_lanes_needing_you_that_the_filter_hides():
+    world, app = make("default")
+
+    async def script(pilot):
+        assert "hidden" not in region_text(app, "#lanes-pane").splitlines()[0]
+        app.fleet.set_filter("zzz")
+        await pilot.pause()
+        assert "3 needing you hidden" in region_text(app, "#lanes-pane").splitlines()[0]
+        app.fleet.set_filter("flag")  # the lane with a candidate flag shows; two that need you do not
+        await pilot.pause()
+        assert "2 needing you hidden" in region_text(app, "#lanes-pane").splitlines()[0]
+
+    drive(app, script)
+
+
+def test_the_fleet_bar_acts_on_the_lane_the_keys_point_at():
+    world, app = make("default")
+    deck = world.deck
+    on_board = deck.lanes_on("paper-trail")[0]
+    selected = deck.lanes_on("ticket-desk")[0]
+
+    async def script(pilot):
+        app.fleet.select_lane(selected.id)
+        app.fleet.select_challenge("paper-trail")  # the board points at a challenge with one lane
+        await pilot.pause()
+        expected = [c for c, _ in app.command_suggestions(on_board.id, with_lane=True)]
+        assert [c for c, _ in bar(app).suggestions] == expected  # its suggestions, not the selected lane's
+        bar(app).start("/pause")
+        await press(pilot, "enter")
+        assert on_board.state is LaneState.PAUSED and selected.state is not LaneState.PAUSED
+        assert app.focused is table(app, "board")  # back where the bar was opened from
+
+    drive(app, script)
+
+
+def test_the_fleet_bar_refuses_a_lane_the_filter_hides_like_the_keys_do():
+    world, app = make("default")
+    lane = world.deck.lanes_on("ticket-desk")[0]
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        app.fleet.set_filter("zzz")
+        await pilot.pause()
+        state, hints = lane.state, list(lane.hints)
+        bar(app).start("try harder")
+        await press(pilot, "enter")
+        assert_warning(app, f"{lane.id} is hidden by the filter; esc clears it")
+        bar(app).start("/pause")
+        await press(pilot, "enter")
+        assert (lane.state, lane.hints) == (state, hints)
+
+    drive(app, script)
+
+
+def test_the_fleet_bar_suggests_for_the_lane_selected_now():
+    world, app = make("default")
+    deck = world.deck
+    first, second = [x.id for x in deck.needing()][:2]
+
+    async def script(pilot):
+        app.fleet.select_lane(first)
+        await press(pilot, "slash", "escape", "escape")
+        app.fleet.select_lane(second)
+        await pilot.pause()
+        await press(pilot, "tab")  # to the bar, without '/'
+        assert app.focused is bar(app).field
+        await press(pilot, "slash")
+        suggested = [c.text for c in bar(app).completions if c.suggested]
+        assert suggested and all(second in text for text in suggested)
+
+    drive(app, script)
+
+
+def test_enter_on_an_empty_fleet_bar_opens_the_selected_lane():
+    world, app = make("default")
+    lane = world.deck.lanes_on("ticket-desk")[0]
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        bar(app).start("")
+        await press(pilot, "enter")
+        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == lane.id
+
+    drive(app, script)
+
+
+def test_enter_on_a_partial_command_completes_it_instead_of_running_it():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        await press(pilot, "slash", *"fil", "enter")
+        assert bar(app).field.value == "/filter " and app.fleet.filter_text == ""
+        assert "Unknown command" not in status_line(app)
+        await type_line(pilot, "bent")
+        assert app.fleet.filter_text == "bent"
+
+    drive(app, script)
+
+
+@pytest.mark.parametrize(
+    "text, warning",
+    [
+        ("/approve 2", "/approve takes no argument; name a lane like /approve L02"),
+        ("/pause please", "/pause takes no argument; name a lane like /pause L02"),
+        ("/open foo", "/open takes a lane, like /open L02"),
+        ("/kill parkk", "/kill takes nothing (re-queue fresh) or 'park'"),
+    ],
+)
+def test_a_command_with_a_stray_argument_warns_and_changes_nothing(text, warning):
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        flag = next(x for x in deck.active_lanes() if x.pending is not None and x.pending.kind is PendingKind.SUBMIT)
+        app.fleet.select_lane(flag.id)
+        before, n_events = snapshot(app), len(interventions(app))
+        bar(app).start(text)
+        await press(pilot, "enter")
+        assert_warning(app, warning)
+        assert isinstance(app.screen, FleetScreen)
+        assert snapshot(app) == before and len(interventions(app)) == n_events
+
+    drive(app, script)
+
+
+def test_sort_takes_its_mode_in_any_case():
+    world, app = make("default")
+
+    async def script(pilot):
+        bar(app).start("/sort Cost")
+        await press(pilot, "enter")
+        assert app.fleet.sort is SortMode.COST
+
+    drive(app, script)
+
+
+def test_at_80_columns_the_board_hides_and_the_lane_list_keeps_state_and_idle():
+    world, app = make("default")
+
+    async def script(pilot):
+        assert app.fleet.board_hidden
+        assert "board hidden" in region_text(app, "#lanes-pane").splitlines()[0]
+        head = region_text(app, "#lanes").splitlines()[0]
+        assert "state" in head and "idle" in head
+        await pilot.resize_terminal(*NARROW)
+        await pilot.pause()
+        assert not app.fleet.board_hidden and "board " in region_text(app, "#board-pane").splitlines()[0]
+
+    drive(app, script, size=(80, 24))
+
+
+def test_every_burst_of_deck_events_redraws_the_console_without_a_timer():
+    """With no refresh timer and no mock clock, lane reports alone redraw the console."""
+    world = FakeWorld(scenarios.get("sstv"))
+    app = FlightdeckApp(world.deck, refresh_seconds=None)
+    lane = world.deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        for _ in range(3):
+            turns = lane.turns
+            world.tick(2)
+            assert lane.turns > turns
+            await pilot.pause()
+            assert cell(app, "lanes", lane.id, "turns") == str(lane.turns)
+
+    drive(app, script)
+
+
+def test_a_status_message_clears_after_12_seconds_in_the_live_console():
+    world = FakeWorld(scenarios.get("sstv"))
+    app = FlightdeckApp(world.deck, refresh_seconds=3600.0)  # the timer is on; it never fires in this test
+    now = [500.0]
+    app.status_clock = lambda: now[0]
+
+    async def script(pilot):
+        app.say("Paused L01")
+        app.refresh_view()
+        await pilot.pause()
+        assert "Paused L01" in status_line(app)
+        now[0] += 11.5
+        app.refresh_view()
+        await pilot.pause()
+        assert "Paused L01" in status_line(app)
+        now[0] += 1.0
+        app.refresh_view()
+        await pilot.pause()
+        assert status_line(app).strip() == ""
+
+    drive(app, script)
+
+
+def test_the_header_drops_cost_and_tokens_first_and_keeps_the_essentials():
+    world = FakeWorld(scenarios.get("default"))
+    deck = world.deck
+    full = views.header(deck, mock="MOCK · default", width=500).plain
+    assert "$" in full and "tok " in full and "Mock Range" in full
+    cut = views.header(deck, mock="MOCK · default", width=len(full) - 2)
+    assert "$" not in cut.plain and "tok " in cut.plain  # the last of the lowest-priority pieces goes first
+    tight = views.header(deck, mock="MOCK · default", width=70)
+    assert tight.cell_len <= 70
+    for piece in ("flightdeck", "team", "lanes ", "▲ 3 need you"):
+        assert piece in tight.plain, (piece, tight.plain)
+    for piece in ("$", "tok ", "Mock Range", "T+"):
+        assert piece not in tight.plain, (piece, tight.plain)
+
+
+# ---------------------------------------------------------------------- review fixes: the focus view
+
+
+def test_an_unsent_message_stays_with_its_lane_when_the_focus_view_switches():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        need = [x.id for x in deck.needing()]
+        focus = await open_focus(pilot, app, need[1])
+        chat = focus.query_one("#chat", CommandBar)
+        app.post_message(events.Paste("try sstv on the left channel"))
+        await pilot.pause()
+        assert chat.field.value == "try sstv on the left channel"
+        await press(pilot, "ctrl+n")
+        assert focus.lane_id == need[2] and chat.field.value == ""
+        hints = {x.id: list(x.hints) for x in deck.lanes.values()}
+        await press(pilot, "enter")  # an empty chat sends nothing
+        assert {x.id: list(x.hints) for x in deck.lanes.values()} == hints
+        app.open_lane(need[1])
+        await pilot.pause()
+        assert focus.lane_id == need[1] and chat.field.value == "try sstv on the left channel"
+
+    drive(app, script)
+
+
+def test_the_slash_menu_follows_the_open_lane_and_its_answers():
+    world, app = make("default")
+    deck = world.deck
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, lane.id)
+        chat = focus.query_one("#chat", CommandBar)
+        await press(pilot, "slash")
+        assert any(c.suggested and c.text.startswith("/redirect ") for c in chat.completions)
+        assert app.apply(iv.Redirect(lane.id, "use SSTV")).ok  # answered while the menu is open
+        await pilot.pause()
+        assert chat.menu_open and not any(c.suggested for c in chat.completions)
+        await press(pilot, "ctrl+n")
+        other = deck.lanes[focus.lane_id]
+        assert other.id != lane.id and not chat.menu_open and chat.field.value == ""
+        await press(pilot, "slash")
+        suggested = [c.text for c in chat.completions if c.suggested]
+        assert suggested == [c for c, _ in app.command_suggestions(other.id, with_lane=False)]
+
+    drive(app, script)
+
+
+def test_reopening_or_switching_lanes_draws_the_whole_transcript():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        lane = next(x for x in deck.active_lanes() if x.files and len(_log(x)) >= 3)
+        focus = await open_focus(pilot, app, lane.id)
+        assert_whole_transcript(focus, lane)
+        await send(pilot, app, "/diff")  # reopens the same lane
+        assert_whole_transcript(focus, lane)
+        other = next(x for x in deck.needing() if x.id != lane.id)
+        app.open_lane(other.id)  # switches the open view to another lane
+        await pilot.pause()
+        assert_whole_transcript(focus, other)
+
+    drive(app, script)
+
+
+def test_a_lane_with_no_files_does_not_keep_the_last_lanes_file_list():
+    world, app = make("sstv")
+    deck = world.deck
+
+    async def script(pilot):
+        lanes = deck.active_lanes()
+        await step_until(pilot, app, lambda: any(x.files for x in lanes) and not all(x.files for x in lanes), "one lane writes a file")
+        with_files = next(x for x in deck.active_lanes() if x.files)
+        without = next(x for x in deck.active_lanes() if not x.files)
+        focus = await open_focus(pilot, app, with_files.id)
+        assert focus.query_one("#files").option_count == len(with_files.files)
+        app.open_lane(without.id)
+        await pilot.pause()
+        assert focus.query_one("#files").option_count == 0
+        assert "No files changed yet." in region_text(app, "#diff-scroll")
+
+    drive(app, script)
+
+
+def test_after_diff_typing_goes_back_to_the_chat_box():
+    world, app = make("sstv")
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.files, "the lane writes a file")
+        focus = await open_focus(pilot, app, lane.id)
+        chat = focus.query_one("#chat", CommandBar)
+        await send(pilot, app, "/diff")
+        assert app.focused is focus.query_one("#files")
+        await press(pilot, "slash")
+        assert app.focused is chat.field and chat.field.value == "/" and chat.menu_open
+        await type_line(pilot, "pause")
+        assert lane.state is LaneState.PAUSED
+
+    drive(app, script)
+
+
+def test_diff_on_a_lane_with_no_files_warns_and_leaves_the_chat_box_focused():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        lane = next(x for x in world.deck.active_lanes() if not x.files)
+        focus = await open_focus(pilot, app, lane.id)
+        await send(pilot, app, "/diff")
+        assert_warning(app, f"{lane.id} has not changed any files yet")
+        assert app.focused is focus.query_one("#chat", CommandBar).field
+
+    drive(app, script)
+
+
+def test_reading_back_in_the_transcript_is_not_undone_by_new_steps():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        lane = max((x for x in deck.active_lanes() if x.state is LaneState.RUNNING), key=lambda x: len(x.actions))
+        focus = await open_focus(pilot, app, lane.id)
+        log = focus.query_one("#transcript", RichLog)
+        await step_until(pilot, app, lambda: log.max_scroll_y > 0, "more transcript than fits")
+        assert log.scroll_y == log.max_scroll_y  # it follows the lane at first
+        await press(pilot, "pageup")
+        y = log.scroll_y
+        assert y < log.max_scroll_y
+        n = len(lane.actions)
+        await step_until(pilot, app, lambda: len(lane.actions) > n, "a new step")
+        assert log.scroll_y == y  # still where the player was reading
+        await press(pilot, *["pagedown"] * 5)
+        assert log.scroll_y == log.max_scroll_y
+        n = len(lane.actions)
+        await step_until(pilot, app, lambda: len(lane.actions) > n, "another step")
+        await pilot.pause()
+        assert log.scroll_y == log.max_scroll_y  # back at the end, it follows again
+
+    drive(app, script)
+
+
+def test_escape_with_the_menu_open_closes_only_the_menu_in_the_focus_view():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, "L01")
+        chat = focus.query_one("#chat", CommandBar)
+        await press(pilot, "slash")
+        assert chat.menu_open
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FocusScreen) and not chat.menu_open and chat.field.value == "/"
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen)
+
+    drive(app, script)
+
+
+def test_claim_with_no_argument_in_the_focus_view_claims_the_open_lanes_challenge():
+    world, app = make("default")  # team mode
+    deck = world.deck
+    lane = deck.lanes_on("ticket-desk")[0]
+
+    async def script(pilot):
+        app.fleet.select_challenge("paper-trail")  # the board had the focus last in the fleet
+        await pilot.pause()
+        assert deck.challenges["paper-trail"].claimed_by is None
+        await open_focus(pilot, app, lane.id)
+        await send(pilot, app, "/claim")
+        assert deck.challenges["ticket-desk"].claimed_by == ME
+        assert deck.challenges["paper-trail"].claimed_by is None
+
+    drive(app, script)
+
+
+def test_the_focus_view_has_no_clock_keys_in_its_header_and_tab_goes_to_the_files():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        assert "space freezes" in region_text(app, "#header")  # in the fleet, space does
+        focus = await open_focus(pilot, app, "L01")
+        header = region_text(app, "#header")
+        assert "▶ live" in header and "space" not in header
+        await press(pilot, "tab")
+        assert app.focused is focus.query_one("#files")
+
+    drive(app, script)
+
+
+def test_at_80x24_the_focus_view_keeps_rows_for_the_transcript():
+    world, app = make("default")
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, lane.id)
+        talk = focus.query_one("#talk-pane").content_region.height
+        assert focus.query_one("#transcript").region.height >= 3
+        assert focus.query_one("#now").region.height <= (talk + 1) // 2
+        assert _transcript(app)  # some of it is drawn
+
+    drive(app, script, size=(80, 24))
+
+
+def test_a_board_card_opens_any_of_its_lanes_by_number():
+    world, app = make("sstv")
+    deck = world.deck
+    lane = deck.lanes_on("static-hiss")[0]
+
+    async def script(pilot):
+        assert app.apply(iv.Fork(lane.id, approach="a second look")).ok
+        first, second = (x.id for x in deck.lanes_on("static-hiss"))
+        app.fleet.select_challenge("static-hiss")
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ChallengeCard)
+        card = screen_text(app)
+        assert f" 1  {first}" in card and f" 2  {second}" in card
+        await press(pilot, "3")  # no third lane: nothing happens
+        assert isinstance(app.screen, ChallengeCard)
+        await press(pilot, "2")
+        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == second
 
     drive(app, script)

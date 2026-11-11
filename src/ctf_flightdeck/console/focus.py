@@ -3,8 +3,10 @@
 Left: the lane's transcript (its steps, your messages, flightdeck's notes) and, under
 it, what the lane needs from you now with the suggested commands. Right: the files it
 changed and the diff of the selected one. Bottom: the chat box. Plain text is a message
-the lane reads on its next turn; `/` runs a command on this lane. `esc` goes back to the
-fleet; a strip on top lists other lanes that need you (`ctrl+n` jumps to the next).
+the lane reads on its next turn; `/` runs a command on this lane. Typing goes to the chat
+box from any pane. `esc` goes back to the fleet; a strip on top lists other lanes that
+need you (`ctrl+n` goes through them in attention order). An unsent message stays with
+the lane it was written for.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -50,8 +52,8 @@ class FocusScreen(Screen, inherit_bindings=False):
     FocusScreen #main { height: 1fr; margin-top: 1; }
     FocusScreen #talk-pane { width: 3fr; }
     FocusScreen #files-pane { width: 2fr; }
-    FocusScreen #transcript { height: 1fr; background: transparent; }
-    FocusScreen #now { height: auto; max-height: 14; }
+    FocusScreen #transcript { height: 1fr; min-height: 3; background: transparent; }
+    FocusScreen #now { height: auto; max-height: 50%; }
     FocusScreen #files { height: auto; max-height: 8; background: transparent; border: none; }
     FocusScreen #diff-scroll { height: 1fr; }
     FocusScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -71,7 +73,8 @@ class FocusScreen(Screen, inherit_bindings=False):
         self.lane_id = lane_id
         self._first_file = file
         self._written = 0  # transcript entries already written
-        self._file_paths: list[str] = []
+        self._file_paths: list[str] | None = None  # None: the list must be rebuilt
+        self._drafts: dict[str, str] = {}  # unsent chat text, by lane
         self.diff_path: str | None = None
         self._ready = False  # widgets composed; set at the start of on_mount
 
@@ -100,13 +103,31 @@ class FocusScreen(Screen, inherit_bindings=False):
 
     def on_mount(self) -> None:
         self._ready = True
+        # pgup/pgdn scroll the transcript from anywhere, so tab goes chat -> files -> diff
+        self.query_one("#transcript", RichLog).can_focus = False
         self.show_lane(self.lane_id, self._first_file)
 
     def show_lane(self, lane_id: str, file: str | None = None) -> None:
-        """Switch this view to another lane (or reopen it)."""
+        """Switch this view to another lane (or reopen it).
+
+        Before the view is composed (a second open queued right behind the one that pushed
+        it), only remember the lane: on_mount draws it."""
+        if not self._ready:
+            self.lane_id, self._first_file = lane_id, file
+            return
+        chat = self.query_one("#chat", CommandBar)
+        if lane_id != self.lane_id:
+            if chat.field.value:
+                self._drafts[self.lane_id] = chat.field.value  # kept for when you come back
+            chat.clear()
+            draft = self._drafts.pop(lane_id, "")
+            chat.field.value = draft
+            chat.field.cursor_position = len(draft)
+        else:
+            chat.hide_menu()
         self.lane_id = lane_id
         self._written = 0
-        self._file_paths = []
+        self._file_paths = None
         self.diff_path = file or None  # "" means: the newest file
         self.query_one("#transcript", RichLog).clear()
         self.refresh_view()
@@ -123,21 +144,22 @@ class FocusScreen(Screen, inherit_bindings=False):
         lane, deck = self.lane, self.fd.deck
         with self.app.batch_update():
             header = self.query_one("#header", Static)
-            header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2)))
+            header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2), clock_keys=False))
             self.query_one("#status", Static).update(self.fd.status_text())
             self.query_one("#others", Static).update(views.others_strip(deck, lane))
             pane = self.query_one("#talk-pane")
             pane.border_title = views.focus_title(deck, lane)
             pane.border_subtitle = views.plan_line(lane)
             log = self.query_one("#transcript", RichLog)
+            at_end = log.scroll_y >= log.max_scroll_y  # a player reading back stays where they are
             for action in lane.actions[self._written :]:
                 for line in views.transcript_lines(action):
-                    log.write(line)
+                    log.write(line, scroll_end=at_end)
             self._written = len(lane.actions)
             self.query_one("#now", Static).update(views.now_card(deck, lane))
             self._render_files()
             chat = self.query_one("#chat", CommandBar)
-            chat.suggestions = self.fd.command_suggestions(lane.id, with_lane=False)
+            chat.set_suggestions(self.fd.command_suggestions(lane.id, with_lane=False))
 
     def _render_files(self) -> None:
         lane = self.lane
@@ -168,21 +190,32 @@ class FocusScreen(Screen, inherit_bindings=False):
 
     @on(CommandBar.Submitted, "#chat")
     def _chat(self, event: CommandBar.Submitted) -> None:
-        self.fd.run_command(event.value, self.lane_id)
+        if event.value:
+            self.fd.run_command(event.value, self.lane_id)
+
+    def on_key(self, event: events.Key) -> None:
+        """Typing goes to the chat box from any pane (the files list, the diff)."""
+        chat = self.query_one("#chat", CommandBar)
+        if event.is_printable and event.character and not chat.field.has_focus:
+            event.stop()
+            event.prevent_default()
+            chat.start(chat.field.value + event.character)
 
     def action_back(self) -> None:
         self.fd.show_fleet(select=self.lane_id)
 
     def action_next_needing(self) -> None:
-        nxt = views.needing(self.fd.deck, exclude=self.lane_id)
-        if not nxt:
+        """The next lane that needs you, in attention order; after the last, the first again."""
+        ids = [lane.id for lane in self.fd.deck.needing()]
+        if not [lane_id for lane_id in ids if lane_id != self.lane_id]:
             self.fd.inform("No other lane needs you right now")
             return
-        self.show_lane(nxt[0].id)
+        nxt = ids[(ids.index(self.lane_id) + 1) % len(ids)] if self.lane_id in ids else ids[0]
+        self.show_lane(nxt)
 
     def action_scroll(self, direction: int) -> None:
         log = self.query_one("#transcript", RichLog)
         if direction < 0:
-            log.scroll_page_up()
+            log.scroll_page_up(animate=False)
         else:
-            log.scroll_page_down()
+            log.scroll_page_down(animate=False)

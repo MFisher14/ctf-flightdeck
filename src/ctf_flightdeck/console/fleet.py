@@ -2,28 +2,33 @@
 
 Keys act on the selected lane. `enter` or `o` opens it in the focus view; `/` opens the
 command bar. A line under the lane list says why the selected lane is flagged and what
-to do about it.
+to do about it. The command bar acts on the same lane the keys do. Under 100 columns the
+board hides so the lane list keeps its columns.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Static
 
 from ..core.attention import SortMode, sort_lanes
 from ..core.model import Lane
 from . import theme, views
+from .commands import CommandError, parse
 from .widgets import CommandBar
 
 if TYPE_CHECKING:
     from .app import FlightdeckApp
+
+BOARD_MIN_WIDTH = 100  # narrower than this, the board hides and the lanes get the room
 
 
 class FleetScreen(Screen, inherit_bindings=False):
@@ -37,6 +42,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen #lanes, FleetScreen #board { overflow-x: hidden; }
     FleetScreen #why { height: 2; margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
     FleetScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    FleetScreen #keys { height: 1; margin: 0 1; }
     """
     BINDINGS = [
         Binding("o", "open_lane", "open"),
@@ -89,16 +95,34 @@ class FleetScreen(Screen, inherit_bindings=False):
                 yield Static(id="why")
         yield Static(id="status")
         yield CommandBar("/ for commands · enter opens the selected lane · or type a message to it", id="bar")
-        yield Footer(compact=True)
+        yield Static(id="keys")
 
     def on_mount(self) -> None:
         self._ready = True
+        self.query_one("#keys", Static).update(self.key_line())
+        self._fit_board(self.size.width)
         self._set_columns()
         self.refresh_view()
         self.query_one("#lanes", DataTable).focus()
 
     def on_resize(self, event: events.Resize) -> None:
+        self._fit_board(event.size.width)
         self.call_after_refresh(self._set_columns)
+
+    @property
+    def board_hidden(self) -> bool:
+        return not self.query_one("#board-pane").display
+
+    def _fit_board(self, width: int) -> None:
+        """Hide the board on a narrow terminal (the lane list needs the room)."""
+        show = width >= BOARD_MIN_WIDTH
+        pane = self.query_one("#board-pane")
+        if pane.display == show:
+            return
+        pane.display = show
+        if not show and self.board_focused:
+            self.board_focused = False
+            self.query_one("#lanes", DataTable).focus()
 
     def on_screen_resume(self) -> None:
         self.refresh_view()
@@ -108,7 +132,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         board = self.query_one("#board", DataTable)
         lanes = self.query_one("#lanes", DataTable)
         board_cols = views.fit_columns(views.BOARD_COLUMNS, "name", views.BOARD_NAME_MIN, max(20, board.size.width - 1), board.cell_padding)
-        lane_cols = views.fit_columns(views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding)
+        lane_cols = views.fit_columns(
+            views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
+        )
         if board_cols != self._board_columns:
             self._board_columns = board_cols
             board.clear(columns=True)
@@ -212,11 +238,17 @@ class FleetScreen(Screen, inherit_bindings=False):
             if self.selected_lane is None and self._lane_cursor not in (None, views.FINISHED_ROW):
                 self.selected_lane = self._lane_cursor  # first lanes on screen: select the top one
                 self._render_lanes()
-        self.query_one("#lanes-pane").border_title = views.lanes_title(self.fd.deck, self.sort, self.filter_text)
+        self.query_one("#lanes-pane").border_title = views.lanes_title(
+            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden
+        )
 
     def _render_why(self) -> None:
         deck = self.fd.deck
         why = self.query_one("#why", Static)
+        lane = self.bar_lane()
+        self.query_one("#bar", CommandBar).set_suggestions(
+            self.fd.command_suggestions(lane.id if lane else None, with_lane=True)
+        )
         if self.board_focused and self.selected_challenge in deck.challenges:
             why.update(views.challenge_why(deck, deck.challenges[self.selected_challenge]))
             return
@@ -247,6 +279,8 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     @on(DataTable.RowSelected, "#lanes")
     def _lane_selected(self, event: DataTable.RowSelected) -> None:
+        if self.app.screen is not self:
+            return  # a second enter queued behind the one that opened a lane
         key = _cursor_key(event.data_table)
         if key == views.FINISHED_ROW:
             self.show_finished = not self.show_finished
@@ -262,6 +296,8 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     @on(DataTable.RowSelected, "#board")
     def _board_selected(self, event: DataTable.RowSelected) -> None:
+        if self.app.screen is not self:
+            return  # a second enter queued behind the one that opened a card or lane
         cid = _cursor_key(event.data_table)
         if cid:
             self.fd.open_challenge(cid)
@@ -299,8 +335,20 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.board_focused = True
         self._render_why()
 
+    def bar_lane(self) -> Lane | None:
+        """The lane keys and the command bar act on, if there is one (no warnings)."""
+        deck = self.fd.deck
+        if self.board_focused and self.selected_challenge in deck.challenges:
+            lanes = deck.lanes_on(self.selected_challenge)
+            return lanes[0] if len(lanes) == 1 else None
+        lane = deck.lanes.get(self.selected_lane or "")
+        if lane is None or not views.lane_matches(deck, lane, self.filter_text):
+            return None
+        return lane
+
     def target_lane(self) -> Lane | None:
-        """The lane a key acts on: the selected lane, or the board challenge's only lane."""
+        """The lane a key acts on: the selected lane, or the board challenge's only lane.
+        Says why when there is none."""
         deck = self.fd.deck
         if self.board_focused and self.selected_challenge:
             ch = deck.challenges[self.selected_challenge]
@@ -355,13 +403,29 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def start_command(self, text: str) -> None:
         bar = self.query_one("#bar", CommandBar)
-        bar.suggestions = self.fd.command_suggestions(self.selected_lane, with_lane=True)
+        lane = self.bar_lane()
+        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True))
         bar.start(text)
 
     @on(CommandBar.Submitted, "#bar")
     def _command(self, event: CommandBar.Submitted) -> None:
-        self.query_one("#lanes", DataTable).focus()
-        self.fd.run_command(event.value, self.selected_lane)
+        """Run what was typed on the lane the keys point at (the bar's placeholder says so)."""
+        self._leave_bar()
+        if not event.value:
+            self.action_open_lane()  # enter on an empty bar opens the selected lane
+            return
+        try:
+            parsed = parse(event.value)
+        except CommandError as exc:
+            self.fd.warn(str(exc))
+            return
+        lane_id = self.selected_lane
+        if parsed.command is None or (parsed.command.lane and parsed.lane is None):
+            lane = self.target_lane()  # warns when the board has no single lane or the filter hides it
+            if lane is None:
+                return
+            lane_id = lane.id
+        self.fd.run_command(event.value, lane_id)
 
     def action_sort(self) -> None:
         self.set_sort(self.sort.next())
@@ -376,11 +440,16 @@ class FleetScreen(Screen, inherit_bindings=False):
         self._render_lanes(rebuild=True)
         self._render_why()
 
+    def _leave_bar(self) -> None:
+        """Back to the table the bar was opened from."""
+        table = "#board" if self.board_focused and not self.board_hidden else "#lanes"
+        self.query_one(table, DataTable).focus()
+
     def action_escape(self) -> None:
         bar = self.query_one("#bar", CommandBar)
         if bar.field.has_focus or bar.field.value:
             bar.clear()
-            self.query_one("#lanes", DataTable).focus()
+            self._leave_bar()
         elif self.filter_text:
             self.set_filter("")
 
@@ -388,6 +457,24 @@ class FleetScreen(Screen, inherit_bindings=False):
         if action == "claim":
             return self.fd.deck.config.team  # hidden in solo mode
         return True
+
+    def key_line(self) -> Text:
+        """Every shown key this screen allows (claim only in team mode), each clickable.
+
+        One Text drawn with the screen, so it is complete on the first frame (Textual's
+        Footer fills in after a later refresh, which made screenshots and tests flaky)."""
+        out = Text(no_wrap=True, overflow="ellipsis")
+        for i, binding in enumerate(b for b in self.BINDINGS if b.show and self._allowed(b.action)):
+            action = binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
+            click = {"@click": action}
+            out.append("  " if i else "")
+            out.append(binding.key_display or binding.key, Style(color=theme.ACCENT, bold=True, meta=click))
+            out.append(f" {binding.description}", Style(color=theme.MUTED, meta=click))
+        return out
+
+    def _allowed(self, action: str) -> bool:
+        name = action.partition("(")[0]
+        return "." in name or bool(self.check_action(name, ()))
 
 
 def _cursor_key(table: DataTable) -> str | None:

@@ -60,7 +60,9 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
             yield Static(Text("Approach for the new lane (optional; it becomes its plan):"), classes="muted")
             yield Input(value=self.fork_approach, placeholder="e.g. read the source before touching the instance", id="fork-approach")
             yield Static(Text("Model:"), classes="muted")
-            yield Select([(m, m) for m in self.fork_models], value=self.fork_model, allow_blank=False, id="fork-model")
+            # Text prompts: a str prompt would be parsed as markup
+            options = [(Text(untrusted(m, one_line=True)), m) for m in self.fork_models]
+            yield Select(options, value=self.fork_model, allow_blank=False, id="fork-model")
             yield Static(_keys(("enter", "fork"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
     def on_mount(self) -> None:
@@ -170,13 +172,16 @@ class TakeOverScreen(ModalScreen[None]):
 
 
 class ChallengeCard(ModalScreen[str | None]):
-    """A challenge from the board: what it is, who has it, and what you can do with it."""
+    """A challenge from the board: what it is, who has it, and what you can do with it.
+
+    Dismissed with "queue", "claim", "open:<lane id>" or None."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="ChallengeCard")
     BINDINGS = [
         Binding("q", "choose('queue')", "queue"),
         Binding("c", "choose('claim')", "claim"),
         Binding("escape", "choose('')", "close"),
+        *(Binding(str(n), f"open_lane({n})", show=False) for n in range(1, 10)),
     ]
 
     def __init__(self, challenge: Challenge, lanes: list[str], owner: str, team: bool) -> None:
@@ -190,7 +195,7 @@ class ChallengeCard(ModalScreen[str | None]):
         mark, color = BOARD_MARK[ch.status]
         title = Text()
         title.append(untrusted(ch.name, one_line=True), "bold")
-        title.append(f"   {ch.category} · {ch.points} pts · {ch.solves} solves · ", "dim")
+        title.append(f"   {untrusted(ch.category, one_line=True)} · {ch.points} pts · {ch.solves} solves · ", "dim")
         title.append(f"{mark} {ch.status.value}", color)
         grid = Table.grid(padding=(0, 2))
         grid.add_column(style="bold dim", no_wrap=True)
@@ -201,8 +206,18 @@ class ChallengeCard(ModalScreen[str | None]):
             grid.add_row("owner", Text(untrusted(self.card_owner, one_line=True)))
         if ch.note:
             grid.add_row("note", Text(untrusted(ch.note, one_line=True), theme.YELLOW))
-        grid.add_row("lanes", Text(", ".join(self.card_lanes) or "none", "dim"))
+        lanes = Text("none", "dim") if not self.card_lanes else Text()
+        for n, lane_id in enumerate(self.card_lanes[:9], start=1):
+            lanes.append("   " if n > 1 else "")
+            lanes.append_text(theme.key_chip(str(n)))
+            lanes.append(f" {lane_id}")
+        if len(self.card_lanes) > 9:
+            lanes.append(f"   +{len(self.card_lanes) - 9} more in the lane list", "dim")
+        grid.add_row("lanes", lanes)
         keys: list[tuple[str, str]] = []
+        if self.card_lanes:
+            last = min(len(self.card_lanes), 9)
+            keys.append(("1" if last == 1 else f"1-{last}", "open that lane"))
         if ch.status in (ChallengeStatus.PARKED, ChallengeStatus.NEW) and not self.card_lanes:
             keys.append(("q", "queue a fresh lane"))
         if self.card_team and not ch.closed:
@@ -214,6 +229,10 @@ class ChallengeCard(ModalScreen[str | None]):
 
     def action_choose(self, choice: str) -> None:
         self.dismiss(choice or None)
+
+    def action_open_lane(self, number: int) -> None:
+        if 1 <= number <= min(len(self.card_lanes), 9):
+            self.dismiss(f"open:{self.card_lanes[number - 1]}")
 
 
 KEY_HELP = (
@@ -229,11 +248,11 @@ KEY_HELP = (
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
     ("s", "Change the lane sort: attention, idle, cost, turns, lane"),
-    ("tab", "Move focus: board, lanes, command bar"),
+    ("tab", "Move focus: board, lanes, command bar (the board hides under 100 columns)"),
     ("enter on ▸", "Expand or collapse finished lanes"),
-    ("enter on board", "A challenge's card: queue it, claim it, open its lane"),
+    ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
     ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
-    ("ctrl+n", "In a lane: jump to the next lane that needs you"),
+    ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
     ("q", "Quit"),
 )
 MOCK_KEYS = (

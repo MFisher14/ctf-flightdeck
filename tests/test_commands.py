@@ -64,3 +64,49 @@ def test_suggestions_come_first_while_they_match():
 def test_no_completion_once_arguments_are_typed():
     assert complete("/redirect some plan") == []
     assert complete("hello") == []
+
+
+def test_a_lane_id_must_be_the_whole_word():
+    # 'l3x' is not lane L03: without the end anchor '/hint l3x try' would hint L03
+    assert [lane_id(t) for t in ("l3x", "L07,", "L7a", "L 7")] == [None, None, None, None]
+    parsed = parse("/hint l3x try this")
+    assert (parsed.lane, parsed.arg) == (None, "l3x try this")
+    parsed = parse("/hint l33t speak")
+    assert (parsed.lane, parsed.arg) == (None, "l33t speak")  # not 'No lane L33'
+    parsed = parse("/hint l33 speak")
+    assert (parsed.lane, parsed.arg) == ("L33", "speak")  # a whole word that is a lane id is one
+
+
+@pytest.mark.parametrize("command", ["approve", "escalate", "pause", "takeover"])
+def test_a_lane_command_that_takes_no_argument_refuses_a_stray_word(command):
+    # '/approve 2' meant for L02 must not approve the selected lane
+    with pytest.raises(CommandError, match=rf"/{command} takes no argument; name a lane like /{command} L02"):
+        parse(f"/{command} 2")
+    with pytest.raises(CommandError, match="takes no argument"):
+        parse(f"/{command} L02 now")
+    parsed = parse(f"/{command} l2")
+    assert (parsed.command.name, parsed.lane, parsed.arg) == (command, "L02", "")
+
+
+@pytest.mark.parametrize("command", ["back", "help", "quit"])
+def test_other_commands_that_take_no_argument_refuse_one_too(command):
+    with pytest.raises(CommandError, match=rf"^/{command} takes no argument$"):
+        parse(f"/{command} please")
+    assert parse(f"/{command}").arg == ""
+
+
+def test_open_takes_only_a_lane():
+    with pytest.raises(CommandError, match="/open takes a lane"):
+        parse("/open foo")
+    with pytest.raises(CommandError, match="/open takes a lane"):
+        parse("/open 3")
+    with pytest.raises(CommandError, match="/open takes a lane"):
+        parse("/open L03 now")
+    assert (parse("/open l3").lane, parse("/open").lane) == ("L03", None)
+
+
+def test_commands_with_arguments_keep_them():
+    assert parse("/kill L02 park").arg == "park"
+    assert parse("/diff solve.py").arg == "solve.py"
+    assert parse("/sort Cost").arg == "Cost"
+    assert parse("/fork L02 read the source").arg == "read the source"

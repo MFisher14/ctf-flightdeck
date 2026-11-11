@@ -198,15 +198,22 @@ LANE_COLUMNS = (
     ("last", "last action", 0, 1),
 )
 LAST_MIN = 12
+LANE_SHRINK = {"chall": 8}  # on a narrow terminal the challenge name narrows before a column is cut
 FINISHED_ROW = "__finished__"
 
 
 def fit_columns(
-    columns: tuple[tuple[str, str, int, int], ...], stretch: str, stretch_min: int, available: int, padding: int
+    columns: tuple[tuple[str, str, int, int], ...],
+    stretch: str,
+    stretch_min: int,
+    available: int,
+    padding: int,
+    shrink: dict[str, int] | None = None,
 ) -> list[tuple[str, str, int]]:
     """Drop columns by rank (highest first) until they fit `available` cells; the
-    `stretch` column takes what is left."""
-    kept = list(columns)
+    `stretch` column takes what is left. If the columns that never drop still do not
+    fit, the `shrink` columns narrow, each down to its floor."""
+    kept = [list(column) for column in columns]
 
     def needed() -> int:
         fixed = sum(width if key != stretch else stretch_min for key, _, width, _ in kept)
@@ -215,6 +222,13 @@ def fit_columns(
     while needed() > available and any(rank for *_, rank in kept):
         worst = max(range(len(kept)), key=lambda i: (kept[i][3], i))
         kept.pop(worst)
+    for key, floor in (shrink or {}).items():
+        over = needed() - available
+        for column in kept:
+            if over > 0 and column[0] == key and column[2] > floor:
+                cut = min(over, column[2] - floor)
+                column[2] -= cut
+                over -= cut
     spare = available - needed()
     return [(key, label, width if key != stretch else stretch_min + max(0, spare)) for key, label, width, _ in kept]
 
@@ -280,10 +294,12 @@ def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
     return all(word in hay for word in query.lower().split())
 
 
-def lanes_title(deck: Deck, sort: SortMode, query: str) -> Text:
+def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = False) -> Text:
     text = Text("fleet ", "bold")
     text.append(f"{len(deck.active_lanes())}/{deck.config.max_lanes}")
     text.append(f" · sort {sort.value}", theme.MUTED)
+    if board_hidden:
+        text.append(" · board hidden: narrow terminal", theme.MUTED)
     if query:
         text.append(" · filter ", theme.MUTED)
         text.append(untrusted(query, one_line=True), f"bold {theme.YELLOW}")
@@ -299,12 +315,13 @@ def lanes_title(deck: Deck, sort: SortMode, query: str) -> Text:
 def _answers(alert: Alert) -> Text:
     out = Text()
     for s in alert.suggestions:
+        label = untrusted(s.label, one_line=True)
         if not s.key:
-            out.append(f"  {s.label}", theme.MUTED)
+            out.append(f"  {label}", theme.MUTED)
             continue
         out.append("  ")
-        out.append_text(theme.key_chip(s.key))
-        out.append(f" {s.label.lower()}", theme.MUTED)
+        out.append_text(theme.key_chip(untrusted(s.key, one_line=True)))
+        out.append(f" {label.lower()}", theme.MUTED)
     return out
 
 
@@ -359,7 +376,7 @@ def challenge_why(deck: Deck, ch: Challenge) -> Text:
     out = Text(no_wrap=True, overflow="ellipsis")
     mark, color = BOARD_MARK[ch.status]
     out.append(untrusted(ch.name, one_line=True), "bold")
-    out.append(f"  {ch.category} {ch.points} · {ch.solves} solves · ", theme.MUTED)
+    out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · {ch.solves} solves · ", theme.MUTED)
     out.append(f"{mark} {ch.status.value}", color)
     if ch.note:
         out.append(f" ({untrusted(ch.note, one_line=True)})", theme.YELLOW)
@@ -377,7 +394,7 @@ def focus_title(deck: Deck, lane: Lane) -> Text:
     out = Text()
     out.append(f"{lane.id} · ", "bold")
     out.append(untrusted(ch.name, one_line=True), "bold")
-    out.append(f"  {ch.category} {ch.points} · ", theme.MUTED)
+    out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · ", theme.MUTED)
     out.append(untrusted(lane.model, one_line=True), theme.CYAN)
     out.append(" · ")
     out.append(lane.state.value, STATE_COLOR[lane.state])
@@ -448,11 +465,12 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
                 continue  # the approval line below says it
             command = suggestion_command(s.key, s.text)
             line = Text("   ")
+            label = untrusted(s.label, one_line=True)
             if command:
                 line.append(untrusted(command, one_line=True), f"bold {theme.ACCENT}")
-                line.append(f"   {s.label.lower()}", theme.MUTED)
+                line.append(f"   {label.lower()}", theme.MUTED)
             else:
-                line.append(s.label, theme.MUTED)
+                line.append(label, theme.MUTED)
             rows.append(line)
     if lane.pending is not None:
         border = border or theme.PURPLE
@@ -474,7 +492,8 @@ def file_label(change: FileChange) -> Text:
     out.append(untrusted(change.path, one_line=True), "bold")
     out.append(f"  +{change.added}", theme.GREEN)
     out.append(f" −{change.removed}", theme.RED)
-    out.append(f"  {'new' if change.status == 'added' else change.status} · turn {change.turn}", theme.MUTED)
+    status = "new" if change.status == "added" else untrusted(change.status, one_line=True)
+    out.append(f"  {status} · turn {change.turn}", theme.MUTED)
     return out
 
 
