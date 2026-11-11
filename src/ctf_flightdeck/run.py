@@ -183,8 +183,9 @@ def lane_network(urls: tuple[str, ...]) -> str:
 
 def host_warning() -> str:
     return (
-        "Lanes run on this machine (runtime host): their shell has your user's permissions "
-        "and can read anything you can. Use a disposable VM, or the docker runtime."
+        "Lanes run on this machine (runtime host): their shell has your user account, so a lane "
+        "can read your files and the environment of your processes, including flightdeck's, which "
+        "holds your API key. Use the docker runtime, a disposable VM, or a separate low-limit key."
     )
 
 

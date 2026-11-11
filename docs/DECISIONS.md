@@ -23,3 +23,16 @@ deviate.
 | D14 | Timeline | ASAP. `ctf-tools` work continues in parallel and must not block on flightdeck, or vice versa. |
 | D15 | Local models | The orchestrator is code, not a model. An optional **local model role** (no API key) may serve small jobs: triage hints from descriptions, the "ignores the hint" detector, lane summaries for escalation, and media helpers (audio transcription, image description). Rules come first; the local model is never required. Candidates to evaluate in M3: Cactus (`pip install cactus-compute`, Apache-2.0, small tool-calling, transcription and vision models; no OpenAI-compatible server per its README, so it needs its own adapter; set `CACTUS_TELEMETRY=0`), and Ollama / llama.cpp / MLX (OpenAI-compatible local servers). Not in M0 or M1. |
 | D16 | Console layout (2026-11-10, M0 review) | Route C: a **fleet view** (board + every lane, attention-sorted) and a **focus view** for one lane (transcript, files and diffs, chat box). One-key interventions in the fleet; a chat box and slash commands in both. Rounded panels, slanted header, alert chips, plain Unicode only. Details in CONSOLE-SPEC; the behaviours listed there under "Proposed at the M0 review" are not yet signed off. |
+
+## Proposed in M1 (built; confirm or change them)
+
+| # | Topic | Proposal |
+|---|---|---|
+| P1 | Boards that cannot check flags | A folder board without an answers file cannot tell whether a flag is right. Approving a flag then becomes "submit it yourself, then confirm": `a` = accepted (solved), `d` = rejected. |
+| P2 | Decline | `d` / `0` / `/decline` says no without killing the lane: a flag is not submitted, the live box stays off limits; declining more budget stops the lane and parks the challenge. |
+| P3 | Quick answers | One key answers what a lane needs: `1` approves an approval, `0` declines it; otherwise the most urgent alert's suggestions are numbered. In the focus view only while the chat box is empty. Kill and a bare fork still open their prompts. |
+| P4 | Lane network | A Docker lane gets no network unless its challenge lists a live instance (`urls`), so it cannot fetch solutions or reach anything else. Finer egress rules are M2. |
+| P5 | Lane image | flightdeck ships a Dockerfile (python3 and common CTF tools) and builds it only when the player runs `flightdeck image build`; it never pulls or builds an image by itself. |
+| P6 | Host runtime | Host lanes run as the player: they can read the player's files and same-user processes' environments, including flightdeck's API key. flightdeck says so before every host run and recommends Docker, a VM or a separate low-limit key; it does not pretend to fence it. |
+| P7 | Unpriced models | Cost comes from the API (OpenRouter reports it), else the config's price, else it is unknown. A dollar-capped lane whose cost becomes unknown asks once before carrying on without the dollar cap. |
+
