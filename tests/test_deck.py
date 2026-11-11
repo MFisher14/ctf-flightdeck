@@ -1999,3 +1999,29 @@ def test_a_teammates_released_claim_frees_the_challenge_but_not_someone_elses_cl
     assert deck.challenges["c1"].claimed_by is None
     assert deck.events[-1].data == {"who": "alice", "claimed": False}
     assert deck.apply(iv.Queue("c1")).ok  # it can be worked again
+
+
+@pytest.mark.parametrize("answer, why", [("approve", "rejected by the platform"), ("decline", "the player declined to submit it")])
+def test_a_flag_found_wrong_on_one_lane_stops_waiting_on_its_siblings(answer, why):
+    deck, driver, _ = make_deck(n=1, max_lanes=3)
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.report(sibling.id, TurnReport(flag="t{other}"))
+    deck.report(sibling.id, TurnReport(flag="t{x}"))  # waits behind t{other}
+    deck.report(lane.id, TurnReport(flag="t{x}"))
+    assert deck.apply(iv.Approve(lane.id) if answer == "approve" else iv.Decline(lane.id)).ok
+    assert [p.flag for p in ([sibling.pending] if sibling.pending else []) + sibling.waiting] == ["t{other}"]
+    assert deck.verify.calls == ([("c0", "t{x}")] if answer == "approve" else [])
+    told = driver.named("rejected") if answer == "approve" else [c[:3:2] for c in driver.named("declined")]
+    assert (sibling.id, "t{x}") in told
+    assert any(f"candidate t{{x}} dropped: {why} on {lane.id}" == a.text for a in sibling.actions)
+    assert deck.not_flag("c0", "t{x}") == why
+
+
+def test_a_platform_rejection_is_never_replaced_by_a_weaker_reason():
+    deck, _, _ = make_deck(n=1, max_lanes=3)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{x}"))
+    assert deck.apply(iv.Approve(lane.id)).ok  # rejected by the platform
+    deck._remember_not_flag("c0", "t{x}", "the player declined to submit it")
+    assert deck.not_flag("c0", "t{x}") == "rejected by the platform"

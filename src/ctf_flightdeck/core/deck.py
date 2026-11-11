@@ -87,6 +87,12 @@ class QueueEntry:
     dollar_cap: float | None = None
 
 
+REJECTED = "rejected by the platform"
+SAID_REJECTED = "the player said the platform rejected it"
+DECLINED = "the player declined to submit it"
+NOT_FLAG_RANK = {DECLINED: 1, SAID_REJECTED: 2, REJECTED: 3}  # how sure: a stronger reason is kept
+
+
 class Deck:
     def __init__(
         self, config: DeckConfig, driver: LaneDriver, clock: Clock, verify: Verifier
@@ -619,9 +625,11 @@ class Deck:
             self._finish(lane, LaneState.STOPPED, "the player declined more budget")
             return Outcome(True, f"Stopped {lane.id}: no more budget")
         if pending.kind is PendingKind.SUBMIT and pending.flag is not None:
-            self._not_flags.setdefault(lane.challenge_id, {})[pending.flag] = "the player declined to submit it"
+            self._remember_not_flag(lane.challenge_id, pending.flag, DECLINED)
         self._resolve(lane)
         self.driver.declined(lane, pending)
+        if pending.kind is PendingKind.SUBMIT and pending.flag is not None:
+            self._drop_known_wrong(lane, pending.flag)
         if pending.kind is PendingKind.SUBMIT:
             return Outcome(True, f"Not submitted: {pending.flag}; {lane.id} carries on")
         return Outcome(True, f"{lane.id} stays off the live box")
@@ -903,10 +911,7 @@ class Deck:
         why = self.not_flag(lane.challenge_id, flag)
         if why is not None:  # asked before and answered: never asked, or submitted, again
             self._note(lane, f"candidate {flag} again; not asked: {why}")
-            if why.startswith("the player declined"):
-                self.driver.declined(lane, Pending(PendingKind.SUBMIT, f"submit {flag}", flag=flag))
-            else:
-                self.driver.rejected(lane, flag)
+            self._tell_not_flag(lane, flag, why)
             return
         self._note(lane, f"candidate flag {flag}")
         queued = ([lane.pending] if lane.pending else []) + lane.waiting
@@ -945,14 +950,13 @@ class Deck:
             data={"flag": flag, "correct": ok, "by": by},
         )
         if not ok:
-            self._not_flags.setdefault(ch.id, {})[flag] = (
-                "rejected by the platform" if by == "platform" else "the player said the platform rejected it"
-            )
+            self._remember_not_flag(ch.id, flag, REJECTED if by == "platform" else SAID_REJECTED)
             if lane.pending is not None and lane.pending.flag == flag:
                 self._resolve(lane)
             else:
                 self._sync_flag_alert(lane)
             self.driver.rejected(lane, flag)
+            self._drop_known_wrong(lane, flag)
             return
         ch.status = ChallengeStatus.SOLVED
         ch.solved_by = lane.id
@@ -962,6 +966,43 @@ class Deck:
         self._finish(lane, LaneState.SOLVED, f"solved with {flag}")
         for other in self.lanes_on(ch.id):
             self._finish(other, LaneState.STOPPED, f"{lane.id} solved it")
+
+    def _remember_not_flag(self, challenge_id: str, flag: str, why: str) -> None:
+        """`flag` is not the flag of that challenge. A weaker reason never replaces a stronger
+        one (the platform's rejection is the strongest)."""
+        known = self._not_flags.setdefault(challenge_id, {})
+        old = known.get(flag)
+        if old is None or NOT_FLAG_RANK[why] > NOT_FLAG_RANK.get(old, 0):
+            known[flag] = why
+
+    def _tell_not_flag(self, lane: Lane, flag: str, why: str) -> None:
+        if why == DECLINED:
+            self.driver.declined(lane, Pending(PendingKind.SUBMIT, f"submit {flag}", flag=flag))
+        else:
+            self.driver.rejected(lane, flag)
+
+    def _drop_known_wrong(self, lane: Lane, flag: str) -> None:
+        """`flag` just became known not to be the flag: the same flag waiting for approval on
+        the challenge's other lanes is dropped (approving it would submit it again), and those
+        lanes hear why."""
+        why = self.not_flag(lane.challenge_id, flag)
+        assert why is not None
+        for other in self.lanes_on(lane.challenge_id):
+            if other is lane or other.finished:
+                continue
+            same = lambda p: p.kind in FLAG_PENDING and p.flag == flag  # noqa: E731
+            dropped = False
+            before = len(other.waiting)
+            other.waiting = [p for p in other.waiting if not same(p)]
+            dropped = len(other.waiting) != before
+            if other.pending is not None and same(other.pending):
+                self._resolve(other)
+                dropped = True
+            elif dropped:
+                self._sync_flag_alert(other)
+            if dropped:
+                self._note(other, f"candidate {flag} dropped: {why} on {lane.id}")
+                self._tell_not_flag(other, flag, why)
 
     def _check_budget(self, lane: Lane) -> None:
         used = lane.budget_used()
