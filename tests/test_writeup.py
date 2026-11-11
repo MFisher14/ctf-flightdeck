@@ -43,7 +43,7 @@ from fake_model import FakeModelServer, error_reply, text_reply
 FLAG_FORMAT = r"t\{[^{}\s]+\}"
 ALPHA = "t{alpha}"
 SOLVE = "import base64\n# prints the flag\nprint(base64.b64decode(open('note.txt').read()).decode())\n"
-TOKEN = re.compile(r"\{\{[0-9a-f]{8}-(?:block-)?\d+\}\}")
+TOKEN = re.compile(r"\{\{[0-9a-f]{8}-(?:block-|line-)?\d+\}\}")
 
 
 # ---------------------------------------------------------------------- building real runs
@@ -1072,6 +1072,14 @@ def block_keys(frozen: str) -> list[str]:
     return [line for line in frozen.split("\n") if TOKEN.fullmatch(line) and "-block-" in line]
 
 
+def fact_keys(frozen: str) -> list[str]:
+    return [line for line in frozen.split("\n") if TOKEN.fullmatch(line) and "-line-" in line]
+
+
+def value_keys(frozen: str) -> list[str]:
+    return [key for key in TOKEN.findall(frozen) if "-block-" not in key and "-line-" not in key]
+
+
 def polish(record: RunRecord, cid: str, server: FakeModelServer, **kwargs) -> writeup.Polished:
     async def go():
         async with ModelClient(server.base_url, None, max_retries=0) as client:
@@ -1082,7 +1090,7 @@ def polish(record: RunRecord, cid: str, server: FakeModelServer, **kwargs) -> wr
 
 def reworded(request: dict) -> dict:
     frozen = frozen_of(request)
-    text = frozen.replace("## Approach", "## How it went").replace("Here it is with", "Shown here with")
+    text = frozen.replace("## Approach", "## How it went").replace("No output recorded.", "It printed nothing.")
     return text_reply(text, prompt_tokens=900, completion_tokens=700, cost=0.002)
 
 
@@ -1098,8 +1106,52 @@ def test_polish_sends_none_of_the_runs_text_and_keeps_every_block(tmp_path, mark
     assert request["json"]["messages"][0] == {"role": "system", "content": writeup.POLISH_INSTRUCTIONS}
     assert "tools" not in request["json"]
     plain = writeup.draft(record, "a")
-    assert done.markdown == plain.replace("## Approach", "## How it went").replace("Here it is with", "Shown here with")
+    assert done.markdown == plain.replace("## Approach", "## How it went").replace("No output recorded.", "It printed nothing.")
     assert (done.usage.total, done.usage.cost) == (1600, 0.002)
+    assert tags(markdown_it.render(done.markdown)) <= ALLOWED_TAGS
+
+
+def test_polish_never_shows_the_model_a_line_that_states_a_fact(tmp_path):
+    record = alpha_run(tmp_path)
+    with FakeModelServer(responder=lambda r: text_reply(frozen_of(r))) as server:
+        done = polish(record, "a", server)
+    sent = frozen_of(server.requests[0])
+    for fact in ("Category", "Points", "Solved by", "T+00:", "6m after", "Model", "Spent", "12 turns", "Started as",
+                 "first shows", "Accepted at", "the board checked it"):
+        assert fact not in sent, fact
+    assert len(fact_keys(sent)) == 8  # six at the top, why turn 11 was picked, when it was accepted
+    assert done.markdown == writeup.draft(record, "a")  # and each comes back exactly as it was
+
+
+@pytest.mark.parametrize("make", [alpha_run, l1_run, lambda tmp_path: hostile_run(tmp_path), lambda tmp_path: surrogate_run(tmp_path)])
+def test_a_reply_that_changes_nothing_gives_back_the_plain_draft(tmp_path, make):
+    record = make(tmp_path)
+    cid = next(iter(writeup.solves(record)))
+    for redact in (False, True):
+        with FakeModelServer(responder=lambda r: text_reply(frozen_of(r))) as server:
+            assert polish(record, cid, server, redact=redact).markdown == writeup.draft(record, cid, redact=redact)
+
+
+def test_a_reply_may_join_a_list_into_prose_around_the_placeholders(tmp_path, markdown_it):
+    record = alpha_run(tmp_path)
+
+    def tidy(request: dict) -> dict:
+        frozen = frozen_of(request)
+        plan, redirect = value_keys(frozen)[1:3]
+        reply = frozen.replace(
+            f"1. Turn 1, the lane's plan: {plan}\n2. Turn 9, you redirected it: {redirect}",
+            f"In turn 1 the lane meant to ({plan}), and in turn 9 you redirected it: {redirect}.",
+        )
+        assert reply != frozen
+        return text_reply(reply)
+
+    with FakeModelServer(responder=tidy) as server:
+        done = polish(record, "a", server)
+    assert done.markdown == writeup.draft(record, "a").replace(
+        "1. Turn 1, the lane's plan: read the note, then decode it\n2. Turn 9, you redirected it: xor it with the key in the note",
+        "In turn 1 the lane meant to (read the note, then decode it), and in turn 9 you redirected it: xor it with the "
+        "key in the note.",
+    )
     assert tags(markdown_it.render(done.markdown)) <= ALLOWED_TAGS
 
 
@@ -1121,9 +1173,20 @@ def test_a_reply_wrapped_whole_in_one_markdown_block_is_unwrapped_then_checked(t
             polish(record, "a", server)
 
 
-def _swap_blocks(frozen: str) -> str:
-    first, second = block_keys(frozen)[:2]
+def _swap(first: str, second: str, frozen: str) -> str:
     return frozen.replace(first, "\0").replace(second, first).replace("\0", second)
+
+
+def _glue_values(frozen: str) -> str:
+    """Two value placeholders side by side, with no markup of the reply's own: their code spans
+    would run together, and the second value's text out of its span."""
+    first, second = value_keys(frozen)[1:3]
+    return frozen.replace(" " + second, "", 1).replace(first, first + second, 1)
+
+
+def _join_facts(frozen: str) -> str:
+    first, second = fact_keys(frozen)[:2]
+    return frozen.replace(f"{first}\n{second}", f"{first} and {second}")
 
 
 @pytest.mark.parametrize(
@@ -1132,14 +1195,24 @@ def _swap_blocks(frozen: str) -> str:
         (lambda f: TOKEN.sub("", f, count=1), "placeholder 1 of"),
         (lambda f: f + "\n" + TOKEN.findall(f)[0], "2 times"),
         (lambda f: f.replace("\n\n" + block_keys(f)[0] + "\n", " " + block_keys(f)[0] + "\n"), "moved a code block"),
-        (_swap_blocks, "changed the order of the code blocks"),
+        (lambda f: _swap(*block_keys(f)[:2], f), "changed the order of the code blocks"),
+        (_join_facts, "moved a line that states a fact into a line of prose"),
+        (lambda f: _swap(*fact_keys(f)[:2], f), "changed the order of the code blocks and the lines that state facts"),
         (lambda f: f + "\nSee {{0badbeef-99}} too.", "placeholder(s) the draft does not have"),
         (lambda f: f + "\nSee the [writeup](http://example.com).", "a square bracket"),
         (lambda f: f + "\n<b>done</b>", "HTML"),
         (lambda f: f + "\nIt was &lt;easy&gt;.", "HTML"),
+        (lambda f: f.replace(value_keys(f)[0], f"<{value_keys(f)[0]} onmouseover=alert(1)>"), "right against a placeholder"),
+        (lambda f: f.replace(value_keys(f)[0], f"&{value_keys(f)[0]};"), "right against a placeholder"),
+        (_glue_values, "right against a placeholder"),
+        (lambda f: f.replace(value_keys(f)[0], f"{value_keys(f)[0]}.com"), "a domain or a file name"),
+        (lambda f: f + "\nMore on evil.com later.", "a domain or a file name"),
         (lambda f: f + "\nRun `ls` first.", "backtick"),
         (lambda f: f + "\n~~~\nls\n~~~", "a code block"),
-        (lambda f: f + "\nIt took 4242 tries.", "numbers the draft does not: 4242"),
+        (lambda f: f + "\nIt took 4242 tries.", "is 4242 where the draft has none"),
+        (lambda f: f.replace("### Turn 11 (", "### Turn 6 ("), "is 6 where the draft has 11"),
+        (lambda f: f.replace("1. Turn 1,", "1. Turn 9,").replace("2. Turn 9,", "2. Turn 1,"), "is 9 where the draft has 1"),
+        (lambda f: f.replace("### Turn 11 (", "### Turn eleven ("), "is 10 where the draft has 11"),  # the next one, early
         (lambda f: f + "\nMore on www.example.com later.", "web address"),
         (lambda f: f + "\nThanks to @someone.", "mention"),
         (lambda f: f.replace("}}", "}", 1), "placeholder"),
