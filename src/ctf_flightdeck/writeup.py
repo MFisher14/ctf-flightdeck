@@ -731,6 +731,7 @@ _HTML = re.compile(r"<[A-Za-z/!?]|&#?[A-Za-z0-9]+;")
 _FENCE = re.compile(r"^ {0,3}~{3,}", re.MULTILINE)
 _ADDRESS = re.compile(r"://|\bwww\.|@\w", re.IGNORECASE)
 _DIGITS = re.compile(r"\d+")
+_WRAPPED = re.compile(r"```[A-Za-z]*\n(.*)\n```", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -770,6 +771,9 @@ async def polish(
 def checked_reply(reply: str, frozen: str, held: Mapping[str, str], blocks: Sequence[str]) -> str:
     """The model's reply, folded, once it passes every check; PolishError naming the first it fails."""
     text = untrusted(reply.replace("\r\n", "\n")).strip("\n")
+    wrapped = _WRAPPED.fullmatch(text.strip())
+    if wrapped:  # the whole answer in one ```markdown block, as models like to send it; the inside is checked
+        text = wrapped.group(1)
     if not text.strip():
         raise PolishError("the model's reply is empty")
     tokens = _TOKEN.findall(text)

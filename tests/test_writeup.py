@@ -741,6 +741,16 @@ def test_polish_with_redact_still_never_holds_the_flag(tmp_path):
     assert done.markdown == writeup.draft(record, "a", redact=True)
 
 
+def test_a_reply_wrapped_whole_in_one_markdown_block_is_unwrapped_then_checked(tmp_path):
+    record = alpha_run(tmp_path)
+    with FakeModelServer(responder=lambda r: text_reply("```markdown\n" + frozen_of(r) + "\n```\n")) as server:
+        assert polish(record, "a", server).markdown == writeup.draft(record, "a")
+    inside = lambda r: text_reply("```markdown\n" + frozen_of(r) + "\nRun `ls`.\n```")  # noqa: E731
+    with FakeModelServer(responder=inside) as server:
+        with pytest.raises(writeup.PolishError, match="backtick"):
+            polish(record, "a", server)
+
+
 def _swap_blocks(frozen: str) -> str:
     first, second = block_keys(frozen)[:2]
     return frozen.replace(first, "\0").replace(second, first).replace("\0", second)
