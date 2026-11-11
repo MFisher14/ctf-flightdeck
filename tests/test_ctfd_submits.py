@@ -112,20 +112,23 @@ def test_flags_on_their_way_when_the_run_ends_are_named_as_not_known_to_have_bee
         fake.hold_attempts = threading.Event()
         run = auto_run(tmp_path, fake, server, max_lanes=2)
 
-        async def main() -> list[str]:
+        async def main() -> tuple[list[str], list[str]]:
             run.release()
             try:
                 await wait_for(
                     lambda: len(fake.to(ATTEMPT)) == 1 and len(run.deck.submitting("warmup")) == 2
                     and run.deck.submitting("baby-rsa"), "three flags on their way, one of them at CTFd",
                 )
-                return [r.json["submission"] for r in fake.to(ATTEMPT)]
+                sent = [r.json["submission"] for r in fake.to(ATTEMPT)]
             finally:
                 await run.shutdown()
                 fake.hold_attempts.set()  # the worker's thread may end now
+            await asyncio.sleep(0.5)  # a submit worker still going would now take CTFd's answer and send the next flag
+            return sent, [r.json["submission"] for r in fake.to(ATTEMPT)]
 
-        (sent,) = asyncio.run(main())
+        (sent,), after = asyncio.run(main())
         run.close()
+    assert after == [sent]  # the worker stopped with the run: nothing went to CTFd after it
     lanes = {"test{nope}": "L01, Warmup", "test{hello}": "L01, Warmup", "test{rsa}": "L02, Baby RSA"}
     waiting = next(flag for flag in ("test{nope}", "test{rsa}") if flag != sent)
     assert sorted(e for e in run.errors if e.startswith("CTFd: ")) == sorted([
