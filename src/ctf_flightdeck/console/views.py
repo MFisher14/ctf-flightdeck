@@ -5,12 +5,20 @@ Everything that comes from a challenge or a lane (names, descriptions, commands,
 output, flags, diffs) is untrusted. It goes through text.untrusted() and is wrapped in
 rich Text, never parsed as markup, so "[@click=app.quit]" or an escape sequence shows
 literally and cannot steer the console.
+
+What a lane did is shown as its transcript keeps it (lane_text): its steps and their output,
+flightdeck's notes and alerts, the commands an alert suggests (a loop's hint quotes the
+command it repeats), the hints it has not read yet, its plan, its result and the diffs of the
+files it changed have the value of anything shaped like a credential taken out
+(credentials.py), and the flags the run knows for its challenge stay. A screen is shared or
+screenshotted like a run folder.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from weakref import WeakKeyDictionary
 
 from rich import box
@@ -39,6 +47,7 @@ from ..core.model import (
     LaneState,
     PendingKind,
 )
+from ..credentials import named_flags, redact
 from ..runrecord import L1 as BY_L1
 from ..runrecord import Credit, EventLine, Solve, accepted
 from ..text import untrusted
@@ -86,6 +95,52 @@ PENDING_ANSWERS = {
 def safe(value: object, style: str | Style = "", *, justify: str | None = None) -> Text:
     """Untrusted text as one literal line: control characters made visible, never markup."""
     return Text(untrusted(str(value), one_line=True), style=style, justify=justify, overflow="ellipsis", no_wrap=True)
+
+
+class _Flags:
+    """The flags the run knows for each challenge, read from the deck's events as they come:
+    what its lanes proposed (waiting or submitted) and what L1 engines reported
+    (credentials.named_flags), the flags a lane's transcript keeps."""
+
+    def __init__(self) -> None:
+        self.read = 0
+        self.of: dict[str, tuple[str, ...]] = {}
+
+    def update(self, events: Sequence[Event]) -> None:
+        for event in events[self.read :]:
+            found = named_flags(event.data)
+            if found and event.challenge:
+                self.of[event.challenge] = tuple(dict.fromkeys((*self.of.get(event.challenge, ()), *found)))
+        self.read = len(events)
+
+
+_FLAGS: WeakKeyDictionary[Deck, _Flags] = WeakKeyDictionary()
+LINE_CHARS = 1000  # a one-line cell (the last action, the why line) shows no more of a text than this: no terminal is that wide
+
+
+def lane_text(deck: Deck, lane: Lane, text: str) -> str:
+    """`text` from what `lane` did, as the console shows it: the value of anything shaped like
+    a credential taken out (credentials.py), but the flags the run knows for its challenge.
+    The deck keeps the text as it was, for the lane's model, which has read it already."""
+    flags = _FLAGS.get(deck)
+    if flags is None:
+        flags = _FLAGS[deck] = _Flags()
+    flags.update(deck.events)
+    return _redacted(text, flags.of.get(lane.challenge_id, ()))
+
+
+@lru_cache(maxsize=256)
+def _redacted(text: str, keep: tuple[str, ...]) -> str:
+    """Kept for the next refresh, which draws every lane's last action, the why line and the
+    open diff again: taking credentials out costs time in proportion to the text, and an
+    output can be a megabyte."""
+    return redact(text, keep=keep)
+
+
+def lane_line(deck: Deck, lane: Lane, text: str) -> str:
+    """`text` from what `lane` did, for a one-line cell: lane_text cut to LINE_CHARS (after
+    the credentials are out, so no part of one is left) and made safe to draw."""
+    return untrusted(lane_text(deck, lane, text)[:LINE_CHARS], one_line=True)
 
 
 def alert_style(kind: AlertKind | None) -> str:
@@ -460,7 +515,7 @@ def lane_cells(deck: Deck, lane: Lane, selected: bool = False) -> dict[str, Text
         "turns": Text(str(lane.turns), style=dim, justify="right"),
         "cost": Text(cost, style=dim or theme.MUTED, justify="right"),
         "idle": Text("-" if lane.finished else fmt.duration(idle), style=dim or (theme.ACCENT if idle >= 600 else ""), justify="right"),
-        "last": safe(lane.last_action, theme.MUTED),
+        "last": safe(lane_text(deck, lane, lane.last_action)[:LINE_CHARS], theme.MUTED),
     }
 
 
@@ -597,13 +652,13 @@ def lane_why(deck: Deck, lane: Lane) -> Text:
     out.append(f"{lane.id} ", "bold")
     if lane.finished:
         out.append(f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}")
-        out.append(untrusted(lane.result, one_line=True))
+        out.append(lane_line(deck, lane, lane.result))
         out.append("\n  enter opens its transcript", theme.MUTED)
         return out
     top = top_answerable(lane)
     if top is not None:
         out.append(f"▲ {top.kind.label}: ", alert_style(top.kind))
-        out.append(untrusted(top.reason, one_line=True))
+        out.append(lane_line(deck, lane, top.reason))
         out.append("\n")
         out.append_text(_answers(lane, top))
         out.append("   enter open", theme.MUTED)
@@ -617,17 +672,17 @@ def lane_why(deck: Deck, lane: Lane) -> Text:
         return out
     if lane.alerts:
         out.append(f"▲ {lane.alerts[0].kind.label}: ", alert_style(lane.alerts[0].kind))
-        out.append(untrusted(lane.alerts[0].reason, one_line=True), theme.MUTED)
+        out.append(lane_line(deck, lane, lane.alerts[0].reason), theme.MUTED)
         out.append("\n  nothing to do   enter open", theme.MUTED)
         return out
     out.append("plan: ", theme.MUTED)
-    out.append(untrusted(lane.plan or "-", one_line=True))
+    out.append(lane_line(deck, lane, lane.plan or "-"))
     out.append("\n  last: ", theme.MUTED)
     last = next((a for a in reversed(lane.actions) if a.kind is ActionKind.STEP), None)
     if last is not None:
-        out.append(untrusted(last.text, one_line=True))
+        out.append(lane_line(deck, lane, last.text))
         if last.output:
-            out.append(f" → {untrusted(last.output, one_line=True)}", theme.MUTED)
+            out.append(f" → {lane_line(deck, lane, last.output)}", theme.MUTED)
     out.append("   enter open", theme.MUTED)
     return out
 
@@ -669,29 +724,31 @@ def focus_title(deck: Deck, lane: Lane) -> Text:
     return out
 
 
-def plan_line(lane: Lane) -> Text:
-    return Text.assemble(("plan ", theme.MUTED), untrusted(lane.plan or "-", one_line=True))
+def plan_line(deck: Deck, lane: Lane) -> Text:
+    return Text.assemble(("plan ", theme.MUTED), untrusted(lane_text(deck, lane, lane.plan or "-"), one_line=True))
 
 
-def transcript_lines(action: Action) -> list[Text]:
-    """One log entry as transcript lines."""
-    text = untrusted(action.text, one_line=True)
+def transcript_lines(deck: Deck, lane: Lane, action: Action) -> list[Text]:
+    """One entry of `lane`'s log as transcript lines, its text and output as the lane's
+    transcript keeps them (lane_text)."""
+    text = untrusted(lane_text(deck, lane, action.text), one_line=True)
+    output = lane_text(deck, lane, action.output)
     if action.kind is ActionKind.STEP:
         lines = [Text.assemble(("⏺ ", theme.GREEN), (text, "bold"))]
-        if action.output:
-            lines.append(Text.assemble(("  ⎿  ", theme.MUTED), (untrusted(action.output, one_line=True), theme.MUTED)))
+        if output:
+            lines.append(Text.assemble(("  ⎿  ", theme.MUTED), (untrusted(output, one_line=True), theme.MUTED)))
         return lines
     if action.kind is ActionKind.MESSAGE:
         return [Text.assemble(("› you  ", f"bold {theme.ACCENT}"), (text, theme.ACCENT))]
     if action.kind is ActionKind.PLAYER:
         lines = [Text.assemble(("› you  ", f"bold {theme.ACCENT}"), (text, f"italic {theme.ACCENT}"))]
-        lines += [Text.assemble(("       ", ""), (untrusted(line, one_line=True), theme.MUTED)) for line in action.output.splitlines()]
+        lines += [Text.assemble(("       ", ""), (untrusted(line, one_line=True), theme.MUTED)) for line in output.splitlines()]
         return lines
     if action.kind is ActionKind.ALERT:
         style = alert_style(action.alert)
         return [
             Text.assemble(("▲ ", style), (text, style)),
-            Text.assemble(("  ", ""), (untrusted(action.output, one_line=True), theme.TEXT)),
+            Text.assemble(("  ", ""), (untrusted(output, one_line=True), theme.TEXT)),
         ]
     if action.kind is ActionKind.APPROVAL:
         return [Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (text, theme.PURPLE))]
@@ -715,7 +772,7 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
     if lane.finished:
         return Text.assemble(
             (f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}"),
-            (untrusted(lane.result, one_line=True), theme.TEXT),
+            (untrusted(lane_text(deck, lane, lane.result), one_line=True), theme.TEXT),
             ("   this lane has ended; esc goes back to the fleet", theme.MUTED),
         )
     rows: list[RenderableType] = []
@@ -725,16 +782,16 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
     for alert in sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind]):
         label = Text.assemble(("▲ ", alert_style(alert.kind)), (alert.kind.label, alert_style(alert.kind)), ("  ", ""))
         if alert.kind in INFORMATIONAL_ALERTS:
-            label.append(untrusted(alert.reason, one_line=True), theme.MUTED)
+            label.append(untrusted(lane_text(deck, lane, alert.reason), one_line=True), theme.MUTED)
             rows.append(label)
             continue
         border = border or theme.alert_colors(alert.kind)[1]
-        label.append(untrusted(alert.reason, one_line=True), theme.TEXT)
+        label.append(untrusted(lane_text(deck, lane, alert.reason), one_line=True), theme.TEXT)
         rows.append(label)
         for s in alert.suggestions:
             if s.key in ("a", "d") and lane.pending is not None:
                 continue  # the approval lines below say it
-            command = suggestion_command(s.key, s.text, lane.id, show_lane=False)
+            command = suggestion_command(s.key, lane_text(deck, lane, s.text), lane.id, show_lane=False)
             number = numbered.get((s.key, s.text)) if alert is top else None
             line = Text("   ")
             line.append_text(_number(number))
@@ -754,7 +811,7 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
         for later in lane.waiting:
             rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
     for hint in lane.hints:
-        rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(hint, one_line=True), theme.ACCENT)))
+        rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(lane_text(deck, lane, hint), one_line=True), theme.ACCENT)))
     if not rows:
         return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
     if border:
@@ -781,8 +838,9 @@ def file_label(change: FileChange) -> Text:
     return out
 
 
-def diff_view(change: FileChange) -> RenderableType:
-    return Syntax(untrusted(change.diff), "diff", theme="monokai", background_color=theme.PAGE, word_wrap=False)
+def diff_view(deck: Deck, lane: Lane, change: FileChange) -> RenderableType:
+    """The diff of a file `lane` changed, as its transcript keeps it (lane_text)."""
+    return Syntax(untrusted(lane_text(deck, lane, change.diff)), "diff", theme="monokai", background_color=theme.PAGE, word_wrap=False)
 
 
 def needing(deck: Deck, exclude: str | None = None) -> list[Lane]:

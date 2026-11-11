@@ -15,17 +15,19 @@ from __future__ import annotations
 
 import asyncio
 import html
+import io
 import os
 import re
 import signal
 
 import pytest
+import rich.console
 from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
 from textual.widgets import DataTable, RichLog, Select, Static
 
-from ctf_flightdeck import fmt
+from ctf_flightdeck import credentials, fmt
 from ctf_flightdeck.console import room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
@@ -54,9 +56,11 @@ from ctf_flightdeck.core.model import (
     PendingKind,
     Suggestion,
 )
+from ctf_flightdeck.detect import DetectConfig, LoopDetector, Watch
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.scenarios import DEEP_ARCHIVE, ReleaseAt, Scenario, Spec
 from ctf_flightdeck.mock.world import FakeWorld, ManualClock
+from deadline import within
 
 SIZE = (160, 46)
 NARROW = (120, 36)
@@ -1743,6 +1747,220 @@ def test_model_names_in_the_fork_prompt_are_text_not_markup():
         assert "[@click=app.quit]x[/]" in text and "[b]bold[/b]" in text
 
     drive(app, script)
+
+
+# Made-up keys, built from pieces so no line here is shaped like a real one (.githooks/secret_scan.py).
+OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
+GITHUB = "ghp" + "_" + "a1B2" * 9
+ANTHROPIC = "sk-" + "ant-api03-" + "Qx7-" * 20
+JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWRtaW4ifQ.bm90LWEtcmVhbC1zaWduYXR1cmU"
+VALUES = ("5f" * 32, "a1B2" * 9, "Qx7-" * 20, JWT)  # the part of each that would show if it were drawn
+
+
+def test_what_a_lane_did_is_shown_without_its_credentials_and_the_deck_keeps_it_as_it_was():
+    """A host lane that read the player's keys: its step and its output, its plan, the alert
+    quoting an output and the diff of a file it wrote show each credential's name and not its
+    value, in the fleet (the last-action cell, the why line) and in the focus view (the
+    transcript, the plan, the needs-you card, the diff), as its transcript file keeps them. A
+    flag shaped like a credential stays whole once the run knows it. The deck keeps what the
+    lane did as it was, for the lane's model, which has read it already."""
+    flag = "t{TOKEN=c0ffee}"
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), flag_format=r"t\{[^{}\s]+\}"))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    deck.report(lane.id, TurnReport(action=f"submit {flag}", flag=flag))
+    assert deck.apply(iv.Decline(lane.id)).ok  # the run knows the flag now, and the lane carries on
+    curl = f"curl -H 'Authorization: Bearer {JWT}' 127.0.0.1"
+    diff = f"+++ b/env.txt\n+ANTHROPIC_API_KEY={ANTHROPIC}\n"
+    deck.report(lane.id, TurnReport(action=curl, output=f"OPENROUTER_API_KEY={OPENROUTER}", plan=f"log in with GITHUB_TOKEN={GITHUB}",
+                                    files=(FileChange("env.txt", diff, "added"),)))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+    reason = f"The same output came back twice: OPENROUTER_API_KEY={OPENROUTER}"
+
+    def nothing_raw(stop: str) -> None:
+        frame = terminal_frame(app)
+        assert not [value for value in VALUES if value in frame], f"{stop}: a credential's value is drawn"
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        nothing_raw("fleet")
+        assert cell(app, "lanes", lane.id, "last") == "curl -H 'Authorization: Bearer [redacted]' 127.0.0.1"
+        assert views.lane_why(deck, lane).plain == (
+            f"▌{lane.id} plan: log in with GITHUB_TOKEN=[redacted]\n"
+            "  last: curl -H 'Authorization: Bearer [redacted]' 127.0.0.1 → OPENROUTER_API_KEY=[redacted]   enter open"
+        )
+        assert "plan: log in with GITHUB_TOKEN=[redacted]" in region_text(app, "#why")
+        deck.report(lane.id, TurnReport(action="cat keys.env", output=f"OPENROUTER_API_KEY={OPENROUTER}",
+                                        alerts=(Alert(AlertKind.LOOP, reason),)))
+        app.refresh_view()
+        await pilot.pause()
+        nothing_raw("fleet, the alert")
+        assert "▲ Loop: The same output came back twice: OPENROUTER_API_KEY=[redacted]" in region_text(app, "#why")
+        focus = await open_focus(pilot, app, lane.id)
+        nothing_raw("focus")
+        lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
+        assert [line for line in lines if line.startswith(("⏺", "⎿", "The same"))] == [
+            f"⏺ submit {flag}",
+            "⏺ curl -H 'Authorization: Bearer [redacted]' 127.0.0.1",
+            "⎿  OPENROUTER_API_KEY=[redacted]",
+            "⏺ cat keys.env",
+            "⎿  OPENROUTER_API_KEY=[redacted]",
+            "The same output came back twice: OPENROUTER_API_KEY=[redacted]",
+        ]
+        assert "plan log in with GITHUB_TOKEN=[redacted]" in screen_text(app)  # under the transcript, on its border
+        assert "Loop  The same output came back twice: OPENROUTER_API_KEY=[redacted]" in region_text(app, "#now")
+        await send(pilot, app, "/diff")
+        nothing_raw("diff")
+        assert "+ANTHROPIC_API_KEY=[redacted]" in region_text(app, "#diff-scroll")
+
+    drive(app, script)
+    assert [(a.text, a.output) for a in lane.actions if a.kind is ActionKind.STEP][1:] == [
+        (curl, f"OPENROUTER_API_KEY={OPENROUTER}"), ("cat keys.env", f"OPENROUTER_API_KEY={OPENROUTER}"),
+    ]
+    assert lane.plan == f"log in with GITHUB_TOKEN={GITHUB}" and lane.files["env.txt"].diff == diff
+    assert lane.alerts[0].reason == reason
+
+
+def test_a_lanes_result_and_an_alert_that_needs_no_answer_are_shown_without_credentials():
+    """The why line and the needs-you card show a lane's result once it has ended, and an alert
+    that needs no answer, as the lane's transcript keeps them: each credential's name, not its
+    value."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("c", "C", "misc", 50), Challenge("d", "D", "misc", 50)], [QueueEntry("c", "glm"), QueueEntry("d", "glm")])
+    (ended,), (told,) = deck.lanes_on("c"), deck.lanes_on("d")
+    deck.report(ended.id, TurnReport(action="ls", gave_up=f"the server wants OPENROUTER_API_KEY={OPENROUTER}"))
+    deck.report(told.id, TurnReport(alerts=(Alert(AlertKind.TEAMMATE, f"the box is in use, logged in with API_TOKEN={GITHUB}"),)))
+    console = rich.console.Console(width=300, record=True, color_system=None, file=io.StringIO())
+    console.print(views.now_card(deck, told))
+    assert "Teammate solved / box in use  the box is in use, logged in with API_TOKEN=[redacted]" in console.export_text()
+    assert views.lane_why(deck, told).plain == (
+        f"▌{told.id} ▲ Teammate solved / box in use: the box is in use, logged in with API_TOKEN=[redacted]\n"
+        "  nothing to do   enter open"
+    )
+    assert views.lane_why(deck, ended).plain == (
+        f"▌{ended.id} gave up: the server wants OPENROUTER_API_KEY=[redacted]\n  enter opens its transcript"
+    )
+    assert views.now_card(deck, ended).plain == (
+        "gave up: the server wants OPENROUTER_API_KEY=[redacted]   this lane has ended; esc goes back to the fleet"
+    )
+    assert ended.result == f"the server wants OPENROUTER_API_KEY={OPENROUTER}"  # the deck's own, as it was
+
+
+def test_a_megabyte_of_keys_is_taken_out_once_not_on_every_refresh(monkeypatch):
+    """Taking credentials out costs time in proportion to the text. The fleet draws each
+    lane's last action and the selected lane's why line again on every refresh, twice a
+    second, and the focus view its open diff: what was taken out is kept, so over fifty
+    refreshes of a lane whose last step printed a megabyte of keys into its output and a file,
+    each megabyte is taken out once, the refreshes stay well inside the deadline, and none of
+    them shows a key. A one-line cell holds no more of a text than a terminal could show, so
+    it is not a megabyte of text to lay out on every refresh."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    row = f"OPENROUTER_API_KEY={OPENROUTER}\n"
+    keys = row * (1_000_000 // len(row))
+    deck.report(lane.id, TurnReport(action="env; env > env.txt", output=keys,
+                                    files=(FileChange("env.txt", "+++ b/env.txt\n" + keys, "added"),)))
+    taken: list[int] = []  # the size of each text the console took credentials out of
+
+    def counted(text: str, *, keep=()) -> str:
+        taken.append(len(text))
+        return credentials.redact(text, keep=keep)
+
+    monkeypatch.setattr(views, "redact", counted)
+    with within(10, "fifty refreshes of the fleet and the open diff"):
+        for _ in range(50):
+            cells, why = views.lane_cells(deck, lane), views.lane_why(deck, lane)
+            diff = views.diff_view(deck, lane, lane.files["env.txt"])
+    assert len([size for size in taken if size >= len(keys)]) <= 2  # the output and the diff, once each at most
+    assert why.plain.startswith(f"▌{lane.id} plan: -\n  last: env; env > env.txt → OPENROUTER_API_KEY=[redacted] ⏎ OPENROUTER")
+    assert len(why.plain) < 4 * views.LINE_CHARS  # a line's worth, with each newline shown as " ⏎ "
+    assert "5f" * 32 not in why.plain + cells["last"].plain + diff.code
+    assert diff.code.count("OPENROUTER_API_KEY=[redacted]\n") == keys.count("\n")
+
+
+def test_a_loops_suggested_hint_and_a_hint_not_read_yet_are_shown_without_credentials():
+    """The loop detector quotes the command a lane repeats in the hint it suggests. Wherever
+    the console shows that hint (the needs-you card's numbered command, the / menu in the
+    fleet and in the focus view, the bar that h fills in) and once it is sent and waits for
+    the lane to read it, as a hint the player typed does, it shows each credential's name and
+    not its value, as the lane's transcript keeps it. The deck keeps the suggestion and the
+    hint as they were: answer 1 sends the lane's model its own command as it ran it."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    Watch(deck, [LoopDetector(DetectConfig())]).attach()
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    token, cookie = "ab12cd34" * 4, "9e" * 20
+    for _ in range(3):
+        deck.report(lane.id, TurnReport(action=f"CTFD_TOKEN={token} python3 solve.py", output="no"))
+    (alert,) = lane.alerts
+    assert alert.kind is AlertKind.LOOP and token in alert.suggestions[0].text  # the deck's own, as the detector quoted it
+    hint = "You are repeating CTFD_TOKEN=[redacted] python3 solve.py: it gives the same result. Try something else."
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    def nothing_raw(stop: str) -> None:
+        frame = terminal_frame(app)
+        assert token not in frame and cookie not in frame, f"{stop}: a credential's value is drawn"
+
+    def card() -> str:
+        console = rich.console.Console(width=300, record=True, color_system=None, file=io.StringIO())
+        console.print(views.now_card(deck, lane))
+        return console.export_text()
+
+    assert f"1  /hint {hint}   hint" in card()
+    assert app.command_suggestions(lane.id, with_lane=True)[0] == (f"/hint {lane.id} {hint}", "loop")
+    assert app.suggested(lane, "h") == hint
+
+    async def script(pilot):
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        nothing_raw("fleet")
+        await press(pilot, "slash")
+        nothing_raw("fleet menu")
+        assert [c.text for c in bar(app).completions if c.suggested][0] == f"/hint {lane.id} {hint}"
+        await press(pilot, "escape", "escape", "h")
+        nothing_raw("fleet h")
+        assert bar(app).field.value == f"/hint {lane.id} {hint} "
+        await press(pilot, "escape", "escape")
+        await open_focus(pilot, app, lane.id)
+        nothing_raw("focus")
+        await press(pilot, "slash")
+        nothing_raw("focus menu")
+        assert [c.text for c in bar(app).completions if c.suggested][0] == f"/hint {hint}"
+        await press(pilot, "escape", "escape")
+        await open_focus(pilot, app, lane.id)
+        await press(pilot, "1")  # the chat box is empty: 1 sends the suggested hint
+        assert lane.hints == [alert.suggestions[0].text] and isinstance(app.screen, FocusScreen)
+        await send(pilot, app, f"log in with Cookie: session={cookie}")  # a hint the player typed
+        app.refresh_view()
+        await pilot.pause()
+        nothing_raw("focus, two hints sent")
+        assert lane.hints[1] == f"log in with Cookie: session={cookie}"
+        assert f"› sent, not read yet: {hint}" in card()
+        assert "› sent, not read yet: log in with Cookie: [redacted]" in card()
+        assert "sent, not read yet: log in with Cookie: [redacted]" in region_text(app, "#now")
+
+    drive(app, script)
+
+
+def test_an_escalations_summary_in_the_transcript_shows_no_credential():
+    """Escalating hands the stronger model a summary whose Plan and Tried lines quote what
+    the lane did. The transcript shows it under the player's entry with each credential's
+    name and not its value, as the lane's transcript file keeps it; the deck keeps the
+    summary as it was."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm", "big")))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    (lane,) = deck.lanes_on("c")
+    deck.report(lane.id, TurnReport(action=f"curl -H 'Authorization: Bearer {JWT}' 127.0.0.1", plan=f"log in with GITHUB_TOKEN={GITHUB}"))
+    assert deck.apply(iv.Escalate(lane.id)).ok
+    entry = lane.actions[-1]
+    assert entry.kind is ActionKind.PLAYER and JWT in entry.output and GITHUB in entry.output
+    lines = [line.plain for line in views.transcript_lines(deck, lane, entry)]
+    assert lines[0] == "› you  escalated glm → big with a summary"
+    assert "       Plan: log in with GITHUB_TOKEN=[redacted]" in lines
+    assert "       Tried: curl -H 'Authorization: Bearer [redacted]' 127.0.0.1" in lines
+    assert not [line for line in lines if JWT in line or "a1B2" * 9 in line]
 
 
 # ---------------------------------------------------------------------- review fixes: the fleet

@@ -230,6 +230,96 @@ def test_untrusted_text_cannot_split_a_line_or_reach_a_terminal(tmp_path):
     assert hint["data"]["text"] == nasty
 
 
+# Made-up keys, each built from pieces so no line here is shaped like a real one (.githooks/secret_scan.py).
+OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
+ANTHROPIC = "sk-" + "ant-api03-" + "Qx7-" * 20
+GITHUB = "ghp" + "_" + "a1B2" * 9
+CTFD = "ctfd" + "_" + "0f" * 32
+JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWRtaW4ifQ.bm90LWEtcmVhbC1zaWduYXR1cmU"
+SECRETS = (OPENROUTER, ANTHROPIC, GITHUB, CTFD)
+
+
+def test_what_a_lane_did_is_logged_with_each_credentials_value_taken_out(tmp_path):
+    """A host lane can read the player's keys file or another process's environment, and a run
+    folder is read, shared and drafted into writeups. A turn's command, an alert quoting an
+    output, spend outside a turn, a hint, a warning and a lane's result keep each credential's
+    name and lose its value in the log (credentials.py); ordinary CTF content (a JWT the lane
+    forged, under a lower-case name) stays. The deck keeps what the lane did as it was: the
+    lane's model has read it already."""
+    deck, _ = make_deck()
+    log = EventLog(tmp_path / "events.jsonl")
+    log.attach(deck)
+    release(deck)
+    curl = f"curl -H 'Authorization: Bearer {JWT}' http://127.0.0.1:8080/admin"
+    deck.report("L01", TurnReport(action=curl, output=f"token: {JWT}"))
+    deck.report("L01", TurnReport(action="cat ~/.config/ctf-flightdeck/keys.env", output=f"OPENROUTER_API_KEY={OPENROUTER}",
+                                  alerts=(Alert(AlertKind.LOOP, f"The same output came back twice: OPENROUTER_API_KEY={OPENROUTER}"),)))
+    deck.report("L01", TurnReport(turn=False, tokens=50, why=f"a reply dropped, which said {ANTHROPIC}"))
+    deck.apply(iv.Hint("L01", f"the token: {JWT} is forged; use GITHUB_TOKEN={GITHUB}"))
+    deck.warn(f"could not pull the board with CTFD_TOKEN={CTFD}")
+    deck.report("L02", TurnReport(action="ls", gave_up=f"the server wants ANTHROPIC_API_KEY={ANTHROPIC}"))
+    log.close()
+    text = log.path.read_text(encoding="ascii")
+    assert not [secret for secret in SECRETS if secret in text]
+    lines = records(log.path)
+    kinds: dict[str, list[dict]] = {}
+    for line in lines:
+        kinds.setdefault(line["kind"], []).append(line)
+    turn = kinds["turn"][0]
+    assert turn["text"] == "L01 turn 1: curl -H 'Authorization: Bearer [redacted]' http://127.0.0.1:8080/admin"
+    assert turn["data"]["action"] == "curl -H 'Authorization: Bearer [redacted]' http://127.0.0.1:8080/admin"
+    (alert,) = kinds["alert"]
+    assert alert["data"]["reason"] == "The same output came back twice: OPENROUTER_API_KEY=[redacted]"
+    assert alert["text"] == "L01 Loop: The same output came back twice: OPENROUTER_API_KEY=[redacted]"
+    (spend,) = kinds["spend"]
+    assert spend["data"]["why"] == "a reply dropped, which said sk-ant-[redacted]"
+    assert spend["text"].endswith(": a reply dropped, which said sk-ant-[redacted]")
+    (hint,) = kinds["intervention"]
+    assert hint["data"]["text"] == f"the token: {JWT} is forged; use GITHUB_TOKEN=[redacted]"
+    (warning,) = kinds["warning"]
+    assert warning["text"] == "could not pull the board with CTFD_TOKEN=[redacted]"
+    (end,) = kinds["lane.end"]
+    assert end["data"]["result"] == "the server wants ANTHROPIC_API_KEY=[redacted]"
+    assert end["text"] == "L02 gave up: the server wants ANTHROPIC_API_KEY=[redacted]"
+    lane = deck.lanes["L01"]  # the deck's own record is as the lane left it
+    assert [a.text for a in lane.actions[:2]] == [curl, "cat ~/.config/ctf-flightdeck/keys.env"]
+    assert lane.actions[1].output == f"OPENROUTER_API_KEY={OPENROUTER}"
+    assert next(e for e in deck.events if e.kind is EventKind.TURN).text == f"L01 turn 1: {curl}"
+
+
+def test_the_flags_the_run_has_named_stay_whole_in_the_log(tmp_path):
+    """Flags are not credentials. Once an event names a flag (an L1 result, a candidate
+    waiting for the player, a submit), that event's line and every line after it keep it
+    whole, one shaped like a credential too, while a credential beside it still loses its
+    value. The log is written as things happen: the turn that submits a flag comes before
+    the event that names it, so that line has the flag's value taken out."""
+    flag, l1_flag = "t{TOKEN=c0ffee}", "t{SECRET=from_l1}"
+    config = DeckConfig(event="Sample Event", max_lanes=1, flag_format=r"t\{[^{}\s]+\}", models=("small",))
+    deck = Deck(config, Driver(), Clock(), verify=lambda cid, candidate: candidate == flag)
+    log = EventLog(tmp_path / "events.jsonl")
+    log.attach(deck)
+    deck.release([Challenge("c0", "Sample 0", "misc", 100)], [QueueEntry("c0", "small")])
+    deck.record_l1("c0", "reader", "flag found", flags=[l1_flag], lane_id="L01")
+    deck.report("L01", TurnReport(action=f"echo {l1_flag} OPENROUTER_API_KEY={OPENROUTER}"))
+    deck.report("L01", TurnReport(action=f"submit {flag}", flag=flag))
+    assert deck.apply(iv.Approve("L01")).ok
+    log.close()
+    lines = records(log.path)
+    assert OPENROUTER not in log.path.read_text(encoding="ascii")
+    (l1,) = [line for line in lines if line["kind"] == "l1"]
+    assert l1["data"]["flags"] == [l1_flag] and l1["text"] == f"L1 reader on Sample 0: flag found: {l1_flag}"
+    assert [line["data"]["action"] for line in lines if line["kind"] == "turn"] == [
+        f"echo {l1_flag} OPENROUTER_API_KEY=[redacted]",
+        "submit t{TOKEN=[redacted]",  # written before the run knew the flag
+    ]
+    (pending,) = [line for line in lines if line["kind"] == "pending"]
+    assert pending["data"]["flag"] == flag and pending["text"] == f"L01 waits for approval: submit {flag}"
+    (submit,) = [line for line in lines if line["kind"] == "submit"]
+    assert submit["data"]["flag"] == flag and submit["text"] == f"L01 submitted {flag} for Sample 0: correct"
+    (end,) = [line for line in lines if line["kind"] == "lane.end"]
+    assert end["data"]["result"] == f"solved with {flag}"
+
+
 def test_the_log_holds_nothing_from_the_environment_or_the_config(monkeypatch, tmp_path):
     secret = "fake-key-value-for-tests-7781"
     monkeypatch.setenv("OPENROUTER_API_KEY", secret)

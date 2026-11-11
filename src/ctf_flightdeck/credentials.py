@@ -4,9 +4,11 @@ flightdeck keeps secrets out of what it records at the source: a lane's commands
 environment built from an allowlist, and a coding-agent lane's output has every secret
 flightdeck holds replaced by [NAME] (agent/external.py). What a lane records can still hold
 a credential that layer did not know: a host lane that read the player's keys file or
-another process's environment, or a run folder written before those fixes. So lane
-transcripts (transcript.py) and writeup drafts (writeup.py) also take out the value of
-anything shaped like a credential, with or without writeup --redact:
+another process's environment, or a run folder written before those fixes. So what
+flightdeck keeps of a run and what it shows also has the value of anything shaped like a
+credential taken out: the run log (eventlog.py), lane transcripts (transcript.py), the steps
+a post-flight report quotes (postflight.py), writeup drafts (writeup.py, with or without
+writeup --redact) and what the console shows of a lane (console/views.py):
 
 - NAME=value and NAME: value, where NAME is an upper-case variable name (letters, digits and
   _) that holds KEY, TOKEN, SECRET, PASSWORD, PASSWD, COOKIE or AUTH, as the environment, a
@@ -28,9 +30,14 @@ anything shaped like a credential, with or without writeup --redact:
 The name stays and the value becomes [redacted]; a prefixed key keeps its prefix
 (sk-ant-[redacted]). A value taken out already ([redacted], or the first layer's [NAME])
 stays as it is. Flags are not credentials: a match whose value lies inside one of the
-strings given as `keep` (the flags the run knows) is left as it is, and hiding flags stays
-writeup --redact's job. Ordinary CTF content passes: a JWT, a hex dump or base64 has no such
-name in front of it and no such prefix. Every pattern runs in time linear in the text.
+strings given as `keep` (the flags the run knows: named_flags) is left as it is, and hiding
+flags stays writeup --redact's job. Ordinary CTF content passes: a JWT, a hex dump or base64
+has no such name in front of it and no such prefix. Every pattern runs in time linear in the
+text.
+
+This cleans only what flightdeck keeps and shows. The deck keeps a lane's text as it was, for
+the lane's model, which has read it already; and a key a host lane read went to its model's
+API with the rest of the lane's context, which nothing done afterwards can take back.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ from __future__ import annotations
 import bisect
 import math
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from .text import NEWLINE
 
@@ -79,7 +86,64 @@ def redact(text: str, *, keep: Iterable[str] = ()) -> str:
     """`text` with the value of everything in it shaped like a credential replaced by
     [redacted] (see the module docstring), but where that value lies inside one of the
     strings in `keep` (the flags the run knows)."""
-    kept = tuple(dict.fromkeys(item for item in keep if item))
+    return _redact(text, _kept(keep))
+
+
+def redact_data(value: object, *, keep: Iterable[str] = ()) -> object:
+    """Plain JSON data, as eventlog.json_safe makes it (strings, numbers, booleans, None,
+    lists and dicts with string keys), with every string in it redacted as redact() does;
+    the keys stay as they are."""
+    return _data(value, _kept(keep))
+
+
+NAMES = frozenset({"board", "challenges", "challenge", "solved"})
+"""The fields of a deck event's data that name challenges rather than tell what happened: a
+release's challenge ids and its board (each one's id, name, category and points), the
+challenge a claim or a queue names, and the challenges an older log's warning says the
+platform lists as solved. They come from the board, never from what a lane did; the report
+and practice scoring match on them; and an id or a name can look like a credential
+(xoxb-slack-bot, "Fortune Cookie: Part 2"). So redact_event_data leaves them as they are."""
+
+
+def redact_event_data(data: object, *, keep: Iterable[str] = ()) -> object:
+    """A deck event's data (plain JSON, as eventlog.json_safe makes it), redacted as
+    redact_data() does, but the fields in NAMES stay as they are."""
+    kept = _kept(keep)
+    if not isinstance(data, Mapping):
+        return _data(data, kept)
+    return {key: item if key in NAMES else _data(item, kept) for key, item in data.items()}
+
+
+def named_flags(data: Mapping[str, object]) -> list[str]:
+    """The flags a deck event's data names: its "flag" (a lane's candidate, waiting for the
+    player or submitted) and its "flags" (what an L1 engine reported). These are the flags
+    the run knows, what `keep` holds for the text of a run."""
+    found: list[str] = []
+    if not isinstance(data, Mapping):
+        return found
+    flag, flags = data.get("flag"), data.get("flags")
+    if isinstance(flag, str) and flag:
+        found.append(flag)
+    if isinstance(flags, (list, tuple)):
+        found += [item for item in flags if isinstance(item, str) and item]
+    return found
+
+
+def _kept(keep: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item for item in keep if item))
+
+
+def _data(value: object, kept: tuple[str, ...]) -> object:
+    if isinstance(value, str):
+        return _redact(value, kept)
+    if isinstance(value, dict):
+        return {key: _data(item, kept) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_data(item, kept) for item in value]
+    return value
+
+
+def _redact(text: str, kept: tuple[str, ...]) -> str:
     for pattern, replace in _RULES:
         if not pattern.search(text):  # most text holds no credential at all
             continue

@@ -11,6 +11,19 @@ the file.
 
 The run-start line names the flightdeck version and the log's FORMAT, so a reader knows what
 the log holds (runrecord.RunRecord.format).
+
+A run folder is read, shared and drafted into writeups, and an event's text can hold what a
+lane did: a turn's command (curl -H 'Authorization: Bearer ...'), an alert quoting a command
+or its output, a lane's result, an error. So each line's text and every string in its data
+have the value of anything shaped like a credential taken out (credentials.py), as a lane's
+transcript has; the fields that name challenges (credentials.NAMES: a release's ids and
+board, the challenge a claim names) come from the board, readers match on them, and they stay
+as they are. The flags the run has named by then stay as they are: each flag an event
+names (credentials.named_flags: a candidate waiting for the player, a submit, an L1 result),
+that event's own included. The log cannot wait for what comes later, so a flag shaped like a
+credential loses its value in a line written before the run knew it (the turn that submits
+it, and its flag alert, come before the approval that names it); the lines that name it keep
+it whole. The deck's events stay as they were.
 """
 
 from __future__ import annotations
@@ -23,7 +36,7 @@ from enum import Enum
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
-from . import __version__
+from . import __version__, credentials
 from .core.model import Event
 
 if TYPE_CHECKING:
@@ -48,6 +61,7 @@ class EventLog:
         self._file: IO[str] | None = self.path.open("a", encoding="ascii")
         self._unsubscribe: list[Callable[[], None]] = []
         self._decks: list[Deck] = []
+        self._flags: tuple[str, ...] = ()  # every flag the run has named so far: kept when credentials are taken out
         try:
             self._write({"kind": "run-start", "wall": _wall(), "version": __version__, "format": FORMAT})
         except BaseException:
@@ -88,16 +102,19 @@ class EventLog:
         self.close()
 
     def _event(self, event: Event) -> None:
+        named = credentials.named_flags(event.data)
+        if any(flag not in self._flags for flag in named):
+            self._flags = tuple(dict.fromkeys((*self._flags, *named)))
         self._write(
             {
                 "at": event.at,
                 "wall": _wall(),
                 "kind": event.kind.value,
-                "text": event.text,
+                "text": credentials.redact_data(json_safe(event.text), keep=self._flags),
                 "lane": event.lane,
                 "challenge": event.challenge,
                 "alert": event.alert.value if event.alert is not None else None,
-                "data": event.data,
+                "data": credentials.redact_event_data(json_safe(event.data), keep=self._flags),
             }
         )
 
