@@ -190,6 +190,11 @@ class FakeCTFd:
         folder = _folder(challenge_id, name)
         return f"/files/{folder}/{quote(name, safe='')}?token={_file_token(folder)}"
 
+    def listing(self) -> dict:
+        """The answer CTFd would give GET /api/v1/challenges now, unpaged (to script it ahead of failures)."""
+        with self._lock:
+            return {"success": True, "data": self._entries()}
+
     # ------------------------------------------------------------------ answering
 
     def _answer(self, method: str, path: str, headers: dict[str, str], body: bytes) -> Reply:
@@ -253,8 +258,11 @@ class FakeCTFd:
             "template": "/plugins/challenges/assets/view.html", "script": "/plugins/challenges/assets/view.js",
         }
 
+    def _entries(self) -> list[dict]:
+        return [self._entry(c) for c in sorted(self.challenges.values(), key=lambda c: (c.value, c.id))]
+
     def _list(self, query: dict) -> Reply:
-        entries = [self._entry(c) for c in sorted(self.challenges.values(), key=lambda c: (c.value, c.id))]
+        entries = self._entries()
         if self.page_size is None:
             return Reply(200, {"success": True, "data": entries})
         page = int(query.get("page", ["1"])[0])

@@ -47,12 +47,14 @@ def pull(
     """Pull the board from CTFd: a folder per challenge with its challenge.json and files.
 
     Exit status 1 when some challenges could not be pulled (each is named, with the reason;
-    pull again to retry them), 2 when nothing could be.
+    pull again to retry them). 2 when the pull could not start or finish (a refused token,
+    CTFd not answering, nothing to pull): what was written stays, each challenge left out
+    so far is named, and pulling again goes on from there.
     """
     import asyncio
 
     from ..text import untrusted
-    from .ctfd import CTFdClient, CTFdError
+    from .ctfd import CTFdClient, CTFdError, PullStopped
     from .ctfd import pull as pull_board
     from .manual import BoardError
 
@@ -77,6 +79,10 @@ def pull(
     problem = None
     try:
         result = asyncio.run(run())
+    except PullStopped as exc:
+        for line in exc.problems:
+            typer.echo(f"not pulled: {line}", err=True)
+        problem = exc.reason
     except (CTFdError, BoardError, ValueError) as exc:
         problem = str(exc)
     except OSError as exc:

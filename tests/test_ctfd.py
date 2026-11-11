@@ -33,6 +33,7 @@ from ctf_flightdeck.platform.ctfd import (
     CTFdVerifier,
     Pull,
     PullIncomplete,
+    PullStopped,
     load_ids,
     origins_in,
     pull,
@@ -598,16 +599,52 @@ def test_pull_board_is_the_whole_board_or_pull_incomplete(tmp_path):
     assert str(caught.value).startswith("1 challenge not pulled: ")
 
 
+def test_a_challenge_that_keeps_failing_is_left_out_and_the_ones_after_it_are_pulled(tmp_path):
+    # a challenge plugin that crashes, or one handout the proxy cannot serve, while CTFd itself answers
+    for where in ("details", "file"):
+        dest = tmp_path / where
+        with FakeCTFd(sample()) as fake:
+            route = "/api/v1/challenges/2" if where == "details" else fake.file_url(2, "out.txt").split("?")[0]
+            fake.script("GET", route, *[Reply(500, {"message": "Internal Server Error"})] * 20)
+            first = pulled(fake, dest, max_retries=1)
+            again = pulled(fake, dest, max_retries=1)
+            assert [len(fake.to(f"/api/v1/challenges/{n}")) for n in (3, 4)] == [1, 1]  # pulled once, then kept
+            assert len(fake.to("/api/v1/challenges")) == 4  # each pull lists, then asks again after the failure
+        assert first.added == ("warmup", "login-portal", "echo-service") and again.added == ()
+        (problem,) = first.problems
+        assert problem.startswith('challenge 2 ("Baby RSA"): ') and "HTTP 500" in problem and again.problems == (problem,)
+        assert load_ids(dest) == {"warmup": 1, "login-portal": 3, "echo-service": 4}
+
+
 def test_a_pull_stops_when_ctfd_stops_answering_and_the_next_one_goes_on(tmp_path):
     dest = tmp_path / "board"
     with FakeCTFd(sample()) as fake:
-        fake.script("GET", "/api/v1/challenges/2", *[Reply(503, "down")] * 2)
-        error = failure(fake, lambda c: pull(c, dest, event="Fake CTF", flag_format=None), max_retries=1)
-        assert fake.to("/api/v1/challenges/3") == []  # it stopped instead of failing every challenge left
-        assert error.retryable and "pull again to go on" in str(error) and "1 new challenge written" in str(error)
+        fake.challenges[2].file_urls = ["https://cdn.example.org/x/far.zip"]  # a problem before CTFd goes down
+        # the list comes through, then CTFd goes down: challenge 3's details fail, and so does the list asked again
+        fake.script("GET", "/api/v1/challenges", Reply(200, fake.listing()), *[Reply(503, "down")] * 2)
+        fake.script("GET", "/api/v1/challenges/3", *[Reply(503, "down")] * 2)
+        with pytest.raises(PullStopped) as caught:
+            call(fake, lambda c: pull(c, dest, event="Fake CTF", flag_format=None), max_retries=1)
+        error = caught.value
+        assert fake.to("/api/v1/challenges/4") == []  # it stopped instead of failing every challenge left
+        assert error.retryable and error.endpoint == "GET /api/v1/challenges" and error.added == ("warmup",)
+        rsa, web = error.problems  # the problems met so far are kept, the one it stopped at included
+        assert rsa.startswith('challenge 2 ("Baby RSA"): ') and web.startswith('challenge 3 ("Login Portal"): ')
+        assert rsa in str(error) and web in str(error) and "HTTP 503" in error.reason
+        assert "pull again to go on" in error.reason and "1 new challenge written" in error.reason
         assert load_ids(dest) == {"warmup": 1}
+        fake.challenges[2].file_urls = None
         result = pulled(fake, dest)
     assert result.added == ("baby-rsa", "login-portal", "echo-service") and len(result.board.challenges) == 4
+
+
+def test_a_token_refused_partway_stops_the_pull_at_once(tmp_path):
+    with FakeCTFd(sample()) as fake:
+        fake.script("GET", "/api/v1/challenges/2", Reply(401, {"message": "Your access token is invalid"}))
+        with pytest.raises(PullStopped) as caught:
+            pulled(fake, tmp_path / "board")
+        assert len(fake.to("/api/v1/challenges")) == 1 and fake.to("/api/v1/challenges/3") == []
+    assert caught.value.status == 401 and caught.value.added == ("warmup",) and "refused the API token" in str(caught.value)
 
 
 def test_a_pull_into_a_folder_that_is_not_a_ctfd_board_is_refused(tmp_path):

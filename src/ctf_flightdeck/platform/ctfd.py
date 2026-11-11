@@ -115,8 +115,8 @@ class CTFdError(Exception):
     naming the endpoint and the HTTP status when there was one. It never holds the token.
 
     `retryable` is True when the failure was of a kind that passes (no answer, 429, 5xx):
-    trying again later may work. A pull stops at such an error, and at a refused token,
-    instead of meeting it again for every challenge left.
+    trying again later may work. A pull stops at a refused token, and at such an error when
+    CTFd's challenge list fails too, instead of meeting it again for every challenge left.
     """
 
     def __init__(
@@ -156,6 +156,25 @@ class PullIncomplete(CTFdError):
         count = len(pull.problems)
         super().__init__(f"{count} challenge{'' if count == 1 else 's'} not pulled: " + "; ".join(pull.problems))
         self.pull = pull
+
+
+class PullStopped(CTFdError):
+    """pull() stopped partway: CTFd refused the token, or stopped answering (a challenge failed
+    in a way that passes, and the challenge list, asked again, failed too). What was written
+    stays, and the next pull goes on from there. `reason` says why it stopped, `added` holds
+    the board ids this pull wrote, and `problems` a line per challenge it left out so far;
+    the message holds all three. endpoint, status and retryable are those of the cause."""
+
+    def __init__(self, cause: CTFdError, added: tuple[str, ...], problems: tuple[str, ...]) -> None:
+        count = len(added)
+        self.reason = (
+            f"{cause}; the pull stopped there, with {count} new challenge{'' if count == 1 else 's'} written: "
+            "pull again to go on"
+        )
+        self.added = added
+        self.problems = problems
+        text = self.reason + (". Not pulled so far: " + "; ".join(problems) if problems else "")
+        super().__init__(text, endpoint=cause.endpoint, status=cause.status, retryable=cause.retryable)
 
 
 # ---------------------------------------------------------------------- the API client
@@ -724,16 +743,17 @@ async def pull(
 
     `dest` must be empty, or a board pulled from this same CTFd before: then the folders there
     are kept as they are and only challenges new on CTFd are added (a wave). A challenge that
-    cannot be pulled (its details, a file, a value CTFd got wrong) is left out with the
-    reason in Pull.problems, and tried again by the next pull. `progress` gets one line per
-    challenge added, safe to print.
+    cannot be pulled (its details or a file keep failing, a value CTFd got wrong) is left out
+    with the reason in Pull.problems, and tried again by the next pull. `progress` gets one
+    line per challenge added, safe to print.
 
-    Raises CTFdError when the pull cannot go on: `dest` not usable, the listing failing, the
-    token refused, or CTFd no longer answering (a retryable error that outlasted the
-    retries); what was written by then stays, and the next pull goes on from there. Also
-    when the board would be empty (it says why: nothing listed, all locked, the reasons).
-    BoardError if the board folder does not load (a folder edited by hand), and OSError if
-    board.json or ctfd.json cannot be written.
+    Raises CTFdError when the pull cannot start (`dest` not usable, the listing failing, the
+    token refused) or the board would be empty (it says why: nothing listed, all locked, the
+    reasons). PullStopped, a CTFdError, when it stops partway: the token refused, or CTFd no
+    longer answering (a challenge failed with no answer, 429 or 5xx after the retries, and
+    the challenge list, asked again, failed too); what was written by then stays, and the
+    next pull goes on from there. BoardError if the board folder does not load (a folder
+    edited by hand), and OSError if board.json or ctfd.json cannot be written.
     """
     if not isinstance(event, str) or not event.strip():
         raise ValueError("event must be a non-empty string: the board's name")
@@ -792,18 +812,23 @@ async def pull(
                 try:
                     slug, line = await _pull_one(client, root, stage_root, number, item, slug, taken, ids)
                 except CTFdError as exc:
-                    if exc.retryable or exc.status == 401:
-                        fatal = exc  # it would only happen again for every challenge left
+                    if exc.status == 401:
+                        fatal = exc  # the token was refused: so it would be for every challenge left
                     else:
                         reason = str(exc).replace(str(stage_root), str(root))
+                        if exc.retryable:
+                            # no answer, 429 or 5xx after the retries: this challenge's own trouble (a plugin that
+                            # fails, a file the proxy cannot serve) unless CTFd no longer answers its list either
+                            fatal = await _not_answering(client)
                 except (BoardError, _Unusable) as exc:
                     reason = str(exc).replace(str(stage_root), str(root))
                 except OSError as exc:
                     reason = f"cannot write it ({exc.strerror or type(exc).__name__})"
+                if reason is not None:
+                    problems.append(f"{_label(number, item.get('name'))}: {reason}")
                 if fatal is not None:
                     break
                 if reason is not None:
-                    problems.append(f"{_label(number, item.get('name'))}: {reason}")
                     continue
                 by_ctfd[number] = slug
                 added.append(slug)
@@ -812,19 +837,23 @@ async def pull(
         finally:
             shutil.rmtree(stage_root, ignore_errors=True)
         if fatal is not None:
-            count = len(added)
-            raise CTFdError(
-                f"{fatal}; the pull stopped there, with {count} new challenge{'' if count == 1 else 's'} written: "
-                "pull again to go on",
-                endpoint=fatal.endpoint,
-                status=fatal.status,
-                retryable=fatal.retryable,
-            )
+            raise PullStopped(fatal, tuple(added), tuple(problems))
         if not any(_is_challenge_folder(entry) for entry in root.iterdir()):
             raise CTFdError(_empty_board(client.base_url, len(listing), hidden, problems))
         board = load_board(root)
     mapped = {item.challenge.id: ids[item.challenge.id] for item in board.challenges if item.challenge.id in ids}
     return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden)
+
+
+async def _not_answering(client: CTFdClient) -> CTFdError | None:
+    """After a challenge failed in a way that passes: None if CTFd still answers its challenge
+    list (asked with the client's retries), so the failure was that challenge's own; else the
+    error that says CTFd does not answer."""
+    try:
+        await client.challenges()
+    except CTFdError as exc:
+        return exc
+    return None
 
 
 def _is_challenge_folder(entry: Path) -> bool:
