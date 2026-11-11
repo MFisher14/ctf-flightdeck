@@ -363,7 +363,7 @@ def test_a_run_notes_models_with_no_known_price_when_the_api_may_not_report_one(
     with FakeModelServer(models=LADDER) as server:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
         run.close()
-    (note,) = run.notes()
+    (note,) = [n for n in run.notes() if not n.startswith("flag format: ")]  # every run says its flag format
     assert "fake/big" in note and "fake/small" not in note  # fake/small has a price in the test config
     assert "asks you once" in note
 
@@ -658,3 +658,18 @@ def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_an
     ]
     assert not any(secret in note for note in run.notes() for secret in (own, api, spare, file_only, overridden))
 
+
+def test_the_notes_say_which_flag_format_the_run_checks_and_where_it_came_from(tmp_path):
+    from ctf_flightdeck.core.model import DeckConfig
+
+    with FakeModelServer(models=LADDER) as server:
+        root = board(tmp_path)
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url)))
+        run.close()
+        assert "flag format: " + r"t\{[a-z0-9_]+\}" + f", from the board's board.json in {root}" in run.notes()
+        (root / "board.json").write_text(json.dumps({"event": "Test Event"}))  # no flag format of its own
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url)))
+        run.close()
+    default = DeckConfig(event="x").flag_format
+    assert f"flag format: {default}, from flightdeck's default, since neither the board nor an event profile sets one" in run.notes()
+    assert sum(note.startswith("flag format: ") for note in run.notes()) == 1

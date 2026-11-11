@@ -295,6 +295,14 @@ def test_the_profiles_name_board_flag_format_and_lane_limit_apply(tmp_path):
         prepare_run(RunOptions(event=profile, config=config(tmp_path), max_lanes=3))
 
 
+def test_the_notes_say_the_flag_format_is_the_event_profiles(tmp_path):
+    root = folder_board(tmp_path)
+    profile = event(tmp_path, platform="manual", board=root, flag_format=r"x\{\w+\}")
+    run = prepare_run(RunOptions(event=profile, config=config(tmp_path)))
+    run.close()
+    assert "flag format: " + r"x\{\w+\}" + f", from the event profile {profile} (event.flag_format)" in run.notes()
+
+
 def test_l1_off_leaves_the_pack_out_and_confirm_runs_it_saying_play_is_the_yes(tmp_path):
     from l1_kit import python_engine
 

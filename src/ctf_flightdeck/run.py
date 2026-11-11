@@ -511,6 +511,7 @@ def prepare_run(options: RunOptions) -> Run:
         models=ladder,
         **({"flag_format": flag_format} if flag_format else {}),
     )
+    plan.notes.append(_flag_format_note(deck_config.flag_format, profile, board, options.board))
     handouts = {b.challenge.id: b.handout for b in board.challenges}
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
@@ -599,6 +600,19 @@ def prepare_run(options: RunOptions) -> Run:
     if isinstance(verify, _OnCTFd):
         verify.solved = run._apply_solves
     return run
+
+
+def _flag_format_note(effective: str, profile: EventProfile | None, board: Board, folder: Path | None) -> str:
+    """The run note on the flag format the deck checks every candidate against, and where it
+    came from: the event profile's wins over the board's, and flightdeck's own is the default.
+    Every loader has checked it (flagformat.py), so it is one line with nothing hidden."""
+    if profile is not None and profile.flag_format:
+        where = f"the event profile {_show(profile.source)} (event.flag_format)"
+    elif board.flag_format:
+        where = "the board's board.json" + (f" in {_show(folder)}" if folder is not None else "")
+    else:
+        where = "flightdeck's default, since neither the board nor an event profile sets one"
+    return f"flag format: {_show(effective)}, from {where}"
 
 
 def _held_secrets(config: Config, profile: EventProfile | None, token: str | None) -> dict[str, str]:
