@@ -730,6 +730,104 @@ def test_spend_outside_a_turn_with_no_price_makes_the_lanes_cost_unknown(tmp_pat
         assert "Spent 4k tokens · $0.03+ · $0.03+ per solve" in scorecard(result).splitlines()
 
 
+def cli_lane(tmp_path) -> Played:
+    """L01 as a coding-agent CLI lane: its steps carry no cost (dollars_later), and the CLI
+    reports each turn's cost when the turn ends (turn_end), the last one after the solve."""
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    deck.report("L01", TurnReport(action="python3 solve.py", tokens=500, dollars_later=True, flag=FLAGS["alpha"]))
+    deck.apply(iv.Approve("L01"))  # solved in the middle of its turn
+    deck.report("L01", TurnReport(turn=False, tokens=300, dollars=0.07, turn_end=True, why="the cut turn's cost"))
+    return played
+
+
+def test_a_cli_lanes_cost_is_what_its_cli_reported_at_each_turns_end_after_the_solve_too(tmp_path):
+    played = cli_lane(tmp_path)
+    result = score(played.close(), played.board)
+    lane = played.deck.lanes["L01"]
+    assert result.lanes["L01"].tokens == lane.tokens == 2000 and result.lanes["L01"].turns == 2
+    assert result.lanes["L01"].dollars == pytest.approx(lane.dollars) and lane.dollars == pytest.approx(0.10)
+    assert result.unpriced == () and result.known_dollars == pytest.approx(0.10)
+    assert not any("no price" in note or "never reported" in note for note in result.notes)  # its steps were not unpriced
+
+
+EARLIER_TURN_END = "what codex reported when its turn ended: the turn's cost, and tokens no step carried"  # before turn_end marks
+
+
+@pytest.mark.parametrize("marked", [True, False], ids=["marked turn_end", "an earlier log's why"])
+def test_a_cli_turn_cost_with_no_price_is_noted_as_the_clis_own_cost_of_its_turns_not_spend_outside_them(tmp_path, marked):
+    # codex reports a turn's tokens but no cost: with no price in the config, each turn's cost is unknown
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=1200, dollars=None, turn_end=True, why=EARLIER_TURN_END))
+    deck.report("L01", TurnReport(action="python3 solve.py", dollars_later=True, flag=FLAGS["alpha"]))
+    deck.report("L01", TurnReport(turn=False, tokens=800, dollars=None, turn_end=True, why=EARLIER_TURN_END))
+    deck.report("L01", TurnReport(turn=False, tokens=500, dollars=None, why="a reply dropped on escalation"))
+    deck.apply(iv.Approve("L01"))
+    path = played.close()
+    if not marked:  # a log from before spend events were marked turn_end: its why says what it was
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        for line in lines:
+            line.get("data", {}).pop("turn_end", None)
+        path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    result = score(path, played.board)
+    assert result.lanes["L01"].tokens == 2500 and result.lanes["L01"].dollars is None and result.unpriced == ("L01",)
+    assert result.notes == (
+        f"L01 spent 500 tokens {OUTSIDE_TURNS} with no price, so its cost is not fully known: the dollars count only "
+        "what had a price.",  # the reply dropped on escalation alone: the CLI's turns are not spend outside them
+        "L01: its coding-agent CLI's own cost of 2 turns (2k tokens), reported when each ended, had no price, so its "
+        "cost is not fully known: the dollars count only what had a price ([prices] in your config can price its model).",
+    )
+    assert "Spent 2k tokens · $0.00+ · $0.00+ per solve" in scorecard(result).splitlines()
+
+
+def test_a_cli_turn_that_ended_with_no_cost_reported_or_counted_is_noted_as_one_turn(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True))  # a turn's report with no cost, and no price
+    result = score(played.close(), played.board)
+    assert result.notes == (
+        "L01: its coding-agent CLI's own cost of 1 turn, reported when it ended, had no price, so its cost is not fully "
+        "known: the dollars count only what had a price ([prices] in your config can price its model).",
+    )
+
+
+def test_a_cli_turn_whose_cost_never_came_is_noted_as_such_and_no_price_is_said_to_be_missing(tmp_path):
+    # codex stopped mid-turn (killed, escalated) never reports that turn: no price could give its cost
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True, unreported=True))
+    deck.report("L01", TurnReport(action="cat note", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=300, dollars=0.02, turn_end=True))
+    deck.report("L01", TurnReport(action="cat flag", dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, dollars=None, turn_end=True, unreported=True))
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].dollars is None and result.unpriced == ("L01",) and result.known_dollars == pytest.approx(0.02)
+    assert result.notes == (
+        "L01's coding-agent CLI never reported what 2 of its turns cost (it was stopped in them, or exited), so its cost "
+        "is not fully known: the dollars count only what is known.",
+    )
+
+
+def test_a_log_that_ends_inside_a_cli_turn_gives_that_lane_no_settled_cost(tmp_path):
+    played = Played(tmp_path)
+    deck = played.at(0).deck
+    deck.report("L01", TurnReport(action="ls", tokens=1000, dollars_later=True))
+    deck.report("L01", TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    deck.report("L01", TurnReport(action="cat note", tokens=400, dollars_later=True))  # the run stops in this turn
+    result = score(played.close(), played.board)
+    assert result.lanes["L01"].dollars is None and result.unpriced == ("L01",)
+    assert result.known_dollars == pytest.approx(0.03)  # what came is still counted
+    assert ("L01's coding-agent CLI never reported what its last turn cost, so its cost is not fully known: the dollars "
+            "count only what had a price.") in result.notes
+    assert "Spent 2k tokens · $0.03+" in scorecard(result).splitlines()
+
+
 def test_a_transcript_that_differs_from_the_turns_only_by_rounding_adds_nothing(played):
     path = played.close()
     whole = score(path, played.board)

@@ -1046,14 +1046,131 @@ def test_the_five_most_expensive_lanes_by_dollars(played):
     assert "Ranked by dollars." in sections(text, "### ")["The 5 most expensive lanes"]
 
 
-def test_tokens_counted_outside_a_turn_get_their_own_row(tmp_path):
+OUTSIDE_ROW = "of which outside a turn (a reply dropped on escalation, for one)"
+TURN_END_ROW = "of which coding-agent CLIs' own cost of their turns, reported when each turn ended"
+PART_OF = "A row that starts with \"of which\" is a part of the model rows above: each spend is in the row of the model that spent it."
+
+
+def test_tokens_counted_outside_a_turn_are_in_their_models_row_and_shown_as_a_part_of_it(tmp_path):
     run = Script(tmp_path)
     run.release([Challenge("x", "X", "misc", 10)])
     run.turn(run.lane("x"), "look", tokens=1000, dollars=0.1)
     run.deck.report(run.lane("x"), TurnReport(turn=False, tokens=400, dollars=0.04))  # a reply dropped on escalation
+    text = report(run.close())
+    rows = table_rows(text)
+    assert rows[1] == ["small", "1", "1,400", "18%", "$0.14"]
+    assert rows[2] == [OUTSIDE_ROW, "-", "400", "0%", "$0.04"]
+    assert rows[3][0] == "Lane"  # no other row: the run's spend is the model rows', and nothing more
+    assert PART_OF in sections(text, "### ")["By model"]
+
+
+def test_spend_counts_for_the_model_that_spent_it_not_the_lanes_model_at_the_time(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "look", tokens=1000, dollars=0.1)
+    assert run.do(iv.Escalate(lane)).ok and run.deck.lanes[lane].model == "big"
+    run.turn(lane, "look again", tokens=2000, cached=0, dollars=0.5)  # the log has the lane on "big" from here
+    # the small model's reply, dropped on the escalation, logged after a turn of "big"
+    run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04, model="small", why="a reply dropped on escalation"))
+    text = report(run.close())
+    rows = table_rows(text)
+    assert rows[1:4] == [
+        ["big", "1", "2,000", "0%", "$0.50"],
+        ["small", "1", "1,400", "18%", "$0.14"],
+        [OUTSIDE_ROW, "-", "400", "0%", "$0.04"],
+    ]
+    assert ["L01", "X", "small → big", "2", "3,400", "7%", "$0.64", "still open"] in rows  # no third model: small spent it
+    assert "L01 spent 400 tokens outside a turn ($0.04): a reply dropped on escalation" in entries(
+        sections(text, "### ")["X (misc, 10 pts): not solved"]
+    )
+
+
+# what agent/external.py said as the why of a CLI's report at a turn's end before spend events were marked turn_end
+EARLIER_TURN_END = "what claude reported when its turn ended: the turn's cost, and tokens no step carried"
+EARLIER_CUT_TURN = "what claude reported for a turn it was stopped in (an escalation, or the lane's end)"
+
+
+@pytest.mark.parametrize("marked", [True, False], ids=["marked turn_end", "an earlier log's why"])
+def test_what_a_cli_reports_at_a_turns_end_is_its_models_own_cost_and_never_spend_outside_a_turn(tmp_path, marked):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls", tokens=1000, cached=0, dollars_later=True)  # a coding-agent CLI's steps carry no cost
+    run.deck.report(lane, TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, model="small", why=EARLIER_TURN_END))
+    run.turn(lane, "cat note", tokens=1000, cached=0, dollars_later=True)
+    assert run.do(iv.Escalate(lane)).ok
+    # the small model's turn, cut by the escalation, reported while the lane runs "big"
+    run.deck.report(lane, TurnReport(turn=False, tokens=300, dollars=0.05, turn_end=True, model="small", why=EARLIER_CUT_TURN))
+    run.turn(lane, "strings blob", tokens=1000, cached=0, dollars_later=True, flag="t{x}")
+    assert run.do(iv.Approve(lane)).ok and run.deck.lanes[lane].finished  # solved in the middle of its turn
+    # what claude reported once it was stopped: after the lane's end
+    run.deck.report(lane, TurnReport(turn=False, tokens=100, dollars=0.2, turn_end=True, model="big", why=EARLIER_CUT_TURN))
+    run.close()
+    if not marked:  # a log from before spend events were marked turn_end: its why says what it was
+        rewrite(tmp_path / "events.jsonl", lambda e: {**e, "data": {k: v for k, v in e["data"].items() if k != "turn_end"}}
+                if e.get("kind") == "spend" else e)
+        assert '"turn_end"' not in (tmp_path / "events.jsonl").read_text()
+    text = report(load_run(tmp_path))
+    rows = table_rows(text)
+    assert rows[1:4] == [
+        ["small", "2", "2,500", "0%", "$0.08"],
+        ["big", "1", "1,100", "0%", "$0.20"],
+        [TURN_END_ROW, "-", "600", "0%", "$0.28"],
+    ]
+    assert not any(row[0].endswith("outside a turn (a reply dropped on escalation, for one)") for row in rows)
+    assert ["L01", "X", "small → big", "3", "3,600", "0%", "$0.28", "solved"] in rows
+    assert "- Dollars: $0.28" in text.splitlines()
+    timeline = entries(sections(text, "### ")["X (misc, 10 pts): solved by lane L01"])
+    assert not any("spent" in entry for entry in timeline)  # summed like the turns, never listed as spend outside one
+    assert "Spend: 4k tokens (0% cached), $0.28, $0.28 per lane solve" in summary(load_run(tmp_path)).splitlines()
+
+
+def test_a_cli_models_dollars_say_how_many_of_its_turns_had_no_price(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls", tokens=1000, cached=0, dollars_later=True)
+    run.deck.report(lane, TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True))
+    run.turn(lane, "cat note", tokens=1000, cached=0, dollars_later=True)
+    run.deck.report(lane, TurnReport(turn=False, dollars=None, turn_end=True))  # it exited in the turn: no price for it
     rows = table_rows(report(run.close()))
-    assert rows[1] == ["small", "1", "1,000", "25%", "$0.10"]
-    assert rows[2] == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "$0.04"]
+    assert rows[1] == ["small", "2", "2,200", "0%", "unknown (at least $0.03; 1 of 2 CLI turns had no known cost)"]
+    assert rows[2] == [TURN_END_ROW, "-", "200", "0%", "unknown (at least $0.03)"]
+
+
+@pytest.mark.parametrize("transcripts", [True, False], ids=["with transcripts", "log only"])
+def test_a_cli_turn_whose_cost_never_came_leaves_the_lanes_dollars_unknown_not_settled(tmp_path, transcripts):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls", dollars_later=True)  # a coding-agent CLI's step: the cost comes when its turn ends
+    run.deck.report(lane, TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    run.turn(lane, "cat note", dollars_later=True)  # the run stops in this turn: its cost never comes
+    run.close()
+    if not transcripts:
+        for path in (tmp_path / "lanes").iterdir():
+            path.unlink()
+    text = report(load_run(tmp_path))
+    assert "- Dollars: unknown (at least $0.03; the lane had a turn with no price)" in text.splitlines()
+    rows = table_rows(text)
+    assert ["L01", "X", "small", "2", "2,200", "23%", "unknown", "still open"] in rows
+    # its model's row and the CLIs' own cost are not settled numbers either
+    assert rows[1:3] == [["small", "2", "2,200", "23%", "unknown (at least $0.03; 1 of 2 CLI turns had no known cost)"],
+                         [TURN_END_ROW, "-", "200", "0%", "unknown (at least $0.03)"]]
+    notes = items(sections(text)["Problems reading the run"])
+    assert "L01's coding-agent CLI never reported what its last turn cost: its dollars are not fully known" in notes
+
+
+def test_a_cli_lanes_steps_are_not_turns_with_no_price(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "ls", dollars_later=True)
+    run.deck.report(lane, TurnReport(turn=False, tokens=200, dollars=0.03, turn_end=True, why="the turn's cost"))
+    text = report(run.close())
+    assert "- Dollars: $0.03" in text.splitlines()
+    assert ["L01", "X", "small", "1", "1,200", "21%", "$0.03", "still open"] in table_rows(text)
 
 
 def test_spend_outside_a_turn_keeps_its_price_after_a_turn_with_none(tmp_path):
@@ -1065,8 +1182,10 @@ def test_spend_outside_a_turn_keeps_its_price_after_a_turn_with_none(tmp_path):
     run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04, why="a reply dropped on escalation"))
     record = run.close()
     text = report(record)
-    outside = next(row for row in table_rows(text) if row[0].startswith("outside a turn"))
-    assert outside == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "$0.04"]  # the API's own price
+    rows = table_rows(text)
+    outside = next(row for row in rows if row[0].endswith("outside a turn (a reply dropped on escalation, for one)"))
+    assert outside == [OUTSIDE_ROW, "-", "400", "0%", "$0.04"]  # the API's own price
+    assert ["small", "2", "1,900", "26%", "unknown (at least $0.14; 1 of 3 turns and spends had no price)"] in rows
     assert "- Dollars: unknown (at least $0.14; the lane had a turn with no price)" in text.splitlines()
     assert "L01 spent 400 tokens outside a turn ($0.04): a reply dropped on escalation" in entries(
         sections(text, "### ")["X (misc, 10 pts): not solved"]
@@ -1082,8 +1201,13 @@ def test_an_older_log_without_spend_events_cannot_price_what_a_lane_with_no_pric
     run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04))
     run.close()
     text = report(load_run(older(tmp_path)))  # only the transcript's totals say what was spent outside a turn
-    outside = next(row for row in table_rows(text) if row[0].startswith("outside a turn"))
-    assert outside == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "unknown"]  # not $0.00
+    rows = table_rows(text)
+    # in no model's row (the transcript cannot say which model spent it), so a row of its own, not a part
+    assert rows[1:3] == [
+        ["small", "2", "1,500", "33%", "unknown (at least $0.10; 1 of 2 turns had no price)"],
+        ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "unknown"],  # not $0.00
+    ]
+    assert PART_OF not in sections(text, "### ")["By model"]
     assert "- Dollars: unknown (at least $0.10; the lane had a turn with no price)" in text.splitlines()
 
 

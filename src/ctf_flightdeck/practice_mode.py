@@ -21,9 +21,11 @@ was told at the time. Who a solve goes to (a lane, or the L1 engine whose flag i
 rule every report uses (runrecord.Credit); a teammate's solve, or one the platform lists
 for you or your team, is shown on its row but earns the run nothing.
 
-Tokens and dollars come from the log's turn events and spend events (what a lane spent
-outside a turn: a model reply dropped on escalation, for one). A log older than spend
-events (format 1, eventlog.FORMAT) has that only in the lane transcripts beside it
+Tokens and dollars come from the log's turn events and spend events: what a lane spent
+outside a turn (a model reply dropped on escalation, for one), and a coding-agent CLI's own
+cost of a turn, which the CLI reports when the turn ends (turn_end; its steps, the turn
+events, carry none of it), after the lane's end too. A log older than spend events
+(format 1, eventlog.FORMAT) has spend outside a turn only in the lane transcripts beside it
 (lanes/<lane id>.jsonl, written by transcript.py as each lane ends): a transcript starts
 with the deck's own totals for its lane. A transcript must agree with the log (the same
 lane, challenge and turns, and no less spent), or it is left out with a note. In an older
@@ -54,7 +56,7 @@ from . import fmt
 from .core.deck import Deck, QueueEntry
 from .core.model import ME, EventKind
 from .platform.manual import AnswerVerifier, Board
-from .runrecord import L1, LANES, Credit, Solve, event_line
+from .runrecord import L1, LANES, Credit, Solve, event_line, turn_end
 from .text import untrusted
 
 TIMELINE_FILE = "timeline.json"
@@ -364,9 +366,13 @@ class _Lane:
     state: str | None = None
     known: float = 0.0  # the part of its cost that had a price
     unpriced_turn: bool = False  # a turn of it had no price
-    spends: int = 0  # spend events: what it spent outside a turn
-    unpriced_spends: int = 0  # spend events with no price
+    spends: int = 0  # spend events: what it spent outside a turn, and its coding-agent CLI's cost of each turn
+    unpriced_spends: int = 0  # spend events outside a turn with no price
     unpriced_spend: int = 0  # the tokens they spent
+    unpriced_turn_ends: int = 0  # its CLI's reports of a turn's own cost (turn_end) with no price
+    unpriced_turn_end: int = 0  # the tokens they counted
+    unreported_turns: int = 0  # its CLI's turns whose cost never came (unreported): no price could give it
+    cost_due: bool = False  # its coding-agent CLI's last turn (dollars_later steps) has no turn_end spend event yet
 
 
 @dataclass(frozen=True)
@@ -442,10 +448,13 @@ def score(events_jsonl: Path, board: Board) -> Score:
             tokens = get.data("tokens", _is_count, f"a token count (a whole number from 0 to {MAX_COUNT:,})")
             dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
             dollars = None if dollars is None else float(dollars)
+            later = get.data("dollars_later", _is_bool, "dollars_later: true or false", default=False)
             acc = lanes.setdefault(lane, _Lane(cid))
             acc.turns += 1
             acc.tokens += tokens
-            if dollars is None:
+            if dollars is None and later:
+                acc.cost_due = True  # a coding-agent CLI's step: the turn_end spend event has its cost
+            elif dollars is None:
                 acc.dollars = None
                 acc.unpriced_turn = True
             else:
@@ -462,18 +471,29 @@ def score(events_jsonl: Path, board: Board) -> Score:
                     raise ScoreError(f"{where}: line {n}: a lane.end event for {_quote(lane)} names no challenge")
                 acc = lanes.setdefault(lane, _Lane(known(cid)))
             acc.state = state
-        elif kind == "spend":  # tokens and dollars spent outside a turn (a format 2 log)
+        elif kind == "spend":  # spent outside a turn, or a coding-agent CLI's own cost of a turn (a format 2 log)
             lane = get.top("lane", _is_text, "a lane id")
             cid = known(get.top("challenge", _is_text, "a challenge id"))
             tokens = get.data("tokens", _is_count, f"a token count (a whole number from 0 to {MAX_COUNT:,})")
             dollars = get.data("dollars", _is_money, "a dollar amount (0 or more) or null")
+            marked = get.data("turn_end", _is_bool, "turn_end: true or false", default=False)
+            at_turn_end = marked or turn_end(rec.get("data", {}))  # a log from before the mark says so by its why
+            unreported = get.data("unreported", _is_bool, "unreported: true or false", default=False)
             acc = lanes.setdefault(lane, _Lane(cid))
+            if at_turn_end:
+                acc.cost_due = False  # the CLI's cost of the turn its steps were in
             acc.tokens += tokens
             acc.spends += 1
             if dollars is None:
                 acc.dollars = None
-                acc.unpriced_spends += 1
-                acc.unpriced_spend += tokens
+                if at_turn_end and unreported:
+                    acc.unreported_turns += 1
+                elif at_turn_end:
+                    acc.unpriced_turn_ends += 1
+                    acc.unpriced_turn_end += tokens
+                else:
+                    acc.unpriced_spends += 1
+                    acc.unpriced_spend += tokens
             else:
                 acc.known += float(dollars)
                 if acc.dollars is not None:
@@ -524,6 +544,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
             "score it against the board it played (--board)"
         )
     spent_outside = _add_transcripts(path.parent / LANES, lanes, log_format)  # before the sums below, so they hold it
+    for acc in lanes.values():
+        if acc.cost_due:  # the log ends inside a turn of its CLI: that turn's cost never came
+            acc.dollars = None
 
     verifier = AnswerVerifier(board.answers) if board.answers is not None else None
     per: dict[str, ChallengeScore] = {}
@@ -583,12 +606,22 @@ def score(events_jsonl: Path, board: Board) -> Score:
     for lane, acc in lanes.items():
         if acc.unpriced_turn:
             notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only what had a price.")
+        if acc.cost_due:
+            notes.append(f"{lane}'s coding-agent CLI never reported what its last turn cost, so its cost is not fully known: "
+                         "the dollars count only what had a price.")
         if acc.unpriced_spends:
             spent = f"{fmt.tokens(acc.unpriced_spend)} tokens" if acc.unpriced_spend else "something"
             notes.append(
                 f"{lane} spent {spent} {OUTSIDE_TURNS} with no price, so its cost is not fully known: the dollars "
                 "count only what had a price."
             )
+        if acc.unpriced_turn_ends:
+            notes.append(_turn_end_note(lane, acc.unpriced_turn_ends, acc.unpriced_turn_end))
+        if acc.unreported_turns:
+            n = acc.unreported_turns
+            which, them = ("1 of its turns", "it") if n == 1 else (f"{n} of its turns", "them")
+            notes.append(f"{lane}'s coding-agent CLI never reported what {which} cost (it was stopped in {them}, or "
+                         "exited), so its cost is not fully known: the dollars count only what is known.")
     notes += spent_outside
     known_dollars = sum(acc.known for acc in lanes.values())
     kinds = Counter(iv.name for iv in done)
@@ -621,6 +654,18 @@ def score(events_jsonl: Path, board: Board) -> Score:
 OUTSIDE = "a model reply dropped on escalation, for one"  # what a lane spends outside its turns
 OUTSIDE_TURNS = f"outside its turns ({OUTSIDE})"
 _PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # a lane id that is safe as a file name ("L01")
+
+
+def _turn_end_note(lane: str, turns: int, tokens: int) -> str:
+    """A lane whose coding-agent CLI's own cost of some turns (which a CLI reports when a turn
+    ends) had no price: no figure from the CLI, and no price in the config for its tokens."""
+    which = "1 turn" if turns == 1 else f"{turns} turns"
+    counted = f" ({fmt.tokens(tokens)} tokens)" if tokens else ""
+    when = "when it ended" if turns == 1 else "when each ended"
+    return (
+        f"{lane}: its coding-agent CLI's own cost of {which}{counted}, reported {when}, had no price, so its cost is "
+        "not fully known: the dollars count only what had a price ([prices] in your config can price its model)."
+    )
 
 
 def _format(start: dict) -> int:

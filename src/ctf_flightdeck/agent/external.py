@@ -24,10 +24,13 @@ For the deck, each tool call is a turn (lane.turns counts them). When the agent'
 ends with nothing waiting for it, it is nudged to carry on; an agent that ends
 MAX_IDLE_TURNS turns in a row without a tool call or a candidate flag gives up. A CLI
 reports a turn's cost (codex: its tokens too) only when the turn ends, so its steps carry
-none of it: that report goes to the deck as spend outside a turn, with why and the model
-that spent it (an escalated lane's old model too), also when it comes after the lane has
-ended (solved or killed mid-turn), and each lane says at its start that its caps are
-checked only then.
+none of it: they say so (TurnReport.dollars_later), and the console and the run log show
+that cost as still to come, not as $0.00. The CLI's report goes to the deck as the turn's
+own cost (TurnReport.turn_end), with why and the model that spent it (an escalated lane's
+old model too), also when it comes after the lane has ended (solved or killed mid-turn). A
+run of the CLI that ends in a turn it never reported settles it: the config price of the
+turn's tokens, or unknown. Each lane says at its start that its caps are checked only when
+a turn ends.
 
 How the player's controls reach the CLI:
 - pause: SIGSTOP to the CLI's process group; resume: SIGCONT. A take-over first lets the
@@ -101,7 +104,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from ..core.driver import TakeoverRefused, TurnReport
+from ..core.driver import TakeoverRefused, TurnReport, spend_only
 from ..core.summary import lane_summary
 from ..core.model import (
     Challenge,
@@ -175,11 +178,14 @@ NUDGE = (
     "write it in your reply on a line of its own as FLAG: <the flag>."
 )
 
-# What spend reported outside a turn was (TurnReport.why): a CLI reports its cost (codex: its
-# tokens too) only when a turn ends, so its steps (the lane's turns) carry none of it.
+# What a CLI's turn_end report was (TurnReport.why): a CLI reports its cost (codex: its tokens
+# too) only when a turn ends, so its steps (the lane's turns, dollars_later) carry none of it.
 TURN_END = "what {kind} reported when its turn ended: the turn's cost, and tokens no step carried"
 CUT_TURN = "what {kind} reported for a turn it was stopped in (an escalation, or the lane's end)"
-LEFTOVER = "tokens {kind} counted after its last step, when it exited"
+LEFTOVER = (
+    "{kind} ended in a turn without reporting what it cost: the tokens it counted since its last step, "
+    "and the turn's cost by your config's price, or unknown"
+)
 
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,199}")
 _CLAIM = re.compile(r"(?:[*+-][ \t]+)?(?:\*\*|__)?flag(?:\*\*|__)?[ \t]*:(?:\*\*|__)?", re.IGNORECASE)
@@ -600,15 +606,6 @@ def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float)
     return set(found), True
 
 
-def _spend_only(rep: TurnReport) -> bool:
-    """A report of tokens or dollars spent outside a turn, and of nothing else."""
-    return (
-        not rep.turn and bool(rep.tokens or rep.dollars) and rep.plan is None
-        and not (rep.action or rep.output or rep.artifacts or rep.files or rep.alerts or rep.clear or rep.pending
-                 or rep.flag is not None or rep.gave_up is not None or rep.hints_taken)
-    )
-
-
 def _blocks(content: Any) -> list[dict]:
     if isinstance(content, list):
         return [block for block in content if isinstance(block, dict)]
@@ -1013,6 +1010,7 @@ class _Run:
         self.pending_tokens = 0
         self.pending_cached = 0
         self.turn_tokens = [0, 0, 0]  # prompt, completion, cached since the turn began (a priced cost)
+        self.cost_due = False  # steps were reported (dollars_later) in a turn whose cost the CLI has not reported yet
         self.tasks: set[asyncio.Future[Any]] = set()
         self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
         self.homes: dict[str, str] = {}  # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME)
@@ -1035,9 +1033,9 @@ class _Run:
     def report(self, rep: TurnReport) -> None:
         rep = self.driver.redact.scrub(rep)  # a second guard: text arrives redacted
         if self.over():
-            if self.lane() is not None and _spend_only(rep):
+            if self.lane() is not None and spend_only(rep):
                 # a CLI reports a turn's cost when the turn ends, often after the lane has (solved
-                # mid-turn, killed): what was spent goes to the deck, which says what it counts for
+                # mid-turn, killed): what was spent goes to the deck, which counts it on the lane
                 self.driver.deck.report(self.lane_id, rep)
             return
         self.driver.deck.report(self.lane_id, rep)
@@ -1493,8 +1491,8 @@ class _Run:
 
     async def finished(self, proc: _Proc) -> None:
         """The CLI's run is over (its stdout ended): make sure it has exited and left
-        nothing running, and report its unreported tokens. exit_reason(proc) says how it
-        ended."""
+        nothing running, and settle a turn whose cost it never reported. exit_reason(proc)
+        says how it ended."""
         try:
             await asyncio.wait_for(asyncio.shield(proc.process.wait()), self.driver.stop_grace)
         except TimeoutError:
@@ -1507,10 +1505,38 @@ class _Run:
             self.in_flight.clear()
         self.update_idle()
         self.release_held()  # its turn is over (codex: one process per turn), whether it ended or was cut short
+        self.settle(proc)
+
+    def settle(self, proc: _Proc) -> None:
+        """A run of the CLI ended in a turn whose cost it never reported (no result; codex: no
+        turn.completed): the turn ends here, with the tokens counted since its last step and,
+        as its cost, the config price of the turn's tokens when there is one, else unknown
+        (None, marked unreported: no price is missing, so the deck asks nothing and keeps a
+        dollar cap on what is known), never $0.00. Not while codex goes on in the same thread
+        (its turn was cut to hand it a message): its next turn.completed counts the whole
+        thread, this turn too. Nor, when the run closes with the lane still open, for a turn
+        with nothing counted and no price (codex): it stays open (the lane's dollars_later),
+        which every report reads as a cost that never came."""
         tokens, cached = self.take_tokens()
-        if tokens:
-            self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, why=LEFTOVER.format(kind=self.kind),
-                                   model=proc.model))
+        prompt, completion, cached_in_turn = self.turn_tokens
+        if not (self.cost_due or tokens or prompt or completion) or self.thread_goes_on(proc):
+            return
+        dollars = None
+        if self.kind == "claude":  # codex never counted this turn's tokens: there is nothing to price
+            dollars = call_cost(None, self.driver.prices.get(proc.model), prompt, completion, cached_in_turn)
+        lane = self.lane()
+        if dollars is None and not tokens and self.stopped and lane is not None and not lane.finished:
+            return  # the run is closing (shutdown stops lanes without ending them)
+        self.turn_tokens = [0, 0, 0]
+        self.cost_due = False
+        self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
+                               why=LEFTOVER.format(kind=self.kind), model=proc.model, turn_end=True,
+                               unreported=dollars is None))
+
+    def thread_goes_on(self, proc: _Proc) -> bool:
+        """Whether the lane's next turn goes on in the conversation this run of the CLI had,
+        so that a later report of the CLI counts this run's turn too (codex)."""
+        return False
 
     def exit_reason(self, proc: _Proc) -> str:
         """How a run of the CLI ended: its exit status and its last stderr line."""
@@ -1639,18 +1665,24 @@ class _Run:
 
     async def step(self, action: str, text: str, *, prefix: str = "", files: Sequence[FileChange] | None = None) -> None:
         """One tool call and its result: a turn, with the files changed since the last look
-        and any new candidate flag in the output (never a claimed one: see sort_out)."""
+        and any new candidate flag in the output (never a claimed one: see sort_out). A step
+        the lane's end cuts off (killed or solved while this looks) is not the lane's, and the
+        deck would drop it whole, so it is not reported: its tokens stay for the CLI's report
+        of the turn's cost (turn_end), which the deck counts after the lane's end too."""
         changed = await self.changes()
         if files:
             known = {change.path for change in changed}
             changed += tuple(change for change in files if change.path not in known)
         flags, _ = await self.candidates(text, own=False)
-        output = _clip(prefix + untrusted(text).strip(), OUTPUT_CHARS)
         self.steps += 1
+        self.cost_due = True  # the CLI reports what the turn cost when it ends (turn_end)
+        if self.over():
+            return
+        output = _clip(prefix + untrusted(text).strip(), OUTPUT_CHARS)
         tokens, cached = self.take_tokens()
         flag, claimed = flags[0] if flags else (None, True)
         self.report(TurnReport(action=_one_line(action), output=output, tokens=tokens, cached_tokens=cached,
-                               files=changed[:MAX_FILES_PER_STEP], flag=flag, claimed=claimed))
+                               files=changed[:MAX_FILES_PER_STEP], flag=flag, claimed=claimed, dollars_later=True))
         for flag, claimed in flags[1:]:  # more candidates in one output: each is its own approval
             self.report(TurnReport(turn=False, flag=flag, claimed=claimed))
 
@@ -1856,10 +1888,11 @@ class _ClaudeRun(_Run):
             dollars = total - proc.cost if total >= proc.cost else total
             proc.cost = total
         self.turn_tokens = [0, 0, 0]
+        self.cost_due = False
         tokens, cached = self.take_tokens()
         if not current:  # an old model's last turn, or one being stopped: only its cost counts, as that model's
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
-                                   why=CUT_TURN.format(kind=self.kind), model=proc.model))
+                                   why=CUT_TURN.format(kind=self.kind), model=proc.model, turn_end=True))
             return
         proc.interrupted = False
         self.busy = False
@@ -1872,9 +1905,12 @@ class _ClaudeRun(_Run):
                     self.said = text
                 self.report_text(text, *self.sort_out(*last), show=False)
             self.release_held()  # the turn is over: what it never claimed goes to the player
+            # The turn's cost on its own: a flag in its last words may have solved the lane just
+            # now, and after a lane's end the deck counts a report of spend only (spend_only).
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
-                                   action=f"says: {_one_line(said, 200)}" if said and not failed else "",
-                                   why=TURN_END.format(kind=self.kind), model=proc.model))
+                                   why=TURN_END.format(kind=self.kind), model=proc.model, turn_end=True))
+            if said and not failed:
+                self.report(TurnReport(turn=False, action=f"says: {_one_line(said, 200)}"))
             if failed:
                 why = _one_line(text, 300)
                 self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})"
@@ -1905,6 +1941,12 @@ class _CodexRun(_Run):
 
     def workdir(self) -> str:
         return CONTAINER_ROOT if self.docker else str(self.workspace.root)
+
+    def thread_goes_on(self, proc: _Proc) -> bool:
+        """A turn cut short to hand codex a message (no turn.completed, no failure) is resumed
+        in the same thread, whose next turn.completed counts this turn's tokens too."""
+        return (proc.interrupted and not proc.completed and proc.failed is None and not self.over()
+                and proc.generation == self.generation and self.thread is not None)
 
     async def session(self) -> None:
         while await self.until_running():
@@ -2070,8 +2112,9 @@ class _CodexRun(_Run):
         fresh, cached, out = (n - b for n, b in zip(now, base))
         self.usage_base, self.usage_thread = now, thread
         dollars = call_cost(None, self.driver.prices.get(proc.model), fresh, out, cached)
+        self.cost_due = False
         self.report(TurnReport(turn=False, tokens=fresh + out, cached_tokens=cached, dollars=dollars,
-                               why=TURN_END.format(kind=self.kind), model=proc.model))
+                               why=TURN_END.format(kind=self.kind), model=proc.model, turn_end=True))
 
 
 class _Takeover(Takeover):

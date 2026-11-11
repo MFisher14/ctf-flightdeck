@@ -6,6 +6,7 @@ are collaborators that note what the deck asked of them. The deck itself is neve
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import re
 import threading
@@ -593,6 +594,64 @@ def test_a_late_report_after_the_lane_ended_changes_nothing():
     assert len(deck.events) == n_events and driver.calls == calls
 
 
+CUT = "what the CLI reported for a turn it was stopped in"
+
+
+def test_spend_reported_after_the_lane_ended_counts_for_the_lane_and_the_run_and_is_logged():
+    # a coding-agent CLI reports a turn's cost when the turn ends: here, after its lane solved mid-turn
+    deck, driver, _ = make_deck(n=2, dollar_cap=2.0)
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    deck.report(lane.id, TurnReport(action="ls", tokens=1000, dollars=0.25))
+    deck.report(other.id, TurnReport(action="ls", tokens=100, dollars=0.01))
+    assert solve(deck, lane).ok and lane.state is LaneState.SOLVED
+    mark, calls, actions = len(deck.events), list(driver.calls), list(lane.actions)
+    deck.report(lane.id, TurnReport(turn=False, tokens=500, cached_tokens=200, dollars=0.5, why=CUT, model="small"))
+    assert (lane.tokens, lane.cached_tokens, lane.turns) == (1510, 200, 2)  # no turn added
+    assert lane.dollars == pytest.approx(0.75) and lane.known_dollars == pytest.approx(0.75)
+    tokens, dollars, unpriced = deck.totals()
+    assert (tokens, unpriced) == (1610, False) and dollars == pytest.approx(0.76)
+    (spend,) = deck.events[mark:]
+    assert (spend.kind, spend.lane, spend.challenge) == (EventKind.SPEND, lane.id, "c0")
+    assert spend.data == {"tokens": 500, "cached_tokens": 200, "dollars": 0.5, "model": "small", "why": CUT}
+    assert driver.calls == calls and lane.actions == actions and lane.state is LaneState.SOLVED
+    # with no price: the lane's total becomes unknown, what was known stays, and nothing is asked
+    deck.report(lane.id, TurnReport(turn=False, tokens=40, dollars=None, model="big"))
+    assert (lane.dollars, lane.unpriced, lane.tokens) == (None, 1, 1550) and lane.known_dollars == pytest.approx(0.75)
+    assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.SOLVED
+    assert deck.totals()[0] == 1650 and deck.totals()[2] is True
+    assert [e.data["model"] for e in events(deck, EventKind.SPEND, since=mark)] == ["small", "big"]
+    assert [e.kind for e in deck.events[mark:]] == [EventKind.SPEND, EventKind.SPEND]
+
+
+LATE_EXTRAS = {
+    "a turn": {"turn": True},
+    "an action": {"action": "cat flag"},
+    "output": {"output": "t{c0}"},
+    "a plan": {"plan": "new plan"},
+    "artifacts": {"artifacts": ("found.txt",)},
+    "files": {"files": (FileChange("a.py", "+x", "added"),)},
+    "alerts": {"alerts": (Alert(AlertKind.LOOP, "x"),)},
+    "clear": {"clear": (AlertKind.STALL,)},
+    "an approval": {"pending": Pending(PendingKind.LIVE_BOX, "box")},
+    "a flag": {"flag": good_flag("c0")},
+    "giving up": {"gave_up": "done"},
+    "hints taken": {"hints_taken": 1},
+    "a cost still to come": {"dollars_later": True},
+}
+
+
+@pytest.mark.parametrize("extra", LATE_EXTRAS.values(), ids=LATE_EXTRAS.keys())
+def test_a_late_report_with_spend_and_anything_else_is_dropped_whole(extra):
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, alerts=(Alert(AlertKind.STALL, "idle"),)))
+    deck.apply(iv.Kill(lane.id, requeue=False))
+    before, n_events, calls = copy.deepcopy(lane), len(deck.events), list(driver.calls)
+    deck.report(lane.id, TurnReport(**{"turn": False, "tokens": 500, "dollars": 1.0, **extra}))
+    assert lane == before and lane.tokens == 0
+    assert len(deck.events) == n_events and driver.calls == calls and deck.verify.calls == []
+
+
 def test_each_turn_report_emits_a_turn_event_with_its_numbers():
     deck, _, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")
@@ -604,6 +663,104 @@ def test_each_turn_report_emits_a_turn_event_with_its_numbers():
         (lane.id, "c0", {"turn": 1, "model": "small", "tokens": 1200, "cached_tokens": 0, "dollars": 0.25, "action": "ls -la"}),
         (lane.id, "c0", {"turn": 2, "model": "small", "tokens": 300, "cached_tokens": 0, "dollars": None, "action": "cat x"}),
     ]
+
+
+TURN_END = "what the CLI reported when its turn ended"
+
+
+def test_a_cli_step_logs_its_cost_as_coming_with_the_turns_end_and_the_lanes_dollars_wait_for_it():
+    deck, driver, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=0.25))  # an earlier turn, priced
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(action="cat note", tokens=300, dollars_later=True))
+    deck.report(lane.id, TurnReport(action="cat flag", dollars_later=True))
+    turns = [dict(e.data) for e in events(deck, EventKind.TURN, since=mark)]
+    assert [(t["dollars"], t.get("dollars_later")) for t in turns] == [(None, True), (None, True)]  # not $0.00, and not unknown
+    assert lane.dollars_later and lane.dollars == pytest.approx(0.25) and lane.unpriced == 0
+    assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None  # no price missing: nothing to ask
+    assert events(deck, EventKind.SPEND, since=mark) == []
+    deck.report(lane.id, TurnReport(turn=False, tokens=50, dollars=0.75, turn_end=True, why=TURN_END, model="small"))
+    assert not lane.dollars_later and lane.dollars == pytest.approx(1.0) and lane.tokens == 450
+    (spend,) = events(deck, EventKind.SPEND, since=mark)
+    assert spend.data == {"tokens": 50, "cached_tokens": 0, "dollars": 0.75, "model": "small", "why": TURN_END, "turn_end": True}
+    assert spend.text == f"{lane.id} spent 50 tokens in a turn of its CLI: {TURN_END}"
+
+
+def test_a_cli_turn_that_cost_nothing_more_is_still_logged_as_settled_and_a_turn_end_with_nothing_open_is_not():
+    deck, _, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", dollars_later=True))
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(turn=False, turn_end=True, why=TURN_END))
+    (spend,) = deck.events[mark:]
+    assert (spend.kind, spend.data["dollars"], spend.data["turn_end"]) == (EventKind.SPEND, 0.0, True)
+    assert not lane.dollars_later and lane.dollars == 0.0
+    deck.report(lane.id, TurnReport(turn=False, turn_end=True, why=TURN_END))  # a turn with no step: nothing was open
+    assert deck.events[mark + 1:] == []
+
+
+def test_a_cli_turn_with_no_price_ends_the_lanes_known_total_and_asks_once_under_a_dollar_cap():
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=0.25))
+    deck.report(lane.id, TurnReport(action="cat note", dollars_later=True))
+    deck.report(lane.id, TurnReport(turn=False, tokens=20, dollars=None, turn_end=True, why=TURN_END))  # tokens, no price
+    assert not lane.dollars_later and lane.dollars is None and lane.known_dollars == pytest.approx(0.25)
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET  # the cap cannot be enforced
+    assert lane.pending.detail == "carry on with no dollar cap (no price for small)"
+    assert events(deck, EventKind.SPEND)[-1].data["dollars"] is None
+
+
+UNREPORTED = "what the CLI never reported for a turn it was stopped in"
+
+
+def test_a_cli_turn_whose_cost_never_came_leaves_the_total_partial_and_the_dollar_cap_holding_on_what_is_known():
+    # a coding-agent CLI stopped in a turn (an escalation, say) may never say what it cost: that cost is not known, but
+    # no price is missing for it, so nothing is asked and the cap stays, checked against what is known
+    deck, driver, _ = make_deck(n=1, dollar_cap=1.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=0.25))
+    deck.report(lane.id, TurnReport(action="cat note", dollars_later=True))
+    mark = len(deck.events)
+    deck.report(lane.id, TurnReport(turn=False, dollars=None, turn_end=True, unreported=True, why=UNREPORTED, model="small"))
+    assert not lane.dollars_later and lane.dollars is None and lane.known_dollars == pytest.approx(0.25)
+    assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.RUNNING
+    assert lane.dollar_cap == 1.0 and lane.budget_used() == pytest.approx(0.25)
+    assert ("the cost of a turn of small never came (its CLI did not report it): the $1.00 cap holds on the $0.25 "
+            "that is known") in [a.text for a in lane.actions if a.kind is ActionKind.NOTE]
+    (spend,) = events(deck, EventKind.SPEND, since=mark)
+    assert spend.data == {"tokens": 0, "cached_tokens": 0, "dollars": None, "model": "small", "why": UNREPORTED,
+                          "turn_end": True, "unreported": True}
+    deck.report(lane.id, TurnReport(action="cat flag", tokens=100, dollars=0.8))  # what is known passes the cap
+    assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "raise the cap by 50% (now $1.05+ of $1.00)"
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.dollar_cap == pytest.approx(1.5) and lane.state is LaneState.RUNNING  # raised, not dropped
+    assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
+
+
+def test_a_cost_with_no_price_after_a_cli_turn_whose_cost_never_came_still_asks_about_the_cap():
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, dollars=None, turn_end=True, unreported=True, why=UNREPORTED))
+    assert lane.pending is None and lane.dollars is None
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=None))  # the model the lane runs has no price
+    assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "carry on with no dollar cap (no price for small)"
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.dollar_cap is None and lane.state is LaneState.RUNNING  # the player chose to go on without it (P7)
+
+
+@pytest.mark.parametrize("cli", [False, True], ids=["no price", "a CLI turn's cost with no price"])
+def test_a_cost_with_no_price_asks_about_the_cap_naming_the_model_that_spent_it_not_the_lanes_model_now(cli):
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=0.25))
+    assert deck.apply(iv.Escalate(lane.id)).ok and lane.model == "mid"
+    deck.report(lane.id, TurnReport(turn=False, tokens=20, dollars=None, model="small", turn_end=cli))  # the old model's
+    assert lane.alert(AlertKind.BUDGET).reason == (
+        "No price for small, so the $2.00 cap cannot be enforced; it waits for approval to carry on without it."
+    )
+    assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "carry on with no dollar cap (no price for small)"
 
 
 def test_a_turn_with_no_action_text_still_emits_its_turn_event_and_a_non_turn_never_does():

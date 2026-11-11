@@ -200,6 +200,24 @@ def test_a_lane_solve_opens_with_the_challenge_and_how_it_went(tmp_path):
     assert "Beta" not in text and "L02" not in text  # another challenge's lane is no part of it
 
 
+def test_a_cli_lanes_cost_is_what_its_cli_reported_and_not_settled_when_its_last_turns_cost_never_came(tmp_path):
+    def spent(late: TurnReport | None) -> str:
+        run = Run(tmp_path / ("late" if late else "never"), [Challenge("a", "Alpha", "misc", 50)], answers={"a": ALPHA})
+        a = run.lane("a")
+        run.step(a, "$ ls", "note.txt", dollars_later=True)  # a coding-agent CLI's steps: no cost of their own
+        run.deck.report(a, TurnReport(turn=False, tokens=50, dollars=0.25, turn_end=True))  # the turn's cost, at its end
+        run.step(a, f"submit {ALPHA}", "the note had it", flag=ALPHA, dollars_later=True)
+        run.apply(iv.Approve(a))  # solved in the middle of the CLI's turn
+        if late is not None:
+            run.deck.report(a, late)  # what the CLI reported for that turn once it was stopped
+        head = writeup.draft(run.close(), "a").split("\n## ")[0]
+        return next(line for line in head.splitlines() if line.startswith("- Spent: "))
+
+    assert spent(TurnReport(turn=False, tokens=50, dollars=0.5, turn_end=True)) == "- Spent: 2 turns, 300 tokens, $0.75"
+    assert spent(None) == ("- Spent: 2 turns, 250 tokens, cost unknown (at least $0.25: its coding-agent CLI never "
+                           "reported what its last turn cost)")
+
+
 def test_the_approach_is_the_plan_changes_in_order(tmp_path):
     text = writeup.draft(alpha_run(tmp_path), "a")
     assert [line for line in lines_of(text, "## Approach") if line] == [

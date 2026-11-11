@@ -708,6 +708,8 @@ class _Writer:
         if lane.tokens > 0 and lane.cached_tokens > 0:
             tokens += f" ({round(100 * lane.cached_tokens / lane.tokens)}% cached)"
         cost = f"${fmt.dollars(lane.dollars)}" if lane.dollars is not None else "cost unknown"
+        if lane.dollars is not None and lane.dollars_later:  # its coding-agent CLI's last turn never reported its cost
+            cost = f"cost unknown (at least {cost}: its coding-agent CLI never reported what its last turn cost)"
         return f"{turns}, {tokens}, {cost}"
 
     def _origin(self, lane: LaneRecord) -> str:

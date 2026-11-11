@@ -1324,6 +1324,88 @@ def test_cost_shows_a_dash_when_the_price_is_unknown():
     drive(app, script)
 
 
+def test_cost_is_not_a_settled_number_while_a_cli_turn_is_under_way():
+    """A coding-agent CLI reports what a turn cost only when the turn ends: until then the lane's
+    cost cell and its focus view say more is to come, rather than show a settled $0.00."""
+    world, app = make("sstv")
+    deck = world.deck
+    lane = deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        known = lane.dollars
+        deck.report(lane.id, TurnReport(action="claude: $ ls", tokens=300, dollars_later=True))
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known, short=True)}…"
+        screen = await open_focus(pilot, app, lane.id)
+        assert f"${fmt.dollars(known)}… (this turn's cost comes when it ends)" in str(screen.query_one("#talk-pane").border_title)
+        app.show_fleet()
+        await pilot.pause()
+        deck.report(lane.id, TurnReport(turn=False, tokens=50, dollars=0.25, turn_end=True))  # the CLI's report at the turn's end
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known + 0.25, short=True)}"
+        lane.dollars, lane.known_dollars = None, 0.5  # some spend had no price, and another turn is under way
+        deck.report(lane.id, TurnReport(action="claude: $ cat", dollars_later=True))
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == "$.50+…"
+
+    drive(app, script)
+
+
+def test_the_cost_column_draws_its_markers_whole_so_a_cost_over_ten_dollars_never_reads_as_settled():
+    """What is drawn, not only the cell's value: "+" (some spend had no price) and "…" (a
+    coding-agent CLI's turn is under way, its cost to come) are never cut off by the column."""
+    world, app = make("sstv")
+    lane = world.deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        for dollars, known, later, drawn in (
+            (12.34, 12.34, True, "$12.34…"),
+            (None, 12.30, False, "$12.30+"),
+            (None, 12.30, True, "$12.30+…"),
+            (None, 1.23, True, "$1.23+…"),
+            (99.99, 99.99, True, "$99.99…"),
+            (None, 0.001, True, "$<.01+…"),
+            (None, 1234.0, True, "$1234+…"),
+        ):
+            lane.dollars, lane.known_dollars, lane.dollars_later = dollars, known, later
+            app.refresh_view()  # redraw without moving the mock clock (its lanes would report more spend)
+            await pilot.pause()
+            assert cell(app, "lanes", lane.id, "cost") == drawn
+            (row,) = [line for line in region_text(app, "#lanes").splitlines() if f" {lane.id} " in line]
+            assert f" {drawn} " in row, row
+
+    drive(app, script)
+
+
+def test_spend_a_cli_reports_after_its_lane_ended_shows_in_the_lanes_row_and_the_headers_total():
+    """A coding-agent CLI reports a turn's cost when the turn ends, often after its lane has
+    (killed, or solved mid-turn): the finished lane's row and the run's total count it."""
+    world, app = make("sstv")
+    deck = world.deck
+    lane = deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        deck.report(lane.id, TurnReport(action="claude: $ ls", tokens=300, dollars_later=True))  # a CLI turn under way
+        assert deck.apply(iv.Kill(lane.id, requeue=False)).ok and lane.finished
+        app.refresh_view()  # redraw without moving the mock clock (its lanes would report more spend)
+        await pilot.pause()
+        app.fleet.select_lane(lane.id)  # expands the finished lanes
+        await pilot.pause()
+        known, total = lane.dollars, deck.totals()[1]
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known, short=True)}…"  # its cost is still to come
+        assert f"${fmt.dollars(total)}" in region_text(app, "#header")
+        deck.report(lane.id, TurnReport(turn=False, tokens=50, dollars=1.25, turn_end=True, model=lane.model, why="cut"))
+        app.refresh_view()
+        await pilot.pause()
+        assert cell(app, "lanes", lane.id, "cost") == f"${fmt.dollars(known + 1.25, short=True)}"
+        assert f"${fmt.dollars(total + 1.25)}" in region_text(app, "#header")
+
+    drive(app, script)
+
+
 def test_challenge_text_is_shown_literally_and_cannot_steer_the_console():
     evil = Spec("evil", "web", "[b]X[/b]", 100, "Click [@click=app.quit]x[/] now \x1b[2J done", ("evil.zip",))
     scenario = Scenario(name="evil", summary="", specs=(evil,), timeline=((0, ReleaseAt(("evil",), "Board")),))

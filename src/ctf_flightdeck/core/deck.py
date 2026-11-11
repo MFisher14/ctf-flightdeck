@@ -40,7 +40,7 @@ from dataclasses import asdict, dataclass, replace
 from .. import fmt
 from ..text import untrusted
 from .attention import attention_key
-from .driver import Clock, LaneDriver, Submitter, TurnReport, Verifier
+from .driver import Clock, LaneDriver, Submitter, TurnReport, Verifier, spend_only
 from .interventions import (
     Approve,
     Claim,
@@ -478,37 +478,23 @@ class Deck:
     # ------------------------------------------------------------------ lane reports
 
     def report(self, lane_id: str, rep: TurnReport) -> None:
-        """Apply what a lane did. Called by the driver after each step."""
+        """Apply what a lane did. Called by the driver after each step. Once the lane has
+        ended, only spend counts (driver.spend_only): a coding-agent CLI reports a turn's cost
+        when the turn ends, often after its lane has (solved mid-turn, killed), and that cost
+        is the lane's and the run's all the same. Anything else in a late report (a step that
+        raced a kill) is dropped."""
         self._on_thread("report")
         lane = self.lanes[lane_id]
         if lane.finished:
-            # A step that completed after the lane ended (a real lane can race a kill).
+            if spend_only(rep):
+                self._spend(lane, rep)
             return
         now = self.now
         if rep.turn:
             lane.turns += 1
         if rep.hints_taken:
             del lane.hints[: rep.hints_taken]
-        lane.tokens += rep.tokens
-        lane.cached_tokens += rep.cached_tokens
-        if rep.dollars is None:
-            lane.unpriced += 1
-            if lane.dollars is not None and lane.dollar_cap:
-                self._unpriced(lane)
-            lane.dollars = None
-        else:
-            lane.known_dollars += rep.dollars
-            if lane.dollars is not None:
-                lane.dollars += rep.dollars
-        if not rep.turn and (rep.tokens or rep.dollars):
-            self._emit(
-                EventKind.SPEND,
-                f"{lane.id} spent {rep.tokens} tokens outside a turn" + (f": {rep.why}" if rep.why else ""),
-                lane.id,
-                lane.challenge_id,
-                data={"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": rep.dollars,
-                      "model": rep.model or lane.model, "why": rep.why},
-            )
+        self._spend(lane, rep)
         lane.last_active_at = now
         if rep.action:
             lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE, ActionKind.STEP))
@@ -521,20 +507,17 @@ class Deck:
             lane.files.pop(change.path, None)
             lane.files[change.path] = replace(change, turn=lane.turns, at=now)
         if rep.turn:
-            self._emit(
-                EventKind.TURN,
-                f"{lane.id} turn {lane.turns}: {rep.action}",
-                lane.id,
-                lane.challenge_id,
-                data={
-                    "turn": lane.turns,
-                    "model": rep.model or lane.model,
-                    "tokens": rep.tokens,
-                    "cached_tokens": rep.cached_tokens,
-                    "dollars": rep.dollars,
-                    "action": rep.action,
-                },
-            )
+            data: dict[str, object] = {
+                "turn": lane.turns,
+                "model": rep.model or lane.model,
+                "tokens": rep.tokens,
+                "cached_tokens": rep.cached_tokens,
+                "dollars": None if rep.dollars_later else rep.dollars,
+                "action": rep.action,
+            }
+            if rep.dollars_later:  # not unknown, and not $0.00: the turn_end spend event has its cost
+                data["dollars_later"] = True
+            self._emit(EventKind.TURN, f"{lane.id} turn {lane.turns}: {rep.action}", lane.id, lane.challenge_id, data=data)
         for kind in rep.clear:
             self._clear(lane, kind)
         for alert in rep.alerts:
@@ -770,7 +753,7 @@ class Deck:
                 return Outcome(True, f"{pending.flag} is correct: {ch.name} solved by {lane.id}")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
-            if lane.dollars is None and lane.dollar_cap:
+            if lane.no_price() and lane.dollar_cap:
                 lane.dollar_cap = None  # no price: the player chose to go on without a dollar cap
             used = lane.budget_used()
             if used is not None and used >= 1.0:
@@ -1425,19 +1408,69 @@ class Deck:
                 ),
             )
 
-    def _unpriced(self, lane: Lane) -> None:
-        """A dollar-capped lane just had a turn with no price: the cap can no longer be enforced."""
+    def _spend(self, lane: Lane, rep: TurnReport) -> None:
+        """Count what a report spent, on the lane and so on the run (totals()), and log what
+        was spent outside a turn as a SPEND event, with the model that spent it and why. A
+        lane that has ended counts it all the same and asks for nothing: no cap is left to
+        enforce. A coding-agent CLI's step (dollars_later) leaves the lane's dollars unsettled
+        until the CLI reports what the turn cost (turn_end), which is logged as a SPEND event
+        marked turn_end: the CLI's own cost of its turn, not spend outside a turn. A turn whose
+        cost never came (unreported: the CLI was stopped in it, or exited) leaves the lane's
+        total not known, but no price is missing for it: nothing is asked, and a dollar cap
+        holds on what is known (Lane.budget_used). Spend with no price asks once (P7)."""
+        due = lane.dollars_later  # a turn_end that settles it is logged even when it adds nothing: the log says so too
+        lane.tokens += rep.tokens
+        lane.cached_tokens += rep.cached_tokens
+        if rep.dollars_later:
+            lane.dollars_later = True
+        elif rep.dollars is None:
+            lane.unpriced += 1
+            if rep.unreported:
+                lane.unreported += 1
+                if not lane.finished and lane.dollar_cap and lane.unreported == 1:
+                    self._note(lane, f"the cost of a turn of {rep.model or lane.model} never came (its CLI did not report "
+                                     f"it): the ${fmt.dollars(lane.dollar_cap)} cap holds on the "
+                                     f"${fmt.dollars(lane.known_dollars)} that is known")
+            elif not lane.finished and lane.dollar_cap and lane.unpriced - lane.unreported == 1:
+                self._unpriced(lane, rep)  # the first spend with no price: the cap cannot be enforced any more
+            lane.dollars = None
+        else:
+            lane.known_dollars += rep.dollars
+            if lane.dollars is not None:
+                lane.dollars += rep.dollars
+        if rep.turn_end:
+            lane.dollars_later = False
+        dollars = None if rep.dollars_later else rep.dollars
+        spent = rep.tokens or rep.cached_tokens or (not rep.dollars_later and dollars != 0.0)
+        if rep.turn or not (spent or (rep.turn_end and due)):
+            return
+        data: dict[str, object] = {"tokens": rep.tokens, "cached_tokens": rep.cached_tokens, "dollars": dollars,
+                                   "model": rep.model or lane.model, "why": rep.why}
+        if rep.turn_end:
+            data["turn_end"] = True
+        if rep.unreported:
+            data["unreported"] = True
+        where = "in a turn of its CLI" if rep.turn_end else "outside a turn"  # a turn_end's why says when it was reported
+        self._emit(EventKind.SPEND, f"{lane.id} spent {rep.tokens} tokens {where}" + (f": {rep.why}" if rep.why else ""),
+                   lane.id, lane.challenge_id, data=data)
+
+    def _unpriced(self, lane: Lane, rep: TurnReport) -> None:
+        """A dollar-capped lane just spent something with no price: the cap can no longer be
+        enforced. Said of the model that spent it (an escalated lane's old model, say), a
+        coding-agent CLI's model too: its report of a turn with no cost, and no price for it
+        in the config. (A turn whose cost the CLI never reported asks nothing: _spend.)"""
+        why = f"no price for {rep.model or lane.model}"
         self._raise(
             lane,
             Alert(
                 AlertKind.BUDGET,
-                f"No price for {lane.model}, so the ${fmt.dollars(lane.dollar_cap)} cap cannot be "
+                f"{why[0].upper()}{why[1:]}, so the ${fmt.dollars(lane.dollar_cap)} cap cannot be "
                 "enforced; it waits for approval to carry on without it.",
                 (Suggestion("a", "Carry on without the dollar cap"), Suggestion("k", "Kill the lane")),
             ),
         )
         if not any(p.kind is PendingKind.BUDGET for p in ([lane.pending] if lane.pending else []) + lane.waiting):
-            self._ask(lane, Pending(PendingKind.BUDGET, f"carry on with no dollar cap (no price for {lane.model})"))
+            self._ask(lane, Pending(PendingKind.BUDGET, f"carry on with no dollar cap ({why})"))
 
     def _raise_caps(self, lane: Lane) -> None:
         if lane.token_cap:
@@ -1450,7 +1483,8 @@ class Deck:
         if lane.token_cap:
             parts.append(f"{fmt.tokens(lane.tokens)} of {fmt.tokens(lane.token_cap)} tokens")
         if lane.dollar_cap:
-            parts.append(f"${fmt.dollars(lane.dollars)} of ${fmt.dollars(lane.dollar_cap)}")
+            spent = fmt.dollars(lane.dollars) if lane.dollars is not None else f"{fmt.dollars(lane.known_dollars)}+"  # what is known
+            parts.append(f"${spent} of ${fmt.dollars(lane.dollar_cap)}")
         return ", ".join(parts) or "no cap"
 
     def _stronger(self, lane: Lane) -> tuple[str | None, str]:

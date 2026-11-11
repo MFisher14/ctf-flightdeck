@@ -581,7 +581,8 @@ def config_command(
         typer.echo(f"fallback: {spare.base_url} ({spare.provider}), key {spare.key_env or '(none needed)'}"
                    + (f" is {'set' if environment_has_key(loaded, fallback=True) else 'NOT set'}" if spare.key_env else ""))
         typer.echo(f"fallback models: {', '.join(spare.ladder)}")
-    priced = [m for m in loaded.models if m in loaded.prices]
+    named = dict.fromkeys([*loaded.models, *(m for ladder in loaded.agents.values() for m in ladder)])  # [agents] models too
+    priced = [m for m in named if m in loaded.prices]
     typer.echo(f"prices from config: {', '.join(priced) or 'none (the API reports cost, or it shows as unknown)'}")
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))
     tokens = f"{lanes.token_cap} tokens" if lanes.token_cap else "no token cap"

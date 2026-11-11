@@ -112,6 +112,55 @@ dir = "/srv/flightdeck runs"
     assert config.run_dir == Path("/srv/flightdeck runs")
 
 
+AGENTS = '[agents]\ncodex = ["cx-small", "cx-big"]\nclaude = ["sonnet", "opus"]\n'
+
+
+def test_a_model_in_an_agents_ladder_can_have_a_price(tmp_path):
+    """codex reports its tokens but no cost: a price under the CLI's own model name prices them."""
+    config = load_config(write(tmp_path, LADDER + AGENTS + (
+        '[prices."vendor/small"]\ninput = 0.5\noutput = 1\n'
+        '[prices.cx-small]\ninput = 1.25\noutput = 10\ncached_input = 0.125\n'
+        '[prices.opus]\ninput = 4\noutput = 20\n'
+    )))
+    assert config.agents == {"codex": ("cx-small", "cx-big"), "claude": ("sonnet", "opus")}
+    assert config.prices == {
+        "vendor/small": Price(input=0.5, output=1.0),
+        "cx-small": Price(input=1.25, output=10.0, cached_input=0.125),
+        "opus": Price(input=4.0, output=20.0),
+    }
+
+
+@pytest.mark.parametrize("text, key", [
+    (LADDER + AGENTS + '[prices.cx-smal]\ninput = 1\noutput = 2\n', "prices.cx-smal"),  # in no ladder
+    (LADDER + '[prices.cx-small]\ninput = 1\noutput = 2\n', "prices.cx-small"),  # no [agents] names it
+    (LADDER + AGENTS + '[prices.cx-small]\ninput = -1\noutput = 2\n', "prices.cx-small.input"),
+    (LADDER + AGENTS + '[prices.cx-small]\ninput = 1\noutput = "cheap"\n', "prices.cx-small.output"),
+    (LADDER + AGENTS + '[prices.cx-small]\ninput = 1\noutput = 2\ncached_input = true\n', "prices.cx-small.cached_input"),
+    (LADDER + AGENTS + '[prices.cx-small]\ninput = 1\noutput = inf\n', "prices.cx-small.output"),
+    (LADDER + AGENTS + '[prices.cx-small]\ninput = 1\n', "prices.cx-small.output"),
+    (LADDER + AGENTS + '[prices.cx-small]\ninput = 1\noutput = 2\noutput_cached = 1\n', "prices.cx-small.output_cached"),
+], ids=["in no ladder", "no agents table", "negative", "a string", "a boolean", "infinite", "no output", "unknown key"])
+def test_a_bad_price_for_an_agents_model_is_an_error_naming_the_key(tmp_path, text, key):
+    path = write(tmp_path, text)
+    message = error(path)
+    assert message.startswith(f"{path}: ") and f" {key} " in message[len(str(path)):]
+    if key.count(".") == 1:  # the table itself
+        assert message == f"{path}: {key} is for a model that is not in models.ladder or in an [agents] ladder"
+    assert "cheap" not in message  # a string is never shown: it could be a key pasted into the wrong place
+
+
+def test_the_config_command_lists_the_prices_of_agents_models_too(tmp_path):
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import cli
+
+    path = write(tmp_path, '[api]\nkey_env = ""\n' + LADDER + AGENTS + '[prices."vendor/big"]\ninput = 1\noutput = 2\n'
+                 "[prices.cx-small]\ninput = 1\noutput = 2\n")
+    result = CliRunner().invoke(cli.app, ["config", "--path", str(path)])
+    assert result.exit_code == 0, result.output
+    assert "prices from config: vendor/big, cx-small" in result.output.splitlines()
+
+
 def test_the_openai_dialect_is_the_default_and_anthropic_brings_its_own_url_and_key_variable(tmp_path):
     assert load_config(write(tmp_path, LADDER)).api.provider == "openai"
     config = load_config(write(tmp_path, LADDER + '[api]\nprovider = "anthropic"\n'))

@@ -486,6 +486,16 @@ def prepare_run(options: RunOptions) -> Run:
         agent = _find_agent(options.agent, model, options.agent_auth)
         plan.notes.append(f"lanes are {options.agent} on {model} ({agent.auth})" if agent.auth else f"lanes are {options.agent} on {model}")
         plan.notes.extend(agent.warnings)
+        unpriced = [m for m in ladder if m not in config.prices]
+        if options.agent == "codex" and unpriced:  # codex reports its tokens but no cost: a price makes them dollars
+            on = "it" if len(unpriced) == 1 else "one of them"
+            cap = config.lanes.dollar_cap
+            asks = f" and asks you once before it carries on without its ${cap:g} cap" if cap else ""
+            plan.notes.append(
+                f"codex reports its tokens but no cost, and your config has no price for {', '.join(unpriced)}: a lane on "
+                f"{on} shows its dollars as unknown{asks}; a table like [prices.{json.dumps(unpriced[0])}] in your config "
+                "(input and output, in dollars per million tokens) prices one"
+            )
     else:
         try:
             key = api_key(config)

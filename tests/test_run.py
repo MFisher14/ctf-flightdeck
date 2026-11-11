@@ -7,6 +7,9 @@ import asyncio
 import hashlib
 import json
 import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +19,7 @@ from ctf_flightdeck import cli
 from ctf_flightdeck.agent.workspace import DockerWorkspace, docker_unavailable
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
 from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
+from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
 
 from fake_model import FakeModelServer, tool_call_reply
@@ -575,6 +579,74 @@ def test_a_run_with_a_coding_agent_needs_no_api_key_and_uses_the_agents_ladder(t
     assert "fake-anthropic-credential-for-tests" not in " ".join(notes)
 
 
+FAKE_CLI = Path(__file__).with_name("fake_agent_cli.py")  # plays claude and codex: never the real tools
+
+
+@pytest.fixture
+def scripted_claude(tmp_path, monkeypatch):
+    """tests/fake_agent_cli.py as `claude`, first on PATH (no folder holding a real one stays
+    there): call it with the script it plays. Whatever it left running is killed afterwards."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    record = tmp_path / "agent-record.jsonl"
+
+    def play(script: dict) -> None:
+        (tmp_path / "agent-script.json").write_text(json.dumps(script))
+        env = {"FAKE_AGENT_SCRIPT": str(tmp_path / "agent-script.json"), "FAKE_AGENT_RECORD": str(record),
+               "FAKE_AGENT_STATE": str(tmp_path / "agent-state.json")}
+        exe = bin_dir / "claude"
+        exe.write_text(f"#!{sys.executable} -I\nimport os, sys\nos.environ.update({env!r})\n"
+                       f"os.execv(sys.executable, [sys.executable, '-I', {str(FAKE_CLI)!r}, 'claude', *sys.argv[1:]])\n")
+        exe.chmod(0o755)
+
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-credential-for-tests")
+    yield play
+    lines = record.read_text().splitlines() if record.exists() else []
+    for pid in {json.loads(line).get("pid") for line in lines if line.strip()}:
+        command = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+        if isinstance(pid, int) and "fake_agent_cli" in command:
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_what_claude_reports_after_its_lane_solved_is_in_the_scorecard_play_prints_and_in_post_flight(tmp_path, scripted_claude):
+    """A coding-agent CLI reports a turn's cost when the turn ends, here after the lane solved
+    in the middle of it: on the way out (the console's on_exit) that cost reaches the deck,
+    the run log and the transcripts, so every summary of the run counts it."""
+    from ctf_flightdeck import postflight
+    from ctf_flightdeck.core import interventions as iv
+    from ctf_flightdeck.runrecord import load_run
+
+    scripted_claude({"turns": [{"calls": [
+        {"tools": [{"bash": "cat note.txt"}], "usage": [100, 10, 0, 0], "cost": 0.02},
+        {"text": f"FLAG: {FLAG}", "usage": [50, 5, 0, 0], "cost": 0.01},
+        {"think": 30.0},  # its turn goes on after the flag
+    ]}]})
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="claude",
+                                     runtime="host"))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the flag claude claimed")
+            assert run.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            assert lane.dollars_later and lane.dollars == 0.0  # solved mid-turn: claude has not reported its cost yet
+            await run.shutdown()  # as play does on the way out
+
+        asyncio.run(main())
+        run.close()
+    lane = run.deck.lanes["L01"]
+    assert (lane.tokens, lane.dollars, lane.dollars_later) == (165, pytest.approx(0.03), False)
+    assert run.deck.totals() == (165, pytest.approx(0.03), False)  # the console's header
+    card = run.scorecard()
+    assert card is not None and "Spent 165 tokens · $0.03 · $0.03 per solve" in card.splitlines(), card
+    summary = postflight.summary(load_run(run.dir))
+    assert "Spend: 165 tokens (0% cached), $0.03, $0.03 per lane solve" in summary.splitlines(), summary
+
+
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude):
     with FakeModelServer() as server:
         with pytest.raises(RunError, match='the instance policy is "confirm", but a claude lane reaches whatever its CLI can reach'):
@@ -586,6 +658,41 @@ def test_codex_lanes_need_their_ladder_in_the_config(tmp_path):
     with FakeModelServer() as server:
         with pytest.raises(RunError, match=r"no model ladder for codex lanes: add \[agents\] codex"):
             prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="codex", runtime="host"))
+
+
+@pytest.fixture
+def fake_codex(tmp_path, monkeypatch):
+    """A `codex` that does nothing, first on PATH, with a key of its own, and no folder holding a real one."""
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "codex"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    keep = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), *keep]))
+    monkeypatch.setenv("CODEX_API_KEY", "fake-codex-credential-for-tests")
+    return exe
+
+
+def test_codex_lanes_get_the_configs_price_for_their_model_and_play_names_the_models_with_none(tmp_path, fake_codex):
+    folder = board(tmp_path)
+    with FakeModelServer() as server:
+        path = config(tmp_path, server.base_url)
+        path.write_text(path.read_text() + '[agents]\ncodex = ["cx-small", "cx-big"]\n[prices.cx-small]\ninput = 1.25\noutput = 10\n')
+        run = prepare_run(RunOptions(board=folder, config=path, agent="codex", runtime="host"))
+        run.close()
+    assert run.deck.config.models == ("cx-small", "cx-big") and run.driver.prices["cx-small"] == Price(input=1.25, output=10.0)
+    assert (
+        "codex reports its tokens but no cost, and your config has no price for cx-big: a lane on it shows its dollars "
+        'as unknown and asks you once before it carries on without its $2 cap; a table like [prices."cx-big"] in your '
+        "config (input and output, in dollars per million tokens) prices one"
+    ) in run.notes()
+    assert "fake-codex-credential-for-tests" not in " ".join(run.notes())
+    path.write_text(path.read_text() + '[prices.cx-big]\ninput = 2\noutput = 20\n')  # every model priced: nothing to say
+    run = prepare_run(RunOptions(board=folder, config=path, agent="codex", runtime="host"))
+    run.close()
+    assert not any("no cost" in note for note in run.notes())
 
 
 def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude):

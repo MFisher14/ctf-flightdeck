@@ -254,6 +254,8 @@ class Lane:
     dollars: float | None = 0.0  # None once any turn had no known price (the total is then not known)
     known_dollars: float = 0.0  # every priced amount, turn or not, also after a turn with no price
     unpriced: int = 0  # reports that had no known price
+    unreported: int = 0  # of those, coding-agent CLI turns whose cost never came (TurnReport.unreported): no price was missing for them
+    dollars_later: bool = False  # a coding-agent CLI's turn is under way: its cost comes when the turn ends, so `dollars` is not settled
     token_cap: int | None = None
     dollar_cap: float | None = None
     started_at: float = 0.0
@@ -300,13 +302,20 @@ class Lane:
         return next((a for a in self.alerts if a.kind is kind), None)
 
     def budget_used(self) -> float | None:
-        """Largest fraction of a cap used so far, or None if the lane has no caps."""
+        """Largest fraction of a cap used so far, or None if the lane has no caps. When the
+        only spend with no known cost is CLI turns whose cost never came (unreported), the
+        dollar cap holds on what is known; spend with no price leaves it unenforceable."""
         used = []
         if self.token_cap:
             used.append(self.tokens / self.token_cap)
-        if self.dollar_cap and self.dollars is not None:
-            used.append(self.dollars / self.dollar_cap)
+        if self.dollar_cap and not self.no_price():
+            spent = self.dollars if self.dollars is not None else self.known_dollars
+            used.append(spent / self.dollar_cap)
         return max(used) if used else None
+
+    def no_price(self) -> bool:
+        """Whether some of the lane's spend had no price (not only a CLI turn whose cost never came)."""
+        return self.unpriced > self.unreported
 
 
 class EventKind(StrEnum):
