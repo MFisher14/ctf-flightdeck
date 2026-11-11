@@ -42,7 +42,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen #lanes, FleetScreen #board { overflow-x: hidden; }
     FleetScreen #why { height: 2; margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
     FleetScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
-    FleetScreen #keys { height: 1; margin: 0 1; }
+    FleetScreen #keys { height: 1; margin: 0 1; link-style: none; link-style-hover: underline; }
     """
     BINDINGS = [
         Binding("o", "open_lane", "open"),

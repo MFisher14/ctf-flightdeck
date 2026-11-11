@@ -48,7 +48,7 @@ class FocusScreen(Screen, inherit_bindings=False):
     DEFAULT_CSS = """
     FocusScreen { layout: vertical; }
     FocusScreen #header { height: 1; margin: 0 1; }
-    FocusScreen #others { height: 1; margin: 0 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    FocusScreen #others { height: 1; margin: 0 1; text-wrap: nowrap; text-overflow: ellipsis; link-style: none; link-style-hover: underline; }
     FocusScreen #main { height: 1fr; margin-top: 1; }
     FocusScreen #talk-pane { width: 3fr; }
     FocusScreen #files-pane { width: 2fr; }
