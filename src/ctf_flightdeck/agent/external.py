@@ -1658,17 +1658,22 @@ class _Run:
 
     async def step(self, action: str, text: str, *, prefix: str = "", files: Sequence[FileChange] | None = None) -> None:
         """One tool call and its result: a turn, with the files changed since the last look
-        and any new candidate flag in the output (never a claimed one: see sort_out)."""
+        and any new candidate flag in the output (never a claimed one: see sort_out). A step
+        the lane's end cuts off (killed or solved while this looks) is not the lane's, and the
+        deck would drop it whole, so it is not reported: its tokens stay for the CLI's report
+        of the turn's cost (turn_end), which the deck counts after the lane's end too."""
         changed = await self.changes()
         if files:
             known = {change.path for change in changed}
             changed += tuple(change for change in files if change.path not in known)
         flags, _ = await self.candidates(text, own=False)
-        output = _clip(prefix + untrusted(text).strip(), OUTPUT_CHARS)
         self.steps += 1
+        self.cost_due = True  # the CLI reports what the turn cost when it ends (turn_end)
+        if self.over():
+            return
+        output = _clip(prefix + untrusted(text).strip(), OUTPUT_CHARS)
         tokens, cached = self.take_tokens()
         flag, claimed = flags[0] if flags else (None, True)
-        self.cost_due = True  # the CLI reports what the turn cost when it ends (turn_end)
         self.report(TurnReport(action=_one_line(action), output=output, tokens=tokens, cached_tokens=cached,
                                files=changed[:MAX_FILES_PER_STEP], flag=flag, claimed=claimed, dollars_later=True))
         for flag, claimed in flags[1:]:  # more candidates in one output: each is its own approval
@@ -1893,9 +1898,12 @@ class _ClaudeRun(_Run):
                     self.said = text
                 self.report_text(text, *self.sort_out(*last), show=False)
             self.release_held()  # the turn is over: what it never claimed goes to the player
+            # The turn's cost on its own: a flag in its last words may have solved the lane just
+            # now, and after a lane's end the deck counts a report of spend only (spend_only).
             self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
-                                   action=f"says: {_one_line(said, 200)}" if said and not failed else "",
                                    why=TURN_END.format(kind=self.kind), model=proc.model, turn_end=True))
+            if said and not failed:
+                self.report(TurnReport(turn=False, action=f"says: {_one_line(said, 200)}"))
             if failed:
                 why = _one_line(text, 300)
                 self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})"
