@@ -464,22 +464,28 @@ def test_the_api_config_lines_replace_the_tables_they_name_and_load(tmp_path):
     assert (light.engine, light.model, light.base_url) == ("openai", "VENDOR/MODEL", "https://openrouter.ai/api/v1")
 
 
-@pytest.mark.parametrize(("ident", "runtime", "role"), [
-    ("qwen3.5-9b", OLLAMA, LANES), ("qwen3.5-9b", MLX, LANES), ("phi4-mini", OLLAMA, LIGHT), ("gemma4-12b", MLX, LIGHT),
-    ("anthropic", None, LANES), ("anthropic", None, LIGHT),
-])
+@pytest.mark.parametrize(("ident", "runtime", "role"), [*SERVED, ("anthropic", None, LANES), ("anthropic", None, LIGHT)])
 def test_the_init_command_it_suggests_writes_a_config_with_that_choice(ident, runtime, role, tmp_path):
+    """The model, and the server it is on: an MLX build's config must ask the MLX server, not Ollama's."""
     choice = load_catalog().get(ident)
     build = choice.build(runtime) if runtime else None
     command = init_command(choice, role, build)
     target = tmp_path / "config.toml"
-    args = [*command.split()[1:], "--host", "--path", str(target)]
+    args = [*shlex.split(command)[1:], "--host", "--path", str(target)]
     if role == LIGHT and "--provider" not in args:
         args += ["--provider", "local", "--models", "some-model"]
     result = CliRunner().invoke(cli.app, args)
     assert result.exit_code == 0, result.output
     config = load_config(target)
-    if role == LANES:
-        assert config.models == ((build.model,) if build else setup.ANTHROPIC_LADDER)
+    if build is None:  # the Anthropic API
+        if role == LANES:
+            assert (config.api.provider, config.api.base_url, config.api.key_env) == ("anthropic", *setup.ANTHROPIC)
+            assert config.models == setup.ANTHROPIC_LADDER
+        else:
+            assert (config.light.engine, config.light.model, config.light.base_url, config.light.key_env) == (
+                "anthropic", setup.LIGHT_ANTHROPIC, *setup.ANTHROPIC)
+    elif role == LANES:
+        assert (config.api.base_url, config.api.key_env, config.models) == (URLS[build.runtime], "", (build.model,))
     else:
-        assert config.light.model == (build.model if build else setup.LIGHT_ANTHROPIC)
+        light = config.light
+        assert (light.engine, light.model, light.base_url, light.key_env) == ("openai", build.model, URLS[build.runtime], "")
