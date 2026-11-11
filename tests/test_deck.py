@@ -1449,7 +1449,6 @@ def test_a_finished_lane_refuses_every_lane_intervention(how):
         iv.Resume(lane.id),
         iv.Hint(lane.id, "x"),
         iv.Redirect(lane.id, "y"),
-        iv.Fork(lane.id),
         iv.Kill(lane.id, requeue=True),
         iv.Kill(lane.id, requeue=False),
         iv.Escalate(lane.id),
@@ -1461,6 +1460,14 @@ def test_a_finished_lane_refuses_every_lane_intervention(how):
         assert not out.ok and "finished" in out.message, intervention
     assert lane.state.value == how and lane.model == "small" and lane.hints == []
     assert driver.calls == calls and deck.lanes == lanes and deck.queue == queue
+    # Fork is the way on from a lane that ended without a solve (another model, another approach)
+    forked = deck.apply(iv.Fork(lane.id))
+    if how in ("killed", "gave up"):
+        assert forked.ok and newest(deck).challenge_id == "c0"
+    elif how == "stopped":
+        assert not forked.ok and "already solved" in forked.message  # a sibling solved it: nothing left to try
+    else:
+        assert not forked.ok and forked.message == f"{lane.id} has finished (solved)"
 
 
 def test_an_unknown_lane_is_refused():
@@ -2074,3 +2081,14 @@ def test_a_solve_the_platform_lists_closes_the_challenge_in_solo_mode_too():
     assert deck.queue == [] and driver.started() == ["c0"]
     solved = [e.data for e in deck.events if e.kind is EventKind.TEAMMATE and e.data.get("source") == "platform"]
     assert [(d["who"], d["before_run"]) for d in solved] == [("your team", True), ("you", False)]
+
+
+def test_a_lane_that_ended_without_a_solve_can_be_forked_onto_another_model():
+    deck, _, _ = make_deck(n=1, max_lanes=2)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, gave_up="the model declined (cyber)"))
+    assert lane.state is LaneState.GAVE_UP
+    out = deck.apply(iv.Escalate(lane.id))
+    assert not out.ok and out.message.endswith("fork it to try another model (f)")
+    out = deck.apply(iv.Fork(lane.id, model="big"))
+    assert out.ok and newest(deck).model == "big" and newest(deck).challenge_id == "c0"

@@ -735,7 +735,9 @@ def test_a_docker_lane_runs_in_work_on_its_copy_of_the_handout(box):
 
 
 def test_a_docker_command_merges_its_output_takes_stdin_and_reports_its_exit_code(box):
-    assert run(box.run("cat; echo err >&2; exit 4", timeout=30, stdin=b"in\n")) == RunResult(4, b"in\nerr\n")
+    result = run(box.run("cat; echo err >&2; exit 4", timeout=30, stdin=b"in\n"))
+    # docker carries stdout and stderr as separate streams: their order in the merged output is not fixed
+    assert result.exit_code == 4 and sorted(result.output.splitlines()) == [b"err", b"in"]
     assert run(box.run("cat", timeout=30)) == RunResult(0, b"")
 
 

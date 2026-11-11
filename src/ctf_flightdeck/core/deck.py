@@ -457,8 +457,11 @@ class Deck:
         lane = self.lanes.get(iv.lane)
         if lane is None:
             return Outcome(False, f"No lane {iv.lane}")
+        if lane.finished and isinstance(iv, Fork) and lane.state is not LaneState.SOLVED:
+            return self._fork(lane, iv.approach.strip(), iv.model)  # a lane that ended (the model declined, say): try again on another model
         if lane.finished:
-            return Outcome(False, f"{lane.id} has finished ({lane.state.value})")
+            hint = "; fork it to try another model (f)" if lane.state is not LaneState.SOLVED and isinstance(iv, Escalate) else ""
+            return Outcome(False, f"{lane.id} has finished ({lane.state.value}){hint}")
         if lane.state is LaneState.TAKEOVER and not isinstance(iv, (HandBack, Kill)):
             return Outcome(False, f"You have {lane.id}'s shell; hand it back first")
         match iv:
