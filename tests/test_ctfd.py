@@ -513,7 +513,9 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them():
     assert [a.status for a in got] == ["incorrect", "correct", "already_solved", "incorrect", "incorrect", "locked_out",
                                        "partial", "paused"]
     assert got[3].message == "Incorrect. You have 1 try remaining." and got[4].message == "Incorrect. You have 0 tries remaining."
-    assert got[5] == Attempt("locked_out", "You have 0 tries remaining") and 6 not in fake.solved
+    assert got[5] == Attempt("locked_out", "You have 0 tries remaining", tries_left=0) and 6 not in fake.solved
+    # the tries left, as CTFd says them: on a wrong flag of a capped challenge, and none once locked out
+    assert [a.tries_left for a in got] == [None, None, None, 1, 0, 0, None, None]
     assert got[7] == Attempt("paused", "Fake CTF is paused")
 
 
@@ -1157,12 +1159,12 @@ def test_a_flag_ctfd_did_not_check_for_want_of_tries_is_not_remembered_as_wrong(
     with FakeCTFd([FakeChallenge(1, "One Try", category="Crypto", flag="test{right}", max_attempts=1)]) as fake:
         with CTFdVerifier(fake.base_url, TOKEN, {"one-try": 1}) as verify:
             assert verify("one-try", "test{wrong}") is False  # the last real try: CTFd checked it
-            assert verify.last_attempt == Attempt("incorrect", "Incorrect. You have 0 tries remaining.")
+            assert verify.last_attempt == Attempt("incorrect", "Incorrect. You have 0 tries remaining.", tries_left=0)
             driver = Driver()
             deck, lane = one_lane_deck(verify, Challenge(id="one-try", name="One Try", category="cry", points=100), driver)
             deck.report(lane.id, TurnReport(action="solve", flag="test{right}"))
             deck.apply(iv.Approve(lane.id))
-            assert verify.last_attempt == Attempt("locked_out", "You have 0 tries remaining")
+            assert verify.last_attempt == Attempt("locked_out", "You have 0 tries remaining", tries_left=0)
             assert "did not check the flag" in verify.last_error and "no tries left" in verify.last_error
             assert "You have 0 tries remaining" in verify.last_error
             assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM  # the player says how it went

@@ -3,8 +3,10 @@
 flightdeck plays a CTFd event through the folder board of M1 (platform/manual.py): a pull
 writes each challenge CTFd shows into a folder of its own, with its challenge.json and its
 downloaded files, and the deck works that folder as it works any board. Flags go back
-through CTFdVerifier, the deck's verify(), which the deck calls only for a flag the player
-approved (or under the auto submit policy).
+through CTFdVerifier, only for a flag the player approved (or under the auto submit policy):
+a run calls its submit() off the console's loop, one flag at a time (run.py's submitter).
+A challenge's limit on tries goes into its challenge.json ("max_attempts"), and CTFd's
+answer to a flag says how many are left when it does (Attempt.tries_left).
 
 CTFd's API (v1), as this module uses it:
 - Every request carries `Authorization: Token <token>` and `Content-Type: application/json`.
@@ -117,6 +119,7 @@ _SECONDS = re.compile(r"\s*(\d{1,10}(?:\.\d{1,6})?)\s*")
 _URL = re.compile(r"https?://[^\s<>\"'`\\]+", re.IGNORECASE)
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _FILE_TOKEN = re.compile(r"([?&]token=)[^&#\s]*", re.IGNORECASE)
+_TRIES_LEFT = re.compile(r"\bYou have (\d{1,9}) (?:try|tries) remaining\b")  # what CTFd adds to a wrong flag's message
 _SURROGATE = re.compile(r"[\ud800-\udfff]")  # in a str only as a lone half of a pair: valid JSON, unprintable
 _NOT_JSON = object()
 _LATE = object()  # an answer that was not all in by the deadline
@@ -145,10 +148,14 @@ class CTFdError(Exception):
 @dataclass(frozen=True)
 class Attempt:
     """CTFd's answer to a flag. `status` is one of ATTEMPT_STATUSES; `message` is CTFd's
-    own words, made safe to show (one line, control characters visible, cut short)."""
+    own words, made safe to show (one line, control characters visible, cut short).
+    `tries_left` is how many tries the account has left on the challenge when CTFd says:
+    on a wrong flag of a challenge with a limit ("... You have 2 tries remaining."), and 0
+    once there are none ("locked_out"); None when it did not say."""
 
     status: str  # correct | incorrect | already_solved | paused | ratelimited | partial | locked_out
     message: str
+    tries_left: int | None = None
 
 
 @dataclass(frozen=True)
@@ -655,26 +662,39 @@ class _Again:
 # ---------------------------------------------------------------------- the deck's verifier
 
 
+@dataclass(frozen=True)
+class Verdict:
+    """CTFdVerifier.submit()'s answer to one flag. `ok`: True correct, False incorrect, None
+    when CTFd did not judge it or the outcome is unknown; `attempt`: CTFd's answer, when there
+    was one; `error`: why the flag was not judged (None when it was)."""
+
+    ok: bool | None
+    attempt: Attempt | None = None
+    error: str | None = None
+
+
 class CTFdVerifier:
-    """The deck's verify() for a CTFd board: submits a flag and says whether it was right.
+    """Submits a flag to CTFd and says whether it was right: submit() returns a Verdict, and
+    calling the verifier (the deck's verify(), for a caller that waits) returns its `ok`.
 
     True for correct, False for incorrect, None when CTFd did not judge the flag (already
     solved, paused, rate-limited, out of tries, a partial answer) or the outcome is unknown
-    (no answer, an error): the deck then asks the player to submit by hand and confirm.
-    `last_error` says why for the console; `last_attempt` holds CTFd's answer when there was
-    one, and its status tells a caller what to do next: "already_solved" means the account
-    (the team) solved the challenge already, without that flag being checked, and
-    "locked_out" that no flag for it can be checked any more.
+    (no answer, an error): the deck then asks the player to submit by hand and confirm. The
+    Verdict's `error` says why for the console; its `attempt` holds CTFd's answer when there
+    was one, and its status tells a caller what to do next: "already_solved" means the
+    account (the team) solved the challenge already, without that flag being checked, and
+    "locked_out" that no flag for it can be checked any more; its `tries_left` is what CTFd
+    said of the tries left. A call sets `last_error` and `last_attempt` from them; submit()
+    sets nothing, so a run calls it from a worker thread (asyncio.to_thread) and the
+    console's loop never waits for CTFd (run.py's submitter).
 
-    The deck calls it synchronously on the console's event loop, so it never touches asyncio:
-    one request with its own httpx.Client, which blocks the console for that round trip (a
-    rare, player-approved action), and never longer than `timeout` seconds in all. httpx's
-    timeouts bound each step of a request only (a server that sends a byte now and then
-    never trips them), so the request runs in a worker thread the call waits for; one
-    still going when the time is up is left to end on its own, and the answer is unknown.
-    It never retries: a retried submit could count twice. `ids` maps board ids (slugs) to
-    CTFd ids: Pull.ids, or load_ids(board folder); after a wave, add the new ones to
-    `verifier.ids`.
+    It never touches asyncio: one request with its own httpx.Client, and never longer than
+    `timeout` seconds in all. httpx's timeouts bound each step of a request only (a server
+    that sends a byte now and then never trips them), so the request runs in a worker
+    thread the call waits for; one still going when the time is up is left to end on its
+    own, and the answer is unknown. It never retries: a retried submit could count twice.
+    `ids` maps board ids (slugs) to CTFd ids: Pull.ids, or load_ids(board folder); after a
+    wave, add the new ones to `verifier.ids`.
     """
 
     def __init__(
@@ -719,37 +739,38 @@ class CTFdVerifier:
     def __call__(self, challenge_id: str, flag: str) -> bool | None:
         self.last_error = None
         self.last_attempt = None
+        verdict = self.submit(challenge_id, flag)
+        self.last_error, self.last_attempt = verdict.error, verdict.attempt
+        return verdict.ok
+
+    def submit(self, challenge_id: str, flag: str) -> Verdict:
+        """Submit `flag` for the board's challenge `challenge_id`, once: CTFd's verdict, or
+        why there is none. It changes nothing on the verifier, so any thread may call it."""
         number = self.ids.get(challenge_id)
         if number is None:
-            self.last_error = (
+            return Verdict(None, error=(
                 f"{untrusted(str(challenge_id), one_line=True)} was not pulled from CTFd, so flightdeck has no CTFd id to "
                 "submit it to: submit it by hand, then say whether it was accepted"
-            )
-            return None
+            ))
         endpoint = f"POST {API}/challenges/attempt"
         content = json.dumps({"challenge_id": number, "submission": flag}, ensure_ascii=True).encode("ascii")
         answer = self._submit(content, endpoint)
         if isinstance(answer, CTFdError):
-            self.last_error = str(answer)
-            return None
+            return Verdict(None, error=str(answer))
         if isinstance(answer, _Failure):
-            self.last_error = str(self._site.no_answer(endpoint, answer, 1, submit=True))
-            return None
+            return Verdict(None, error=str(self._site.no_answer(endpoint, answer, 1, submit=True)))
         error = None
         try:
             attempt = _attempt(self._site, answer)
         except CTFdError as exc:
             error = str(exc)
         if error is not None:
-            self.last_error = error
-            return None
-        self.last_attempt = attempt
+            return Verdict(None, error=error)
         if attempt.status == "correct":
-            return True
+            return Verdict(True, attempt)
         if attempt.status == "incorrect":
-            return False
-        self.last_error = _unjudged(attempt)
-        return None
+            return Verdict(False, attempt)
+        return Verdict(None, attempt, _unjudged(attempt))
 
     def _submit(self, content: bytes, endpoint: str) -> _Answer | _Failure | CTFdError:
         """The submission's one request, in a worker thread the call waits for, at most
@@ -824,7 +845,11 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
         said = site.short(message) if isinstance(message, str) else ""
         if status == "incorrect" and answer.status == 403:
             # CTFd's answer when the account has no tries left, sent before it checks the flag
-            return Attempt("locked_out", said)
+            return Attempt("locked_out", said, 0)
+        if status == "incorrect" and isinstance(message, str):
+            # read from CTFd's whole message, before it is cut short: its count comes last
+            counts = _TRIES_LEFT.findall(message)
+            return Attempt(status, said, int(counts[-1]) if counts else None)
         if status in ATTEMPT_STATUSES:
             return Attempt(status, said)
         if status == "authentication_required":
@@ -1122,6 +1147,7 @@ class _Spec:
     extra: tuple[str, ...]  # paragraphs flightdeck adds after it: the connection info, notes
     urls: tuple[str, ...]
     files: tuple[str, ...]  # the file URLs, as CTFd sent them
+    max_attempts: int = 0  # the tries CTFd allows at the flag; 0: any number
 
 
 async def _pull_one(
@@ -1160,6 +1186,7 @@ async def _pull_one(
                 "files": names,
                 "urls": list(spec.urls),
                 "id": slug,
+                **({"max_attempts": spec.max_attempts} if spec.max_attempts else {}),
             },
         )
         try:
@@ -1255,14 +1282,18 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
             f"Note from flightdeck: the connection info points at CTFd itself ({', '.join(platform)}), which lanes "
             "never get as an instance."
         )
-    tries = detail.get("max_attempts")  # 0 (or absent) when CTFd allows any number
-    if _is_number(tries):
+    tries = detail.get("max_attempts")  # 0 (or absent, or null) when CTFd allows any number
+    if tries is None:
+        tries = 0
+    if not _is_count(tries):
+        raise _Unusable("its max_attempts (the tries CTFd allows) is not a whole number, 0 or more")
+    if tries:
         # the player and the lane should know that every wrong flag costs one
         extra.append(
             f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
             "then checks no more."
         )
-    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files))
+    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries)
 
 
 def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:
