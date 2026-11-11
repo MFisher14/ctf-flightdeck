@@ -688,6 +688,30 @@ def test_a_run_that_crashed_says_so_and_counts_open_lanes_from_the_event_log(tmp
     assert "The run did not close cleanly (no run-end line)." in summary(record)
 
 
+def test_values_of_the_wrong_type_become_unknowns_not_crashes_or_zeros(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    run.close()
+    odd = [
+        {"kind": "release", "at": 1, "data": {"challenges": "x"}},  # not a list
+        {"kind": "turn", "at": 2, "lane": "L01", "challenge": "x", "data": {"turn": "two", "tokens": "many", "dollars": "1"}},
+        {"kind": "l1", "at": 3, "challenge": "x", "data": {"engine": 7, "status": "solved", "flags": "t{x}", "seconds": "fast"}},
+        {"kind": "intervention", "at": 4, "lane": "L01", "data": {"intervention": "hint", "text": ["a"]}},
+        {"kind": "outcome", "at": 4, "lane": "L01", "data": {"intervention": "hint", "ok": "yes"}},
+        {"kind": "submit", "at": 5, "lane": "L01", "challenge": "x", "data": {"flag": 123, "correct": "yes"}},
+    ]
+    with (tmp_path / "events.jsonl").open("a") as handle:
+        handle.writelines(json.dumps(line) + "\n" for line in odd)
+    text = report(load_run(tmp_path))
+    x = entries(sections(text, "### ")["X (misc, 10 pts): solved by L1 engine 7"])
+    assert x[-3:] == [
+        "L1 7: solved (the solve)",  # no flags list and no number of seconds: neither is made up
+        "you: hint L01: \\['a'\\] (no outcome in the log)",  # its "ok" is not true or false
+        "L01 submitted `123`: no verdict",
+    ]
+    assert ["(none)", "1", "0", "0%", "unknown"] in table_rows(text)  # a price that is not a number is unknown, not $0
+
+
 def test_a_run_with_nothing_in_it_still_reports(tmp_path):
     run = Script(tmp_path)
     text = report(run.close())
