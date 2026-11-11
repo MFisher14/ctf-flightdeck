@@ -149,6 +149,31 @@ def test_a_light_model_on_mlx_is_offered_and_init_says_how_to_serve_it(tmp_path,
     assert "note: lanes and the light model share the MLX server at 127.0.0.1:8080, which holds one model at a time" in other.output
 
 
+def test_mlx_lanes_on_another_port_serve_the_same_light_model_and_a_different_one_gets_its_own_server(tmp_path, monkeypatch):
+    lanes, gemma = "http://127.0.0.1:8081/v1", "mlx-community/gemma-4-12B-it-4bit"
+    same, target = init(monkeypatch, tmp_path, "--provider", "mlx", "--base-url", lanes, "--models", QWEN_MLX, "--host",
+                        "--light", "mlx", "--light-model", QWEN_MLX)
+    assert same.exit_code == 0, same.output
+    assert load_config(target).light.base_url == lanes  # the one server the player is told to start serves both
+    assert same.output.count("mlx_lm.server") == 1 and "--port 8081" in same.output and "note:" not in same.output
+    other, target = init(monkeypatch, tmp_path, "--provider", "mlx", "--base-url", lanes, "--models", QWEN_MLX, "--host",
+                         "--light", "mlx", "--light-model", gemma, name="other.toml")
+    assert other.exit_code == 0, other.output
+    assert load_config(target).light.base_url == "http://127.0.0.1:8080/v1"  # mlx_lm.server's default port, free here
+    assert f"next: serve the light model: mlx_lm.server --model {gemma}   (" in other.output
+    assert "share the MLX server" not in other.output
+
+
+def test_the_shared_mlx_server_note_names_the_lanes_server_as_given(tmp_path, monkeypatch):
+    result, target = init(monkeypatch, tmp_path, "--provider", "mlx", "--base-url", "http://localhost:8080/v1", "--models",
+                          QWEN_MLX, "--host", "--light", "mlx", "--light-model", "mlx-community/gemma-4-12B-it-4bit")
+    assert result.exit_code == 0, result.output
+    assert ("note: lanes and the light model share the MLX server at localhost:8080, which holds one model at a time; to "
+            "keep both loaded, serve the light model on another port (mlx_lm.server --model "
+            "mlx-community/gemma-4-12B-it-4bit --port 8081) and set [light] base_url to http://127.0.0.1:8081/v1") in result.output
+    assert "next: serve the light model" not in result.output  # 127.0.0.1:8080 is the lanes' server: not a second one
+
+
 def test_away_from_a_terminal_a_local_light_model_must_be_named_and_is_written_with_thinking_off(tmp_path, monkeypatch):
     result, target = init(monkeypatch, tmp_path, "--provider", "openrouter", "--models", "a/b", "--host", "--light", "ollama")
     assert result.exit_code == 2 and not target.exists()

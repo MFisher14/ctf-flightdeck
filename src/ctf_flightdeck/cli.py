@@ -521,6 +521,11 @@ def init(
     from .light import on_this_machine
 
     here = dialect == "openai" and on_this_machine(base_url)  # a server on this machine: its replies can take minutes
+    mlx_here = provider == "mlx" and on_this_machine(base_url)  # the lanes' MLX server, at whatever port it was given
+    if light_table is not None and light_choice == "mlx" and mlx_here and light_table.model == ladder[0]:
+        from dataclasses import replace
+
+        light_table = replace(light_table, base_url=base_url)  # the one server the player starts serves both
     answers = Answers(base_url, key_env or "", ladder, lanes_at, max_lanes, dollar_cap=dollar_cap,
                       provider=dialect, prices=prices, fallback=spare, light=light_table,
                       timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None)
@@ -541,17 +546,19 @@ def init(
         typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
                    "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX in a "
                    "benchmark on one machine)")
-    if light_table is not None and light_choice == "mlx" and (provider != "mlx" or light_table.model != ladder[0]):
+    if light_table is not None and light_choice == "mlx":
         import shlex
+        from urllib.parse import urlsplit
 
         served = shlex.quote(light_table.model)
-        if provider != "mlx":
+        port = urlsplit(light_table.base_url).port  # [light]'s: mlx_lm.server's default 8080, or the lanes' (above)
+        if not (mlx_here and urlsplit(base_url).port == port):  # a server of its own, at the default port
             typer.echo(f"next: serve the light model: mlx_lm.server --model {served}   (flightdeck asks for thinking off "
                        "with each request, so it needs no flag for that)")
-        else:
-            typer.echo("note: lanes and the light model share the MLX server at 127.0.0.1:8080, which holds one model at "
-                       f"a time; to keep both loaded, serve the light model on another port (mlx_lm.server --model {served} "
-                       "--port 8081) and set [light] base_url to http://127.0.0.1:8081/v1")
+        elif light_table.model != ladder[0]:  # the lanes' server, which holds one model at a time
+            typer.echo(f"note: lanes and the light model share the MLX server at {urlsplit(base_url).netloc}, which holds "
+                       "one model at a time; to keep both loaded, serve the light model on another port (mlx_lm.server "
+                       f"--model {served} --port {port + 1}) and set [light] base_url to http://127.0.0.1:{port + 1}/v1")
     try:
         keys_file = str(keys_path())
     except KeysError:
