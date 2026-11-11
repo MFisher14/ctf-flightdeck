@@ -10,6 +10,28 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   Haiku, Sonnet and Opus 5.5 with their prices), with OpenRouter offered as a fallback when
   `OPENROUTER_API_KEY` is set: a lane whose calls keep failing moves there for the rest of its
   context and says so. Any config can name a `[fallback]` API; `flightdeck doctor` checks its key.
+- Before anything starts, `play` and `practice` ask each model API the lanes will use whether it
+  takes the key and serves the ladder's models (the Anthropic API through its Models API), and
+  stop with the closest ids it does serve, or the key's variable, or "start your local model
+  server". A typo in a model id no longer ends every lane at its first call.
+
+### Setup
+
+- `flightdeck init` checks each answer as you give it and asks again, says first if a config is
+  already there, takes `ollama` as the local provider and `--runtime docker|host`, and away from
+  a terminal names every option it still needs in one message. Its errors name your config file.
+- `flightdeck doctor` compares your ladder with what a local model server lists. With `--agent`,
+  the `[api]` key is only a warning (agent lanes never use it), the lane image is probed for the
+  CLI as `play --agent` does, and the closing line says `flightdeck practice --agent ...`. Its
+  Docker advice fits your runtime.
+
+### Events
+
+- A TCP service is a live instance: `tcp://host:port` in a challenge's `urls`, and what a CTFd
+  pull reads from connection info like `nc host port`. A docker lane on it gets the network
+  (asking first under `confirm`) and its brief names it.
+- A challenge CTFd lists as solved closes in solo mode too, credited as CTFd says: you, your
+  team, or "you or your team" when CTFd does not say.
 
 ### M4: after a run
 

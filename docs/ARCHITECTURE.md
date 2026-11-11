@@ -56,7 +56,7 @@ with an agent loop per lane behind the same `LaneDriver` protocol.
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane: on the host (an allowlisted environment, no keys) or in a container per lane (`--pull never`); snapshots and diffs of the files a lane changes; the take-over shell. |
 | Tools | `agent/tools.py` | `shell`, `read_file`, `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | One asyncio task per lane on the console's loop (the deck's single thread). A turn is one model call; tool results go back into the context; the deck gets a `TurnReport` per turn. A small fixed prefix, then the challenge brief (challenge text fenced as data). Escalation starts a fresh context with the deck's summary. |
-| Run | `run.py` | Checks config, board, key, Docker and the image before anything starts; wires the deck, driver, event log and console; releases the board on the console's loop. |
+| Run | `run.py`, `apicheck.py` | Checks config, board, key, Docker and the image before anything starts, then asks each model API once whether it takes the key and serves the ladder (a refused key, a model it does not serve or no server up stops the run); wires the deck, driver, event log and console; releases the board on the console's loop. |
 | Event log | `eventlog.py` | Append-only `events.jsonl` per run: every deck event, flushed per line. |
 
 Board format: a folder; each subfolder with a `challenge.json` is a challenge:

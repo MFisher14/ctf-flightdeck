@@ -24,9 +24,11 @@ flightdeck practice             # 14 small practice challenges that ship with fl
 ```
 
 `flightdeck` on its own says what to do next on your machine, and `flightdeck doctor` checks
-everything (Python, the config, the API key variable, Docker, the lane image) and says how to fix
-each problem. No setup at all: `flightdeck mock` opens the console on scripted data and spends
-nothing.
+everything (Python, the config, the API key variable, a local model server and its models, Docker,
+the lane image) and says how to fix each problem. Before the console opens, `play` and `practice`
+ask the model API whether it takes your key and serves every model in your ladder, and stop with
+what to fix if not. No setup at all: `flightdeck mock` opens the console on scripted data and
+spends nothing.
 
 ## Keys and model APIs
 
