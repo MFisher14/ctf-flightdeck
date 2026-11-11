@@ -24,7 +24,7 @@ import pytest
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import ChallengeStatus, DeckConfig, PendingKind
+from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, EventKind, PendingKind
 from ctf_flightdeck.platform.ctfd import (
     STATE_FILE,
     Attempt,
@@ -394,9 +394,11 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them():
                        (6, "test{two}"), (7, "test{half}"))
         fake.paused = True
         got += statuses((2, "test{rsa}"))
-    assert [a.status for a in got] == ["incorrect", "correct", "already_solved", "incorrect", "incorrect", "incorrect",
+    # out of tries, CTFd answers "incorrect" with HTTP 403 before it checks the flag: here the right one
+    assert [a.status for a in got] == ["incorrect", "correct", "already_solved", "incorrect", "incorrect", "locked_out",
                                        "partial", "paused"]
-    assert got[3].message == "Incorrect. You have 1 try remaining." and got[5].message == "You have 0 tries remaining"
+    assert got[3].message == "Incorrect. You have 1 try remaining." and got[4].message == "Incorrect. You have 0 tries remaining."
+    assert got[5] == Attempt("locked_out", "You have 0 tries remaining") and 6 not in fake.solved
     assert got[7] == Attempt("paused", "Fake CTF is paused")
 
 
@@ -495,6 +497,18 @@ def test_connection_info_gives_the_live_origins_and_joins_the_description(tmp_pa
     assert pwn.urls == () and not pwn.challenge.live  # nc is not a URL: no origin, but the lane still reads it
     assert pwn.challenge.description == "It echoes.\n\nConnection info: nc pwn.example.org 1337"
     assert found["warmup"].urls == () and found["warmup"].challenge.description == "Say hello."
+
+
+def test_a_challenge_with_capped_tries_says_so_in_its_description(tmp_path):
+    board = [FakeChallenge(1, "Capped", description="Guess well.", max_attempts=3), FakeChallenge(2, "One Shot", max_attempts=1),
+             FakeChallenge(3, "Free", description="Any number of tries."), FakeChallenge(4, "Unsaid", max_attempts=None)]
+    with FakeCTFd(board) as fake:
+        found = {item.challenge.id: item.challenge for item in pulled(fake, tmp_path / "board").board.challenges}
+    assert found["capped"].description == (
+        "Guess well.\n\nNote from flightdeck: CTFd allows 3 attempts at this challenge's flag, then checks no more.")
+    assert found["one-shot"].description == (
+        "Note from flightdeck: CTFd allows 1 attempt at this challenge's flag, then checks no more.")
+    assert found["free"].description == "Any number of tries." and found["unsaid"].description == ""
 
 
 def test_origins_are_taken_from_urls_in_the_connection_info():
@@ -783,3 +797,32 @@ def test_a_pulled_board_plays_on_the_deck_with_the_ctfd_verifier(tmp_path):
     sent = [r.json for r in fake.to("/api/v1/challenges/attempt")]
     assert sent == [{"challenge_id": 2, "submission": "test{wrong}"}, {"challenge_id": 2, "submission": "test{rsa}"},
                     {"challenge_id": 1, "submission": "test{hello}"}]
+
+
+def one_lane_deck(verify, challenge: Challenge, driver: Driver, **config) -> tuple[Deck, object]:
+    """A deck with one lane on `challenge`, submitting through `verify` after the player approves."""
+    config.setdefault("submit", "confirm")
+    deck = Deck(DeckConfig(event="Fake CTF", flag_format=FLAG_FORMAT, models=("m",), **config), driver, Clock(),
+                verify=verify)
+    deck.release([challenge], [QueueEntry(challenge.id, "m")])
+    (lane,) = deck.lanes_on(challenge.id)
+    return deck, lane
+
+
+def test_a_flag_ctfd_did_not_check_for_want_of_tries_is_not_remembered_as_wrong():
+    # Out of tries, CTFd answers {"status": "incorrect"} with HTTP 403 before it looks at the flag.
+    with FakeCTFd([FakeChallenge(1, "One Try", category="Crypto", flag="test{right}", max_attempts=1)]) as fake:
+        with CTFdVerifier(fake.base_url, TOKEN, {"one-try": 1}) as verify:
+            assert verify("one-try", "test{wrong}") is False  # the last real try: CTFd checked it
+            assert verify.last_attempt == Attempt("incorrect", "Incorrect. You have 0 tries remaining.")
+            driver = Driver()
+            deck, lane = one_lane_deck(verify, Challenge(id="one-try", name="One Try", category="cry", points=100), driver)
+            deck.report(lane.id, TurnReport(action="solve", flag="test{right}"))
+            deck.apply(iv.Approve(lane.id))
+            assert verify.last_attempt == Attempt("locked_out", "You have 0 tries remaining")
+            assert "did not check the flag" in verify.last_error and "no tries left" in verify.last_error
+            assert "You have 0 tries remaining" in verify.last_error
+            assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM  # the player says how it went
+            assert deck.not_flag("one-try", "test{right}") is None and driver.rejected_flags == []
+            assert deck.summary(lane).not_flags == ()
+        assert len(fake.to("/api/v1/challenges/attempt")) == 2

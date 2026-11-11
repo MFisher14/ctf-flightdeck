@@ -17,7 +17,9 @@ CTFd's API (v1), as this module uses it:
   followed when a server does. A challenge locked behind another is listed as type "hidden",
   name "???": it is left out until a later pull finds it unlocked.
 - POST /api/v1/challenges/attempt puts a status in its data whatever the HTTP status: paused
-  comes as 403, ratelimited as 429 or 403, and a challenge out of tries as 403.
+  comes as 403, ratelimited as 429 or 403. A challenge out of tries comes as "incorrect" with
+  403, sent before CTFd looks at the flag (the last real try is "incorrect" with 200): this
+  module calls that "locked_out", since the flag was not checked and may be right.
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
   403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead.
 
@@ -79,8 +81,10 @@ API = "/api/v1"
 STATE_FILE = "ctfd.json"
 """In the board folder: the CTFd's URL and the CTFd id of each board id pulled."""
 
-ATTEMPT_STATUSES = ("correct", "incorrect", "already_solved", "paused", "ratelimited", "partial")
-"""CTFd's answers to a flag. "partial": part of a multi-part answer was right (CTFd 3.8+)."""
+ATTEMPT_STATUSES = ("correct", "incorrect", "already_solved", "paused", "ratelimited", "partial", "locked_out")
+"""CTFd's answers to a flag. "partial": part of a multi-part answer was right (CTFd 3.8+).
+"locked_out": CTFd's "incorrect" sent with HTTP 403, which means this account has no tries
+left on the challenge: CTFd did not check the flag."""
 
 MAX_WAIT = 30.0  # seconds: the longest pause between tries, whatever Retry-After asks for
 CONNECT_TIMEOUT = 10.0  # seconds: a connection that takes longer is not coming
@@ -129,7 +133,7 @@ class Attempt:
     """CTFd's answer to a flag. `status` is one of ATTEMPT_STATUSES; `message` is CTFd's
     own words, made safe to show (one line, control characters visible, cut short)."""
 
-    status: str  # correct | incorrect | already_solved | paused | ratelimited | partial
+    status: str  # correct | incorrect | already_solved | paused | ratelimited | partial | locked_out
     message: str
 
 
@@ -554,9 +558,11 @@ class CTFdVerifier:
     """The deck's verify() for a CTFd board: submits a flag and says whether it was right.
 
     True for correct (or already solved), False for incorrect, None when CTFd did not judge
-    it (paused, rate-limited, a partial answer) or the outcome is unknown (no answer, an
-    error): the deck then asks the player to submit by hand and confirm. `last_error` says
-    why for the console; `last_attempt` holds CTFd's answer when there was one.
+    it (paused, rate-limited, out of tries, a partial answer) or the outcome is unknown (no
+    answer, an error): the deck then asks the player to submit by hand and confirm.
+    `last_error` says why for the console; `last_attempt` holds CTFd's answer when there was
+    one (its status tells a caller what to do next: "locked_out" means no flag for that
+    challenge can be checked any more).
 
     The deck calls it synchronously on the console's event loop, so it never touches asyncio:
     one request with its own httpx.Client, which blocks the console for that round trip (a
@@ -649,6 +655,11 @@ def _unjudged(attempt: Attempt) -> str:
         return f"CTFd is paused, so it did not check the flag{said}. Submit it by hand when CTFd runs again"
     if attempt.status == "ratelimited":
         return f"CTFd rate-limited the submission and did not check the flag{said}. Wait, then submit it by hand"
+    if attempt.status == "locked_out":
+        return (
+            f"CTFd did not check the flag: this account has no tries left on this challenge{said}, so CTFd checks "
+            "no more flags for it. The flag is not known to be wrong"
+        )
     return f"CTFd says the flag is only part of the answer{said}; the challenge is not solved yet"
 
 
@@ -661,6 +672,9 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
     if isinstance(status, str):
         message = data.get("message")
         said = site.short(message) if isinstance(message, str) else ""
+        if status == "incorrect" and answer.status == 403:
+            # CTFd's answer when the account has no tries left, sent before it checks the flag
+            return Attempt("locked_out", said)
         if status in ATTEMPT_STATUSES:
             return Attempt(status, said)
         if status == "authentication_required":
@@ -995,8 +1009,21 @@ def _spec(number: int, item: dict, detail: dict) -> _Spec:
     connection = connection.strip()
     if connection and connection not in description:
         # the folder board has no field for it: `nc host port` must still reach the lane
-        description = (description.rstrip() + "\n\n" if description.strip() else "") + f"Connection info: {connection}"
+        description = _joined(description, f"Connection info: {connection}")
+    tries = detail.get("max_attempts")  # 0 (or absent) when CTFd allows any number
+    if _is_number(tries):
+        # nor for this: the player and the lane should know that every wrong flag costs one
+        description = _joined(
+            description,
+            f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
+            "then checks no more.",
+        )
     return _Spec(name, category, points, solves, description, origins_in(connection), tuple(files))
+
+
+def _joined(text: str, paragraph: str) -> str:
+    """`paragraph` after `text`, with a blank line between them."""
+    return (text.rstrip() + "\n\n" if text.strip() else "") + paragraph
 
 
 def _new_slug(name: str, number: int, taken: set[str]) -> str:
