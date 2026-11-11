@@ -101,7 +101,7 @@ models `flightdeck init` suggests.
   safe. Watch it: in November 2026 it was a preview for Apple silicon and Linux ARM64 only, with no
   Linux x86-64.
 
-## v0.1.0: go public
+## v0.1.0: go public (released 2026-11-11)
 
 M0 to M4 built (M5, Autopilot, comes after v0.1.0: below), docs and quickstart, secret scan
 `--all` clean, history reviewed, MIT license, a recorded demo.
@@ -120,6 +120,14 @@ nothing to a running console in a few minutes, without reading the architecture:
   work right after installing, with no clone.
 - A lane image that works out of the box, built or pulled only by a command the player runs.
 - A three-command quickstart at the top of the README, tested on a clean machine.
+
+## 0.2.0: a model per small job
+
+Measured per job before it was built (docs/MODELS.md): a light engine per job in the config,
+a flag check that can only hold an auto-submit (never cause one), routing at lane start (the
+instance by rule, a category guess only where the board names none, the specialist family),
+and a recon brief as a fenced data section of a lane's opening brief. eval-local scores each
+job the way a run uses it.
 
 ## M5: Autopilot (after v0.1.0)
 

@@ -2,7 +2,12 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.1.0 (2026-11-11)
+
+The first public release: the console, agent lanes on any model API or a local model server,
+coding-agent lanes (Claude Code, Codex), your own no-model solvers first, CTFd events and team
+play, alerts, practice scoring, post-flight reports, writeup drafts and build mode. Everything
+from M0 to M4 is below.
 
 ### Lanes and L1
 
@@ -25,6 +30,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   coding-agent lanes already did. The lane says what that search of the handout left out (the
   rest of a file past 1 MB, files past 16 MB in all, a file it could not read, files past the
   first 5000).
+- An L1 engine's result that the challenge's own text holds (a stand-in flag.txt, say) waits for
+  you under auto submit too; the lane says why and names the engine.
+- A lane that gave up while its flag waits (for you, or for CTFd's answer) takes no more turns,
+  so a hint, a new plan or an escalation is refused, saying why: fork it onto another model
+  (`f`), or answer or wait for its flag.
+- Coding-agent lanes: handing a lane back after a take-over interrupts the agent before it runs
+  again, so a step it chose before you took over never runs, and the take-over shell opens only
+  once the agent's last command is on the lane.
 - A lane's brief names a TCP service with the command that reaches it: `tcp://host:port (nc host
   port)`.
 - Coding-agent lanes hide every secret the run holds, not only the agent's own key: each value in
@@ -80,7 +93,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `flightdeck models ID` prints how to get a model, with the server arguments it was measured
   with, and the config lines that use it (`--json` for scripts). It recommends and never changes
   a config. Its catalog: Qwen3.5 9B, gpt-oss 20B, Gemma 4 12B and Phi-4-mini (light role only)
-  on Ollama and MLX, the Anthropic API and OpenRouter.
+  on Ollama and MLX, the Anthropic API and OpenRouter. It shows what a benchmark measured for each
+  model on each runtime (practice challenges solved, tool calls, the light-role score), and a
+  build that measured badly is not offered for that role (see [docs/MODELS.md](docs/MODELS.md)).
 - `flightdeck doctor` names the machine in one line and points at `flightdeck models`. Its
   terminal check says what your terminal's size leaves out of the console on a busy run, and
   from which size nothing is (147x18 for four lanes in Docker; team mode's key line needs 156
@@ -143,6 +158,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   On the way out, `play` names any flag that was still waiting for your approval.
 - The key line always shows `? help` and `q quit`, and keeps approve, decline and the commands on
   a narrow terminal.
+- Quitting stops every lane's work at once and raises no budget alert, approval or queued start
+  while the run closes; what a coding-agent CLI spent in the turn quitting cut still counts in
+  the totals, the transcripts and the scorecard.
+- The header's dollar total ends in `…` while a coding-agent CLI's turn is under way: that turn's
+  cost comes when it ends.
+- The quit prompt names each flag on its way to CTFd and says quitting leaves its answer unknown.
+- The run log (`events.jsonl`), `flightdeck report` and what the console shows of a lane show a
+  credential's name but not its value, as transcripts and writeup drafts do; the flags the run
+  knows stay whole. A report on an older run folder is cleaned the same way.
 - Help and the `/` menu say what take-over and decline do in a run; `flightdeck config` says "no
   dollar cap" instead of "$no cap".
 - When the queue is held (a model API failure every lane would hit), the header says "queue held"

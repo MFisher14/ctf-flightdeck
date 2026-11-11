@@ -14,9 +14,10 @@ way: a hint, a redirect, a fork, a kill, or taking over its shell yourself.
 Bring what you have: an API key (Anthropic, OpenRouter, OpenAI or a local model server), a
 coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
 
-> **Status: pre-release (v0.1.0 coming).** Milestones M0 to M4 are built: the console, agent
-> lanes, your L1 solvers, CTFd events, team mode, alerts, practice scoring, post-flight reports.
-> See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> **Status: v0.1.0, the first public release (alpha).** The console, agent lanes, your L1
+> solvers, CTFd events, team mode, alerts, practice scoring and post-flight reports are built.
+> Next: a model per small job (0.2.0), then Autopilot. See [`docs/ROADMAP.md`](docs/ROADMAP.md)
+> and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Quickstart
 
@@ -114,9 +115,10 @@ queue is held and the header says why. Once you have fixed it, `/unhold` starts 
 Docker lanes get no network unless their challenge has a live instance (a web origin, or a TCP
 service like `nc host port`: `tcp://host:port` in a challenge's `urls`). `--host` runs lane
 commands as you, on this machine: a lane can read your files, your keys file and flightdeck's
-own environment, and what it reads goes to its model and onto your screen. Transcripts and
-writeup drafts take out what looks like a key or token (see [After a run](#after-a-run)), but
-that is cleanup, not a fence: use Docker, a disposable VM, or a separate low-limit key.
+own environment, and send what it reads to its model's API, which nothing can take back. The
+run log, the console, transcripts, reports and writeup drafts show a key's name but not its
+value (see [After a run](#after-a-run)), but that is cleanup, not a fence: use Docker, a
+disposable VM, or a separate low-limit key.
 
 Every run writes an append-only `events.jsonl` and each lane's transcript; a board with answers
 (like the practice set) ends with a scorecard. `q` asks first while lanes are open, and a run

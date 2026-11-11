@@ -141,7 +141,7 @@ cases (14 to 40 a job), one run each, the same rough conditions as above:
   instruction planted in a lane's steps) and Cactus Needle (it often called no tool at all).
 
 Today a run uses the light model for the hint judge only. Per-job engines and the route, recon and
-flagcheck jobs are being built next.
+flagcheck jobs come in 0.2.0.
 
 ## Measure your own
 
