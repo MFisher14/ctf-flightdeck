@@ -11,7 +11,7 @@ Keep this file short: every agent re-reads it on every turn.
 - `docs/VISION.md`: what we are building and for whom. Read first.
 - `docs/DECISIONS.md`: decisions already made, with dates. Do not re-litigate them; propose changes
   in your report instead.
-- `docs/ROADMAP.md`: milestones M0 to v0.1.0 and their acceptance criteria.
+- `docs/ROADMAP.md`: milestones M0 to v0.1.0 and their acceptance criteria; M5 (Autopilot) after.
 - `docs/CONSOLE-SPEC.md`: the console layout, lanes, alerts and intervention keys.
 - `docs/ARCHITECTURE.md`: pipeline, stages, policies, components (draft).
 - `docs/PORTING.md`: what may later be copied from the private `~/ctf-tools` repo, and what never.
