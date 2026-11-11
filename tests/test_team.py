@@ -927,6 +927,22 @@ def test_our_box_holds_follow_our_lanes_allowed_on_the_box(folder, wall):
     assert reports == []
 
 
+def test_a_hold_is_freed_once_its_lane_ends_even_after_the_mirror_stopped_listening(folder, wall):
+    deck, _ = make_deck(("c0", "c1"), max_lanes=2)
+    w, reports = watcher(folder, deck, wall)
+    unsubscribe = mirror(w.channel, deck, report=reports.append)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    for lane in (first, second):
+        deck.report(lane.id, TurnReport(pending=LIVE_BOX))
+        assert deck.apply(iv.Approve(lane.id)).ok
+    unsubscribe()  # the mirror no longer sees lanes end
+    assert deck.apply(iv.Kill(first.id, requeue=False)).ok
+    w.poll()
+    assert w.channel.current("boxes", "c0") is None  # its lane ended: freed by the watcher
+    assert w.channel.current("boxes", "c1") == Mark("alpha", T0, second.id)  # its lane is still at work
+    assert reports == []
+
+
 def test_a_hold_left_by_an_earlier_run_is_freed_though_our_lane_works_the_challenge(folder, wall):
     TeamChannel(folder, "alpha", clock=wall).hold_box("c0", note="L03")  # our flightdeck before a restart
     deck, _ = make_deck(("c0",), max_lanes=1)

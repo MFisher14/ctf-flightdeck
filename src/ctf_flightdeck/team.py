@@ -478,12 +478,12 @@ class TeamWatcher:
                 self._do(messages, f"free our hold on the live box of {cid}", channel.free_box, cid)
         for cid, lane_id in using.items():
             mark = state.boxes.get(cid)
-            if mark is not None and mark.who != me:
-                messages.append(f"team: {mark.who} holds the live box of {cid}, which {lane_id} was allowed on")
-            elif mark is None or mark.at < renew_before:  # missing (its write failed, or it went stale), or due
-                held = self._do(messages, f"hold the live box of {cid} for {lane_id}", channel.hold_box, cid, note=lane_id)
-                if held is False:
-                    messages.append(f"team: {_holder(channel, 'boxes', cid)} holds the live box of {cid}, which {lane_id} was allowed on")
+            if mark is not None and mark.who == me and mark.at >= renew_before:
+                continue  # ours, and not due for renewal yet
+            # missing (its write failed, or it went stale), due, or a teammate's
+            held = self._do(messages, f"hold the live box of {cid} for {lane_id}", channel.hold_box, cid, note=lane_id)
+            if held is False:  # a teammate's fresh hold, which is never overwritten
+                messages.append(f"team: {_holder(channel, 'boxes', cid)} holds the live box of {cid}, which {lane_id} was allowed on")
 
     # ------------------------------------------------------------------ helpers
 
