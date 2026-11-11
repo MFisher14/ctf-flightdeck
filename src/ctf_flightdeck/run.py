@@ -44,6 +44,12 @@ submitted.
 The team channel (team.py): mirror() writes our claims, solves and live-box holds to the
 team folder as the deck makes them, and the team watcher applies the teammates' marks. A
 challenge the team folder shows as solved, or claimed by a teammate, is not queued.
+
+What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
+its process groups on this machine a record in the run folder, which a note in flightdeck's
+state folder names (so it is found wherever --run-dir put it). Before a run starts, what
+earlier runs left running because flightdeck itself was killed (SIGKILL, a power loss) is
+removed, and the notes say what.
 """
 
 from __future__ import annotations
@@ -73,6 +79,7 @@ from .config import Config, ConfigError, api_key, fallback_key, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
+from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, Solves, Verdict, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
@@ -195,6 +202,7 @@ class Run:
     _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
     _errors: list[str] = field(default_factory=list, repr=False)
     _submits: _Submits | None = field(default=None, repr=False)  # the deck's submitter, with the verifier
+    processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -221,9 +229,10 @@ class Run:
     @property
     def errors(self) -> list[str]:
         """Problems to show when the run has ended: the lanes' cleanup, the team folder's, the
-        flags still on their way to CTFd."""
+        flags still on their way to CTFd, and the run's process record's."""
         submits = self._submits.errors if self._submits is not None else []
-        return [*self.driver.errors, *submits, *self._errors]
+        record = [self.processes.problem] if self.processes is not None and self.processes.problem else []
+        return [*self.driver.errors, *submits, *self._errors, *record]
 
     def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
         """The challenges (default: the board's) in triage order: cheap first (fewest points,
@@ -297,6 +306,8 @@ class Run:
             self.verifier.close()
         self.transcripts.close()
         self.log.close()
+        if self.processes is not None:
+            self.processes.finish()
 
     def scorecard(self) -> str | None:
         """After close(): the run scored against the board's answers (practice mode), or None
@@ -531,7 +542,15 @@ def prepare_run(options: RunOptions) -> Run:
         first = _pull_first(options, plan, token)
         board = first.board
     assert board is not None
-    run_dir = new_run_dir((options.run_dir or config.run_dir).expanduser())
+    runs = (options.run_dir or config.run_dir).expanduser()
+    plan.notes += sweep(runs, docker=True if runtime == "docker" else None, clean=True).lines  # what killed runs left
+    run_dir = new_run_dir(runs)
+    try:
+        processes = ProcessRecord.start(run_dir, docker=runtime == "docker")
+    except OSError as exc:  # the record, or the note that lets a later start find it
+        what = f"cannot write {exc.filename}" if exc.filename else f"cannot keep {run_dir / RECORD}"
+        raise RunError(f"{what}: {exc.strerror or exc}") from None
+    marks = labels(run_dir.name)  # on every container the run starts
     write_run_info(run_dir, board=options.board, answers=options.answers)  # for the commands after the run
     log = EventLog(run_dir / "events.jsonl")
     flag_format = (profile.flag_format if profile is not None else None) or board.flag_format
@@ -552,6 +571,7 @@ def prepare_run(options: RunOptions) -> Run:
         l1 = L1Stage(
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
+            labels=marks, record=processes,
         )
     try:
         client = build_client(config, key, spare_key) if agent is None else None
@@ -593,8 +613,9 @@ def prepare_run(options: RunOptions) -> Run:
                 image=config.lanes.image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
                 network="bridge" if agent is not None else (lane_network(urls[challenge.id]) if instance == "auto" else "none"),
+                labels=marks,
             )
-        return HostWorkspace(root, handouts[challenge.id])
+        return HostWorkspace(root, handouts[challenge.id], record=processes)
 
     files = {b.challenge.id: b.challenge.files for b in board.challenges}
     if agent is not None:
@@ -630,6 +651,7 @@ def prepare_run(options: RunOptions) -> Run:
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
+        processes=processes,
     )
     if submits is not None:
         submits.solved = run._apply_solves

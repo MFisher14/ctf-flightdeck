@@ -22,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck.build import (
+    STOP_GRACE,
     BuildError,
     case_ids,
     case_size,
@@ -534,29 +535,52 @@ def test_no_configuration_or_conftest_above_the_pack_applies(board, tmp_path):
     assert not (tmp_path / "above-ran").exists()
 
 
+def _gone(pid: int, within: float = 10.0) -> bool:
+    """Whether no process has this pid within `within` seconds (killed and reaped: whoever
+    started it has exited, so init reaps it)."""
+    deadline = time.monotonic() + within
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
 def test_a_case_test_past_its_timeout_is_stopped_with_its_engine_and_whatever_it_left_running(board, pack, tmp_path):
+    """The engine and the processes the test code leaves behind would run far longer than the
+    test waits, so they are gone only if check() stopped them; how fast a loaded machine starts
+    pytest or lets it unwind is not what is checked. The timeout leaves such a machine time to
+    reach the engine."""
     marks = tmp_path / "marks"
     marks.mkdir()
+    timeout, hang = 10, 60  # hang: past every wait here (the engine's own timeout is 60 s)
     solver, *_ = scaffold(pack, board / "layers")
-    solver.write_text(  # an engine that hangs (its own timeout is 60 s)
-        "import time\nfrom ctf_flightdeck.l1.result import SolverResult\n\n"
-        f"def solve(challenge_dir):\n    open({str(marks / 'engine-started')!r}, 'w').close()\n"
-        f"    time.sleep(5)\n    open({str(marks / 'engine-finished')!r}, 'w').close()\n"
+    solver.write_text(  # an engine that hangs, once it has said its pid
+        "import os, time\nfrom ctf_flightdeck.l1.result import SolverResult\n\n"
+        "def solve(challenge_dir):\n"
+        f"    with open({str(marks / 'engine.tmp')!r}, 'w') as f:\n        f.write(str(os.getpid()))\n"
+        f"    os.rename({str(marks / 'engine.tmp')!r}, {str(marks / 'engine-started')!r})\n"
+        f"    time.sleep({hang})\n    open({str(marks / 'engine-finished')!r}, 'w').close()\n"
         "    return SolverResult('none')\n"
     )
-    (pack / "tests" / "conftest.py").write_text(  # and test code that leaves a process behind, deaf to SIGINT
+    (pack / "tests" / "conftest.py").write_text(  # and test code that leaves processes behind, deaf to SIGINT
         "import subprocess\n"
-        f"subprocess.Popen(['sh', '-c', \"trap '' INT; sleep 5; touch {marks / 'leftover'}\"])\n"
+        f"subprocess.Popen(['sh', '-c', \"trap '' INT; sleep {hang} & echo $$ $! > {marks / 'left.tmp'}; "
+        f"mv {marks / 'left.tmp'} {marks / 'leftover-pids'}; wait; touch {marks / 'leftover'}\"])\n"
     )
     begun = time.monotonic()
-    [result] = check(pack, timeout=4)
-    assert time.monotonic() - begun < 4 + 5 + 3  # the timeout, the grace before a kill, and slack
-    assert (result.passed, result.detail) == (False, "timed out after 4s; pytest was stopped")
-    started = marks / "engine-started"
-    assert started.exists()  # the engine was running when the time ran out
-    # the leftover process started before the engine: once the engine's 5 s are over, both would have written
-    time.sleep(max(0.0, started.stat().st_mtime + 5.5 - time.time()))
-    assert sorted(p.name for p in marks.iterdir()) == ["engine-started"]
+    [result] = check(pack, timeout=timeout)
+    took = time.monotonic() - begun
+    assert (result.passed, result.detail) == (False, f"timed out after {timeout}s; pytest was stopped")
+    assert took < timeout + STOP_GRACE + 20 < hang  # with slack, yet a check() that waited for the engine would not be
+    engine = int((marks / "engine-started").read_text())  # the engine was running when the time ran out
+    shell, sleeper = (int(pid) for pid in (marks / "leftover-pids").read_text().split())
+    for pid, what in ((engine, "the engine"), (shell, "the shell the test code left"), (sleeper, "what that shell started")):
+        assert _gone(pid), f"{what} (pid {pid}) is still running after check() returned"
+    assert sorted(p.name for p in marks.iterdir()) == ["engine-started", "leftover-pids"]
 
 
 def test_check_without_pytest_or_a_python_fails_loudly(board, pack, tmp_path):

@@ -39,13 +39,16 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ..core.model import FileChange
 from ..text import untrusted
+
+if TYPE_CHECKING:
+    from ..leftovers import ProcessRecord
 
 PRIVATE = ".flightdeck"
 """flightdeck's own directory in a workspace (home, tmp, logs, tool output). Never copied
@@ -58,6 +61,7 @@ OUTPUT_CAP = 10 * 1024 * 1024  # bytes of a command's output kept; the rest is d
 NOT_RUN = 126  # the exit status of a command the host runtime could not start (bash's "cannot execute")
 DOCKER_BACKSTOP = 15.0  # seconds past a command's own timeout before the docker exec client is killed
 DOCKER_CALL_TIMEOUT = 60.0  # seconds for docker's own housekeeping calls (run, inspect, rm)
+RECORD_NOTES = 5.0  # seconds between a host workspace's notes of what runs in its process groups (its run's record)
 
 SNAPSHOT_FILES = 5000
 SNAPSHOT_DEPTH = 64
@@ -482,16 +486,28 @@ class HostWorkspace:
 
     Each command runs in its own process group. A timeout kills the group; close() kills
     every group the lane left running, such as a server it started in the background.
+    With a `record` (the run's leftovers.ProcessRecord), every such group is in the run
+    folder's record while it may be running, as `what` ("a lane command"), so the next
+    start can stop it if flightdeck itself is killed (SIGKILL, a power loss) and close()
+    never runs. What runs in those groups is noted there at each command's start and end,
+    and every RECORD_NOTES seconds while any group is left (what a background process or a
+    coding-agent CLI started since), so a group can still be told apart once its leader
+    has exited.
     """
 
-    def __init__(self, root: Path, handout: Path, *, shell: str = "bash") -> None:
+    def __init__(
+        self, root: Path, handout: Path, *, shell: str = "bash", record: ProcessRecord | None = None, what: str = "a lane command"
+    ) -> None:
         self.root = Path(root).absolute()
         self.handout = Path(handout)
         self.shell = shell  # the take-over shell: a bash (it gets bash's --noprofile --norc)
         self.workdir = str(self.root)  # root as the lane's commands see it
+        self.record = record
+        self.what = what
         self._bash: str | None = None
         self._groups: set[int] = set()  # process groups started here that may still be running
         self._shell_homes: set[Path] = set()  # take-over homes made here; close() removes those still there
+        self._noting: asyncio.Task[None] | None = None  # notes what runs in them, while any is left (with a record)
         self._closed = False
 
     async def prepare(self) -> None:
@@ -536,14 +552,27 @@ class HostWorkspace:
         """Kill every process group the lane left running, and remove a take-over's HOME that
         is still there (its hand-back did not run). WorkspaceError when one cannot be removed."""
         self._closed = True
+        if self._noting is not None:
+            self._noting.cancel()
         self._prune()
         for pgid in sorted(self._groups):
             _kill_group(pgid)
+        if self.record is not None and self._groups:
+            self.record.drop(self._groups)
         self._groups.clear()
         homes, self._shell_homes = self._shell_homes, set()
         problems = [problem for home in sorted(homes) if (problem := _remove_home(home))]
         if problems:
             raise WorkspaceError("; ".join(problems))
+
+    def adopt(self, pgid: int, what: str) -> None:
+        """A process group a caller started in root, led by process `pgid` (a coding-agent
+        CLI, say): close() kills what is left of it, and the run's record has it meanwhile."""
+        self._prune()
+        self._groups.add(pgid)
+        if self.record is not None:
+            self.record.add(pgid, self.root, what)
+            self._keep_noting()
 
     def interactive_shell(self) -> ShellSpec:
         """The player's take-over shell: bash in the workspace, as the player, at the player's
@@ -610,11 +639,38 @@ class HostWorkspace:
 
     def _started(self, proc: asyncio.subprocess.Process) -> None:
         self._groups.add(proc.pid)  # start_new_session: the process group id is its pid
+        if self.record is not None:
+            self.record.add(proc.pid, self.root, self.what)
+            self._keep_noting()
+
+    def _keep_noting(self) -> None:
+        """Note what runs in the groups every RECORD_NOTES seconds while any is left."""
+        if self._noting is not None and not self._noting.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no loop to do it on: the notes at each command's start and end only
+            return
+        self._noting = loop.create_task(self._notes(), name="flightdeck process record")
+
+    async def _notes(self) -> None:
+        while not self._closed:
+            await asyncio.sleep(RECORD_NOTES)
+            self._prune()
+            if not self._groups:
+                return
 
     def _prune(self) -> None:
         """Forget groups with no process left, so close() never signals a number the system
-        has since given to someone else's group."""
-        self._groups = {pgid for pgid in self._groups if _group_alive(pgid)}
+        has since given to someone else's group. The record forgets them too, and notes
+        what is in the groups still there (a server a command started in the background)."""
+        live = {pgid for pgid in self._groups if _group_alive(pgid)}
+        gone, self._groups = self._groups - live, live
+        if self.record is not None:
+            if gone:
+                self.record.drop(gone)
+            if live:
+                self.record.refresh(live)
 
 
 # ---------------------------------------------------------------- docker runtime
@@ -699,6 +755,10 @@ class DockerWorkspace:
     `mounts` are more bind mounts, each (a path on this machine, where the container sees
     it), read-only: an L1 engine's container (l1/container.py) gets the pack and flightdeck's
     boot script this way. A lane's own container has none.
+
+    `labels` go on the container (`docker run --label`): a run's containers carry the run
+    and the flightdeck that started them (leftovers.labels()), so the next start can find
+    and remove them if flightdeck itself is killed and close() never runs.
     """
 
     def __init__(
@@ -713,6 +773,7 @@ class DockerWorkspace:
         cpus: str = "2",
         pids_limit: int = 512,
         mounts: Sequence[tuple[Path, str]] = (),
+        labels: Mapping[str, str] | None = None,
     ) -> None:
         _require(bool(_DOCKER_NAME.fullmatch(name)), f"container name {name!r} is not valid (letters, digits, _ . -; at least 2 characters)")
         _require(bool(image) and not image.startswith("-") and not any(c.isspace() for c in image), f"image {image!r} is not a valid image name")
@@ -723,6 +784,7 @@ class DockerWorkspace:
         self.root = Path(root).absolute()
         _require(":" not in str(self.root.resolve()), f"workspace path {self.root} contains ':', which docker -v cannot mount")
         self.mounts = tuple(_read_only_mount(source, target) for source, target in mounts)
+        self.labels = dict(sorted(_docker_label(key, value) for key, value in (labels or {}).items()))
         self.handout = Path(handout)
         self.image = image
         self.name = name
@@ -856,9 +918,11 @@ class DockerWorkspace:
     def run_args(self) -> list[str]:
         """The `docker run` arguments that start this lane's container."""
         mounts = [arg for source, target in self.mounts for arg in ("-v", f"{source}:{target}:ro")]
+        labels = [arg for key, value in self.labels.items() for arg in ("--label", f"{key}={value}")]
         return [
             "run", "-d", "--rm", "--init", "--pull", "never",
             "--name", self.name,
+            *labels,
             "--network", self.network,
             "--memory", self.memory,
             "--cpus", self.cpus,
@@ -884,6 +948,18 @@ class DockerWorkspace:
 def _require(ok: bool, message: str) -> None:
     if not ok:
         raise ValueError(message)
+
+
+_LABEL_KEY = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
+
+
+def _docker_label(key: str, value: str) -> tuple[str, str]:
+    """A container label, checked: a plain lower-case key (no '=', which would end it) and a
+    value on one line."""
+    _require(isinstance(key, str) and bool(_LABEL_KEY.fullmatch(key)), f"label {key!r} is not a valid label name")
+    _require(isinstance(value, str) and len(value) <= 1024 and not any(c in value for c in "\0\r\n\t"),
+             f"label {key} has a value that is not one line of text without tabs")
+    return key, value
 
 
 def _read_only_mount(source: Path, target: str) -> tuple[str, str]:

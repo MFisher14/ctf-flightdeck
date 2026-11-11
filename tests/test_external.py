@@ -472,8 +472,14 @@ def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name
         return done.stdout
 
     async def state(pid: str) -> str:
+        """The process's state letter in the container (T: stopped), "" when it is not there.
+        While the container is being removed, `docker exec` can answer with a blank line or
+        a message of its own instead of the file: that is "?...", and is asked again."""
         stat = await in_container("cat", f"/proc/{pid}/stat")
-        return stat.rsplit(")", 1)[-1].split()[0] if stat else ""
+        if not stat:
+            return ""
+        fields = stat.rsplit(")", 1)[-1].split()
+        return fields[0] if ")" in stat and fields else f"?{stat[:80]!r}"
 
     async def main():
         driver = ExternalDriver(
@@ -484,25 +490,30 @@ def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name
         deck.release([Challenge("note", "Note", "misc", 50)], [QueueEntry("note", "small")])
         (lane,) = deck.lanes.values()
         try:
-            await until(lambda: lane.pending is not None or lane.finished, "the candidate from the container", timeout=60)
+            await until(lambda: lane.pending is not None or lane.finished, "the candidate from the container", timeout=DOCKER_WAIT)
             assert lane.pending is not None, lane.result
             assert lane.pending.flag == "t{note}" and steps(lane) == ["$ cat note.txt"]
             assert fake.starts() == []  # it ran in the container, never on this machine
-            pid = (root / ".flightdeck" / "fake-pid.txt").read_text().strip()
-            child = (root / ".flightdeck" / "fake-child.txt").read_text().strip()
-            assert driver.runs[lane.id].proc.inner.result() == int(pid)
-            seen = dict(line.split("=", 1) for line in (root / ".flightdeck" / "fake-env.txt").read_text().splitlines() if "=" in line)
+            records = root / ".flightdeck"
+            pid = (await written(records / "fake-pid.txt", "the CLI's pid")).strip()
+            child = (await written(records / "fake-child.txt", "the pid of what it started")).strip()
+            inner = driver.runs[lane.id].proc.inner  # set when the CLI's pid line is read from its stderr
+            await until(inner.done, "the CLI's pid in its container, as the driver read it", timeout=DOCKER_WAIT)
+            assert inner.result() == int(pid)
+            env = await written(records / "fake-env.txt", "the CLI's environment")
+            seen = dict(line.split("=", 1) for line in env.splitlines() if "=" in line)
             assert seen["ANTHROPIC_API_KEY"] == KEY and seen["HOME"] == "/work/.flightdeck/home"
             assert "OPENROUTER_API_KEY" not in seen
-            first = json.loads((root / ".flightdeck" / "fake-stdin.txt").read_text())
+            first = json.loads(await written(records / "fake-stdin.txt", "the first message"))
             assert first["type"] == "user" and "Challenge: Note" in first["message"]["content"]
             await until_async(lambda: state(pid), "T", "the CLI frozen in its container while the flag waits")
             await until_async(lambda: state(child), "T", "what it started frozen too")
             assert lab_apply(deck, iv.Decline(lane.id))
-            told = root / ".flightdeck" / "fake-stdin-2.txt"
-            await until(told.exists, "the answer passed on in the container")
-            assert json.loads(told.read_text())["message"]["content"].startswith("Note from flightdeck: The player did not submit t{note}")
-            assert await state(pid) == "S" and await state(child) == "S"  # running again (sleeping in wait)
+            told = await written(records / "fake-stdin-2.txt", "the answer passed on in the container")
+            assert json.loads(told)["message"]["content"].startswith("Note from flightdeck: The player did not submit t{note}")
+            # running again: the shell goes back to sleep in `wait` once it has written the answer down
+            await until_async(lambda: state(pid), "S", "the CLI running again")
+            await until_async(lambda: state(child), "S", "what it started running again")
             assert lab_apply(deck, iv.Kill(lane.id, requeue=False))
             await until_async(lambda: state(child), "", "what it started gone")
         finally:
@@ -517,7 +528,10 @@ def lab_apply(deck, intervention) -> bool:
     return deck.apply(intervention).ok
 
 
-async def until_async(probe, want: str, what: str, timeout: float = 20.0) -> None:
+DOCKER_WAIT = 90.0  # seconds a state in a container may take to show: each `docker exec` can take seconds on a loaded machine
+
+
+async def until_async(probe, want: str, what: str, timeout: float = DOCKER_WAIT) -> None:
     end = time.monotonic() + timeout
     got = None
     while time.monotonic() < end:
@@ -526,6 +540,24 @@ async def until_async(probe, want: str, what: str, timeout: float = 20.0) -> Non
             return
         await asyncio.sleep(0.1)
     raise AssertionError(f"timed out waiting for {what} (last seen {got!r}, wanted {want!r})")
+
+
+async def written(path: Path, what: str, timeout: float = 60.0) -> str:
+    """The text of a file the fake in the container writes, once all of it is there. The fake
+    writes each file as whole lines, and its shell creates the file before it writes to it: a
+    reader that only waits for the file to exist can find it empty or cut short, the more so
+    on a loaded machine, with Docker's file sharing in between."""
+    end = time.monotonic() + timeout
+    text = ""
+    while time.monotonic() < end:
+        try:
+            text = path.read_text()
+        except FileNotFoundError:
+            text = ""
+        if text.endswith("\n"):
+            return text
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {what} in {path.name} (last read {text!r})")
 
 
 # ====================================================================== claude: a lane from start to flag

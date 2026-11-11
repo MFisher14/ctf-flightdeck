@@ -20,14 +20,19 @@ engine can reach the instance, before the player is asked or ever.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..core.model import Challenge
 from ..l1.container import EngineContainer, container_name
 from ..l1.manifest import Manifest
 from ..l1.router import route
 from ..l1.runner import EngineRun, WorkspaceFactory, run_routed
+from .workspace import HostWorkspace
+
+if TYPE_CHECKING:
+    from ..leftovers import ProcessRecord
 
 FLAG_STATUSES = ("solved", "candidate")  # results whose flags go to the player
 
@@ -41,6 +46,8 @@ class L1Stage:
     concurrency: int = 4
     image: str | None = None  # lanes run in Docker: each engine runs in a container of this image; None: on this machine
     pack: Path | None = None  # the pack's folder, as its manifests were read from it: mounted read-only in each container
+    labels: Mapping[str, str] = field(default_factory=dict)  # on each engine's container: the run's (leftovers.labels())
+    record: ProcessRecord | None = None  # the run's record of process groups: an engine on this machine is in it while it runs
 
     def __post_init__(self) -> None:
         if self.image is not None and self.pack is None:
@@ -64,7 +71,7 @@ class L1Stage:
             flag_format=self.flag_format,
             concurrency=self.concurrency,
             challenge_id=challenge.id,
-            workspace_factory=self.containers(lane, "bridge" if online else "none") if self.image is not None else None,
+            workspace_factory=self.containers(lane, "bridge" if online else "none") if self.image is not None else self.hosts(),
         )
 
     def containers(self, lane: str, network: str) -> WorkspaceFactory:
@@ -74,9 +81,17 @@ class L1Stage:
 
         def factory(engine_id: str, root: Path, handout: Path) -> EngineContainer:
             name = container_name(self.workdir.name, lane, engine_id)
-            return EngineContainer(root, handout, image=image, name=name, network=network, pack=pack)
+            return EngineContainer(root, handout, image=image, name=name, network=network, pack=pack, labels=self.labels)
 
         return factory
+
+    def hosts(self) -> WorkspaceFactory | None:
+        """Makes each engine's workspace on this machine, in the run's record (None without
+        one: l1.runner's own host workspace)."""
+        record = self.record
+        if record is None:
+            return None
+        return lambda engine_id, root, handout: HostWorkspace(root, handout, record=record, what=f"the L1 engine {engine_id}")
 
 
 def result_line(run: EngineRun) -> str:

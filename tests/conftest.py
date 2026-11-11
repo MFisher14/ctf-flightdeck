@@ -22,3 +22,11 @@ def no_real_keys_file(tmp_path_factory, monkeypatch):
     """No test reads the player's real keys file: FLIGHTDECK_KEYS points at a file that does
     not exist, unless a test sets its own."""
     monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path_factory.mktemp("keys") / "absent-keys.env"))
+
+
+@pytest.fixture(autouse=True)
+def own_state_folder(tmp_path_factory, monkeypatch):
+    """Each test has a state folder of its own (XDG_STATE_HOME), never the player's: what a
+    run notes there, and the containers a sweep may remove (leftovers.py), are the test's
+    only. Commands a test starts get it through the environment they inherit."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("state")))

@@ -108,10 +108,12 @@ class EngineContainer:
     `docker exec` that runs a command there, and run_argv() runs a command on this machine
     (flightdeck's capture, which starts that docker exec); wipe() empties /work from inside;
     close() removes the container. run() and interactive_shell() are the lane workspace's:
-    in the container."""
+    in the container. `labels` go on the container (a run's: leftovers.labels())."""
 
-    def __init__(self, root: Path, handout: Path, *, image: str, name: str, network: str, pack: Path) -> None:
-        self.box = DockerWorkspace(root, handout, image=image, name=name, network=network, mounts=engine_mounts(pack))
+    def __init__(self, root: Path, handout: Path, *, image: str, name: str, network: str, pack: Path,
+                 labels: Mapping[str, str] | None = None) -> None:
+        self.box = DockerWorkspace(root, handout, image=image, name=name, network=network, mounts=engine_mounts(pack),
+                                   labels=labels)
         self.root = self.box.root
         self.workdir = CONTAINER_ROOT  # root as the engine sees it
         self.image = image
