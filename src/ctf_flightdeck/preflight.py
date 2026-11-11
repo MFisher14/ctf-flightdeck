@@ -35,9 +35,15 @@ allow, a platform setting missing, more lanes than the rules allow...) and warni
 knowing before the event: a token variable that is not set...).
 
 The profile holds no secret. token_env names the environment variable that holds the platform's
-API token, and nothing here reads that variable except to see whether it is set. A profile can
-come from a teammate, so everything in it is untrusted: error messages never show its string
-values, and what is shown is made safe with text.untrusted().
+API token (an upper-case name: a token pasted there is refused without being shown), and nothing
+here reads that variable except to see whether it is set. A profile can come from a teammate, so
+everything in it is untrusted: error messages never show its string values (only TOML's own
+message may quote a key, and the regular expression engine's part of the flag format), and
+whatever is shown is made safe with text.untrusted().
+
+Not enforced yet: instance "confirm". Nothing in a run asks the player before a lane first
+reaches a live instance, and lane_network() gives a docker lane its open network when it
+starts, so check() warns when lanes would run under it.
 """
 
 from __future__ import annotations
@@ -79,26 +85,49 @@ USES_PLATFORM = frozenset({Policy.AUTO, Policy.CONFIRM})
 """Policies under which flightdeck itself uses the platform (pulls or submits)."""
 
 OTHER_SERVICE_KEYS = frozenset({
+    # model providers and agent command lines
     "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "AZURE_OPENAI_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "CODEX_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "MISTRAL_API_KEY",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
+    "XAI_API_KEY",
+    # code hosts and clouds
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "GITLAB_TOKEN",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
 })
 """Variables that hold other services' keys, never a CTF platform's token. A profile whose
 token_env names one would have flightdeck send that key to the platform's URL."""
 
+OTHER_SERVICE_SUFFIXES = ("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN", "_ACCESS_KEY", "_SECRET_KEY", "_PRIVATE_KEY", "_SESSION_TOKEN")
+"""How other services' key variables are usually named, so OTHER_SERVICE_KEYS need not list
+them all. A name with CTFD in it is taken for a CTFd token's variable even so (CTFD_API_KEY)."""
+
 _TABLES = ("event", "rules", "policies")
 _EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team")
 _RULE_KEYS = ("ai_allowed", "platform_automation", "live_targets", "max_lanes")
 _PLATFORM_ONLY = {"url": "ctfd", "token_env": "ctfd", "board": "manual"}
-_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# token_env: an upper-case name, as config.py asks of api.key_env. A token is letters, digits and
+# _ often enough (CTFd's is ctfd_ and 64 hex digits), but almost never all upper case, so one
+# pasted into token_env is refused before anything could show it.
+_ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
+_MAX_ENV_NAME = 64
+_TOKEN_SHAPE = re.compile(r"\s*(?:ctfd_[0-9a-f]{16,}|[0-9a-f]{32,})\s*", re.IGNORECASE)
+_NOT_A_NAME = (
+    "must be the name of an environment variable, like CTFD_TOKEN (upper-case letters, digits and _, "
+    f"not starting with a digit, at most {_MAX_ENV_NAME} characters), not the token itself"
+)
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -162,6 +191,10 @@ class EventProfile:
             raise ValueError(f"platform must be {_or(PLATFORMS)}")
         if self.live_targets not in LIVE_TARGETS:
             raise ValueError(f"live_targets must be {_or(LIVE_TARGETS)}")
+        if self.token_env is not None and not _is_env_name(self.token_env):
+            # describe() and check() show token_env, so a profile built in code gets the same
+            # check as load_profile's, and the value is never shown here either.
+            raise ValueError(f"token_env {_NOT_A_NAME}")
         unknown = set(self.explicit) - set(STAGES)
         if unknown:
             raise ValueError(f"explicit names stages that do not exist: {', '.join(sorted(unknown))}")
@@ -204,9 +237,10 @@ def defaults(profile: EventProfile) -> Policies:
 
 def lane_network(policies: Policies, urls: Sequence[str]) -> str:
     """The docker network for a lane: "bridge" only when its challenge has a live instance and
-    lanes may reach one (instance auto, or confirm: the lane asks first); "none" otherwise, so
-    the lane cannot reach the instance or anything else. Under manual the player works the
-    instance, not the lane, so that is "none" too."""
+    lanes may reach one (instance auto or confirm); "none" otherwise, so the lane cannot reach
+    the instance or anything else. Under manual the player works the instance, not the lane, so
+    that is "none" too. Bridge is open egress, not only the instance, and a lane gets it when
+    it starts: under confirm nothing holds it back until the player says yes (check() warns)."""
     if policies.instance in (Policy.OFF, Policy.MANUAL) or not urls:
         return "none"
     return "bridge"
@@ -293,6 +327,15 @@ def check(
                 f'the instance policy is "{requested.instance}", but lanes run on this machine (runtime host), '
                 "where a lane's shell can still reach an instance. The docker runtime enforces it (no network)"
             )
+    if agents_on and requested.instance is Policy.CONFIRM:
+        # lane_network() gives a docker lane its network when the lane starts, and nothing in a run
+        # asks the player before a lane's first use of an instance, so confirm is not enforced yet.
+        warn.append(
+            'the instance policy is "confirm", but flightdeck does not yet ask you before a lane first reaches '
+            "a live instance: a lane can reach it from its first turn, and a docker lane gets an open network "
+            "(bridge: any host, not only the instance). Watch the lanes, or set [policies] instance = "
+            '"manual" to keep docker lanes off instances'
+        )
     if profile.flag_format is None:
         warn.append(
             "event.flag_format is not set: lanes take the board's flag format if it has one, else anything "
@@ -325,11 +368,12 @@ def _check_ctfd(
     name = profile.token_env
     if name is not None:
         model_key = isinstance(model_config, Config) and model_config.api.key_env == name
-        if name in OTHER_SERVICE_KEYS or model_key:
+        what = "a variable for another service's key" if model_key else _other_service(name)
+        if what is not None:
             where = " (api.key_env in your config)" if model_key else ""
             refuse.append(
-                f"event.token_env names {name}{where}, a variable for another service's key, not a CTFd token: "
-                f"flightdeck would send its value to {_shown_url(profile)}. Name the variable that holds your CTFd token"
+                f"event.token_env names {name}{where}, {what}, not a CTFd token: flightdeck would send its value "
+                f"to {_shown_url(profile)}. Name the variable that holds your CTFd token, like CTFD_TOKEN"
             )
         elif (requested.pull in USES_PLATFORM or requested.submit in USES_PLATFORM) and not _is_set(env, name):
             warn.append(f"the CTFd token variable {name} (event.token_env) is not set or is empty: export your CTFd API token in it")
@@ -342,9 +386,14 @@ def _check_manual(profile: EventProfile, refuse: list[str]) -> None:
     board = profile.board
     if board is None:
         refuse.append('event.board is required for platform "manual": the folder of challenge folders')
-    elif not board.is_dir():
+        return
+    try:
+        if board.is_dir():
+            return
         what = "is not a directory" if board.exists() else "no such directory"
-        refuse.append(f"event.board: {_show(board)}: {what}")
+    except OSError as exc:  # pathlib passes on all but "no such file" and the like: a name too long, no permission
+        what = f"cannot be read ({exc.strerror or type(exc).__name__})"
+    refuse.append(f"event.board: {_show(board)}: {what}")
 
 
 def _check_models(agents: Policy, env: Mapping[str, str], model_config: Config | ConfigError | None, warn: list[str]) -> None:
@@ -368,6 +417,17 @@ def _rule(profile: EventProfile, stage: str) -> str:
     if stage == "instance":
         return f'rules.live_targets = "{profile.live_targets}"'
     return "no rule limits it"  # l1: allowed() never limits it
+
+
+def _other_service(name: str) -> str | None:
+    """Why a token_env of `name` looks like another service's key variable; None when it does not."""
+    if name in OTHER_SERVICE_KEYS:
+        return "a variable for another service's key"
+    if "CTFD" not in name:
+        for suffix in OTHER_SERVICE_SUFFIXES:
+            if name.endswith(suffix):
+                return f"a name ending in {suffix} like other services' key variables (a name with CTFD in it is fine)"
+    return None
 
 
 def _is_set(environ: Mapping[str, str], name: str) -> bool:
@@ -406,7 +466,7 @@ _MEANING = {
     },
     "instance": {
         Policy.AUTO: "lanes may reach their challenge's live instance",
-        Policy.CONFIRM: "a lane asks you before it reaches a live instance",
+        Policy.CONFIRM: "lanes can reach their challenge's live instance: asking you first is not enforced yet",
         Policy.MANUAL: "lanes stay off live instances; you work them yourself",
         Policy.OFF: "no lane touches a live instance",
     },
@@ -448,8 +508,8 @@ def describe(profile: EventProfile, policies: Policies, *, environ: Mapping[str,
         elif policy is not limit:
             note = f" (the rules allow {limit})"
         lines.append(f"{stage:<10}{policy.value:<9}{_MEANING[stage][policy]}{note}")
-    if policies.instance in USES_PLATFORM:
-        lines.append("network   a docker lane gets a network only if its challenge has a live instance")
+    if policies.instance in (Policy.AUTO, Policy.CONFIRM):
+        lines.append("network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none")
     else:
         lines.append(f'network   docker lanes get no network (instance "{policies.instance}")')
     return lines
@@ -554,8 +614,12 @@ def _parse(path: Path) -> dict:
         raise ProfileError(f"{_show(path)}: is not UTF-8 text") from None
     try:
         return tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise ProfileError(f"{_show(path)}: is not valid TOML: {exc}") from None
+    except tomllib.TOMLDecodeError as exc:  # its message may quote a key from the file
+        raise ProfileError(f"{_show(path)}: is not valid TOML: {_show(exc)}") from None
+    except ValueError:  # the one tomllib leaves unwrapped: int() refuses a number of thousands of digits
+        raise ProfileError(f"{_show(path)}: is not valid TOML: it holds a number too long to read") from None
+    except RecursionError:
+        raise ProfileError(f"{_show(path)}: is not valid TOML: its arrays or tables are nested too deeply to read") from None
 
 
 def _table(path: Path, doc: dict, name: str, *, required: bool = True) -> dict:
@@ -644,15 +708,18 @@ def _url(path: Path, table: dict) -> str | None:
 
 
 def _token_env(path: Path, table: dict) -> str | None:
+    """The token variable's name. A value that is not one is never shown: it may be the token."""
     name = _string(path, table, ("event", "token_env"))
-    if name is not None and not _ENV_NAME.fullmatch(name):
+    if name is None or _is_env_name(name):
+        return name
+    if _TOKEN_SHAPE.fullmatch(name):
         raise _error(
             path,
             ("event", "token_env"),
-            "must be the name of an environment variable (letters, digits and _, not starting with a digit), "
-            "not the token itself",
+            "looks like a CTFd API token itself, not the name of the variable that holds it: export the token "
+            '(export CTFD_TOKEN=...) and name that variable here, like token_env = "CTFD_TOKEN"',
         )
-    return name
+    raise _error(path, ("event", "token_env"), _NOT_A_NAME)
 
 
 def _board(path: Path, table: dict) -> Path | None:
@@ -672,9 +739,9 @@ def _flag_format(path: Path, table: dict) -> str | None:
         return None
     try:
         re.compile(pattern)
-    except re.error as exc:
+    except re.error as exc:  # its message may quote part of the pattern, control characters and all
         where = f" at position {exc.pos}" if exc.pos is not None else ""
-        raise _error(path, ("event", "flag_format"), f"is not a valid regular expression ({exc.msg}{where})") from None
+        raise _error(path, ("event", "flag_format"), f"is not a valid regular expression ({_show(exc.msg)}{where})") from None
     return pattern
 
 
@@ -712,6 +779,11 @@ def _loopback(host: str) -> bool:
 def _plain(value: str) -> bool:
     """No whitespace and no control or other unprintable characters."""
     return all(ch.isprintable() and not ch.isspace() for ch in value)
+
+
+def _is_env_name(value: str) -> bool:
+    """An upper-case environment variable name of at most 64 characters (see _ENV_NAME)."""
+    return len(value) <= _MAX_ENV_NAME and _ENV_NAME.fullmatch(value) is not None
 
 
 def _is_int(value: object) -> bool:
