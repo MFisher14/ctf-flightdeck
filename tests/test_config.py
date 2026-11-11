@@ -236,6 +236,9 @@ BAD_VALUES = {
     "base_url with a password": (LADDER + '[api]\nbase_url = "https://me:pw@models.example/v1"\n', "api.base_url"),
     "key_env not a name": (LADDER + '[api]\nkey_env = "my key"\n', "api.key_env"),
     "key_env starts with a digit": (LADDER + '[api]\nkey_env = "1KEY"\n', "api.key_env"),
+    "key_env in lower case": (LADDER + '[api]\nkey_env = "my_api_key"\n', "api.key_env"),
+    "key_env in mixed case": (LADDER + '[api]\nkey_env = "OpenRouter_Key"\n', "api.key_env"),
+    "key_env too long": (LADDER + f'[api]\nkey_env = "{"K" * 65}"\n', "api.key_env"),
     "key_env not a string": (LADDER + "[api]\nkey_env = 5\n", "api.key_env"),
     "api not a table": ("api = 5\n" + LADDER, "api"),
     "no ladder": ("[lanes]\nmax_lanes = 2\n", "models.ladder"),
@@ -279,7 +282,7 @@ def test_errors_show_the_number_that_was_wrong(tmp_path):
     assert "(got -2.5)" in error(write(tmp_path, LADDER + "[lanes]\ndollar_cap = -2.5\n"))
 
 
-SENTINEL = "zq-sentinel-value-4471"
+SENTINEL = "zqSentinelValue4471"  # letters and digits only, like many real keys, so gsk_ + it is a valid name
 
 STRING_VALUES = {
     "runtime": (LADDER + f'[lanes]\nruntime = "{SENTINEL}"\n', "lanes.runtime"),
@@ -290,6 +293,7 @@ STRING_VALUES = {
     "base_url scheme": (LADDER + f'[api]\nbase_url = "{SENTINEL}"\n', "api.base_url"),
     "base_url password": (LADDER + f'[api]\nbase_url = "https://user:{SENTINEL}@models.example/v1"\n', "api.base_url"),
     "key_env holding a key": (LADDER + f'[api]\nkey_env = "sk-{SENTINEL}"\n', "api.key_env"),
+    "key_env holding a key without a dash": (LADDER + f'[api]\nkey_env = "gsk_{SENTINEL}"\n', "api.key_env"),
     "ladder entry": (f'[models]\nladder = [" {SENTINEL}"]\n', "models.ladder[0]"),
     "ladder not a list": (f'[models]\nladder = "{SENTINEL}"\n', "models.ladder"),
     "price": (LADDER + f'[prices."vendor/small"]\ninput = "{SENTINEL}"\noutput = 1\n', 'prices."vendor/small".input'),
@@ -343,13 +347,51 @@ def test_a_missing_key_is_an_error_naming_the_variable_and_never_a_value(monkeyp
     assert FAKE_KEY not in message and FAKE_KEY not in repr(caught.value)
 
 
-def test_a_key_pasted_into_key_env_is_never_shown():
-    """A config built in code skips load_config's check; api_key() still refuses to echo it."""
-    config = Config(ApiConfig(key_env=f"sk-{FAKE_KEY}"), ("m",), {}, LaneConfig(), Path("/runs"), None)
+KEY_CORE = "FakeTestKey0451xYz"  # synthetic: no real key, and no shape the secret scan knows
+PASTED_KEYS = {
+    "with dashes": f"sk-{FAKE_KEY}",
+    "gsk_ prefix": f"gsk_{KEY_CORE}",
+    "hf_ prefix": f"hf_{KEY_CORE}",
+    "fw_ prefix": f"fw_{KEY_CORE}",
+    "32 bare letters and digits": (KEY_CORE * 2)[:32],
+    "64 lower-case hex": "fade" + "0451beef" * 7 + "0451",
+}
+
+
+@pytest.mark.parametrize("pasted", PASTED_KEYS.values(), ids=PASTED_KEYS.keys())
+def test_a_key_pasted_into_key_env_is_refused_and_never_shown(tmp_path, pasted):
+    """Many keys are only letters, digits and _, so they look like variable names. The error
+    that says a variable is not set would name the key itself; key_env must be upper case."""
+    with pytest.raises(ConfigError) as caught:
+        load_config(write(tmp_path, LADDER + f'[api]\nkey_env = "{pasted}"\n'))
+    message = str(caught.value)
+    assert "api.key_env" in message
+    assert pasted not in message and KEY_CORE not in message and pasted[4:20] not in message
+
+
+@pytest.mark.parametrize("pasted", PASTED_KEYS.values(), ids=PASTED_KEYS.keys())
+def test_api_key_never_shows_a_key_pasted_into_key_env(monkeypatch, pasted):
+    """A config built in code skips load_config's check; api_key() still refuses to show it,
+    whether or not a variable of that name happens to be set."""
+    monkeypatch.delenv(pasted, raising=False)
+    config = Config(ApiConfig(key_env=pasted), ("m",), {}, LaneConfig(), Path("/runs"), None)
     with pytest.raises(ConfigError) as caught:
         api_key(config)
-    assert "api.key_env" in str(caught.value)
-    assert FAKE_KEY not in str(caught.value)
+    message = str(caught.value)
+    assert "api.key_env" in message
+    assert pasted not in message and KEY_CORE not in message and pasted[4:20] not in message
+    if pasted.isidentifier():
+        monkeypatch.setenv(pasted, FAKE_KEY)
+        with pytest.raises(ConfigError):
+            api_key(config)
+
+
+@pytest.mark.parametrize("name", ["OPENROUTER_API_KEY", "HF_TOKEN", "_KEY", "KEY2", "K" * 64])
+def test_upper_case_variable_names_are_taken(monkeypatch, tmp_path, name):
+    monkeypatch.setenv(name, FAKE_KEY)
+    config = keyed(tmp_path, name)
+    assert config.api.key_env == name
+    assert api_key(config) == FAKE_KEY
 
 
 def test_no_config_error_contains_the_key_in_the_environment(monkeypatch, tmp_path):

@@ -8,7 +8,9 @@ Nothing that matters has a silent default. A missing file says how to create one
 model ladder must be filled in, and an unknown table or key is an error, so a typo
 fails loudly instead of quietly leaving the default in place. Every error names the file
 and the key. Error messages show numbers but never a string value: a string could be
-the API key pasted into the wrong place.
+the API key pasted into the wrong place. The one name they show, the variable api.key_env
+names, must be upper case like OPENROUTER_API_KEY: many keys are made only of letters,
+digits and _ too, but almost none are all upper case.
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ _TABLES = ("api", "models", "prices", "lanes", "run")
 _API_KEYS = ("base_url", "key_env")
 _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
 _PRICE_KEYS = ("input", "output", "cached_input")
-_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
+_MAX_ENV_NAME = 64
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -96,13 +99,14 @@ def api_key(config: Config) -> str | None:
     """The API key, read from the environment variable api.key_env names; None when key_env is "".
 
     An unset or empty variable is a ConfigError that names the variable and never shows a
-    value (the variable's, or a key_env that is not a variable name and may be the key itself).
+    value. A key_env that is not an upper-case variable name may be the key itself, so it is
+    refused without being shown, here too (a Config built in code skips load_config's check).
     """
     where = f"{config.source}: " if config.source is not None else ""
     name = config.api.key_env
     if not name:
         return None
-    if not _ENV_NAME.fullmatch(name):
+    if not _is_env_name(name):
         raise ConfigError(f"{where}api.key_env {_NOT_A_NAME}")
     value = os.environ.get(name, "").strip()
     if not value:
@@ -125,8 +129,8 @@ EXAMPLE = """\
 [api]
 # An OpenAI-compatible chat completions endpoint (OpenRouter by default).
 base_url = "https://openrouter.ai/api/v1"
-# The environment variable that holds your API key; the key itself never goes in this file.
-# "" for a local server that needs no key.
+# The name, in upper case, of the environment variable that holds your API key; the key
+# itself never goes in this file. "" for a local server that needs no key.
 key_env = "OPENROUTER_API_KEY"
 
 [models]
@@ -154,8 +158,9 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 """
 
 _NOT_A_NAME = (
-    "must be the name of an environment variable (letters, digits and _, not starting with a "
-    'digit), not the key itself; "" for a local server that needs no key'
+    "must be the name of an environment variable, like OPENROUTER_API_KEY (upper-case letters, "
+    f"digits and _, not starting with a digit, at most {_MAX_ENV_NAME} characters), not the key itself; "
+    '"" for a local server that needs no key'
 )
 
 
@@ -201,7 +206,7 @@ def _api(path: Path, table: dict) -> ApiConfig:
             "must not carry a user name or password; the key goes in the environment variable api.key_env names",
         )
     key_env = _string(path, table, ("api", "key_env"), defaults.key_env, empty=True)
-    if key_env and not _ENV_NAME.fullmatch(key_env):
+    if key_env and not _is_env_name(key_env):
         raise _error(path, ("api", "key_env"), _NOT_A_NAME)
     return ApiConfig(base_url=base_url, key_env=key_env)
 
@@ -358,6 +363,15 @@ def _split_url(value: str) -> SplitResult | None:
 def _plain(value: str) -> bool:
     """No whitespace and no control or other unprintable characters."""
     return all(ch.isprintable() and not ch.isspace() for ch in value)
+
+
+def _is_env_name(value: str) -> bool:
+    """An environment variable name in the usual form: upper-case letters, digits and _, not
+    starting with a digit, at most 64 characters. Errors show api.key_env only in this form.
+    Many API keys are letters, digits and _ only (gsk_..., hf_..., or 32 bare letters and
+    digits), so a looser rule would let a key pasted into key_env through, to be shown in
+    the error that says the variable is not set; almost no key is all upper case."""
+    return len(value) <= _MAX_ENV_NAME and _ENV_NAME.fullmatch(value) is not None
 
 
 def _is_int(value: object) -> bool:
