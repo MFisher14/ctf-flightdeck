@@ -2526,10 +2526,10 @@ def test_a_second_q_or_one_meant_for_help_or_a_card_does_not_quit_a_run():
     drive(app, script)
 
 
-def platform_run(names: tuple[str, ...] = ("alpha", "bravo", "charlie")) -> Deck:
+def platform_run(names: tuple[str, ...] = ("alpha", "bravo", "charlie"), max_lanes: int = 3) -> Deck:
     """A run's deck whose flags go to a platform over the network (a submitter that only takes
     them: no answer comes back unless a test gives one), under submit confirm."""
-    config = DeckConfig(event="ev", models=("glm",), max_lanes=3, flag_format=r"t\{[a-z]+\}", submit="confirm")
+    config = DeckConfig(event="ev", models=("glm",), max_lanes=max_lanes, flag_format=r"t\{[a-z]+\}", submit="confirm")
     deck = Deck(config, QuietDriver(), ManualClock(1000.0), wrong_flag, submitter=lambda lane, challenge, flag: None)
     deck.release([Challenge(n, n.title(), "misc", 50) for n in names], [QueueEntry(n, "glm") for n in names])
     return deck
@@ -2573,6 +2573,17 @@ def test_the_quit_prompt_names_each_flag_on_its_way_to_the_platform_and_says_qui
     deck.platform_verdict(alpha.id, "t{one}", False, "Incorrect")  # its answer is in: t{two} goes out in its place
     assert "2 flags on their way to the platform" in views.quit_summary(deck).plain
     assert "L01 Alpha  t{two}\n" in views.quit_summary(deck).plain and "t{one}" not in views.quit_summary(deck).plain
+
+
+def test_the_quit_prompt_names_five_flags_on_their_way_and_counts_the_rest():
+    names = tuple(f"chal{letter}" for letter in "abcdefg")  # letters only: the flag format is t\{[a-z]+\}
+    deck = platform_run(names, max_lanes=len(names))
+    for name in names:
+        send(deck, deck.lanes_on(name)[0].id, f"t{{{name}}}")
+    text = views.quit_summary(deck).plain
+    assert "7 flags on their way to the platform" in text
+    assert [f"t{{{name}}}" in text for name in names] == [True] * 5 + [False] * 2  # in board order: the first five
+    assert "\n  and 2 more on their way\n" in text
 
 
 def test_quitting_asks_first_while_a_flag_is_on_its_way_though_every_lane_has_ended():
