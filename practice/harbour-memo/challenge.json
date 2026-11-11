@@ -1,0 +1,11 @@
+{
+  "name": "Harbour Memo",
+  "category": "crypto",
+  "points": 200,
+  "solves": 61,
+  "description": "The harbour office XORs its memos with a short repeating key. Every memo opens with the same header, \"HARBOUR OFFICE MEMO\".",
+  "files": [
+    "memo.enc"
+  ],
+  "id": "harbour-memo"
+}

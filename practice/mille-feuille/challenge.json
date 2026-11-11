@@ -1,0 +1,11 @@
+{
+  "name": "Mille Feuille",
+  "category": "crypto",
+  "points": 100,
+  "solves": 187,
+  "description": "A thousand layers, give or take. Peel them one at a time.",
+  "files": [
+    "layers.txt"
+  ],
+  "id": "mille-feuille"
+}

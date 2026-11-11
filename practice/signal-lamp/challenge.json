@@ -1,0 +1,11 @@
+{
+  "name": "Signal Lamp",
+  "category": "misc",
+  "points": 150,
+  "solves": 104,
+  "description": "The keeper logged every change of the signal lamp to the millisecond. It is Morse code. The flag is the message in lower case, words joined by underscores, inside practice{...}.",
+  "files": [
+    "lamp_log.csv"
+  ],
+  "id": "signal-lamp"
+}

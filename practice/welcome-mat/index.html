@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keepers' Portal</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Keepers' Portal</h1>
+    <p>Enter your keeper PIN to see tonight's banner.</p>
+    <form id="pin-form">
+      <input id="pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" aria-label="PIN">
+      <button type="submit">Open</button>
+    </form>
+    <p id="banner" hidden></p>
+  </main>
+  <!-- TODO before launch: take out the test banner practice{nice_try_read_the_script} -->
+  <script src="portal.js"></script>
+</body>
+</html>

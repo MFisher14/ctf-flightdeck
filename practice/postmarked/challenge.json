@@ -1,0 +1,12 @@
+{
+  "name": "Postmarked",
+  "category": "crypto",
+  "points": 150,
+  "solves": 93,
+  "description": "Gran's letters always arrive scrambled, but never the envelope. She keys every letter to the town she posts it from.",
+  "files": [
+    "envelope.txt",
+    "letter.txt"
+  ],
+  "id": "postmarked"
+}

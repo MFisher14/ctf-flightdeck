@@ -1,0 +1,11 @@
+{
+  "name": "Turnstile",
+  "category": "rev",
+  "points": 200,
+  "solves": 66,
+  "description": "The ferry gate checks your ticket in Python. Find the ticket that makes it click.",
+  "files": [
+    "turnstile.py"
+  ],
+  "id": "turnstile"
+}

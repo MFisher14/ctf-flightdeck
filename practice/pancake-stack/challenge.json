@@ -1,0 +1,12 @@
+{
+  "name": "Pancake Stack",
+  "category": "rev",
+  "points": 300,
+  "solves": 19,
+  "description": "A tiny stack machine checks your order before it serves breakfast. The program is short, and not all of it runs.",
+  "files": [
+    "program.bin",
+    "vm.py"
+  ],
+  "id": "pancake-stack"
+}
