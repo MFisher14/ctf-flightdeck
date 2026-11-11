@@ -161,20 +161,20 @@ async def run_engine(
     workspace = (workspace_factory or host_workspace)(manifest.id, Path(workdir) / manifest.id, handout)
     root = Path(workspace.root)
     ours = not os.path.lexists(root)  # made by prepare(): this run's to remove
+    trouble: list[str] = []  # said in the notes, after the engine's own
     try:
         result, seconds = await _run_in(workspace, manifest, argv, path, limit, pattern)
     finally:
         try:
             await workspace.close()
-            unclosed = ""
         except WorkspaceError as exc:  # e.g. docker rm failed: say so, keep the result
-            unclosed = f"its workspace did not close cleanly: {_safe(str(exc))}"
+            trouble.append(f"its workspace did not close cleanly: {_safe(str(exc))}")
     if not keep and ours and os.path.lexists(root):
         left = await asyncio.to_thread(remove_tree, root)
         if left:
-            unclosed = "; ".join(filter(None, [unclosed, f"its copy of the challenge {_safe(str(root))} could not be removed: {left}"]))
-    if unclosed:
-        result = dataclasses.replace(result, notes=f"{result.notes}; {unclosed}" if result.notes else unclosed)
+            trouble.append(f"its copy of the challenge {_safe(str(root))} could not be removed: {left}")
+    if trouble:
+        result = dataclasses.replace(result, notes="; ".join(filter(None, [result.notes, *trouble])))
     return done(result, seconds)
 
 
@@ -199,7 +199,7 @@ def _open_up(root: Path) -> None:
         mode = os.lstat(directory).st_mode
         if not stat.S_ISDIR(mode):
             continue
-        if mode & 0o700 != 0o700:
+        if (mode & 0o700) != 0o700:
             try:
                 os.chmod(directory, stat.S_IMODE(mode) | 0o700, follow_symlinks=False)
             except (NotImplementedError, OSError):  # no lchmod here (Linux): lstat said it is a real folder

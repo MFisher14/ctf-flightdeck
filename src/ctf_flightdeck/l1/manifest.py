@@ -26,9 +26,10 @@ reads as a relative path to a file (it has a `/`, or ends in .py .sh .bash .pl .
 but names no file of the pack is an error: it could only ever be the challenge's file. So
 is a file of the pack that lies in a folder holding a challenge's files (see below).
 
-Outputs. "result": the last non-empty line the engine prints is a SolverResult as JSON (a
-python entry gets this for free from the boot script). "text": free text; every match of
-the event's flag format in it becomes a candidate flag.
+Outputs. "result": the engine reports a SolverResult. A python entry returns it (the boot
+script hands it to flightdeck apart from what the engine prints); a cli entry prints it as
+JSON on its last non-empty line, or writes it to the file $FLIGHTDECK_L1_RESULT names.
+"text": free text; every match of the event's flag format in it becomes a candidate flag.
 
 Generated manifests. The importer writes manifests for plain scripts into
 `<folder>/.flightdeck/generated/`. Paths in those start from `<folder>`, the folder they
@@ -336,7 +337,7 @@ def _entry(path: Path, value: object, base: Path) -> Entry:
         raise ManifestError(path, "entry", f"{_value(file)} {'is not a file' if full.exists() else 'does not exist'} in {_show(base)}{hint}")
     if not full.resolve().is_relative_to(base.resolve()):
         raise ManifestError(path, "entry", f"{_value(file)} leaves {_show(base)} through a symlink")
-    _not_a_challenges(path, file, base)
+    _not_in_a_challenge(path, file, base)
     return Entry("python", rel.as_posix(), function)
 
 
@@ -351,7 +352,7 @@ def _cli_entry(path: Path, command: str, base: Path) -> Entry:
     for i, word in enumerate(argv):
         target = pack_file(word, base)
         if target is not None:
-            _not_a_challenges(path, word, base)
+            _not_in_a_challenge(path, word, base)
             if i == 0 and not os.access(target, os.X_OK):
                 raise ManifestError(path, "entry", f"{_value(word)} is not executable (chmod +x it, or run it with its interpreter)")
             positions.append(i)
@@ -375,7 +376,7 @@ def _names_a_file(word: str) -> bool:
     return "/" in word or word.lower().endswith(SCRIPT_SUFFIXES)
 
 
-def _not_a_challenges(path: Path, word: str, base: Path) -> None:
+def _not_in_a_challenge(path: Path, word: str, base: Path) -> None:
     """Refuse a file of the pack that lies in a folder holding a challenge's files (a copy
     of a challenge left in the pack, say): running it would run the challenge's code."""
     folder = base

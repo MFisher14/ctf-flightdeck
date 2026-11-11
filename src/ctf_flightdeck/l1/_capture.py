@@ -119,4 +119,7 @@ def report(status, out, errors):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    code = main(sys.argv)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)  # nothing after the record: no interpreter shutdown to print on the pipe it shares with stderr
