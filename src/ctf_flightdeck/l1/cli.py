@@ -57,24 +57,28 @@ def list_engines(pack: PackArg) -> None:
         extra = f", needs {', '.join(manifest.needs_tools)}" if manifest.needs_tools else ""
         tags = f" [{', '.join(manifest.tags)}]" if manifest.tags else ""
         typer.echo(_show(f"{manifest.id}{tags}: {how} (output {manifest.output}, timeout {manifest.timeout_seconds}s{extra})"))
-        for rule in manifest.routes:
-            parts = [f"category {' | '.join(rule.category)}"] if rule.category else []
-            parts += [f"keywords {' | '.join(rule.keywords)}"] if rule.keywords else []
-            parts += [f"files {' | '.join(rule.files)}"] if rule.files else []
-            typer.echo(_show(f"    priority {rule.priority}: {', and '.join(parts)}"))
+        for line in _route_lines(manifest):
+            typer.echo(line)
 
 
 @app.command("route")
 def route_command(pack: PackArg, challenge_dir: ChallengeArg) -> None:
-    """Show which engines a challenge reaches, best first, and why."""
-    from .router import route
+    """Show which engines a challenge reaches, best first, and why; when it reaches none, what
+    each engine's nearest route lacks."""
+    from .router import misses, route
 
     manifests = _discover(pack)
     item, _ = _challenge(challenge_dir)
     _apart(pack, item.handout)
     hits = route(manifests, item.challenge, item.handout)
     if not hits:
-        typer.echo(f"flightdeck: no engine in {_show(pack)} routes {item.challenge.id}", err=True)
+        typer.echo(
+            f"flightdeck: no engine in {_show(pack)} routes {item.challenge.id}; what each engine's nearest route lacks:",
+            err=True,
+        )
+        for miss in misses(manifests, item.challenge, item.handout):
+            held = f" ({', '.join(miss.held)} held)" if miss.held else ""
+            typer.echo(_show(f"  -  {miss.manifest.id}  not reached: {'; '.join(miss.failed)}{held}"))
         return
     for hit in hits:
         typer.echo(f"{hit.priority:3d}  {hit.manifest.id}  {hit.reason}")
@@ -156,9 +160,10 @@ def import_command(
     folder: Annotated[Path, typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A folder of your scripts.")],
 ) -> None:
     """Wrap a folder of plain scripts as engines: write a manifest for each script that has
-    none, into FOLDER/.flightdeck/generated/. The scripts are never changed."""
+    none, into FOLDER/.flightdeck/generated/, and show the route each got. The scripts are
+    never changed."""
     from .importer import ImporterError, import_scripts
-    from .manifest import ManifestError
+    from .manifest import ManifestError, load
 
     try:
         report = import_scripts(folder)
@@ -167,6 +172,12 @@ def import_command(
     root = folder.expanduser().absolute()
     for path in report.written:
         typer.echo(f"wrote {_show(_relative(path, root))}")
+        try:
+            lines = _route_lines(load(path))
+        except ManifestError as exc:  # it loaded when it was written: something changed it since
+            lines = [f"    (its route cannot be shown: {_show(str(exc))})"]
+        for line in lines:
+            typer.echo(line)
     for path, why in report.skipped:
         typer.echo(f"skipped {_show(_relative(path, root))}: {_show(why)}")
     typer.echo(
@@ -174,9 +185,27 @@ def import_command(
         f"{len(report.skipped)} skipped",
         err=True,
     )
+    if report.written:
+        typer.echo(
+            "flightdeck: a route comes from the script's folder (its category) and its file name (its keywords); to "
+            "route a script another way, write <script>.manifest.toml next to the script, and the import leaves that "
+            "script alone (`flightdeck l1 route` shows what a challenge reaches, and why not)",
+            err=True,
+        )
 
 
 # ---------------------------------------------------------------- helpers
+
+
+def _route_lines(manifest) -> list[str]:
+    """An engine's routes, a line each: "    priority 20: category cry, and keywords a | b"."""
+    lines = []
+    for rule in manifest.routes:
+        parts = [f"category {' | '.join(rule.category)}"] if rule.category else []
+        parts += [f"keywords {' | '.join(rule.keywords)}"] if rule.keywords else []
+        parts += [f"files {' | '.join(rule.files)}"] if rule.files else []
+        lines.append(_show(f"    priority {rule.priority}: {', and '.join(parts)}"))
+    return lines
 
 
 def _discover(pack: Path):
