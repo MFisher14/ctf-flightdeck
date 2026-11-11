@@ -43,6 +43,7 @@ SYSCTL = "/usr/sbin/sysctl"
 NVIDIA_ARGS = ("--query-gpu=name,memory.total", "--format=csv,noheader,nounits")
 OFF = {OLLAMA: "http://127.0.0.1:9/api/tags", MLX: "http://127.0.0.1:9/v1/models", LM_STUDIO: "http://127.0.0.1:9/v1/models"}
 REAL_PORTS = {11434, 8080, 1234}  # where this machine's own runtimes may be listening
+PATIENT = 30.0  # seconds a test server on 127.0.0.1 may take when the test is not about time (a loaded machine is slow)
 
 
 @pytest.fixture(autouse=True)
@@ -302,7 +303,7 @@ def test_the_real_getter_reads_each_servers_list_and_asks_only_127_0_0_1():
     with ListServer(routes) as server:
         servers = {OLLAMA: server.url("/api/tags"), MLX: server.url("/v1/models"), LM_STUDIO: server.url("/studio/v1/models")}
         host = FakeHost("Linux", "x86_64", real_http=True)
-        machine = probe(host, servers=servers)
+        machine = probe(host, servers=servers, http_timeout=PATIENT)
     assert machine.runtime(OLLAMA).server.models == ("gpt-oss:20b",)
     assert machine.runtime(OLLAMA).server.size("gpt-oss:20b") == 13793441244
     assert machine.runtime(MLX).server.models == ("mlx-community/Qwen3.5-9B-MLX-4bit",)
@@ -331,7 +332,7 @@ def test_nothing_listening_is_down_and_a_slow_server_is_unknown():
 def test_a_redirect_is_not_followed():
     routes = {"/api/tags": Answer(302, b"", headers=(("Location", "/elsewhere"),)), "/elsewhere": Answer(body=tags())}
     with ListServer(routes) as server:
-        status, _ = http_get(server.url("/api/tags"), 2.0)
+        status, _ = http_get(server.url("/api/tags"), PATIENT)
     assert status == 302 and server.paths == ["/api/tags"]
 
 
@@ -341,7 +342,7 @@ def test_a_proxy_in_the_environment_is_not_used(monkeypatch):
             monkeypatch.setenv(name, f"http://127.0.0.1:{proxy.port}")
         for name in ("NO_PROXY", "no_proxy"):
             monkeypatch.delenv(name, raising=False)
-        status, body = http_get(target.url("/api/tags"), 2.0)
+        status, body = http_get(target.url("/api/tags"), PATIENT)
     assert (status, json.loads(body)) == (200, {"models": []})
     assert proxy.paths == [] and target.paths == ["/api/tags"]
 
@@ -349,7 +350,8 @@ def test_a_proxy_in_the_environment_is_not_used(monkeypatch):
 def test_an_answer_longer_than_the_cap_is_unknown(monkeypatch):
     monkeypatch.setattr(hardware, "MAX_BODY", 64)
     with ListServer({"/api/tags": Answer(body=tags(*((f"model-{n}:latest", n + 1) for n in range(20))))}) as server:
-        machine = probe(FakeHost("Linux", "x86_64", real_http=True), servers={**OFF, OLLAMA: server.url("/api/tags")})
+        machine = probe(FakeHost("Linux", "x86_64", real_http=True), servers={**OFF, OLLAMA: server.url("/api/tags")},
+                        http_timeout=PATIENT)
     assert machine.runtime(OLLAMA).server.state == UNKNOWN and "longer than" in machine.runtime(OLLAMA).server.why
 
 
