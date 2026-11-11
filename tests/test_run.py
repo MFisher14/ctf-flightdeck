@@ -603,21 +603,21 @@ def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude
 def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_and_transcripts(tmp_path, monkeypatch):
     """The keys file's values, the [api] and [fallback] keys and the agent's own credential:
     a host lane can read them (here: a file in the handout holds them all, as the keys file
-    would), and each shows as [NAME] in what the run keeps (agent/external.py takes them out
-    of what the CLI writes, before anything is logged). A keys-file value the environment
-    overrides is still a secret."""
+    or another process's environment would), and each shows as [NAME] in what the run keeps
+    (agent/external.py takes them out of what the CLI writes, before anything is logged). The
+    [api] and [fallback] keys here are set in the environment only, and a keys-file value the
+    environment overrides is a secret all the same."""
     from test_external import Fake
 
     own = "fake-anthropic-credential-for-tests"
-    api, spare = "api-key-from-the-environment-for-tests-55aa", "fallback-key-from-the-keys-file-for-tests-7d1e"
+    api, spare = "api-key-from-the-environment-for-tests-55aa", "fallback-key-from-the-environment-for-tests-7d1e"
     file_only, overridden = "a-value-only-the-keys-file-holds-for-tests-91c4", "keys-file-anthropic-value-for-tests-03"
     keys = tmp_path / "keys.env"
-    keys.write_text(
-        f"FLIGHTDECK_TEST_FILE_SECRET={file_only}\nANTHROPIC_API_KEY={overridden}\nFLIGHTDECK_TEST_SPARE_KEY={spare}\n"
-    )
+    keys.write_text(f"FLIGHTDECK_TEST_FILE_SECRET={file_only}\nANTHROPIC_API_KEY={overridden}\n")
     keys.chmod(0o600)
     monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
     monkeypatch.setenv("FLIGHTDECK_TEST_API_KEY", api)
+    monkeypatch.setenv("FLIGHTDECK_TEST_SPARE_KEY", spare)
     monkeypatch.setenv("ANTHROPIC_API_KEY", own)  # the agent's own credential: the environment wins
     fake = Fake(tmp_path, {"turns": [{"calls": [{"tools": [{"bash": "cat leak.txt"}]}, {"text": "Read it."}]}]})
     path = [d for d in os.environ.get("PATH", "").split(os.pathsep)
