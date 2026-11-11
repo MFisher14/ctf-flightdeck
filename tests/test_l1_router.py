@@ -9,10 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from ctf_flightdeck.agent.workspace import HostWorkspace
 from ctf_flightdeck.l1.manifest import Entry, Manifest, Route
-from ctf_flightdeck.l1.router import MAX_FILES, Hit, route
+from ctf_flightdeck.l1.router import MAX_FILES, HandoutFiles, Hit, route
 
-from l1_kit import challenge
+from l1_kit import challenge, run
 
 
 def engine(engine_id: str, *routes: Route) -> Manifest:
@@ -183,6 +184,37 @@ def test_files_are_only_read_when_a_magic_pattern_needs_them(tmp_path, monkeypat
     assert opened == []
     route([engine("e", Route(files=("magic:x",))), engine("f", Route(files=("magic:x",)))], challenge(), h)
     assert opened == ["a.txt"]  # read once, for both engines
+
+
+def test_routing_sees_exactly_the_files_an_engines_copy_will_have(tmp_path):
+    # the real M1 copy is the reference: if copy_handout's rules change, this fails
+    h = tmp_path / "h"
+    for rel in ("challenge.json", "top.txt", ".hidden.bin", "sub/a.pyc", "sub/deep/b.txt", "__pycache__/x.cpython-311.pyc",
+                "sub/__pycache__/y.cpython-312.pyc", ".flightdeck/home/.bashrc", "sub/.flightdeck/kept.txt"):
+        (h / rel).parent.mkdir(parents=True, exist_ok=True)
+        (h / rel).write_bytes(b"x")
+    os.symlink(h / "top.txt", h / "link.txt")
+    os.symlink(h / "sub", h / "linkdir")
+    os.mkfifo(h / "pipe")
+    copy = tmp_path / "copy"
+    run(HostWorkspace(copy, h).prepare())
+    copied = sorted(
+        str(path.relative_to(copy).as_posix()) for path in copy.rglob("*")
+        if path.is_file() and not path.relative_to(copy).as_posix().startswith(".flightdeck/")
+    )
+    assert sorted(rel for rel, _ in HandoutFiles(h).files()) == [rel for rel in copied if rel != "challenge.json"]
+    assert "sub/.flightdeck/kept.txt" in copied and "sub/a.pyc" in copied  # what is copied is routed on
+
+
+def test_a_file_in_a_pycache_folder_never_routes_an_engine_that_would_not_see_it(tmp_path):
+    h = tmp_path / "h"
+    (h / "__pycache__").mkdir(parents=True)
+    (h / "__pycache__" / "chall.cpython-311.pyc").write_bytes(b"\x6f\x0d\x0d\x0a" + b"\x00" * 12)
+    pyc = engine("rev.pyc", Route(files=("ext:.pyc", "magic:0x6f0d0d0a"), priority=90))
+    assert route([pyc], challenge(category="rev"), h) == []  # the copy has no __pycache__, so nothing to give it
+    (h / "chall.pyc").write_bytes(b"\x6f\x0d\x0d\x0a" + b"\x00" * 12)  # a .pyc of the handout's own is copied
+    [hit] = route([pyc], challenge(category="rev"), h)
+    assert hit.reason == "file 'chall.pyc' (ext:.pyc)"
 
 
 def test_a_handout_that_is_not_a_directory_is_an_error(tmp_path):

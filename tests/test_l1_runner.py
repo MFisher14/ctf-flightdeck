@@ -4,8 +4,11 @@ runs a challenge file: the handouts hold invented text and bytes."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import random
+import re
 import shutil
 import subprocess
 import sys
@@ -15,9 +18,25 @@ from pathlib import Path
 import pytest
 
 from ctf_flightdeck.agent.workspace import HostWorkspace
+from ctf_flightdeck.core.model import DeckConfig
 from ctf_flightdeck.l1.manifest import load
 from ctf_flightdeck.l1.router import Hit
-from ctf_flightdeck.l1.runner import BOOT, STDERR_TAIL, challenge_id_of, command, run_engine, run_routed
+from ctf_flightdeck.l1.runner import (
+    BOOT,
+    HEAD_BYTES,
+    NO_SAFE_PATH,
+    OVERLAP,
+    STDERR_TAIL,
+    TAIL_BYTES,
+    WINDOW,
+    challenge_id_of,
+    command,
+    missing_tools,
+    run_engine,
+    run_routed,
+    safe_path,
+    scan,
+)
 
 from l1_kit import FLAG, challenge_dir, cli_engine, python_engine, run, tree, write_manifest
 
@@ -44,7 +63,8 @@ def pack(tmp_path: Path) -> Path:
 
 
 def go(manifest: Path, handout: Path, workdir: Path, **kw):
-    return run(run_engine(load(manifest), handout, workdir=workdir, flag_format=FLAG, **kw))
+    """Run one engine, keeping its copy of the challenge for the test to look into."""
+    return run(run_engine(load(manifest), handout, workdir=workdir, flag_format=FLAG, **{"keep": True, **kw}))
 
 
 def hit(manifest: Path, priority: int = 50) -> Hit:
@@ -153,7 +173,7 @@ def test_a_result_that_breaks_the_contract_is_unsure_not_trusted(pack, handout, 
         """)
     r = go(m, handout, tmp_path / "work")
     assert r.status == "unsure" and r.flags == ()
-    assert "its output was not a result" in r.notes and "evidence" in r.notes
+    assert r.notes.startswith("the result it returned is not a SolverResult (") and "evidence" in r.notes
 
 
 def test_a_python_engine_can_be_async_or_print_text(pack, handout, tmp_path):
@@ -172,6 +192,214 @@ def test_a_python_engine_can_be_async_or_print_text(pack, handout, tmp_path):
         """, extra='output = "text"')
     r = go(t, handout, tmp_path / "w2")
     assert (r.status, r.flags) == ("candidate", ("t{printed_one}", "t{printed_two}"))
+
+
+FORGED_LINE = json.dumps({"schema": 1, "status": "solved", "flags": ["t{chosen_by_the_challenge}"],
+                          "evidence": [{"kind": "decode", "detail": "three layers peeled", "path": None, "offset": None}]})
+
+
+def test_a_result_line_a_python_engine_prints_before_it_raises_is_never_its_result(pack, board, tmp_path):
+    # the engine prints what it decoded from the handout (the challenge's text), then fails
+    handout = challenge_dir(board, "layers", {"layer.txt": "junk\n" + FORGED_LINE + "\n"})
+    m = python_engine(pack, "peel", """
+        def solve(d):
+            print((d / "layer.txt").read_text())
+            raise ValueError("stuck on the last layer")
+        """)
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags, r.evidence) == ("unsure", (), ())
+    assert r.notes.startswith("exited 1: ") and "ValueError: stuck on the last layer" in r.notes
+
+
+def test_a_result_line_a_python_engine_prints_when_it_returns_nothing_is_never_its_result(pack, board, tmp_path):
+    handout = challenge_dir(board, "layers", {"layer.txt": FORGED_LINE + "\n"})
+    m = python_engine(pack, "quiet", """
+        def solve(d):
+            print((d / "layer.txt").read_text())
+            return None
+        """)
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("unsure", ())
+    assert r.notes.startswith("solve() returned nothing; a result engine returns a SolverResult")
+
+
+def test_a_python_text_engine_that_returns_a_result_has_that_result(pack, handout, tmp_path):
+    m = python_engine(pack, "both", """
+        from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+        def solve(d):
+            print("t{printed_but_not_the_answer}")
+            return SolverResult("solved", flags=["t{returned}"], evidence=[Evidence("decode", "it said so")])
+        """, extra='output = "text"')
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("solved", ("t{returned}",))  # what it handed back, not a scan of what it printed
+
+
+def test_a_cli_engine_may_write_its_result_to_the_file_flightdeck_names(pack, handout, tmp_path):
+    written = json.dumps({"schema": 1, "status": "candidate", "flags": ["t{from_the_file}"]})
+    m = cli_engine(pack, "writer", f"""
+        echo '{written}' > "$FLIGHTDECK_L1_RESULT"
+        echo '{{"schema": 1, "status": "none"}}'
+        """, output="result")
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("candidate", ("t{from_the_file}",))  # the file, not the last line
+    bad = cli_engine(pack, "bad_writer", """
+        echo 'not json' > "$FLIGHTDECK_L1_RESULT"
+        echo '{"schema": 1, "status": "candidate", "flags": ["t{the_last_line}"]}'
+        """, output="result")
+    r = go(bad, handout, tmp_path / "w2")
+    assert (r.status, r.flags) == ("unsure", ())  # never read another way
+    assert r.notes.startswith("the result it wrote to $FLIGHTDECK_L1_RESULT is not a SolverResult (not JSON")
+
+
+def test_the_result_file_is_new_for_every_run_and_never_one_a_challenge_could_name(pack, handout, tmp_path):
+    m = cli_engine(pack, "where", 'echo "$FLIGHTDECK_L1_RESULT"\n')
+    names = set()
+    for i in range(2):
+        work = tmp_path / f"w{i}"
+        r = run(run_engine(load(m), handout, workdir=work, flag_format=r"\S*l1-result-\S*"))
+        [path] = r.flags
+        assert Path(path).parent == work / "where" / ".flightdeck"
+        names.add(Path(path).name)
+    assert len(names) == 2
+
+
+# ---------------------------------------------------------------- output past what is kept
+
+
+BULK = "yes 'trying key 0x41414141 ... no' | head -c 10000000\necho\n"  # 10 MB of progress lines, then a line end
+
+
+def test_a_flag_printed_after_megabytes_of_output_is_still_found_and_the_gap_is_said(pack, handout, tmp_path):
+    m = cli_engine(pack, "brute", BULK + "echo 'key found: t{late_flag}'\n")
+    r = go(m, handout, tmp_path / "work")
+    total = 10_000_001 + len("key found: t{late_flag}\n")
+    assert (r.status, r.flags) == ("candidate", ("t{late_flag}",))
+    assert r.notes == f"output over 8 MB: {total - HEAD_BYTES - TAIL_BYTES} bytes in the middle not searched"
+
+
+def test_output_not_all_searched_is_never_none(pack, handout, tmp_path):
+    m = cli_engine(pack, "brute", "yes 'nothing yet' | head -c 7000000\necho t{in_the_middle}\n" + BULK)
+    r = go(m, handout, tmp_path / "work")
+    assert (r.status, r.flags) == ("unsure", ())
+    assert r.notes.startswith("output over 8 MB: ") and r.notes.endswith(" bytes in the middle not searched")
+
+
+def test_a_result_after_megabytes_of_output_is_still_read(pack, handout, tmp_path):
+    line = '{"schema": 1, "status": "candidate", "flags": ["t{cli_result}"]}'
+    cli = cli_engine(pack, "cli_brute", BULK + f"echo '{line}'\n", output="result")
+    assert go(cli, handout, tmp_path / "w1").flags == ("t{cli_result}",)  # its last line, from the end that was kept
+    py = python_engine(pack, "py_brute", """
+        from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+        def solve(d):
+            for key in range(400_000):
+                print(f"trying key {key:08d} ... no")
+            return SolverResult("solved", flags=["t{key_found}"], evidence=[Evidence("oracle", "key 0x42 decrypts the header")])
+        """)
+    r = go(py, handout, tmp_path / "w2")
+    assert (r.status, r.flags) == ("solved", ("t{key_found}",))
+
+
+def test_stderr_is_kept_only_at_its_end_and_never_written_to_disk(pack, handout, tmp_path):
+    m = cli_engine(pack, "noisy", "head -c 30000000 /dev/zero | tr '\\0' w >&2\necho 'last words' >&2\nexit 1\n")
+    r = go(m, handout, tmp_path / "work")
+    assert r.status == "unsure" and r.notes.startswith("exited 1: ") and r.notes.endswith("wwwlast words")
+    sizes = [p.stat().st_size for p in (tmp_path / "work").rglob("*") if p.is_file()]
+    assert max(sizes) < 1_000_000  # 30 MB of stderr went nowhere
+
+
+# ---------------------------------------------------------------- the flag search
+
+DEFAULT_FORMAT = DeckConfig(event="x").flag_format  # flightdeck's own, used when a board sets none: quadratic on word runs
+
+
+@pytest.mark.parametrize("fmt", [FLAG, DEFAULT_FORMAT, r"flag\((\w+)\)", r"(?<=key: )t\{\w+\}", r"t\{[a-z0-9_]+"])  # the last: no end mark
+def test_the_windowed_search_finds_what_one_search_per_line_finds(fmt):
+    rng = random.Random(fmt)
+    pattern = re.compile(fmt)
+    for _ in range(40):
+        words = []
+        for _ in range(rng.choice([5, 200, 1500])):  # short lines and lines many windows long
+            roll = rng.random()
+            if roll < 0.05:
+                words.append(rng.choice(["t", "key: t", "flag("]) + "{" + "".join(rng.choices("abc_019", k=rng.randint(1, 120))) + "}")
+            elif roll < 0.08:
+                words.append("flag(" + "".join(rng.choices("xyz", k=rng.randint(1, 40))) + ")")
+            elif roll < 0.1:
+                words.append("\n")
+            else:
+                words.append("".join(rng.choices("abcdef0123", k=rng.randint(1, 12))))
+        text = " ".join(words)
+        expected = {}
+        for line in text.split("\n"):
+            for match in pattern.finditer(line):
+                if match.group(0).strip():
+                    expected.setdefault(match.group(0))
+        found: dict[str, None] = {}
+        assert scan(text, pattern, time.monotonic() + 60, found)
+        assert list(found) == list(expected)
+
+
+def test_a_flag_across_a_window_boundary_is_found_whole_and_never_as_a_piece():
+    pattern = re.compile(DEFAULT_FORMAT)
+    for offset in range(WINDOW - OVERLAP - 40, WINDOW - OVERLAP + 40):  # around where the first window's own part ends
+        text = "-" * offset + " flag{across_the_boundary} " + "-" * 3000
+        found: dict[str, None] = {}
+        assert scan(text, pattern, time.monotonic() + 60, found)
+        assert list(found) == ["flag{across_the_boundary}"], offset  # never "ag{across_the_boundary}" as well
+
+
+def test_a_long_line_of_hex_is_searched_in_bounded_time():
+    # one search over this line with the default format takes tens of seconds (quadratic);
+    # windows keep each search to WINDOW squared steps
+    line = "0123456789abcdef" * 12_500 + " t{hidden_at_the_end}"  # 200,000 word characters, then a flag
+    found: dict[str, None] = {}
+    began = time.monotonic()
+    assert scan(line, re.compile(DEFAULT_FORMAT), time.monotonic() + 60, found)
+    assert list(found) == ["t{hidden_at_the_end}"] and time.monotonic() - began < 10
+
+
+LONG_LINES = "head -c {size} /dev/zero | tr '\\0' a | fold -w 2000\necho\n"  # lines of 2000 word characters
+
+
+def test_the_flag_search_never_holds_up_the_event_loop(pack, handout, tmp_path):
+    # 2 MB of 2000-character word lines: seconds of searching with the default format, in a
+    # thread; the loop (other engines' timeouts, the console) keeps running all along
+    m = cli_engine(pack, "dump", LONG_LINES.format(size=2_000_000) + "echo t{found_at_last}\n")
+
+    async def main():
+        gaps: list[float] = []
+        done = asyncio.Event()
+
+        async def tick():
+            last = time.monotonic()
+            while not done.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        ticker = asyncio.create_task(tick())
+        result = await run_engine(load(m), handout, workdir=tmp_path / "work", flag_format=DEFAULT_FORMAT)
+        done.set()
+        await ticker
+        return result, max(gaps)
+
+    r, worst = asyncio.run(main())
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{found_at_last}",), "")  # searched to the end
+    assert worst < 0.5, f"the event loop stood still for {worst:.2f}s"
+
+
+def test_a_flag_search_that_runs_out_of_time_stops_and_is_never_none(pack, handout, tmp_path):
+    # the engine prints 6 MB in a fraction of its 2 s; searching it takes far longer than 2 s
+    slow = cli_engine(pack, "dump", LONG_LINES.format(size=6_000_000))
+    r = run(run_engine(load(slow), handout, workdir=tmp_path / "w1", flag_format=DEFAULT_FORMAT, timeout=2))
+    assert (r.status, r.flags) == ("unsure", ())
+    assert r.notes == "flag search stopped after 2s, before the end of its output"
+    early = cli_engine(pack, "dump_early", "echo t{first_line}\n" + LONG_LINES.format(size=6_000_000))
+    r = run(run_engine(load(early), handout, workdir=tmp_path / "w2", flag_format=DEFAULT_FORMAT, timeout=2))
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{first_line}",), "flag search stopped after 2s, before the end of its output")
 
 
 # ---------------------------------------------------------------- cli engines
@@ -201,13 +429,32 @@ def test_words_of_a_cli_entry_that_name_pack_files_become_absolute_paths(pack, h
         keywords = ["demo"]
         """)
     manifest = load(m)
-    assert command(manifest) == ["bash", str(pack / "tools" / "args.sh"), "--mode", "two words", str(pack / "tools" / "words.txt"), "missing.txt", "."]
+    assert command(manifest) == [os.path.abspath(shutil.which("bash", path=safe_path())), str(pack / "tools" / "args.sh"), "--mode", "two words", str(pack / "tools" / "words.txt"), "missing.txt", "."]
     assert go(m, handout, tmp_path / "work").flags == ("t{ran}",)
+
+
+PLANTED = "#!/bin/sh\ntouch HANDOUT_CODE_RAN\necho 't{planted_by_the_handout}'\n"
+
+
+def test_a_pack_file_gone_since_the_pack_was_read_blocks_the_engine_and_never_runs_the_challenges(pack, board, tmp_path):
+    handout = challenge_dir(board, "plants", {"x.sh": PLANTED, "helper.py": "open('HANDOUT_CODE_RAN', 'w')\nprint('t{planted}')\n"})
+    (handout / "x.sh").chmod(0o755)
+    (pack / "helper.py").write_text("print('t{mine}')\n")
+    by_name = load(cli_engine(pack, "x", "echo t{mine}\n"))  # entry cli:./x.sh
+    by_word = load(write_manifest(pack, "h", 'id = "h"\nentry = "cli:python3 helper.py"\noutput = "text"\n[[routes]]\nkeywords = ["demo"]\n'))
+    by_python = load(python_engine(pack, "py", "def solve(d):\n    return None\n"))
+    for name in ("x.sh", "helper.py", "py.py"):
+        (pack / name).unlink()  # the player renames or deletes it mid-event
+    for manifest, word in ((by_name, "./x.sh"), (by_word, "helper.py"), (by_python, "py.py")):
+        r = run(run_engine(manifest, handout, workdir=tmp_path / "work", flag_format=FLAG))
+        assert (r.status, r.flags) == ("blocked", ())
+        assert r.notes == f"pack file {word} is missing (it was there when the pack was read); nothing ran"
+    assert not (tmp_path / "work").exists() and not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
 
 
 def test_the_python_command_is_the_boot_script_in_isolated_mode(pack):
     manifest = load(python_engine(pack, "x", "def solve(d):\n    return None\n"))
-    assert command(manifest) == ["python3", "-I", str(BOOT), str(pack / "x.py"), "solve", "."]
+    assert command(manifest) == [os.path.abspath(shutil.which("python3", path=safe_path())), "-I", str(BOOT), str(pack / "x.py"), "solve", "."]
     assert BOOT.is_file() and BOOT.is_absolute()
 
 
@@ -323,6 +570,59 @@ def test_a_python_engine_needs_python3_and_a_cli_engine_its_program(pack, handou
     assert (r.status, r.notes) == ("blocked", "missing tools: python3 (not on PATH); nothing ran")
 
 
+FORGED = '{"schema": 1, "status": "solved", "flags": ["t{from_the_handout}"], "evidence": [{"kind": "x", "detail": "y"}]}'
+
+
+@pytest.mark.parametrize("prefix", [".", "", "./sub"])
+def test_a_relative_path_entry_never_runs_a_handout_file_in_place_of_a_program(pack, board, tmp_path, monkeypatch, prefix):
+    # "." or an empty PATH entry means the working directory: the copy of the challenge
+    planted = f"#!/bin/sh\ntouch \"$HOME/../../HANDOUT_CODE_RAN\"\necho '{FORGED}'\n"
+    handout = challenge_dir(board, "plants", {"python3": planted, "mytool": planted, "sub/python3": planted, "sub/mytool": planted})
+    for name in ("python3", "mytool", "sub/python3", "sub/mytool"):
+        (handout / name).chmod(0o755)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "mytool").write_text('#!/bin/sh\necho "t{the_real_tool}"; echo "PATH=$PATH"\n')
+    (bindir / "mytool").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{prefix}{os.pathsep}{bindir}{os.pathsep}{os.environ['PATH']}")
+    py = load(python_engine(pack, "py", "from ctf_flightdeck.l1.result import SolverResult\ndef solve(d):\n    return SolverResult('none')\n"))
+    cli = load(write_manifest(pack, "c", 'id = "c"\nentry = "cli:mytool"\noutput = "text"\n[[routes]]\nkeywords = ["demo"]\n'))
+    assert missing_tools(py) == [] and missing_tools(cli) == []
+    r = run(run_engine(py, handout, workdir=tmp_path / "w1", flag_format=FLAG, keep=True))  # kept: a marker would stay
+    assert (r.status, r.flags) == ("none", ())  # the real python3 ran the engine
+    c = run(run_engine(cli, handout, workdir=tmp_path / "w2", flag_format=FLAG, keep=True))
+    assert c.flags == ("t{the_real_tool}",)
+    assert not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
+
+
+def test_engines_and_what_they_start_get_only_the_absolute_directories_of_path(pack, handout, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", f".{os.pathsep}{os.pathsep}rel/bin{os.pathsep}{os.environ['PATH']}{os.pathsep}")
+    assert safe_path() == os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if p.startswith("/"))
+    c = cli_engine(pack, "env_path", 'echo "$PATH" > seen.path\n')
+    assert go(c, handout, tmp_path / "w").status == "none"
+    seen = (tmp_path / "w" / "env_path" / "seen.path").read_text().strip().split(os.pathsep)
+    assert seen == safe_path().split(os.pathsep) and all(p.startswith("/") for p in seen)
+
+
+def test_a_tool_found_only_through_a_relative_path_entry_is_missing(pack, handout, tmp_path, monkeypatch):
+    (tmp_path / "relbin").mkdir()
+    (tmp_path / "relbin" / "flightdeck-test-relative-tool").write_text("#!/bin/sh\necho hi\n")
+    (tmp_path / "relbin" / "flightdeck-test-relative-tool").chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"relbin{os.pathsep}{os.environ['PATH']}")
+    assert shutil.which("flightdeck-test-relative-tool") is not None  # the plain lookup would find it
+    m = cli_engine(pack, "needs_rel", "true\n", extra='needs_tools = ["flightdeck-test-relative-tool"]')
+    r = go(m, handout, tmp_path / "w")
+    assert (r.status, r.notes) == ("blocked", "missing tools: flightdeck-test-relative-tool (not on PATH); nothing ran")
+
+
+def test_a_path_with_no_absolute_directory_blocks_every_engine(pack, handout, tmp_path, monkeypatch):
+    m = cli_engine(pack, "e", "touch ran.marker\n")
+    monkeypatch.setenv("PATH", f".{os.pathsep}bin")
+    r = go(m, handout, tmp_path / "w")
+    assert (r.status, r.notes) == ("blocked", NO_SAFE_PATH) and not (tmp_path / "w").exists()
+
+
 # ---------------------------------------------------------------- the sandbox
 
 
@@ -340,12 +640,25 @@ def test_engines_see_only_the_allowlisted_environment(pack, handout, tmp_path, m
     r = go(m, handout, tmp_path / "w1")
     assert r.status == "none" and FAKE_TOKEN not in r.notes
     env = json.loads(r.notes)
-    assert set(env) - PROCESS_OWN <= ALLOWED and "PATH" in env
+    assert set(env) - PROCESS_OWN <= ALLOWED | {"FLIGHTDECK_L1_RESULT"} and "PATH" in env
     assert env["HOME"] == str(tmp_path / "w1" / "env_py" / ".flightdeck" / "home")
+    result_file = Path(env["FLIGHTDECK_L1_RESULT"])  # flightdeck's own: where the result goes, a name nobody can guess
+    assert result_file.parent == tmp_path / "w1" / "env_py" / ".flightdeck" and re.fullmatch(r"l1-result-[0-9a-f]{32}\.json", result_file.name)
     c = cli_engine(pack, "env_cli", "env > seen.env\n")
     assert go(c, handout, tmp_path / "w2").status == "none"
     seen = (tmp_path / "w2" / "env_cli" / "seen.env").read_text()
     assert FAKE_TOKEN not in seen and "CTFD_TOKEN" not in seen and "PYTHONPATH" not in seen
+
+
+def test_a_cli_engine_gets_the_locale_it_was_given_not_the_one_python_sets_for_itself(pack, handout, tmp_path, monkeypatch):
+    # with no locale set, Python sets LC_CTYPE=C.UTF-8 for itself and what it starts (PEP 538);
+    # the capture runs under Python, but the engine must see the plain C locale it was given
+    for name in ("LANG", "LC_ALL", "LC_CTYPE"):
+        monkeypatch.delenv(name, raising=False)
+    c = cli_engine(pack, "env_cli", "env > seen.env\n")
+    assert go(c, handout, tmp_path / "w").status == "none"
+    names = {line.split("=", 1)[0] for line in (tmp_path / "w" / "env_cli" / "seen.env").read_text().splitlines()}
+    assert "LC_CTYPE" not in names and "LANG" not in names
 
 
 def test_the_handout_is_never_written_whatever_the_engine_does(pack, handout, tmp_path):
@@ -369,9 +682,37 @@ def test_a_workspace_that_cannot_be_prepared_blocks_the_engine_with_the_reason(p
     m = cli_engine(pack, "e", "echo t{x}\n")
     (tmp_path / "work" / "e").mkdir(parents=True)
     (tmp_path / "work" / "e" / "leftover").write_text("from an earlier run")
-    r = go(m, handout, tmp_path / "work")
+    r = go(m, handout, tmp_path / "work", keep=False)
     assert r.status == "blocked" and r.notes.startswith("its workspace could not be prepared: ")
     assert "already exists and is not an empty directory" in r.notes
+    assert (tmp_path / "work" / "e" / "leftover").read_text() == "from an earlier run"  # not this run's: never removed
+
+
+def test_an_engines_copy_is_removed_once_its_result_is_read_whatever_it_left_there(pack, handout, tmp_path):
+    outside = tmp_path / "players-file.txt"
+    outside.write_text("mine\n")
+    os.chmod(outside, 0o400)
+    m = cli_engine(pack, "messy", f"""
+        mkdir -p ro/inner shut && touch ro/inner/f shut/g
+        chmod 555 ro/inner ro && chmod 000 shut
+        ln -s {outside} link-out && ln -s {tmp_path} link-dir
+        head -c 3000000 /dev/zero > big.bin
+        echo t{{read_before_removal}}
+        """)
+    r = run(run_engine(load(m), handout, workdir=tmp_path / "work", flag_format=FLAG))
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{read_before_removal}",), "")
+    assert list((tmp_path / "work").iterdir()) == []  # the copy is gone, read-only and shut folders too
+    assert outside.read_text() == "mine\n" and os.stat(outside).st_mode & 0o777 == 0o400  # never followed
+    assert (tmp_path / "pack" / "messy.sh").is_file()
+
+
+def test_run_routed_keeps_the_copies_only_when_asked(pack, handout, tmp_path):
+    hits = [hit(cli_engine(pack, "a", "echo t{a}\n")), hit(cli_engine(pack, "b", "echo t{b}\n"))]
+    gone = run(run_routed(hits, handout, workdir=tmp_path / "w1", flag_format=FLAG))
+    assert [r.result.flags for r in gone] == [("t{a}",), ("t{b}",)] and list((tmp_path / "w1").iterdir()) == []
+    kept = run(run_routed(hits, handout, workdir=tmp_path / "w2", flag_format=FLAG, keep=True))
+    assert [r.result.flags for r in kept] == [("t{a}",), ("t{b}",)]
+    assert sorted(p.name for p in (tmp_path / "w2").iterdir()) == ["a", "b"] and (tmp_path / "w2" / "a" / "note.txt").is_file()
 
 
 def test_a_workspace_factory_chooses_the_workspace(pack, handout, tmp_path):
@@ -440,6 +781,33 @@ def test_engines_within_the_concurrency_limit_run_at_the_same_time(pack, handout
     b = cli_engine(pack, "b", script.format(shared=shared, me="b", other="a"))
     runs = run(run_routed([hit(a), hit(b)], handout, workdir=tmp_path / "work", flag_format=FLAG, concurrency=2))
     assert [r.result.flags for r in runs] == [("t{met_a}",), ("t{met_b}",)]  # each saw the other running
+
+
+def test_one_engine_that_cannot_run_never_stops_the_others(pack, handout, tmp_path):
+    def factory(engine_id, root, given):
+        if engine_id == "broken":
+            raise RuntimeError("no room for its copy")
+        return HostWorkspace(root, given)
+
+    broken = cli_engine(pack, "broken", "echo t{never}\n")
+    slow = cli_engine(pack, "slow", "sleep 0.5\necho t{the_real_one}\n")
+    runs = run(run_routed([hit(broken, 90), hit(slow, 10)], handout, workdir=tmp_path / "work", flag_format=FLAG,
+                          workspace_factory=factory))
+    assert [(r.manifest.id, r.result.status, r.result.flags) for r in runs] == [
+        ("broken", "unsure", ()),
+        ("slow", "candidate", ("t{the_real_one}",)),  # still ran to the end
+    ]
+    assert runs[0].result.notes == "flightdeck could not run it: RuntimeError: no room for its copy"
+    assert (runs[0].result.engine, runs[0].result.challenge_id) == ("broken", "demo-id")
+
+
+def test_a_result_with_a_number_too_big_for_a_float_is_unsure_and_the_others_still_run(pack, handout, tmp_path):
+    line = '{"schema": 1, "status": "none", "cost": {"seconds": 1' + "0" * 400 + "}}"
+    big = cli_engine(pack, "big", f"echo '{line}'\n", output="result")
+    good = cli_engine(pack, "good", "sleep 0.3\necho t{the_real_one}\n")
+    runs = run(run_routed([hit(big, 90), hit(good, 10)], handout, workdir=tmp_path / "work", flag_format=FLAG))
+    assert [(r.result.status, r.result.flags) for r in runs] == [("unsure", ()), ("candidate", ("t{the_real_one}",))]
+    assert "cost.seconds is too large" in runs[0].result.notes
 
 
 def test_run_routed_refuses_bad_arguments_before_anything_runs(pack, handout, tmp_path):

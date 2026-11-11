@@ -5,6 +5,9 @@
 - manifest.py: the sidecar `<anything>.manifest.toml` that describes one engine.
 - router.py: which engines a challenge reaches, and why.
 - runner.py: runs engines, each in its own copy of the handout.
+- _capture.py and _boot.py: never imported; every engine runs under _capture.py (what it
+  prints, kept within bounds), a python engine through _boot.py (its result, apart from
+  what it prints).
 - importer.py: wraps a folder of plain scripts with generated manifests.
 - cli.py: `flightdeck l1 list | route | run | import`.
 

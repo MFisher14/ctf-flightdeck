@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import json
+import random
 from pathlib import Path
 
 import pytest
@@ -111,11 +112,34 @@ def test_the_statuses_that_need_nothing_more_are_valid_bare():
         (lambda: Cost(seconds=True), "cost.seconds"),
         (lambda: Cost(tokens=1.5), "cost.tokens"),
         (lambda: Cost(tokens=-3), "cost.tokens"),
+        (lambda: Cost(seconds=10**400), "cost.seconds is too large"),
+        (lambda: Cost(usd=-(10**400)), "cost.usd is too large"),
     ],
 )
 def test_evidence_and_cost_check_their_fields(build, words):
     with pytest.raises(ResultError, match=words):
         build()
+
+
+HOSTILE = [None, True, False, 0, 1, -1, 2**63, 10**308, 10**400, -(10**400), 1.5, -0.0, 1e308, "", " ", "t{x}", "\ud800",
+           [], [1], ["t{x}"], {}, {"a": 1}, [{"kind": "k", "detail": "d"}], [{"kind": "k", "detail": "d", "offset": 10**400}],
+           {"seconds": 10**400}, {"usd": 10**400}, {"tokens": 10**400}, [{"kind": "k", "detail": "d", "path": "\udcff"}]]
+
+
+def test_any_value_in_any_field_is_read_or_refused_with_a_result_error():
+    # The runner catches ResultError only: any other exception from one engine's line would
+    # stop every engine on the challenge.
+    rng = random.Random(7)
+    keys = ["schema", "status", "flags", "evidence", "cost", "engine", "challenge_id", "notes"]
+    for _ in range(3000):
+        doc = {"schema": 1, "status": rng.choice(STATUSES)}
+        for key in rng.sample(keys, rng.randint(1, 4)):
+            doc[key] = rng.choice(HOSTILE)
+        line = json.dumps(doc)  # Python writes any int, however long
+        try:
+            SolverResult.from_json(line)
+        except ResultError:
+            pass
 
 
 @pytest.mark.parametrize(
@@ -153,6 +177,10 @@ def test_reading_a_result_is_strict(data, words):
         ('{"schema": 1, "status": "none", "cost": {"usd": Infinity}}', "Infinity is not a JSON number"),
         (b'{"schema": 1, "status": "none", "notes": "\xff"}', "UTF-8"),
         ("[" * 100_000 + "]" * 100_000, "nesting too deep"),
+        # whole numbers too big for a float: float() raises OverflowError, which must not escape
+        ('{"schema": 1, "status": "none", "cost": {"seconds": 1' + "0" * 400 + "}}", "cost.seconds is too large"),
+        ('{"schema": 1, "status": "none", "cost": {"usd": 1' + "0" * 309 + "}}", "cost.usd is too large"),
+        ('{"schema": 1, "status": "none", "cost": {"seconds": -1' + "0" * 400 + "}}", "cost.seconds is too large"),
     ],
 )
 def test_from_json_turns_every_bad_line_into_a_result_error(text, words):

@@ -14,8 +14,13 @@ first), then id.
 The handout is untrusted: the walk never follows a symlink and only opens regular files
 (through no symlink, and non-blocking, so a FIFO cannot hang it). It searches
 subdirectories, stops after 2000 files, and leaves out the board's own challenge.json at
-the top and flightdeck's .flightdeck/. File names from the handout appear in a hit's
-reason made safe to print.
+the top. File names from the handout appear in a hit's reason made safe to print.
+
+Routing looks only at what an engine will see: the files agent.workspace.copy_handout
+puts in the engine's copy. So it leaves out what that copy leaves out: symlinks, anything
+that is not a regular file or a directory, a .flightdeck/ at the top (flightdeck's own
+name) and every __pycache__/ folder (Python's bytecode cache). An engine is never routed
+by a file it will not have.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ from .manifest import MAGIC_BYTES, Manifest, Route, file_pattern
 
 MAX_FILES = 2000
 MAX_DIRS = 20000  # a handout of nothing but empty directories still ends
+NOT_COPIED_DIRS = ("__pycache__",)  # folders copy_handout leaves out at any depth (and .flightdeck at the top)
 
 
 @dataclass(frozen=True)
@@ -138,7 +144,7 @@ def _walk(root: Path) -> list[tuple[str, str]]:
                 if entry.is_symlink():
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    if not (prefix == "" and entry.name == PRIVATE):
+                    if not (prefix == "" and entry.name == PRIVATE) and entry.name not in NOT_COPIED_DIRS:
                         subdirs.append((Path(entry.path), f"{prefix}{entry.name}/"))
                 elif entry.is_file(follow_symlinks=False):
                     if prefix == "" and entry.name == CHALLENGE_FILE:

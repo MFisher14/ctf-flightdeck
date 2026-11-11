@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ctf_flightdeck.l1.importer import ImporterError, ImportReport, import_scripts, keywords_of
+from ctf_flightdeck.l1.importer import NO_MAIN, NOT_EXECUTABLE, ImporterError, ImportReport, import_scripts, keywords_of
 from ctf_flightdeck.l1.manifest import Entry, Route, discover, load
 from ctf_flightdeck.l1.router import route
 from ctf_flightdeck.l1.runner import run_engine
@@ -58,12 +58,17 @@ def test_every_script_gets_a_generated_manifest_and_the_rest_are_listed_with_a_r
         gen / "web/sqli-dump.sh.manifest.toml",
     ])
     skipped = {path.relative_to(scripts).as_posix(): why for path, why in report.skipped}
-    assert set(skipped) == {"tools/solve.py", "tools/exploit_main.sh"}
-    assert all("no category from its folder name and no keyword from its file name" in why for why in skipped.values())
+    assert set(skipped) == {"tools/solve.py", "tools/exploit_main.sh", "misc/helpers.py", "misc/notes.sh"}
+    for rel in ("tools/solve.py", "tools/exploit_main.sh"):
+        assert "no category from its folder name and no keyword from its file name" in skipped[rel]
+    assert skipped["misc/helpers.py"] == NO_MAIN and "write a manifest for it" in NO_MAIN
+    assert skipped["misc/notes.sh"] == NOT_EXECUTABLE and "chmod +x" in NOT_EXECUTABLE
+    # misc/data.bin (executable, no #! line) is not a script, and hidden files are not looked at
 
     rsa = load(gen / "crypto/solve_rsa-small.e.py.manifest.toml")
     assert rsa.id == "imported.crypto.solve_rsa-small.e.py"
-    assert rsa.entry == Entry("cli", None, None, ("python3", "./crypto/solve_rsa-small.e.py"))
+    assert rsa.entry == Entry("cli", None, None, ("python3", "./crypto/solve_rsa-small.e.py"), pack_files=(1,))
+    assert rsa.files == (scripts / "crypto" / "solve_rsa-small.e.py",)
     assert (rsa.output, rsa.tags, rsa.timeout_seconds) == ("text", ("imported",), 60)
     assert rsa.routes == (Route(category=("cry",), keywords=("rsa", "small"), priority=20),)
     assert rsa.base == scripts
@@ -137,6 +142,32 @@ def test_imported_scripts_are_discovered_routed_and_run_from_the_folder(scripts,
     assert result.flags == ("t{xored}",)  # run through its own #! line
 
 
+@pytest.mark.parametrize(
+    "guard",
+    [
+        'if __name__ == "__main__" and len(sys.argv) > 1:',
+        'if (__name__ == "__main__"):',
+        "if(__name__=='__main__'):",
+        'if "__main__" == __name__:',
+        'if __name__ == "__main__" :  # run me',
+    ],
+)
+def test_main_blocks_written_other_ways_are_scripts_too(tmp_path, guard):
+    folder = tmp_path / "s"
+    script(folder, "crypto/aes_ecb_oracle.py", f"import sys\n{guard}\n    print(sys.argv[1])\n")
+    report = import_scripts(folder)
+    assert [p.name for p in report.written] == ["aes_ecb_oracle.py.manifest.toml"] and report.skipped == []
+
+
+def test_a_py_file_with_no_main_block_is_listed_with_what_to_do(tmp_path):
+    folder = tmp_path / "s"
+    top_level = script(folder, "crypto/xor_known_plaintext.py", "import sys\nprint(open(sys.argv[1]).read())\n")
+    indented = script(folder, "crypto/vigenere_crack.py", 'def main():\n    if __name__ == "__main__":\n        pass\n')
+    report = import_scripts(folder)
+    assert report.written == []
+    assert report.skipped == sorted([(top_level, NO_MAIN), (indented, NO_MAIN)])  # never dropped without a word
+
+
 def test_a_script_at_the_top_takes_the_category_of_the_folder_itself(tmp_path):
     folder = tmp_path / "Crypto"
     script(folder, "solve.py", MAIN)
@@ -208,6 +239,45 @@ def test_folders_that_cannot_be_imported_into_are_errors(tmp_path):
     with pytest.raises(ImporterError, match="is a symlink"):
         import_scripts(folder)
     assert list(elsewhere.iterdir()) == []
+
+
+def test_a_symlinked_folder_inside_generated_is_never_written_through(tmp_path):
+    # .flightdeck and .flightdeck/generated are real folders here: the symlink is one level
+    # down, where only _real_dirs looks
+    folder = tmp_path / "s"
+    script(folder, "crypto/xor_tool.py", MAIN)
+    (folder / GEN).mkdir(parents=True)
+    os.symlink(folder / "crypto", folder / GEN / "crypto")  # would land the manifest in the player's own crypto/
+    before = tree(folder / "crypto")
+    with pytest.raises(ImporterError, match=r"generated/crypto is a symlink"):
+        import_scripts(folder)
+    assert tree(folder / "crypto") == before
+
+
+def test_scripts_in_a_challenge_or_a_workspace_inside_the_folder_are_never_wrapped(tmp_path):
+    folder = tmp_path / "s"
+    script(folder, "crypto/rsa_tool.py", MAIN)
+    challenge = folder / "boards" / "evil"
+    script(challenge, "chall.py", 'if __name__ == "__main__":\n    print("t{planted_chall}")\n')
+    script(challenge, "challenge.json", '{"name": "Evil", "category": "crypto", "points": 1}')
+    workspace = folder / "runs" / "20261111-000000" / "grep"
+    script(workspace, "crypto/chall.py", MAIN)
+    script(workspace, ".flightdeck/prepare.log", "copied 1 files\n")
+    report = import_scripts(folder)
+    assert [p.relative_to(folder / GEN).as_posix() for p in report.written] == ["crypto/rsa_tool.py.manifest.toml"]
+    reasons = dict(report.skipped)
+    assert reasons[challenge].startswith("a challenge folder (it has a challenge.json)")
+    assert reasons[workspace].startswith("a flightdeck workspace, a copy of a challenge")
+    assert set(reasons) == {challenge, workspace}
+
+
+def test_a_folder_that_is_a_challenge_is_not_imported(tmp_path):
+    folder = tmp_path / "chal"
+    script(folder, "crypto/chall.py", MAIN)
+    script(folder, "challenge.json", "{}")
+    with pytest.raises(ImporterError, match="is a challenge folder"):
+        import_scripts(folder)
+    assert not (folder / ".flightdeck").exists()
 
 
 def test_a_broken_manifest_of_the_players_stops_the_import(tmp_path):

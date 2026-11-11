@@ -4,6 +4,8 @@ its own here with synthetic packs and folder-board challenges."""
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,11 @@ runner = CliRunner()
 
 def invoke(*args):
     return runner.invoke(app, [str(a) for a in args], prog_name="flightdeck l1")
+
+
+def flat(text: str) -> str:
+    """A message as words on one line, without the box Typer draws around a usage error."""
+    return " ".join(text.replace("│", " ").split())
 
 
 @pytest.fixture
@@ -82,7 +89,7 @@ def test_route_lists_the_hits_best_first_with_reasons(pack, board):
 
 
 def test_run_prints_one_json_result_per_engine_using_the_boards_flag_format(pack, board, tmp_path):
-    result = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs")
+    result = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs", "--keep")
     assert result.exit_code == 0, result.stderr
     results = [SolverResult.from_json(line) for line in result.stdout.splitlines()]
     assert [(r.engine, r.status, r.flags) for r in results] == [
@@ -92,9 +99,26 @@ def test_run_prints_one_json_result_per_engine_using_the_boards_flag_format(pack
     assert all(r.challenge_id == "sticky-note" for r in results)
     [run_dir] = (tmp_path / "runs").iterdir()  # a new folder per run inside --workdir
     assert sorted(p.name for p in run_dir.iterdir()) == ["read.note", "text.grep"]
-    assert "no API keys or tokens" in result.stderr and str(run_dir) in result.stderr
-    again = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs")
+    assert "no API keys or tokens" in result.stderr and str(run_dir) in result.stderr and "kept there (--keep)" in result.stderr
+    again = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs", "--keep")
     assert again.exit_code == 0 and len(list((tmp_path / "runs").iterdir())) == 2
+
+
+def test_run_leaves_nothing_behind_unless_kept(pack, board, tmp_path):
+    result = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs")
+    assert result.exit_code == 0, result.stderr
+    assert len(result.stdout.splitlines()) == 2 and "each removed once its result is read" in result.stderr
+    assert list((tmp_path / "runs").iterdir()) == []  # every copy, and the run's own folder, gone
+    default = invoke("run", pack, board / "sticky-note")
+    assert default.exit_code == 0, default.stderr
+    temporary = Path(re.search(r"under (\S*flightdeck-l1-\S+?), ", flat(default.stderr)).group(1))
+    assert not temporary.exists()  # the temporary folder goes whole
+    kept = invoke("run", pack, board / "sticky-note", "--keep")
+    folder = Path(re.search(r"under (\S*flightdeck-l1-\S+?), ", flat(kept.stderr)).group(1))
+    try:
+        assert sorted(p.name for p in folder.iterdir()) == ["read.note", "text.grep"]
+    finally:
+        shutil.rmtree(folder)
 
 
 def test_run_takes_a_flag_format_and_refuses_a_bad_one(pack, board, tmp_path):
@@ -127,6 +151,52 @@ def test_a_folder_that_is_not_a_challenge_is_refused(pack, board, tmp_path):
     (board / "broken" / "challenge.json").write_text('{"name": "x"}')
     broken = invoke("route", pack, board / "sticky-note")
     assert broken.exit_code == 2 and '"category" is missing' in broken.stderr
+
+
+PLANTED = 'id = "aaa.planted"\nentry = "cli:./x.sh"\noutput = "text"\n[[routes]]\nkeywords = ["e"]\npriority = 100\n'
+
+
+def hostile_challenge(board: Path) -> Path:
+    """A challenge that ships an engine of its own: a manifest and an executable x.sh."""
+    evil = challenge_dir(board, "evil", {"x.manifest.toml": PLANTED, "x.sh": "#!/bin/sh\ntouch HANDOUT_CODE_RAN\necho 't{planted}'\n"},
+                         description="every engine")
+    (evil / "x.sh").chmod(0o755)
+    return evil
+
+
+def test_run_refuses_a_workdir_inside_the_pack_or_the_challenge(pack, board, tmp_path):
+    evil = hostile_challenge(board)
+    for workdir, owner in ((pack / "runs", "the pack"), (pack, "the pack"), (evil / "runs", "the challenge")):
+        result = invoke("run", pack, evil, "--workdir", workdir)
+        assert result.exit_code == 2 and result.stdout == ""
+        assert f"is inside {owner}" in flat(result.stderr) and "engine workspaces are copies of the challenge" in flat(result.stderr)
+        assert not (pack / "runs").exists() and not (evil / "runs").exists()
+    ok = invoke("run", pack, evil, "--workdir", tmp_path / "elsewhere")
+    assert ok.exit_code == 0, ok.stderr
+    listed = [line for line in invoke("list", pack).stdout.splitlines() if not line.startswith(" ")]
+    assert [re.match(r"[a-z0-9_.-]+", line).group(0) for line in listed] == ["never", "read.note", "text.grep"]  # nothing planted
+
+
+def test_a_challenge_inside_the_pack_or_a_pack_inside_the_challenge_is_refused(pack, tmp_path):
+    inner_board = pack / "boards"
+    inner_board.mkdir()
+    evil = hostile_challenge(inner_board)
+    for command in ("route", "run"):
+        result = invoke(command, pack, evil, *(["--workdir", tmp_path / "w"] if command == "run" else []))
+        assert result.exit_code == 2 and "overlap" in result.stderr, result.stderr
+    assert not (tmp_path / "w").exists() and not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
+    outer = challenge_dir(tmp_path / "board2", "holds-pack", {})
+    python_engine(outer / "inner-pack", "e", "def solve(d):\n    return None\n")
+    result = invoke("route", outer / "inner-pack", outer)
+    assert result.exit_code == 2 and "overlap" in result.stderr
+
+
+def test_folders_of_the_pack_that_hold_a_challenge_are_left_out_and_said(pack, tmp_path):
+    hostile_challenge(pack / "examples")
+    result = invoke("list", pack)
+    assert result.exit_code == 0, result.stderr
+    assert "aaa.planted" not in result.stdout
+    assert "skipped examples/evil in the pack: a challenge folder (it has a challenge.json)" in result.stderr
 
 
 def test_import_writes_manifests_and_lists_what_it_skipped(tmp_path):

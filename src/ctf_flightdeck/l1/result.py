@@ -81,9 +81,15 @@ class Cost:
     def __post_init__(self) -> None:
         for name in ("seconds", "usd"):
             value = getattr(self, name)
-            if not (_is_number(value) and math.isfinite(value) and value >= 0):
+            if not _is_number(value):
                 raise ResultError(f"cost.{name} must be a finite number, 0 or more")
-            object.__setattr__(self, name, float(value))
+            try:
+                number = float(value)  # a whole number past 1e308 does not fit: OverflowError
+            except OverflowError:
+                raise ResultError(f"cost.{name} is too large") from None
+            if not (math.isfinite(number) and number >= 0):
+                raise ResultError(f"cost.{name} must be a finite number, 0 or more")
+            object.__setattr__(self, name, number)
         if not (_is_int(self.tokens) and self.tokens >= 0):
             raise ResultError("cost.tokens must be a whole number, 0 or more")
 
