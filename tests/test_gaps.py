@@ -563,6 +563,7 @@ def test_without_a_pack_there_is_no_routing_line(played):
     assert "Routed now" not in text
     assert headings(text, "h3")[-1] == "hotel (category unknown, points unknown): solved by you"  # no name: its id
     assert section(text, "### hotel") == ["- Id: hotel", f"- Why L1 did not solve it: {NO_ROUTE}"]
+    assert section(text, "## Solved by L1") == ["- Bravo: sqli", "- india: rsa"]
 
 
 def test_problems_reading_the_run_are_reported(played):
@@ -576,6 +577,10 @@ def test_problems_reading_the_run_are_reported(played):
         "- no name or points in the run for delta, hotel, india (give --board to fill them in)",
     ]
     assert summary(rep).splitlines()[-1] == "2 problems reading the run: see gaps.md"
+    assert json.loads(gaps_json(rep))["notes"] == [
+        f"events.jsonl:{torn}: not JSON (Expecting property name enclosed in double quotes); skipped",
+        "no name or points in the run for delta, hotel, india (give --board to fill them in)",
+    ]
 
 
 def test_a_run_with_no_gaps_or_no_challenges_says_so(tmp_path):
