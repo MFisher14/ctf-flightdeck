@@ -19,7 +19,8 @@ it is used, because a server may echo the key back.
 Untrusted data. Everything in an answer came from a model or a server. Error text is passed
 through `text.untrusted()` and shortened. The reply's message is handed back as data for
 the history, with its role pinned to "assistant" so an answer cannot smuggle a system or
-tool message into the conversation.
+tool message into the conversation. Only strict JSON is accepted, so whatever the message
+holds can be sent back on the next turn.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
+from typing import NoReturn
 
 import httpx
 
@@ -120,10 +122,11 @@ class ModelClient:
 
     `chat()` may run for several lanes at once on one event loop. httpx pools connections
     per loop, so keep the client on that loop and `aclose()` it when done (or use `async
-    with`). `timeout` bounds each try, in seconds: an answer that has not come by then is
-    given up on and tried again (a non-streaming answer only starts once the model has
-    finished); connecting gets at most CONNECT_TIMEOUT of it. A call makes at most
-    `max_retries + 1` tries. With `transport` given, httpx ignores proxy variables.
+    with`). `timeout` bounds each try as a whole, in seconds, from connecting to the last
+    byte of the answer: an answer that is not complete by then is given up on and tried
+    again (a non-streaming answer only starts once the model has finished); connecting gets
+    at most CONNECT_TIMEOUT of it. A call makes at most `max_retries + 1` tries. With
+    `transport` given, httpx ignores proxy variables.
     """
 
     def __init__(
@@ -151,6 +154,7 @@ class ModelClient:
             raise ValueError(f"max_retries must not be negative, got {max_retries}")
         if not backoff >= 0:
             raise ValueError(f"backoff must not be negative, got {backoff}")
+        self.timeout = timeout
         self.max_retries = max_retries
         self.backoff = backoff
         self._key = api_key
@@ -216,11 +220,16 @@ class ModelClient:
     async def _post(self, content: bytes) -> tuple[httpx.Response | None, str, bool]:
         """One try: the response, or None with what went wrong and whether a retry may help.
 
-        The httpx error is described here and dropped, never chained onto a ModelError: its
-        request holds the Authorization header.
+        httpx's timeouts bound each wait for bytes, not the whole answer, so a server that
+        sends a byte now and then could hold a try for as long as it liked: the deadline
+        here bounds the whole try. The httpx error is described here and dropped, never
+        chained onto a ModelError: its request holds the Authorization header.
         """
         try:
-            return await self._http.post(self._url, content=content), "", False
+            async with asyncio.timeout(self.timeout):
+                return await self._http.post(self._url, content=content), "", False
+        except TimeoutError:  # the deadline passed: no complete answer in time
+            return None, f"timed out after {self.timeout:g} s", True
         except httpx.HTTPError as exc:
             what = type(exc).__name__ + (f": {exc}" if str(exc) else "")
             return None, what, isinstance(exc, TRANSIENT)
@@ -435,11 +444,28 @@ def _text(value: object) -> str:
 
 
 def _json(response: httpx.Response) -> object:
-    """The parsed body, or _NOT_JSON."""
+    """The parsed body, or _NOT_JSON when it is not strict JSON.
+
+    Python's parser also takes NaN and Infinity, and reads a number such as 1e400 as
+    infinity. JSON has neither, and a reply message holding one could never be sent back
+    in the history: `_request_body` refuses it. A body nested deeper than the parser can
+    follow raises RecursionError, not ValueError, and is refused the same way.
+    """
     try:
-        return response.json()
-    except ValueError:  # also UnicodeDecodeError
+        return response.json(parse_constant=_refuse_constant, parse_float=_finite_float)
+    except (ValueError, RecursionError):  # ValueError covers UnicodeDecodeError too
         return _NOT_JSON
+
+
+def _refuse_constant(name: str) -> NoReturn:
+    raise ValueError(f"{name} is not JSON")
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("a number too big for a float")
+    return value
 
 
 def _error_message(data: object) -> str:

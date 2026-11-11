@@ -1,9 +1,11 @@
 """The model API client, over real HTTP to the fake model server.
 
 Nothing is mocked: each test starts a FakeModelServer on 127.0.0.1, scripts its replies and
-reads back what the client sent. pytest has no async support here, so each call runs on a
-fresh event loop with asyncio.run(). Backoffs are a millisecond so the retries stay fast; the
-tests about waiting use waits that are short but long enough to measure.
+reads back what the client sent. A few start a RawServer instead, for what an HTTP server
+will not do on its own: hang up or reset a connection, or trickle in an answer a byte at a
+time. pytest has no async support here, so each call runs on a fresh event loop with
+asyncio.run(). Backoffs are a millisecond so the retries stay fast; the tests about waiting
+use waits that are short but long enough to measure.
 """
 
 from __future__ import annotations
@@ -12,8 +14,10 @@ import asyncio
 import itertools
 import json
 import socket
+import struct
 import threading
 import time
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -100,17 +104,22 @@ def closed_port() -> int:
 
 
 class CountingTransport(httpx.AsyncBaseTransport):
-    """httpx's real transport, counting the requests it is asked to send."""
+    """httpx's real transport, counting the requests it is asked to send and when, and
+    noting when its connection pool is closed."""
 
     def __init__(self) -> None:
         self.inner = httpx.AsyncHTTPTransport()
         self.sent = 0
+        self.times: list[float] = []  # time.monotonic() as each request set off
+        self.closed = False
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self.sent += 1
+        self.times.append(time.monotonic())
         return await self.inner.handle_async_request(request)
 
     async def aclose(self) -> None:
+        self.closed = True
         await self.inner.aclose()
 
 
@@ -118,6 +127,91 @@ def reply_with_message(message: dict) -> dict:
     body = text_reply("unused")
     body["choices"][0]["message"] = message
     return body
+
+
+class RawServer:
+    """A loopback HTTP server for the misbehaviour the fake model server will not show.
+
+    Each connection's request is read in full, then `answer(conn, number)` writes what it
+    likes (number counts the connections from 0) and the connection is closed. A failed
+    try never reuses its connection, so `connections` counts the tries.
+    """
+
+    def __init__(self, answer: Callable[[socket.socket, int], None]) -> None:
+        self._answer = answer
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self._listener.settimeout(0.05)  # so the accept loop sees the stop flag
+        self.base_url = f"http://127.0.0.1:{self._listener.getsockname()[1]}/v1"
+        self.connections = 0
+        self._stop = threading.Event()
+        self._workers: list[threading.Thread] = []
+        self._acceptor = threading.Thread(target=self._accept, name="raw-server", daemon=True)
+
+    def __enter__(self) -> RawServer:
+        self._acceptor.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._acceptor.join()
+        for worker in self._workers:
+            worker.join(5.0)
+        self._listener.close()
+
+    def _accept(self) -> None:
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._listener.accept()
+            except TimeoutError:
+                continue
+            worker = threading.Thread(target=self._serve, args=(conn, self.connections), daemon=True)
+            self.connections += 1
+            self._workers.append(worker)
+            worker.start()
+
+    def _serve(self, conn: socket.socket, number: int) -> None:
+        with conn:
+            conn.settimeout(5.0)
+            try:
+                read_request(conn)
+                self._answer(conn, number)
+            except OSError:  # the client hung up first: it gave up on the try
+                pass
+
+
+def read_request(conn: socket.socket) -> None:
+    """Read one HTTP request, its head and its Content-Length body, off the connection."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(65536)
+        if not chunk:
+            return
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    length = 0
+    for line in head.split(b"\r\n")[1:]:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-length":
+            length = int(value)
+    while len(body) < length:
+        chunk = conn.recv(65536)
+        if not chunk:
+            return
+        body += chunk
+
+
+def http_200(body: dict) -> tuple[bytes, bytes]:
+    """The head and the body of a complete HTTP/1.1 200 answer carrying `body` as JSON."""
+    data = json.dumps(body).encode()
+    head = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n" % len(data)
+    return head, data
+
+
+def trickle(conn: socket.socket, data: bytes) -> None:
+    """Send `data` a byte every 50 ms: each wait for bytes is short, the whole answer is not."""
+    for byte in data:
+        conn.sendall(bytes([byte]))
+        time.sleep(0.05)
 
 
 # ------------------------------------------------------------------ the request
@@ -209,6 +303,34 @@ def test_a_closed_client_refuses_to_call():
 
     with pytest.raises(RuntimeError, match="closed"):
         asyncio.run(run())
+
+
+@pytest.mark.parametrize("how", ["aclose", "async with"])
+def test_closing_the_client_closes_its_connection_pool(how):
+    transport = CountingTransport()
+
+    async def run() -> None:
+        if how == "aclose":
+            client = ModelClient(server.base_url, None, transport=transport)
+            await client.chat("fake/model", MESSAGES, [], session_id=SESSION)
+            assert not transport.closed
+            await client.aclose()
+        else:
+            async with ModelClient(server.base_url, None, transport=transport) as client:
+                await client.chat("fake/model", MESSAGES, [], session_id=SESSION)
+                assert not transport.closed
+
+    with FakeModelServer([text_reply("a")]) as server:
+        asyncio.run(run())
+    assert transport.closed
+
+
+def test_a_client_built_with_the_defaults_has_the_documented_timeout_retries_and_backoff():
+    client = ModelClient("http://127.0.0.1:9/v1", None)
+    try:
+        assert (client.timeout, client.max_retries, client.backoff) == (180.0, 4, 1.0)
+    finally:
+        asyncio.run(client.aclose())
 
 
 def test_lanes_can_share_one_client_at_the_same_time():
@@ -384,6 +506,31 @@ def test_a_reply_that_is_not_json_fails_with_a_safe_snippet_of_it():
     assert "\x1b" not in str(err)
 
 
+# valid JSON, but nested far deeper than Python's parser can follow (it raises RecursionError)
+DEEP = '{"error": ' + "[" * 200_000 + "]" * 200_000 + "}"
+
+
+@pytest.mark.parametrize("status", [200, 400])
+def test_a_body_nested_too_deep_to_parse_fails_at_once_as_a_model_error(status):
+    with FakeModelServer([FakeReply(status, DEEP), text_reply("never sent")]) as server:
+        err = fails(server.base_url)
+        assert len(server.requests) == 1
+    assert err.status == status and err.retryable is False
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_a_reply_holding_a_number_json_cannot_carry_is_refused_before_it_reaches_the_history(number):
+    # Python's parser takes these (1e400 becomes infinity), but a message holding one could
+    # never be sent back: the next request's body would fail to encode
+    message = '{"role": "assistant", "content": "thinking", "logprobs": %s}' % number
+    raw = '{"choices": [{"message": %s, "finish_reason": "stop"}], "model": "fake/model"}' % message
+    with FakeModelServer([FakeReply(200, raw), text_reply("never sent")]) as server:
+        err = fails(server.base_url)
+        assert len(server.requests) == 1
+    assert "not JSON" in str(err)
+    assert err.status == 200 and err.retryable is False
+
+
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 422])
 def test_any_other_failing_status_fails_at_once_with_the_servers_message(status):
     with FakeModelServer([error_reply(status, "you sent something wrong"), text_reply("never sent")]) as server:
@@ -394,11 +541,15 @@ def test_any_other_failing_status_fails_at_once_with_the_servers_message(status)
 
 
 def test_the_servers_error_text_is_made_safe_and_cut_to_300_characters():
-    message = "line one\nline two \x1b]0;title\x07 " + "A" * 1000
+    # right-to-left override and pop, zero-width space, left-to-right isolate and pop
+    invisible = "\u202e\u202c\u200b\u2066\u2069"
+    message = "line one\nline two \x1b]0;title\x07 \u202edesrever\u202c zero\u200bwidth \u2066isolated\u2069 " + "A" * 1000
     with FakeModelServer([error_reply(400, message)]) as server:
         err = fails(server.base_url)
     text = str(err)
     assert "\n" not in text and "\x1b" not in text and "\x07" not in text
+    assert not any(ch in text for ch in invisible)
+    assert text.count("\ufffd") == len(invisible)  # each one shows as a mark, as text.untrusted() makes it
     servers_part = text.split(": ", 1)[1]
     assert servers_part.startswith("line one")
     assert len(servers_part) <= 300
@@ -421,13 +572,32 @@ def test_a_status_that_means_not_now_is_tried_again(status):
         assert len(server.requests) == 2
 
 
+def test_a_429_whose_body_is_nested_too_deep_to_parse_is_still_tried_again():
+    with FakeModelServer([FakeReply(429, DEEP), text_reply("now")]) as server:
+        assert call(server.base_url).content == "now"
+        assert len(server.requests) == 2
+
+
 def test_when_every_try_fails_the_error_is_retryable_and_names_the_last_status():
-    replies = [error_reply(500, "upstream exploded")] * 3 + [text_reply("one try too many")]
+    replies = [error_reply(429, "slow down"), error_reply(503, "overloaded"), text_reply("one try too many")]
     with FakeModelServer(replies) as server:
-        err = fails(server.base_url, max_retries=2)
-        assert len(server.requests) == 3
-    assert err.status == 500 and err.retryable is True
-    assert "upstream exploded" in str(err) and "3 tries" in str(err)
+        err = fails(server.base_url, max_retries=1)
+        assert len(server.requests) == 2
+    assert err.status == 503 and err.retryable is True
+    assert "HTTP 503" in str(err) and "overloaded" in str(err) and "2 tries" in str(err)
+    assert "slow down" not in str(err)
+
+
+def test_when_the_last_try_gets_no_answer_the_error_has_no_status_though_an_earlier_one_did():
+    def too_slow(request: dict) -> dict:
+        time.sleep(0.6)  # past the client's timeout
+        return text_reply("too late")
+
+    with FakeModelServer([error_reply(502, "bad gateway")], responder=too_slow) as server:
+        err = fails(server.base_url, timeout=0.25, max_retries=1)
+        assert len(server.requests) == 2
+    assert err.status is None and err.retryable is True
+    assert "bad gateway" not in str(err)
 
 
 def test_no_retries_means_one_try():
@@ -435,6 +605,20 @@ def test_no_retries_means_one_try():
         err = fails(server.base_url, max_retries=0)
         assert len(server.requests) == 1
     assert err.status == 429 and err.retryable is True
+
+
+def test_a_client_built_with_the_defaults_makes_five_tries():
+    busy = error_reply(500, "busy", headers={"Retry-After": "0"})  # no wait, whatever the backoff
+
+    async def run() -> None:
+        async with ModelClient(server.base_url, None) as client:
+            await client.chat("fake/model", MESSAGES, [], session_id=SESSION)
+
+    with FakeModelServer([busy] * 5 + [text_reply("one try too many")]) as server:
+        with pytest.raises(ModelError) as info:
+            asyncio.run(run())
+        assert len(server.requests) == 5
+    assert info.value.retryable is True and "5 tries" in str(info.value)
 
 
 def test_a_retry_after_header_sets_the_wait_instead_of_the_backoff():
@@ -450,13 +634,26 @@ def test_a_retry_after_header_sets_the_wait_instead_of_the_backoff():
         assert time.monotonic() - start >= 0.3
 
 
-def test_the_wait_between_tries_doubles_from_the_backoff():
-    replies = [error_reply(502, "a"), error_reply(502, "b"), text_reply("ok")]
-    with FakeModelServer(replies) as server:
-        start = time.monotonic()
-        assert call(server.base_url, max_retries=2, backoff=0.1).content == "ok"
-        elapsed = time.monotonic() - start
-    assert elapsed >= 0.1 + 0.2  # a steady 0.1 s would be 0.2 s in all
+def gaps(times: list[float]) -> list[float]:
+    return [later - earlier for earlier, later in itertools.pairwise(times)]
+
+
+def test_the_waits_between_tries_double_from_the_backoff_and_none_follows_the_last():
+    arrivals: list[float] = []
+
+    def failing(request: dict) -> FakeReply:
+        arrivals.append(time.monotonic())
+        return error_reply(500, "upstream exploded")
+
+    with FakeModelServer(responder=failing) as server:
+        err = fails(server.base_url, max_retries=2, backoff=0.2)
+        ended = time.monotonic()
+    assert len(arrivals) == 3
+    first, second = gaps(arrivals)
+    assert first >= 0.2 and second >= 0.4  # doubling from the backoff (a steady 0.2 s fails)
+    assert first + second < 1.0  # not from twice the backoff, which waits 0.4 + 0.8 s
+    assert ended - arrivals[-1] < 0.5  # no wait after the last try (it would be 0.8 s)
+    assert err.status == 500 and err.retryable is True
 
 
 def test_a_try_that_times_out_is_tried_again():
@@ -473,12 +670,74 @@ def test_a_try_that_times_out_is_tried_again():
     assert reply.content == "on the second try"
 
 
-def test_a_refused_connection_is_tried_again_then_fails_as_retryable():
+def test_an_answer_that_trickles_in_is_given_up_on_when_the_try_runs_out_of_time():
+    # httpx's own timeouts bound each wait for bytes, and every byte here comes in 50 ms;
+    # only a deadline on the whole try stops the first answer, which would take over 10 s
+    def first_trickles(conn: socket.socket, number: int) -> None:
+        head, data = http_200(text_reply("too late" if number == 0 else "on the second try"))
+        conn.sendall(head)
+        if number == 0:
+            trickle(conn, data)
+        else:
+            conn.sendall(data)
+
+    with RawServer(first_trickles) as server:
+        start = time.monotonic()
+        reply = call(server.base_url, timeout=0.3, max_retries=1)
+        elapsed = time.monotonic() - start
+    assert reply.content == "on the second try"
+    assert server.connections == 2
+    assert elapsed < 2.0
+
+
+def test_when_the_last_try_runs_out_of_time_the_error_says_so_and_is_retryable():
+    def trickles(conn: socket.socket, number: int) -> None:
+        head, data = http_200(text_reply("too late"))
+        conn.sendall(head)  # a status line came, but no complete answer
+        trickle(conn, data)
+
+    with RawServer(trickles) as server:
+        start = time.monotonic()
+        err = fails(server.base_url, key=KEY, timeout=0.25, max_retries=0)
+        elapsed = time.monotonic() - start
+    assert err.status is None and err.retryable is True
+    assert "timed out after 0.25 s" in str(err) and KEY not in str(err)
+    assert err.__cause__ is None and err.__context__ is None
+    assert 0.25 <= elapsed < 0.45  # the deadline is the timeout itself, not a multiple of it
+
+
+def test_a_refused_connection_is_tried_again_after_the_same_waits_then_fails_as_retryable():
     transport = CountingTransport()
-    err = fails(f"http://127.0.0.1:{closed_port()}/v1", max_retries=2, transport=transport)
+    err = fails(f"http://127.0.0.1:{closed_port()}/v1", max_retries=2, backoff=0.2, transport=transport)
+    ended = time.monotonic()
     assert transport.sent == 3
+    first, second = gaps(transport.times)
+    assert first >= 0.2 and second >= 0.4  # a transport error waits as a failing status does
+    assert first + second < 1.0
+    assert ended - transport.times[-1] < 0.5
     assert err.status is None and err.retryable is True
     assert "no answer from the model API" in str(err) and "3 tries" in str(err)
+
+
+def hang_up(conn: socket.socket, number: int) -> None:
+    """Answer nothing: the request was read, so closing sends a plain FIN."""
+
+
+def reset(conn: socket.socket, number: int) -> None:
+    """Answer nothing, and make closing send a TCP reset instead of a FIN."""
+    conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+
+
+@pytest.mark.parametrize(
+    "drop, error", [(hang_up, "RemoteProtocolError"), (reset, "ReadError")], ids=["hang-up", "reset"]
+)
+def test_a_connection_dropped_before_the_answer_is_tried_again_then_fails_as_retryable(drop, error):
+    with RawServer(drop) as server:
+        err = fails(server.base_url, key=KEY, max_retries=2)
+    assert server.connections == 3
+    assert err.status is None and err.retryable is True
+    assert error in str(err) and "3 tries" in str(err)
+    assert KEY not in str(err)
 
 
 def test_the_wait_doubles_from_the_backoff_and_stops_at_30_seconds():
