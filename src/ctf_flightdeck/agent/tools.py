@@ -5,6 +5,12 @@ text: arguments are checked, paths are fenced to the workspace, http goes only t
 challenge's own instance, and each mistake comes back as an error result the model can
 correct, never an exception. Output is cut to what a context can afford, and the full text
 goes to a file the model can read on purpose (context size drives cost: ARCHITECTURE.md).
+
+One deliberate difference from the M1 contract: a plan over 500 characters is cut, and
+set_plan then answers "Plan noted (cut to 500 characters)." rather than "Plan noted.", so
+the model knows the player sees only the start of it. And one addition to it: in a docker
+lane whose image has no python3, the python tool answers an error saying so, and how to
+get the lane image that has it (DockerWorkspace.python_missing), instead of exit 127.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import os
 import re
 import shlex
 import stat
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,9 +40,11 @@ CONSOLE_CHARS = 300  # ToolResult.output
 ACTION_CHARS = 400  # ToolResult.action
 PLAN_CHARS = 500
 READ_LINES = 400
+COMMAND_BYTES = 100_000  # the longest shell command: it is one argument (bash -c), and Linux takes at most 128 KiB in one
 HTTP_TIMEOUT = 30.0
 HTTP_HEADERS = 30  # response headers shown at most
 SYMLINK_HOPS = 40
+PATH_CHARS = 4096  # the longest path read_file looks up, in characters (Linux's PATH_MAX)
 SUBMITTED = "Sent to the player for approval. Carry on until you hear it was correct."
 
 
@@ -192,6 +201,10 @@ class Toolbox:
         if "\0" in command:
             raise _Mistake("command contains a NUL character", action)
         _sendable(command, "command", action)
+        size = len(command.encode("utf-8"))
+        if size > COMMAND_BYTES:
+            # Past the system's limit, starting bash fails (E2BIG) before the command runs.
+            raise _Mistake(f"the command is {size} bytes, over the {COMMAND_BYTES}-byte limit for one command; write long data to a file in parts", action)
         timeout = self._timeout(args)
         return self._ran(action, await self.workspace.run(command, timeout=timeout), timeout, turn, index)
 
@@ -199,6 +212,9 @@ class Toolbox:
         code = _required(args, "code", "python")
         first = next((line.strip() for line in code.splitlines() if line.strip()), "")
         action = f"python: {first}"
+        missing = getattr(self.workspace, "python_missing", None)  # a docker lane whose image has no python3
+        if missing:
+            raise _Mistake(missing, action)
         if not first:
             raise _Mistake("code is empty", action)
         timeout = self._timeout(args)
@@ -262,60 +278,78 @@ class Toolbox:
             raise _Mistake("start_line counts from 1", action)
         if count < 1:
             raise _Mistake("max_lines must be at least 1", action)
-        parts = self._fence(path, action)
-        return await asyncio.to_thread(self._read, parts, path, action, start, count)
+        # The fence looks the path up on disk too, so it runs off the event loop with the read.
+        return await asyncio.to_thread(self._fence_and_read, path, action, start, count)
+
+    def _fence_and_read(self, path: str, action: str, start: int, count: int) -> ToolResult:
+        return self._read(self._fence(path, action), path, action, start, count)
 
     def _fence(self, path: str, action: str) -> list[str]:
         """The file the model means, as components under root, following symlinks the way the
         lane's commands would see them (in docker, /work/... is root). Anything that leaves root
         is refused. The components found are opened later without following any symlink, so a
-        swap after this check cannot lead outside either."""
+        swap after this check cannot lead outside either.
+
+        Each component costs one lookup, and the work is bounded: a path over PATH_CHARS is
+        refused before any lookup, and so is one that grows past that through its symlinks
+        (no such path can be opened anyway)."""
+        if len(path) > PATH_CHARS:
+            raise _Mistake(f"the path is {len(path)} characters; a path can be at most {PATH_CHARS}", action)
         if not path.strip():
             raise _Mistake("path is empty", action)
         if "\0" in path:
             raise _Mistake("path contains a NUL character", action)
         _sendable(path, "path", action)
-        root = Path(self.workspace.root)
+        base = str(Path(self.workspace.root))
         prefixes = _prefixes(self.workspace)
         if path.startswith("/"):
-            pending = _below(path, prefixes)
-            if pending is None:
+            below = _below(path, prefixes)
+            if below is None:
                 raise _Mistake(f"{path} is outside the workspace", action)
+            pending = deque(below)
         else:
-            pending = path.split("/")
+            pending = deque(path.split("/"))
         parts: list[str] = []
+        here = base  # root/parts as one path, grown a component at a time
+        ends: list[int] = []  # len(here) before each part was added, to step back on ".."
         hops = 0
         while pending:
-            name = pending.pop(0)
+            name = pending.popleft()
             if name in ("", "."):
                 continue
             if name == "..":
                 if not parts:
                     raise _Mistake(f"{path} is outside the workspace", action)
                 parts.pop()
+                here = here[: ends.pop()]
                 continue
-            here = root.joinpath(*parts, name)
+            step = f"{here}/{name}"
+            if len(step) - len(base) > PATH_CHARS:
+                raise _Mistake(f"{path} is too long once its symlinks are followed (over {PATH_CHARS} characters)", action)
             try:
-                link = stat.S_ISLNK(os.lstat(here).st_mode)
+                link = stat.S_ISLNK(os.lstat(step).st_mode)
             except OSError:
                 link = False  # missing, or under a file: opening it says which
             if not link:
                 parts.append(name)
+                ends.append(len(here))
+                here = step
                 continue
             hops += 1
             if hops > SYMLINK_HOPS:
                 raise _Mistake(f"{path}: too many levels of symlinks", action)
             try:
-                target = os.readlink(here)
+                target = os.readlink(step)
             except OSError:
                 raise _Mistake(f"{path} changed while it was being looked up; try again", action) from None
             if target.startswith("/"):
                 rest = _below(target, prefixes)
                 if rest is None:
                     raise _Mistake(f"{path} leads outside the workspace (a symlink to {target})", action)
-                parts, pending = [], rest + pending
+                parts, ends, here = [], [], base
+                pending.extendleft(reversed(rest))
             else:
-                pending = target.split("/") + pending
+                pending.extendleft(reversed(target.split("/")))
         return parts
 
     def _read(self, parts: list[str], path: str, action: str, start: int, count: int) -> ToolResult:
@@ -362,7 +396,7 @@ class Toolbox:
         if not lines:
             if number == 0:
                 return ToolResult("(empty file)", _one_line(action), "empty file")
-            raise _Mistake(f"start_line {start} is past the end: {path} has {number} lines", action)
+            raise _Mistake(f"start_line {_clip(str(start), 30)} is past the end: {path} has {number} lines", action)
         last = start + len(lines) - 1
         text = "".join(lines)
         if not (more or cut):
@@ -416,10 +450,19 @@ class Toolbox:
             raise _Mistake(f"the request failed: {type(exc).__name__}: {_clip(str(exc), 200)}", action) from None
         except (ValueError, UnicodeError) as exc:
             raise _Mistake(f"the request was not sent: {_clip(str(exc), 200)}", action) from None
+        except Exception as exc:
+            # The HTTP stack refused what the model asked for in a way httpx does not wrap: h11
+            # raises its own LocalProtocolError while writing a body that disagrees with a
+            # Content-Length header the model set. Cancellation is not an Exception, so it
+            # still goes through.
+            raise _Mistake(f"the request could not be sent as given: {type(exc).__name__}: {_clip(str(exc), 200)}", action) from None
         return self._answer(action, response, raw, complete, turn, index)
 
     def _answer(self, action: str, response: httpx.Response, raw: bytes, complete: bool, turn: int, index: int) -> ToolResult:
-        status = f"{response.http_version} {response.status_code} {response.reason_phrase}".strip()
+        # The reason phrase is the instance's text, of any length: clipped like a header line,
+        # so it cannot push the body out of max_chars.
+        reason = untrusted(response.reason_phrase, one_line=True)
+        status = _clip(f"{response.http_version} {response.status_code} {reason}".strip(), min(200, self.max_chars // 4))
         head = "\n".join([status, *_header_lines(response.headers, self.max_chars // 4)])
         if not complete:
             head += f"\n[body over {OUTPUT_CAP // (1024 * 1024)} MB: the rest was not read]"
@@ -434,7 +477,7 @@ class Toolbox:
             body = self._fit(raw.decode("utf-8", "replace"), raw, self.max_chars - len(head) - 2, turn, index)
         else:
             body = "(empty body)"
-        summary = f"{response.status_code} {response.reason_phrase}, {len(raw)} bytes"
+        summary = f"{response.status_code} {_clip(reason, 60)}".strip() + f", {len(raw)} bytes"
         return ToolResult(f"{head}\n\n{body}", _one_line(action), _clip(summary, CONSOLE_CHARS))
 
     # ------------------------------------------------------------ flags and plans
@@ -497,10 +540,13 @@ def _optional(args: dict[str, Any], key: str) -> str | None:
 
 
 def _number(args: dict[str, Any], key: str) -> float | None:
+    """A JSON number, or None when absent. An integer can be far too big for a float
+    (json.loads takes up to 4300 digits), so it is never turned into one here: callers
+    compare and clamp it."""
     value = args.get(key)
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)):
         raise _Mistake(f"{key} must be a number")
     return value
 

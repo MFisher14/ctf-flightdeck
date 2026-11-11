@@ -10,7 +10,14 @@ Everything in a workspace is untrusted: the handout comes from the challenge and
 lane's commands are steered by it. So flightdeck's own reads and writes there never follow
 a symlink (a container can plant /work/x -> /etc/passwd, which on this machine points at
 the host's file), never block on a FIFO, and never land outside the root. Commands get an
-environment built fresh from an allowlist, so no API key or token reaches them.
+environment built fresh from an allowlist, so no API key or token is handed to them. In
+the host runtime that is not a wall: a command runs as the player and can read whatever
+the player's account can, flightdeck's own environment and so the API key included (see
+HostWorkspace). A docker lane sees none of that.
+
+One deliberate difference from the M1 contract: the host take-over shell gets the player's
+own TERM, not the allowlist's TERM=dumb, so editors and pagers work in it. The lane's own
+commands still get TERM=dumb.
 """
 
 from __future__ import annotations
@@ -39,10 +46,12 @@ from ..text import untrusted
 
 PRIVATE = ".flightdeck"
 """flightdeck's own directory in a workspace (home, tmp, logs, tool output). Never copied
-from a handout and never snapshotted."""
+from a handout and never snapshotted; the host runtime puts it back before each command if
+the lane removed or replaced it (restore_private)."""
 
 CONTAINER_ROOT = "/work"
 OUTPUT_CAP = 10 * 1024 * 1024  # bytes of a command's output kept; the rest is dropped with a note
+NOT_RUN = 126  # the exit status of a command the host runtime could not start (bash's "cannot execute")
 DOCKER_BACKSTOP = 15.0  # seconds past a command's own timeout before the docker exec client is killed
 DOCKER_CALL_TIMEOUT = 60.0  # seconds for docker's own housekeeping calls (run, inspect, rm)
 
@@ -156,6 +165,42 @@ def write_inside(root: Path, relative: str, data: bytes) -> None:
         out.write(data)
 
 
+def restore_private(root: Path) -> None:
+    """Make root/.flightdeck and its home/ and tmp/ real directories again, for a lane that
+    deleted them or put something else there (by extracting an archive, say). .flightdeck is
+    flightdeck's own name, so a file, a symlink or a FIFO there is unlinked, never followed,
+    and the directory made anew. OSError when that cannot be done. WorkspaceError when root
+    itself cannot be opened (it is gone, say): that is a broken workspace, not a broken
+    .flightdeck."""
+    try:
+        top = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise WorkspaceError(f"workspace {root} cannot be opened: {exc.strerror or exc}") from None
+    try:
+        _own_dir(top, PRIVATE)
+        private = os.open(PRIVATE, _DIR, dir_fd=top)
+    finally:
+        os.close(top)
+    try:
+        for sub in ("home", "tmp"):
+            _own_dir(private, sub)
+    finally:
+        os.close(private)
+
+
+def _own_dir(dir_fd: int, name: str) -> None:
+    """dir_fd/name as a directory: made if missing, and anything else there unlinked first."""
+    try:
+        info = os.lstat(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        info = None
+    if info is not None and stat.S_ISDIR(info.st_mode):
+        return
+    if info is not None:
+        os.unlink(name, dir_fd=dir_fd)  # a symlink itself goes, never what it points at
+    os.mkdir(name, dir_fd=dir_fd)
+
+
 def _quoted(text: str) -> str:
     """A name from a handout or a lane, escaped so it cannot fake a line of a log."""
     return json.dumps(text)
@@ -192,6 +237,16 @@ def copy_handout(handout: Path, root: Path) -> None:
         (root / PRIVATE / "prepare.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError as exc:
         raise WorkspaceError(f"could not copy handout {handout} into {root}: {exc}") from None
+
+
+def add_to_log(root: Path, line: str) -> None:
+    """Add a line to root/.flightdeck/prepare.log, never through a symlink. For prepare()
+    only: no command of the lane's has run yet, so nothing else is writing there."""
+    log = f"{PRIVATE}/prepare.log"
+    fd = open_inside(root, log.split("/"))
+    with open(fd, "rb") as f:
+        old = f.read()
+    write_inside(root, log, old + line.encode("utf-8") + b"\n")
 
 
 def _copy_tree(source: Path, target: Path, notes: list[tuple[str, str]]) -> tuple[int, int]:
@@ -380,10 +435,16 @@ _ALLOWED_ENV = ("PATH", "LANG", "LC_ALL")
 class HostWorkspace:
     """Runs a lane's commands with bash on this machine, in root (containerized = false, D9).
 
-    Meant for players on a disposable VM: a command can do whatever the player's account
-    can, except read the player's environment (it gets the allowlist in _env). Each command
-    runs in its own process group. A timeout kills the group; close() kills every group the
-    lane left running, such as a server it started in the background.
+    Meant for players on a disposable VM. A command runs as the player's own account and can
+    do whatever that account can: read and change the player's files, and read the
+    environment of the player's other processes (`ps eww`, /proc/<pid>/environ), flightdeck's
+    own among them, so the API key flightdeck was started with too. The allowlist in _env
+    only keeps keys and tokens out of the command's own environment; it is not a boundary,
+    and nothing here can make it one. The docker runtime is what keeps a lane from all this:
+    a container sees neither this machine's processes nor its files outside the workspace.
+
+    Each command runs in its own process group. A timeout kills the group; close() kills
+    every group the lane left running, such as a server it started in the background.
     """
 
     def __init__(self, root: Path, handout: Path, *, shell: str = "bash") -> None:
@@ -405,12 +466,20 @@ class HostWorkspace:
         self._bash = bash
 
     async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:
+        """Run one command. Whatever the lane did to its .flightdeck, this never raises for
+        it: the directories are put back, and if even that fails the command is not run and
+        the result says why (exit status NOT_RUN)."""
         bash = self._ready()
         _check_call(command, timeout)
         try:
-            env = self._env()
+            restore_private(self.root)
         except OSError as exc:
-            raise WorkspaceError(f"cannot set up {PRIVATE}/home and {PRIVATE}/tmp in {self.root}: {exc}") from None
+            note = (
+                f"flightdeck: cannot set up {PRIVATE}/home and {PRIVATE}/tmp: {exc}; the command was not run. "
+                f"{PRIVATE} is flightdeck's own directory: the player can take over the lane to repair it.\n"
+            )
+            return RunResult(NOT_RUN, note.encode())
+        env = self._env()
         self._prune()
         try:
             code, output, timed_out = await _execute(
@@ -435,9 +504,10 @@ class HostWorkspace:
     def interactive_shell(self) -> ShellSpec:
         self._ready()
         try:
-            env = self._env()
-        except OSError as exc:
-            raise WorkspaceError(f"cannot set up {PRIVATE}/home and {PRIVATE}/tmp in {self.root}: {exc}") from None
+            restore_private(self.root)
+        except OSError:
+            pass  # it opens anyway: taking over is how the player repairs what the lane broke
+        env = self._env()
         env["TERM"] = os.environ.get("TERM", "dumb")  # the player's own terminal, so editors and pagers work
         env["HISTFILE"] = str(self.root / PRIVATE / "takeover_history")
         return ShellSpec([self.shell, "-i"], self.root, env)
@@ -451,12 +521,12 @@ class HostWorkspace:
 
     def _env(self) -> dict[str, str]:
         """The allowlist, built fresh for each command: nothing else of this machine's
-        environment (no API keys, no tokens). HOME and TMPDIR are the lane's own."""
+        environment (no API keys, no tokens). HOME and TMPDIR are the lane's own, which
+        restore_private() makes sure are there."""
         env = {name: os.environ[name] for name in _ALLOWED_ENV if name in os.environ}
         env["TERM"] = "dumb"
-        for name, sub in (("HOME", "home"), ("TMPDIR", "tmp")):
-            os.close(open_dir(self.root, [PRIVATE, sub], create=True))  # the lane may have deleted it
-            env[name] = str(self.root / PRIVATE / sub)
+        env["HOME"] = str(self.root / PRIVATE / "home")
+        env["TMPDIR"] = str(self.root / PRIVATE / "tmp")
         return env
 
     def _started(self, proc: asyncio.subprocess.Process) -> None:
@@ -542,6 +612,10 @@ class DockerWorkspace:
     backstop that kills the docker client if docker itself hangs. close() removes the
     container. The docker client inherits flightdeck's environment, but docker passes none
     of it into the container.
+
+    prepare() refuses an image without bash or timeout, which every command needs. An image
+    without python3 (debian:bookworm-slim, say) is fine for the shell, so it only sets
+    python_missing, for the python tool to answer, and says so in prepare.log.
     """
 
     def __init__(
@@ -572,6 +646,7 @@ class DockerWorkspace:
         self.cpus = cpus
         self.pids_limit = pids_limit
         self.workdir = CONTAINER_ROOT  # root as the lane's commands see it
+        self.python_missing: str | None = None  # set by prepare() when the image has no python3: why the python tool cannot run
         self._started = False  # our container exists: close() must remove it
         self._ready = False
         self._closed = False
@@ -604,6 +679,15 @@ class DockerWorkspace:
         if code != 0:
             await self.close()
             raise WorkspaceError(f"image {self.image} has no bash or no timeout (coreutils); lane commands need both")
+        code, _ = await _docker("exec", self.name, "bash", "-c", "command -v python3")
+        if code != 0:  # remembered: the python tool answers this instead of failing with exit 127
+            self.python_missing = (
+                f"python3 is not installed in this lane's container (image {self.image}), so the python tool "
+                "cannot run here; use shell instead. The lane image has python3: the player can build it "
+                "with `flightdeck image build`."
+            )
+            add_to_log(self.root, f"python3 is not in image {self.image}: the python tool will not work in this lane "
+                                  "(`flightdeck image build` builds the lane image, which has it)")
         self._ready = True
 
     async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:

@@ -1,8 +1,9 @@
 """The toolbox, driven through Toolbox.call() against a real host workspace in tmp_path.
 
-The http tool talks to a local http.server each test starts on 127.0.0.1. An origin it must
-refuse is a socket that listens but never accepts: any connection attempt would be left
-pending on it, so "no pending connection" proves the tool never connected.
+The http tool talks to a local http.server each test starts on 127.0.0.1, or to a raw socket
+server there for answers http.server will not send. An origin it must refuse is a socket
+that listens but never accepts: any connection attempt would be left pending on it, so "no
+pending connection" proves the tool never connected.
 """
 
 from __future__ import annotations
@@ -119,6 +120,17 @@ def test_shell_timeouts_have_a_default_and_are_clamped(lane):
     assert call(box, "shell", {"command": "sleep 60"}).content == "timed out after 1s\n"
     assert call(box, "shell", {"command": "sleep 60", "timeout_seconds": 0}).content == "timed out after 1s\n"
     assert time.monotonic() - started < 20
+
+
+def test_a_command_too_long_to_start_is_refused_and_one_within_the_limit_runs(box):
+    # 2 MB is past the argument limits of macOS (1 MiB in all) and Linux (128 KiB in one argument).
+    over = call(box, "shell", {"command": "echo " + "x" * 2_000_000})
+    assert over.error
+    assert over.content == "error: the command is 2000005 bytes, over the 100000-byte limit for one command; write long data to a file in parts"
+    assert len(over.action) <= 400
+    at_limit = ": " + "x" * (tools.COMMAND_BYTES - 12) + "; echo ran"
+    assert len(at_limit) == tools.COMMAND_BYTES
+    assert call(box, "shell", {"command": at_limit}).content == "exit 0\nran\n"
 
 
 def test_long_output_is_cut_to_its_head_and_tail_and_saved_in_full(lane):
@@ -298,6 +310,39 @@ def test_read_file_never_hangs_on_a_fifo(box, lane):
     assert (result.error, result.content) == (True, "error: fifo is not a regular file")
 
 
+def test_a_path_too_long_to_exist_is_refused_at_once_and_one_at_the_limit_is_read(box):
+    started = time.monotonic()
+    refused = call(box, "read_file", {"path": "a/" * 10_000 + "x"})  # 20,001 characters
+    assert time.monotonic() - started < 1
+    assert (refused.error, refused.content) == (True, "error: the path is 20001 characters; a path can be at most 4096")
+    at_limit = "./" * 2043 + "/notes.txt"
+    assert len(at_limit) == 4096
+    assert call(box, "read_file", {"path": at_limit, "max_lines": 1}).content.startswith("line 1\n")
+
+
+def test_a_path_that_grows_too_long_through_a_symlink_is_refused(box, lane):
+    os.symlink("y/" * 500, lane.root / "grow")  # 1,000 characters more once it is followed
+    result = call(box, "read_file", {"path": "grow/" + "z/" * 1600 + "end"})  # 3,208 characters as sent
+    assert result.error
+    assert result.content.endswith(" is too long once its symlinks are followed (over 4096 characters)")
+
+
+def test_read_file_looks_the_path_up_off_the_event_loop(box, lane, monkeypatch):
+    lookups: list[int] = []  # the thread of each lookup of a path in the workspace
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if str(path).startswith(f"{lane.root}/"):
+            lookups.append(threading.get_ident())
+        return real_lstat(path, *args, **kwargs)
+
+    os.symlink("notes.txt", lane.root / "alias")
+    monkeypatch.setattr(os, "lstat", lstat)
+    assert call(box, "read_file", {"path": "alias", "max_lines": 1}).content.startswith("line 1\n")
+    assert lookups, "the fence looked nothing up"
+    assert threading.get_ident() not in lookups  # asyncio.run() runs the event loop in this thread
+
+
 # ---------------------------------------------------------------- the model's mistakes
 
 
@@ -332,6 +377,28 @@ def test_the_models_mistakes_come_back_as_errors_it_can_read(box, name, argument
     result = run(box.call(name, arguments, turn=1, index=0))
     assert result.error and result.content.startswith(message), result.content
     assert len(result.output) <= 300
+
+
+HUGE = "1" + "0" * 4000  # a 4001-digit JSON integer: valid JSON, far too big for a float
+
+
+@pytest.mark.parametrize(
+    "name, arguments, content",
+    [
+        ("shell", '{"command": "echo hi", "timeout_seconds": %s}' % HUGE, "exit 0\nhi\n"),
+        ("shell", '{"command": "echo hi", "timeout_seconds": -%s}' % HUGE, "exit 0\nhi\n"),
+        ("python", '{"code": "print(1)", "timeout_seconds": %s}' % HUGE, "exit "),
+        ("python", '{"code": "print(1)", "timeout_seconds": -%s}' % HUGE, "exit "),
+        ("read_file", '{"path": "notes.txt", "start_line": %s}' % HUGE, "error: start_line 10000000000000000000000000000… is past the end: notes.txt has 1000 lines"),
+        ("read_file", '{"path": "notes.txt", "start_line": -%s}' % HUGE, "error: start_line counts from 1"),
+        ("read_file", '{"path": "notes.txt", "max_lines": %s}' % HUGE, "line 1\nline 2\n"),
+        ("read_file", '{"path": "notes.txt", "max_lines": -%s}' % HUGE, "error: max_lines must be at least 1"),
+    ],
+)
+def test_a_huge_integer_in_any_numeric_argument_is_clamped_or_refused_never_raised(box, name, arguments, content):
+    result = run(box.call(name, arguments, turn=1, index=0))
+    assert result.content.startswith(content), result.content
+    assert len(result.content) <= box.max_chars
 
 
 # ---------------------------------------------------------------- flags and plans
@@ -419,6 +486,43 @@ def silent(monkeypatch):
     sock.close()
 
 
+@pytest.fixture
+def instance():
+    """Raw TCP servers on 127.0.0.1, for answers http.server will not send: instance(handler)
+    starts one that runs handler(conn, stop) on each connection, and returns its origin."""
+    stop = threading.Event()
+    socks: list[socket.socket] = []
+
+    def start(handler) -> str:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        sock.settimeout(0.1)  # so the server thread sees stop
+        socks.append(sock)
+
+        def serve() -> None:
+            while not stop.is_set():
+                try:
+                    conn, _ = sock.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    return
+                with conn:
+                    try:
+                        handler(conn, stop)
+                    except OSError:
+                        pass  # the client went away
+
+        threading.Thread(target=serve, daemon=True).start()
+        return f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+    yield start
+    stop.set()
+    for sock in socks:
+        sock.close()
+
+
 def origin(server) -> str:
     return f"http://127.0.0.1:{server.server_address[1]}"
 
@@ -451,6 +555,17 @@ def test_http_sends_the_method_body_and_headers_it_is_given(lane, web):
     result = call(box, "http", {"method": "POST", "url": origin(web) + "/submit", "body": "a=1", "headers": {"X-Token": "t0k"}})
     assert result.content.endswith("\n\ngot a=1 with t0k")
     assert (web.requests[0]["method"], web.requests[0]["body"]) == ("POST", b"a=1")
+
+
+@pytest.mark.parametrize("declared, body", [("99", "abc"), ("1", "abc"), ("5", None)])  # too long, too short, no body
+def test_a_content_length_that_disagrees_with_the_body_is_an_error_the_model_can_read(lane, web, declared, body):
+    box = Toolbox(lane, http_allow=(origin(web),))
+    args = {"method": "POST", "url": origin(web) + "/login", "headers": {"Content-Length": declared}}
+    result = call(box, "http", args | ({"body": body} if body is not None else {}))
+    assert result.error, result.content
+    assert result.content.startswith("error: the request could not be sent as given: LocalProtocolError: ")
+    assert "Content-Length" in result.content
+    assert result.action == f"POST {origin(web)}/login"
 
 
 def test_http_refuses_every_other_origin_without_connecting(lane, web, silent):
@@ -519,6 +634,50 @@ def test_a_binary_http_body_is_saved_rather_than_shown(lane, web):
     assert (lane.root / ".flightdeck" / "out" / "turn5-0.txt").read_bytes() == bytes(range(256)) * 4
 
 
+@pytest.mark.parametrize("max_chars", [1000, 8000])
+def test_a_long_reason_phrase_is_clipped_and_the_body_still_shows(lane, instance, max_chars):
+    def long_reason(conn, stop):
+        conn.recv(65536)
+        conn.sendall(b"HTTP/1.1 200 " + b"R" * 10_000 + b"\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+
+    url = instance(long_reason)
+    box = Toolbox(lane, max_chars=max_chars, http_allow=(url,))
+    result = call(box, "http", {"method": "GET", "url": url + "/"})
+    assert not result.error
+    assert len(result.content) <= max_chars
+    status = result.content.splitlines()[0]
+    assert status.startswith("HTTP/1.1 200 RRRR") and status.endswith("…") and len(status) <= 200
+    assert result.content.endswith("\n\nok")
+    assert result.output.endswith("…, 2 bytes")
+
+
+def test_an_instance_that_never_answers_is_given_up_on_after_the_timeout(lane, silent):
+    url = f"http://127.0.0.1:{port(silent)}"  # it connects (the backlog takes it), and the request is never read
+    box = Toolbox(lane, http_allow=(url,))
+    started = time.monotonic()
+    result = within(10, lambda: call(box, "http", {"method": "GET", "url": url + "/"}))
+    assert (result.error, result.content) == (True, "error: no complete answer within 2 s")
+    assert time.monotonic() - started < 6
+
+
+def test_an_instance_that_answers_too_slowly_is_given_up_on_after_the_timeout(lane, instance, monkeypatch):
+    monkeypatch.setattr(tools, "HTTP_TIMEOUT", 2.0)
+
+    def drip(conn, stop):  # a byte every 0.2 s: no single read ever waits long, the whole never ends
+        conn.recv(65536)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        while not stop.is_set():
+            conn.sendall(b"x")
+            time.sleep(0.2)
+
+    url = instance(drip)
+    box = Toolbox(lane, http_allow=(url,))
+    started = time.monotonic()
+    result = within(10, lambda: call(box, "http", {"method": "GET", "url": url + "/"}))
+    assert (result.error, result.content) == (True, "error: no complete answer within 2 s")
+    assert time.monotonic() - started < 6
+
+
 def test_an_unreachable_instance_is_an_error_the_model_can_read(lane, silent):
     closed = port(silent)
     silent.close()  # nothing listens there now
@@ -559,6 +718,14 @@ def test_tools_in_a_docker_lane_run_in_the_container_and_read_through_work(docke
     assert call(box, "read_file", {"path": "/work/alias", "max_lines": 1}).content.startswith("line 1\n")
     leak = call(box, "read_file", {"path": "leak"})
     assert leak.error and "outside the workspace" in leak.content
-    missing = call(box, "python", {"code": "print(1)"}, turn=2, index=0)
-    assert missing.content.startswith("exit 127\n") and "python3" in missing.content  # the image has none, and says so
-    assert (docker_lane.root / ".flightdeck" / "py" / "turn2-0.py").read_text() == "print(1)"
+
+
+def test_in_a_lane_whose_image_has_no_python3_the_python_tool_says_so(docker_lane):
+    # debian:bookworm-slim has no python3; the lane image (`flightdeck image build`) has it.
+    result = call(Toolbox(docker_lane), "python", {"code": "print(1)"}, turn=2, index=0)
+    assert result.error
+    assert result.content.startswith("error: python3 is not installed in this lane's container (image debian:bookworm-slim)")
+    assert "use shell instead" in result.content and "`flightdeck image build`" in result.content
+    assert result.action == "python: print(1)"
+    assert not (docker_lane.root / ".flightdeck" / "py" / "turn2-0.py").exists()
+    assert call(Toolbox(docker_lane), "shell", {"command": "echo still fine"}).content == "exit 0\nstill fine\n"

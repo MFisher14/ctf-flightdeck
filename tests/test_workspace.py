@@ -3,7 +3,9 @@
 The host runtime always runs. The docker runtime runs only when docker answers and the image
 debian:bookworm-slim is already on this machine (tests never pull, and use no other image);
 otherwise those tests are skipped with the reason, so they report as not run. Every
-container a test starts is removed afterwards, even when the test fails.
+container a test starts is removed afterwards, even when the test fails. A few tests drive
+DockerWorkspace against a fake docker script instead (FAKE_DOCKER): they start no
+container and run everywhere.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from ctf_flightdeck.agent import workspace as workspace_module
 from ctf_flightdeck.agent.workspace import (
     HASH_LIMIT,
     OUTPUT_CAP,
@@ -223,6 +226,67 @@ def test_unset_optional_variables_stay_unset(lane, monkeypatch):
 def test_home_and_tmp_come_back_if_the_lane_deletes_them(lane):
     run(lane.run("rm -rf .flightdeck", timeout=10))
     assert run(lane.run('touch "$HOME/h" "$TMPDIR/t" && echo ok', timeout=10)).output == b"ok\n"
+
+
+BREAKAGES = {
+    "a file at .flightdeck": "rm -rf .flightdeck && touch .flightdeck",
+    "a symlink at .flightdeck": "rm -rf .flightdeck && ln -s {elsewhere} .flightdeck",
+    "a file at .flightdeck/home": "rm -rf .flightdeck/home && echo x > .flightdeck/home",
+    "a symlink at .flightdeck/tmp": "rm -rf .flightdeck/tmp && ln -s {elsewhere} .flightdeck/tmp",
+    "a fifo at .flightdeck/home": "rm -rf .flightdeck/home && mkfifo .flightdeck/home",
+}
+
+
+def assert_private_dirs_are_real(root: Path) -> None:
+    for sub in (".flightdeck", ".flightdeck/home", ".flightdeck/tmp"):
+        assert stat.S_ISDIR(os.lstat(root / sub).st_mode), sub
+
+
+@pytest.mark.parametrize("breakage", list(BREAKAGES))
+def test_a_lane_that_puts_something_else_at_flightdeck_gets_the_directories_back(lane, tmp_path, breakage):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert run(lane.run(BREAKAGES[breakage].format(elsewhere=elsewhere), timeout=10)).exit_code == 0
+    assert run(lane.run('touch "$HOME/h" "$TMPDIR/t" && echo ok', timeout=10)) == RunResult(0, b"ok\n")
+    assert_private_dirs_are_real(lane.root)
+    assert list(elsewhere.iterdir()) == []  # the symlink itself went; nothing was made where it pointed
+
+
+@pytest.mark.parametrize("breakage", ["a file at .flightdeck", "a symlink at .flightdeck"])
+def test_the_take_over_shell_opens_after_the_lane_broke_flightdeck(lane, tmp_path, breakage):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    run(lane.run(BREAKAGES[breakage].format(elsewhere=elsewhere), timeout=10))
+    spec = lane.interactive_shell()
+    assert (spec.argv, spec.cwd) == (["bash", "-i"], lane.root)
+    assert spec.env["HOME"] == str(lane.root / ".flightdeck" / "home")
+    assert_private_dirs_are_real(lane.root)
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_workspace_whose_root_is_gone_fails_loudly(lane):
+    shutil.rmtree(lane.root)  # a broken workspace, not a broken .flightdeck: no command can repair it
+    with pytest.raises(WorkspaceError, match="workspace .*/lane cannot be opened: No such file or directory"):
+        run(lane.run("true", timeout=5))
+    with pytest.raises(WorkspaceError, match="cannot be opened"):
+        lane.interactive_shell()
+
+
+def test_flightdeck_that_cannot_be_repaired_gives_an_error_result_and_the_take_over_still_opens(lane):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions, so this cannot make the repair fail")
+    run(lane.run("chmod 000 .flightdeck", timeout=10))
+    try:
+        result = run(lane.run("touch ran.txt", timeout=10))
+        spec = lane.interactive_shell()
+    finally:
+        os.chmod(lane.root / ".flightdeck", 0o755)
+    assert (result.exit_code, result.timed_out) == (126, False)
+    assert result.output.startswith(b"flightdeck: cannot set up .flightdeck/home and .flightdeck/tmp: [Errno 13] Permission denied")
+    assert b"the command was not run" in result.output and b"take over the lane" in result.output
+    assert not (lane.root / "ran.txt").exists()
+    assert spec.cwd == lane.root
+    assert run(lane.run("echo ok", timeout=10)) == RunResult(0, b"ok\n")  # and it works again once it can be repaired
 
 
 def test_a_timeout_kills_the_whole_process_group_and_keeps_the_partial_output(lane):
@@ -547,6 +611,71 @@ def test_the_container_is_started_from_a_local_image_only_with_limits(tmp_path, 
     assert args[args.index("--entrypoint") + 1] == "sleep" and args[-2:] == [IMAGE, "infinity"]
 
 
+FAKE_DOCKER = r"""#!/bin/bash
+# A stand-in for the docker CLI. It answers what DockerWorkspace asks while it prepares; on a
+# lane's command (exec -i) it records its pid and hangs, the way a stuck docker would.
+last=${!#}
+case "$1" in
+  version) echo 99.0.0-fake ;;
+  image) echo sha256:fake ;;
+  container) echo "Error: No such container: $last" >&2; exit 1 ;;
+  run) echo fake-container-id ;;
+  rm) exit 0 ;;
+  exec)
+    if [ "$2" = "-i" ]; then echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300; fi
+    case "$last" in
+      "command -v "*) echo "/usr/bin/${last#command -v }" ;;
+      *) exit 1 ;;
+    esac ;;
+  *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;
+esac
+"""
+
+
+FAKE_IMAGE = "flightdeck-test-fake-image:1"  # a made-up name: only the fake docker ever sees it
+
+
+@pytest.fixture
+def fake_docker(tmp_path, monkeypatch) -> Path:
+    """FAKE_DOCKER first on PATH, so DockerWorkspace runs against it and no docker is needed:
+    no container is started. Returns the directory it is in."""
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "docker").write_text(FAKE_DOCKER)
+    (fake_bin / "docker").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return fake_bin
+
+
+def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(fake_docker, tmp_path, handout, monkeypatch):
+    """The real DockerWorkspace against a fake docker that never returns from a lane's command:
+    the client is killed DOCKER_BACKSTOP seconds after the command's own timeout."""
+    monkeypatch.setattr(workspace_module, "DOCKER_BACKSTOP", 1.0)
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+
+    async def scenario():
+        await ws.prepare()
+        started = time.monotonic()
+        try:
+            return await asyncio.wait_for(ws.run("sleep 300", timeout=0.5), 10), time.monotonic() - started
+        finally:
+            await ws.close()
+
+    result, took = run(scenario())
+    assert result == RunResult(None, b"", timed_out=True)
+    assert took < 5
+    assert_dies(int((fake_docker / "exec.pid").read_text()), within=2)
+
+
+def test_an_image_with_python3_leaves_the_python_tool_on(fake_docker, tmp_path, handout):
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+    run(ws.prepare())  # the fake answers `command -v python3` with a path, as the lane image does
+    run(ws.close())
+    assert ws.python_missing is None
+    log = (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()
+    assert log[0].startswith("copied 5 files") and not any(line.startswith("python3 is not") for line in log)
+
+
 @pytest.mark.parametrize(
     "change",
     [{"name": "-x"}, {"name": "a b"}, {"image": "--privileged"}, {"image": ""}, {"memory": "lots"}, {"cpus": "two"}, {"pids_limit": 0}, {"network": "--x"}],
@@ -674,6 +803,19 @@ def test_a_container_removed_outside_flightdeck_fails_loudly(box):
     docker("rm", "-f", box.name)
     with pytest.raises(WorkspaceError, match="not running"):
         run(box.run("true", timeout=30))
+
+
+def test_an_image_without_python3_is_noted_for_the_python_tool_and_in_prepare_log(box):
+    # debian:bookworm-slim has no python3; the lane image (`flightdeck image build`) has it.
+    assert box.python_missing is not None
+    assert box.python_missing.startswith("python3 is not installed in this lane's container (image debian:bookworm-slim)")
+    assert "`flightdeck image build`" in box.python_missing
+    last = (box.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1]
+    assert last == (
+        "python3 is not in image debian:bookworm-slim: the python tool will not work in this lane "
+        "(`flightdeck image build` builds the lane image, which has it)"
+    )
+    assert run(box.run("echo the shell works", timeout=30)) == RunResult(0, b"the shell works\n")
 
 
 def test_the_docker_take_over_shell_is_docker_exec_in_work(box):
