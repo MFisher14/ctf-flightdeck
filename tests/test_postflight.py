@@ -889,6 +889,18 @@ def test_tokens_counted_outside_a_turn_get_their_own_row(tmp_path):
     assert rows[2] == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "$0.04"]
 
 
+def test_tokens_outside_a_turn_of_a_lane_with_no_known_price_have_unknown_dollars(tmp_path):
+    run = Script(tmp_path)
+    run.release([Challenge("x", "X", "misc", 10)])
+    lane = run.lane("x")
+    run.turn(lane, "look", tokens=1000, dollars=0.1)
+    run.turn(lane, "look again", tokens=500, dollars=None)  # on a model with no price: the lane's dollars are unknown
+    run.deck.report(lane, TurnReport(turn=False, tokens=400, dollars=0.04))  # a reply dropped on escalation
+    rows = table_rows(report(run.close()))
+    outside = next(row for row in rows if row[0].startswith("outside a turn"))
+    assert outside == ["outside a turn (a reply dropped on escalation, for one)", "-", "400", "0%", "unknown"]  # not $0.00
+
+
 # ---------------------------------------------------------------------- lanes that gave up or were killed
 
 
@@ -1141,6 +1153,7 @@ def test_md_helpers_pick_fences_longer_than_any_backtick_run():
     assert md_fence(["a\nb"]) == ["```text", "a \u23ce b", "```"]
     assert md_text("- item") == "\\- item" and md_text("1. item") == "1\\. item"
     assert md_text("a" * 300) == "a" * 199 + "\u2026"
+    assert md_text("$x$ costs $5") == "\\$x\\$ costs \\$5"  # never TeX math where a renderer has it (GitHub does)
 
 
 # ---------------------------------------------------------------------- the command
