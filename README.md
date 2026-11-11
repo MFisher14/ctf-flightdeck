@@ -6,9 +6,10 @@ flightdeck pulls the board, runs your own no-model solvers first, starts agent l
 and submits flags, while you watch every lane on one console and step in when one goes the wrong
 way: a hint, a redirect, a fork, a kill, or taking over its shell yourself.
 
-![The fleet view: a board of eight challenges on the left; on the right, six agent lanes sorted by what needs you, with chips for a found flag, a lane that ignores the hint, a web lane heading the wrong way and a live box a teammate holds; under the list, the found flag with 1 to submit it and 0 not to](docs/images/fleet.png)
+![The fleet view: a board of eight challenges on the left; on the right, six agent lanes sorted by what needs you, with chips for a found flag, a lane that ignores the hint, a web lane heading the wrong way and a live box a teammate holds; under the list, the found flag with 1 to submit it and 0 not to](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/fleet.png)
 
-*The fleet view, from `flightdeck mock`: scripted lanes on invented challenges.*
+*The fleet view, from `flightdeck mock`: scripted lanes on invented challenges. More in the
+[screenshot gallery](docs/SCREENSHOTS.md).*
 
 Bring what you have: an API key (Anthropic, OpenRouter, OpenAI or a local model server), a
 coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
@@ -84,7 +85,7 @@ The console raises an alert when a lane spends big on a low-value challenge, ign
 description hints at, heads the wrong way on web, loops or stalls. Lanes that need you sort
 first, and the line under the list says why and numbers the answers: one key answers.
 
-![A wave of 43 challenges: 16 lanes run and 33 wait in the queue. The selected lane ignores the description's hint of slow-scan TV, and the line under the list offers 1 to redirect it to the hinted technique and 2 to send a hint](docs/images/alert.png)
+![A wave of 43 challenges: 16 lanes run and 33 wait in the queue. The selected lane ignores the description's hint of slow-scan TV, and the line under the list offers 1 to redirect it to the hinted technique and 2 to send a hint](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/alert-hint.png)
 
 *An alert with its quick answers, from `flightdeck mock` (invented challenges).*
 
@@ -92,7 +93,7 @@ first, and the line under the list says why and numbers the answers: one key ans
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
 commands; `esc` goes back).
 
-![One lane full screen: its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](docs/images/lane.png)
+![One lane full screen: its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/lane.png)
 
 *A lane full screen, from `flightdeck mock` (invented challenges).*
 
@@ -101,10 +102,6 @@ lane hears what you changed. The shell starts clean: it reads no startup file, a
 its HOME is a new folder only you can read, outside the workspace, so nothing the lane wrote runs
 before you type. `e` escalates a lane to a stronger model with a summary of what it did, `f`
 forks it, `?` shows every key.
-
-![The take-over dialog over the fleet: in Docker you get a shell inside the lane's container, on the host a shell in the lane's folder; the lane stays paused until you hand it back](docs/images/take-over.png)
-
-*In the mock, `t` explains take-over instead of opening a shell (invented challenges).*
 
 When a model API failure would hit every lane (a refused key, an unknown model, no credits), the
 queue is held and the header says why. Once you have fixed it, `/unhold` starts the queued lanes
@@ -253,7 +250,8 @@ invented.
 
 [Vision](docs/VISION.md) · [Decisions](docs/DECISIONS.md) · [Roadmap](docs/ROADMAP.md) ·
 [Console spec](docs/CONSOLE-SPEC.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Model APIs](docs/MODEL-APIS.md) · [Models](docs/MODELS.md) · [Changelog](CHANGELOG.md)
+[Model APIs](docs/MODEL-APIS.md) · [Models](docs/MODELS.md) · [Screenshots](docs/SCREENSHOTS.md) ·
+[Changelog](CHANGELOG.md)
 
 Development: `uv run pytest`. `ctfdeck` is an alias for `flightdeck`.
 
