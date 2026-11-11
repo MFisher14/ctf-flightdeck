@@ -22,7 +22,10 @@ PROVIDERS = {
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
     "local": ("http://127.0.0.1:11434/v1", ""),  # Ollama's OpenAI-compatible endpoint; no key
+    "mlx": ("http://127.0.0.1:8080/v1", ""),  # an MLX server on this Mac (mlx_lm.server's default port); no key
 }
+LOCAL_PROVIDERS = ("local", "mlx")  # nothing to spend: no dollar cap
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,8 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
             present = bool(environ.get(name, "").strip())
             checks.append(Check("api key", present, f"{name} is {'set' if present else 'not set'}",
                                 f"export {name}=<your key> in the shell you run flightdeck from"))
+    if config is not None:
+        checks += _local_server_check(config.api.base_url)
     runtime = config.lanes.runtime if config is not None else "docker"
     checks += _docker_checks(config.lanes.image if config is not None else None, essential=runtime == "docker")
     try:
@@ -133,6 +138,27 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
         checks.append(Check("terminal", big, f"{columns}x{lines}",
                             "the console is easiest at 100x30 or more (it works smaller)", essential=False))
     return checks
+
+
+def _local_server_check(base_url: str) -> list[Check]:
+    """For an API on this machine (Ollama, an MLX server), check that it answers. A remote
+    API is never contacted here."""
+    from urllib.parse import urlsplit
+
+    import httpx
+
+    host = urlsplit(base_url).hostname or ""
+    if host not in LOCAL_HOSTS:
+        return []
+    url = base_url.rstrip("/") + "/models"
+    try:
+        answer = httpx.get(url, timeout=2.0, follow_redirects=False)
+    except httpx.HTTPError as exc:
+        return [Check("model server", False, f"nothing answers at {base_url} ({type(exc).__name__})",
+                      "start your local model server (it must speak the OpenAI API with tool calling)")]
+    ok = answer.status_code < 400
+    return [Check("model server", ok, f"{url} answered {answer.status_code}",
+                  "check the server's address and port in [api] base_url")]
 
 
 def _docker_checks(image: str | None, *, essential: bool) -> list[Check]:

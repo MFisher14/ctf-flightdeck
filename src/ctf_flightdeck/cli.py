@@ -218,7 +218,7 @@ def image_dockerfile() -> None:
 
 @app.command()
 def init(
-    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, openai, local (no key) or custom.")] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, openai, local (Ollama), mlx (an MLX server) or custom.")] = None,
     base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
     key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
     models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
@@ -230,7 +230,7 @@ def init(
     """Write a config by answering a few questions (or give them all as options)."""
     from .agent.workspace import docker_unavailable
     from .config import ConfigError, default_config_path
-    from .setup import PROVIDERS, Answers, write_config
+    from .setup import LOCAL_PROVIDERS, PROVIDERS, Answers, write_config
 
     interactive = _at_terminal()
 
@@ -242,7 +242,7 @@ def init(
             raise typer.Exit(2)
         return typer.prompt(question, default=default) if default is not None else typer.prompt(question)
 
-    provider = need(provider, "Provider: openrouter, openai, local or custom", "openrouter").strip().lower()
+    provider = need(provider, "Provider: openrouter, openai, local (Ollama), mlx or custom", "openrouter").strip().lower()
     if provider in PROVIDERS:
         url, env = PROVIDERS[provider]
         base_url = base_url or url
@@ -251,7 +251,7 @@ def init(
         base_url = need(base_url, "API base URL (OpenAI-compatible, ending in /v1 usually)")
         key_env = need(key_env, "Environment variable for the key (empty if none)", "")
     else:
-        typer.echo(f"flightdeck: provider must be openrouter, openai, local or custom, not {provider!r}", err=True)
+        typer.echo(f"flightdeck: provider must be openrouter, openai, local, mlx or custom, not {provider!r}", err=True)
         raise typer.Exit(2)
     if models is None and interactive and provider == "openrouter":
         typer.echo("Model ids look like vendor/model; see https://openrouter.ai/models")
@@ -265,7 +265,7 @@ def init(
     target = (path or default_config_path()).expanduser()
     # A local model costs nothing and reports no cost: a dollar cap would only make every lane
     # stop once to ask whether to carry on without it.
-    dollar_cap = None if provider == "local" else 2.0
+    dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
     try:
         answers = Answers(base_url, key_env or "", ladder, runtime.strip().lower(), max_lanes, dollar_cap=dollar_cap)
         written = write_config(answers, target, force=force)

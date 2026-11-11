@@ -114,3 +114,25 @@ def test_doctor_says_plainly_when_there_is_no_config_and_points_at_a_broken_one(
     broken.write_text("[models]\nladder = []\n")
     check = {c.name: c for c in doctor(broken, environ={})}["config"]
     assert not check.ok and "--force" in check.fix and str(broken) in check.detail
+
+
+def test_init_for_an_mlx_server_needs_no_key_and_no_dollar_cap(tmp_path):
+    target = tmp_path / "config.toml"
+    result = CliRunner().invoke(cli.app, ["init", "--provider", "mlx", "--models", "mlx-community/some-model", "--host", "--path", str(target)])
+    assert result.exit_code == 0, result.output
+    config = load_config(target)
+    assert (config.api.base_url, config.api.key_env, config.lanes.dollar_cap) == ("http://127.0.0.1:8080/v1", "", None)
+
+
+def test_doctor_checks_a_local_model_server_answers_and_never_contacts_a_remote_api(tmp_path):
+    from fake_model import FakeModelServer
+
+    with FakeModelServer() as server:  # answers GET /v1/models with 404: a server, but not that path
+        cfg = write_config(Answers(server.base_url, "", ("m",), "host"), tmp_path / "up.toml")
+        checks = {c.name: c for c in doctor(cfg, environ={})}
+        assert "model server" in checks and "answered" in checks["model server"].detail
+    down = write_config(Answers("http://127.0.0.1:9/v1", "", ("m",), "host"), tmp_path / "down.toml")
+    check = {c.name: c for c in doctor(down, environ={})}["model server"]
+    assert not check.ok and "nothing answers at http://127.0.0.1:9/v1" in check.detail
+    remote = write_config(Answers("https://api.example.test/v1", "", ("m",), "host"), tmp_path / "remote.toml")
+    assert "model server" not in {c.name for c in doctor(remote, environ={})}
