@@ -108,6 +108,26 @@ def test_a_light_model_that_fails_leaves_the_alert_up_and_the_run_says_so_once(t
     assert lane.turns >= 5  # the lane never waited for the light model
 
 
+def test_a_local_light_model_never_makes_a_dollar_capped_lane_ask_about_its_budget(tmp_path):
+    with FakeModelServer(responder=lane_loops) as lanes, FakeModelServer([text_reply("yes")] * 20) as judge:
+        path = config(tmp_path, lanes.base_url, light_table(judge.base_url))
+        text = path.read_text().replace("dollar_cap = false", "dollar_cap = 5.0")
+        path.write_text(text + '[prices."fake/small"]\ninput = 0.1\noutput = 0.1\n')
+        run = prepare_run(RunOptions(board=board(tmp_path), config=path))
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: asked(judge) >= 1 and not run.watch._judging, "the hint judge's verdict")
+            await run.shutdown()
+            return lane
+
+        lane = asyncio.run(main())
+        run.close()
+    assert lane.dollars is not None and lane.unpriced == 0  # the judge's $0 is a known cost
+    assert lane.pending is None or lane.pending.kind.value != "budget"
+
+
 def test_without_a_light_table_a_run_has_no_judge(tmp_path):
     with FakeModelServer(responder=lane_loops) as lanes:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, "")))

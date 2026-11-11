@@ -17,8 +17,9 @@ to another model: the player sees the refusal and decides.
 
 What a job spent is reported to the deck as spend outside a turn (a SPEND event, why "the hint
 judge (<engine> <model>)", the light model named): tokens and dollars on the lane's meter. The
-cost is the API's figure, else the [light] price's, else unknown (None): the deck then treats
-the lane as unpriced, and a dollar-capped lane asks the player before going on.
+cost is the API's figure, else the [light] price's, else $0 for a server on this machine, else
+unknown (None): the deck then treats the lane as unpriced, and a dollar-capped lane asks the
+player before going on.
 
 The description and the steps are untrusted: light.py fences and folds them for the model and
 reads its answer strictly.
@@ -145,7 +146,7 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
     [light] is absent or rules. A light model that cannot be made (a key not set, Cactus not
     installed) leaves the judge off and says why: the light role never stops a run."""
     from ..config import ConfigError, light_key
-    from ..light import LightError, build
+    from ..light import LightError, build, on_this_machine
 
     light = config.light
     if light.engine == "rules":
@@ -158,9 +159,9 @@ def from_config(config: Config, *, cactus=None) -> tuple[HintJudge | None, str]:
         f"light model: {engine.label} judges each 'ignores the hint' alert (the alert shows at once; it comes down "
         "if the light model says the lane follows the hint; when it fails or refuses, the rules' answer stands)"
     )
-    if light.engine == "anthropic" and light.price is None:
-        note += (
-            "; no [light] price in your config, so its calls are unpriced: a dollar-capped lane asks you once "
-            "before it carries on without its cap"
-        )
+    unpriced = "; no [light] price in your config, so its calls are unpriced"
+    if light.price is None and light.engine == "anthropic":
+        note += unpriced + ": a dollar-capped lane asks you once before it carries on without its cap"
+    elif light.price is None and light.engine == "openai" and not on_this_machine(light.base_url):
+        note += unpriced + " unless the API reports their cost: a dollar-capped lane may ask you once"
     return HintJudge(engine), note

@@ -324,7 +324,10 @@ class RulesLight:
 
 class ModelLight:
     """A model over an API: openai (ModelClient) or anthropic (AnthropicClient). One try per
-    job, within `timeout` seconds; the client's own retries should be off (max_retries=0)."""
+    job, within `timeout` seconds; the client's own retries should be off (max_retries=0).
+
+    A job's cost is the API's figure, else `price`'s, else $0 when `free` (a server on this
+    machine: no API is paid), else unknown (None)."""
 
     def __init__(
         self,
@@ -336,6 +339,7 @@ class ModelLight:
         timeout: float,
         tokens: Mapping[str, int],
         temperature: float | None = None,
+        free: bool = False,
     ) -> None:
         if engine not in (OPENAI, ANTHROPIC):
             raise ValueError(f"a model engine is openai or anthropic, not {engine!r}")
@@ -348,6 +352,7 @@ class ModelLight:
         self.timeout = timeout
         self.tokens = dict(tokens)
         self.temperature = temperature
+        self.free = free
         self.label = f"{engine} {model}"
 
     def does(self, job: str) -> bool:
@@ -418,7 +423,22 @@ class ModelLight:
         return answer, reply
 
     def _cost(self, usage) -> float | None:
-        return call_cost(usage.cost, self.price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
+        dollars = call_cost(usage.cost, self.price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
+        return 0.0 if dollars is None and self.free else dollars
+
+
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def on_this_machine(base_url: str) -> bool:
+    """Whether `base_url` is a server on this machine (so no API bills its calls)."""
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(base_url).hostname or ""
+    except ValueError:
+        return False
+    return host in LOCAL_HOSTS
 
 
 def _body(reply: Reply) -> tuple[str, str, str]:
@@ -569,7 +589,7 @@ def build(config: LightConfig, key: str | None, *, cactus: ModuleType | None = N
 
             client = ModelClient(config.base_url, key, timeout=config.timeout, max_retries=0)
             return ModelLight(OPENAI, client, config.model, price=config.price, timeout=config.timeout,
-                              tokens=OPENAI_TOKENS, temperature=0.0)
+                              tokens=OPENAI_TOKENS, temperature=0.0, free=on_this_machine(config.base_url))
         if engine == ANTHROPIC:
             from .agent.anthropic_client import AnthropicClient
 

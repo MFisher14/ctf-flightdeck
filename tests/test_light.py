@@ -195,6 +195,21 @@ def test_the_price_prices_a_call_the_api_did_not_price_and_without_one_the_cost_
     assert unpriced.cost is None and unpriced.spent
 
 
+def test_a_server_on_this_machine_costs_nothing_unless_the_api_or_a_price_says_otherwise():
+    with FakeModelServer([text_reply("sstv", cost=None), text_reply("sstv", cost=0.002),
+                          text_reply("sstv", prompt_tokens=1_000, completion_tokens=0)]) as server:
+        def free(price=None):
+            client = ModelClient(server.base_url, None, max_retries=0)
+            return L.ModelLight("openai", client, "m", price=price, timeout=5.0, tokens=L.OPENAI_TOKENS,
+                                temperature=0.0, free=True)
+
+        assert ask(free()).cost == 0.0  # known, not unknown: a dollar-capped lane is never stopped by it
+        assert ask(free()).cost == pytest.approx(0.002)  # the API's own figure wins
+        assert ask(free(Price(1.0, 1.0))).cost == pytest.approx(0.001)  # so does a configured price
+    assert L.on_this_machine("http://127.0.0.1:11434/v1") and L.on_this_machine("http://localhost:8080/v1")
+    assert not L.on_this_machine("https://openrouter.ai/api/v1") and not L.on_this_machine("not a url")
+
+
 def test_the_judge_and_the_summary_jobs():
     with FakeModelServer([text_reply("no"), text_reply("We ran ls; next decode the audio as SSTV.")]) as server:
         judged = ask(local(server), "judge")
@@ -315,7 +330,10 @@ def test_build_makes_the_engine_the_config_names():
     assert isinstance(L.build(LightConfig(), None), L.RulesLight)
     local_engine = L.build(LightConfig("openai", "qwen", "http://127.0.0.1:11434/v1", "", 7.0), None)
     assert isinstance(local_engine.client, ModelClient) and local_engine.client.max_retries == 0
-    assert local_engine.label == "openai qwen" and local_engine.timeout == 7.0
+    assert local_engine.label == "openai qwen" and local_engine.timeout == 7.0 and local_engine.free
+    elsewhere = L.build(LightConfig("openai", "qwen", "https://models.example/v1", "", 7.0), None)
+    assert not elsewhere.free
+    asyncio.run(elsewhere.aclose())
     remote = L.build(LightConfig("anthropic", "claude-haiku-5-5", "https://api.anthropic.com", "ANTHROPIC_API_KEY"), KEY)
     client = remote.client
     assert isinstance(client, AnthropicClient) and client.effort == "low" and client.server_fallback is False
