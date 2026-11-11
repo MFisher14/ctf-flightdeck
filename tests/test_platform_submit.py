@@ -237,6 +237,19 @@ def test_a_wrong_answer_after_the_lane_ended_is_still_remembered_and_its_lane_is
     assert deck.challenges["c0"].status is ChallengeStatus.PARKED and lane.state is LaneState.KILLED
 
 
+def test_no_verdict_after_every_lane_that_sent_the_flag_has_ended_is_a_warning_naming_it():
+    deck, _, _ = platform_deck()
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.apply(iv.Kill(lane.id, requeue=False))
+    deck.platform_verdict(lane.id, "t{maybe}", None, "CTFd is paused, so it did not check the flag")
+    (warning,) = events(deck, EventKind.WARNING)
+    assert warning.text == (f"no verdict from the platform on t{{maybe}} for Chall 0, and {lane.id} has ended: submit it "
+                            "by hand if you think it is the flag")
+    assert (warning.challenge, warning.data) == ("c0", {"flag": "t{maybe}", "lanes": [lane.id]})
+    assert lane.state is LaneState.KILLED and lane.pending is None
+
+
 @pytest.mark.parametrize("ok", [True, False, None])
 def test_an_answer_after_a_teammate_solved_the_challenge_is_recorded_and_reopens_nothing(ok):
     deck, driver, submitter = platform_deck(team=True)
