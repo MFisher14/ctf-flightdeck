@@ -63,7 +63,8 @@ def pack(tmp_path: Path) -> Path:
 
 
 def go(manifest: Path, handout: Path, workdir: Path, **kw):
-    return run(run_engine(load(manifest), handout, workdir=workdir, flag_format=FLAG, **kw))
+    """Run one engine, keeping its copy of the challenge for the test to look into."""
+    return run(run_engine(load(manifest), handout, workdir=workdir, flag_format=FLAG, **{"keep": True, **kw}))
 
 
 def hit(manifest: Path, priority: int = 50) -> Hit:
@@ -586,9 +587,9 @@ def test_a_relative_path_entry_never_runs_a_handout_file_in_place_of_a_program(p
     py = load(python_engine(pack, "py", "from ctf_flightdeck.l1.result import SolverResult\ndef solve(d):\n    return SolverResult('none')\n"))
     cli = load(write_manifest(pack, "c", 'id = "c"\nentry = "cli:mytool"\noutput = "text"\n[[routes]]\nkeywords = ["demo"]\n'))
     assert missing_tools(py) == [] and missing_tools(cli) == []
-    r = run(run_engine(py, handout, workdir=tmp_path / "w1", flag_format=FLAG))
+    r = run(run_engine(py, handout, workdir=tmp_path / "w1", flag_format=FLAG, keep=True))  # kept: a marker would stay
     assert (r.status, r.flags) == ("none", ())  # the real python3 ran the engine
-    c = run(run_engine(cli, handout, workdir=tmp_path / "w2", flag_format=FLAG))
+    c = run(run_engine(cli, handout, workdir=tmp_path / "w2", flag_format=FLAG, keep=True))
     assert c.flags == ("t{the_real_tool}",)
     assert not list(tmp_path.rglob("HANDOUT_CODE_RAN"))
 
@@ -680,9 +681,37 @@ def test_a_workspace_that_cannot_be_prepared_blocks_the_engine_with_the_reason(p
     m = cli_engine(pack, "e", "echo t{x}\n")
     (tmp_path / "work" / "e").mkdir(parents=True)
     (tmp_path / "work" / "e" / "leftover").write_text("from an earlier run")
-    r = go(m, handout, tmp_path / "work")
+    r = go(m, handout, tmp_path / "work", keep=False)
     assert r.status == "blocked" and r.notes.startswith("its workspace could not be prepared: ")
     assert "already exists and is not an empty directory" in r.notes
+    assert (tmp_path / "work" / "e" / "leftover").read_text() == "from an earlier run"  # not this run's: never removed
+
+
+def test_an_engines_copy_is_removed_once_its_result_is_read_whatever_it_left_there(pack, handout, tmp_path):
+    outside = tmp_path / "players-file.txt"
+    outside.write_text("mine\n")
+    os.chmod(outside, 0o400)
+    m = cli_engine(pack, "messy", f"""
+        mkdir -p ro/inner shut && touch ro/inner/f shut/g
+        chmod 555 ro/inner ro && chmod 000 shut
+        ln -s {outside} link-out && ln -s {tmp_path} link-dir
+        head -c 3000000 /dev/zero > big.bin
+        echo t{{read_before_removal}}
+        """)
+    r = run(run_engine(load(m), handout, workdir=tmp_path / "work", flag_format=FLAG))
+    assert (r.status, r.flags, r.notes) == ("candidate", ("t{read_before_removal}",), "")
+    assert list((tmp_path / "work").iterdir()) == []  # the copy is gone, read-only and shut folders too
+    assert outside.read_text() == "mine\n" and os.stat(outside).st_mode & 0o777 == 0o400  # never followed
+    assert (tmp_path / "pack" / "messy.sh").is_file()
+
+
+def test_run_routed_keeps_the_copies_only_when_asked(pack, handout, tmp_path):
+    hits = [hit(cli_engine(pack, "a", "echo t{a}\n")), hit(cli_engine(pack, "b", "echo t{b}\n"))]
+    gone = run(run_routed(hits, handout, workdir=tmp_path / "w1", flag_format=FLAG))
+    assert [r.result.flags for r in gone] == [("t{a}",), ("t{b}",)] and list((tmp_path / "w1").iterdir()) == []
+    kept = run(run_routed(hits, handout, workdir=tmp_path / "w2", flag_format=FLAG, keep=True))
+    assert [r.result.flags for r in kept] == [("t{a}",), ("t{b}",)]
+    assert sorted(p.name for p in (tmp_path / "w2").iterdir()) == ["a", "b"] and (tmp_path / "w2" / "a" / "note.txt").is_file()
 
 
 def test_a_workspace_factory_chooses_the_workspace(pack, handout, tmp_path):

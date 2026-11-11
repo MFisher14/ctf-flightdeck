@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -88,7 +89,7 @@ def test_route_lists_the_hits_best_first_with_reasons(pack, board):
 
 
 def test_run_prints_one_json_result_per_engine_using_the_boards_flag_format(pack, board, tmp_path):
-    result = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs")
+    result = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs", "--keep")
     assert result.exit_code == 0, result.stderr
     results = [SolverResult.from_json(line) for line in result.stdout.splitlines()]
     assert [(r.engine, r.status, r.flags) for r in results] == [
@@ -98,9 +99,26 @@ def test_run_prints_one_json_result_per_engine_using_the_boards_flag_format(pack
     assert all(r.challenge_id == "sticky-note" for r in results)
     [run_dir] = (tmp_path / "runs").iterdir()  # a new folder per run inside --workdir
     assert sorted(p.name for p in run_dir.iterdir()) == ["read.note", "text.grep"]
-    assert "no API keys or tokens" in result.stderr and str(run_dir) in result.stderr
-    again = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs")
+    assert "no API keys or tokens" in result.stderr and str(run_dir) in result.stderr and "kept there (--keep)" in result.stderr
+    again = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs", "--keep")
     assert again.exit_code == 0 and len(list((tmp_path / "runs").iterdir())) == 2
+
+
+def test_run_leaves_nothing_behind_unless_kept(pack, board, tmp_path):
+    result = invoke("run", pack, board / "sticky-note", "--workdir", tmp_path / "runs")
+    assert result.exit_code == 0, result.stderr
+    assert len(result.stdout.splitlines()) == 2 and "each removed once its result is read" in result.stderr
+    assert list((tmp_path / "runs").iterdir()) == []  # every copy, and the run's own folder, gone
+    default = invoke("run", pack, board / "sticky-note")
+    assert default.exit_code == 0, default.stderr
+    temporary = Path(re.search(r"under (\S*flightdeck-l1-\S+?), ", flat(default.stderr)).group(1))
+    assert not temporary.exists()  # the temporary folder goes whole
+    kept = invoke("run", pack, board / "sticky-note", "--keep")
+    folder = Path(re.search(r"under (\S*flightdeck-l1-\S+?), ", flat(kept.stderr)).group(1))
+    try:
+        assert sorted(p.name for p in folder.iterdir()) == ["read.note", "text.grep"]
+    finally:
+        shutil.rmtree(folder)
 
 
 def test_run_takes_a_flag_format_and_refuses_a_bad_one(pack, board, tmp_path):

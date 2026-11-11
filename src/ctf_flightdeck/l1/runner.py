@@ -65,6 +65,7 @@ import re
 import secrets
 import shlex
 import shutil
+import stat
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -124,9 +125,13 @@ async def run_engine(
     timeout: float | None = None,
     workspace_factory: WorkspaceFactory | None = None,
     challenge_id: str | None = None,
+    keep: bool = False,
 ) -> SolverResult:
     """Run one engine on one challenge. `timeout` overrides the manifest's timeout_seconds;
-    `challenge_id` defaults to the handout's challenge.json id, else its folder name."""
+    `challenge_id` defaults to the handout's challenge.json id, else its folder name. The
+    engine's copy of the challenge is removed once its result is read (a forensics image
+    times every engine routed to it adds up), unless `keep`; a folder that was there before
+    the run is never removed."""
     pattern = _flag_pattern(flag_format)
     limit = manifest.timeout_seconds if timeout is None else timeout
     if not (isinstance(limit, (int, float)) and not isinstance(limit, bool) and math.isfinite(limit) and limit > 0):
@@ -154,6 +159,8 @@ async def run_engine(
     except LookupError as exc:  # a program went between the check and now
         return done(SolverResult("blocked", notes=f"{_safe(str(exc))}; nothing ran"), 0.0)
     workspace = (workspace_factory or host_workspace)(manifest.id, Path(workdir) / manifest.id, handout)
+    root = Path(workspace.root)
+    ours = not os.path.lexists(root)  # made by prepare(): this run's to remove
     try:
         result, seconds = await _run_in(workspace, manifest, argv, path, limit, pattern)
     finally:
@@ -162,9 +169,43 @@ async def run_engine(
             unclosed = ""
         except WorkspaceError as exc:  # e.g. docker rm failed: say so, keep the result
             unclosed = f"its workspace did not close cleanly: {_safe(str(exc))}"
+    if not keep and ours and os.path.lexists(root):
+        left = await asyncio.to_thread(remove_tree, root)
+        if left:
+            unclosed = "; ".join(filter(None, [unclosed, f"its copy of the challenge {_safe(str(root))} could not be removed: {left}"]))
     if unclosed:
         result = dataclasses.replace(result, notes=f"{result.notes}; {unclosed}" if result.notes else unclosed)
     return done(result, seconds)
+
+
+def remove_tree(root: Path) -> str:
+    """Remove an engine's copy of the challenge: "" when it is gone, else why not. The tree is
+    the engine's doing, so this never follows a symlink (shutil.rmtree walks by descriptor) and
+    first gives the owner back every folder an engine or an archive made read-only or shut."""
+    try:
+        _open_up(Path(root))
+        shutil.rmtree(root)
+    except OSError as exc:
+        where = f" ({_safe(str(exc.filename))})" if exc.filename else ""
+        return f"{_safe(exc.strerror or str(exc))}{where}"
+    return ""
+
+
+def _open_up(root: Path) -> None:
+    """Owner read, write and search on every real folder under root, symlinks never followed."""
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        mode = os.lstat(directory).st_mode
+        if not stat.S_ISDIR(mode):
+            continue
+        if mode & 0o700 != 0o700:
+            try:
+                os.chmod(directory, stat.S_IMODE(mode) | 0o700, follow_symlinks=False)
+            except (NotImplementedError, OSError):  # no lchmod here (Linux): lstat said it is a real folder
+                os.chmod(directory, stat.S_IMODE(mode) | 0o700)
+        with os.scandir(directory) as listing:
+            pending.extend(entry.path for entry in listing if entry.is_dir(follow_symlinks=False))
 
 
 async def run_routed(
@@ -176,9 +217,11 @@ async def run_routed(
     concurrency: int = 4,
     workspace_factory: WorkspaceFactory | None = None,
     challenge_id: str | None = None,
+    keep: bool = False,
 ) -> list[EngineRun]:
     """Run every routed engine, at most `concurrency` at once, best first. The runs come
-    back in priority order (high first, then id), whenever each one finished."""
+    back in priority order (high first, then id), whenever each one finished. `keep` keeps
+    each engine's copy of the challenge (run_engine)."""
     if not (isinstance(concurrency, int) and not isinstance(concurrency, bool) and concurrency >= 1):
         raise ValueError(f"concurrency must be a whole number, 1 or more, got {concurrency!r}")
     ordered = sorted(hits, key=lambda hit: (-hit.priority, hit.manifest.id))
@@ -195,7 +238,7 @@ async def run_routed(
             try:
                 result = await run_engine(
                     hit.manifest, handout, workdir=workdir, flag_format=flag_format,
-                    workspace_factory=workspace_factory, challenge_id=label,
+                    workspace_factory=workspace_factory, challenge_id=label, keep=keep,
                 )
             except Exception as exc:  # a flightdeck bug or a failing factory: this engine's run only, never the others'
                 result = SolverResult(

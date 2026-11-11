@@ -92,6 +92,10 @@ def run_command(
         Path | None,
         typer.Option("--workdir", file_okay=False, help="Where engine workspaces go: a new folder per run inside it (default: a new temporary folder)."),
     ] = None,
+    keep: Annotated[
+        bool,
+        typer.Option("--keep", help="Keep each engine's copy of the challenge after the run (default: each is removed once its result is read)."),
+    ] = False,
 ) -> None:
     """Run every engine the challenge reaches, each in its own copy of the challenge, and
     print each result as one line of JSON."""
@@ -102,7 +106,7 @@ def run_command(
     from ..core.model import DeckConfig
     from ..eventlog import new_run_dir
     from .router import route
-    from .runner import run_routed
+    from .runner import remove_tree, run_routed
 
     manifests = _discover(pack)
     item, board = _challenge(challenge_dir)
@@ -130,12 +134,19 @@ def run_command(
         runs_dir = new_run_dir(workdir.expanduser()) if workdir else Path(tempfile.mkdtemp(prefix="flightdeck-l1-"))
     except OSError as exc:
         raise typer.BadParameter(f"cannot create a folder there ({exc.strerror})", param_hint="--workdir") from None
+    after = "kept there (--keep)" if keep else "each removed once its result is read (--keep keeps them)"
     typer.echo(
         f"flightdeck: running {len(hits)} engine{'s' if len(hits) != 1 else ''} on this machine as you, each in a copy "
-        f"of the challenge under {_show(runs_dir)}; they get no API keys or tokens from flightdeck's environment",
+        f"of the challenge under {_show(runs_dir)}, {after}; they get no API keys or tokens from flightdeck's environment",
         err=True,
     )
-    runs = asyncio.run(run_routed(hits, item.handout, workdir=runs_dir, flag_format=pattern, challenge_id=item.challenge.id))
+    try:
+        runs = asyncio.run(run_routed(hits, item.handout, workdir=runs_dir, flag_format=pattern, challenge_id=item.challenge.id, keep=keep))
+    finally:
+        if not keep:  # the run's own folder: a temporary one goes whole, one in --workdir once it is empty
+            left = remove_tree(runs_dir) if workdir is None else _remove_if_empty(runs_dir)
+            if left:
+                typer.echo(f"flightdeck: could not remove {_show(runs_dir)}: {left}", err=True)
     for run in runs:
         typer.echo(run.result.to_json())
 
@@ -207,6 +218,21 @@ def _not_inside(folder: Path, pack: Path, handout: Path, option: str, *, default
 
 def _within(path: Path, folder: Path) -> bool:
     return path == folder or path.is_relative_to(folder)
+
+
+def _remove_if_empty(folder: Path) -> str:
+    """Remove a run's folder in --workdir when every engine's copy in it is gone: "" when it
+    was removed or holds something (an engine's copy that could not be removed, which that
+    engine's result already says), else why not."""
+    import errno
+
+    try:
+        folder.rmdir()
+    except OSError as exc:
+        if exc.errno in (errno.ENOTEMPTY, errno.EEXIST):
+            return ""
+        return _show(exc.strerror or str(exc))
+    return ""
 
 
 def _challenge(challenge_dir: Path):
