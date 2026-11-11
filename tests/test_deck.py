@@ -636,6 +636,7 @@ LATE_EXTRAS = {
     "a flag": {"flag": good_flag("c0")},
     "giving up": {"gave_up": "done"},
     "hints taken": {"hints_taken": 1},
+    "a cost still to come": {"dollars_later": True},
 }
 
 
@@ -708,6 +709,20 @@ def test_a_cli_turn_whose_cost_never_came_ends_the_lanes_known_total_and_asks_on
     assert not lane.dollars_later and lane.dollars is None and lane.known_dollars == pytest.approx(0.25)
     assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET  # the cap cannot be enforced
     assert events(deck, EventKind.SPEND)[-1].data["dollars"] is None
+
+
+@pytest.mark.parametrize("cli", [False, True], ids=["no price", "a CLI turn's cost not known"])
+def test_a_cost_with_no_price_asks_about_the_cap_naming_the_model_that_spent_it_not_the_lanes_model_now(cli):
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=0.25))
+    assert deck.apply(iv.Escalate(lane.id)).ok and lane.model == "mid"
+    deck.report(lane.id, TurnReport(turn=False, tokens=20, dollars=None, model="small", turn_end=cli))  # the old model's
+    why = "the cost of a turn of small is not known" if cli else "no price for small"
+    assert lane.alert(AlertKind.BUDGET).reason == (
+        f"{why[0].upper()}{why[1:]}, so the $2.00 cap cannot be enforced; it waits for approval to carry on without it."
+    )
+    assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == f"carry on with no dollar cap ({why})"
 
 
 def test_a_turn_with_no_action_text_still_emits_its_turn_event_and_a_non_turn_never_does():

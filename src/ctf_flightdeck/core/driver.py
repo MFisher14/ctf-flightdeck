@@ -65,13 +65,15 @@ class TurnReport:
 def spend_only(rep: TurnReport) -> bool:
     """A report of spend and of nothing else: not a turn; tokens, cached tokens or dollars
     (None: spent at an unknown price), or a coding-agent CLI's turn_end; and no action,
-    output, plan, artifacts, files, alerts, clear, approval, flag, hints or giving up. Once a
-    lane has ended, the deck still counts such a report (a CLI reports a turn's cost when the
-    turn ends, often after its lane has) and drops everything else."""
+    output, plan, artifacts, files, alerts, clear, approval, flag, hints, giving up or cost
+    still to come (dollars_later). Once a lane has ended, the deck still counts such a report
+    (a CLI reports a turn's cost when the turn ends, often after its lane has) and drops
+    everything else."""
     spent = rep.tokens or rep.cached_tokens or rep.dollars or rep.dollars is None or rep.turn_end
     return not rep.turn and bool(spent) and not (
         rep.action or rep.output or rep.plan is not None or rep.artifacts or rep.files or rep.alerts or rep.clear
         or rep.pending is not None or rep.flag is not None or rep.gave_up is not None or rep.hints_taken
+        or rep.dollars_later
     )
 
 

@@ -48,6 +48,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import (
     ActionKind,
+    AlertKind,
     Challenge,
     ChallengeStatus,
     DeckConfig,
@@ -969,6 +970,54 @@ def test_a_codex_lane_killed_mid_turn_never_gets_that_turns_cost_so_it_is_unknow
             (spent,) = spends(lab.deck)
             assert (spent["tokens"], spent["dollars"], spent["turn_end"]) == (0, None, True)
             assert spent["why"] == external.LEFTOVER.format(kind="codex")
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_turn_open_when_the_run_closes_stays_a_cost_that_never_came_and_asks_nothing(tmp_path):
+    # quitting stops every lane without ending it: the open turn's cost is not known, and no cap is left to ask about
+    script = {"turns": [{"items": [{"command": "echo one"}, {"sleep": 30.0}], "usage": [300, 100, 50]}]}
+    folder = tmp_path / "run"
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", prices={"small": Price(input=1.0, output=10.0)}, dollar_cap=2.0)
+        transcripts = TranscriptLog(folder / "lanes")
+        transcripts.attach(lab.deck)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the step")
+            await lab.finish()  # what the console's quit does: the driver's shutdown
+            assert not lane.finished and lane.dollars_later and (lane.dollars, lane.unpriced) == (0.0, 0)
+            assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and spends(lab.deck) == []
+        finally:
+            await lab.finish()
+            transcripts.close()  # the lanes still open, as the run's close writes them
+
+    run(main())
+    head = json.loads((folder / "lanes" / "L01.jsonl").read_text().splitlines()[0])
+    assert (head["state"], head["dollars"], head["dollars_later"]) == ("run", 0.0, True)  # reports read: never came
+
+
+def test_a_cost_with_no_price_asks_about_the_cap_naming_the_model_that_spent_it(tmp_path):
+    # escalated mid-turn: the small model's turn was cut, and codex never says what it cost
+    script = {"turns": [{"items": [{"command": "echo one"}, {"sleep": 30.0}], "usage": [300, 100, 50]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", prices={"small": Price(input=1.0, output=10.0),
+                                                          "big": Price(input=2.0, output=20.0)}, dollar_cap=2.0)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the step")
+            assert lab.deck.apply(iv.Escalate(lane.id)).ok and lane.model == "big"
+            await until(lambda: lane.alert(AlertKind.BUDGET) is not None, "the cap that cannot be enforced")
+            alert = lane.alert(AlertKind.BUDGET)
+            assert alert.reason.startswith("The cost of a turn of small is not known, so the $2.00 cap cannot be enforced")
+            assert lane.pending.detail == "carry on with no dollar cap (the cost of a turn of small is not known)"
+            assert "big" not in alert.reason  # it has a price: not the model whose cost is missing
         finally:
             await lab.finish()
 

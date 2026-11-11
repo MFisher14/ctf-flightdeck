@@ -1101,7 +1101,7 @@ class Deck:
         elif rep.dollars is None:
             lane.unpriced += 1
             if not lane.finished and lane.dollars is not None and lane.dollar_cap:
-                self._unpriced(lane)
+                self._unpriced(lane, rep)
             lane.dollars = None
         else:
             lane.known_dollars += rep.dollars
@@ -1121,19 +1121,24 @@ class Deck:
         self._emit(EventKind.SPEND, f"{lane.id} spent {rep.tokens} tokens {where}" + (f": {rep.why}" if rep.why else ""),
                    lane.id, lane.challenge_id, data=data)
 
-    def _unpriced(self, lane: Lane) -> None:
-        """A dollar-capped lane just had a turn with no price: the cap can no longer be enforced."""
+    def _unpriced(self, lane: Lane, rep: TurnReport) -> None:
+        """A dollar-capped lane just spent something with no price: the cap can no longer be
+        enforced. Said of the model that spent it (an escalated lane's old model, say); for a
+        coding-agent CLI, the cost of a turn it reported with none, or never reported (cut
+        short), whatever its model's price."""
+        model = rep.model or lane.model
+        why = f"the cost of a turn of {model} is not known" if rep.turn_end else f"no price for {model}"
         self._raise(
             lane,
             Alert(
                 AlertKind.BUDGET,
-                f"No price for {lane.model}, so the ${fmt.dollars(lane.dollar_cap)} cap cannot be "
+                f"{why[0].upper()}{why[1:]}, so the ${fmt.dollars(lane.dollar_cap)} cap cannot be "
                 "enforced; it waits for approval to carry on without it.",
                 (Suggestion("a", "Carry on without the dollar cap"), Suggestion("k", "Kill the lane")),
             ),
         )
         if not any(p.kind is PendingKind.BUDGET for p in ([lane.pending] if lane.pending else []) + lane.waiting):
-            self._ask(lane, Pending(PendingKind.BUDGET, f"carry on with no dollar cap (no price for {lane.model})"))
+            self._ask(lane, Pending(PendingKind.BUDGET, f"carry on with no dollar cap ({why})"))
 
     def _raise_caps(self, lane: Lane) -> None:
         if lane.token_cap:
