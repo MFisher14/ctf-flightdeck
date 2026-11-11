@@ -238,7 +238,7 @@ LANE_COLUMNS = (
     ("model", "model", 6, 4),
     ("state", "state", 8, 0),
     ("turns", "turns", 5, 3),
-    ("cost", "cost", 6, 2),
+    ("cost", "cost", 8, 2),  # "$12.34+…": lane_dollars' markers are never cut off
     ("idle", "idle", 4, 0),
     ("last", "last action", 0, 1),
 )

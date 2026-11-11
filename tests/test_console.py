@@ -1354,6 +1354,32 @@ def test_cost_is_not_a_settled_number_while_a_cli_turn_is_under_way():
     drive(app, script)
 
 
+def test_the_cost_column_draws_its_markers_whole_so_a_cost_over_ten_dollars_never_reads_as_settled():
+    """What is drawn, not only the cell's value: "+" (some spend had no price) and "…" (a
+    coding-agent CLI's turn is under way, its cost to come) are never cut off by the column."""
+    world, app = make("sstv")
+    lane = world.deck.lanes_on("bent-coin")[0]
+
+    async def script(pilot):
+        for dollars, known, later, drawn in (
+            (12.34, 12.34, True, "$12.34…"),
+            (None, 12.30, False, "$12.30+"),
+            (None, 12.30, True, "$12.30+…"),
+            (None, 1.23, True, "$1.23+…"),
+            (99.99, 99.99, True, "$99.99…"),
+            (None, 0.001, True, "$<.01+…"),
+            (None, 1234.0, True, "$1234+…"),
+        ):
+            lane.dollars, lane.known_dollars, lane.dollars_later = dollars, known, later
+            app.refresh_view()  # redraw without moving the mock clock (its lanes would report more spend)
+            await pilot.pause()
+            assert cell(app, "lanes", lane.id, "cost") == drawn
+            (row,) = [line for line in region_text(app, "#lanes").splitlines() if f" {lane.id} " in line]
+            assert f" {drawn} " in row, row
+
+    drive(app, script)
+
+
 def test_spend_a_cli_reports_after_its_lane_ended_shows_in_the_lanes_row_and_the_headers_total():
     """A coding-agent CLI reports a turn's cost when the turn ends, often after its lane has
     (killed, or solved mid-turn): the finished lane's row and the run's total count it."""
