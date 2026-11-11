@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from ctf_flightdeck.credentials import REDACTED, redact
+from ctf_flightdeck.credentials import REDACTED, named_flags, redact, redact_data
 from deadline import within
 
 OPENROUTER = "sk-" + "or-v1-" + "5f" * 32
@@ -137,6 +137,43 @@ def test_a_flag_is_never_taken_for_a_credential():
 def test_a_kept_string_never_shields_a_credential_it_is_only_part_of():
     assert redact(f"OPENROUTER_API_KEY={OPENROUTER}", keep=["5f5f", "sk-or-"]) == "OPENROUTER_API_KEY=[redacted]"
     assert redact(f"key {OPENROUTER}", keep=["5f"]) == "key sk-or-[redacted]"
+
+
+def test_every_string_in_an_events_data_is_redacted_and_the_rest_stays():
+    """The run log's data (redact_data): strings at any depth, in dicts and lists, lose their
+    credentials' values as redact() takes them out; the keys, numbers, booleans and None stay,
+    and so does a flag in `keep`, in the text and as a value of its own."""
+    data = {
+        "action": f"curl -H 'Authorization: Bearer {JWT}' http://127.0.0.1:8080/",
+        "API_KEY=x": f"KEY={OPENROUTER}",  # a key is a field name of flightdeck's, never a value
+        "flag": FLAG,
+        "nested": [{"reason": f"the same output twice: GITHUB_TOKEN={GITHUB}", "turn": 3}, [f"aws {AWS_ID}", None]],
+        "tokens": 1200, "dollars": 0.5, "correct": True, "detail": None,
+        "said": f"submitted {FLAG}: correct, and ANTHROPIC_API_KEY={ANTHROPIC}",
+    }
+    assert redact_data(data, keep=[FLAG]) == {
+        "action": "curl -H 'Authorization: Bearer [redacted]' http://127.0.0.1:8080/",
+        "API_KEY=x": "KEY=[redacted]",
+        "flag": FLAG,
+        "nested": [{"reason": "the same output twice: GITHUB_TOKEN=[redacted]", "turn": 3}, ["aws AKIA[redacted]", None]],
+        "tokens": 1200, "dollars": 0.5, "correct": True, "detail": None,
+        "said": f"submitted {FLAG}: correct, and ANTHROPIC_API_KEY=[redacted]",
+    }
+    assert redact_data(f"plain {CTFD}") == "plain ctfd_[redacted]"
+    assert redact_data(7) == 7 and redact_data(None) is None
+
+
+@pytest.mark.parametrize("data, flags", [
+    ({"flag": FLAG, "correct": True}, [FLAG]),  # a submit, or a candidate waiting for the player
+    ({"engine": "strings", "flags": ["t{a}", "", 3, "t{b}"]}, ["t{a}", "t{b}"]),  # an L1 result
+    ({"flag": "t{a}", "flags": ("t{b}",)}, ["t{a}", "t{b}"]),
+    ({"flag": None, "kind": "budget"}, []),  # a budget approval names no flag
+    ({"flag": 3, "flags": "t{a}"}, []),  # values of the wrong type name none
+    ({}, []),
+    (None, []),
+])
+def test_the_flags_an_event_names_are_its_flag_and_its_flags(data, flags):
+    assert named_flags(data) == flags
 
 
 LONG_RUNS = {  # shape -> (before, unit, after): the unit repeated to a megabyte between the two
