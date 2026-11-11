@@ -84,9 +84,10 @@ ANTHROPIC_TOKENS = {HINT: 1024, JUDGE: 1024, SUMMARY: 1024}
 
 # Thinking off, with each request of an openai engine whose [light] thinking is false
 # (config.light_thinking()): a model that reasons first fills those caps with its reasoning and
-# answers nothing. Ollama's OpenAI-compatible /v1 reads reasoning_effort "none" and ignores
-# chat_template_kwargs; mlx_lm.server (0.32) reads chat_template_kwargs per request, over its
-# --chat-template-args, and ignores reasoning_effort. A model with no thinking ignores both.
+# answers nothing. Ollama's OpenAI-compatible /v1 (0.34) reads reasoning_effort "none" and
+# ignores chat_template_kwargs; mlx_lm.server (0.32) reads chat_template_kwargs per request, over
+# its --chat-template-args, and ignores reasoning_effort. Neither was tried on a model that does
+# not think: if a server refuses them for one, [light] thinking = true sends neither.
 THINKING_OFF = {"reasoning_effort": "none", "chat_template_kwargs": {"enable_thinking": False}}
 
 _ANSWER = re.compile(r"[\s\"'`*_]*([a-z0-9]+(?:[ _-]+[a-z0-9]+)*)[\s\"'`*_]*[.!]?[\s\"'`*_]*")
