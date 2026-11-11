@@ -78,7 +78,7 @@ import httpx
 
 from .. import __version__
 from ..text import untrusted
-from .manual import BOARD_FILE, CHALLENGE_FILE, Board, BoardError, load_board
+from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board
 from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
 
 API = "/api/v1"
@@ -100,6 +100,9 @@ MAX_REDIRECTS = 3  # same-origin redirects a download follows
 MAX_SHOWN = 200  # characters of the server's own words kept in a message
 MAX_ID = 2**53  # CTFd ids are database ids; anything bigger is not one
 SLUG_MAX = 40  # characters of a name kept in its slug; room for "-<id>-<n>" within 64
+DESCRIPTION_MAX_BYTES = MAX_JSON_BYTES // 5  # a description bigger as JSON is cut short; challenge.json stays loadable
+DESCRIPTION_FILE = "description.md"  # where the whole of a description cut short goes, beside the handout
+MAX_PARAGRAPH = 2_000  # characters of a paragraph flightdeck adds (the connection info) kept beside a cut description
 
 _LOCK = ".ctfd-pull.lock"
 _STAGING = ".ctfd-pull-"
@@ -972,7 +975,8 @@ class _Spec:
     category: str
     points: int
     solves: int
-    description: str
+    description: str  # CTFd's own
+    extra: tuple[str, ...]  # paragraphs flightdeck adds after it: the connection info, notes
     urls: tuple[str, ...]
     files: tuple[str, ...]  # the file URLs, as CTFd sent them
 
@@ -999,6 +1003,9 @@ async def _pull_one(
     stage.mkdir()
     try:
         names = [(await client.download(url, stage)).name for url in spec.files]
+        description, whole = _description(spec, stage)
+        if whole is not None:
+            names.append(whole)
         _write_json(
             stage / CHALLENGE_FILE,
             {
@@ -1006,7 +1013,7 @@ async def _pull_one(
                 "category": spec.category,
                 "points": spec.points,
                 "solves": spec.solves,
-                "description": spec.description,
+                "description": description,
                 "files": names,
                 "urls": list(spec.urls),
                 "id": slug,
@@ -1029,9 +1036,10 @@ async def _pull_one(
         raise
     taken.add(slug)
     count = len(names)
+    cut = "" if whole is None else f"; its description is cut short, the whole of it is in {whole}"
     line = (
         f"added {slug}: {_quote(spec.name)} ({untrusted(spec.category, one_line=True) or 'no category'}, "
-        f"{spec.points} points, {count} file{'' if count == 1 else 's'})"
+        f"{spec.points} points, {count} file{'' if count == 1 else 's'}{cut})"
     )
     return slug, line
 
@@ -1088,35 +1096,67 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
         files = []
     if not isinstance(files, list) or not all(isinstance(url, str) for url in files):
         raise _Unusable("its files are not a list of URLs")
+    extra: list[str] = []  # what the folder board has no field for, after CTFd's description
     connection = connection.strip()
     if connection and connection not in description:
-        # the folder board has no field for it: `nc host port` must still reach the lane
-        description = _joined(description, f"Connection info: {connection}")
+        extra.append(f"Connection info: {connection}")  # `nc host port` must still reach the lane
     urls = origins_in(connection)
     platform = [origin for origin in urls if _on_ctfd(origin, ctfd)]
     if platform:
         # an instancer page on CTFd, a link to the scoreboard: a lane's instance is the one place its
         # tools may send requests to, and CTF infrastructure is never a target
         urls = tuple(origin for origin in urls if origin not in platform)
-        description = _joined(
-            description,
+        extra.append(
             f"Note from flightdeck: the connection info points at CTFd itself ({', '.join(platform)}), which lanes "
-            "never get as an instance.",
+            "never get as an instance."
         )
     tries = detail.get("max_attempts")  # 0 (or absent) when CTFd allows any number
     if _is_number(tries):
-        # nor for this: the player and the lane should know that every wrong flag costs one
-        description = _joined(
-            description,
+        # the player and the lane should know that every wrong flag costs one
+        extra.append(
             f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
-            "then checks no more.",
+            "then checks no more."
         )
-    return _Spec(name, category, points, solves, description, urls, tuple(files))
+    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files))
 
 
-def _joined(text: str, paragraph: str) -> str:
-    """`paragraph` after `text`, with a blank line between them."""
-    return (text.rstrip() + "\n\n" if text.strip() else "") + paragraph
+def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:
+    """challenge.json's description: CTFd's, then the paragraphs flightdeck adds. One too long
+    for challenge.json (an image pasted into it) is written whole to a file in `stage`, and
+    cut short where the board shows it. Returns it and that file's name, if one was written."""
+    text = _paragraphs(spec.description, spec.extra)
+    if len(json.dumps(text, ensure_ascii=True)) <= DESCRIPTION_MAX_BYTES:
+        return text, None
+    path, fd = _create(stage, DESCRIPTION_FILE)
+    with os.fdopen(fd, "wb") as out:
+        out.write(text.encode("utf-8", "replace"))
+    note = (
+        "Note from flightdeck: this description is too long for the board, so it is cut short; the whole of it is in "
+        f"the file {path.name}."
+    )
+    # CTFd's own text gets half the room; flightdeck's paragraphs (the connection info) stay in view
+    kept = [part if len(part) <= MAX_PARAGRAPH else part[: MAX_PARAGRAPH - 3] + "..." for part in spec.extra]
+    return _paragraphs(_cut(spec.description, DESCRIPTION_MAX_BYTES // 2), (note, *kept)), path.name
+
+
+def _paragraphs(text: str, paragraphs: tuple[str, ...]) -> str:
+    """`paragraphs` after `text`, with a blank line before each."""
+    for paragraph in paragraphs:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + paragraph
+    return text
+
+
+def _cut(text: str, budget: int) -> str:
+    """The longest start of `text` that takes at most `budget` bytes as JSON (ASCII, as
+    challenge.json is written: a character takes 1 to 12 bytes there)."""
+    low, high = 0, min(len(text), budget)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(json.dumps(text[:middle], ensure_ascii=True)) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
 
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}

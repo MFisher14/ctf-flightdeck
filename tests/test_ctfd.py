@@ -604,6 +604,33 @@ def test_a_connection_url_the_board_would_refuse_is_left_in_the_text_not_in_the_
     assert item.challenge.description == "Connection info: Instance: http://127.1:8080/ (or nc 127.0.0.1 9001)"
 
 
+def test_a_description_too_long_for_challenge_json_is_cut_short_and_kept_whole_in_a_file(tmp_path):
+    inline = "![diagram](data:image/png;base64," + "A" * 1_100_000 + ")"  # an image pasted into the description
+    wide = "暗号" * 100_000  # 200,000 characters, six bytes each in challenge.json
+    board = [FakeChallenge(1, "Big Image", description=inline, connection_info="nc chal.example.org 1337",
+                           files={"description.md": b"the challenge's own file"}),
+             FakeChallenge(2, "Wide Text", description=wide), FakeChallenge(3, "Small", description="x" * 150_000)]
+    lines: list[str] = []
+    with FakeCTFd(board) as fake:
+        result = call(fake, lambda c: pull(c, tmp_path / "board", event="Fake CTF", flag_format=None, progress=lines.append))
+    assert result.problems == () and len(result.board.challenges) == 3
+    found = {item.challenge.id: item for item in result.board.challenges}
+    big, wide_one, small = found["big-image"], found["wide-text"], found["small"]
+    assert big.challenge.files == ("description.md", "description-2.md")
+    assert (big.handout / "description.md").read_bytes() == b"the challenge's own file"
+    assert (big.handout / "description-2.md").read_text(encoding="utf-8") == (
+        inline + "\n\nConnection info: nc chal.example.org 1337")
+    shown = big.challenge.description
+    assert shown.startswith("![diagram](data:image/png;base64,AAAA") and len(shown) < 120_000
+    assert shown.endswith("\n\nNote from flightdeck: this description is too long for the board, so it is cut short; "
+                          "the whole of it is in the file description-2.md.\n\nConnection info: nc chal.example.org 1337")
+    assert (wide_one.handout / "description.md").read_text(encoding="utf-8") == wide
+    assert wide_one.challenge.description.startswith(wide[:1000]) and len(wide_one.challenge.description) < 20_000
+    assert small.challenge.description == "x" * 150_000 and small.challenge.files == ()  # long, but it fits: whole
+    assert lines[0] == ('added big-image: "Big Image" (misc, 100 points, 2 files; its description is cut short, '
+                        "the whole of it is in description-2.md)")
+
+
 def test_origins_are_taken_from_urls_in_the_connection_info():
     assert origins_in(None) == () and origins_in("") == () and origins_in("nc chal.example.org 31337") == ()
     assert origins_in("http://web.example.org:8080") == ("http://web.example.org:8080",)
