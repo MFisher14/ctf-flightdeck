@@ -19,6 +19,7 @@ import stat
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from ctf_flightdeck.core import interventions as iv
@@ -563,6 +564,44 @@ def test_a_challenge_with_capped_tries_says_so_in_its_description(tmp_path):
     assert found["one-shot"].description == (
         "Note from flightdeck: CTFd allows 1 attempt at this challenge's flag, then checks no more.")
     assert found["free"].description == "Any number of tries." and found["unsaid"].description == ""
+
+
+def test_connection_info_that_points_at_ctfd_itself_never_makes_ctfd_a_lanes_instance(tmp_path):
+    # an instancer page served by a CTFd plugin: the lane must not get the platform as its target
+    with FakeCTFd([]) as fake:
+        on_https = fake.base_url.replace("http://", "https://")  # the same host and port, the other scheme
+        fake.add(FakeChallenge(1, "Note Keeper", connection_info=f"Start your instance at {fake.base_url}/plugins/i/1"),
+                 FakeChallenge(2, "Same Host", connection_info=f"http://127.0.0.1:31337/ or {on_https}/x"))
+        found = {item.challenge.id: item for item in pulled(fake, tmp_path / "board").board.challenges}
+    keeper, same = found["note-keeper"], found["same-host"]
+    assert keeper.urls == () and not keeper.challenge.live
+    assert keeper.challenge.description == (
+        f"Connection info: Start your instance at {fake.base_url}/plugins/i/1\n\nNote from flightdeck: the connection "
+        f"info points at CTFd itself ({fake.base_url}), which lanes never get as an instance.")
+    assert same.urls == ("http://127.0.0.1:31337",)  # another port on CTFd's host is an instance like any other
+    assert f"points at CTFd itself ({on_https})" in same.challenge.description
+
+
+def test_ctfds_own_host_on_the_other_default_port_is_ctfd_too():
+    from ctf_flightdeck.platform.ctfd import _on_ctfd  # CTFd on port 80 or 443 cannot be faked here
+
+    ctfd = httpx.URL("https://ctf.example.org/")
+    assert _on_ctfd("https://ctf.example.org", ctfd) and _on_ctfd("http://ctf.example.org", ctfd)
+    assert _on_ctfd("https://ctf.example.org:443", ctfd) and _on_ctfd("http://CTF.example.org:80", ctfd)
+    assert not _on_ctfd("http://ctf.example.org:8080", ctfd) and not _on_ctfd("https://chal.ctf.example.org", ctfd)
+    odd = httpx.URL("http://10.0.0.1:8000/ctf/")
+    assert _on_ctfd("https://10.0.0.1:8000", odd) and not _on_ctfd("http://10.0.0.1", odd)
+
+
+def test_a_connection_url_the_board_would_refuse_is_left_in_the_text_not_in_the_urls(tmp_path):
+    disguised = ("http://127.1:8080/", "http://2130706433/", "http://1.2.3.4.5/", "http://0x7f.1/", "http://10.0.0.256/")
+    assert origins_in(" ".join(disguised)) == ()  # each a loopback address in disguise, or no address at all
+    board = [FakeChallenge(1, "Short Form", connection_info="Instance: http://127.1:8080/ (or nc 127.0.0.1 9001)")]
+    with FakeCTFd(board) as fake:
+        result = pulled(fake, tmp_path / "board")
+    (item,) = result.board.challenges
+    assert result.problems == () and item.urls == ()
+    assert item.challenge.description == "Connection info: Instance: http://127.1:8080/ (or nc 127.0.0.1 9001)"
 
 
 def test_origins_are_taken_from_urls_in_the_connection_info():

@@ -79,6 +79,7 @@ import httpx
 from .. import __version__
 from ..text import untrusted
 from .manual import BOARD_FILE, CHALLENGE_FILE, Board, BoardError, load_board
+from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
 
 API = "/api/v1"
 STATE_FILE = "ctfd.json"
@@ -937,13 +938,17 @@ def load_ids(dest: Path) -> dict[str, int]:
 
 def origins_in(text: str | None) -> tuple[str, ...]:
     """The http(s) origins (scheme://host[:port], lower case) of the URLs in `text`, in
-    order, each once. A URL with no usable host is left out, and so is anything else
-    (`nc host port` has no URL in it)."""
+    order, each once. Only origins a board's challenge.json takes are kept (the folder
+    board's own rule: a host that ends in a number must be a plain IPv4 address, so 127.1
+    or 2130706433 is left out); a URL with no usable host is left out, and so is anything
+    else (`nc host port` has no URL in it)."""
     if not text:
         return ()
     found: list[str] = []
     for match in _URL.finditer(text):
         origin = _origin(_trim(match.group(0)))
+        if origin is not None:
+            origin = _board_origin(origin)
         if origin is not None and origin not in found:
             found.append(origin)
     return tuple(found)
@@ -986,7 +991,7 @@ async def _pull_one(
     the staging folder and checked with load_board() first, so it appears complete or not
     at all. The mapping is written before the folder moves into place: a crash in between
     leaves a mapped slug with no folder, which the next pull fills in."""
-    spec = _spec(number, item, await client.challenge(number))
+    spec = _spec(number, item, await client.challenge(number), client._site.base)
     if slug is None:
         slug = _new_slug(spec.name, number, taken)
     stage_root.mkdir(exist_ok=True)
@@ -1044,7 +1049,7 @@ def _numbered(listing: list[dict], problems: list[str]) -> Iterator[tuple[int, d
         yield number, seen[number]
 
 
-def _spec(number: int, item: dict, detail: dict) -> _Spec:
+def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
     """challenge.json's fields from CTFd's details (the listing fills in what they lack)."""
     if detail.get("id") != number:
         raise _Unusable("CTFd answered with the details of another challenge")
@@ -1087,6 +1092,17 @@ def _spec(number: int, item: dict, detail: dict) -> _Spec:
     if connection and connection not in description:
         # the folder board has no field for it: `nc host port` must still reach the lane
         description = _joined(description, f"Connection info: {connection}")
+    urls = origins_in(connection)
+    platform = [origin for origin in urls if _on_ctfd(origin, ctfd)]
+    if platform:
+        # an instancer page on CTFd, a link to the scoreboard: a lane's instance is the one place its
+        # tools may send requests to, and CTF infrastructure is never a target
+        urls = tuple(origin for origin in urls if origin not in platform)
+        description = _joined(
+            description,
+            f"Note from flightdeck: the connection info points at CTFd itself ({', '.join(platform)}), which lanes "
+            "never get as an instance.",
+        )
     tries = detail.get("max_attempts")  # 0 (or absent) when CTFd allows any number
     if _is_number(tries):
         # nor for this: the player and the lane should know that every wrong flag costs one
@@ -1095,12 +1111,27 @@ def _spec(number: int, item: dict, detail: dict) -> _Spec:
             f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
             "then checks no more.",
         )
-    return _Spec(name, category, points, solves, description, origins_in(connection), tuple(files))
+    return _Spec(name, category, points, solves, description, urls, tuple(files))
 
 
 def _joined(text: str, paragraph: str) -> str:
     """`paragraph` after `text`, with a blank line between them."""
     return (text.rstrip() + "\n\n" if text.strip() else "") + paragraph
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _on_ctfd(origin: str, ctfd: httpx.URL) -> bool:
+    """`origin` (scheme://host[:port]) is the CTFd's own: its host on its port, whatever the
+    scheme, or on either default port when CTFd is on one (http:// to an https CTFd is the
+    same site). Another port on that host is another service."""
+    url = httpx.URL(origin)
+    if url.raw_host.lower().rstrip(b".") != ctfd.raw_host.lower().rstrip(b"."):
+        return False
+    port = url.port or _DEFAULT_PORTS.get(url.scheme)
+    own = ctfd.port or _DEFAULT_PORTS.get(ctfd.scheme)
+    return port == own or (port in (80, 443) and own in (80, 443))
 
 
 def _new_slug(name: str, number: int, taken: set[str]) -> str:
