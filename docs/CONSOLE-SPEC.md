@@ -233,16 +233,16 @@ matters there: what needs you and why, the one-key answers, and each lane's stat
 ```
  solo ╱ 4/4 · q3 ╱ ▲ 2 need you ╱ $3.18
 ╭ fleet 4/4 · sort attention ────────────────────────╮
-│  !      lane  chall              state     cost    │
-│▌ flag   L04   Ticket Desk        wait      $.16    │
-│  hint   L01   Static Hiss        run       $.13    │
-│         L02   Bent Coin          run       $.02    │
+│    !      lane  state      cost  chall             │
+│ ▌  flag   L04   wait       $.16  Ticket Desk       │
+│    hint   L01   run        $.13  Static Hiss       │
+│           L02   run        $.02  Bent Coin         │
 │▌L04 ▲ Flag found: Candidate mock{…} matches the    │
-│ flag format.                                       │
-│  1  submit mock{…}                                 │
-│  0  do not submit                                  │
+│flag format.                                        │
+│   1  submit mock{…}                                │
+│   0  do not submit                                 │
+│  enter open                                        │
 │                                                    │
-│ enter open                                         │
 ╰────────────────────────────────────────────────────╯
  ● wren solved Night Shift · stopped L05
 ╭ / for commands · enter opens the selected lane · … ╮
@@ -256,20 +256,22 @@ matters there: what needs you and why, the one-key answers, and each lane's stat
   event's name, the mock tag and docker/host are not shown.
 - **Fleet.** No board (as under 100 columns). Each lane row has the attention chip in four
   letters at most (`flag`, `budg`, `loop`, `efrt`, `hint`, `wway`, `stal`, `mate`; an approval
-  alone: `sub`, `conf`, `budg`, `box`; `send` while a flag is on its way), the lane, the challenge
-  (it takes the room left and is cut first), the state in five letters at most (`run`, `wait`,
-  `pause`, `take`; ended: `done`, `kill`, `stop`, `gave`) and the lane's cost with its markers
-  (`$.42+`, `…`). Model, turns, idle time and the last action are in the focus view.
-- **Why line.** Six rows under the list, none cut mid-answer: why the selected lane is flagged
-  (two rows, wrapped), then its numbered answers, one a row (three at most; with more, the last
-  row says how many more the lane's needs-you card has), then `x dismiss` for an alert about its
-  course and `enter open`.
+  alone: `sub`, `conf`, `budg`, `box`; `send` while a flag is on its way), the lane, the state in
+  five letters at most (`run`, `wait`, `pause`, `take`; ended: `done`, `kill`, `stop`, `gave`),
+  the lane's cost with its markers (`$.42+`, `…`), and last the challenge, which takes the room
+  left: the edge of the terminal cuts its name, never the state or the cost. Model, turns, idle
+  time and the last action are in the focus view.
+- **Why line.** Six rows under the list: why the selected lane is flagged (wrapped onto two
+  rows), then its numbered answers, one a row (three at most; with more, the last row says how
+  many more: the lane's needs-you card has them all), then a row with `x dismiss` for an alert
+  about its course and `enter open`.
 - **Key lines.** Fleet: `a yes  d no  1-9 answer  / cmd  ? help  q quit`. Focus: `esc fleet
   1-9 0 answer  / cmd  ctrl+n next`. Every other key still works (`?` lists them): only the line
   is shorter.
-- **Focus view.** One pane: the needs-you card on top (half the pane at most), the transcript
-  under it; the title has the lane, its state and its cost first, then the challenge. The files
-  pane is hidden, and `/diff` says so (widen the terminal to read a diff). The strip of other
+- **Focus view.** One pane: the needs-you card on top (six tenths of the pane at most), the
+  transcript under it; the title has the lane, its state and its cost first, then the challenge.
+  On the card the reasons wrap and each answer is one row, its number first and its command cut
+  at the edge. The files pane is hidden, and `/diff` says so (widen the terminal to read a diff). The strip of other
   lanes needing you is `N more need you (ctrl+n):` and their chips.
 - Panels lose their side margin and padding, and the gaps under the header and over the why
   line go, so the lane list has the rows and columns.

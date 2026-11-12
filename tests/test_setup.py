@@ -687,3 +687,18 @@ def test_the_terminal_check_never_fails_doctor_and_is_left_out_away_from_a_termi
 
     monkeypatch.setattr(os, "get_terminal_size", no_terminal)
     assert "terminal" not in {c.name for c in doctor(cfg, environ={})}
+
+
+def test_doctor_says_a_phones_width_gets_the_compact_layout_and_what_that_leaves_out(tmp_path, monkeypatch):
+    assert terminal_check(tmp_path, monkeypatch, (56, 40)) == [
+        "warn terminal: 56x40: the compact layout, for 64 columns or fewer (what needs you and why, the one-key answers, "
+        "each lane's state and cost); on a busy run the console leaves out tokens, the event clock, the event's name, the "
+        "runtime (docker or host) and the flightdeck name in the header; the board (it shows from 100 columns); each "
+        "lane's model, turns, idle time and last action in the lane list (the lane's own view has them) and the files pane "
+        "of that view (the full layout starts at 65 columns); tab focus, s sort, t take over, e escalate, f fork, "
+        "x dismiss, r redirect, h hint, p pause, A approve all, k kill and o open on the fleet view's key line (? lists "
+        "every key); enter send, tab files and pgup pgdn scroll on the focus view's key line",
+        "     fix: from 173x18 it leaves none of this out, with an event name of up to 66 characters (a column more for "
+        "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
+    ]
+    assert "the compact layout" not in terminal_check(tmp_path, monkeypatch, (65, 40))[0]

@@ -620,8 +620,14 @@ def _terminal_check(columns: int, lines: int, config) -> Check:
         rows = f"each of your {lanes.max_lanes} lanes" if lanes.max_lanes > 1 else "your lane"
         return Check("terminal", True, f"{size}: on a busy run the console shows the whole header, the board, every key "
                                        f"and a row for {rows}" + (team if columns < fit.team_columns else ""))
+    layout = ""
+    if fit.compact:
+        from .console.views import COMPACT_MAX_WIDTH
+
+        layout = (f"the compact layout, for {COMPACT_MAX_WIDTH} columns or fewer (what needs you and why, the one-key "
+                  "answers, each lane's state and cost); ")
     return Check(
-        "terminal", False, f"{size}: on a busy run the console leaves out " + "; ".join(missing),
+        "terminal", False, f"{size}: {layout}on a busy run the console leaves out " + "; ".join(missing),
         f"from {fit.columns}x{fit.lines} it leaves none of this out, with an event name of up to {fit.event} characters "
         f"(a column more for each character more){team}; the console still works smaller", essential=False,
     )

@@ -51,6 +51,7 @@ class FlightdeckApp(App[None]):
         padding: 0 1; margin: 0 1;
     }}
     .panel:focus-within {{ border: round {theme.ACCENT}; }}
+    .-compact .panel {{ margin: 0; padding: 0; }}
     DataTable {{ background: transparent; }}
     DataTable > .datatable--header {{ background: transparent; color: {theme.MUTED}; text-style: bold; }}
     DataTable > .datatable--cursor {{ background: {theme.SELECTED}; text-style: bold; }}
@@ -179,15 +180,16 @@ class FlightdeckApp(App[None]):
             if isinstance(screen, (FleetScreen, FocusScreen)):
                 screen.refresh_view()
 
-    def header_text(self, width: int, *, clock_keys: bool = True) -> Text:
-        """The header; `clock_keys` says how to freeze the mock clock (only where space does)."""
+    def header_text(self, width: int, *, clock_keys: bool = True, compact: bool = False) -> Text:
+        """The header; `clock_keys` says how to freeze the mock clock (only where space does).
+        `compact`: the compact layout's header (views.header_pieces)."""
         note = ""
         if self._ticker is not None:
             if clock_keys:
                 note = "⏸ frozen: space resumes, . steps" if self.frozen else "▶ live: space freezes"
             else:
                 note = "⏸ frozen" if self.frozen else "▶ live"
-        return views.header(self.deck, mock=self.mock, note=note, width=width)
+        return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact)
 
     def status_text(self) -> Text:
         if self._status is None:
@@ -614,6 +616,9 @@ class FlightdeckApp(App[None]):
                 return
             if arg and arg not in lane.files:
                 self.warn(f"{lane.id} has not changed {untrusted(arg, one_line=True)}")
+                return
+            if views.compact(self.size.width):  # no silent nothing: the compact layout has no files pane
+                self.warn(f"No files pane under {views.COMPACT_MAX_WIDTH + 1} columns (diffs need it)")
                 return
             self.open_lane(lane.id, file=arg)
         elif name == "open":

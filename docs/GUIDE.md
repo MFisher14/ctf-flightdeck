@@ -198,6 +198,13 @@ stays quiet for the lane's next 3 turns as an answered one does (and comes back 
 if it still holds), and the run log has it as your action. It works on alerts about a lane's
 course; a flag, a budget and a teammate alert have their own answers.
 
+On a phone (flightdeck in tmux, attached over SSH) the console has a compact layout, from 64
+columns down: the header keeps what needs you and the run's dollars; each lane's row has its
+alert, state and cost; the line under the list wraps the reason and puts one answer on a row, so
+`a`, `d` and the number keys work as on a wide terminal. A lane opens with what it needs above its
+transcript; the files pane and diffs need 65 columns. `flightdeck doctor` says when your terminal
+gets this layout and what it leaves out.
+
 `q` asks first while lanes are open, and a run cannot be resumed.
 
 The fleet's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,

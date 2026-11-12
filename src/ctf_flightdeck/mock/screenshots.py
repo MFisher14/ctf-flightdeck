@@ -23,6 +23,7 @@ from .world import FakeWorld
 
 SIZE = (160, 46)
 NARROW = (120, 36)
+COMPACT = (56, 40)  # a phone over SSH: the compact layout (64 columns or fewer)
 
 # The course alerts, in the order the runner looks for one to show and answer.
 PREFERRED = (AlertKind.HINT, AlertKind.DIRECTION, AlertKind.EFFORT, AlertKind.LOOP, AlertKind.STALL)
@@ -31,7 +32,8 @@ PREFERRED = (AlertKind.HINT, AlertKind.DIRECTION, AlertKind.EFFORT, AlertKind.LO
 # in CaptureResult.skipped as "<moment>[, <moment>...]: why".
 MOMENTS = (
     "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
-    "approve-pending", "approve-submit", "team-stop", "attention-sort", f"narrow-{NARROW[0]}x{NARROW[1]}", "fork-prompt",
+    "approve-pending", "approve-submit", "team-stop", "attention-sort", f"narrow-{NARROW[0]}x{NARROW[1]}",
+    f"compact-{COMPACT[0]}x{COMPACT[1]}", f"compact-focus-{COMPACT[0]}x{COMPACT[1]}", "fork-prompt",
     "kill-prompt", "take-over", "challenge-card", "help",
 )
 
@@ -191,6 +193,18 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
         await pilot.resize_terminal(*NARROW)
         await pilot.pause()
         await run.shot(f"narrow-{NARROW[0]}x{NARROW[1]}")
+
+        # The compact layout, at a phone's width: the fleet, then the lane that most needs you.
+        await pilot.resize_terminal(*COMPACT)
+        await pilot.pause()
+        await run.shot(f"compact-{COMPACT[0]}x{COMPACT[1]}")
+        if top is not None:
+            app.open_lane(top.id)
+            await pilot.pause()
+            await run.shot(f"compact-focus-{COMPACT[0]}x{COMPACT[1]}")
+            await run.fleet(select=top.id)
+        else:
+            result.skipped.append(f"compact-focus-{COMPACT[0]}x{COMPACT[1]}: the scenario has no lane to open")
         await pilot.resize_terminal(*size)
         await pilot.pause()
 

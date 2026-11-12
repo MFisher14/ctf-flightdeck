@@ -42,7 +42,7 @@ runner = CliRunner()
 MOMENTS = (
     "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
     "approve-pending", "approve-submit", "team-stop", "attention-sort", "narrow-120x36",
-    "fork-prompt", "kill-prompt", "take-over", "challenge-card", "help",
+    "compact-56x40", "compact-focus-56x40", "fork-prompt", "kill-prompt", "take-over", "challenge-card", "help",
 )
 COURSE_TAGS = {kind.tag: kind for kind in COURSE_ALERTS}
 ALERT_SHOT = rf"alert-(?:{'|'.join(COURSE_TAGS)})"
@@ -609,12 +609,28 @@ def test_narrow_shot_has_no_line_longer_than_120_cells(default_run):
     assert widest(shot(out, "narrow-120x36")) <= 120
 
 
-def test_only_the_narrow_shot_is_narrow(default_run):
+def test_only_the_narrow_and_the_compact_shots_are_narrow(default_run):
     _, out = default_run
     widths = {path.name: columns(path) for path in out.iterdir()}
     narrow = shot(out, "narrow-120x36").name
     assert widths.pop(narrow) == 120
+    for moment in ("compact-56x40", "compact-focus-56x40"):
+        assert widths.pop(shot(out, moment).name) == 56
     assert set(widths.values()) == {screenshots.SIZE[0]}
+
+
+def test_the_compact_shots_show_what_needs_you_the_answers_and_each_lanes_state_and_cost(default_run):
+    _, out = default_run
+    fleet, lane = screen_text(shot(out, "compact-56x40")), screen_text(shot(out, "compact-focus-56x40"))
+    assert widest(shot(out, "compact-56x40")) <= 56 and widest(shot(out, "compact-focus-56x40")) <= 56
+    assert re.search(r"▲ \d+ need you ╱ \$\d+\.\d\d", fleet) and "a yes  d no  1-9 answer  / cmd  ? help  q quit" in fleet
+    rows = re.findall(r"(L\d\d) +(run|wait|pause|take) +(\$\S+|-) +\S", fleet)
+    assert len(rows) >= 10, fleet  # a row for each lane on screen: its state and its cost
+    selected = re.search(r"▌(L\d\d) [▲◆] ", fleet).group(1)  # the why line: why, then each answer on its own row
+    assert re.search(r"\n│ +1  \S.*\n│ +[02]  \S", fleet), fleet
+    assert re.search(rf"─ {selected} (run|wait) \$\S+ · ", lane), lane  # the same lane, opened: its state and cost in the title
+    assert lane.index("needs you now") < lane.index("⏺ ")  # what it needs, above its transcript
+    assert "files changed" not in lane and "esc fleet  1-9 0 answer  / cmd  ctrl+n next" in lane
 
 
 @pytest.mark.parametrize(

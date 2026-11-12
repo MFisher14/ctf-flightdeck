@@ -25,13 +25,15 @@ import rich.console
 from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
-from textual.widgets import DataTable, RichLog, Select, Static
+from textual.widgets import DataTable, OptionList, RichLog, Select, Static
 
 from ctf_flightdeck import credentials, fmt
 from ctf_flightdeck.console import room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
+from ctf_flightdeck.console.fleet import COMPACT_KEYS as FLEET_COMPACT_KEYS
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.fleet import key_room as fleet_key_room
+from ctf_flightdeck.console.focus import COMPACT_KEY_LABELS as FOCUS_COMPACT_KEYS
 from ctf_flightdeck.console.focus import KEY_LABELS as FOCUS_KEYS
 from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
@@ -3234,34 +3236,59 @@ def four_lanes_and_one_finished(*, team: bool = False) -> Deck:
     return deck
 
 
-@pytest.mark.parametrize("size", [(60, 12), (99, 17), (100, 30), (108, 18), (125, 18), (147, 18), (172, 18), (173, 17), (173, 18)])
+@pytest.mark.parametrize("size", [(44, 30), (50, 24), (56, 40), (60, 12), (64, 30), (65, 30), (99, 17), (100, 30), (108, 18), (125, 18),
+                                  (147, 18), (172, 18), (173, 17), (173, 18)])
 def test_what_doctor_says_a_terminal_leaves_out_is_what_the_console_leaves_out(size, monkeypatch):
     """doctor measures a terminal with room.room(); at that size, on the busy run it measures
     with (the header of room.busy_header), the console leaves out exactly that: the header's
-    pieces in both views, the board, lane rows, the fleet view's keys and the focus view's."""
+    pieces in both views, the board, lane rows, the fleet view's keys and the focus view's.
+    At 64 columns or fewer that is the compact layout's header and key lines."""
     columns, lines = size
     fit = room.room(columns, lines, max_lanes=4, containerized=True)
+    assert fit.compact is (columns <= 64)
     busy = room.busy_header(max_lanes=4, containerized=True)
     monkeypatch.setattr(views, "header_facts", lambda deck, mock="": busy)
     pieces = {name: text for name, rank, (text, *_) in views.header_pieces(busy) if rank}  # the pieces that can drop
+    if fit.compact:  # its header has the lanes and the queue in short, and two more pieces that can drop
+        pieces |= {name: text for name, rank, (text, *_) in views.header_pieces(busy, compact=True) if rank}
+        del pieces["dollars"]  # never dropped there
+        assert "dollars" not in fit.header and "$12.34+…" in views.fit_header(busy, 40, compact=True)[0].plain
     app = FlightdeckApp(four_lanes_and_one_finished(), refresh_seconds=None, on_exit=nothing)
 
     async def script(pilot):
         for view in ("fleet", "focus"):
             header = region_text(app, "#header")
             assert {name for name, text in pieces.items() if text not in header} == set(fit.header), (view, header)
+            assert not fit.compact or ("▲ 4 need you" in header and "$12.34+…" in header), header
             keys = region_text(app, "#keys").strip()
             if view == "fleet":
-                assert app.fleet.board_hidden is fit.board
+                assert app.fleet.board_hidden is fit.board and app.fleet.compact is fit.compact
                 rows = [line for line in region_text(app, "#lanes").splitlines()[1:] if line.strip()]  # under the labels
                 assert len(rows) == min(fit.rows, fit.needed) and (fit.rows < fit.needed) is (len(rows) < 5)
                 every = [f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS if b.show and b.action != "claim"]
-                assert [key for key in every if key not in keys.split("  ")] == sorted(fit.fleet_keys, key=every.index), keys
+                if fit.compact:  # its own short line: every key it has not got is left out, and any the edge cuts
+                    line = [f"{shown} {label}" for _, shown, label in FLEET_COMPACT_KEYS]
+                    kept = {key for key, _, _ in FLEET_COMPACT_KEYS}
+                    gone = [f"{b.key_display or b.key} {b.description}" for b in FleetScreen.BINDINGS
+                            if b.show and b.action != "claim" and b.key not in kept]
+                    cut = [label for label in line if label not in keys.split("  ")]
+                    assert sorted(fit.fleet_keys) == sorted(gone + cut) and fit.fleet_keys[len(gone):] == tuple(cut), keys
+                    assert (cut == []) is (columns >= 48)
+                else:
+                    assert [key for key in every if key not in keys.split("  ")] == sorted(fit.fleet_keys, key=every.index), keys
                 await open_focus(pilot, app, "L02")
+            elif fit.compact:
+                line = [f"{key} {label}" for key, label in FOCUS_COMPACT_KEYS]
+                gone = [f"{key} {label}" for key, label in FOCUS_KEYS if key not in dict(FOCUS_COMPACT_KEYS)]
+                assert gone == ["enter send", "tab files", "pgup pgdn scroll"]
+                assert gone + [label for label in line if label not in keys] == list(fit.focus_keys), keys
+                assert not app.screen.query_one("#files-pane").display  # as left_out() says
             else:
                 labels = [f"{key} {label}" for key, label in FOCUS_KEYS]
                 assert [label for label in labels if label not in keys] == list(fit.focus_keys), keys  # cut, or not there
+                assert app.screen.query_one("#files-pane").display
         assert (fit.left_out() == []) is (size == (fit.columns, fit.lines))  # the smallest size that leaves nothing out
+        assert any("the files pane" in part for part in fit.left_out()) is fit.compact
 
     drive(app, script, size=size)
 
@@ -3542,3 +3569,188 @@ def test_help_lists_approve_all_and_dismiss():
         assert "/dismiss take down the lane's alert about its course" in text
 
     drive(app, script)
+
+
+# ---------------------------------------------------------------------- the compact layout: 64 columns or fewer (#28)
+
+PHONE = (56, 40)
+
+
+def lane_row(app: FlightdeckApp, lane_id: str) -> str:
+    """The lane's row of the lane list as it is drawn (not the table's cells: what the terminal shows)."""
+    (row,) = [line for line in region_text(app, "#lanes").splitlines() if f" {lane_id} " in f" {line} "]
+    return row
+
+
+def test_at_56_columns_every_lane_row_shows_what_needs_you_its_state_and_its_cost():
+    world, app = make("default")
+    deck = world.deck
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: len(submits(deck)) >= 2 and any(
+            lane.pending and lane.pending.kind is PendingKind.BUDGET for lane in deck.active_lanes()), "flags and a budget request")
+        assert app.fleet.compact and app.fleet.board_hidden
+        assert columns(app, "lanes") == ["bar", "!", "lane", "state", "cost", "chall"]
+        head = region_text(app, "#lanes").splitlines()[0]
+        assert head.split() == ["!", "lane", "state", "cost", "chall"]
+        shown = [key for key in lane_rows(app) if key in region_text(app, "#lanes")]
+        assert len(shown) >= 8
+        for lane_id in shown:  # each row, as drawn: state and cost whole, the name last
+            lane = deck.lanes[lane_id]
+            row = lane_row(app, lane_id)
+            cost = views.lane_dollars(lane, short=True)
+            assert re.search(rf" {lane_id} +{views.COMPACT_STATE[lane.state]} +{re.escape(cost)} +\S", row), row
+            assert "…" not in row.split(cost)[0]  # nothing before the name is cut
+        flag = deck.lanes[next(iter(submits(deck)))]
+        budget = next(lane for lane in deck.active_lanes() if lane.pending and lane.pending.kind is PendingKind.BUDGET)
+        assert " flag " in lane_row(app, flag.id) and " budg " in lane_row(app, budget.id)
+        header = region_text(app, "#header")
+        assert f"▲ {len(deck.needing())} need you" in header and f"${fmt.dollars(deck.totals()[1])}" in header
+        assert all(len(line) <= PHONE[0] for line in screen_text(app).splitlines())
+
+    drive(app, script, size=PHONE)
+
+
+def test_at_56_columns_the_why_line_has_the_reason_and_each_answer_whole_and_a_and_1_approve():
+    world, app = make("overthinking")
+    deck = world.deck
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: len(submits(deck)) == 3, "three lanes waiting with a flag")
+        first, second = (deck.lanes[lane_id] for lane_id in list(submits(deck))[:2])
+        for lane, key in ((first, "a"), (second, "1")):
+            flag = lane.pending.flag
+            app.fleet.select_lane(lane.id)
+            await pilot.pause()
+            why = region_text(app, "#why")
+            rows = [row.strip() for row in why.splitlines() if row.strip()]
+            assert " ".join(rows[:2]) == f"▌{lane.id} ▲ Flag found: Candidate {flag} matches the flag format."  # wrapped, not cut
+            assert rows[2:] == [f"1  submit {flag}", "0  do not submit", "enter open"]
+            assert "…" not in why
+            await press(pilot, key)
+            assert lane.state is LaneState.SOLVED and deck.challenges[lane.challenge_id].status is ChallengeStatus.SOLVED
+            assert f"{flag} is correct" in status_line(app)
+        assert interventions(app).count("approve") == 2
+        third = deck.lanes[next(iter(submits(deck)))]
+        app.fleet.select_lane(third.id)
+        await press(pilot, "0")  # and 0 says no
+        assert third.pending is None and third.state is LaneState.RUNNING and interventions(app)[-1] == "decline"
+        assert footer_line(app).strip() == "a yes  d no  1-9 answer  / cmd  ? help  q quit"
+
+    drive(app, script, size=PHONE)
+
+
+def test_at_56_columns_a_course_alerts_numbered_answers_work_and_x_dismisses():
+    world, app = make("sstv")
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.alert(AlertKind.HINT) is not None, "off-hint alert")
+        redirect = next(s.text for s in lane.alert(AlertKind.HINT).suggestions if s.key == "r")
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        assert " hint " in lane_row(app, lane.id)
+        rows = [row.strip() for row in region_text(app, "#why").splitlines() if row.strip()]
+        assert rows[0].startswith(f"▌{lane.id} ▲ Ignores the hint: The description hints at")
+        assert rows[1].endswith("…")  # a long reason is cut after two rows, so the answers keep theirs
+        assert rows[2:] == ["1  redirect with the hinted technique", "2  hint", "x dismiss   enter open"]
+        await press(pilot, "1")
+        assert lane.plan == redirect and lane.alert(AlertKind.HINT) is None
+        assert interventions(app)[-1] == "redirect"
+
+    drive(app, script, size=PHONE)
+
+    world, app = make("sstv")
+    lane = _off_hint(world)
+
+    async def dismiss(pilot):
+        await step_until(pilot, app, lambda: lane.alert(AlertKind.HINT) is not None, "off-hint alert")
+        app.fleet.select_lane(lane.id)
+        before = snapshot(app)
+        await press(pilot, "x")
+        assert lane.alert(AlertKind.HINT) is None and snapshot(app) == before and interventions(app)[-1] == "dismiss"
+        assert " hint " not in lane_row(app, lane.id)
+
+    drive(app, dismiss, size=PHONE)
+
+
+def test_at_56_columns_a_lane_opens_with_what_it_needs_above_its_transcript_and_a_digit_answers():
+    world, app = make("sstv")
+    deck = world.deck
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.alert(AlertKind.HINT) is not None and submits(deck), "an alert and a flag")
+        flag_id = next(iter(submits(deck)))
+        focus = await open_focus(pilot, app, lane.id)
+        assert focus.compact and not focus.query_one("#files-pane").display
+        now, log = focus.query_one("#now").region, focus.query_one("#transcript").region
+        assert now.bottom <= log.y and log.height >= 3  # the card first, then the transcript
+        title = region_text(app, "#talk-pane").splitlines()[0]
+        assert f"{lane.id} run {views.lane_dollars(lane)} · Static Hiss" in title  # state and cost, whole
+        card = region_text(app, "#now")
+        assert "needs you now" in card and "Ignores the hint" in card and "slow-scan TV" in card
+        answers = [row.strip(" │") for row in card.splitlines() if re.search(r"│\s+[0-9]  /", row)]
+        assert [row[:13] for row in answers] == ["1  /redirect ", "2  /hint Thin"]  # each on its own row, number first
+        assert "/dismiss" in card
+        others = region_text(app, "#others")
+        more = len(deck.needing()) - 1
+        assert others.startswith(f"{more} more need{'' if more > 1 else 's'} you (ctrl+n):") and f" {flag_id} flag " in f"{others} "
+        assert footer_line(app).strip() == "esc fleet  1-9 0 answer  / cmd  ctrl+n next"
+        assert all(len(line) <= PHONE[0] for line in screen_text(app).splitlines())
+        flag_lane = deck.lanes[flag_id]
+        await open_focus(pilot, app, flag_lane.id)
+        title = region_text(app, "#talk-pane").splitlines()[0]
+        assert f"{flag_lane.id} wait {views.lane_dollars(flag_lane)} · " in title
+        card = region_text(app, "#now")
+        assert f"waiting for you: submit {flag_lane.pending.flag}" in " ".join(card.split())
+        assert re.search(r"1  /approve", card) and re.search(r"0  /decline", card)
+        await press(pilot, "1")  # the chat box is empty: the digit answers
+        assert flag_lane.state is LaneState.SOLVED and interventions(app)[-1] == "approve"
+        await press(pilot, "ctrl+n")
+        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id in [x.id for x in deck.needing()]
+
+    drive(app, script, size=PHONE)
+
+
+def test_at_56_columns_diff_says_there_is_no_room_and_a_wider_terminal_gets_the_full_layout_back():
+    world, app = make("sstv")
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.files, "the lane writes a file")
+        focus = await open_focus(pilot, app, lane.id)
+        await send(pilot, app, "/diff")
+        assert_warning(app, "No files pane under 65 columns (diffs need it)")
+        assert not isinstance(app.focused, OptionList)
+        assert not focus.query_one("#files-pane").display
+        await pilot.resize_terminal(*NARROW)
+        await pilot.pause()
+        app.refresh_view()
+        await pilot.pause()
+        assert not focus.compact and focus.query_one("#files-pane").display
+        now, log = focus.query_one("#now").region, focus.query_one("#transcript").region
+        assert log.bottom <= now.y  # the card is back under the transcript
+        assert "esc fleet  enter send  / commands" in footer_line(app)
+        await send(pilot, app, "/diff")
+        assert app.focused is focus.query_one("#files")
+        await press(pilot, "escape")
+        assert not app.fleet.compact and "idle" in columns(app, "lanes") and "last" in columns(app, "lanes")
+        assert "a approve" in footer_line(app)
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+        assert app.fleet.compact and columns(app, "lanes") == ["bar", "!", "lane", "state", "cost", "chall"]
+        await pilot.resize_terminal(65, 30)
+        await pilot.pause()
+        assert not app.fleet.compact and "idle" in columns(app, "lanes")
+
+    drive(app, script, size=PHONE)
+
+
+def test_the_compact_chips_and_states_are_short_enough_for_their_columns():
+    widths = {key: width for key, _, width, _ in views.COMPACT_LANE_COLUMNS}
+    tags = [*views.COMPACT_ALERT_TAG.values(), *views.COMPACT_PENDING_TAG.values(), views.COMPACT_SENDING]
+    assert set(views.COMPACT_ALERT_TAG) == set(AlertKind) and set(views.COMPACT_PENDING_TAG) == set(PendingKind)
+    assert all(theme.chip(tag, theme.INK, theme.ACCENT).cell_len <= widths["!"] for tag in tags)
+    assert set(views.COMPACT_STATE) == set(LaneState) and all(len(word) <= widths["state"] for word in views.COMPACT_STATE.values())
+    assert len(set(views.COMPACT_ALERT_TAG.values())) == len(AlertKind) and len(set(views.COMPACT_STATE.values())) == len(LaneState)

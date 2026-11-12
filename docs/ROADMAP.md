@@ -83,13 +83,12 @@ Planned in a milestone and not built:
 
 ## Later (not scheduled)
 
-- **Phone control.** Today: run flightdeck in tmux and attach over SSH (needs a compact layout for
-  50–60 columns). Option: serve the same console in a browser (textual-serve); touches D4 and must be
-  locked down. Best: push a notification when a lane needs you, with approve and decline from the
+- **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
+  layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
+  touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the
   phone; needs its own sign-in and permission design.
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
   in terminals that draw them; plain Unicode stays the default.
-- Batch approve (several waiting flags at once), dismissing an alert without intervening.
 - **Installs beyond PyPI.** A Homebrew tap (`brew install mfisher14/tap/ctf-flightdeck`, the
   formula bumped by the release workflow), a `.deb` on each GitHub release that brings its own
   Python (Debian 12 has 3.11), then a signed apt repository for `apt upgrade`. Homebrew's own
