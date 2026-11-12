@@ -421,7 +421,7 @@ key_env = "OPENROUTER_API_KEY"
 # With provider "anthropic" only: the ladder models a lane calls in fast mode (up to 2.5x the
 # output speed at a premium price: $8 / $40 per million tokens on claude-opus-5-5, twice the
 # standard price). Fast mode has its own rate limit; on a 429 the lane goes on at standard
-# speed for the rest of its context and says so.
+# speed for the rest of its session (until an escalation) and says so.
 # fast = ["claude-opus-5-5"]
 # Seconds one try of a lane's model call may take; a reply not complete by then is given up and
 # tried again (the retries and their waits stay as they are). Default 180, or 600 with provider
@@ -481,14 +481,16 @@ runtime = "docker"              # "docker": a container per lane; "host": on thi
 image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image build` makes it (never pulled)
 token_cap = 400000              # per lane; false for no cap
 dollar_cap = 2.0                # per lane; false for no cap
-submit = "confirm"              # "confirm": you approve each flag; "auto": submitted at once
+submit = "confirm"              # "confirm": you approve each flag; "auto": a flag a lane claims goes at once; the rest wait for you
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
 
 [agents]
 # Coding-agent CLIs as lanes (`flightdeck play --agent claude`): each CLI's own model ladder,
-# weakest first. They use the CLI's own login or key, never the [api] above.
+# weakest first. They use the CLI's own key or token (claude: ANTHROPIC_API_KEY or
+# CLAUDE_CODE_OAUTH_TOKEN; codex: CODEX_API_KEY, or a saved login on the host), never the [api]
+# above.
 # claude = ["sonnet", "opus"]
 # codex = ["your-codex-model"]
 
@@ -544,7 +546,9 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
 # (`flightdeck l1 import` makes the manifests for a folder of scripts). A lane runs the engines
-# routed to its challenge before its first model call; a flag one finds waits for your approval.
+# routed to its challenge before its first model call; a flag an engine returns as its result
+# waits for your approval, or goes at once under submit = "auto"; a match in what a text engine
+# printed always waits.
 # Each works in a copy of the handout. When lanes run in Docker, so do they: each in a container
 # of the lane image, your pack mounted read-only, with no network unless lanes may reach the
 # challenge's live instance at once. On the host runtime they run on this machine, as you.
