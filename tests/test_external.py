@@ -2090,6 +2090,27 @@ def test_under_auto_a_claim_that_could_not_be_looked_for_in_all_of_the_handout_w
     run(main())
 
 
+def test_under_auto_a_claim_never_looked_for_in_the_handout_never_goes_out_alone(tmp_path):
+    """Every claim is looked for (vet) before it is sorted out; should one ever reach sort_out
+    without it (a flightdeck bug), it waits for the player rather than go out unchecked."""
+    script = {"turns": [{"calls": [{"tools": [bash("true")]}, {"think": 30.0}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, submit="auto")
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: steps(lane), "the first step")
+            run_ = lab.run(lane)
+            assert run_.sort_out([], ["t{unvetted}"]) == ([], 1) and "t{unvetted}" in run_.held  # not claimed: held
+            assert ("t{unvetted} was never looked for in the challenge's own text, so it waits for you, though the agent "
+                    "gave it as its flag") in notes(lane)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_a_claimed_flag_no_part_of_a_big_handout_holds_still_goes_out_at_once(tmp_path):
     files = {"firmware.bin": b"\x7fELF" + b"\x00" * (2 * 1024 * 1024) + b"t{other}\x00", "note.txt": "x\n"}
     script = {"turns": [{"calls": [{"text": "FLAG: t{real}"}, {"think": 30.0, "text": "waiting"}]}]}
