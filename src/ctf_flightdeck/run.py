@@ -267,7 +267,7 @@ class Run:
             self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if state is not None:
-            self._watcher.apply(state)
+            self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
         if self.ctfd is not None:
             self._apply_solves(before_run=True)  # what CTFd listed before the run started
             self._apply_tries(self.ctfd.tries, before_run=True)  # and the tries its details said were left (none: out of tries)

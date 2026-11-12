@@ -1211,6 +1211,27 @@ def test_a_run_whose_only_solves_came_before_it_says_none_came_during_it(tmp_pat
     assert any(line.startswith("No solve during the run · last event ") for line in lines)
 
 
+def test_a_teammates_solve_the_team_folder_held_at_the_start_is_no_solve_during_the_run(tmp_path):
+    folder = make_board(tmp_path / "archive")
+    board = load_board(folder)
+    clock, driver = Clock(), Driver()
+    config = DeckConfig(event=board.event, team=True, max_lanes=4, flag_format=FLAG_FORMAT, models=MODELS)
+    deck = Deck(config, driver, clock, AnswerVerifier(board.answers))
+    log = EventLog(tmp_path / "run" / "events.jsonl")
+    log.attach(deck)
+    Release(deck, board, load_timeline(board), cheapest_first(board)).tick()
+    deck.teammate_solved("charlie", "wren", before_run=True)  # as the run applies the folder at its start, at T+0
+    clock.t = 600.0
+    deck.report("L01", TurnReport(action="ls"))
+    log.close()
+    result = score(log.path, board)
+    assert result.solved == ("charlie",) and result.per_challenge["charlie"].solved_at is None
+    assert result.first_solve_at is None
+    lines = scorecard(result).splitlines()
+    assert "Solves: 1 (lanes 0, L1 0, teammates 1, you 0)" in lines
+    assert any(line.startswith("No solve during the run · last event ") for line in lines)
+
+
 def test_an_l1_flag_is_the_l1_engines_solve_on_the_scorecard_as_in_every_report(tmp_path):
     played = Played(tmp_path)
     deck = played.at(0).deck  # alpha L01, bravo L02

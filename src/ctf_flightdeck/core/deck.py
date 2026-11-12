@@ -312,13 +312,17 @@ class Deck:
         self._on_thread("set_solves")
         self.challenges[challenge_id].solves = solves
 
-    def teammate_solved(self, challenge_id: str, who: str) -> None:
-        """Team mode: a teammate solved a challenge. Its lanes stop and it leaves the queue."""
+    def teammate_solved(self, challenge_id: str, who: str, *, before_run: bool = False) -> None:
+        """Team mode: a teammate solved a challenge. Its lanes stop and it leaves the queue.
+        `before_run`: the solve was already in the team folder when the run started, so no
+        report counts it as a solve that came during the run."""
         self._on_thread("teammate_solved")
         self._need_team("teammate_solved")
         ch = self.challenges[challenge_id]
+        mark = {"before_run": True} if before_run else {}
         if ch.closed:  # we, or another teammate, got there first; keep that record
-            self._emit(EventKind.TEAMMATE, f"{who} also solved {ch.name}", challenge=ch.id, data={"who": who, "solved": True})
+            self._emit(EventKind.TEAMMATE, f"{who} also solved {ch.name}", challenge=ch.id,
+                       data={"who": who, "solved": True, **mark})
             return
         ch.status = ChallengeStatus.TEAMMATE
         ch.solved_by = who
@@ -340,7 +344,7 @@ class Deck:
         text = f"{who} solved {ch.name}"
         if stopped:
             text += f" · stopped {', '.join(stopped)}"
-        self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={"who": who, "solved": True, "stopped": stopped})
+        self._emit(EventKind.TEAMMATE, text, challenge=ch.id, data={"who": who, "solved": True, "stopped": stopped, **mark})
 
     def platform_solved(self, challenge_id: str, who: str, *, before_run: bool = False) -> None:
         """The platform lists a challenge as solved by this account or its team (CTFd), solo
