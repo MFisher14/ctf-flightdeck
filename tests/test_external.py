@@ -564,6 +564,7 @@ async def written(path: Path, what: str, timeout: float = 60.0) -> str:
 
 
 def test_a_claude_lane_reports_steps_tokens_once_per_message_and_cost_and_a_flag_waits_frozen_for_approval(tmp_path):
+    gate = tmp_path / "answer"  # never made: the model's last answer has not come when the flag is raised
     script = {"turns": [
         {"calls": [
             {"text": "Looking at the files.", "tools": [bash("cat note.txt")], "usage": [100, 20, 0, 50]},
@@ -572,7 +573,7 @@ def test_a_claude_lane_reports_steps_tokens_once_per_message_and_cost_and_a_flag
         ], "cost": 0.01},
         {"calls": [
             {"tools": [bash("tr 'a-z' 'n-za-m' < note.txt")], "usage": [20, 10, 170, 0]},
-            {"think": 1.0, "text": "That is the flag."},
+            {"until": str(gate), "text": "That is the flag."},
         ], "cost": 0.02},
     ]}
 
@@ -1658,7 +1659,8 @@ def test_a_hint_ends_the_agents_turn_and_goes_in_as_its_next_message(tmp_path):
 
 
 def test_pause_freezes_the_cli_and_resume_lets_it_go_on(tmp_path):
-    script = {"turns": [{"calls": [{"tools": [bash("echo one")]}, {"think": 0.8, "tools": [bash("echo two")]}]}]}
+    gate = tmp_path / "answer"
+    script = {"turns": [{"calls": [{"tools": [bash("echo one")]}, {"until": str(gate), "tools": [bash("echo two")]}]}]}
 
     async def main():
         lab = Lab(tmp_path, script)
@@ -1669,6 +1671,7 @@ def test_pause_freezes_the_cli_and_resume_lets_it_go_on(tmp_path):
             assert lab.deck.apply(iv.Pause(lane.id)).ok
             pid = lab.pid(lane)
             await until(lambda: stopped(pid), "the CLI stopped")
+            gate.touch()  # the answer it waited for comes while it is frozen
             await asyncio.sleep(1.2)
             assert "$ echo two" not in steps(lane)
             assert lab.deck.apply(iv.Resume(lane.id)).ok
@@ -1802,8 +1805,9 @@ def test_a_hint_the_old_model_had_not_finished_a_turn_on_goes_to_the_stronger_mo
 
 
 def test_a_take_over_waits_for_the_agents_command_freezes_the_cli_and_tells_it_what_changed(tmp_path):
+    gate = tmp_path / "answer"
     script = {"turns": [
-        {"calls": [{"tools": [bash("sleep 1 && touch lane-a.txt")]}, {"think": 0.5, "tools": [bash("touch lane-b.txt")]}]},
+        {"calls": [{"tools": [bash("sleep 1 && touch lane-a.txt")]}, {"until": str(gate), "tools": [bash("touch lane-b.txt")]}]},
         {"calls": [{"tools": [bash("echo back")]}]},
     ]}
 
@@ -1821,7 +1825,8 @@ def test_a_take_over_waits_for_the_agents_command_freezes_the_cli_and_tells_it_w
             assert shell.cwd == work
             assert (work / "lane-a.txt").exists() and "lane-a.txt" in lane.files
             pid = lab.pid(lane)
-            assert stopped(pid)
+            await until(lambda: stopped(pid), "the CLI frozen")
+            gate.touch()  # the answer it waited for comes while the player has the shell
             await asyncio.sleep(0.8)
             assert not (work / "lane-b.txt").exists()  # nothing runs while the player has the shell
             (work / "player.txt").write_text("mine\n")
@@ -1841,9 +1846,157 @@ def test_a_take_over_waits_for_the_agents_command_freezes_the_cli_and_tells_it_w
     run(main())
 
 
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_the_take_over_shell_opens_only_once_the_step_of_the_command_it_waited_for_is_on_the_lane(tmp_path, monkeypatch, kind):
+    """The CLI freezes as soon as the agent's command ends, but its step goes on the lane only
+    after a look at the workspace, in a thread a loaded machine can hold up (here for half a
+    second). The shell waits for that step: the file the command made is on the lane as the
+    agent's before the player can change anything, so no change of the player's can be
+    taken for one of the agent's. The agent's next answer comes during that look: the CLI
+    froze when its command ended, before the look, so the step it chooses does not run."""
+    real = external.take_snapshot
+    gate = tmp_path / "answer"
+    command = "sleep 0.5 && touch lane-a.txt"
+    if kind == "claude":
+        script = {"turns": [{"calls": [{"tools": [bash(command)]}, {"until": str(gate), "tools": [bash("touch lane-b.txt")]}]}]}
+    else:
+        script = {"turns": [{"items": [{"command": command}, {"until": str(gate)}, {"command": "touch lane-b.txt"}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind=kind)
+
+        def held_up(root):
+            if (Path(root) / "lane-a.txt").exists() and not gate.exists():  # the look after the agent's command
+                pid, end = lab.pid(lane), time.monotonic() + 2
+                while not stopped(pid) and time.monotonic() < end:
+                    time.sleep(0.01)
+                gate.touch()  # its next answer comes now: a CLI not frozen yet goes on with it
+                time.sleep(0.5)
+            return real(root)
+
+        monkeypatch.setattr(external, "take_snapshot", held_up)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lab.run(lane).in_flight, "the agent's command running")
+            session = lab.driver.takeover(lane)
+            assert lab.deck.apply(iv.TakeOver(lane.id)).ok
+            await asyncio.wait_for(session.begin(), 10)
+            assert "lane-a.txt" in lane.files and lane.files["lane-a.txt"].by == "lane"
+            assert steps(lane) == ["$ sleep 0.5 && touch lane-a.txt"]
+            assert not (lab.work(lane) / "lane-b.txt").exists()  # frozen when its command ended
+            session.finish()
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def held_up_at_sigcont(monkeypatch, fake: Fake, step: Path) -> None:
+    """A loaded machine (or docker, one `docker exec` per signal) can hold flightdeck up between
+    the signals it sends a frozen CLI. Here each SIGCONT holds it up for as long as the CLI
+    needs to act: until the CLI has taken an interrupt, or has made `step` (at most 10 s)."""
+    real_killpg = os.killpg
+
+    def held_up(pgid, sig):
+        taken = len(fake.records("signal"))
+        real_killpg(pgid, sig)
+        if sig == signal.SIGCONT:
+            end = time.monotonic() + 10
+            while len(fake.records("signal")) == taken and not step.exists() and time.monotonic() < end:
+                time.sleep(0.01)
+
+    monkeypatch.setattr(os, "killpg", held_up)
+
+
+def chosen_while_frozen(gate: Path) -> dict:
+    """A claude turn: a first step, then a step the agent chooses once `gate` exists (the
+    model's answer, which the test lets come while the CLI is frozen); then a turn for what
+    comes after."""
+    return {"turns": [
+        {"calls": [{"tools": [bash("touch lane-a.txt")]}, {"until": str(gate), "tools": [bash("touch lane-b.txt")]}]},
+        {"calls": [{"tools": [bash("echo next")]}]},
+    ]}
+
+
+def test_a_hand_back_interrupts_the_frozen_cli_before_it_runs_again(tmp_path, monkeypatch):
+    """The agent had chosen its next step before the take-over, and the answer it waited for
+    came while the CLI was frozen. The interrupt of a hand-back goes first, so the CLI wakes
+    with it, however long flightdeck is held up after the SIGCONT, and that step never runs."""
+    gate = tmp_path / "answer"
+
+    async def main():
+        lab = Lab(tmp_path, chosen_while_frozen(gate))
+        try:
+            lab.release()
+            lane = lab.lane()
+            work = lab.work(lane)
+            held_up_at_sigcont(monkeypatch, lab.fake, work / "lane-b.txt")
+            await until(lambda: "lane-a.txt" in lane.files, "the agent's first step")
+            session = lab.driver.takeover(lane)
+            assert lab.deck.apply(iv.TakeOver(lane.id)).ok  # frozen at once: no command runs
+            await asyncio.wait_for(session.begin(), 10)
+            pid = lab.pid(lane)
+            await until(lambda: stopped(pid), "the CLI frozen")
+            gate.touch()  # the answer comes while it is frozen
+            assert lab.deck.apply(iv.HandBack(lane.id, session.finish())).ok
+            await until(lambda: "$ echo next" in steps(lane), "the step after the hand-back")
+            assert not (work / "lane-b.txt").exists()  # the step it had chosen before was cut off
+            assert [(r["sig"], r["in_turn"]) for r in lab.fake.records("signal")] == [("SIGINT", True)]  # woke with it
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("how", ["kill it paused", "kill it taken over", "escalate it paused"])
+def test_killing_or_escalating_a_frozen_cli_interrupts_it_before_it_runs_again(tmp_path, monkeypatch, how):
+    """The player froze the lane because something looked wrong (a lane that waits for the
+    player is frozen the same way), and the answer the agent waited for came while it was
+    frozen. Stopping the CLI (a kill, an escalation) sends the SIGINT before the SIGCONT, so
+    the CLI wakes with it, however long flightdeck is held up after the SIGCONT, and the step
+    it had chosen never runs after the player acted."""
+    gate = tmp_path / "answer"
+
+    async def main():
+        lab = Lab(tmp_path, chosen_while_frozen(gate))
+        try:
+            lab.release()
+            lane = lab.lane()
+            work = lab.work(lane)
+            held_up_at_sigcont(monkeypatch, lab.fake, work / "lane-b.txt")
+            await until(lambda: "lane-a.txt" in lane.files, "the agent's first step")
+            pid = lab.pid(lane)
+            if how == "kill it taken over":
+                session = lab.driver.takeover(lane)
+                assert lab.deck.apply(iv.TakeOver(lane.id)).ok
+                await asyncio.wait_for(session.begin(), 10)
+            else:
+                assert lab.deck.apply(iv.Pause(lane.id)).ok
+            await until(lambda: stopped(pid), "the CLI frozen")
+            gate.touch()  # the answer comes while it is frozen
+            if how.startswith("kill"):
+                assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            else:
+                assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            await until(lambda: gone(pid), "the CLI stopped")
+            assert not (work / "lane-b.txt").exists()  # the step it had chosen never ran
+            assert [(r["sig"], r["in_turn"]) for r in lab.fake.records("signal")] == [("SIGINT", True)]  # woke with it
+            if how.startswith("escalate"):
+                assert lab.deck.apply(iv.Resume(lane.id)).ok
+                await until(lambda: "$ echo next" in steps(lane), "the stronger model's step")
+            else:
+                assert lane.state is LaneState.KILLED
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_a_budget_cap_freezes_the_cli_until_the_player_approves_more(tmp_path):
+    gate = tmp_path / "answer"
     script = {"turns": [
-        {"calls": [{"tools": [bash("echo one")], "usage": [400, 10, 0, 0]}, {"think": 0.3, "tools": [bash("echo two")]}]},
+        {"calls": [{"tools": [bash("echo one")], "usage": [400, 10, 0, 0]}, {"until": str(gate), "tools": [bash("echo two")]}]},
         {"calls": [{"tools": [bash("echo three")]}]},
     ]}
 
@@ -1856,6 +2009,7 @@ def test_a_budget_cap_freezes_the_cli_until_the_player_approves_more(tmp_path):
             assert lane.pending.kind is PendingKind.BUDGET
             pid = lab.pid(lane)
             await until(lambda: stopped(pid), "the CLI frozen at its cap")
+            gate.touch()  # the answer it waited for comes while it is frozen
             await asyncio.sleep(0.6)
             assert "$ echo two" not in steps(lane)
             assert lab.deck.apply(iv.Approve(lane.id)).ok
@@ -1981,10 +2135,11 @@ def test_a_codex_login_keeps_the_players_own_codex_home(tmp_path):
 
 
 def test_a_codex_lane_runs_a_process_per_turn_resumes_its_thread_and_counts_the_usage_it_grew_by(tmp_path):
+    gate = tmp_path / "answer"  # never made: codex is still on its turn when the flag is raised
     script = {"turns": [
         {"items": [{"command": "cat note.txt"}, {"message": "Looks like rot13."}], "usage": [300, 100, 50]},
         {"items": [{"command": "echo two"}], "usage": [200, 80, 40]},
-        {"items": [{"command": "tr 'a-z' 'n-za-m' < note.txt"}, {"sleep": 1.0}, {"message": "done"}], "usage": [10, 0, 1]},
+        {"items": [{"command": "tr 'a-z' 'n-za-m' < note.txt"}, {"until": str(gate)}, {"message": "done"}], "usage": [10, 0, 1]},
     ]}
 
     async def main():
