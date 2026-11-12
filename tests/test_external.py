@@ -38,7 +38,7 @@ from ctf_flightdeck.agent.external import (
     find_agent,
     hold_agent_config,
 )
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN
+from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, OFF_LIMITS
 from ctf_flightdeck.agent.workspace import (
     DockerWorkspace,
     HostWorkspace,
@@ -182,7 +182,8 @@ class Lab:
                  handouts: dict[str, Path] | None = None, environ: dict[str, str] | None = None,
                  prices: dict[str, Price] | None = None, token_cap: int | None = None, takeover_wait: float = 10.0,
                  flag_format: str = FLAG, secrets: dict[str, str] | None = None, dollar_cap: float | None = None,
-                 deck_class: type[Deck] = Deck) -> None:
+                 deck_class: type[Deck] = Deck, urls: dict[str, tuple[str, ...]] | None = None,
+                 instance: str = "auto") -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -200,6 +201,8 @@ class Lab:
             secrets=secrets,
             stop_grace=0.3,
             takeover_wait=takeover_wait,
+            urls=urls,
+            instance=instance,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=2, submit=submit)
         self.deck = deck_class(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
@@ -1393,6 +1396,33 @@ def test_the_flag_format_reaches_a_cli_agent_only_inside_the_opening_briefs_fenc
             inside = brief.split(FENCE_OPEN + "\n", 1)[1].split("\n" + FENCE_CLOSE, 1)[0]
             (shown,) = [line for line in inside.splitlines() if line.startswith("Flag format (a regular expression): ")]
             assert shown.startswith(r"Flag format (a regular expression): t\{[a-z0-9_]+\}(?#") and FORGED in shown
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("instance, named", [("auto", True), ("off", False)])
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_a_cli_agents_opening_brief_offers_the_instance_only_when_the_policy_lets_the_lane_reach_it(tmp_path, kind,
+                                                                                                    instance, named):
+    """Under the instance policy off, a coding-agent lane's opening brief says what a model
+    lane's says: no instance, and the event's rules keep the lane off it (a run starts no
+    agent lane under off today: this holds the brief to the policy all the same)."""
+    script = {"turns": [{"calls": [{"text": "Looking around."}]}]} if kind == "claude" else {"turns": [{"items": [{"message": "Looking around."}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind=kind, urls={"note": ("tcp://127.0.0.1:31337",)}, instance=instance)
+        try:
+            lab.release()
+            told = lab.fake.messages if kind == "claude" else lab.fake.prompts
+            await until(lambda: told(), "the CLI's first message")
+            first = told()[0]
+            assert ("Live instance: tcp://127.0.0.1:31337 (nc 127.0.0.1 31337)" in first) is named
+            assert ("tcp://127.0.0.1:31337" in first) is named and (OFF_LIMITS in first) is not named
+            if not named:
+                assert "Live instance: not yours to reach (the event's rules; see below)" in first
+                assert first.rsplit(FENCE_CLOSE, 1)[1].strip() == OFF_LIMITS  # flightdeck's words, after the challenge's fence
         finally:
             await lab.finish()
 

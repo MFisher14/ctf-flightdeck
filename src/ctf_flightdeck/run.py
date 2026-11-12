@@ -658,7 +658,8 @@ def prepare_run(options: RunOptions) -> Run:
         if l1 is not None:
             plan.notes.append(f"your L1 pack is not used: L1 runs before flightdeck's own lanes, not {agent.kind} lanes (for now)")
         held = _held_secrets(config, profile, token)  # each shown as [NAME] wherever the CLI writes it
-        driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices, secrets=held)
+        driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices, secrets=held,
+                                instance=instance)
     else:
         assert client is not None
         driver = AgentDriver(
