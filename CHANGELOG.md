@@ -2,7 +2,7 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-12)
 
 A model per small job, plus fixes from a rehearsal against a real CTFd, a security review and
 the first pricing issue.
