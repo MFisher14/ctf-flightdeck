@@ -329,6 +329,29 @@ def test_under_ctfds_timeout_behaviour_a_wave_that_finds_tries_left_again_opens_
     assert opened["data"] == {"out_of_tries": False, "tries_left": 2}
 
 
+def test_a_waves_count_asked_before_ctfds_answer_to_a_flag_never_raises_the_tries_that_answer_left(tmp_path, token):
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=3)
+    before = {"id": 1, "name": "Warmup", "value": 50, "category": "Misc", "description": "", "max_attempts": 3,
+              "attempts": 0, "logic": "any", "solved_by_me": False, "files": [], "type": "standard", "solves": 0}
+    details = "/api/v1/challenges/1"
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{nope}")]})) as server:
+        run = auto_run(tmp_path, fake, server, wave_seconds=0.05)
+        late = threading.Event()  # the first wave's count, as CTFd gave it before the flag, comes in after the answer
+        fake.script("GET", details, Reply(200, {"success": True, "data": before}, hold=late))
+
+        async def body(run):
+            ch, lane = run.deck.challenges["warmup"], run.deck.lanes["L01"]
+            await wait_for(lambda: len(fake.to(details)) == 2 and lane.pending is not None, "the wave's ask, and the flag")
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: ch.tries_left == 2, "CTFd's answer: Incorrect. You have 2 tries remaining.")
+            late.set()
+            await wait_for(lambda: len(fake.to(details)) >= 3, "the next wave: the one before it is applied")
+            assert ch.tries_left == 2  # the count asked before the answer (3 left) was older than it
+
+        play(run, body)
+    assert submits(run) == [("test{nope}", False, "platform")]
+
+
 MINUTE = {"success": True, "data": {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"}}
 
 
@@ -477,7 +500,7 @@ def test_a_no_tries_answer_is_ctfds_limit_within_a_minute_when_its_details_count
     assert asked == [("POST", ATTEMPT), ("GET", "/api/v1/challenges/6")]
 
 
-@pytest.mark.parametrize("case", ["all used", "older CTFd", "partial answers", "no details", "solved", "late"])
+@pytest.mark.parametrize("case", ["all used", "older CTFd", "partial answers", "no details", "other details", "solved", "late"])
 def test_a_no_tries_answer_stands_when_ctfds_details_do_not_show_tries_left(case):
     lockout = "incorrect" if case == "older CTFd" else "ratelimited"
     partial = ("test{half}",) if case == "partial answers" else ()
@@ -491,6 +514,9 @@ def test_a_no_tries_answer_stands_when_ctfds_details_do_not_show_tries_left(case
             fake.teammate_partials(6)  # 2 of 2 used as the details count them: the minute's limit, or the lockout
         elif case == "no details":
             fake.script("GET", "/api/v1/challenges/6", *[Reply(500, {"message": "the database is broken"})] * 2)
+        elif case == "other details":  # what is not the details of this challenge says nothing of its tries
+            other = {"id": 7, "max_attempts": 2, "attempts": 1, "logic": "any", "solved_by_me": False}
+            fake.script("GET", "/api/v1/challenges/6", Reply(200, {"success": True, "data": other}))
         elif case == "solved":
             fake.solved = {6}  # a teammate's solve meanwhile: the run's poll of the solves closes it
         elif case == "late":  # details that would show a try left, a byte every 0.2 s: past the verifier's timeout
