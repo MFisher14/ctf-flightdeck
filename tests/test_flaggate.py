@@ -407,6 +407,66 @@ def test_the_candidate_and_where_go_only_inside_the_fence(tmp_path, planted):
         asyncio.run(main())
 
 
+def fence_inside(user: str) -> str:
+    return user.split(FENCE_OPEN, 1)[1].split(FENCE_CLOSE, 1)[0]
+
+
+@pytest.mark.parametrize("size", [1_000, 5_560, 5_830, 6_068, 50_000])
+def test_a_long_description_never_pushes_the_candidate_or_where_out_of_the_check(size):
+    """The description comes before the candidate (as the function eval measured it), and the data
+    is cut at MAX_DATA characters: a long description (a challenge that prints its numbers or its
+    source) gets only the room the candidate and where the lane found it leave, cut and marked; one
+    that fits is whole. 5,560 and 5,830 characters are where the candidate's output, then its line,
+    were cut off before."""
+    flag = "t{real_flag_here}"
+    where = around("$ python3 solve.py --remote", "x" * 600 + flag + "y" * 600, 600, len(flag))
+    description = ("Textbook RSA, but the modulus is a bit special.\n" + "0123456789" * 6000)[:size]
+    data = {"name": "Big RSA", "category": "crypto", "flag_format": FLAG, "description": description,
+            "candidate": flag, "where": where}
+    _, user = L.choice_messages(L.FLAGCHECK, data, L.FLAG_QUESTION, L.FLAG_CHOICES)
+    inside = fence_inside(user["content"])
+    assert inside.endswith(f"\nCandidate flag: {flag}\nWhere the lane found it:\n{where}\n")  # whole, and last
+    assert len(L.render(L.FLAGCHECK, data)) <= L.MAX_DATA and "[cut:" not in inside
+    if size == 1_000:
+        assert f"Description:\n{description}\nCandidate flag:" in inside and "[description cut" not in inside
+    else:
+        kept = inside.split("Description:\n", 1)[1].split(f"\n[description cut: {size:,} characters in all]\n", 1)[0]
+        assert description.startswith(kept) and len(kept) > 4_000  # its start, as much as the room leaves
+
+
+def test_a_long_description_leaves_the_light_model_the_candidate_and_where_the_lane_found_it(tmp_path):
+    """A crypto challenge that prints n, e and c in its description (6,068 characters): the lane
+    prints the flag and submits it, and the light model reads the candidate and where the lane
+    found it, whole, inside the fence, so its stand-in is about the flag it was shown."""
+    description = ("Textbook RSA, but the modulus is a bit special.\n" + "n = " + "1234567890" * 370 + "\n"
+                   + "e = 65537\n" + "c = " + "9876543210" * 230 + "\n")
+    assert len(description) == 6_068
+    first = [tool_call_reply("shell", {"command": f"echo {CANDIDATE}"}), tool_call_reply("submit_flag", {"flag": CANDIDATE})]
+    with FakeModelServer(responder=lambda r: text_reply("stand-in")) as light, \
+            FakeModelServer(first, responder=lambda r: time.sleep(0.05) or tool_call_reply("set_plan", {"plan": "on"})) as lanes:
+        gate = FlagGate(model_light(light), timeout=5.0)
+        challenge = Challenge("rsa", "Special RSA", "crypto", 200, description=description)
+
+        async def main():
+            lab = Lab(tmp_path, lanes, gate=gate, challenge=challenge)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: lane.pending is not None, "the flag held for the player")
+                assert lab.sent == [] and waiting(lane) == [(PendingKind.SUBMIT, CANDIDATE)]
+                where = lab.driver.runs[lane.id].outputs.where(CANDIDATE, SUBMITTED_ONLY)
+                assert where == f"$ echo {CANDIDATE}\nexit 0\n{CANDIDATE}\n"
+                (user,) = light_users(light)
+                inside = fence_inside(user)
+                assert (f"\n[description cut: 6,068 characters in all]\nCandidate flag: {CANDIDATE}\n"
+                        f"Where the lane found it:\n{where}") in inside
+                assert inside.rstrip().endswith(CANDIDATE) and description[:3_000] in inside
+            finally:
+                await lab.finish()
+
+        asyncio.run(main())
+
+
 # ---------------------------------------------------------------------- once, and never lost
 
 

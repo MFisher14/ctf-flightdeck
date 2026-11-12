@@ -107,6 +107,7 @@ MAX_STEPS = 6  # steps a judge reads: the lane's last
 SHOWN = 160  # characters of a reply kept for display
 MAX_ANSWER = 200  # characters a reply that names one option can have, wrapping included
 MAX_DATA = 6000  # characters of a challenge or a flag, as rendered, a route, recon or flagcheck job shows an engine
+CUT_LINE = 40  # characters of MAX_DATA kept for the line that says where the data was cut
 
 # Output token caps per job. An OpenAI-compatible model that answers directly stops after a
 # word; the cap leaves room for a short reasoning preamble, and a brief's for its 120 words.
@@ -471,10 +472,12 @@ def recon_messages(data: Mapping) -> list[dict]:
 
 def render(job: str, data: Mapping) -> str:
     """A job's data as an engine reads it: rendered to text, cut at MAX_DATA characters, and
-    made safe to fence (control and invisible characters visible, no fence marker)."""
-    text = render_flag(data) if job == FLAGCHECK else render_challenge(data)
+    made safe to fence (control and invisible characters visible, no fence marker). A flag's
+    description is cut first (render_flag), so this cut at the end never takes its candidate
+    or where it was found."""
+    text = render_flag(data, room=MAX_DATA - CUT_LINE) if job == FLAGCHECK else render_challenge(data)
     if len(text) > MAX_DATA:
-        text = text[: MAX_DATA - 40] + f"\n[cut: {len(text):,} characters in all]"
+        text = text[: MAX_DATA - CUT_LINE] + f"\n[cut: {len(text):,} characters in all]"
     return fence_safe(text)
 
 
@@ -535,17 +538,27 @@ def _file_lines(item: object) -> list[str]:
     return lines
 
 
-def render_flag(flag: Mapping) -> str:
+def render_flag(flag: Mapping, room: int | None = None) -> str:
     """A flag-shaped string a lane found, with its challenge and where it was found, as lines of
-    text."""
+    text. The description comes before the candidate, as the function eval measured it; with
+    `room`, it gets only what the rest leaves of `room` characters (cut, and marked as cut), so
+    a long one (a challenge that prints its numbers or its source) never pushes the candidate
+    and where it was found out of what an engine reads. Other keys come last."""
     facts = f" (category {_value(flag['category'])})" if flag.get("category") else ""
-    lines = [f"Challenge: {_value(flag.get('name') or '(no name)')}{facts}"]
+    head = [f"Challenge: {_value(flag.get('name') or '(no name)')}{facts}"]
     if flag.get("flag_format"):
-        lines.append(f"Flag format (a regular expression): {_value(flag['flag_format'])}")
-    lines += ["Description:", _value(flag.get("description") or "(no description)")]
-    lines.append(f"Candidate flag: {_value(flag.get('candidate', ''))}")
+        head.append(f"Flag format (a regular expression): {_value(flag['flag_format'])}")
+    found = [f"Candidate flag: {_value(flag.get('candidate', ''))}"]
     if flag.get("where"):
-        lines += ["Where the lane found it:", _value(flag["where"])]
+        found += ["Where the lane found it:", _value(flag["where"])]
+    description = _value(flag.get("description") or "(no description)")
+    if room is not None:
+        left = room - len("\n".join([*head, "Description:", "", *found]))  # the description's share of room
+        if len(description) > left:
+            mark = f"[description cut: {len(description):,} characters in all]"
+            keep = left - len(mark) - 1
+            description = (description[:keep] + "\n" if keep > 0 else "") + mark
+    lines = [*head, "Description:", description, *found]
     for key in sorted(set(flag) - set(FLAG_KEYS)):
         lines.append(f"{key}: {_value(flag[key])}")
     return "\n".join(lines)
