@@ -684,7 +684,8 @@ def test_under_auto_a_submitted_flag_holding_a_lone_surrogate_waits_for_the_play
             lab.release()
             lane = lab.lane()
             try:
-                await until(lambda: lane.pending is not None or lane.finished, "the flag held for the player", timeout=30)
+                await until(lambda: lane.pending is not None or lane.finished or tried, "the flag held for the player",
+                            timeout=30)
                 assert lane.pending is not None, (lane.state, lane.result, lab.driver.errors)  # it waits for the player
                 assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, LONE, [])
                 assert LONE_WAITS + "the lane submitted it" in [a.text for a in lane.actions]
@@ -2103,7 +2104,8 @@ def test_under_auto_an_l1_engines_flag_holding_a_lone_surrogate_waits_for_the_pl
             lab.release()
             lane = lab.lane()
             try:
-                await until(lambda: lane.pending is not None or lane.finished, "the engine's flag held", timeout=30)
+                await until(lambda: lane.pending is not None or lane.finished or tried, "the engine's flag held",
+                            timeout=30)
                 assert lane.pending is not None, (lane.state, lane.result, lab.driver.errors)  # it waits for the player
                 assert (lane.pending.flag, tried, server.requests) == (LONE, [], [])
                 assert LONE_WAITS + "your L1 engine reader gave it as its flag" in [a.text for a in lane.actions]
