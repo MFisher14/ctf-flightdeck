@@ -1,7 +1,10 @@
 # Decisions
 
-Each entry is settled unless a later entry replaces it. Propose changes in a report; don't silently
-deviate.
+Each entry is settled unless a later entry replaces it. To change one, propose it in an issue or a
+pull request ([CONTRIBUTING.md](../CONTRIBUTING.md)); don't silently deviate. D entries were decided
+when they were written; P entries were proposed while building, and each table's heading says
+whether they have been accepted. A note in brackets that starts "Later:" says what has changed
+since an entry was written.
 
 ## 2026-11-10: founding decisions
 
@@ -9,35 +12,35 @@ deviate.
 |---|---|---|
 | D1 | Repo | Separate public repo `ctf-flightdeck`. Private solver packs and event data never go in it; a private pack may depend on flightdeck, never the reverse. |
 | D2 | Names | Distribution `ctf-flightdeck`, import `ctf_flightdeck`, command `flightdeck`. Never a plain `ctf` package (too generic: it collides with other CTF tooling). Avoid `ctfdeck` as the project name (reads as a CTFd plugin); fine as a command alias. `ctfpilot` is taken. |
-| D3 | Language | Python 3.12+ with uv. CTF tooling and players' scripts are Python; L1 plugins load in-process. Plugins may also be subprocesses speaking JSON, so any language works. |
+| D3 | Language | Python 3.12+ with uv. CTF tooling and players' scripts are Python; L1 plugins load in-process. Plugins may also be subprocesses speaking JSON, so any language works. (Later, changed in M2: no engine loads in-process. Every engine runs as its own process, in its own copy of the handout, and in a container when lanes run in Docker: P8, D17.) |
 | D4 | Interface | Terminal UI (Textual). No web UI. |
-| D5 | Agent model | Both: (a) flightdeck's own agent loop against model APIs, and (b) orchestrating external agents (claude/codex CLIs, ACP-capable agents). **Phase 1 is (a)**, via an OpenAI-compatible endpoint, tested on OpenRouter. (b) is roadmap. |
+| D5 | Agent model | Both: (a) flightdeck's own agent loop against model APIs, and (b) orchestrating external agents (claude/codex CLIs, ACP-capable agents). **Phase 1 is (a)**, via an OpenAI-compatible endpoint, tested on OpenRouter. (b) is roadmap. (Later: (b) was built in M2 for the `claude` and `codex` CLIs, P11; ACP is not built.) |
 | D6 | Prototype order | M0 = clickable terminal mock with fake data, to agree on look and controls. M1 = thin working slice with real agents. |
 | D7 | Solo/team | Both, chosen in config. Team mode means: never work a challenge a teammate solved, don't step on teammates' live boxes, claim challenges. |
 | D8 | Lanes | Number of concurrent lanes is a config setting (`max_lanes`). Boards can drop 40+ challenges at once, so the lane list must scroll, stay compact and sort by what needs attention; overflow waits in a queue. |
-| D9 | Execution | Config setting `containerized`: true runs every lane in Docker; false runs on the host (many players use a disposable VM). The choice is shown in the console header and checked in pre-flight. |
+| D9 | Execution | Config setting `containerized`: true runs every lane in Docker; false runs on the host (many players use a disposable VM). The choice is shown in the console header and checked in pre-flight. (Later: the setting is `[lanes] runtime = "docker"` or `"host"`, or `--docker` or `--host` on `play` and `practice`; `containerized` is only the deck's internal flag.) |
 | D10 | Cost display | Per lane: tokens and turns always; dollars when using an API key with known prices. Per-lane caps. |
 | D11 | Alerts | Built from the author's real intervention cues (see CONSOLE-SPEC): effort out of proportion to points, activity that ignores what the description hints at, web lanes heading the wrong way, loops, stalls, teammate solved. |
 | D12 | License | MIT. Anyone may use, fork or rebuild it. |
-| D13 | Release | Private until the demo works; go public at v0.1.0. |
+| D13 | Release | Developed in private until the mock and a first working slice were done; public from v0.1.0 (2026-11-11). |
 | D14 | Timeline | ASAP. Work on private solver packs goes on in parallel and never blocks flightdeck, or the reverse. |
 | D15 | Local models | The orchestrator is code, not a model. An optional **local model role** (no API key) may serve small jobs: triage hints from descriptions, the "ignores the hint" detector, lane summaries for escalation, and media helpers (audio transcription, image description). Rules come first; the local model is never required. Candidates to evaluate in M3: Cactus (`pip install cactus-compute`, Apache-2.0, small tool-calling, transcription and vision models; no OpenAI-compatible server per its README, so it needs its own adapter; set `CACTUS_TELEMETRY=0`), and Ollama / llama.cpp / MLX (OpenAI-compatible local servers). Not in M0 or M1. |
-| D16 | Console layout (2026-11-10, M0 review) | Route C: a **fleet view** (board + every lane, attention-sorted) and a **focus view** for one lane (transcript, files and diffs, chat box). One-key interventions in the fleet; a chat box and slash commands in both. Rounded panels, slanted header, alert chips, plain Unicode only. Details in CONSOLE-SPEC; the behaviours listed there under "Proposed at the M0 review" are not yet signed off. |
+| D16 | Console layout | Two views (chosen at the M0 review, 2026-11-10): a **fleet view** (board + every lane, attention-sorted) and a **focus view** for one lane (transcript, files and diffs, chat box). One-key interventions in the fleet; a chat box and slash commands in both. Rounded panels, slanted header, alert chips, plain Unicode only. Details in CONSOLE-SPEC. The five behaviours proposed at that review beyond the two views (a lane kept off a live box a teammate holds, approvals queued per lane, approving more budget at the 80% warning, parked challenges, any approval sorted with the flags) shipped in 0.1.0 and were accepted on 2026-11-11. |
 
-## Proposed in M1 (built; confirmed by the player on 2026-11-11)
+## Proposed in M1 (built; accepted 2026-11-11)
 
 | # | Topic | Proposal |
 |---|---|---|
 | P1 | Boards that cannot check flags | A folder board without an answers file cannot tell whether a flag is right. Approving a flag then becomes "submit it yourself, then confirm": `a` = accepted (solved), `d` = rejected. |
 | P2 | Decline | `d` / `0` / `/decline` says no without killing the lane: a flag is not submitted, the live box stays off limits; declining more budget stops the lane and parks the challenge. |
 | P3 | Quick answers | One key answers what a lane needs: `1` approves an approval, `0` declines it; otherwise the most urgent alert's suggestions are numbered. In the focus view only while the chat box is empty. Kill and a bare fork still open their prompts. |
-| P4 | Lane network | A Docker lane gets no network unless its challenge lists a live instance (`urls`), so it cannot fetch solutions or reach anything else. Finer egress rules are M2. |
+| P4 | Lane network | A Docker lane gets no network unless its challenge lists a live instance (`urls`), so it cannot fetch solutions or reach anything else. Finer egress rules: not built (ROADMAP: a per-origin egress allowlist). |
 | P5 | Lane image | flightdeck ships a Dockerfile (python3 and common CTF tools) and builds it only when the player runs `flightdeck image build`; it never pulls or builds an image by itself. |
 | P6 | Host runtime | Host lanes run as the player: they can read the player's files and same-user processes' environments, including flightdeck's API key. flightdeck says so before every host run and recommends Docker, a VM or a separate low-limit key; it does not pretend to fence it. |
-| P7 | Unpriced models | Cost comes from the API (OpenRouter reports it), else the config's price, else it is unknown. A dollar-capped lane whose cost becomes unknown asks once before carrying on without the dollar cap. **Refinement (built; accepted by the player on 2026-11-11):** only spend with no price asks. A coding-agent CLI reports a turn's cost when the turn ends, so until then the lane's dollars show as still to come, never as $0.00. A turn whose cost the CLI never reported (an escalation or a kill stopped it in the turn, or it exited) and that no config price covers leaves the lane's total not fully known, but the cap stays and holds on what is known, and the lane says so once. `[prices]` may price a model of an `[agents]` ladder (codex reports no cost), and a CLI's own figure (claude) wins over a config price. |
+| P7 | Unpriced models | Cost comes from the API (OpenRouter reports it), else the config's price, else it is unknown. A dollar-capped lane whose cost becomes unknown asks once before carrying on without the dollar cap. **Refinement (shipped in 0.1.0; accepted 2026-11-11):** only spend with no price asks. A coding-agent CLI reports a turn's cost when the turn ends, so until then the lane's dollars show as still to come, never as $0.00. A turn whose cost the CLI never reported (an escalation or a kill stopped it in the turn, or it exited) and that no config price covers leaves the lane's total not fully known, but the cap stays and holds on what is known, and the lane says so once. `[prices]` may price a model of an `[agents]` ladder (codex reports no cost), and a CLI's own figure (claude) wins over a config price. |
 
 
-## Proposed in M2 to M4 (built; confirmed by the player on 2026-11-11, P8 changed: see D17)
+## Proposed in M2 to M4 (built; accepted 2026-11-11; D17 changes P8)
 
 | # | Topic | Proposal |
 |---|---|---|
@@ -45,27 +48,27 @@ deviate.
 | P9 | Live instance policy | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks before its first model call; until the player allows it, its http tool is off and a docker lane has no network, then the container joins the bridge network (open egress, not only the instance). `off`/`manual`: never. On the host runtime only the http tool can be held back (pre-flight warns). |
 | P10 | Known-wrong flags | A flag the platform rejected, or the player declined, is remembered per challenge: proposed again by any lane it raises no approval and is never submitted again, a sibling's waiting approval for it is dropped, and an escalated model hears of it. The platform's rejection outranks a decline. |
 | P11 | Coding-agent CLIs | `play --agent claude\|codex` runs lanes as that CLI, with its own login or key and its own model ladder (`[agents]`; claude defaults to sonnet then opus). A docker agent lane needs the CLI in its image and a network for the CLI's API, so an event whose instance policy is not `auto` refuses agent lanes. Files a CLI would read as its own configuration (CLAUDE.md, AGENTS.md, .mcp.json, .claude/, .codex/) are moved out of the workspace first: they are challenge data. A lane waiting for the player is frozen (SIGSTOP) so it spends nothing. |
-| P12 | Cactus Needle | An adapter and an optional extra (`ctf-flightdeck[cactus]`), off unless asked for, its telemetry turned off. In the spike it beat keyword rules only when given the same keywords as triggers (70% against 67% on invented blurbs), so nothing uses it by default. |
-| P13 | CTFd answers | CTFd's "already solved" and "locked out" are not a correct flag: the deck asks the player (and in team mode "already solved" closes the challenge at once). A flag attempt is never retried. |
+| P12 | Cactus Needle | An adapter and an optional extra (`ctf-flightdeck[cactus]`), off unless asked for, its telemetry turned off. In a first trial it beat keyword rules only when given the same keywords as triggers (70% against 67% on invented blurbs), so nothing uses it by default. |
+| P13 | CTFd answers | CTFd's "already solved" and "locked out" are not a correct flag: flightdeck asks the player (and in team mode "already solved" closes the challenge at once). A flag attempt is never retried. (Later: "already solved" closes the challenge at once in solo mode too, and asks nobody. On "locked out", 0.2.0 closes the challenge as out of tries instead of asking; P18 records that change as proposed.) |
 | P14 | Extras | `[cactus]` (Cactus Needle) and `[build]` (pytest, for `flightdeck build check`) are optional extras, so the default install stays small. |
 
-## 2026-11-11: decided with the player
+## 2026-11-11: decisions
 
 | # | Topic | Decision |
 |---|---|---|
-| D17 | L1 isolation (changes P8) | When lanes run in Docker, the player's L1 solvers run in Docker too (a container per engine run, the pack mounted read-only), so a hostile handout cannot reach the player's machine through a solver's parser. On the host runtime they run as the player, as before. |
+| D17 | L1 isolation (changes P8) | When lanes run in Docker, the player's L1 solvers run in Docker too (a container per engine run, the pack mounted read-only), so a hostile handout cannot reach the player's machine through a solver's parser. On the host runtime they run as the player, as P8 had it. |
 | D18 | Keys | Keys live in the environment or in `~/.config/ctf-flightdeck/keys.env` (owner-only, outside the repository); the config names each key's variable and never holds a key. A variable set in the environment wins over the file. |
 | D19 | Model APIs | flightdeck's own lanes may use the Anthropic Messages API directly (the player's Anthropic key first), with an OpenAI-compatible API (OpenRouter) as the automatic fallback when the first keeps failing; a lane that falls back stays there for the rest of its current context. |
 | D20 | Autopilot | **Autopilot** is the name of the mode where flightdeck runs an event end to end: scheduled pulls, L1, lanes, interventions and submits, with the player away. It comes after v0.1.0, as M5 (see ROADMAP). Fixed now: the event's rules stay the ceiling (autopilot is never looser than the profile); it never guesses a flag or spends a challenge's last try; engaging it needs a run budget; it disengages, holding the queue and raising an alert, when something needs a human; the player can always take the controls (take over, pause, kill, or switch autopilot off). The rest of its design is decided in M5. |
 
-## Proposed with the light role (built; accepted by the player on 2026-11-11)
+## Proposed with the light role (shipped in 0.1.0; accepted 2026-11-11)
 
 | # | Topic | Proposal |
 |---|---|---|
 | P15 | Light role (extends D15) | D15's local model role becomes the light role, `[light]`: `rules` (the default: no model), `openai` (any OpenAI-compatible server; recommended and said so in the docs, `init` and `doctor`: an open-weight model on the player's machine, which no provider classifier can stop and which costs $0), `anthropic` (an API model, which D15 did not allow), `cactus` or `decider` (a Strands Decider server on the player's machine: a decision model that writes no text and picks one of the options with a calibrated confidence). Every engine is measured with `flightdeck eval-local` against the rules before use. Its first job in a run is the hint judge. Nothing waits for it: an "ignores the hint" alert is raised at once by the rules, and a light model's "the lane follows the hint" takes it down (before, the alert was held until the judge confirmed it). A refusal, an error, a timeout, a malformed answer or one outside the options leaves the rules' answer, and the run says so once per kind; a refused request is never rerouted to another model or provider. The decider's answer below `[light] threshold` (0.9 by default) is unsure: neither an answer nor a failure, so the rules' answer stands, and eval-local counts unsure answers apart, neither right nor wrong (its accuracy is over the answers it was sure of). The judge's yes or no goes to it as a choice between two options, read against that confidence (its yes/no question type returns no confidence, and its choices are the type it is calibrated for). It gets one request at a time, as its documentation advises, and the challenge's text only in its state, never in its question. A light model that cannot be made (no key, Cactus missing) leaves the judge off with a note and never stops the run. |
 | P16 | Fast mode | `[api] fast` lists the ladder models a lane calls in fast mode, on the Anthropic API only, and only models Anthropic documents fast mode for (Opus 5.5, Fable 5.2, Mythos 5.2; Opus 5 and Opus 4.8 as research previews, Opus 4.8 until 2026-11-30). A fast call is priced at the fast rate. On fast mode's own 429 the lane goes on at standard speed at once and stays there for its session (each switch invalidates the prompt cache), saying so on its transcript. |
 
-## Proposed with the cleanup after a killed run (built; accepted by the player on 2026-11-11)
+## Proposed with the cleanup after a killed run (shipped in 0.1.0; accepted 2026-11-11)
 
 | # | Topic | Proposal |
 |---|---|---|
