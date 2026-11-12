@@ -101,7 +101,7 @@ from .preflight import (
     no_agents,
     strictest,
 )
-from .runrecord import write_run_info
+from .runrecord import write_run_info, write_run_setup
 from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
 from .text import untrusted
 from .transcript import TranscriptLog
@@ -618,6 +618,10 @@ def prepare_run(options: RunOptions) -> Run:
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
             labels=marks, record=processes,
         )
+    write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
+        config, options, deck_config, ladder, agent=options.agent, ctfd=bool(plan.ctfd),
+        engines=len(manifests) if manifests is not None else 0,
+    ))
     try:
         client = build_client(config, key, spare_key) if agent is None else None
     except ValueError as exc:  # a key no HTTP header can carry; never shown
@@ -1409,6 +1413,61 @@ def _check_docker(image: str) -> None:
             f"the lane image {image} is not on this machine, and flightdeck never fetches images by "
             f"itself: run {how}, or set [lanes] image in your config"
         )
+
+
+KNOWN_APIS = {"api.anthropic.com": "the Anthropic API", "openrouter.ai": "OpenRouter", "api.openai.com": "the OpenAI API"}
+
+
+def api_kind(base_url: str) -> str:
+    """An API named for a flight card: a server on this machine, one of the public APIs, or
+    "another API". Never the address itself, which can name a private host."""
+    from urllib.parse import urlsplit
+
+    from .light import on_this_machine
+
+    if on_this_machine(base_url):
+        return "a server on this machine"
+    try:
+        host = urlsplit(base_url).hostname or ""
+    except ValueError:
+        host = ""
+    return KNOWN_APIS.get(host, "another API")
+
+
+def _setup(
+    config: Config, options: RunOptions, deck_config: DeckConfig, ladder: Sequence[str], *,
+    agent: str | None, ctfd: bool, engines: int,
+) -> dict[str, object]:
+    """How this run is set up, for RUN_DIR/setup.json and the flight card. It names models
+    and settings only: no path, no key or its variable, no address, no event and no
+    challenge."""
+    from .config import light_specs
+    from .practice_set import practice_dir
+
+    board = "ctfd" if ctfd else "folder"
+    if options.board is not None and Path(options.board).resolve() == practice_dir().resolve():
+        board = "practice"
+    lights = [
+        {"engine": spec.config.engine, "model": spec.config.model, "jobs": list(spec.jobs),
+         "api": api_kind(spec.config.base_url) if spec.config.base_url else ""}
+        for spec in light_specs(config) if spec.jobs and spec.config.engine != "rules"
+    ]
+    return {
+        "runtime": "docker" if deck_config.containerized else "host",
+        "max_lanes": deck_config.max_lanes,
+        "submit": deck_config.submit,
+        "lanes": agent or "flightdeck",
+        "api": "" if agent else api_kind(config.api.base_url),
+        "fallback": "" if agent or config.fallback is None else api_kind(config.fallback.base_url),
+        "ladder": list(ladder),
+        "fast": [] if agent else list(config.api.fast),
+        "light": lights,
+        "l1_engines": engines,
+        "team": deck_config.team,
+        "board": board,
+        "token_cap": config.lanes.token_cap,
+        "dollar_cap": config.lanes.dollar_cap,
+    }
 
 
 def lane_network(urls: tuple[str, ...]) -> str:

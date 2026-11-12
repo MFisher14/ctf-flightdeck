@@ -28,6 +28,7 @@ from .core.model import ME
 EVENTS = "events.jsonl"
 LANES = "lanes"
 RUN_INFO = "run.json"
+RUN_SETUP = "setup.json"  # how the run was set up, for `flightdeck share`
 MAX_RUN_INFO = 64 * 1024  # a run.json bigger than this was not written by a run
 
 # Who solved a challenge (Solve.by).
@@ -494,6 +495,46 @@ def write_run_info(run_dir: Path, *, board: Path | None, answers: Path | None = 
     with os.fdopen(handle, "w", encoding="ascii") as out:
         out.write(json.dumps(info, ensure_ascii=True) + "\n")
     return path
+
+
+def write_run_setup(run_dir: Path, setup: Mapping[str, object]) -> Path:
+    """Write RUN_DIR/setup.json for a run that is starting: how it was set up (the runtime,
+    the lanes, the models), which the flight card of `flightdeck share` shows. No path, key,
+    address or challenge is in it (run.py's _setup builds it). The run folder is new, so the
+    file is created, never replaced (and so never written through a symlink)."""
+    path = Path(run_dir) / RUN_SETUP
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+    with os.fdopen(handle, "w", encoding="ascii") as out:
+        out.write(json.dumps(dict(setup), ensure_ascii=True) + "\n")
+    return path
+
+
+def read_run_setup(run_dir: Path) -> dict[str, object] | None:
+    """What the run recorded about its setup; None when it recorded nothing (a run older than
+    setup.json). RunFolderError, with the reason, when the file is there but cannot be used.
+    A lane on the host can write in the run folder, so a reader treats every value as
+    untrusted text."""
+    path = Path(run_dir) / RUN_SETUP
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise RunFolderError(f"{path}: is not a regular file")
+        if info.st_size > MAX_RUN_INFO:
+            raise RunFolderError(f"{path}: is over {MAX_RUN_INFO:,} bytes, too big for what a run writes there")
+        text = path.read_bytes().decode("utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RunFolderError(f"{path}: cannot read it ({exc.strerror or exc})") from None
+    except UnicodeDecodeError:
+        raise RunFolderError(f"{path}: is not text") from None
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        raise RunFolderError(f"{path}: is not JSON") from None
+    if not isinstance(data, dict):
+        raise RunFolderError(f"{path}: is not a JSON object")
+    return data
 
 
 def read_run_info(run_dir: Path) -> RunInfo | None:

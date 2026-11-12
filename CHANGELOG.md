@@ -2,6 +2,22 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+### Sharing what you ran
+
+- `flightdeck share RUN_DIR` prints a run's flight card: your setup and models, solves by
+  category, time, spend by model, how often you stepped in, and whether the run was hands-on,
+  approve-only or hands-off. It holds no flag and no challenge name or text, and sends nothing:
+  you paste it where you choose. A run now records its setup in `setup.json` in its folder.
+- A leaderboard of the events flightdeck was used in, `docs/LEADERBOARD.md`, with an issue form
+  to add yours, and an issue form for flight cards.
+
+### Commands and docs
+
+- The README is a short front page. What it held is the player's guide, `docs/GUIDE.md`.
+  `llms.txt` maps the docs for AI agents.
+
 ## 0.2.0 (2026-11-12)
 
 A model per small job, plus fixes from a rehearsal against a real CTFd, a security review and

@@ -328,6 +328,7 @@ flightdeck score RUN_DIR       # the run scored against the board's answers
 flightdeck gaps RUN_DIR        # the challenges your L1 solvers did not solve, and why
 flightdeck build gap CHALLENGE_DIR --pack ~/ctf/solvers   # a new engine stub with a test that must pass
 flightdeck build check ~/ctf/solvers                       # run the pack's tests: which engines pass
+flightdeck share RUN_DIR       # the run's flight card, to post: no flags, no challenge names
 ```
 
 When a run ends, `play` prints its run folder with the report, writeups and gaps commands for it
@@ -342,6 +343,22 @@ headers; well-known key prefixes (the full rule is in the
 [architecture](ARCHITECTURE.md#credentials)).
 Anything else stays, lower-case names included (a `password` is everyday CTF content), so read a
 draft before you share it.
+
+### Share a flight card
+
+`flightdeck share RUN_DIR` prints the run's **flight card**: flightdeck's version, where lanes
+ran, the models, solves by category, time, tokens and dollars by model, how often you approved
+and how often you steered, and the run's mode (hands-on, approve-only or hands-off:
+[the leaderboard](LEADERBOARD.md#mode-how-hands-on-the-players-were) defines them). It is made
+to be posted, so it holds no flag, no challenge name or text, no event name, no path and no
+address; a category the board named in its own words shows as `other`. `--name TEXT` adds your
+own label.
+
+Nothing is sent anywhere. The card goes to your terminal (`flightdeck share RUN_DIR > card.txt`
+keeps it), and you post it if you want to:
+[a flight card issue](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=flight-card.yml).
+The setup lines come from `setup.json`, which a run writes in its folder when it starts; a run
+from before 0.3.0 has none, and its card says so.
 
 ## Configuration and files
 

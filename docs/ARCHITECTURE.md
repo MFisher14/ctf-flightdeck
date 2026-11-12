@@ -496,6 +496,7 @@ and the sweep says why.
 |---|---|---|
 | Post-flight | `postflight.py`, `writeup.py` | `flightdeck report` and `flightdeck writeups`. [More](#post-flight). |
 | Practice mode | `practice_mode.py` | Scores a past run against the board's answers (`flightdeck score`). [More](#practice-mode). |
+| Flight card | `share.py`, `share_cli.py` | `flightdeck share RUN_DIR` prints a run's flight card for the player to post (D22): the setup a run recorded in `setup.json` when it started (`run.py`'s `_setup`: models and settings, never a path, key, address, event or challenge), solves by category code, time, spend by model, the player's interventions and the mode. No flag, challenge name or challenge text is in it, and nothing is sent. |
 | Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run). |
 | Build mode | `build.py`, `build_cli.py` | `flightdeck build gap CHALLENGE_DIR --pack PACK`: an engine stub, its manifest and a case test on a copy of the challenge; nothing is overwritten. `flightdeck build check PACK` runs the pack's case tests with pytest (the `[build]` extra) and no keys from flightdeck's environment. |
 

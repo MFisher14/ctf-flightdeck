@@ -738,7 +738,9 @@ def config_command(
 
 
 def _mount() -> None:
-    from . import build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
+    from . import (
+        build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, share_cli, team_cli, writeup_cli,
+    )
     from . import models_cli
     from .l1 import cli as l1_cli
     from .platform import ctfd_cli
@@ -752,6 +754,7 @@ def _mount() -> None:
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
     app.command("gaps", rich_help_panel=AFTER)(gaps_cli.gaps_command)
+    app.command("share", rich_help_panel=AFTER)(share_cli.share_command)
     app.add_typer(build_cli.app, name="build", rich_help_panel=SOLVERS,
                   help="Build mode: turn a gap into a new L1 engine, with a test that proves a raw handout reaches it.")
     app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)

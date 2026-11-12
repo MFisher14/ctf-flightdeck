@@ -356,7 +356,7 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
                 arguments[(" ".join(path[1:]), param.name)] = param.metavar
     assert arguments == {
         ("play", "board"): "BOARD",
-        ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR",
+        ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR", ("share", "run_dir"): "RUN_DIR",
         ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
         ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
         ("team init", "folder"): "FOLDER", ("team status", "folder"): "FOLDER", ("l1 import", "folder"): "FOLDER",
@@ -704,6 +704,7 @@ MOUNTED = {
     ("score",): "Score",
     ("eval-local",): "",
     ("gaps",): "L1",
+    ("share",): "flight card",
 }
 
 
@@ -737,7 +738,7 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
         "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
         "Play": ["mock", "play", "practice"],
         "Before and during an event": ["preflight", "ctfd", "team"],
-        "After a run": ["report", "writeups", "score", "gaps"],  # gaps reads a run folder, like the three before it
+        "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
         "Solvers (L1)": ["l1", "build"],
     }
 
