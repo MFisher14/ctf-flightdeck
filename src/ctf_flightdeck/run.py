@@ -664,12 +664,13 @@ def prepare_run(options: RunOptions) -> Run:
         return HostWorkspace(root, handouts[challenge.id], record=processes)
 
     files = {b.challenge.id: b.challenge.files for b in board.challenges}
+    # each shown as [NAME] wherever a lane's tool call or its CLI writes it (agent/held.py)
+    held = _held_secrets(config, profile, token)
     if agent is not None:
         from .agent.external import ExternalDriver
 
         if l1 is not None:
             plan.notes.append(f"your L1 pack is not used: L1 runs before flightdeck's own lanes, not {agent.kind} lanes (for now)")
-        held = _held_secrets(config, profile, token)  # each shown as [NAME] wherever the CLI writes it
         driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices, secrets=held,
                                 instance=instance)
     else:
@@ -684,6 +685,7 @@ def prepare_run(options: RunOptions) -> Run:
             compact_at=lane_refresh_at(config, COMPACT_AT),  # sooner where [api] or [fallback] states a smaller context
             l1=l1,
             instance=instance,
+            secrets=held,
         )
     deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits)
     if submits is not None:
@@ -724,8 +726,9 @@ def _flag_format_note(effective: str, profile: EventProfile | None, board: Board
 
 
 def _held_secrets(config: Config, profile: EventProfile | None, token: str | None) -> dict[str, str]:
-    """Every secret this run holds, as name -> value, for a coding-agent lane's redaction
-    (agent/external.py shows each value as [NAME] wherever its CLI writes it, before anything
+    """Every secret this run holds, as name -> value, for a lane's redaction (agent/held.py:
+    flightdeck's own lanes show each value as [NAME] wherever a tool call gives it, before the
+    model or the deck has it; agent/external.py's wherever the CLI writes it, before anything
     is shown, logged or put in a transcript): each value in the keys file, the [api] and
     [fallback] keys (a coding-agent run uses neither, but a host lane can read them), and the
     CTFd token. A variable set in the environment wins over the keys file, as it does

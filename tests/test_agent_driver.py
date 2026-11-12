@@ -64,7 +64,7 @@ class Lab:
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
                  max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
                  submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG,
-                 submitter=None) -> None:
+                 submitter=None, secrets: dict[str, str] | None = None) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -79,6 +79,7 @@ class Lab:
             urls=urls,
             instance=instance,
             compact_at=compact_at,
+            secrets=secrets,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"), submitter=submitter)
@@ -2264,6 +2265,71 @@ def test_under_off_a_lane_is_never_asked_and_its_http_tool_stays_off(tmp_path):
             assert lane.pending is None or lane.pending.kind is not PendingKind.LIVE_BOX
             first = server.requests[0]["json"]["messages"][1]["content"]  # the opening brief offers no instance
             assert OFF_LIMITS in first and origin not in first
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- the run's secrets
+
+
+LEAKS = """
+    from ctf_flightdeck.l1.result import SolverResult
+
+    def solve(challenge_dir):
+        return SolverResult("none", notes="the environment holds " + (challenge_dir / "held.txt").read_text().strip())
+    """
+
+
+def test_a_secret_the_run_holds_reaches_neither_the_model_nor_the_deck_by_value_whatever_wrote_it(tmp_path):
+    """Beside a tool's result (tests/test_tools.py, tests/test_run.py): what an L1 engine noted,
+    the player's hint, the file a lane wrote and the plan it set go to the model and the deck
+    with [NAME] for the value. A flag is never changed: it is what would be submitted."""
+    secret = "held-value-" + "s" * 20
+    server = FakeModelServer([
+        tool_calls_reply([("shell", {"command": "cat held.txt > copy.txt"}), ("set_plan", {"plan": "use what held.txt holds"})]),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+        tool_call_reply("shell", {"command": "true"}),
+    ])
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files={"held.txt": f"{secret}\n"})}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"leaks": LEAKS}),
+                      secrets={"HELD": secret}, max_lanes=1)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag", timeout=30)
+            assert lab.deck.apply(iv.Hint(lane.id, f"the key is {secret}")).ok
+            assert lab.deck.apply(iv.Decline(lane.id)).ok  # the lane goes on, and reads the hint
+            await until(lambda: len(server.chats()) == 3, "the next model call")
+            first, second, third = server.chats()
+            assert "leaks: none (the environment holds [HELD])" in first["json"]["messages"][2]["content"]
+            assert "the key is [HELD]" in last_user(third)
+            assert lane.plan == "use what held.txt holds"
+            for request in (first, second, third):
+                assert secret not in str(request["json"])
+            l1 = next(e for e in lab.deck.events if e.kind is EventKind.L1)
+            assert l1.data["notes"] == "the environment holds [HELD]"
+            assert "+[HELD]" in lane.files["copy.txt"].diff and secret not in lane.files["copy.txt"].diff
+            assert not any(secret in a.text + a.output for a in lane.actions if a.by.value != "player")
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_flag_that_is_a_value_the_run_holds_is_raised_as_the_lane_gave_it(tmp_path):
+    secret = "held-value-" + "s" * 20
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": secret})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, secrets={"HELD": secret}, flag_format=r"t\{[a-z0-9_]+\}|held-value-s+")
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert lane.pending.flag == secret  # never [HELD]: that is not what the lane found
+            assert lane.actions[0].text == "submit [HELD]"
             await lab.finish()
 
     run(main())

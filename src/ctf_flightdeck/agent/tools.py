@@ -25,7 +25,7 @@ import shlex
 import stat
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -147,6 +147,12 @@ class Toolbox:
     http_allow lists the origins the http tool may reach (the challenge's own instance, like
     "http://127.0.0.1:8080"); with none, http is off, and http_off says why. allow() adds
     origins later (the player allowed the live instance).
+
+    scrub takes the secrets the run holds out of text (agent/held.py's Secrets: each value
+    becomes [NAME]). Every result goes through it, so neither the model nor the console gets a
+    value a call read (a host lane can read the keys file): a tool's output where it arrives,
+    before anything cuts it (a key cut in two would keep its first part), and the whole result
+    again as it leaves call(). Never a result's flag: that is what would be submitted.
     """
 
     def __init__(
@@ -158,6 +164,7 @@ class Toolbox:
         max_timeout: float = 300.0,
         http_allow: tuple[str, ...] = (),
         http_off: str = "this challenge has no instance to reach",
+        scrub: Callable[[str], str] | None = None,
     ) -> None:
         if max_chars < MIN_CHARS:
             raise ValueError(f"max_chars must be at least {MIN_CHARS}, got {max_chars}")
@@ -169,6 +176,7 @@ class Toolbox:
         self.max_timeout = max_timeout
         self.http_allow: dict[Origin, str] = {_allowed_origin(o): o for o in http_allow}
         self.http_off = http_off
+        self.scrub: Callable[[str], str] = scrub or _as_is
         self._tools: dict[str, Callable[[dict[str, Any], int, int], Awaitable[ToolResult]]] = {
             "shell": self._shell,
             "read_file": self._read_file,
@@ -191,6 +199,9 @@ class Toolbox:
         path outside the workspace...): they come back as ToolResult(error=True,
         content="error: ..."). A broken workspace (WorkspaceError) does raise: no model can fix it.
         """
+        return self._scrubbed(await self._call(name, arguments, turn, index))
+
+    async def _call(self, name: str, arguments: str, turn: int, index: int) -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
             shown = _clip(str(name), 60)
@@ -198,7 +209,18 @@ class Toolbox:
         try:
             return await tool(_arguments(arguments, name), turn, index)
         except _Mistake as mistake:
-            return _failed(mistake.action or name, str(mistake))
+            # the action and the message before they are cut (the action is the model's own command or path)
+            return _failed(self.scrub(mistake.action or name), self.scrub(str(mistake)))
+
+    def _scrubbed(self, result: ToolResult) -> ToolResult:
+        """`result` with the run's secrets out of everything but its flag: what a tool did not
+        scrub where it arrived (a header, an error's text)."""
+        return replace(result, content=self.scrub(result.content), action=self.scrub(result.action),
+                       output=self.scrub(result.output), plan=None if result.plan is None else self.scrub(result.plan))
+
+    def _line(self, action: str) -> str:
+        """An action as the console's one line, the run's secrets out of it before it is cut."""
+        return _one_line(self.scrub(action))
 
     # ------------------------------------------------------------ shell and python
 
@@ -242,7 +264,7 @@ class Toolbox:
         return float(min(max(asked, 1), self.max_timeout))
 
     def _ran(self, action: str, result: RunResult, timeout: float, turn: int, index: int) -> ToolResult:
-        text = result.output.decode("utf-8", "replace")
+        text = self.scrub(result.output.decode("utf-8", "replace"))  # before anything cuts it
         if result.timed_out:
             status = f"timed out after {timeout:g}s"
         elif result.exit_code is None:
@@ -253,7 +275,7 @@ class Toolbox:
         failed = result.exit_code != 0
         return ToolResult(
             content=f"{status}\n{body}",
-            action=_one_line(action),
+            action=self._line(action),
             output=_brief(text, status if failed else "", tail=failed),
         )
 
@@ -365,12 +387,12 @@ class Toolbox:
         try:
             fd = open_inside(Path(self.workspace.root), parts)
         except OSError as exc:
-            return _failed(action, _open_problem(path, exc))
+            return _failed(self.scrub(action), self.scrub(_open_problem(path, exc)))
         with open(fd, "rb") as f:
             size = os.fstat(f.fileno()).st_size
             if b"\0" in f.read(SNIFF):
                 summary = f"binary file, {size} bytes"
-                return ToolResult(f"{summary}; use shell (file, xxd, strings)", _one_line(action), summary)
+                return ToolResult(f"{summary}; use shell (file, xxd, strings)", self._line(action), summary)
             f.seek(0)
             return self._lines(f, path, action, start, count)
 
@@ -390,7 +412,7 @@ class Toolbox:
             if number >= start + count:
                 more = True
                 break
-            line = raw.decode("utf-8", "replace")
+            line = self.scrub(raw.decode("utf-8", "replace"))  # before the budget cuts it
             if used + len(line) > budget:
                 if lines:
                     more = True
@@ -404,13 +426,13 @@ class Toolbox:
                 break
         if not lines:
             if number == 0:
-                return ToolResult("(empty file)", _one_line(action), "empty file")
+                return ToolResult("(empty file)", self._line(action), "empty file")
             raise _Mistake(f"start_line {_clip(str(start), 30)} is past the end: {path} has {number} lines", action)
         last = start + len(lines) - 1
         text = "".join(lines)
         if not (more or cut):
             shown = f"{len(lines)} lines" if start == 1 else f"lines {start}-{last}"
-            return ToolResult(text, _one_line(action), shown)
+            return ToolResult(text, self._line(action), shown)
         total = _count_lines(f)
         notes = [f"lines {start}-{last} of {total}" if total is not None else f"lines {start}-{last} of a {os.fstat(f.fileno()).st_size}-byte file"]
         if cut:
@@ -418,7 +440,7 @@ class Toolbox:
         if more:
             notes.append(f"read on with start_line={last + 1}")
         newline = "" if text.endswith("\n") else "\n"
-        return ToolResult(f"{text}{newline}[{'; '.join(notes)}]", _one_line(action), notes[0])
+        return ToolResult(f"{text}{newline}[{'; '.join(notes)}]", self._line(action), notes[0])
 
     # ------------------------------------------------------------ http
 
@@ -483,30 +505,30 @@ class Toolbox:
             except OSError as exc:
                 body = f"[binary body, {len(raw)} bytes; it could not be saved ({exc.strerror or exc})]"
         elif raw:
-            body = self._fit(raw.decode("utf-8", "replace"), raw, self.max_chars - len(head) - 2, turn, index)
+            body = self._fit(self.scrub(raw.decode("utf-8", "replace")), raw, self.max_chars - len(head) - 2, turn, index)
         else:
             body = "(empty body)"
         summary = f"{response.status_code} {_clip(reason, 60)}".strip() + f", {len(raw)} bytes"
-        return ToolResult(f"{head}\n\n{body}", _one_line(action), _clip(summary, CONSOLE_CHARS))
+        return ToolResult(f"{head}\n\n{body}", self._line(action), _clip(summary, CONSOLE_CHARS))
 
     # ------------------------------------------------------------ flags and plans
 
     async def _submit_flag(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
         flag = _required(args, "flag", "submit_flag").strip()
-        how = (_optional(args, "how") or "").strip()
+        how = self.scrub((_optional(args, "how") or "").strip())
         if not flag:
             raise _Mistake("flag is empty", "submit")
-        return ToolResult(SUBMITTED, _one_line(f"submit {flag}"), _clip(how, CONSOLE_CHARS), flag=flag)
+        return ToolResult(SUBMITTED, self._line(f"submit {flag}"), _clip(how, CONSOLE_CHARS), flag=flag)
 
     async def _set_plan(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
-        plan = _required(args, "plan", "set_plan").strip()
+        plan = self.scrub(_required(args, "plan", "set_plan").strip())
         if not plan:
             raise _Mistake("plan is empty", "plan")
         noted = "Plan noted."
         if len(plan) > PLAN_CHARS:
             plan = _clip(plan, PLAN_CHARS)
             noted = f"Plan noted (cut to {PLAN_CHARS} characters)."
-        return ToolResult(noted, _one_line(f"plan: {plan}"), "", plan=plan)
+        return ToolResult(noted, self._line(f"plan: {plan}"), "", plan=plan)
 
 
 # ---------------------------------------------------------------- arguments
@@ -700,6 +722,11 @@ def _header_lines(headers: httpx.Headers, room: int) -> list[str]:
 
 
 # ---------------------------------------------------------------- results
+
+
+def _as_is(text: str) -> str:
+    """A toolbox with no secrets to take out (Toolbox.scrub)."""
+    return text
 
 
 def _failed(action: str, message: str) -> ToolResult:

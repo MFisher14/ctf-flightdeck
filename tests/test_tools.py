@@ -732,3 +732,51 @@ def test_in_a_lane_whose_image_has_no_python3_the_python_tool_says_so(docker_lan
     assert result.action == "python: print(1)"
     assert not (docker_lane.root / ".flightdeck" / "py" / "turn2-0.py").exists()
     assert call(Toolbox(docker_lane), "shell", {"command": "echo still fine"}).content == "exit 0\nstill fine\n"
+
+
+# ---------------------------------------------------------------- the run's secrets
+
+
+def test_a_toolbox_takes_the_runs_secrets_out_of_a_result_before_anything_cuts_it(lane):
+    """Each value becomes [NAME] where a tool's output arrives. The value here lies across the
+    place each tool cuts its text (the model's share of a long output, read_file's budget for
+    one line, the console's 300 characters): a toolbox without the scrub shows its first part
+    there, which taking the value out of the cut text could not undo."""
+    from ctf_flightdeck.agent.held import Secrets
+
+    secret = "held-value-" + "s" * 20
+    (lane.root / "big.txt").write_text("y" * 200 + secret + "\n" + "z" * 600 + "\n")
+    (lane.root / "line.txt").write_text("y" * 230 + secret + "\n")
+    (lane.root / "wide.txt").write_text("w" * 290 + secret + "\n")
+    plain, box = Toolbox(lane, max_chars=400), Toolbox(lane, max_chars=400, scrub=Secrets({"HELD": secret}))
+
+    def both(name: str, args: dict) -> tuple[ToolResult, ToolResult]:
+        return call(plain, name, args), call(box, name, args)
+
+    leaky, cat = both("shell", {"command": "cat big.txt"})
+    assert "held-v" in leaky.content and secret not in leaky.content  # cut inside the value
+    assert "held-v" not in cat.content and "y" * 200 + "[HELD]" in cat.content
+    leaky, read = both("read_file", {"path": "line.txt"})
+    assert "held-v" in leaky.content and secret not in leaky.content
+    assert "held-v" not in read.content and read.content.startswith("y" * 230 + "[HELD]\n")
+    leaky, wide = both("shell", {"command": "cat wide.txt"})
+    assert leaky.output.endswith("held-valu…") and wide.output == "w" * 290 + "[HELD]"
+    for result in (cat, read, wide):
+        assert secret not in result.content + result.action + result.output
+
+
+def test_a_toolbox_takes_the_runs_secrets_out_of_errors_actions_and_plans_but_never_out_of_a_flag(lane):
+    from ctf_flightdeck.agent.held import Secrets
+
+    secret = "held-value-" + "s" * 20
+    box = Toolbox(lane, scrub=Secrets({"HELD": secret, "SHORT": "abc"}))
+    missing = call(box, "read_file", {"path": f"{secret}.txt"})
+    assert missing.error and secret not in missing.content + missing.action + missing.output
+    assert missing.action == "read [HELD].txt" and "[HELD].txt" in missing.content
+    echoed = call(box, "shell", {"command": f"echo {secret} abc"})
+    assert (echoed.action, echoed.content, echoed.output) == ("$ echo [HELD] abc", "exit 0\n[HELD] abc\n", "[HELD] abc")  # too short to hide
+    plan = call(box, "set_plan", {"plan": f"log in with {secret}"})
+    assert plan.plan == "log in with [HELD]" and plan.action == "plan: log in with [HELD]"
+    flag = call(box, "submit_flag", {"flag": secret, "how": f"it printed {secret}"})
+    assert flag.flag == secret  # what would be submitted, as the lane gave it
+    assert (flag.action, flag.output) == ("submit [HELD]", "it printed [HELD]")

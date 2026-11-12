@@ -40,6 +40,15 @@ or for the platform's answer). A model call that
 fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
 queue before the lane ends, so the next challenges are not started only to fail the same way.
 
+The secrets the run holds (`secrets`: run.py's _held_secrets, name -> value) never reach the
+model or the deck by value: each is replaced by [NAME] (agent/held.py) in what a tool call
+gave, where it arrives and before anything cuts it (the lane's Toolbox), in every report to
+the deck (its step, its plan, its files' diffs; never its flag), in the driver's notes on the
+lane, and in what else the driver writes into the lane's context (what the L1 engines found,
+the first look, the player's and flightdeck's messages, a summary). A host lane can read the
+keys file; this keeps the values out of the model's API and out of every record, as
+agent/external.py does for its lanes. It is cleanup, not a fence.
+
 Escalation and take-over are turn boundaries. Each bumps the lane's generation, and a reply
 asked for in an older generation runs no further tool call. After an escalation none of
 it goes into the new context (it belongs to the old one). After a take-over the calls it
@@ -70,6 +79,7 @@ from ..text import untrusted
 from . import owntext, prompts
 from .client import ChatClient, ModelError, Reply, Usage
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
+from .held import Secrets
 from .facts import FirstLooks, Look
 from .l1stage import FLAG_STATUSES, L1Stage, result_line
 from .tools import TOOLS, Toolbox, ToolResult
@@ -299,8 +309,12 @@ class AgentDriver:
         instance: str = "auto",
         flaggate: FlagGate | None = None,
         lights: Lights | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> None:
+        """`secrets`: name -> value of what must never reach a lane's model or the deck (run.py's
+        _held_secrets), each shown as [NAME] wherever a lane's tool calls give it."""
         self.client = client
+        self.redact = Secrets(secrets)
         self.workspaces = workspaces
         self.run_id = run_id
         self.files = dict(files or {})  # challenge id -> handout file names, for the brief
@@ -334,14 +348,14 @@ class AgentDriver:
         workspace = self.workspaces(lane, challenge)
         urls = self.urls.get(challenge.id, ())
         if urls and self.instance == "confirm":
-            toolbox = Toolbox(workspace, http_off="the player has not allowed the live instance yet")
+            toolbox = Toolbox(workspace, scrub=self.redact, http_off="the player has not allowed the live instance yet")
         elif urls and self.instance == "off":
-            toolbox = Toolbox(workspace, http_off="the event's rules keep lanes off the live instance")
+            toolbox = Toolbox(workspace, scrub=self.redact, http_off="the event's rules keep lanes off the live instance")
         elif urls and not web_origins(urls):  # a TCP service (`nc host port`): the shell reaches it, not http
-            toolbox = Toolbox(workspace, http_off=f"this challenge's instance is not a web server ({', '.join(urls)}): "
+            toolbox = Toolbox(workspace, scrub=self.redact, http_off=f"this challenge's instance is not a web server ({', '.join(urls)}): "
                                                   "reach it from the shell, for example with nc")
         else:
-            toolbox = Toolbox(workspace, http_allow=web_origins(urls))
+            toolbox = Toolbox(workspace, scrub=self.redact, http_allow=web_origins(urls))
         run = _Run(
             lane_id=lane.id,
             challenge=challenge,
@@ -383,7 +397,7 @@ class AgentDriver:
         run.idle_turns = 0  # the stronger model gets its own chances
         run.session = self._session(lane.id, run.escalations)
         text = lane_summary(self.deck, lane, before=summary)
-        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(text)}]
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.escalation(text))}]
         run.wake.set()  # flightdeck's notes stay queued: the stronger model reads them with its first call
 
     def approved(self, lane: Lane, pending: Pending) -> None:
@@ -484,7 +498,7 @@ class AgentDriver:
             hints = list(lane.hints)
             notes, run.notes = run.notes, []
             if hints or notes:  # the player spoke (or flightdeck on their behalf): a reply to it starts the count again
-                run.messages.append({"role": "user", "content": prompts.player_message(hints, notes)})
+                run.messages.append({"role": "user", "content": self.redact(prompts.player_message(hints, notes))})
                 run.idle_turns = 0
             generation, model, messages = run.generation, run.model, run.messages
             try:
@@ -509,7 +523,7 @@ class AgentDriver:
             run.uncounted = (model, reply.usage)  # until its turn (or its drop) reports what it cost
             self.answered.add(model)
             if reply.notice:
-                self.deck.note(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
+                self._say(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
             if not await self._until_running(run, generation) and self._over(run):
                 return  # killed or finished while the model was thinking
             if run.generation != generation:
@@ -581,17 +595,17 @@ class AgentDriver:
             raise
         except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
             self.errors.append(f"{run.lane_id}: L1 did not run: {type(exc).__name__}: {exc}")
-            self.deck.note(run.lane_id, f"L1 did not run: {type(exc).__name__}: {exc}")
+            self._say(run.lane_id, f"L1 did not run: {type(exc).__name__}: {exc}")
             return
         if self._over(run):
             return
         if not runs:
-            self.deck.note(run.lane_id, "L1: no engine in the pack routes to this challenge")
+            self._say(run.lane_id, "L1: no engine in the pack routes to this challenge")
             return
         for engine in runs:
             res = engine.result
             self.deck.record_l1(run.challenge.id, engine.manifest.id, res.status, flags=res.flags,
-                                seconds=engine.seconds, notes=res.notes, lane_id=run.lane_id)
+                                seconds=engine.seconds, notes=self.redact(res.notes), lane_id=run.lane_id)
         # an engine's own result is claimed: under auto each is looked for in the challenge's own text first
         await self._vet(run, [flag for engine in runs if engine.result.status in FLAG_STATUSES and not engine.scraped
                               for flag in engine.result.flags])
@@ -607,10 +621,10 @@ class AgentDriver:
                     said = bool(why) and self.deck.not_flag(run.challenge.id, flag) is None
                     self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not why))
                     if said:
-                        self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though your L1 engine "
+                        self._say(run.lane_id, f"{flag} {why}, so it waits for you, though your L1 engine "
                                                     f"{engine.manifest.id} gave it as its flag")
         if not self._over(run):
-            run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
+            run.l1_message = {"role": "user", "content": prompts.l1_results([self.redact(result_line(e)) for e in runs])}
             run.messages.append(dict(run.l1_message))
 
     async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:
@@ -622,7 +636,7 @@ class AgentDriver:
                 await connect("bridge")
         except WorkspaceError as exc:
             run.instance = "failed"
-            self.deck.note(run.lane_id, f"could not open the network to the live instance: {exc}")
+            self._say(run.lane_id, f"could not open the network to the live instance: {exc}")
             run.notes.append(f"flightdeck could not open the network to the live instance ({exc}): work from the handout.")
             return
         if web_origins(urls):
@@ -816,9 +830,9 @@ class AgentDriver:
         for flag in raised[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in own))
         for flag, why in told.items():
-            self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though the lane submitted it")
+            self._say(run.lane_id, f"{flag} {why}, so it waits for you, though the lane submitted it")
         for flag in again:
-            self.deck.note(run.lane_id, f"candidate {flag} again; not raised: the light model is still checking it")
+            self._say(run.lane_id, f"candidate {flag} again; not raised: the light model is still checking it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
             if self.flaggate is None or not self.flaggate.under_check(run.lane_id, flag):  # else the check has it
                 self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
@@ -881,8 +895,8 @@ class AgentDriver:
         if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
             return
         summary = lane_summary(self.deck, lane)
-        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.refresh(summary, prompt_tokens)}]
-        self.deck.note(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.refresh(summary, prompt_tokens))}]
+        self._say(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
 
     # ------------------------------------------------------------------ helpers
 
@@ -895,7 +909,7 @@ class AgentDriver:
         look, run.look = run.look, None
         if look is None:
             return
-        run.recon = self.looks.opening(look, self.deck, run.lane_id, self._flag_re())
+        run.recon = self.redact(self.looks.opening(look, self.deck, run.lane_id, self._flag_re()))
         if run.recon and len(run.messages) > 1:
             lane = self._lane(run)
             run.messages[1] = self._fresh(run, lane.approach if lane is not None else "")[1]
@@ -981,6 +995,7 @@ class AgentDriver:
         lane = self._lane(run)
         if lane is None:
             return
+        report = self.redact.scrub(report)  # the one way to the deck: no secret the run holds goes by value (never the flag)
         if lane.finished or run.stopped:
             if spend_only(report):  # what was spent counts after the lane's end too (Deck.report): _count_cut
                 self.deck.report(run.lane_id, report)
@@ -990,6 +1005,11 @@ class AgentDriver:
             if report is None:
                 return
         self.deck.report(run.lane_id, report)
+
+    def _say(self, lane_id: str, text: str) -> None:
+        """A note of the driver's on a lane, the run's secrets out of it (it may quote what a
+        lane's engine or its model's API wrote)."""
+        self.deck.note(lane_id, self.redact(text))
 
     def _note(self, lane: Lane, text: str) -> None:
         run = self.runs.get(lane.id)
@@ -1011,7 +1031,7 @@ class AgentDriver:
             return
         services = unlisted_services(run.challenge.description, self.urls.get(run.challenge.id, ()))
         if services:
-            self.deck.note(run.lane_id, instance_note(services, run.workspace))
+            self._say(run.lane_id, instance_note(services, run.workspace))
 
     async def _close(self, run: _Run) -> None:
         """Close the lane's workspace once. The close runs shielded: cancelling the lane's

@@ -24,7 +24,7 @@ from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
 
-from fake_model import FakeModelServer, FakeReply, tool_call_reply
+from fake_model import FakeModelServer, FakeReply, text_reply, tool_call_reply
 
 FLAG = "t{note}"
 LADDER = ("fake/small", "fake/big")  # the test config's
@@ -1179,6 +1179,86 @@ def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_an
         "[ANTHROPIC_API_KEY_IN_KEYS_FILE]",
     ]
     assert not any(secret in note for note in run.notes() for secret in (own, api, spare, file_only, overridden))
+
+
+def test_a_host_lane_that_reads_the_keys_file_leaves_only_the_names_of_its_values_everywhere(tmp_path, monkeypatch):
+    """flightdeck's own lanes (#8): a host lane can read the keys file, and the values the run
+    holds (the keys file's, the [api] key from the environment) are replaced by [NAME] in what
+    its tool calls give before the model or the deck has them: in the model's requests, on the
+    console, in the lane's transcript and in events.jsonl. Two of the values have no shape the
+    pattern layer (credentials.py) knows, so only their values can give them away; they are
+    built here, when the test runs. One sits across the console excerpt's 300th character: a
+    value taken out after the cut would leave its first part."""
+    from test_console import screen_text
+
+    file_only = "value-only-the-keys-file-holds-" + "v" * 16
+    shaped = "sk-ant-fake-" + "k" * 24
+    api = "the-api-key-of-the-environment-" + "a" * 16
+    secrets = (file_only, shaped, api)
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"FLIGHTDECK_TEST_FILE_SECRET={file_only}\nFLIGHTDECK_TEST_SHAPED_KEY={shaped}\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    monkeypatch.setenv("FLIGHTDECK_TEST_API_KEY", api)
+    root = board(tmp_path)
+    (root / "note" / "pad.txt").write_text("x" * 290 + f"\n{file_only}\n{api}\n")
+    read_keys = f"cat {shlex.quote(str(keys))}"
+    server = FakeModelServer([
+        tool_call_reply("shell", {"command": read_keys}),
+        tool_call_reply("shell", {"command": "cat pad.txt"}),
+        tool_call_reply("read_file", {"path": "pad.txt"}),
+        tool_call_reply("shell", {"command": f"cp {shlex.quote(str(keys))} copy.txt"}),
+    ], responder=lambda record: text_reply("I have read it."), models=LADDER)
+
+    async def main():
+        with server:
+            run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url, key_env="FLIGHTDECK_TEST_API_KEY")))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(200, 60)) as pilot:
+                await pilot.pause()
+                (lane,) = run.deck.lanes.values()
+                await until(pilot, lambda: lane.finished, "the lane to give up")
+                app.refresh_view()
+                app.fleet.select_lane(lane.id)
+                await pilot.pause()
+                await pilot.press("enter")  # its transcript: every step with its output
+                await pilot.pause()
+                screen = screen_text(app)
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("q")
+                await until(pilot, lambda: not app.is_running, "the console to quit")
+            run.close()
+            return run, lane, screen
+
+    run, lane, screen = asyncio.run(main())
+    # the model's requests: every body the API was sent (the key itself goes in the Authorization header only)
+    chats = server.chats()
+    assert len(chats) >= 5
+    for chat in chats:
+        sent = json.dumps(chat["json"])
+        for secret in secrets:
+            assert secret not in sent
+    results = [m["content"] for m in chats[-1]["json"]["messages"] if m["role"] == "tool"]
+    listed = "FLIGHTDECK_TEST_FILE_SECRET=[FLIGHTDECK_TEST_FILE_SECRET]\nFLIGHTDECK_TEST_SHAPED_KEY=[FLIGHTDECK_TEST_SHAPED_KEY]"
+    pad = "x" * 290 + "\n[FLIGHTDECK_TEST_FILE_SECRET]\n[FLIGHTDECK_TEST_API_KEY]\n"
+    assert results[:3] == [f"exit 0\n{listed}\n", f"exit 0\n{pad}", pad]
+    # the console: what the deck holds for it (each step, the changed file's diff), and what it drew
+    steps = {a.text: a.output for a in lane.actions}
+    assert steps[f"$ {read_keys}"] == listed
+    cut = steps["$ cat pad.txt"]  # 300 characters: the cut falls inside the name, never inside the value
+    assert len(cut) == 300 and cut.startswith("x" * 290 + "\n[FLIGHT") and file_only[:6] not in cut
+    diff = lane.files["copy.txt"].diff
+    assert "+FLIGHTDECK_TEST_FILE_SECRET=[FLIGHTDECK_TEST_FILE_SECRET]" in diff
+    assert "[FLIGHTDECK_TEST_FILE_SECRET]" in screen
+    # what the run keeps
+    transcript = (run.dir / "lanes" / f"{lane.id}.jsonl").read_text()
+    events = run.log.path.read_text()
+    assert "[FLIGHTDECK_TEST_FILE_SECRET]" in transcript and read_keys in events
+    held = [lane.plan, lane.result, diff, *(a.text + a.output for a in lane.actions)]
+    for text in (*held, screen, transcript, events, "\n".join(run.notes())):
+        for secret in secrets:
+            assert secret not in text
 
 
 def test_the_notes_say_which_flag_format_the_run_checks_and_where_it_came_from(tmp_path):
