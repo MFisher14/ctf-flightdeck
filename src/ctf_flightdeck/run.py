@@ -82,7 +82,7 @@ from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
 from .clock import RunClock
-from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at, load_config
+from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at, load_config, webhook_url
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
@@ -102,7 +102,10 @@ from .preflight import (
     no_agents,
     strictest,
 )
+from .notify import Notifier, NotifyError
 from .runrecord import write_run_info, write_run_setup
+from .status import NAME as STATUS_NAME
+from .status import StatusFile
 from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
 from .text import untrusted
 from .transcript import TranscriptLog
@@ -214,6 +217,8 @@ class Run:
     _submits: _Submits | None = field(default=None, repr=False)  # the deck's submitter, with the verifier
     processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
     lights: object = None  # light.Lights: the light engines its jobs share (closed after the watch)
+    status: StatusFile | None = None  # status.json in the run folder, for whatever is not the console
+    notifier: Notifier | None = None  # the notification webhook, when [notify] names one
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -245,7 +250,8 @@ class Run:
         flags still on their way to CTFd, and the run's process record's."""
         submits = self._submits.errors if self._submits is not None else []
         record = [self.processes.problem] if self.processes is not None and self.processes.problem else []
-        return [*self.driver.errors, *submits, *self._errors, *record]
+        status = [self.status.problem] if self.status is not None and self.status.problem else []
+        return [*self.driver.errors, *submits, *self._errors, *record, *status]
 
     def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
         """The challenges (default: the board's) in triage order: cheap first (fewest points,
@@ -266,6 +272,10 @@ class Run:
         not queued. The team folder is read here first, on this thread, so no lane starts on
         a challenge a teammate holds."""
         state = None
+        if self.status is not None:  # its timer: the file moves on with no event too
+            self._tasks.append(asyncio.create_task(self.status.run(), name="flightdeck status file"))
+        if self.notifier is not None:  # before any lane starts: what was queued so far goes now
+            self.notifier.start()
         if self.team is not None:
             self._watcher = TeamWatcher(self.team, self.deck)
             state = self._watcher.poll()  # its marks wait until the board is on the deck
@@ -328,6 +338,8 @@ class Run:
             await self.lights.aclose()  # the light models, each once
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
+        if self.notifier is not None:  # last: what the shutdown itself had to say is sent too
+            await self.notifier.aclose()
 
     def close(self) -> None:
         if self._unmirror is not None:
@@ -336,6 +348,8 @@ class Run:
         if self.verifier is not None:
             self.verifier.close()
         self.transcripts.close()
+        if self.status is not None:  # before the log closes: a write that fails is a warning in it
+            self.status.close()
         self.log.close()
         if self.processes is not None:
             self.processes.finish()
@@ -579,6 +593,10 @@ def prepare_run(options: RunOptions) -> Run:
         if config.api.effort:
             plan.notes.append("effort: " + ", ".join(f"{name} at {level}" for name, level in config.api.effort)
                               + " (any other ladder model runs at Anthropic's default for it)")
+    try:
+        webhook = webhook_url(config)  # [notify]: a variable named and not set stops the run here
+    except ConfigError as exc:
+        raise RunError(str(exc)) from None
     if runtime == "docker":
         _check_docker(config.lanes.image)
         if agent is not None:
@@ -710,6 +728,20 @@ def prepare_run(options: RunOptions) -> Run:
     if submits is not None:
         submits.deck = deck
     log.attach(deck)
+    status = StatusFile(run_dir / STATUS_NAME, deck, run=run_dir.name, held=held)  # after the log: its warning is logged
+    status.attach()
+    notifier = None
+    if webhook is not None:
+        env = config.notify.webhook_env
+        try:
+            notifier = Notifier(webhook, deck, run=run_dir.name, env=env, on=config.notify.on, held=held)
+        except NotifyError as exc:
+            raise RunError(str(exc)) from None
+        notifier.attach()
+        plan.notes.append(
+            f"notifications ({', '.join(config.notify.on)}) go to the webhook in the variable {env}: what is sent is in "
+            "docs/GUIDE.md (never a flag)"
+        )
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
     # after the logs (a warning raised inside an event is logged after it), before any lane
@@ -724,7 +756,7 @@ def prepare_run(options: RunOptions) -> Run:
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
-        processes=processes, lights=lights,
+        processes=processes, lights=lights, status=status, notifier=notifier,
     )
     if submits is not None:
         submits.solved = run._apply_solves
@@ -749,8 +781,8 @@ def _held_secrets(config: Config, profile: EventProfile | None, token: str | Non
     flightdeck's own lanes show each value as [NAME] wherever a tool call gives it, before the
     model or the deck has it; agent/external.py's wherever the CLI writes it, before anything
     is shown, logged or put in a transcript): each value in the keys file, the [api] and
-    [fallback] keys (a coding-agent run uses neither, but a host lane can read them), and the
-    CTFd token. A variable set in the environment wins over the keys file, as it does
+    [fallback] keys (a coding-agent run uses neither, but a host lane can read them), the
+    notification webhook's URL ([notify] webhook_env: it often holds a token), and the CTFd token. A variable set in the environment wins over the keys file, as it does
     everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
     [NAME_IN_KEYS_FILE]. A key that is not set is no secret to hide, and no error here."""
     from .keys import KeysError, load_keys
@@ -763,7 +795,7 @@ def _held_secrets(config: Config, profile: EventProfile | None, token: str | Non
     spare = config.fallback.key_env if config.fallback is not None else ""
     held = {
         name: value
-        for name in dict.fromkeys([*filed, config.api.key_env, spare])
+        for name in dict.fromkeys([*filed, config.api.key_env, spare, config.notify.webhook_env])
         if name and (value := environ.get(name, "").strip() or filed.get(name, ""))
     }
     if profile is not None and profile.token_env and token:
@@ -1167,7 +1199,8 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
         if options.confirm is None:
             raise RunError(
                 'the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board, and it cannot ask '
-                'here (not at a terminal): start play at a terminal, or set pull = "auto" in the profile\'s [policies]'
+                'here (not at a terminal, or a headless run): start play at a terminal without --headless, or set '
+                'pull = "auto" in the profile\'s [policies]'
             )
         if not options.confirm(f"Pull the board from {url} into {where}?"):
             raise RunError("you said no to the pull, so nothing was pulled and the run did not start")

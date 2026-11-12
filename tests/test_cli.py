@@ -413,7 +413,19 @@ def test_play_not_at_a_terminal_cannot_ask_before_a_pull_and_says_what_to_do(tmp
         result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, pull="confirm", api=model_api))
         assert fake.requests == []
     assert result.exit_code == 2 and opened == []
-    assert 'cannot ask here (not at a terminal): start play at a terminal, or set pull = "auto"' in result.stderr
+    assert 'cannot ask here (not at a terminal, or a headless run): start play at a terminal without --headless, or set pull = "auto"' in result.stderr
+
+
+def test_a_headless_play_has_nobody_to_ask_before_a_pull_even_at_a_terminal_and_says_what_to_do(tmp_path, monkeypatch, opened, model_api):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)  # someone may be there now; nobody is once it flies
+    monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
+    with FakeCTFd(sample()) as fake:
+        result = runner.invoke(cli.app, [*ctfd_event(tmp_path, fake.base_url, pull="confirm", api=model_api), "--headless"], input="y\n")
+        assert fake.requests == []
+    assert result.exit_code == 2 and opened == [] and "Pull the board from" not in result.output
+    assert ('flightdeck: the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board, and it cannot ask '
+            'here (not at a terminal, or a headless run): start play at a terminal without --headless, or set pull = "auto" '
+            "in the profile's [policies]") in result.stderr
 
 
 def test_play_with_a_token_ctfd_refuses_says_why_and_never_shows_it(tmp_path, monkeypatch, opened, model_api):
