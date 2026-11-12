@@ -10,7 +10,8 @@ coding-agent CLIs can outlive it. A run therefore marks what it starts:
   and the flightdeck that started it: this machine (a hash of the machine's id, never the
   id itself), the user id, the process id, the process's start time, and the folder it
   keeps its notes in (state_folder(), as a hash), so that two flightdeck setups, or two
-  test suites, on one machine never remove each other's containers;
+  test suites, on one machine never remove each other's containers. The network a fenced
+  lane gets and the proxy containers on it (agent/egress.py) carry the same labels;
 - its run folder holds processes.json (ProcessRecord): the same flightdeck, whether the run
   used Docker, and every process group the run started on this machine that may still be
   running (host lanes' commands, L1 engines on the host, coding-agent CLIs on the host),
@@ -26,8 +27,8 @@ started at another time (the pid was reused). sweep() finds what such runs left 
 folders in the runs folder it is given, and those the notes name), and with clean=True
 removes it:
 
-- their containers: only those with all of flightdeck's labels, of this machine, this
-  user and this state folder;
+- their containers, and then their Docker networks: only those with all of flightdeck's
+  labels, of this machine, this user and this state folder;
 - their process groups: each only when a process recorded in it is still in it (the same
   pid with the same start time) and works in a folder under that run's folder. A process
   group's number is not given out again while any process of the group lives, so the group
@@ -753,6 +754,7 @@ class _Leftovers:
 
     run: str
     containers: list[tuple[str, str]] = field(default_factory=list)  # (id, name)
+    networks: list[tuple[str, str]] = field(default_factory=list)  # (id, name): a fenced lane's (agent/egress.py)
     groups: list[tuple[_Group, str]] = field(default_factory=list)  # (group, the run folder, as the kernel names it)
     alone: list[str] = field(default_factory=list)  # left alone, each with why
     record: Path | None = None
@@ -823,7 +825,11 @@ def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
                        f"{_show(str(exc.strerror or exc))}")
         else:
             boxes, problem = _containers()
+            nets: list[tuple[str, str, dict[str, str]]] = []
+            if not problem:
+                nets, problem = _networks()
             if problem:
+                boxes = []  # one look that failed: nothing of Docker's is touched, and the next sweep looks again
                 problem = (f"the containers of runs that did not shut down could not be looked for ({problem}); once Docker "
                            "runs, `flightdeck doctor --clean` removes them")
         if problem:
@@ -831,21 +837,22 @@ def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
             for entry in found.values():
                 if entry.record is not None and _says_docker(entry.record):
                     entry.keep = True
-        for box_id, name, box_labels in boxes:
-            owner = _owner(box_labels.get(LABEL_HOST), box_labels.get(LABEL_UID), box_labels.get(LABEL_PID),
-                           box_labels.get(LABEL_STARTED))
-            if owner is None or not owner.here() or box_labels.get(LABEL_STATE) != mine:
-                continue  # not all of flightdeck's labels, or another machine's, user's or setup's (state folder's)
-            state = owner.state()
-            if state == _RUNNING:
-                continue
-            run_name = named.get((box_labels[LABEL_RUN], owner), box_labels[LABEL_RUN])
-            entry = found.setdefault(run_name, _Leftovers(run_name))
-            if state == _UNKNOWN:
-                entry.alone.append(f"its container {_show(name)} was left alone: its labels do not say when its "
-                                   "flightdeck started")
-                continue
-            entry.containers.append((box_id, name))
+        for kind, things in (("container", boxes), ("network", nets if not problem else [])):
+            for thing_id, name, thing_labels in things:
+                owner = _owner(thing_labels.get(LABEL_HOST), thing_labels.get(LABEL_UID), thing_labels.get(LABEL_PID),
+                               thing_labels.get(LABEL_STARTED))
+                if owner is None or not owner.here() or thing_labels.get(LABEL_STATE) != mine:
+                    continue  # not all of flightdeck's labels, or another machine's, user's or setup's (state folder's)
+                state = owner.state()
+                if state == _RUNNING:
+                    continue
+                run_name = named.get((thing_labels[LABEL_RUN], owner), thing_labels[LABEL_RUN])
+                entry = found.setdefault(run_name, _Leftovers(run_name))
+                if state == _UNKNOWN:
+                    entry.alone.append(f"its {kind} {_show(name)} was left alone: its labels do not say when its "
+                                       "flightdeck started")
+                    continue
+                (entry.containers if kind == "container" else entry.networks).append((thing_id, name))
     done_lines: list[str] = []
     found_lines: list[str] = []
     for run_name in sorted(found):
@@ -959,6 +966,7 @@ def _describe(item: _Group, folder: str) -> str:
 
 def _items(entry: _Leftovers) -> list[str]:
     return ([f"its container {_show(name)}" for _, name in entry.containers]
+            + [f"its network {_show(name)}" for _, name in entry.networks]
             + [f"its {_describe(item, folder)}" for item, folder in entry.groups])
 
 
@@ -972,6 +980,12 @@ def _remove(entry: _Leftovers) -> tuple[list[str], list[str]]:
             failed.append(f"its container {_show(name)} could not be removed: {problem}")
         else:
             done.append(f"its container {_show(name)}")
+    for net_id, name in entry.networks:  # after the containers: docker removes no network a container is on
+        problem = _remove_network(net_id)
+        if problem:
+            failed.append(f"its network {_show(name)} could not be removed: {problem}")
+        else:
+            done.append(f"its network {_show(name)}")
     for item, folder in entry.groups:
         try:
             live = group(item.pgid)
@@ -998,6 +1012,7 @@ def _remove(entry: _Leftovers) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------- containers
 
 _FORMAT = "\t".join(["{{.ID}}", "{{.Names}}", *(f'{{{{.Label "{name}"}}}}' for name in LABELS)])
+_NETWORK_FORMAT = _FORMAT.replace("{{.Names}}", "{{.Name}}")
 
 
 def _docker(*args: str) -> tuple[int, str]:
@@ -1014,12 +1029,22 @@ def _docker(*args: str) -> tuple[int, str]:
 def _containers() -> tuple[list[tuple[str, str, dict[str, str]]], str]:
     """([(id, name, flightdeck's labels)] of every container with the run label, running or
     not), or ([], why they could not be listed)."""
+    return _listed("ps", "-a", "--no-trunc", "--filter", f"label={LABEL_RUN}", "--format", _FORMAT)
+
+
+def _networks() -> tuple[list[tuple[str, str, dict[str, str]]], str]:
+    """([(id, name, flightdeck's labels)] of every Docker network with the run label: a fenced
+    lane's, agent/egress.py), or ([], why they could not be listed)."""
+    return _listed("network", "ls", "--no-trunc", "--filter", f"label={LABEL_RUN}", "--format", _NETWORK_FORMAT)
+
+
+def _listed(*args: str) -> tuple[list[tuple[str, str, dict[str, str]]], str]:
     try:
-        code, out = _docker("ps", "-a", "--no-trunc", "--filter", f"label={LABEL_RUN}", "--format", _FORMAT)
+        code, out = _docker(*args)
     except OSError as exc:
         return [], _show(str(exc.strerror or exc))
     if code != 0:
-        first = next((line.strip() for line in out.splitlines() if line.strip()), f"docker ps exited {code}")
+        first = next((line.strip() for line in out.splitlines() if line.strip()), f"docker {args[0]} exited {code}")
         return [], _show(first)[:300]
     boxes = []
     for line in out.splitlines():
@@ -1040,6 +1065,18 @@ def _remove_container(box_id: str) -> str:
     if code == 0 or "No such container" in out or "already in progress" in out:
         return ""
     first = next((line.strip() for line in out.splitlines() if line.strip()), f"docker rm exited {code}")
+    return _show(first)[:300]
+
+
+def _remove_network(net_id: str) -> str:
+    """"" when the network is gone (removed now, or already), else why not."""
+    try:
+        code, out = _docker("network", "rm", net_id)
+    except OSError as exc:
+        return _show(str(exc.strerror or exc))
+    if code == 0 or "No such network" in out or "not found" in out:
+        return ""
+    first = next((line.strip() for line in out.splitlines() if line.strip()), f"docker network rm exited {code}")
     return _show(first)[:300]
 
 

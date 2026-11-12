@@ -9,7 +9,9 @@ Each engine run gets a container of its own, from the lane image:
   on this machine, so the engine's command names the same files in the container;
 - its network is "none", unless the caller says the engine may be online: the event lets
   lanes reach the challenge's live instance at once (instance policy auto) and the
-  challenge has one. Then it is "bridge", as the lane's own container is;
+  challenge has one. Then it is the fenced network the lane's engines share
+  (agent/l1stage.py makes it: agent/egress.py), which reaches that instance and nothing
+  else, as the lane's own container's does: never Docker's bridge network;
 - the programs the command needs (python3 for a python entry, a cli entry's program, the
   manifest's needs_tools, and bash, which starts the engine) are looked up on the image's
   PATH (programs()), never on this machine's.
@@ -97,6 +99,20 @@ def container_name(run: str, lane: str, engine_id: str) -> str:
     if len(name) > MAX_NAME:
         digest = hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
         name = f"{name[:MAX_NAME - 11]}-{digest}"
+    return name
+
+
+def fence_name(run: str, lane: str) -> str:
+    """What the fenced network a lane's online engines share is named after
+    (agent.egress.Egress: <this>-net, and its proxies <this>-egress-1, ...): no engine's
+    container has such a name (container_name: theirs have -l1- in them). Cut like one, with
+    room for those endings."""
+    raw = f"flightdeck-{run}-{lane}-l1net"
+    name = _NAME_CHARS.sub("-", raw)
+    room = MAX_NAME - len("-egress-99")
+    if len(name) > room:
+        digest = hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
+        name = f"{name[:room - 11]}-{digest}"
     return name
 
 

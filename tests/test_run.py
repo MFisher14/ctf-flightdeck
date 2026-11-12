@@ -18,11 +18,12 @@ import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli
+from ctf_flightdeck.agent.egress import CLI_API
 from ctf_flightdeck.agent.workspace import DockerWorkspace, docker_unavailable
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
 from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
 from ctf_flightdeck.pricing import Price
-from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
+from ctf_flightdeck.run import RunError, RunOptions, lane_reach, prepare_run
 
 from fake_model import FakeModelServer, FakeReply, tool_call_reply
 
@@ -369,9 +370,16 @@ def test_the_api_key_is_read_from_the_variable_the_config_names_and_never_shown(
     assert "NOT-SHOWN" not in repr(run.client)
 
 
-def test_docker_lanes_get_a_network_only_when_their_challenge_has_a_live_instance():
-    assert lane_network(()) == "none"
-    assert lane_network(("http://127.0.0.1:8080",)) == "bridge"
+def test_a_docker_lanes_network_reaches_its_instance_by_the_policy_and_a_clis_api_and_nothing_else():
+    web = ("http://127.0.0.1:8080", "tcp://chal.example.test:1337")
+    assert lane_reach((), "auto") == ((), ())  # no instance: no network at all
+    assert lane_reach(web, "auto") == (web, ())
+    assert lane_reach(web, "confirm") == ((), web)  # once the player allows it
+    assert lane_reach(web, "off") == ((), ())
+    api = CLI_API["claude"]
+    assert api == ("https://api.anthropic.com",) and CLI_API["codex"] == ("https://api.openai.com",)
+    assert lane_reach(web, "auto", api=api) == ((*api, *web), ())  # a coding-agent lane: its CLI's API too
+    assert lane_reach((), "auto", api=api) == (api, ())
 
 
 def _image_present(image: str) -> bool:
@@ -381,18 +389,18 @@ def _image_present(image: str) -> bool:
 
 
 @pytest.mark.parametrize(
-    "urls, instance, network",
+    "urls, instance, fenced, later",
     [
-        ((), "auto", "none"),
-        (("http://127.0.0.1:8080",), "auto", "bridge"),
-        (("http://127.0.0.1:8080",), "confirm", "none"),  # connected when the player allows it
-        (("http://127.0.0.1:8080",), "off", "none"),
-        (("tcp://127.0.0.1:1337",), "auto", "bridge"),  # what `nc host port` reaches is an instance too
-        (("tcp://127.0.0.1:1337",), "confirm", "none"),
-        (("tcp://127.0.0.1:1337",), "off", "none"),
+        ((), "auto", False, False),
+        (("http://127.0.0.1:8080",), "auto", True, False),
+        (("http://127.0.0.1:8080",), "confirm", False, True),  # fenced onto it when the player allows it
+        (("http://127.0.0.1:8080",), "off", False, False),
+        (("tcp://127.0.0.1:1337",), "auto", True, False),  # what `nc host port` reaches is an instance too
+        (("tcp://127.0.0.1:1337",), "confirm", False, True),
+        (("tcp://127.0.0.1:1337",), "off", False, False),
     ],
 )
-def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, network):
+def test_a_docker_run_builds_lanes_with_no_network_or_a_fenced_one_never_bridge(tmp_path, urls, instance, fenced, later):
     reason = docker_unavailable()
     if reason:
         pytest.skip(f"not run: {reason}")
@@ -407,7 +415,12 @@ def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, n
     workspace = run.driver.workspaces(lane, bc.challenge)
     assert isinstance(workspace, DockerWorkspace)
     args = workspace.run_args()
-    assert args[args.index("--network") + 1] == network
+    name = args[args.index("--name") + 1]
+    assert args[args.index("--network") + 1] == (f"{name}-net" if fenced else "none") and "bridge" not in args
+    assert workspace.reach == (urls if fenced else ()) and workspace.later == (urls if later else ())
+    assert (workspace.egress is not None) == (fenced or later)
+    if workspace.egress is not None:  # the fence's own network and proxies carry the run's labels, as the container does
+        assert workspace.egress.network == f"{name}-net" and workspace.egress.labels == workspace.labels != {}
 
 
 def test_a_docker_run_with_a_missing_image_names_the_command_that_builds_it(tmp_path):
@@ -1036,8 +1049,8 @@ def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_c
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude, instance):
     # so no coding-agent lane ever opens on a brief under "off": the run does not start
     with FakeModelServer() as server:
-        with pytest.raises(RunError, match=f'the instance policy is "{instance}", but a claude lane reaches whatever its CLI '
-                                           "can reach"):
+        with pytest.raises(RunError, match=f'the instance policy is "{instance}", but a claude lane does not ask before it '
+                                           "reaches its instance, and on the host it reaches whatever its CLI can reach"):
             prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url),
                                    agent="claude", runtime="host", instance=instance))
 
@@ -1096,11 +1109,13 @@ def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude
 
 
 @pytest.mark.parametrize("urls", [(), ("http://127.0.0.1:8080",)])
-def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path, fake_claude, monkeypatch, urls):
+def test_a_coding_agent_lane_in_docker_reaches_its_clis_api_and_its_instance_and_is_never_on_bridge(
+        tmp_path, fake_claude, monkeypatch, urls):
     """Its CLI needs its own API, so its container has a network whether or not its challenge
-    has an instance: where flightdeck's own lane on the same board gets "none". Docker itself
-    is not asked here: only the two checks that need it (is it running, has the image the CLI)
-    are stood in for, and no container is made."""
+    has an instance: where flightdeck's own lane on the same board gets "none". That network
+    is the lane's fenced one, which reaches the API and the instance and nothing else. Docker
+    itself is not asked here: only the two checks that need it (is it running, has the image
+    the CLI) are stood in for, and no container is made."""
     import ctf_flightdeck.run as run_module
 
     monkeypatch.setattr(run_module, "_check_docker", lambda image: None)
@@ -1108,7 +1123,7 @@ def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path,
 
     folder = board(tmp_path, urls=urls)
 
-    def network(**options) -> str:
+    def lane(**options) -> tuple[DockerWorkspace, str, str]:
         with FakeModelServer() as server:
             cfg = config(tmp_path, server.base_url, runtime="docker")
             run = prepare_run(RunOptions(board=folder, config=cfg, **options))
@@ -1116,10 +1131,13 @@ def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path,
         workspace = run.driver.workspaces(type("L", (), {"id": "L01"})(), run.board.challenges[0].challenge)
         assert isinstance(workspace, DockerWorkspace)
         args = workspace.run_args()
-        return args[args.index("--network") + 1]
+        assert "bridge" not in args
+        return workspace, args[args.index("--network") + 1], args[args.index("--name") + 1]
 
-    assert network(agent="claude") == "bridge"
-    assert network() == ("bridge" if urls else "none")  # flightdeck's own lane: only for a live instance
+    agent, network, name = lane(agent="claude")
+    assert network == f"{name}-net" and agent.reach == (*CLI_API["claude"], *urls) and agent.later == ()
+    own, network, name = lane()  # flightdeck's own lane: only for a live instance
+    assert network == (f"{name}-net" if urls else "none") and own.reach == urls
 
 
 def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_and_transcripts(tmp_path, monkeypatch):

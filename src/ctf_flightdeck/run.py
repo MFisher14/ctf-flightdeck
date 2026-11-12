@@ -77,6 +77,7 @@ from typing import Any
 
 from .agent.client import ChatClient
 from .agent.driver import COMPACT_AT, AgentDriver
+from .agent.egress import CLI_API
 from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
@@ -530,8 +531,8 @@ def prepare_run(options: RunOptions) -> Run:
             raise RunError(f"model {model!r} is not in the {options.agent} ladder: {', '.join(ladder)}")
         if options.instance != "auto":
             raise RunError(
-                f'the instance policy is "{options.instance}", but a {options.agent} lane reaches whatever its CLI '
-                "can reach (in Docker its container needs a network for the CLI's own API), so flightdeck "
+                f'the instance policy is "{options.instance}", but a {options.agent} lane does not ask before it '
+                "reaches its instance, and on the host it reaches whatever its CLI can reach, so flightdeck "
                 "cannot hold it to that: play this event with flightdeck's own lanes (no --agent)"
             )
         agent = _find_agent(options.agent, model, options.agent_auth)
@@ -616,7 +617,7 @@ def prepare_run(options: RunOptions) -> Run:
         l1 = L1Stage(
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
-            labels=marks, record=processes,
+            labels=marks, record=processes, urls=urls,
         )
     try:
         client = build_client(config, key, spare_key) if agent is None else None
@@ -653,12 +654,14 @@ def prepare_run(options: RunOptions) -> Run:
     def workspace(lane: Lane, challenge: Challenge) -> Workspace:
         root = run_dir / lane.id.lower() / "work"
         if runtime == "docker":
+            reach, later = lane_reach(urls[challenge.id], instance, api=CLI_API[agent.kind] if agent is not None else ())
             return DockerWorkspace(
                 root,
                 handouts[challenge.id],
                 image=config.lanes.image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
-                network="bridge" if agent is not None else (lane_network(urls[challenge.id]) if instance == "auto" else "none"),
+                reach=reach,
+                later=later,
                 labels=marks,
             )
         return HostWorkspace(root, handouts[challenge.id], record=processes)
@@ -1411,10 +1414,19 @@ def _check_docker(image: str) -> None:
         )
 
 
-def lane_network(urls: tuple[str, ...]) -> str:
-    """A docker lane gets a network only when its challenge has a live instance to reach.
-    Without one it gets none, so it cannot fetch solutions or talk to anything else."""
-    return "bridge" if urls else "none"
+def lane_reach(urls: Sequence[str], instance: str, api: Sequence[str] = ()) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(what a docker lane's network reaches from its start, what it reaches once the player
+    allows it its instance), as URLs (P9): its challenge's instance, `urls`, at once under
+    the instance policy "auto", after the player's yes under "confirm", never under "off";
+    and `api`, a coding-agent CLI's own API (agent.egress.CLI_API), from the start. A lane
+    with neither gets no network at all, so it cannot fetch solutions or talk to anything;
+    one with either reaches those hosts and ports and nothing else (agent/egress.py), never
+    Docker's open bridge network."""
+    if instance == "auto":
+        return (*api, *urls), ()
+    if instance == "confirm":
+        return tuple(api), tuple(urls)
+    return tuple(api), ()
 
 
 def host_warning() -> str:

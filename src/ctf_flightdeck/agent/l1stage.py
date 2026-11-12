@@ -15,8 +15,10 @@ the player: they are the player's own code (l1/runner.py says how they are sandb
 what that does not stop). When lanes run in Docker (`image` set), each engine runs in a
 container of the lane image (l1/container.py), with the pack mounted read-only, and no
 network unless the lane may reach the challenge's live instance at once (`online`: instance
-policy auto, and the challenge has one). So under the confirm, manual and off policies no
-engine can reach the instance, before the player is asked or ever.
+policy auto, and the challenge has one). Then the lane's engines share a fenced network that
+reaches that instance and nothing else (agent/egress.py), as the lane's own container will.
+So under the confirm, manual and off policies no engine can reach the instance, before the
+player is asked or ever.
 """
 
 from __future__ import annotations
@@ -27,10 +29,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..core.model import Challenge
-from ..l1.container import EngineContainer, container_name
+from ..l1.container import EngineContainer, container_name, fence_name
 from ..l1.manifest import Manifest
 from ..l1.router import route
 from ..l1.runner import EngineRun, WorkspaceFactory, run_routed
+from .egress import Egress
 from .workspace import HostWorkspace
 
 if TYPE_CHECKING:
@@ -50,6 +53,7 @@ class L1Stage:
     pack: Path | None = None  # the pack's folder, as its manifests were read from it: mounted read-only in each container
     labels: Mapping[str, str] = field(default_factory=dict)  # on each engine's container: the run's (leftovers.labels())
     record: ProcessRecord | None = None  # the run's record of process groups: an engine on this machine is in it while it runs
+    urls: Mapping[str, Sequence[str]] = field(default_factory=dict)  # challenge id -> its live instance: what online engines in Docker reach
 
     def __post_init__(self) -> None:
         if self.image is not None and self.pack is None:
@@ -59,22 +63,39 @@ class L1Stage:
         return route(self.manifests, challenge, self.handouts[challenge.id])
 
     async def run(self, lane_id: str, challenge: Challenge, *, online: bool = False) -> list[EngineRun]:
-        """Run the engines routed to `challenge` for a lane. `online`: in Docker, an engine's
-        container joins the bridge network (the lane may reach the challenge's instance at
-        once); else it has none. Engines on this machine have its network either way."""
+        """Run the engines routed to `challenge` for a lane. `online`: in Docker, the engines'
+        containers are on a fenced network that reaches the challenge's instance and nothing
+        else (the lane may reach it at once); else they have none. Engines on this machine
+        have its network either way."""
         hits = self.routed(challenge)
         if not hits:
             return []
         lane = lane_id.lower()
-        return await run_routed(
-            hits,
-            self.handouts[challenge.id],
-            workdir=self.workdir / lane / "l1",
-            flag_format=self.flag_format,
-            concurrency=self.concurrency,
-            challenge_id=challenge.id,
-            workspace_factory=self.containers(lane, "bridge" if online else "none") if self.image is not None else self.hosts(),
-        )
+        egress = None
+        if self.image is not None and online:
+            # one fence for the lane's engines (agent/egress.py), made before the first engine
+            # starts and removed after the last has gone: WorkspaceError when it cannot be
+            # made, and then no engine runs (never one on an open network instead)
+            urls = self.urls.get(challenge.id, ())
+            if not urls:
+                raise ValueError(f"L1 engines were to be online for {challenge.id}, which has no instance to reach")
+            egress = Egress(fence_name(self.workdir.name, lane), image=self.image, labels=self.labels)
+        try:
+            if egress is not None:
+                await egress.allow(urls)
+            return await run_routed(
+                hits,
+                self.handouts[challenge.id],
+                workdir=self.workdir / lane / "l1",
+                flag_format=self.flag_format,
+                concurrency=self.concurrency,
+                challenge_id=challenge.id,
+                workspace_factory=(self.containers(lane, egress.network if egress is not None else "none")
+                                   if self.image is not None else self.hosts()),
+            )
+        finally:
+            if egress is not None:
+                await egress.close()
 
     def containers(self, lane: str, network: str) -> WorkspaceFactory:
         """Makes each engine's container for a lane, on `network`."""

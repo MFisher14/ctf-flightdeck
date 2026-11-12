@@ -739,14 +739,19 @@ def test_the_readmes_no_network_promise_matches_what_runs_do():
     """The README promises a docker practice lane no network. That holds only while runs give a
     lane without urls the "none" network and no practice challenge lists urls: check both, so
     the promise and the code cannot drift apart."""
-    from ctf_flightdeck.run import lane_network
+    from ctf_flightdeck.agent.egress import CLI_API
+    from ctf_flightdeck.agent.workspace import DockerWorkspace
+    from ctf_flightdeck.run import lane_reach
 
     readme = " ".join((PRACTICE / "README.md").read_text(encoding="utf-8").split())  # line breaks do not matter
     assert "a docker lane gets no network when its challenge lists no `urls`" in readme.lower()
-    assert lane_network(()) == "none"
-    # and it says where the promise ends: a coding-agent lane always has the bridge network
-    # (tests/test_run.py checks that a run gives it one)
-    assert "A coding-agent lane (`--agent`) is always on Docker's bridge network" in readme
-    assert "practice with `--agent` is not honest practice" in readme
+    assert lane_reach((), "auto") == ((), ())
+    box = DockerWorkspace(PRACTICE, PRACTICE, image="debian:bookworm-slim", name="flightdeck-test-practice")
+    assert box.run_args()[box.run_args().index("--network") + 1] == "none"  # which is what reaching nothing makes
+    # and it says where the promise ends: a coding-agent lane reaches its CLI's API and nothing
+    # else, and what that API does on its own servers is not flightdeck's to fence
+    assert "A coding-agent lane (`--agent`) in docker reaches its CLI's own API" in readme
+    assert "and nothing else" in readme and "beyond flightdeck's fence" in readme
+    assert lane_reach((), "auto", api=CLI_API["claude"]) == (CLI_API["claude"], ())
     for spec in (PRACTICE).glob("*/challenge.json"):
         assert not json.loads(spec.read_text(encoding="utf-8")).get("urls"), spec.parent.name

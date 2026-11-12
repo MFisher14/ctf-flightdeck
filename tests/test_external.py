@@ -447,7 +447,8 @@ def test_a_docker_codex_lane_needs_codex_api_key_since_a_saved_login_stays_on_th
 
     async def main():
         driver = ExternalDriver(
-            agent, lambda lane, ch: DockerWorkspace(tmp_path / "w", work, image="debian:bookworm-slim", name="fd-test-codex"),
+            agent, lambda lane, ch: DockerWorkspace(tmp_path / "w", work, image="debian:bookworm-slim", name="fd-test-codex",
+                                                    reach=("https://api.openai.com",)),
             run_id="r",
         )
         deck = Deck(DeckConfig(event="t", flag_format=FLAG, models=MODELS), driver, RunClock(), lambda c, f: None)
