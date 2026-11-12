@@ -230,7 +230,8 @@ Where: `agent/external.py`.
 Code's stream-json, Codex's exec --json); messages, pause (SIGSTOP), take-over (the shell opens once
 the step of the command it waited for is recorded; a hand-back's SIGINT reaches the frozen CLI
 before its SIGCONT), escalation (a fresh session on the next model) and the CLI's own cost. Files
-the CLI would read as its configuration are moved out of the workspace first.
+the CLI would read as its configuration are moved out of the workspace first. With a pack, the
+[L1 stage](#l1-stage) runs before the CLI is first started.
 
 The CLI gets the allowlist a lane's commands get, its own credential (from the environment or the
 keys file) and nothing else of the player's; the commands the agent runs can read that credential,
@@ -265,7 +266,7 @@ next to the workspace.
 | Piece | Where | Job |
 |---|---|---|
 | L1 packs | `l1/` | `SolverResult`, engine manifests, the router, the runner and the importer. [More](#l1-packs). |
-| L1 stage | `agent/l1stage.py` | A lane runs the engines routed to its challenge before its first model call. [More](#l1-stage). |
+| L1 stage | `agent/l1stage.py` | A lane runs the engines routed to its challenge before its first model call, or before its coding-agent CLI is started. [More](#l1-stage). |
 
 ### L1 packs
 
@@ -284,7 +285,9 @@ a pack.
 Where: `agent/l1stage.py`.
 
 With `[l1] pack` (or `--pack`), a lane runs the engines routed to its challenge before its first
-model call. Each result is an `l1` event; a flag an engine returns as its result is claimed
+model call. Both drivers call the one stage (`run_stage`), each giving it its own parts
+(`StageLane`): `AgentDriver` before a lane's first model call, `ExternalDriver` before a lane's
+CLI is first started, after the search of the handout as it came. Each result is an `l1` event; a flag an engine returns as its result is claimed
 (`TurnReport.claimed`), so it waits for the player under `confirm` and goes to the platform at once
 under `auto` (unless the challenge's tries are counted), while a flag found in what a text engine
 printed (`output = "text"`, `EngineRun.scraped`) is never claimed and waits for the player even
@@ -293,9 +296,17 @@ description, or the handout as it came, searched before the engines run; the lan
 the model's context says what they found, fenced as data, and keeps saying so after an escalation or
 a refresh.
 
+A coding-agent lane starts no CLI while a flag an engine found waits for the player, and none at
+all once that flag solved the challenge. What the engines found goes into the CLI's opening brief,
+in a fence of its own after the challenge's, and into the brief of each later start (an
+escalation); the lane's secrets layer takes the secrets flightdeck holds out of an engine's notes
+before they are logged, shown or told to the agent.
+
 Engines run where lanes do (D17): on the host runtime on this machine, as the player; with Docker
 each in a container of the lane image (`l1/container.py`), the pack and the boot script mounted
 read-only, with no network unless the instance policy is auto and the challenge has an instance.
+An engine works on its own copy of the handout, never in the lane's workspace or container, so a
+coding-agent lane's file changes hold nothing an engine wrote.
 
 ## 6. Platforms and events
 

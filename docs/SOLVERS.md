@@ -2,9 +2,9 @@
 
 Most players have a folder of scripts that solve the easy, familiar challenges with no model at
 all: a decoder for layered base64, a script that carves files, an RSA small-exponent attack.
-flightdeck calls these **L1**. Each of flightdeck's lanes runs the ones that fit its challenge
-before its first model call, so a solve can cost no tokens, and when they find nothing the lane's
-model starts with what they reported.
+flightdeck calls these **L1**. Each lane runs the ones that fit its challenge before its first
+model call (a coding-agent lane: before its CLI is started), so a solve can cost no tokens, and
+when they find nothing the lane's model starts with what they reported.
 
 flightdeck ships no solvers. You bring your own, and this page is the contract between them and
 flightdeck.
@@ -224,8 +224,13 @@ which is often a decoy, still waits (the guide's [Play a board](GUIDE.md#play-a-
 them all). A flag that is only a match in what an engine printed (`output = "text"`, so every
 imported script) always waits for you, under auto submit too.
 
-**When L1 does not run.** Coding-agent lanes (`--agent`) do not use the pack. Under an event
-profile, an `l1` policy of `manual` or `off` turns it off.
+**Coding-agent lanes** (`--agent`) run the pack too, before their CLI is started, by the same
+rules: engines run where the lanes do, a flag waits or goes out as above, and no CLI runs while a
+flag waits for you (none at all when it solves the challenge). The CLI's opening brief says what
+the engines found, as data, so the agent does not redo it.
+
+**When L1 does not run.** Under an event profile, an `l1` policy of `manual` or `off` turns it
+off.
 
 Keep challenges out of your pack. A folder inside the pack that holds a challenge's files (it has
 a `challenge.json` or a `board.json`) is never searched for engines, so that a challenge can never

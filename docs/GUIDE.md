@@ -87,7 +87,7 @@ can read the practice set's reference solutions in a clone of this repository.
   yours; exit it to hand the lane back.
 - **Caps**: per lane, `token_cap` and `dollar_cap` under `[lanes]`. An alert comes at 80%, and at
   100% the lane waits for you.
-- **L1**: your own no-model solvers, which run before a lane's first model call. They come as a
+- **L1**: your own no-model solvers, which run before a lane's model does anything. They come as a
   **pack** of **engines**, each with a **manifest** saying which challenges it fits
   ([Solvers](SOLVERS.md)).
 - **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
@@ -240,8 +240,9 @@ removes it.
 
 ## Your solvers first (L1)
 
-Point flightdeck at a folder of your no-model solvers and each of flightdeck's own lanes runs the
-ones that fit its challenge before its first model call, so a solve can cost no tokens at all.
+Point flightdeck at a folder of your no-model solvers and each lane runs the ones that fit its
+challenge before its model does anything: before the first model call of flightdeck's own lanes,
+and before a coding-agent lane's CLI is started. So a solve can cost no tokens at all.
 
 ```sh
 flightdeck l1 import ~/ctf/solvers        # manifests for a folder of plain scripts (the scripts are never changed)
@@ -315,9 +316,14 @@ it, or play with `--host`. `flightdeck doctor --agent claude` checks the CLI, it
 the lane image.
 
 A coding-agent lane is always on Docker's bridge network, for its CLI's API, so an event whose
-instance policy is not `auto` refuses agent lanes. They do not run your L1 pack. A CLI says what a
-turn cost only when the turn ends, so its lane's cost ends in `…` until then; codex reports no
-cost at all, so give its models a `[prices."<model>"]` table for their lanes to show dollars.
+instance policy is not `auto` refuses agent lanes. A CLI says what a turn cost only when the turn
+ends, so its lane's cost ends in `…` until then; codex reports no cost at all, so give its models
+a `[prices."<model>"]` table for their lanes to show dollars.
+
+With a pack ([Your solvers first](#your-solvers-first-l1)), a coding-agent lane runs your L1
+engines before its CLI is started, by the same rules as flightdeck's own lanes. While a flag an
+engine found waits for you, no CLI runs, and if that flag solves the challenge none is ever
+started. Otherwise the CLI's opening brief says what the engines found, as data.
 
 ## After a run
 
