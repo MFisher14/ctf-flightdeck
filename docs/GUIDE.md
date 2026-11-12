@@ -334,7 +334,11 @@ flightdeck build check ~/ctf/solvers                       # run the pack's test
 ```
 
 When a run ends, `play` prints its run folder with the report, writeups and gaps commands for it
-(and score, when the board has answers), ready to paste. `writeups --polish MODEL` has MODEL tidy
+(and score, when the board has answers), ready to paste. A lane's transcript
+(`RUN_DIR/lanes/L01.jsonl`) keeps more than the console showed: every tool call of each turn, with
+up to 40 lines of its output, where the console's step is the turn's first call and 3 lines. A
+writeup draft shows each step that mattered with all of its turn's tool calls, 20 lines of output
+each. `writeups --polish MODEL` has MODEL tidy
 the prose through the API in your config: it spends tokens, and never sees the run's flags,
 commands or outputs.
 

@@ -136,7 +136,10 @@ asked about, and anything else in a late report is dropped.
 Where: `agent/driver.py`, `agent/prompts.py`.
 
 One asyncio task per lane on the console's loop (the deck's single thread). A turn is one model
-call; tool results go back into the context; the deck gets a `TurnReport` per turn. A small fixed
+call; tool results go back into the context; the deck gets a `TurnReport` per turn: one step for
+the console and the detectors (the turn's first real tool call, `(+N more)` for the rest, 3 lines
+and 300 characters of its output), and with it every tool call the turn ran, each with a longer
+excerpt of its output, for the lane's [transcript](#transcripts). A small fixed
 prefix (the same text for every lane: nothing from the board), then the challenge brief (challenge
 text, the flag format among it, fenced as data).
 
@@ -451,6 +454,7 @@ kind. The lane goes on while its flag is checked.
 |---|---|---|
 | Run | `run.py`, `apicheck.py` | Checks the setup before anything starts, wires the deck, driver, event log and console, and releases the board. [More](#run). |
 | Event log | `eventlog.py` | Append-only `events.jsonl` per run, with credential values taken out. [More](#event-log). |
+| Transcripts | `transcript.py` | Each lane's whole log, `lanes/<lane>.jsonl`, written when the lane ends: every step with every tool call of its turn. [More](#transcripts). |
 | Leftovers | `leftovers.py` | The backstop for what outlives a killed flightdeck. [More](#leftovers). |
 
 ### Run
@@ -476,6 +480,25 @@ that name challenges, stay. Format 2 adds spend outside a turn as `spend` events
 CLI's step is a turn event with dollars null and `dollars_later` true, and the CLI's report of the
 turn's cost a `spend` event with `turn_end` true (`unreported` true, dollars null, when it never
 came). Reports credit each spend event to its `data.model`.
+
+### Transcripts
+
+Where: `transcript.py`, `runrecord.py`.
+
+`<run>/lanes/<lane id>.jsonl`, written when a lane ends (again when spend comes in after its end),
+and for every lane still open when the run closes: a header for the lane, a line per entry of its
+log (steps, the player's messages, notes, alerts, approvals), a line per changed file with its diff.
+
+A step of flightdeck's own loop is one turn. Its `text` and `output` are the console's step, and
+its `calls` hold every tool call the turn ran, in order: each call's one line, and up to 40 lines
+and 4000 characters of its output (`agent/tools.py`: the first lines of a success; of a failure its
+status, then its last lines; a line in brackets says what was left out). The console, the
+detectors, the lane summary and `events.jsonl` (one line per step) never read `calls`. A
+coding-agent CLI's step is one tool call already and has none; nor has a transcript written before
+the field, which reads back as before (`runrecord.py`).
+
+Every text of a lane is written with credentials taken out ([Credentials](#credentials)): by value
+before it reached the deck, by shape here.
 
 ### Leftovers
 
@@ -514,10 +537,12 @@ Where: `postflight.py`, `writeup.py`.
 
 `flightdeck report RUN_DIR` (where lanes stalled, which interventions helped, cost per solve; each
 spend in the row of the model that spent it, a CLI's own turn costs apart from spend outside a turn)
-and `flightdeck writeups RUN_DIR` (a draft per solved challenge, from its transcript, with
-credentials taken out of every value it shows: `credentials.py`; both read an older run folder's log
+and `flightdeck writeups RUN_DIR` (a draft per solved challenge, from its transcript: each step
+that mattered with every tool call of its turn, up to 20 lines of each output, and the flag found in
+any of them; with credentials taken out of every value it shows: `credentials.py`; both read an older run folder's log
 and transcripts cleaned the same way; it writes only in `RUN_DIR/writeups/`, so the run's own log
-and transcripts stay as they were written).
+and transcripts stay as they were written). The report's "last steps before the alert" stay the
+console's steps, one line each: they are what the detectors counted when the alert fired.
 
 ### Practice mode
 
