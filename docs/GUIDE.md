@@ -114,6 +114,8 @@ With an Anthropic key, `flightdeck init --provider anthropic` writes Claude Haik
 Opus 5.5 with their list prices, so the dollar caps work from the start. If `OPENROUTER_API_KEY`
 is set too, it offers OpenRouter as the fallback for a lane whose calls to Anthropic keep
 failing. OpenRouter, OpenAI, Ollama, an MLX server or any OpenAI-compatible API work as well.
+On the Anthropic API, `[api] effort` sets how hard each ladder model thinks
+(`effort = { "claude-opus-5-5" = "high" }`; [Model APIs](MODEL-APIS.md#effort)).
 For Ollama or an MLX server, `init` suggests a model, and for any server on your machine it lets
 a lane wait up to 10 minutes for a reply of up to 8192 tokens, since a local model can take
 minutes to answer. More on [keys](MODEL-APIS.md#keys),

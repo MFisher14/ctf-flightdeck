@@ -48,7 +48,8 @@ class FallbackClient:
 
     `models` maps each primary model to its fallback model (position i of [models] ladder to
     position i of [fallback] ladder). `primary_name` and `fallback_name` are how the notices
-    and errors name the two APIs ("Anthropic", "OpenRouter")."""
+    and errors name the two APIs ("Anthropic", "OpenRouter"). `efforts` ([api] effort) is not
+    sent to the fallback API: the notice of a move says so for a model that has one."""
 
     def __init__(
         self,
@@ -58,10 +59,12 @@ class FallbackClient:
         *,
         primary_name: str,
         fallback_name: str,
+        efforts: Mapping[str, str] | None = None,
     ) -> None:
         self.primary = primary
         self.fallback = fallback
         self.models = dict(models)
+        self.efforts = dict(efforts or {})  # primary model -> its [api] effort, which the fallback API is not sent
         self.primary_name = primary_name
         self.fallback_name = fallback_name
         self._moved: dict[str, _Moved] = {}  # session id -> the context that moved
@@ -121,10 +124,12 @@ class FallbackClient:
             target = self.models.get(model)
             if target is None:
                 raise _again(failure, f"{failure}; no fallback: [fallback] ladder has no model for {model}")
+            effort = self.efforts.get(model)
             moved = _Moved(
                 messages, target,
-                f"moved to {self.fallback_name} ({target}) for the rest of this context: "
-                f"{self.primary_name} failed: {failure}",
+                f"moved to {self.fallback_name} ({target}) for the rest of this context"
+                + (f" (without [api] effort {effort}, which is for {self.primary_name} only)" if effort else "")
+                + f": {self.primary_name} failed: {failure}",
             )
             self._moved[session_id] = moved
             if before_retry is not None:
@@ -153,26 +158,32 @@ def _again(error: ModelError, message: str) -> ModelError:
 
 
 def client_for(provider: str, base_url: str, key: str | None, *, fast: Sequence[str] = (),
+               efforts: Mapping[str, str] | None = None,
                timeout: float | None = None, max_tokens: int | None = None) -> ChatClient:
     """The client for one API: AnthropicClient for "anthropic" (calling the models in `fast`
-    in fast mode), else ModelClient. `timeout` (seconds per try) and `max_tokens` (sent with
-    each call that gives none) are the client's own defaults when None."""
+    in fast mode, and each model in `efforts` at that effort), else ModelClient. `timeout`
+    (seconds per try) and `max_tokens` (sent with each call that gives none) are the client's
+    own defaults when None."""
     own = {"timeout": timeout} if timeout is not None else {}
     if provider == "anthropic":
         from .anthropic_client import AnthropicClient
 
-        return AnthropicClient(base_url, key, fast=fast, max_tokens=max_tokens, **own)
+        return AnthropicClient(base_url, key, fast=fast, efforts=efforts, max_tokens=max_tokens, **own)
     if provider != "openai":
         raise ValueError(f"unknown API provider {provider!r}: openai or anthropic")
     if fast:
         raise ValueError("fast mode is a feature of the Anthropic Messages API, not of an OpenAI-compatible one")
+    if efforts:
+        raise ValueError("effort (output_config.effort) is a feature of the Anthropic Messages API, not of an OpenAI-compatible one")
     return ModelClient(base_url, key, max_tokens=max_tokens, **own)
 
 
 def build_client(config: Config, key: str | None, fallback_key: str | None) -> ChatClient:
     """The lanes' client for `config`: the [api] one, behind a FallbackClient when the config
     has a [fallback]. The keys are read by the caller (config.api_key(), fallback_key()). Each
-    API's timeout and max_tokens come from its own table (config.lane_max_tokens())."""
+    API's timeout and max_tokens come from its own table (config.lane_max_tokens()). [api]
+    effort goes to the [api] client only: the fallback API's models run at their own default
+    (it may take no output_config at all), and a lane that moves there is told so."""
     from ..config import lane_max_tokens
 
     api, spare = config.api, config.fallback
@@ -182,7 +193,7 @@ def build_client(config: Config, key: str | None, fallback_key: str | None) -> C
     if spare is not None:
         fallback = client_for(spare.provider, spare.base_url, fallback_key, timeout=spare.timeout,
                               max_tokens=lane_max_tokens(spare.provider, spare.base_url, spare.max_tokens))
-    primary = client_for(api.provider, api.base_url, key, fast=api.fast, timeout=api.timeout,
+    primary = client_for(api.provider, api.base_url, key, fast=api.fast, efforts=dict(api.effort), timeout=api.timeout,
                          max_tokens=lane_max_tokens(api.provider, api.base_url, api.max_tokens))
     if spare is None or fallback is None:
         return primary
@@ -192,6 +203,7 @@ def build_client(config: Config, key: str | None, fallback_key: str | None) -> C
         dict(zip(config.models, spare.ladder)),
         primary_name=api_name(config.api.provider, config.api.base_url),
         fallback_name=api_name(spare.provider, spare.base_url),
+        efforts=dict(api.effort),
     )
 
 

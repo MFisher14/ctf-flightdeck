@@ -29,6 +29,20 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   rules as in flightdeck's own lanes, no CLI runs while it waits (none at all when it solves
   the challenge), and the CLI's opening brief says what the engines found, as data (#26).
 
+### The console and lanes
+
+- The help screen (`?`) explains the `sending` chip, `queue held` in the header, and the `+`
+  and `…` after a lane's dollars, and its board legend says which `…` is which (#17).
+- Codex lanes: a take-over that lands during a file edit or a tool step opens its shell only
+  once that step is on the lane, so your first edit is never credited to the agent (#21).
+
+### Models
+
+- `[api] effort` sets the Anthropic effort of each ladder model
+  (`effort = { "claude-opus-5-5" = "high" }`): lanes send it, a model with no entry runs at
+  Anthropic's default, a model or level the API would refuse is a config error that names the
+  key, and it is not sent to the `[fallback]` API (the lane says so when it moves) (#27).
+
 ### Commands and docs
 
 - `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the

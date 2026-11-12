@@ -130,7 +130,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
-| `?` | `/help` | Help |
+| `?` | `/help` | Help: every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks |
 | `q`, `ctrl+q` | `/quit` | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it

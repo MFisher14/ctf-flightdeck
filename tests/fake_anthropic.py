@@ -12,8 +12,9 @@ alternate, an empty turn or text block, a field the API does not know (a private
 "_anthropic_content" included), a tool_use left without its tool_result in the next turn or
 a tool_result for no tool_use, tool results after other content, temperature or top_p or
 top_k (removed on these models), a forced tool_choice, an OpenAI-style tool, fallbacks
-without their beta header, or `speed: "fast"` on a model without fast mode or, on a
-research-preview model, without the fast-mode beta header. A test that means to send such a
+without their beta header, `speed: "fast"` on a model without fast mode or, on a
+research-preview model, without the fast-mode beta header, or an output_config.effort the model
+does not take (EFFORTS). A test that means to send such a
 request turns it off with check=False.
 
 With `models`, it also answers the Models API: GET /v1/models lists the models that are not
@@ -45,6 +46,15 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 FAST_BETA = "fast-mode-2026-02-01"
 FAST_MODELS = {"claude-opus-5-5", "claude-fable-5-2", "claude-mythos-5-2", "claude-opus-5", "claude-opus-4-8"}
 FAST_PREVIEW = {"claude-opus-5", "claude-opus-4-8"}  # these need the beta header for any speed
+_ALL_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EFFORTS = {  # output_config.effort: the levels each model takes (Anthropic's thinking table); no other model takes one
+    **dict.fromkeys(("claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
+                     "claude-mythos-5-2", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
+                     "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"), _ALL_EFFORTS),
+    "claude-opus-4-6": ("low", "medium", "high", "max"),
+    "claude-sonnet-4-6": ("low", "medium", "high", "max"),
+    "claude-opus-4-5": ("low", "medium", "high"),
+}
 _ids = itertools.count(1)
 
 _MESSAGE_KEYS = {"role", "content"}
@@ -175,6 +185,12 @@ def contract(record: dict) -> str | None:
             return f"speed: fast mode is not supported for {body['model']}"
         if body["model"] in FAST_PREVIEW and FAST_BETA not in betas:
             return f"speed: {body['model']} needs the {FAST_BETA} beta header for speed"
+    config = body.get("output_config")
+    if isinstance(config, dict) and "effort" in config:
+        if body["model"] not in EFFORTS:
+            return f"output_config.effort: not supported for {body['model']}"
+        if config["effort"] not in EFFORTS[body["model"]]:
+            return f"output_config.effort: Input should be one of {', '.join(EFFORTS[body['model']])}"
     for index, tool in enumerate(body.get("tools") or []):
         if not isinstance(tool, dict) or "name" not in tool or "input_schema" not in tool or set(tool) - {"name", "description", "input_schema", "cache_control"}:
             return f"tools.{index}: a custom tool takes name, description and input_schema"

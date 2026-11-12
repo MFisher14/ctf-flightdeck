@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import anthropic
@@ -92,13 +92,35 @@ DEFAULT_MAX_TOKENS = 16_000  # when the caller gives none: Anthropic's documente
 CONTENT_KEY = "_anthropic_content"  # the raw content blocks of a reply, on its history message
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-EFFORT_MODELS = frozenset({
-    "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
-    "claude-mythos-5-2", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
-    "claude-opus-4-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5-5",
-})
-"""The models that take output_config.effort (Anthropic's documentation, its thinking table); it is an
-error on Claude Haiku 4.5 and Sonnet 4.5, so it goes only to these."""
+_NO_XHIGH = ("low", "medium", "high", "max")  # xhigh came with Claude Opus 4.7
+_TO_HIGH = ("low", "medium", "high")
+EFFORT_LEVELS: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys((
+        "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
+        "claude-mythos-5-2", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
+        "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5",
+    ), EFFORTS),
+    "claude-opus-4-6": _NO_XHIGH,
+    "claude-sonnet-4-6": _NO_XHIGH,
+    "claude-opus-4-5": _TO_HIGH,
+}
+"""The models that take output_config.effort, and the levels each takes (Anthropic's documentation,
+its thinking table, as of 2026-11-12: all five from Claude Opus 4.7 on; no xhigh on Opus 4.6 and
+Sonnet 4.6; low to high on Opus 4.5). It is an error on Claude Haiku 4.5 and Sonnet 4.5."""
+EFFORT_MODELS = frozenset(EFFORT_LEVELS)
+"""The models that take output_config.effort: the client-wide `effort` goes only to these."""
+
+
+def effort_problem(model: str, level: object) -> str | None:
+    """Why `model` cannot be called at effort `level`, or None when it can. The words name
+    neither: either could be a secret pasted into the wrong place (the caller names the key)."""
+    levels = EFFORT_LEVELS.get(model)
+    if levels is None:
+        return ("names a model that takes no effort (output_config.effort): Anthropic documents it for "
+                f"{', '.join(sorted(EFFORT_LEVELS))}")
+    if level not in levels:
+        return f"must be one of {', '.join(levels)}: the effort levels that model takes"
+    return None
 
 TRANSIENT = (httpx2.TimeoutException, httpx2.NetworkError, httpx2.RemoteProtocolError, httpx2.ProxyError)
 """Transport errors a retry can fix, as the SDK's APIConnectionError carries them."""
@@ -139,6 +161,9 @@ class AnthropicClient:
     whole (connecting gets at most CONNECT_TIMEOUT of it), and a call makes at most
     `max_retries + 1` tries, waiting retry_delay() between them. `max_tokens` ([api]
     max_tokens) goes with every call that gives none; without it, DEFAULT_MAX_TOKENS.
+    `efforts` ([api] effort) is the output_config.effort of each model named in it (a model
+    or a level the API would refuse is a ValueError here); a model with no entry gets the
+    client-wide `effort` when it takes one, else none, and runs at its own default.
     """
 
     def __init__(
@@ -152,6 +177,7 @@ class AnthropicClient:
         fast: Iterable[str] = (),
         server_fallback: bool = True,
         effort: str | None = None,
+        efforts: Mapping[str, str] | None = None,
         max_tokens: int | None = None,
     ) -> None:
         where = _base_url(base_url)
@@ -173,6 +199,11 @@ class AnthropicClient:
                 raise ValueError(f"fast mode cannot be used: {problem}")
         if effort is not None and effort not in EFFORTS:
             raise ValueError(f"effort must be one of {', '.join(EFFORTS)}, got {effort!r}")
+        efforts = dict(efforts or {})
+        for model, level in efforts.items():
+            problem = effort_problem(model, level)
+            if problem is not None:
+                raise ValueError(f"efforts: the entry for {model!r} {problem}")
         if max_tokens is not None and (not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1):
             raise ValueError(f"max_tokens must be a positive whole number, got {max_tokens!r}")
         self.max_tokens = max_tokens
@@ -181,7 +212,8 @@ class AnthropicClient:
         self.backoff = backoff
         self.fast = fast  # models called in fast mode
         self.server_fallback = server_fallback
-        self.effort = effort
+        self.effort = effort  # client-wide (the light role): sent to every model that takes one
+        self.efforts = efforts  # model -> level ([api] effort): a lane's calls to that model
         self._standard: set[str] = set()  # lane sessions whose fast mode hit its rate limit: standard speed from then on
         self._key = api_key
         self._where = where
@@ -273,7 +305,9 @@ class AnthropicClient:
 
     def _params(self, model: str, messages: Sequence[dict], tools: Sequence[dict], max_tokens: int | None, *,
                 fast: bool) -> dict:
-        effort = self.effort if self.effort is not None and model in EFFORT_MODELS else None
+        effort = self.efforts.get(model)  # the level set for this model; with none, the client-wide one
+        if effort is None and self.effort is not None and model in EFFORT_MODELS:
+            effort = self.effort
         return request(model, messages, tools, max_tokens, fast=fast, effort=effort, server_fallback=self.server_fallback)
 
     async def _try(self, params: dict) -> dict | _Failure:

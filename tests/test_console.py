@@ -691,6 +691,26 @@ def test_question_mark_opens_help_that_scrolls_and_escape_closes_it():
     drive(app, script)
 
 
+def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tells_the_two_ellipses_apart():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        assert app.screen.query_one("#help-body").max_scroll_y == 0  # tall enough here: all of it is on screen
+        text = prompt_text(app)
+        assert ("sending A flag of the lane is on its way to the platform: nothing to answer, "
+                "its answer comes back on its own") in text
+        assert ('queue held In the header where "all clear" would be, followed by why: a model API failure every lane '
+                "would hit holds the queue, and nothing starts until you lift the hold with /unhold") in text
+        assert '$0.42+ Some spend had no price: what is known, as "at least"' in text
+        assert ("$0.42… A coding-agent CLI's turn is under way: it reports the turn's cost when the turn ends "
+                "(on the board, … is a queued challenge)") in text
+        assert "… queued (after dollars: a cost still to come)" in text
+
+    drive(app, script, size=(160, 120))
+
+
 def test_in_a_run_help_and_the_command_menu_say_what_take_over_and_decline_do_and_they_do_it():
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",), flag_format=r"t\{[a-z]+\}"))
     deck.release([Challenge("alpha", "Alpha", "misc", 50), Challenge("bravo", "Bravo", "misc", 50)],

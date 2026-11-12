@@ -1214,7 +1214,10 @@ class _Run:
         """While the step of a command that ended goes on the lane, from before the freeze a
         take-over makes then. The step's look at the workspace runs in a thread, which a loaded
         machine can hold up: the take-over's shell opens only after it, so the files the command
-        changed are the agent's, and what the player changes is never in its step."""
+        changed are the agent's, and what the player changes is never in its step. Every step
+        that looks at the workspace goes on the lane this way (codex's file edits and tool
+        calls too, which nothing in flight announces: a take-over freezes the CLI at once
+        then, and its shell still waits for the look)."""
         self.recording += 1
         try:
             yield
@@ -2290,7 +2293,8 @@ class _CodexRun(_Run):
                     status = {"add": "added", "delete": "deleted"}.get(_str(change.get("kind")), "modified")
                     listed.append(FileChange(self.relative(_str(change.get("path"))), "", status))
             names = ", ".join(change.path for change in listed) or "files"
-            await self.step(f"edit {names}", "", files=listed)
+            with self.record_step():  # as a command's step: a take-over's shell waits for this look
+                await self.step(f"edit {names}", "", files=listed)
         elif itype == "agent_message" and kind == "item.completed":
             await self.text(_str(item.get("text")), show=True)
         elif itype == "todo_list":
@@ -2299,7 +2303,8 @@ class _CodexRun(_Run):
             self.note(f"codex: {_one_line(_str(item.get('message')), 300) or 'an error with no message'}")
         elif itype in ("mcp_tool_call", "web_search", "collab_tool_call") and kind == "item.completed":
             detail = _str(item.get("query")) or _str(item.get("tool")) or ""
-            await self.step(f"{itype} {detail}".strip(), "")
+            with self.record_step():  # a tool can change files too: what it changed is the agent's
+                await self.step(f"{itype} {detail}".strip(), "")
         elif itype != "reasoning" and kind == "item.completed":
             self.unknown_event(proc, f"item {itype}")
 

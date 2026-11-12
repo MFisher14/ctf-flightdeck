@@ -48,7 +48,10 @@ Codex: `codex exec --json ...`
   ({id: "item_N", type, ...}: command_execution {command, the shell wrapper `bash -lc '...'`
   included; aggregated_output; exit_code, null while it runs; status}, agent_message {text},
   reasoning {text}, file_change {changes [{path, kind add|delete|update}], status},
-  todo_list {items [{text, completed}]}, error {message}), then turn.completed {usage
+  todo_list {items [{text, completed}]}, error {message}, and the tool items mcp_tool_call
+  {server, tool, status}, web_search {query} and collab_tool_call {tool, status} (ASSUMED:
+  codex-rs/exec names these item types; their fields here are a guess, and flightdeck reads
+  only `query` and `tool` from them)), then turn.completed {usage
   {input_tokens, cached_input_tokens, output_tokens}} (ASSUMED: counted over the whole
   thread, resumed turns included; cached tokens are part of input_tokens), or turn.failed
   {error {message}} and exit 1. A top-level error {message} does not end the turn.
@@ -76,7 +79,8 @@ process, in order across processes. When the turns run out, the fake answers not
   turn cut short includes it: ASSUMED, claude adds each API call's cost as it comes)}.
 - codex TURN: {"items": [ITEM, ...], "usage": [input, cached, output] added to the thread,
   "fail": message}. ITEM: {"command": cmd} | {"message": text} | {"reasoning": text} |
-  {"file": [path, text]} | {"todo": [[text, done], ...]} | {"warning": text} (an error item)
+  {"file": [path, text]} | {"mcp": [server, tool]} | {"search": query} | {"collab": tool}
+  | {"todo": [[text, done], ...]} | {"warning": text} (an error item)
   | {"error": text} (a top-level error event) | {"raw": line} | {"stderr": line} |
   {"sleep": seconds} | {"until": path} | {"spawn": [...]} | {"exit": status}.
 """
@@ -566,6 +570,17 @@ def codex_item(item: dict, item_id: str, env: dict[str, str]) -> None:
         with open(full, "w", encoding="utf-8") as f:
             f.write(text)
         emit({"type": "item.completed", "item": {"id": item_id, "type": "file_change", "changes": [{"path": full, "kind": kind}], "status": "completed"}})
+    elif "mcp" in item:  # ASSUMED fields (see the module's notes)
+        server, tool = item["mcp"]
+        base = {"id": item_id, "type": "mcp_tool_call", "server": server, "tool": tool}
+        emit({"type": "item.started", "item": {**base, "status": "in_progress"}})
+        emit({"type": "item.completed", "item": {**base, "status": "completed"}})
+    elif "search" in item:  # ASSUMED fields
+        emit({"type": "item.completed", "item": {"id": item_id, "type": "web_search", "query": item["search"]}})
+    elif "collab" in item:  # ASSUMED fields
+        base = {"id": item_id, "type": "collab_tool_call", "tool": item["collab"]}
+        emit({"type": "item.started", "item": {**base, "status": "in_progress"}})
+        emit({"type": "item.completed", "item": {**base, "status": "completed"}})
     elif "todo" in item:
         items = [{"text": text, "completed": bool(done)} for text, done in item["todo"]]
         emit({"type": "item.started", "item": {"id": item_id, "type": "todo_list", "items": items}})
