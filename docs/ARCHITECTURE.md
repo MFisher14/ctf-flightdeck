@@ -338,6 +338,13 @@ loop through `Deck.platform_verdict`), the team's solves stop our lanes; the tea
 and watched. Background tasks run on the console's loop and stop at shutdown; a flag still on its
 way then is named on the way out, as not known to have been submitted.
 
+Every run, with or without `--event`, ends through one path. `play` awaits the console on an event
+loop of its own (`_fly()` in `cli.py`, which takes what runs between the board's release and the
+shutdown) and awaits `Run.shutdown()` on that loop however the console ended: a quit, a signal, or
+an exception in the console that nothing handled (`play` then exits 1). `Run.shutdown()` runs once:
+the console's quit starts it, and a later call only waits for it. Then `play` closes the run and
+prints its exit lines.
+
 Board format: a folder in which each subfolder with a `challenge.json` is a challenge, with an
 optional `board.json` (the event's name and flag format) and an optional `answers.sha256.json`
 (each flag's sha256, outside the challenge folders). [BOARDS.md](BOARDS.md) has every key.

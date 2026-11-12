@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -251,8 +252,33 @@ def play(
     for note in run.notes():
         typer.echo(f"flightdeck: {note}", err=True)
     console = run.app()
+    _fly(run, console.run_async)  # the console releases the board itself once it is up (on_start)
+    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
+        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(128 + console.stopped_by)
+    if console.return_code:  # the console failed (Textual has printed why): not a run that ended as asked
+        typer.echo("flightdeck: the console failed: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(1)
+
+
+def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
+    """One run from its release to its exit lines, whatever plays it. `between` is awaited on
+    an event loop of this function's own and is what runs from the board's release to the
+    run's shutdown: the console (which releases the board itself once it is up), or anything
+    that calls run.release() and waits. However it ends (it returns, it raises, it is
+    cancelled), the run is shut down on that same loop, where its lanes and background tasks
+    live (Run.shutdown: once, also when `between` already did it), then closed, and the exit
+    lines are printed. What `between` raised is raised again after them."""
+    import asyncio
+
+    async def flight() -> None:
+        try:
+            await between()
+        finally:
+            await run.shutdown()
+
     try:
-        console.run()
+        asyncio.run(flight())
     finally:
         run.close()
         card = run.scorecard()
@@ -269,9 +295,6 @@ def play(
             typer.echo(f"flightdeck: not submitted, still waiting for your approval when the run ended: {'; '.join(waiting)}", err=True)
         for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
-    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
-        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
-        raise typer.Exit(128 + console.stopped_by)
 
 
 def _held_at_the_end(deck) -> str:

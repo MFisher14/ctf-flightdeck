@@ -162,6 +162,11 @@ run folder and the commands that read it, and names any flag still waiting for y
 (never submitted) and any flag still on its way to the platform (not known to have been
 submitted).
 
+If the console itself fails (an error in it that nothing handles), the run is stopped the same
+way before `play` exits: every lane stops, every workspace closes and your live-box holds leave the
+team folder. `play` prints the same lines on the way out, says that the console failed, and exits
+with status 1.
+
 ## Narrow terminals
 
 What gives way when the terminal is narrow, least needed first:
