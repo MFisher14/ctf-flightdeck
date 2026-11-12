@@ -38,7 +38,7 @@ from ctf_flightdeck.run import RunOptions, prepare_run
 from ctf_flightdeck.setup import doctor
 
 from fake_model import FakeModelServer, tool_call_reply
-from l1_kit import FAKE_IMAGE, FLAG, challenge, challenge_dir, cli_engine, install_fake_docker
+from l1_kit import FAKE_IMAGE, FLAG, challenge, challenge_dir, cli_engine, docker_not_run, install_fake_docker
 
 RUN = "20261111-120000"  # a killed run's folder name
 STARTED: list[subprocess.Popen] = []
@@ -850,7 +850,7 @@ def test_after_flightdeck_is_killed_its_lanes_container_is_removed_by_the_next_p
 
     missing = _docker_missing()
     if missing:
-        pytest.skip(f"not run: needs docker and {IMAGE}: {missing}")
+        docker_not_run(f"not run: needs docker and {IMAGE}: {missing}")
     with FakeModelServer([tool_call_reply("shell", {"command": QUIET, "timeout_seconds": 300})]) as server:
         cfg = make_config(tmp_path, server.base_url, runtime="docker")
         played = make_board(tmp_path)

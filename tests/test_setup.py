@@ -13,6 +13,7 @@ from ctf_flightdeck.agent.workspace import docker_unavailable
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.lane import IMAGE
 from ctf_flightdeck.setup import Answers, Check, doctor, render, report, write_config
+from l1_kit import docker_not_run
 
 ANSWERS = Answers("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", ("vendor/small", "vendor/big"), "docker")
 FAKE_PASTED_KEY = "fake_key_0123456789abcdef0123456789abcdef"  # synthetic: a key pasted where its variable's name goes
@@ -541,9 +542,9 @@ def test_doctor_for_agent_lanes_only_warns_about_the_api_key_they_never_use(tmp_
 def test_doctor_for_docker_agent_lanes_runs_plays_probe_of_the_lane_image(tmp_path, fake_claude_bin):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if subprocess.run(["docker", "image", "inspect", "debian:bookworm-slim"], capture_output=True).returncode != 0:
-        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+        docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     path = tmp_path / "c.toml"
     path.write_text('[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "docker"\nimage = "debian:bookworm-slim"\n')
     checks = doctor(path, environ=fake_claude_bin, agent="claude")

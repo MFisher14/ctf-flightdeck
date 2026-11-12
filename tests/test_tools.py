@@ -26,6 +26,7 @@ import pytest
 from ctf_flightdeck.agent import tools
 from ctf_flightdeck.agent.tools import SUBMITTED, TOOLS, ToolResult, Toolbox
 from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace, docker_unavailable
+from l1_kit import docker_not_run
 
 IMAGE = "debian:bookworm-slim"
 NOTES = "".join(f"line {i}\n" for i in range(1, 1001))
@@ -704,7 +705,7 @@ def docker_lane(tmp_path, handout):
     if reason is None and subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True, timeout=60).returncode:
         reason = f"image {IMAGE} is not present locally (these tests never pull it)"
     if reason:
-        pytest.skip(reason)
+        docker_not_run(reason)
     name = f"flightdeck-test-{uuid.uuid4().hex[:12]}"
     ws = DockerWorkspace(tmp_path / "box", handout, image=IMAGE, name=name)
     try:

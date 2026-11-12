@@ -11,6 +11,8 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from ctf_flightdeck.core.model import Challenge
 
 FLAG = r"t\{[a-z0-9_]+\}"
@@ -141,17 +143,35 @@ def install_fake_docker(tmp_path: Path, monkeypatch) -> Path:
     return fake_bin / "runs.log"
 
 
-def docker_skip_reason() -> str | None:
-    """Why the tests with a real container cannot run here, or None when they can."""
+REQUIRE_DOCKER = "FLIGHTDECK_REQUIRE_DOCKER"  # =1: a test that needs Docker and DOCKER_IMAGE fails where it cannot run
+REQUIRE_LANE_IMAGE = "FLIGHTDECK_REQUIRE_LANE_IMAGE"  # =1: the same for the tests that need the lane image
+
+
+def docker_skip_reason(image: str = DOCKER_IMAGE) -> str | None:
+    """Why the tests with a real container of `image` cannot run here, or None when they can."""
     from ctf_flightdeck.agent.workspace import docker_unavailable
 
     reason = docker_unavailable()
     if reason:
         return reason
-    probe = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", DOCKER_IMAGE], capture_output=True, timeout=60)
+    probe = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, timeout=60)
     if probe.returncode != 0:
-        return f"image {DOCKER_IMAGE} is not present locally (these tests never pull it)"
+        return f"image {image} is not present locally (these tests never pull it)"
     return None
+
+
+def docker_not_run(message: str, *, require: str = REQUIRE_DOCKER):
+    """A test that needs Docker cannot run here: it is skipped with `message`, so it reports
+    as not run. Where the environment variable `require` is 1 (CI sets it on the job that has
+    Docker and the image), it fails instead: a job's log then never passes with these tests
+    left out. Any other value of the variable fails too, naming it."""
+    value = os.environ.get(require, "")
+    if value == "1":
+        pytest.fail(f"{require}=1, and a test that needs Docker could not run: {message}", pytrace=False)
+    if value not in ("", "0"):
+        pytest.fail(f"{require} is {value!r}: set it to 1 (these tests must run) or 0 or leave it unset (they may be skipped)",
+                    pytrace=False)
+    pytest.skip(message)
 
 
 def containers(word: str) -> list[str]:

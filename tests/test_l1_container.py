@@ -5,8 +5,9 @@ at once.
 
 The tests with a container run only when docker answers and debian:bookworm-slim is already
 on this machine (tests never pull, and use no other image); otherwise they are skipped with
-the reason, so they report as not run. That image has bash but no python3: its engines here
-are bash scripts, and a python engine is blocked, naming python3. No test starts a container
+the reason, so they report as not run (they fail instead where FLIGHTDECK_REQUIRE_DOCKER=1).
+That image has bash but no python3: its engines here are bash scripts, and a python engine
+is blocked, naming python3 (test_l1_lane_image.py runs one in the lane image). No test starts a container
 with a network. Every container a test starts is removed, even when the test fails. The
 tests with a fake docker script start no container and run everywhere.
 """
@@ -33,6 +34,7 @@ from l1_kit import (
     challenge_dir,
     cli_engine,
     containers,
+    docker_not_run,
     docker_skip_reason,
     install_fake_docker,
     python_engine,
@@ -45,7 +47,7 @@ from l1_kit import (
 def docker_ready():
     reason = docker_skip_reason()
     if reason:
-        pytest.skip(reason)
+        docker_not_run(reason)
 
 
 @pytest.fixture

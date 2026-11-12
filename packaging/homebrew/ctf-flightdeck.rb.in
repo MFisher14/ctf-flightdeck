@@ -1,0 +1,34 @@
+# Rendered by packaging/homebrew/render_formula.py in the ctf-flightdeck repository: edit the
+# template there (ctf-flightdeck.rb.in), not this file. The release workflow writes it to the
+# tap on every release.
+class CtfFlightdeck < Formula
+  include Language::Python::Virtualenv
+
+  desc "Terminal harness for playing CTFs with AI agents"
+  homepage "https://github.com/MFisher14/ctf-flightdeck"
+  url "{{URL}}"
+  sha256 "{{SHA256}}"
+  license "MIT"
+
+  depends_on "rust" => :build # pydantic-core and jiter build from source
+  depends_on "python@3.13"
+
+{{RESOURCES}}
+
+  def install
+    virtualenv_install_with_resources
+  end
+
+  def caveats
+    <<~EOS
+      Docker lanes need Docker, which this formula does not install.
+      Start with:  flightdeck init  &&  flightdeck doctor
+    EOS
+  end
+
+  test do
+    assert_equal "flightdeck #{version}", shell_output("#{bin}/flightdeck --version").strip
+    assert_equal "ctfdeck #{version}", shell_output("#{bin}/ctfdeck --version").strip
+    assert_equal "ctf-flightdeck #{version}", shell_output("#{bin}/ctf-flightdeck --version").strip
+  end
+end

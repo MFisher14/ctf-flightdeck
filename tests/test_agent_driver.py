@@ -2160,11 +2160,11 @@ def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_insta
 def test_under_confirm_in_docker_l1_runs_before_the_question_with_no_network(tmp_path):
     """The findings' case with a real container: the engine reads the instance's URL from its
     copy of challenge.json, before the lane asks the player, and has no network to use it."""
-    from l1_kit import DOCKER_IMAGE, containers, docker_skip_reason, remove_containers
+    from l1_kit import DOCKER_IMAGE, containers, docker_not_run, docker_skip_reason, remove_containers
 
     reason = docker_skip_reason()
     if reason:
-        pytest.skip(reason)
+        docker_not_run(reason)
     from ctf_flightdeck.agent.l1stage import L1Stage
     from ctf_flightdeck.l1.manifest import discover
 

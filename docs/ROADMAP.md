@@ -90,9 +90,13 @@ Planned in a milestone and not built:
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
   in terminals that draw them; plain Unicode stays the default.
 - Batch approve (several waiting flags at once), dismissing an alert without intervening.
-- **Installs beyond PyPI.** A Homebrew tap (`brew install mfisher14/tap/ctf-flightdeck`, the
-  formula bumped by the release workflow), a `.deb` on each GitHub release that brings its own
-  Python (Debian 12 has 3.11), then a signed apt repository for `apt upgrade`. Homebrew's own
+- **Installs beyond PyPI.** Built, and first used by the release after 0.2.0: the release
+  workflow builds a `.deb` for amd64 and arm64 that brings its own Python (Debian 12 has 3.11),
+  installs each in a clean Debian 12 container and attaches them to the GitHub release, and it
+  writes the Homebrew formula (`brew install mfisher14/tap/ctf-flightdeck`) to the tap
+  (`packaging/`, and Releases in [CONTRIBUTING.md](../CONTRIBUTING.md)). The tap repository and
+  its token are the maintainer's to create, and no `brew install` of the formula has been run
+  yet. Left: a signed apt repository, so `apt upgrade` finds a new release. Homebrew's own
   repository and Debian's archives once the project is notable enough for them.
 - **A host sandbox without Docker.** Strands Box (Apache-2.0: OS isolation with deny-by-default
   policies, an egress gateway and credentials injected outside the agent) could make `--host` lanes

@@ -66,6 +66,7 @@ from ctf_flightdeck.runrecord import load_run
 from fake_light import Lingers
 from light_kit import LightModel, lights, user_text
 from fake_model import FakeModelServer, text_reply
+from l1_kit import docker_not_run
 from stand_in_kit import OWN_TEXT, PAST, STAND_IN, cut_short, handout_of
 
 FAKE = Path(__file__).with_name("fake_agent_cli.py")
@@ -472,7 +473,7 @@ def _docker_image_missing() -> str | None:
 def test_a_docker_lane_whose_image_has_no_claude_gives_up_naming_the_missing_cli(tmp_path):
     missing = _docker_image_missing()
     if missing:
-        pytest.skip(f"needs docker and {DOCKER_IMAGE}: {missing}")
+        docker_not_run(f"needs docker and {DOCKER_IMAGE}: {missing}")
     fake = Fake(tmp_path, {})
     agent = find_agent("claude", "small", environ={"PATH": str(fake.bin), "ANTHROPIC_API_KEY": KEY})
     work = handout(tmp_path)
@@ -538,7 +539,7 @@ class ImageWithFakeClaude(DockerWorkspace):
 def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name_and_freezes_it_there(tmp_path, monkeypatch):
     missing = _docker_image_missing()
     if missing:
-        pytest.skip(f"needs docker and {DOCKER_IMAGE}: {missing}")
+        docker_not_run(f"needs docker and {DOCKER_IMAGE}: {missing}")
     monkeypatch.setenv("OPENROUTER_API_KEY", "player-secret-openrouter-value")
     fake = Fake(tmp_path, {})
     agent = find_agent("claude", "small", environ={"PATH": str(fake.bin), "ANTHROPIC_API_KEY": KEY})
@@ -625,7 +626,7 @@ def test_the_docker_wrapper_makes_the_clis_own_folder_owner_only_in_a_real_conta
     user owns stops the CLI, saying why. As a user other than root too."""
     missing = _docker_image_missing()
     if missing:
-        pytest.skip(f"not run: needs docker and {DOCKER_IMAGE}: {missing}")
+        docker_not_run(f"not run: needs docker and {DOCKER_IMAGE}: {missing}")
     home = external.CONTAINER_HOME["claude"]
     base = ["docker", "run", "--rm", "--pull", "never", "--network", "none"]
     done = subprocess.run([*base, DOCKER_IMAGE, "sh", "-c", WRAPPER_CASES, "sh", external._DOCKER_WRAPPER, home],
