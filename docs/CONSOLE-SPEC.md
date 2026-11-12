@@ -1,9 +1,8 @@
-# Console spec (M0)
+# Console spec
 
-The console is the product. M0 builds it as a clickable mock with fake data; M1 wires it to real lanes.
-At the M0 review the player chose **route C**: a fleet view to watch every lane and a focus view to
-work one lane, with one-key interventions in the fleet and a chat box with slash commands in both
-(D16).
+The console is the product: a fleet view to watch every lane and a focus view to work one (D16),
+with one-key interventions in the fleet and a chat box with slash commands in both.
+`flightdeck mock` shows it on scripted data; `play` and `practice` drive it with real lanes.
 
 ## Fleet view (the default screen)
 
@@ -14,8 +13,8 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
 │ web  Ticket Desk  100   41 ▶ L04 │ │ ▌ [flag]     L04  Ticket Desk  sonnet wait     7  .16  11m …    │
 │ for  Static Hiss   50   88 ▶ L01 │ │   [offhint]  L01  Static Hiss  glm    run     21  .13  20s …    │
 │ ...                              │ │   ...                                                          │
-│                                  │ │ ▌L04 ▲ Flag found: candidate mock{…} matches the flag format    │
-│                                  │ │    a submit mock{…}   enter open                                │
+│                                  │ │ ▌L04 ▲ Flag found: Candidate mock{…} matches the flag format.   │
+│                                  │ │    1  submit mock{…}   0  do not submit   enter open            │
 ╰──────────────────────────────────╯ ╰────────────────────────────────────────────────────────────────╯
  ● wren solved Night Shift · stopped L05                                    (status: latest outcome or event)
 ╭ / for commands · enter opens the selected lane · or type a message to it ──────────────────────────╮
@@ -31,21 +30,15 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   under way, whose cost comes when the turn ends; `+` when some spend has no price), event clock. While the queue is held (a model
   API failure every lane would hit), "queue held" stands where "all clear" would be (or beside
   "▲ N need you"), followed by why: never "all clear", since nothing starts until the player
-  lifts the hold with `/unhold`. On a narrow terminal the dollars go first, then tokens, the event
-  clock, the event name, the mock tag and docker/host; flightdeck, solo/team, lanes, the need-you
-  count and a held queue stay. A held queue's reason gets its room the same way (dollars, tokens,
-  the clock, then the event name give way to it) and is cut to the room left; with fewer than 12
-  cells left, the header names no reason. `flightdeck doctor` measures a terminal with this code
-  (`console/room.py`), so what it says a size leaves out is what the console leaves out.
+  lifts the hold with `/unhold`.
 - **Board**: every challenge with category, points, solve count, status (new ·, queued …, running ▶,
   solved by us ✓, solved by a teammate ✓ in cyan, blocked ✗, parked ‖) and owner (lane, me,
   teammate, or `L1·<engine>` when the flag that engine found solved it, whichever lane submitted
   it: every report credits the solve the same way). Enter on a row opens its lane; with no lane or
-  several, a card to queue or claim it and to open any of its lanes (`1`-`9`). Under 100 columns
-  the board hides (the lane list says so).
+  several, a card to queue or claim it and to open any of its lanes (`1`-`9`). A parked challenge
+  can be queued again, from its card or with `/queue`.
 - **Fleet**: one compact row per lane, scrolling, **sorted by attention** (below). Finished lanes
-  collapse into one row. 40+ rows stay usable; low-value columns drop first on narrow terminals,
-  and the challenge name narrows before a column is cut. The list keeps its scroll position. The
+  collapse into one row. 40+ rows stay usable. The list keeps its scroll position. The
   attention cell (`!`) shows what the lane most urgently needs from you (an alert or an approval);
   with nothing to answer, `sending` while a flag of the lane is on its way to the platform (its
   answer comes back on its own), else an informational alert, if any. The cost column has room
@@ -76,7 +69,7 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 │ ╰──────────────────────────────────────────────────────╯  │ │                                   │
 ╰ plan  Decode the audio as slow-scan TV ──────────────────╯ ╰───────────────────────────────────╯
 ╭ message this lane (it reads it on its next turn) · / for commands ─────────────────────────────────╮
- esc fleet  enter send  / commands  ctrl+n next lane needing you  tab files  pgup pgdn scroll
+ esc fleet  enter send  / commands  1-9 0 answer  ctrl+n next lane needing you  tab files  pgup pgdn scroll
 ```
 
 - **Transcript**: the lane's steps (⏺ command, ⎿ output), your messages (› you), flightdeck notes,
@@ -94,14 +87,15 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 
 1. Lanes that need the player: an approval waiting, or an alert that wants an answer. Most urgent
    first: a flag, then any other approval, then budget, loop, effort, ignores the hint, wrong way,
-   stall; oldest first within the same urgency.
+   stall; oldest first within the same urgency. A lane's approvals queue, a flag first, and none
+   is dropped: the needs-you card lists those still to come (`then:`).
 2. Lanes with only an informational alert (flightdeck already acted, e.g. a teammate holds the box).
 3. Running lanes by idle time, in whole minutes, so rows do not reshuffle every tick.
 4. Paused and taken-over lanes. 5. Finished lanes (collapsed).
 
 ## Alerts (from the author's real cues)
 
-| Alert | Fires when (mock: scripted; M3: real detector) | Suggested action |
+| Alert | Fires when (in the mock: scripted; in a run: a detector) | Suggested action |
 |---|---|---|
 | Effort vs value | Turns or tokens are high for a low-point challenge, especially one with many solves. "Complex work on a 50-pointer." | Hint "it's simpler than this", or kill and re-queue fresh |
 | Ignores the hint | The description hints at something (e.g. SSTV, slow scan, radio) but the lane does something else (e.g. comparing stereo channels of the wav). | Redirect with the hinted technique |
@@ -111,6 +105,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 | Teammate solved / box in use | Team mode: the challenge is solved, or a teammate holds the live instance. | Solved: stop the lane (automatic). Box in use: keep the lane off the box until it is free (automatic) |
 | Budget | Lane near its token or dollar cap (80%), or at it (100%: it waits). | Approve more (also at 80%), escalate (at 80%), or kill |
 | Flag found | A candidate flag matches the format. | Approve submit (if submit = confirm) |
+
+A lane whose live box a teammate holds is not stopped: it keeps working on the handout, off the
+box, and then asks for live-box access (a `box` approval). At a budget's 80% warning `a` approves
+more, as it does at 100%; escalate is offered at 80% only.
 
 ## Interventions
 
@@ -133,18 +131,29 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help |
-| `q`, `ctrl+q` | `/quit` | Quit. While lanes are open, or a flag is on its way to the platform, it asks first, saying what is at stake (each flag on its way is named: quitting leaves its answer unknown): the open lanes by state, what each lane waiting for you waits for (five at most, then a count), the challenges queued and not started, that nothing waiting for you is submitted or approved, and where the run's log and transcripts stay. `y` stops every lane and closes its workspace (a run cannot be resumed); `n`, `esc` or enter on Stay stays (`q` is not an answer, so a double tap never quits) |
+| `q`, `ctrl+q` | `/quit` | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
-takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer. While
-the run is closing (after `q`, `y`), every intervention is refused.
+takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer.
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
 back to the fleet and `ctrl+n` goes on to the next lane that needs you.
 
-The fleet's key line always shows `? help` and `q quit`; on a narrow terminal the keys needed least
-are left out whole rather than cut: focus and sort first, then take over, escalate and fork, then
-claim, redirect, hint and pause, then kill and open, and last the commands, decline and approve.
+## Quitting and signals
+
+While lanes are open, or a flag is on its way to the platform, `q` (or `ctrl+q`, or `/quit`) asks
+first and says what is at stake:
+
+- each flag on its way, by name: quitting leaves its answer unknown;
+- the open lanes by state, and what each lane waiting for you waits for (five at most, then a
+  count);
+- the challenges queued and not started;
+- that nothing waiting for you is submitted or approved;
+- where the run's log and transcripts stay.
+
+`y` stops every lane and closes its workspace (a run cannot be resumed). `n`, `esc` or enter on
+Stay stays; `q` is not an answer, so a double tap never quits. While the run is closing, every
+intervention is refused.
 
 During a run, closing the terminal (or an SSH drop) and a SIGTERM stop the run the way quitting
 does, without asking: every lane stops and every workspace closes, and `play` exits with 128 plus
@@ -153,18 +162,25 @@ run folder and the commands that read it, and names any flag still waiting for y
 (never submitted) and any flag still on its way to the platform (not known to have been
 submitted).
 
-## Proposed at the M0 review (built in the mock, not yet signed off)
+## Narrow terminals
 
-These go beyond route C itself; keep or change them when you sign off the mock.
+What gives way when the terminal is narrow, least needed first:
 
-- **Box in use** keeps the lane working on the handout, off the live box, instead of stopping it,
-  and then asks for live-box access (a `box` approval).
-- **Approvals** queue per lane and a flag goes first; nothing is dropped.
-- **Budget**: `a` also works at the 80% warning; escalate is not offered at 100%.
-- **Parked** is a board status; a parked challenge can be queued again (`/queue`, or its card).
-- **Attention order** puts any approval with the flags and informational alerts after them (above).
+- **Header.** The dollars go first, then tokens, the event clock, the event name, the mock tag and
+  docker/host; flightdeck, solo/team, lanes, the need-you count and a held queue stay. A held
+  queue's reason gets its room the same way (dollars, tokens, the clock, then the event name give
+  way to it) and is cut to the room left; with fewer than 12 cells left, the header names no
+  reason.
+- **Board.** Under 100 columns the board hides (the lane list says so).
+- **Fleet.** Low-value columns drop first, and the challenge name narrows before a column is cut.
+- **Key line.** The fleet's key line always shows `? help` and `q quit`; the keys needed least are
+  left out whole rather than cut: focus and sort first, then take over, escalate and fork, then
+  claim, redirect, hint and pause, then kill and open, and last the commands, decline and approve.
 
-## Mock scenarios (M0)
+`flightdeck doctor` measures a terminal with the console's own layout code, so what it says a size
+leaves out is what the console leaves out.
+
+## Mock scenarios
 
 The mock ships fake data that exercises every alert and at least these scenarios:
 
