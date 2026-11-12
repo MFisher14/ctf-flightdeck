@@ -24,6 +24,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `flightdeck build gap CHALLENGE_DIR --pack PACK` command, in `gaps.md`, in the printed
   summary and in `gaps.json`, the paths filled in and shell-quoted, ready to paste (#19).
 
+- Coding-agent lanes (`--agent`) run your L1 pack too, before their CLI is started and in
+  Docker when lanes run there. A flag an engine finds waits for you or goes out by the same
+  rules as in flightdeck's own lanes, no CLI runs while it waits (none at all when it solves
+  the challenge), and the CLI's opening brief says what the engines found, as data (#26).
+
 ### Commands and docs
 
 - `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the
