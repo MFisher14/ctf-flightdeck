@@ -14,7 +14,6 @@ Keep this file short: every agent re-reads it on every turn.
 - `docs/ROADMAP.md`: milestones M0 to v0.1.0 and their acceptance criteria; M5 (Autopilot) after.
 - `docs/CONSOLE-SPEC.md`: the console layout, lanes, alerts and intervention keys.
 - `docs/ARCHITECTURE.md`: pipeline, stages, policies, components (draft).
-- `docs/PORTING.md`: what may later be copied from the private `~/ctf-tools` repo, and what never.
 - `private-notes/`: local-only research notes (git-ignored). Read them for context; never copy their
   contents into tracked files.
 
@@ -23,9 +22,9 @@ httpx/asyncio. Tests: `uv run pytest`.
 
 ## Rules
 
-1. **This repo will be public.** Nothing private goes in: no secrets, no real event data, no player
-   names, no content from `private-notes/`, nothing from `~/ctf-tools/solvers/`, `events/`,
-   `analysis/` or `writeups/`. `~/ctf-tools` is read-only; porting follows `docs/PORTING.md`.
+1. **This repo is public.** Nothing private goes in: no secrets, no real event data, no player
+   names, nothing from `private-notes/` or from the maintainer's private repositories. In the
+   maintainer's checkout, `private-notes/AGENTS.private.md` adds rules of its own.
 2. **No secrets.** Keys come from environment variables or a user config outside the repo. Never print,
    log or commit tokens, cookies or Authorization values. The pre-commit guard (`.githooks/`) must pass;
    never use `--no-verify`.
