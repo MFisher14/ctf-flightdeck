@@ -359,6 +359,15 @@ def test_away_from_a_terminal_init_mentions_the_fallback_and_writes_it_with_the_
     assert load_config(target).fallback is None and "--fallback` also writes" not in declined.output
 
 
+def test_the_config_command_lists_the_refusal_fallbacks_prices_after_the_ladders(tmp_path, monkeypatch):
+    result, target = anthropic_init(tmp_path, monkeypatch, "--host")
+    assert result.exit_code == 0, result.output
+    shown = CliRunner().invoke(cli.app, ["config", "--path", str(target)])
+    assert shown.exit_code == 0, shown.output
+    assert ("prices from config: claude-haiku-5-5, claude-sonnet-5-5, claude-opus-5-5, claude-sonnet-5, claude-opus-5, "
+            "claude-opus-4-8") in shown.output.splitlines()
+
+
 def test_init_prices_the_refusal_fallbacks_models_of_the_ladder_it_writes_and_no_others(tmp_path, monkeypatch):
     result, target = anthropic_init(tmp_path, monkeypatch, "--models", "claude-haiku-5-5,claude-sonnet-5-5", "--host")
     assert result.exit_code == 0, result.output
