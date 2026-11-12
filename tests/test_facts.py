@@ -120,6 +120,38 @@ def test_the_file_command_quotes_every_name_and_puts_it_after_the_options():
     assert command.startswith("command -v file >/dev/null 2>&1 || {")
 
 
+def test_a_long_description_never_crowds_the_handouts_facts_out_of_what_the_light_model_reads():
+    """A board's long description (a story, pasted source) is cut for route and recon, so the
+    handout's facts still reach the light model: in a model's prompt, and in a decision model's
+    state, whose window is smaller. A description that fits is the board's as it is."""
+    from ctf_flightdeck import light as L
+    from ctf_flightdeck.core.model import Challenge
+    from fake_decider import FakeDeciderServer, picks
+
+    facts = F.HandoutFacts((F.FileFacts("capture.pcapng", 123456, "pcapng capture file - version 1.0", ("tcp stream",)),))
+    told = "The ship's log. " * 400  # 6,400 characters
+    data = F.challenge_data(Challenge("long", "Long Story", "", 100, description=told), facts, [])
+    for messages in (L.choice_messages(L.ROUTE, data, L.FAMILY, L.FAMILY.choices), L.recon_messages(data)):
+        user = messages[1]["content"]
+        assert "- capture.pcapng (123,456 bytes)" in user and "file says: pcapng capture file - version 1.0" in user
+        assert "[cut: the description is 6,400 characters in all]" in user
+    assert data["description"].startswith(told[:F.DESCRIPTION_CHARS])
+
+    async def decide():
+        engine = L.DeciderLight(decider.base_url, timeout=5.0)
+        try:
+            return await engine.ask_choice(L.ROUTE, data, L.FAMILY, L.FAMILY.choices)
+        finally:
+            await engine.aclose()
+
+    with FakeDeciderServer(responder=picks("network-capture", 0.95)) as decider:
+        assert asyncio.run(decide()).choice == "network-capture"
+    (asked,) = [r for r in decider.requests if r["json"]]
+    assert "- capture.pcapng (123,456 bytes)" in asked["json"]["state"]
+    short = "We pulled this off the 20-metre band.\nIt warbles."
+    assert F.challenge_data(Challenge("short", "Short", "for", 100, description=short), facts, [])["description"] == short
+
+
 # ---------------------------------------------------------------------- the first look's text
 
 

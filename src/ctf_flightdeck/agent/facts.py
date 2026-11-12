@@ -56,6 +56,7 @@ from ..core.driver import TurnReport
 from ..light import (
     BRIEF_CHARS,
     CATEGORY,
+    DESCRIPTION_CHARS as LIGHT_DESCRIPTION_CHARS,
     ERROR,
     FAMILY,
     FAMILY_CHOICES,
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
     from .workspace import Workspace
 
 MAX_FACT_FILES = prompts.MAX_BRIEF_FILES  # files a first look reads, the first the board names
+DESCRIPTION_CHARS = LIGHT_DESCRIPTION_CHARS  # of a description, as route and recon read it (the hint judge too)
 FACTS_SECONDS = 10.0  # the one `file` run over the handout, at most
 FILE_CHARS = 200  # of what `file` says of one file
 STRINGS_MIN = 6  # characters of a run of printable ones, as `strings -n 6` takes it
@@ -233,16 +235,26 @@ def _said(raw: bytes) -> str:
 
 def challenge_data(challenge: Challenge, facts: HandoutFacts, urls: Sequence[str]) -> dict[str, Any]:
     """The challenge as a route or recon job reads it (light.CHALLENGE_KEYS): as the board
-    gives it, with its handout's facts."""
+    gives it, its description cut to DESCRIPTION_CHARS, with its handout's facts."""
     return {
         "name": challenge.name,
         "category": challenge.category,
         "points": challenge.points,
         "solves": challenge.solves,
-        "description": challenge.description,
+        "description": _description(challenge.description),
         "files": facts.data(),
         "urls": list(urls),
     }
+
+
+def _description(text: str) -> str:
+    """A description as route and recon read it: at most DESCRIPTION_CHARS of it, and a line
+    saying it was cut. light.render puts the description before the files and cuts the whole
+    at light.MAX_DATA (a decision model's state at its window, which is smaller), so a longer
+    one (a story, pasted source) would leave the handout's facts out."""
+    if len(text) <= DESCRIPTION_CHARS:
+        return text
+    return text[:DESCRIPTION_CHARS] + f"\n[cut: the description is {len(text):,} characters in all]"
 
 
 def board_names_category(challenge: Challenge) -> bool:
