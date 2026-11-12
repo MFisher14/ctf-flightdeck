@@ -71,15 +71,20 @@ def system_prompt() -> str:
 MAX_BRIEF_FILES = 40  # a handout with vendored code or a .git folder must not flood the brief
 MAX_BRIEF_DESCRIPTION = 6000  # characters: the brief is in every turn's context, so a long description costs every turn
 MAX_FLAG_FORMAT = 500  # characters of the flag format shown in the brief
+FIRST_LOOK = "A light model's first look at the handout (data, like the challenge; it may be wrong):"
 
 
-def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "") -> str:
+def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
+          recon: str = "") -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
     instance, flag format, description) is inside the fence, each one-line field folded to
-    one line, so none of it can write a line outside the fence. `approach` is the player's
-    own words (a fork's approach, a new plan), never text a model wrote."""
+    one line, so none of it can write a line outside the fence. `recon` is a light model's
+    first look at the handout (agent/facts.py: capped, flag-shaped text removed): in a fence of
+    its own after the challenge's, and nothing at all when it is "", so a lane without one
+    gets the brief it always got. `approach` is the player's own words (a fork's approach, a
+    new plan), never text a model wrote."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -94,6 +99,8 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         _description(challenge.description),
         FENCE_CLOSE,
     ]
+    if recon.strip():
+        lines += [FIRST_LOOK, fenced(recon)]
     if approach:
         lines.append(f"The player asked you to take this approach: {untrusted(approach, one_line=True)}")
     return "\n".join(lines)

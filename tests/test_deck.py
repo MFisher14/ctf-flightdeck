@@ -739,6 +739,46 @@ def test_a_cli_turn_whose_cost_never_came_leaves_the_total_partial_and_the_dolla
     assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
 
 
+LIGHT = "the light model's recon (openai light/m)"
+
+
+def test_a_light_models_spend_with_no_known_cost_never_asks_and_the_dollar_cap_holds_on_what_is_known():
+    # a light model's first look (agent/facts.py) with no [light] price: its cost is not known, but a light model never
+    # holds up a lane, and a fraction of a cent of it must not lift the cap off the lane's own, priced model
+    deck, driver, _ = make_deck(n=1, dollar_cap=1.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=0.25))
+    mark = len(deck.events)
+    for _ in range(2):
+        deck.report(lane.id, TurnReport(turn=False, tokens=44, dollars=None, why=LIGHT, model="light/m", light=True))
+    assert lane.dollars is None and lane.known_dollars == pytest.approx(0.25) and lane.tokens == 188
+    assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.state is LaneState.RUNNING
+    assert lane.dollar_cap == 1.0 and lane.budget_used() == pytest.approx(0.25)
+    said = [a.text for a in lane.actions if a.kind is ActionKind.NOTE and "no known cost" in a.text]
+    assert said == [f"{LIGHT} has no known cost: the $1.00 cap holds on the $0.25 that is known (a light model's first "
+                    "look never holds up a lane)"]  # once
+    spends = events(deck, EventKind.SPEND, since=mark)
+    assert [e.data for e in spends] == [{"tokens": 44, "cached_tokens": 0, "dollars": None, "model": "light/m",
+                                         "why": LIGHT}] * 2  # logged as any spend with no known cost
+    assert [e for e in deck.events[mark:] if e.kind is EventKind.PENDING] == []
+    deck.report(lane.id, TurnReport(action="cat flag", tokens=100, dollars=0.8))  # what is known passes the cap
+    assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "raise the cap by 50% (now $1.05+ of $1.00)"
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.dollar_cap == pytest.approx(1.5) and lane.state is LaneState.RUNNING  # raised, not dropped
+    assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
+
+
+def test_a_cost_with_no_price_after_a_light_models_spend_with_none_still_asks_about_the_cap():
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, tokens=44, dollars=None, why=LIGHT, model="light/m", light=True))
+    assert lane.pending is None and lane.dollars is None
+    deck.report(lane.id, TurnReport(action="ls", tokens=100, dollars=None))  # the model the lane runs has no price
+    assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "carry on with no dollar cap (no price for small)"
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.dollar_cap is None and lane.state is LaneState.RUNNING  # the player chose to go on without it (P7)
+
+
 def test_a_cost_with_no_price_after_a_cli_turn_whose_cost_never_came_still_asks_about_the_cap():
     deck, _, _ = make_deck(n=1, dollar_cap=2.0)
     lane = lane_on(deck, "c0")

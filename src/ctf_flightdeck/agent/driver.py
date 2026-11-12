@@ -11,6 +11,11 @@ Each lane starts with a fresh context: the fixed system prompt, then the challen
 once its L1 engines have run, what they found). Escalation starts a fresh context too, on the
 stronger model, with the deck's summary; so does the refresh of a context grown too long.
 
+With a light model for route or recon ([light] jobs), the challenge's first look (agent/facts.py)
+starts once the workspace is ready, beside the handout search and the L1 stage. Nothing waits
+for it: at the lane's first model call the brief takes what is back, in a fence of its own, and
+every fresh context of the lane repeats that brief as it was; what comes later is never added.
+
 A flag the model submits that the challenge's own text holds (its description, or a handout
 file as it came: often a decoy) is not claimed: under submit auto too it waits for the
 player, and the model hears why, as agent/external.py's lanes do. Such a flag that an L1
@@ -54,11 +59,13 @@ from ..core.driver import TakeoverRefused, TurnReport
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..core.summary import lane_summary
 from ..l1.runner import scan
+from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
 from .client import ChatClient, ModelError, Reply
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
+from .facts import FirstLooks, Look
 from .l1stage import FLAG_STATUSES, L1Stage, result_line
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
@@ -190,6 +197,9 @@ class _Run:
     said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
     planted: frozenset[str] = frozenset()  # flag-format matches in the challenge's own text: never claimed when submitted
     outputs: Outputs = field(default_factory=Outputs)  # its newest tool outputs: where a flag it submits was found
+    look: Look | None = None  # the challenge's first look (agent/facts.py), until the lane's first model call takes it
+    recon: str = ""  # what of the first look was back then: in the brief of every fresh context of the lane
+    opened: bool = False  # the lane's first model call is made (or about to be): nothing more goes into its brief
 
 
 @dataclass
@@ -279,6 +289,7 @@ class AgentDriver:
         l1: L1Stage | None = None,
         instance: str = "auto",
         flaggate: FlagGate | None = None,
+        lights: Lights | None = None,
     ) -> None:
         self.client = client
         self.workspaces = workspaces
@@ -298,6 +309,8 @@ class AgentDriver:
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.answered: set[str] = set()  # the models that have answered a lane in this run
         self.deck = None
+        self.lights = lights  # the run's light engines (light.Lights): route and recon at a lane's start; None: none
+        self.looks = FirstLooks(self.errors)
 
     # ------------------------------------------------------------------ LaneDriver
 
@@ -436,6 +449,9 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         run.ready = True
+        cid = run.challenge.id
+        run.look = self.looks.start(self.lights, self.deck, run.lane_id, run.challenge, run.workspace,
+                                    self.files.get(cid, run.challenge.files), self.urls.get(cid, ()))  # never waited for
         await self._plant(run)
         if self.l1 is not None:
             await self._l1_stage(run)
@@ -445,6 +461,8 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, pending=Pending(
                 PendingKind.LIVE_BOX, f"let {run.lane_id} reach the live instance: {', '.join(urls)}")))
         while await self._until_running(run):
+            if not run.opened:
+                self._open(run)
             if run.instance == "allowed":
                 await self._open_instance(run, urls)
             lane = self._lane(run)
@@ -816,18 +834,33 @@ class AgentDriver:
 
     # ------------------------------------------------------------------ helpers
 
+    def _open(self, run: _Run) -> None:
+        """Just before the lane's first model call: its brief takes the first look as far as it
+        is back (agent/facts.py), and from now on nothing more goes into it. The context's
+        brief (always its second message: the lane's first context, or an escalation's made
+        before the call) is made again with it; a later one repeats it (_fresh)."""
+        run.opened = True
+        look, run.look = run.look, None
+        if look is None:
+            return
+        run.recon = self.looks.opening(look, self.deck, run.lane_id, self._flag_re())
+        if run.recon and len(run.messages) > 1:
+            lane = self._lane(run)
+            run.messages[1] = self._fresh(run, lane.approach if lane is not None else "")[1]
+
     def _fresh(self, run: _Run, approach: str) -> list[dict]:
-        """A new context: the system prompt, the brief, and what the L1 engines found (once
-        they have run: an escalation or a refresh keeps it, so the model never pays to redo
-        what they did or ruled out). `approach` is the player's own direction (lane.approach),
-        never the model's plan."""
+        """A new context: the system prompt, the brief (with the first look the lane took at its
+        first model call, if any: the same text every time, so the cached prefix holds), and
+        what the L1 engines found (once they have run: an escalation or a refresh keeps it, so
+        the model never pays to redo what they did or ruled out). `approach` is the player's
+        own direction (lane.approach), never the model's plan."""
         challenge = run.challenge
         messages = [
             {"role": "system", "content": prompts.system_prompt()},
             {
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
-                                         approach, flag_format=self.deck.config.flag_format),
+                                         approach, flag_format=self.deck.config.flag_format, recon=run.recon),
             },
         ]
         if run.l1_message is not None:
@@ -901,9 +934,10 @@ class AgentDriver:
     # ------------------------------------------------------------------ shutdown
 
     async def shutdown(self) -> None:
-        """Stop every lane and close every workspace (the console calls this before it exits).
-        The flag checks stop once every lane has (so no lane asks for one after), before the
-        run closes the light model, which it does after this."""
+        """Stop every lane and close every workspace (the console calls this before it exits);
+        a first look still under way first. The flag checks stop once every lane has (so no lane
+        asks for one after), before the run closes the light model, which it does after this."""
+        await self.looks.aclose()
         tasks = []
         for run in self.runs.values():
             run.stopped = True

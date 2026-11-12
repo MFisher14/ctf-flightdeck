@@ -657,6 +657,7 @@ def prepare_run(options: RunOptions) -> Run:
     idle = _flagcheck_idle(deck_config.submit, submits is not None or isinstance(verify, AnswerVerifier))
     lights = _lights(config, plan.notes, idle={"flagcheck": idle} if idle else None)
     driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
+    driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
@@ -1175,9 +1176,10 @@ def _l1_manifests(pack: Path | None) -> list | None:
     return manifests
 
 
-# The [light] jobs a run of this build gives the light model. The config takes route and recon too
-# (config.RUN_JOBS); until a run wires one in, it is named in a note and its engine is not made.
-RUN_LIGHT_JOBS = ("judge", "flagcheck")
+# The [light] jobs a run of this build gives the light model: the hint judge (detect/judge.py),
+# the flagcheck before an auto-submit (agent/flaggate.py), and route and recon at a lane's start
+# (agent/facts.py).
+RUN_LIGHT_JOBS = ("judge", "flagcheck", "route", "recon")
 
 
 def _flagcheck_idle(submit: str, checks: bool) -> str:
@@ -1195,8 +1197,10 @@ def _flagcheck_idle(submit: str, checks: bool) -> str:
 def _lights(config: Config, notes: list[str], *, idle: dict[str, str] | None = None):
     """The run's light engines (light.build_all), one per distinct spec, for the [light] jobs a
     run wires in; a spec that cannot be made leaves its jobs off, said in `notes`, as is a job
-    [light] jobs lists that this build does not run yet. `idle`: jobs this run gives nothing
-    to do, with why (said in `notes` for a job [light] jobs lists): no engine is made for them."""
+    [light] jobs lists that this build does not run yet, and what route and recon do. `idle`:
+    jobs this run gives nothing to do, with why (said in `notes` for a job [light] jobs lists):
+    no engine is made for them."""
+    from .agent.facts import first_look_notes
     from .light import build_all
 
     idle = {job: why for job, why in (idle or {}).items() if job in config.light_jobs}
@@ -1204,6 +1208,7 @@ def _lights(config: Config, notes: list[str], *, idle: dict[str, str] | None = N
     notes.extend(lights.notes)
     for job, why in idle.items():
         notes.append(f"[light] jobs lists {job}, but this run gives it nothing to do: {why}")
+    notes.extend(first_look_notes(lights))
     waiting = [job for job in config.light_jobs if job not in RUN_LIGHT_JOBS]
     if waiting:
         listed = waiting[0] if len(waiting) == 1 else ", ".join(waiting[:-1]) + " and " + waiting[-1]

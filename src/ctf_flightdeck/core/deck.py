@@ -449,6 +449,34 @@ class Deck:
             data={"engine": engine, "status": status, "flags": list(flags), "seconds": seconds, "notes": notes},
         )
 
+    def record_route(self, challenge_id: str, *, family: str = "", category: str = "", by: str = "",
+                     lane_id: str | None = None) -> None:
+        """A light model routed a challenge at a lane's start (agent/facts.py): the specialist
+        family it suits, and a guess at its category where the board names none flightdeck
+        knows. Kept on the challenge (Challenge.family, Challenge.category_guess: its category
+        stays the board's), logged as a `route` event, and noted on the lane it ran for. `by`
+        names the light model."""
+        self._on_thread("record_route")
+        ch = self.challenges[challenge_id]
+        if family:
+            ch.family = family
+        if category:
+            ch.category_guess = category
+        parts = ([f"family {family}"] if family else []) + (
+            [f"category {category}? (a guess: the board names none flightdeck knows)"] if category else [])
+        if not parts:
+            return
+        lane = self.lanes.get(lane_id) if lane_id else None
+        if lane is not None and not lane.finished:
+            self._note(lane, f"light model ({by}) routed it: {', '.join(parts)}")
+        self._emit(
+            EventKind.ROUTE,
+            f"light model ({by}) routed {ch.name}: {', '.join(parts)}",
+            lane_id,
+            challenge_id,
+            data={"family": family, "category": category, "board_category": ch.category, "by": by},
+        )
+
     def warn(self, text: str, *, challenge: str | None = None, data: dict | None = None) -> None:
         """A warning for the player that belongs to no lane (a team folder problem, a failed
         poll): a WARNING event, which the console shows and the run log keeps."""
@@ -1485,7 +1513,9 @@ class Deck:
         turn, not spend outside a turn. A turn whose cost never came (unreported: the CLI was
         stopped in it, or exited) leaves the lane's total not known, but no price is missing
         for it: nothing is asked, and a dollar cap holds on what is known (Lane.budget_used).
-        Spend with no price asks once (P7)."""
+        So does a light model's first look with no known cost (light: agent/facts.py), said
+        once on the lane: a first look never holds up a lane, and its few calls must not lift
+        the cap off the lane's own model. Other spend with no price asks once (P7)."""
         capped = bool(lane.dollar_cap) and not lane.finished and not self.closing  # a dollar cap still to enforce
         due = lane.dollars_later  # a turn_end that settles it is logged even when it adds nothing: the log says so too
         lane.tokens += rep.tokens
@@ -1500,7 +1530,13 @@ class Deck:
                     self._note(lane, f"the cost of a turn of {rep.model or lane.model} never came (its CLI did not report "
                                      f"it): the ${fmt.dollars(lane.dollar_cap)} cap holds on the "
                                      f"${fmt.dollars(lane.known_dollars)} that is known")
-            elif capped and lane.unpriced - lane.unreported == 1:
+            elif rep.light:
+                lane.light_unpriced += 1
+                if capped and lane.light_unpriced == 1:
+                    self._note(lane, f"{rep.why or 'a light model spent something that'} has no known cost: the "
+                                     f"${fmt.dollars(lane.dollar_cap)} cap holds on the ${fmt.dollars(lane.known_dollars)} "
+                                     "that is known (a light model's first look never holds up a lane)")
+            elif capped and lane.unpriced - lane.unreported - lane.light_unpriced == 1:
                 self._unpriced(lane, rep)  # the first spend with no price: the cap cannot be enforced any more
             lane.dollars = None
         else:
