@@ -168,6 +168,8 @@ token_env = "CTFD_TOKEN"            # ctfd: the NAME of the variable that holds 
 # board = "board"                   # manual: the folder of challenge folders (relative to this file, or ~/...)
 flag_format = "example\\{[^}]+\\}"  # a regular expression for the event's flags
 team = false                        # true: team mode (claims, teammates' solves, live-box holds)
+# start = "2026-11-14T09:00:00+00:00"  # when the event starts, with its zone: autopilot waits for it
+# end = "2026-11-15T09:00:00+00:00"    # when it ends: autopilot stops the run then
 
 [rules]
 ai_allowed = true                   # may model-driven lanes work challenges
@@ -186,6 +188,13 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 `[event]` says where the board comes from. With `platform = "ctfd"`, flightdeck pulls the board
 from `url` into the folder you give `play`. With `platform = "manual"`, `board` names a folder
 board you made, and you submit the flags on the platform yourself.
+
+`start` and `end` are optional: the event's first and last moment, each an ISO 8601 date and time
+with its zone (`"2026-11-14T09:00:00+01:00"`, or `Z` for UTC; a time with no zone is refused,
+naming the key, and so is an `end` that is not after `start`). Only autopilot reads them
+([GUIDE.md](GUIDE.md#autopilot)): with a `start` still to come it waits until then before it pulls
+or releases anything, and at the `end` it stops the run as quitting does. A run without autopilot
+ignores both.
 
 `[rules]` is what the event allows. `[policies]` is how far flightdeck goes on its own at each of
 five stages, and it can be stricter than the rules, never looser: `preflight` and `play` refuse a
