@@ -443,21 +443,23 @@ def test_without_route_or_recon_no_facts_run_and_the_light_model_is_never_asked(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     lanes = FakeModelServer(responder=looping)
     with lanes, LightModel({"family": "audio-signal"}) as light:
-        async def play(where: str, engines):
+        async def play(where: str, engines) -> bool:
+            """Two turns of a lane; whether a first look was started for it (before its first call, if ever)."""
             lab = Lab(tmp_path / where, lanes, {"hiss": handout(tmp_path / where, "hiss", {"hiss.wav": "RIFF"})}, lights=engines)
             try:
                 lab.release(challenge("hiss", "for", "Hiss."))
                 lane = lab.lane("hiss")
                 await until(lambda: lane.turns >= 2 and (engines is None or "route" not in engines.engines
                                                          or lab.looked("hiss")), "two turns")
+                return lab.driver.looks.started("hiss")
             finally:
                 await lab.finish()
 
         async def main():
-            await play("none", None)
-            await play("judge", lights(light.engine(), ("judge",)))
+            assert not await play("none", None)
+            assert not await play("judge", lights(light.engine(), ("judge",)))
             assert not marker.exists() and light.asked() == []
-            await play("route", lights(light.engine(), ("route",)))
+            assert await play("route", lights(light.engine(), ("route",)))
             assert marker.exists() and light.asked() == ["family"]
 
         asyncio.run(main())

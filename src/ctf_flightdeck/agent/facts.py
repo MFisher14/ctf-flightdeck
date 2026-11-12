@@ -375,6 +375,11 @@ class FirstLooks:
                 look, job=jobs, failure="late")
         return text
 
+    def started(self, challenge_id: str) -> bool:
+        """Whether a first look of the challenge was ever started (a lane on it had a light
+        engine for route or recon)."""
+        return challenge_id in self._looks
+
     def done(self, challenge_id: str) -> bool:
         """Whether the challenge's first look has started and every job of it is back."""
         look = self._looks.get(challenge_id)

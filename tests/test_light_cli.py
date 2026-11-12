@@ -115,7 +115,7 @@ def test_a_cli_lane_without_recon_gets_the_opening_it_got_before(tmp_path, engin
                 lab.release()
                 await until(lambda: lab.fake.messages(), "the CLI's first message")
                 assert lab.fake.messages()[0] == TODAY
-                assert not lab.driver.looks.done("note") and light.asked() == []  # no first look was started
+                assert not lab.driver.looks.started("note") and light.asked() == []  # no first look was started
             finally:
                 await lab.finish()
                 if given is not None:
