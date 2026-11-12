@@ -650,6 +650,7 @@ def prepare_run(options: RunOptions) -> Run:
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
     lights = _lights(config, plan.notes)
+    driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
@@ -1168,20 +1169,23 @@ def _l1_manifests(pack: Path | None) -> list | None:
     return manifests
 
 
-# The [light] jobs a run of this build gives the light model. The config takes route, recon and
-# flagcheck too (config.RUN_JOBS); until a run wires one in, it is named in a note and its engine
-# is not made.
-RUN_LIGHT_JOBS = ("judge",)
+# The [light] jobs a run of this build gives the light model: the hint judge (detect/judge.py), and
+# route and recon at a lane's start (agent/facts.py). The config takes flagcheck too
+# (config.RUN_JOBS); until a run wires one in, it is named in a note and its engine is not made.
+RUN_LIGHT_JOBS = ("judge", "route", "recon")
 
 
 def _lights(config: Config, notes: list[str]):
     """The run's light engines (light.build_all), one per distinct spec, for the [light] jobs a
     run wires in; a spec that cannot be made leaves its jobs off, said in `notes`, as is a job
-    [light] jobs lists that this build does not run yet."""
+    [light] jobs lists that this build does not run yet. What route and recon do is said there
+    too."""
+    from .agent.facts import first_look_notes
     from .light import build_all
 
     lights = build_all(config, jobs=RUN_LIGHT_JOBS)
     notes.extend(lights.notes)
+    notes.extend(first_look_notes(lights))
     waiting = [job for job in config.light_jobs if job not in RUN_LIGHT_JOBS]
     if waiting:
         listed = waiting[0] if len(waiting) == 1 else ", ".join(waiting[:-1]) + " and " + waiting[-1]
