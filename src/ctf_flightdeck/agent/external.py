@@ -1027,7 +1027,7 @@ class _Run:
         self.unknown: set[str] = set()
         self.pending_tokens = 0
         self.pending_cached = 0
-        self.turn_tokens = [0, 0, 0]  # prompt, completion, cached since the turn began (a priced cost)
+        self.turn_tokens = [0, 0, 0, 0]  # prompt, completion, cached, written to the cache since the turn began (a priced cost)
         self.cost_due = False  # steps were reported (dollars_later) in a turn whose cost the CLI has not reported yet
         self.tasks: set[asyncio.Future[Any]] = set()
         self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
@@ -1582,16 +1582,16 @@ class _Run:
         with nothing counted and no price (codex): it stays open (the lane's dollars_later),
         which every report reads as a cost that never came."""
         tokens, cached = self.take_tokens()
-        prompt, completion, cached_in_turn = self.turn_tokens
+        prompt, completion, cached_in_turn, written = self.turn_tokens
         if not (self.cost_due or tokens or prompt or completion) or self.thread_goes_on(proc):
             return
         dollars = None
         if self.kind == "claude":  # codex never counted this turn's tokens: there is nothing to price
-            dollars = call_cost(None, self.driver.prices.get(proc.model), prompt, completion, cached_in_turn)
+            dollars = call_cost(None, self.driver.prices.get(proc.model), prompt, completion, cached_in_turn, written)
         lane = self.lane()
         if dollars is None and not tokens and self.stopped and lane is not None and not lane.finished:
             return  # the run is closing (shutdown stops lanes without ending them)
-        self.turn_tokens = [0, 0, 0]
+        self.turn_tokens = [0, 0, 0, 0]
         self.cost_due = False
         self.report(TurnReport(turn=False, tokens=tokens, cached_tokens=cached, dollars=dollars,
                                why=LEFTOVER.format(kind=self.kind), model=proc.model, turn_end=True,
@@ -1636,12 +1636,15 @@ class _Run:
 
     # ------------------------------------------------------------------ steps, text, tokens
 
-    def add_tokens(self, prompt: int, completion: int, cached: int) -> None:
+    def add_tokens(self, prompt: int, completion: int, cached: int, written: int = 0) -> None:
+        """Tokens a model call of the CLI used: `cached` (read from the cache) and `written` (to
+        it) are part of `prompt`, and each has its own rate when the config prices the turn."""
         self.pending_tokens += prompt + completion
         self.pending_cached += cached
         self.turn_tokens[0] += prompt
         self.turn_tokens[1] += completion
         self.turn_tokens[2] += cached
+        self.turn_tokens[3] += written
 
     def take_tokens(self) -> tuple[int, int]:
         tokens, cached = self.pending_tokens, self.pending_cached
@@ -1926,7 +1929,7 @@ class _ClaudeRun(_Run):
         new = (max(old[0], now[0]), max(old[1], now[1]), max(old[2], now[2]), max(old[3], now[3]))
         self.usage_seen[key] = new
         fresh, created, read, out = (n - o for n, o in zip(new, old))
-        self.add_tokens(prompt=fresh + created + read, completion=out, cached=read)
+        self.add_tokens(prompt=fresh + created + read, completion=out, cached=read, written=created)
 
     def action(self, name: str, args: dict) -> str:
         if name == "Bash":
@@ -1964,12 +1967,12 @@ class _ClaudeRun(_Run):
         total = _dollars(event.get("total_cost_usd"))
         if total is None:
             price = self.driver.prices.get(proc.model)
-            prompt, completion, cached = self.turn_tokens
-            dollars = call_cost(None, price, prompt, completion, cached)
+            prompt, completion, cached, written = self.turn_tokens
+            dollars = call_cost(None, price, prompt, completion, cached, written)
         else:  # total_cost_usd counts from the start of this process
             dollars = total - proc.cost if total >= proc.cost else total
             proc.cost = total
-        self.turn_tokens = [0, 0, 0]
+        self.turn_tokens = [0, 0, 0, 0]
         self.cost_due = False
         tokens, cached = self.take_tokens()
         if not current:  # an old model's last turn, or one being stopped: only its cost counts, as that model's

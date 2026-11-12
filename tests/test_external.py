@@ -1320,6 +1320,30 @@ def test_a_cli_lane_says_its_caps_are_checked_only_when_a_turn_ends(tmp_path):
         run(main())
 
 
+@pytest.mark.parametrize("ending", ["exits mid-turn", "no total_cost_usd"])
+def test_a_claude_turn_priced_from_the_config_counts_its_cache_writes_at_the_cache_write_rate(tmp_path, ending):
+    # claude says the tokens written to the cache (cache_creation_input_tokens) apart from those read
+    wrote = {"tools": [bash("echo one")], "usage": [1000, 100, 3000, 2000]}  # 1000 plain, 100 out, 3000 read, 2000 written
+    if ending == "exits mid-turn":  # no result: settle() prices the turn
+        script = {"turns": [{"calls": [wrote, {"text": "hmm", "usage": [500, 50, 0, 0]}, {"exit": 1}]}]}
+    else:  # a result without its cost: result() prices it
+        script = {"turns": [{"calls": [wrote, {"text": "t{note}", "usage": [500, 50, 0, 0]}], "cost": None}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, prices={"small": Price(input=2.0, output=10.0, cached_input=0.20, cache_write=2.5)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished or (lane.pending is not None and any(s.startswith("says:") for s in steps(lane))),
+                        "the turn's end")
+            assert lane.tokens == 1000 + 3000 + 2000 + 100 + 550 and not lane.dollars_later
+            assert lane.dollars == pytest.approx((1500 * 2.0 + 3000 * 0.20 + 2000 * 2.5 + 150 * 10.0) / 1e6)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_without_a_reported_cost_the_config_price_applies_else_the_cost_is_unknown(tmp_path):
     script = {"turns": [{"calls": [{"tools": [bash("true")], "usage": [1000, 100, 0, 0]}, {"text": "t{note}"}], "cost": None}]}
 
