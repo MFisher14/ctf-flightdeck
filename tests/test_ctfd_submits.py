@@ -151,8 +151,8 @@ def test_under_auto_a_ctfd_challenge_with_limited_tries_waits_for_the_player(tmp
         async def body(run):
             lane = run.deck.lanes["L01"]
             await wait_for(lambda: lane.pending is not None, "the flag")
-            assert (lane.pending.kind, lane.pending.detail) == (
-                PendingKind.SUBMIT, "submit test{hello} (3 tries in all, how many are left is not known yet)")
+            assert (lane.pending.kind, lane.pending.detail) == (  # CTFd's details say none of the 3 is used yet
+                PendingKind.SUBMIT, "submit test{hello} (3 tries left of 3)")
             await asyncio.sleep(0.2)
             assert fake.to(ATTEMPT) == []  # nothing went to CTFd without the player
             assert run.deck.apply(iv.Approve(lane.id)).ok
@@ -225,6 +225,60 @@ def test_out_of_tries_on_ctfd_the_challenge_closes_for_the_run_and_its_unchecked
                                "stopped": ["L01"], "before_run": False}
 
 
+def test_a_new_run_knows_the_tries_already_used_on_ctfd(tmp_path, token):
+    board = [FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=2),
+             FakeChallenge(2, "Baby RSA", category="Crypto", value=100, flag="test{rsa}", max_attempts=2)]
+    with FakeCTFd(board) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        fake.teammate_fails(1)  # one of Warmup's two tries is gone before the run
+        fake.teammate_fails(2, 2)  # and both of Baby RSA's
+        run = auto_run(tmp_path, fake, server, max_lanes=2)
+        notes = run.notes()
+
+        async def body(run):
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            assert lane.pending.detail == "submit test{hello} (1 try left of 2: the last one)"
+
+        play(run, body)
+    assert [lane.challenge_id for lane in run.deck.lanes.values()] == ["warmup"]  # no lane on Baby RSA
+    rsa = run.deck.challenges["baby-rsa"]
+    assert (rsa.status, rsa.tries_left, rsa.note) == (ChallengeStatus.BLOCKED, 0, "out of tries: the platform checks no more flags for it")
+    assert run.deck.challenges["warmup"].tries_left == 1 and fake.to(ATTEMPT) == []
+    assert "Warmup: CTFd allows 2 tries at its flag and 1 is left; each of its flags waits for you" in notes
+    assert ("Baby RSA: CTFd says no tries are left at its flag (2 allowed), so it is out of tries: no lane works it in "
+            "this run and flightdeck sends no flag for it") in notes
+    (warning,) = [e for e in log(run) if e["kind"] == "warning"]
+    assert warning["challenge"] == "baby-rsa" and warning["text"] == (
+        "Baby RSA is out of tries: the platform checks no more flags for it, so flightdeck closed it for this run "
+        "(the platform said so before the run started)"
+    )
+    assert (warning["data"]["before_run"], warning["data"]["stopped"]) == (True, [])
+
+
+def test_each_wave_reads_the_tries_a_teammate_spent_and_none_left_stops_the_lane_before_its_flag_goes(tmp_path, token):
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=2)
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{maybe}")]})) as server:
+        run = auto_run(tmp_path, fake, server, wave_seconds=0.05)
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            assert lane.pending.detail == "submit test{maybe} (2 tries left of 2)"
+            fake.teammate_fails(1)
+            await wait_for(lambda: lane.pending.detail == "submit test{maybe} (1 try left of 2: the last one)",
+                           "the count a wave reads")
+            fake.teammate_fails(1)
+            await wait_for(lambda: lane.finished, "the wave that finds no try left")
+
+        play(run, body)
+    lane = run.deck.lanes["L01"]
+    assert fake.to(ATTEMPT) == []  # the flag that waited for the player never went
+    assert run.deck.challenges["warmup"].status is ChallengeStatus.BLOCKED
+    assert (lane.state, lane.result) == (LaneState.STOPPED, "Warmup is out of tries: the platform checks no more flags for it")
+    assert "not submitted: test{maybe} (Warmup is out of tries: the platform checks no more flags for it)" in [
+        a.text for a in lane.actions]
+
+
 def test_a_pull_carries_the_tries_ctfd_allows_onto_the_board(tmp_path):
     board = [FakeChallenge(1, "Capped", max_attempts=3), FakeChallenge(2, "Free"), FakeChallenge(3, "Unsaid", max_attempts=None)]
     with FakeCTFd(board) as fake:
@@ -234,6 +288,63 @@ def test_a_pull_carries_the_tries_ctfd_allows_onto_the_board(tmp_path):
     spec = json.loads((tmp_path / "board" / "capped" / "challenge.json").read_text())
     assert spec["max_attempts"] == 3
     assert "max_attempts" not in json.loads((tmp_path / "board" / "free" / "challenge.json").read_text())
+
+
+def test_a_pull_reads_the_tries_left_from_the_attempts_ctfds_details_say_are_used(tmp_path):
+    board = [FakeChallenge(1, "One Used", max_attempts=2), FakeChallenge(2, "All Used", max_attempts=2),
+             FakeChallenge(3, "Solved", max_attempts=3), FakeChallenge(4, "Any Number")]
+    with FakeCTFd(board) as fake:
+        fake.teammate_fails(1)
+        fake.teammate_fails(2, 2)
+        fake.teammate_fails(3)
+        fake.solved = {3}  # solved: its tries no longer matter
+        fake.teammate_fails(4, 5)  # no limit, so no count
+        result = pulled(fake, tmp_path / "board")
+    assert result.tries == {"one-used": 1, "all-used": 0} and result.tries_unread == ()
+
+
+def test_a_pull_from_a_ctfd_whose_details_do_not_say_the_attempts_counts_none(tmp_path):
+    with FakeCTFd([FakeChallenge(1, "Capped", max_attempts=2)]) as fake:
+        older = {"id": 1, "name": "Capped", "value": 100, "category": "misc", "description": "", "max_attempts": 2,
+                 "files": [], "type": "standard", "solves": 0}  # an older CTFd: no "attempts"
+        fake.script("GET", "/api/v1/challenges/1", Reply(200, {"success": True, "data": older}))
+        result = pulled(fake, tmp_path / "board")
+    assert [b.challenge.id for b in result.board.challenges] == ["capped"]
+    assert result.tries == {} and result.tries_unread == ()  # its approvals say how many are left is not known yet
+
+
+@pytest.mark.parametrize("value", ["1", -1, 1.5, True])
+def test_a_count_of_tries_used_that_is_not_one_is_said_and_the_challenge_is_pulled_all_the_same(tmp_path, value):
+    with FakeCTFd([FakeChallenge(1, "Capped", max_attempts=2)]) as fake:
+        odd = {"id": 1, "name": "Capped", "value": 100, "category": "misc", "description": "", "max_attempts": 2,
+               "attempts": value, "files": [], "type": "standard", "solves": 0}
+        fake.script("GET", "/api/v1/challenges/1", Reply(200, {"success": True, "data": odd}))
+        result = pulled(fake, tmp_path / "board")
+    assert [b.challenge.id for b in result.board.challenges] == ["capped"] and result.tries == {}
+    assert result.tries_unread == ('challenge 1 ("Capped"): CTFd\'s count of its tries used (attempts) is not a whole number, '
+                                   "so how many are left is not known",)
+
+
+def test_a_pull_again_asks_ctfd_for_the_tries_used_of_each_limited_challenge_pulled_before_and_no_other(tmp_path):
+    board = [FakeChallenge(1, "Capped", max_attempts=3), FakeChallenge(2, "Free")]
+    with FakeCTFd(board) as fake:
+        assert pulled(fake, tmp_path / "board").tries == {"capped": 3}
+        fake.teammate_fails(1, 2)  # a teammate spends two tries on CTFd, outside flightdeck
+        again = pulled(fake, tmp_path / "board")
+        asked = [r.route for r in fake.requests if r.route.startswith("/api/v1/challenges/") and r.method == "GET"]
+    assert again.added == () and again.tries == {"capped": 1}
+    assert asked == ["/api/v1/challenges/1", "/api/v1/challenges/2", "/api/v1/challenges/1"]  # Free is not asked again
+
+
+def test_a_pull_again_that_cannot_read_a_challenges_tries_says_why_and_goes_on(tmp_path):
+    with FakeCTFd([FakeChallenge(1, "Capped", max_attempts=3), FakeChallenge(2, "Free")]) as fake:
+        pulled(fake, tmp_path / "board")
+        fake.script("GET", "/api/v1/challenges/1", *[Reply(500, {"message": "the database is broken"})] * 3)
+        again = pulled(fake, tmp_path / "board")
+    assert again.tries == {} and len(again.board.challenges) == 2
+    (line,) = again.tries_unread
+    assert line.startswith('challenge 1 ("Capped"): could not read how many of its tries are used: ')
+    assert "HTTP 500" in line and "the database is broken" in line
 
 
 @pytest.mark.parametrize("value", ["3", -1, 2.5, True])

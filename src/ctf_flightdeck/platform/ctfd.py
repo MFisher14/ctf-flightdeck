@@ -29,6 +29,10 @@ CTFd's API (v1), as this module uses it:
   Try again in N seconds", 429), which passes. The tries left are read from every answer
   that says them ("You have N tries remaining"), but for a 0 that a wait gives back ("...
   Try again in N seconds": CTFd's timeout behaviour).
+- GET /api/v1/challenges/<id> gives a challenge's max_attempts and, in CTFd 3.8, the
+  attempts the account (the team, in teams mode) has used on it: a pull reads them as the
+  tries left (Pull.tries). CTFd counts a partial answer there too, though not against the
+  limit, so on a challenge that takes partial answers the count errs low.
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
   403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead. In teams
   mode /api/v1/users/me/solves says which of the team's solves are this user's own.
@@ -80,7 +84,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -188,6 +192,11 @@ class Pull:
     added: tuple[str, ...]  # board ids new in this pull (a wave), in CTFd id order
     problems: tuple[str, ...]  # one line per challenge left out this time, and why; safe to print
     hidden: int  # challenges CTFd lists as locked ("???") until a prerequisite is solved
+    # board id -> the tries left at its flag as CTFd's details said in this pull (the tries it
+    # allows less the attempts the account has used), for each challenge CTFd counts them on,
+    # one pulled before included, whose details said the attempts and that is not solved yet
+    tries: Mapping[str, int] = field(default_factory=dict)
+    tries_unread: tuple[str, ...] = ()  # one line per such challenge whose tries used could not be read, and why
 
 
 class PullIncomplete(CTFdError):
@@ -920,7 +929,11 @@ async def pull(
     are kept as they are and only challenges new on CTFd are added (a wave). A challenge that
     cannot be pulled (its details or a file keep failing, a value CTFd got wrong) is left out
     with the reason in Pull.problems, and tried again by the next pull. `progress` gets one
-    line per challenge added, safe to print.
+    line per challenge added, safe to print. Pull.tries has the tries left at the flag of
+    each challenge CTFd counts them on, as its details say now: a challenge pulled before
+    whose challenge.json says CTFd counts them has its details asked again for that (a
+    teammate may have spent some); one whose count cannot be read is a line in
+    Pull.tries_unread, and the pull goes on.
 
     board.json gets `event` (the board's name) and `flag_format`. None keeps what a board
     pulled before has in its board.json; on a new board, None names it after the folder and
@@ -969,6 +982,9 @@ async def pull(
         problems: list[str] = []
         hidden = 0
         fatal: CTFdError | None = None
+        tries: dict[str, int] = {}  # board id -> the tries left, as the details CTFd gave in this pull say
+        unread: list[str] = []
+        kept: list[tuple[int, str, dict]] = []  # (CTFd id, board id, listing entry) of the challenges pulled before
         stage_root = root / f"{_STAGING}{secrets.token_hex(6)}"
         try:
             for number, item in _numbered(listing, problems):
@@ -980,6 +996,7 @@ async def pull(
                     there = root / slug
                     if there.is_symlink() or there.exists():
                         if not there.is_symlink() and there.is_dir() and (there / CHALLENGE_FILE).is_file():
+                            kept.append((number, slug, item))
                             continue  # pulled before: kept as it is
                         problems.append(
                             f"{_label(number, item.get('name'))}: {_show(there)} is in the way (not a challenge folder); "
@@ -988,7 +1005,7 @@ async def pull(
                         continue
                 reason = None
                 try:
-                    slug, line = await _pull_one(client, root, stage_root, number, item, slug, taken, ids)
+                    slug, line, spec = await _pull_one(client, root, stage_root, number, item, slug, taken, ids)
                 except CTFdError as exc:
                     if exc.status == 401:
                         fatal = exc  # the token was refused: so it would be for every challenge left
@@ -1010,6 +1027,10 @@ async def pull(
                     continue
                 by_ctfd[number] = slug
                 added.append(slug)
+                if spec.tries_left is not None:
+                    tries[slug] = spec.tries_left
+                if spec.tries_problem:
+                    unread.append(f"{_label(number, item.get('name'))}: {spec.tries_problem}")
                 if progress is not None:
                     progress(line)
         finally:
@@ -1019,8 +1040,54 @@ async def pull(
         if not any(_is_challenge_folder(entry) for entry in root.iterdir()):
             raise CTFdError(_empty_board(client.base_url, len(listing), hidden, problems))
         board = load_board(root)
+    await _tries_again(client, board, kept, tries, unread)
     mapped = {item.challenge.id: ids[item.challenge.id] for item in board.challenges if item.challenge.id in ids}
-    return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden)
+    counted = {cid: left for cid, left in tries.items() if cid in mapped}
+    return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden, tries=counted,
+                tries_unread=tuple(unread))
+
+
+async def _tries_again(
+    client: CTFdClient, board: Board, kept: list[tuple[int, str, dict]], tries: dict[str, int], unread: list[str]
+) -> None:
+    """The tries left now at the flag of each challenge pulled before whose challenge.json says
+    CTFd counts them, from its details asked again (the listing does not say them): a teammate
+    may have spent some since. Into `tries`; a challenge whose details cannot be read now is
+    a line in `unread`, and keeps what the run knows of it."""
+    limits = {item.challenge.id: item.challenge.max_attempts for item in board.challenges}
+    for number, slug, item in kept:
+        if not limits.get(slug):
+            continue
+        try:
+            detail = await client.challenge(number)
+        except CTFdError as exc:
+            unread.append(f"{_label(number, item.get('name'))}: could not read how many of its tries are used: {exc}")
+            continue
+        if detail.get("id") != number:
+            unread.append(f"{_label(number, item.get('name'))}: CTFd answered with the details of another challenge")
+            continue
+        most = detail.get("max_attempts")
+        left, problem = _tries_left_at(detail, most if _is_count(most) else limits[slug])
+        if left is not None:
+            tries[slug] = left
+        if problem:
+            unread.append(f"{_label(number, item.get('name'))}: {problem}")
+
+
+def _tries_left_at(detail: Mapping[str, object], most: int) -> tuple[int | None, str]:
+    """The tries left at a challenge's flag from CTFd's details, which CTFd 3.8 gives as the
+    attempts the account (the team, in teams mode) has used: `most`, the tries it allows,
+    less those, never below 0. None when it allows any number, says nothing of the attempts
+    (an older CTFd), or the account has solved it (no try matters then); None and why when
+    its count is not one."""
+    if not most or detail.get("solved_by_me") is True:
+        return None, ""
+    used = detail.get("attempts")
+    if used is None:
+        return None, ""
+    if not _is_count(used):
+        return None, "CTFd's count of its tries used (attempts) is not a whole number, so how many are left is not known"
+    return max(0, most - used), ""
 
 
 def _settings(root: Path, known: Mapping[str, int], event: str | None, flag_format: str | None) -> tuple[str, str | None]:
@@ -1167,6 +1234,8 @@ class _Spec:
     urls: tuple[str, ...]
     files: tuple[str, ...]  # the file URLs, as CTFd sent them
     max_attempts: int = 0  # the tries CTFd allows at the flag; 0: any number
+    tries_left: int | None = None  # the tries left now, as the details say (_tries_left_at); None: not counted or not said
+    tries_problem: str = ""  # why the tries left are not known, when CTFd's count of those used is not one
 
 
 async def _pull_one(
@@ -1178,11 +1247,12 @@ async def _pull_one(
     slug: str | None,
     taken: set[str],
     ids: dict[str, int],
-) -> tuple[str, str]:
-    """Pull one challenge into root/<slug>: (slug, a progress line). The folder is built in
-    the staging folder and checked with load_board() first, so it appears complete or not
-    at all. The mapping is written before the folder moves into place: a crash in between
-    leaves a mapped slug with no folder, which the next pull fills in."""
+) -> tuple[str, str, _Spec]:
+    """Pull one challenge into root/<slug>: (slug, a progress line, what its details said).
+    The folder is built in the staging folder and checked with load_board() first, so it
+    appears complete or not at all. The mapping is written before the folder moves into
+    place: a crash in between leaves a mapped slug with no folder, which the next pull fills
+    in."""
     spec = _spec(number, item, await client.challenge(number), client._site.base)
     if slug is None:
         slug = _new_slug(spec.name, number, taken)
@@ -1230,7 +1300,7 @@ async def _pull_one(
         f"added {slug}: {_quote(spec.name)} ({untrusted(spec.category, one_line=True) or 'no category'}, "
         f"{spec.points} points, {count} file{'' if count == 1 else 's'}{cut})"
     )
-    return slug, line
+    return slug, line, spec
 
 
 def _numbered(listing: list[dict], problems: list[str]) -> Iterator[tuple[int, dict]]:
@@ -1312,7 +1382,8 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
             f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
             "then checks no more."
         )
-    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries)
+    left, problem = _tries_left_at(detail, tries)
+    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries, left, problem)
 
 
 def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:

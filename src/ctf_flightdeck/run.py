@@ -37,8 +37,12 @@ an error.
 A CTFd run's flags go to CTFd from one worker task (_Submits, the deck's submitter), one at a
 time and off the console's loop: the lane carries on, and CTFd's answer reaches the deck when
 it is in (Deck.platform_verdict). A challenge whose tries CTFd counts (its max_attempts, or a
-wrong flag's "N tries remaining") gets no flag without the player, under auto too. A flag
-still on its way when the run ends is named on the way out, as not known to have been
+wrong flag's "N tries remaining") gets no flag without the player, under auto too. The tries
+left are what CTFd last said: in its answer to a flag, or in the challenge's details at each
+pull (the attempts used, by you or a teammate: Pull.tries, Deck.platform_tries), so a new run
+starts with them. With none left the challenge is out of tries for the run: no lane starts on
+it, those on it stop, and no flag of it goes to CTFd or to the player to submit by hand. A
+flag still on its way when the run ends is named on the way out, as not known to have been
 submitted.
 
 The team channel (team.py): mirror() writes our claims, solves and live-box holds to the
@@ -154,6 +158,7 @@ class CTFdLink:
     answered: set[str] = field(default_factory=set)  # CTFd answered a flag for it "already solved": solved, whatever a lane waits for
     reported: set[str] = field(default_factory=set)  # pull problems told to the player
     problems: dict[str, str] = field(default_factory=dict)  # what failed (a poll, or using its answer) -> the failure shown last
+    tries: dict[str, int] = field(default_factory=dict)  # board id -> the tries left at its flag, as CTFd's details last said (a pull's)
 
     def solved_board_ids(self) -> list[str]:
         """The board ids of the challenges CTFd lists as solved."""
@@ -264,6 +269,7 @@ class Run:
             self._watcher.apply(state)
         if self.ctfd is not None:
             self._apply_solves(before_run=True)  # what CTFd listed before the run started
+            self._apply_tries(before_run=True)  # and the tries its details said were left: none, and it is out of tries
             if self.ctfd.waves:
                 self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
             self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
@@ -339,9 +345,11 @@ class Run:
     # ------------------------------------------------------------------ the event's background work
 
     def _held(self) -> set[str]:
-        """Board ids not to queue: solved on CTFd, or in the team folder solved (by anyone)
-        or claimed by a teammate."""
+        """Board ids not to queue: solved on CTFd, out of tries on CTFd (as its details said at
+        the last pull), or in the team folder solved (by anyone) or claimed by a teammate."""
         held = set(self.ctfd.solved_board_ids()) if self.ctfd is not None else set()
+        if self.ctfd is not None:
+            held |= {cid for cid, left in self.ctfd.tries.items() if left == 0}
         state = self._watcher.latest if self._watcher is not None else None
         if state is not None and self.team is not None:
             held |= set(state.solves)
@@ -364,6 +372,16 @@ class Run:
             if (self._confirming(cid) and cid not in link.answered) or self.deck.submitting(cid):
                 continue
             self.deck.platform_solved(cid, link.who(cid), before_run=before_run)
+
+    def _apply_tries(self, *, before_run: bool = False) -> None:
+        """Give the deck the tries CTFd's details said were left at the last pull
+        (Deck.platform_tries): from then on each approval of the challenge's flags says the
+        count, and at 0 it is out of tries for the run. `before_run`: the first pull's."""
+        link = self.ctfd
+        assert link is not None
+        for cid, left in sorted(link.tries.items()):
+            if cid in self.deck.challenges:
+                self.deck.platform_tries(cid, left, before_run=before_run)
 
     def _confirming(self, cid: str) -> bool:
         """Whether a lane on it waits for the player to say if a flag they submitted by hand
@@ -398,6 +416,8 @@ class Run:
                 link.problems.pop("release", None)
 
     def _wave(self, result: Pull) -> None:
+        """What a pull of the waves brought: the new challenges, released, and the tries CTFd's
+        details say are left now (a teammate may have spent some), new challenges or not."""
         link = self.ctfd
         assert link is not None
         link.ids.update(result.ids)
@@ -407,13 +427,18 @@ class Run:
             if line not in link.reported:
                 link.reported.add(line)
                 self.deck.warn(f"CTFd: not pulled: {line}; the next wave tries it again", data={"source": "ctfd"})
+        for line in result.tries_unread:
+            if line not in link.reported:
+                link.reported.add(line)
+                self.deck.warn(f"CTFd: {line}; the next wave asks again", data={"source": "ctfd"})
+        link.tries.update(result.tries)
         new = [b for b in result.board.challenges if b.challenge.id not in self.deck.challenges]
-        if not new:
-            return
-        self._add(new)
-        link.wave += 1
-        self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), f"Wave {link.wave}")
-        self._apply_solves()
+        if new:
+            self._add(new)
+            link.wave += 1
+            self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), f"Wave {link.wave}")
+            self._apply_solves()
+        self._apply_tries()
 
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""
@@ -597,7 +622,8 @@ def prepare_run(options: RunOptions) -> Run:
             dict(first.ids),
             waves=plan.policies.pull is Policy.AUTO,
             solved=set(),
-            reported=set(first.problems),
+            reported=set(first.problems) | set(first.tries_unread),
+            tries=dict(first.tries),
         )
         if first.solves is not None:
             link.read(first.solves)
@@ -1043,6 +1069,8 @@ class _FirstPull:
     ids: Mapping[str, int]  # board id -> CTFd id
     solves: Solves | None  # what CTFd lists as solved for the account, and whose; None if it could not be read
     problems: tuple[str, ...]  # the challenges left out, and why
+    tries: Mapping[str, int] = field(default_factory=dict)  # board id -> the tries left at its flag (Pull.tries)
+    tries_unread: tuple[str, ...] = ()  # the challenges whose tries used could not be read, and why
 
 
 def _ctfd_token(profile: EventProfile) -> str:
@@ -1113,12 +1141,34 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
         )
     if unread is not None:
         plan.notes.append(f"could not read your solves from CTFd: {unread}; lanes may start on challenges already solved")
+    plan.notes += _tries_notes(result)
     if not waves:
         plan.notes.append(
             'pull is "confirm" in the event profile: flightdeck pulled the board once, after you said yes, and pulls no '
             "later waves; start play again to pull new challenges"
         )
-    return _FirstPull(result.board, folder, ids, solves, tuple(result.problems))
+    return _FirstPull(result.board, folder, ids, solves, tuple(result.problems), dict(result.tries), tuple(result.tries_unread))
+
+
+def _tries_notes(result: Pull) -> list[str]:
+    """What the player should know of the tries CTFd counts, as the first pull read them: how
+    many are left at each such flag, which challenges are out of tries (no lane works them in
+    this run), and which counts could not be read (their flags wait for you all the same)."""
+    notes: list[str] = []
+    names = {b.challenge.id: b.challenge for b in result.board.challenges}
+    for cid, left in sorted(result.tries.items()):
+        ch = names.get(cid)
+        if ch is None:
+            continue
+        name, most = _show(ch.name), ch.max_attempts
+        if left == 0:
+            notes.append(f"{name}: CTFd says no tries are left at its flag ({most} allowed), so it is out of tries: no lane "
+                         "works it in this run and flightdeck sends no flag for it")
+        else:
+            notes.append(f"{name}: CTFd allows {most} tries at its flag and {left} {'is' if left == 1 else 'are'} left; "
+                         "each of its flags waits for you")
+    notes += [f"CTFd: {line}; its flags wait for you all the same" for line in result.tries_unread]
+    return notes
 
 
 async def _pull_and_solves(
