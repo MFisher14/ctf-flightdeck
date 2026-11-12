@@ -90,6 +90,13 @@ A challenge's card: what it is, its files and lanes; `c` claims it for you in te
 
 On a 120x36 terminal: less goes in the header, and the key line keeps what you need most.
 
+At 64 columns or fewer (a phone over SSH) the console has a compact layout. `flightdeck mock
+--screenshot DIR` saves it at 56x40, numbered like the rest (14 and 15 in the default scenario):
+`14-compact-56x40.svg` (the fleet: each lane's row has what needs you, its state and its cost;
+the line under the list has the reason and one answer a row) and `15-compact-focus-56x40.svg` (a
+lane: what it needs above its transcript, no files pane). No picture of it here yet: make your
+own with that command.
+
 ![The help screen listing every key and command](screenshots/help.png)
 
 `?` shows every key and command.

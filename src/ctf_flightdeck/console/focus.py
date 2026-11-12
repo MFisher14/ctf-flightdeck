@@ -7,6 +7,9 @@ the lane reads on its next turn; `/` runs a command on this lane. Typing goes to
 box from any pane. `esc` goes back to the fleet; a strip on top lists other lanes that
 need you (`ctrl+n` goes through them in attention order). An unsent message stays with
 the lane it was written for.
+
+At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: one pane, with
+what the lane needs from you above its transcript, and no files pane.
 """
 
 from __future__ import annotations
@@ -35,12 +38,14 @@ KEY_LABELS = (
     ("esc", "fleet"), ("enter", "send"), ("/", "commands"), ("1-9 0", "answer"), ("ctrl+n", "next lane needing you"),
     ("tab", "files"), ("pgup pgdn", "scroll"),
 )
+# The compact layout's key line: back, the answers, the commands, the next lane that needs you.
+COMPACT_KEY_LABELS = (("esc", "fleet"), ("1-9 0", "answer"), ("/", "cmd"), ("ctrl+n", "next"))
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 
 
-def _key_line() -> Text:
+def _key_line(labels: tuple[tuple[str, str], ...] = KEY_LABELS) -> Text:
     out = Text(no_wrap=True, overflow="ellipsis")
-    for i, (key, label) in enumerate(KEY_LABELS):
+    for i, (key, label) in enumerate(labels):
         out.append("  " if i else "")
         out.append(key, f"bold {theme.ACCENT}")
         out.append(f" {label}", theme.MUTED)
@@ -48,17 +53,23 @@ def _key_line() -> Text:
 
 
 KEYS = _key_line()
+COMPACT_KEYS = _key_line(COMPACT_KEY_LABELS)
 
 
 def key_room(columns: int) -> tuple[list[str], int]:
     """The keys the key line does not show whole on a terminal `columns` wide (it is cut at its
-    edge, the last keys first), and the columns it needs to show every key."""
+    edge, the last keys first), and the columns it needs to show every key. The compact
+    layout's line leaves out every key it does not have, then any of its own that the edge cuts."""
+    labels, left = KEY_LABELS, []
+    if views.compact(columns):
+        kept = {key for key, _ in COMPACT_KEY_LABELS}
+        labels, left = COMPACT_KEY_LABELS, [f"{key} {label}" for key, label in KEY_LABELS if key not in kept]
     width, end, cut = columns - KEY_MARGIN, 0, []
-    for i, (key, label) in enumerate(KEY_LABELS):
+    for i, (key, label) in enumerate(labels):
         end += (2 if i else 0) + cell_len(f"{key} {label}")
         if end > width:
             cut.append(f"{key} {label}")
-    return cut, KEYS.cell_len + KEY_MARGIN
+    return left + cut, KEYS.cell_len + KEY_MARGIN
 
 
 class FocusScreen(Screen, inherit_bindings=False):
@@ -75,6 +86,9 @@ class FocusScreen(Screen, inherit_bindings=False):
     FocusScreen #diff-scroll { height: 1fr; }
     FocusScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
     FocusScreen #keys { height: 1; margin: 0 1; }
+    FocusScreen.-compact #main { margin-top: 0; width: 100%; }
+    FocusScreen.-compact #now { max-height: 60%; }
+    FocusScreen.-compact #files-pane { display: none; }
     """
     BINDINGS = [
         Binding("escape", "back", "fleet"),
@@ -93,6 +107,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         self._file_paths: list[str] | None = None  # None: the list must be rebuilt
         self._drafts: dict[str, str] = {}  # unsent chat text, by lane
         self.diff_path: str | None = None
+        self.compact = False  # the compact layout (views.compact of the terminal's width)
         self._ready = False  # widgets composed; set at the start of on_mount
 
     @property
@@ -123,7 +138,30 @@ class FocusScreen(Screen, inherit_bindings=False):
         self.query_one("#chat", CommandBar).field.quick = self._quick
         # pgup/pgdn scroll the transcript from anywhere, so tab goes chat -> files -> diff
         self.query_one("#transcript", RichLog).can_focus = False
+        self._fit_layout(self.size.width)
         self.show_lane(self.lane_id, self._first_file)
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self._ready and self._fit_layout(event.size.width):
+            self.call_after_refresh(self.refresh_view)
+
+    def _fit_layout(self, width: int) -> bool:
+        """Switch to or from the compact layout for a terminal `width` wide: one pane, what the
+        lane needs above its transcript, a shorter key line. True if it changed."""
+        compact = views.compact(width)
+        if compact == self.compact:
+            return False
+        self.compact = compact
+        self.set_class(compact, "-compact")
+        pane, now, log = self.query_one("#talk-pane"), self.query_one("#now"), self.query_one("#transcript")
+        if compact:
+            pane.move_child(now, before=log)
+            if self.focused is not None and self.focused.id in ("files", "diff-scroll"):
+                self.query_one("#chat", CommandBar).field.focus()  # the files pane is gone
+        else:
+            pane.move_child(now, after=log)
+        self.query_one("#keys", Static).update(COMPACT_KEYS if compact else KEYS)
+        return True
 
     def show_lane(self, lane_id: str, file: str | None = None) -> None:
         """Switch this view to another lane (or reopen it).
@@ -149,7 +187,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         self.diff_path = file or None  # "" means: the newest file
         self.query_one("#transcript", RichLog).clear()
         self.refresh_view()
-        if file is not None:
+        if file is not None and not self.compact:
             self.query_one("#files", OptionList).focus()
         else:
             self.query_one("#chat", CommandBar).field.focus()
@@ -162,11 +200,12 @@ class FocusScreen(Screen, inherit_bindings=False):
         lane, deck = self.lane, self.fd.deck
         with self.app.batch_update():
             header = self.query_one("#header", Static)
-            header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2), clock_keys=False))
+            width = max(40, header.size.width or self.size.width - 2)
+            header.update(self.fd.header_text(width, clock_keys=False, compact=self.compact))
             self.query_one("#status", Static).update(self.fd.status_text())
-            self.query_one("#others", Static).update(views.others_strip(deck, lane))
+            self.query_one("#others", Static).update(views.others_strip(deck, lane, compact=self.compact))
             pane = self.query_one("#talk-pane")
-            pane.border_title = views.focus_title(deck, lane)
+            pane.border_title = views.focus_title(deck, lane, compact=self.compact)
             pane.border_subtitle = views.plan_line(deck, lane)
             log = self.query_one("#transcript", RichLog)
             at_end = log.scroll_y >= log.max_scroll_y  # a player reading back stays where they are
@@ -174,7 +213,7 @@ class FocusScreen(Screen, inherit_bindings=False):
                 for line in views.transcript_lines(deck, lane, action):
                     log.write(line, scroll_end=at_end)
             self._written = len(lane.actions)
-            self.query_one("#now", Static).update(views.now_card(deck, lane))
+            self.query_one("#now", Static).update(views.now_card(deck, lane, compact=self.compact))
             self._render_files()
             chat = self.query_one("#chat", CommandBar)
             chat.set_suggestions(self.fd.command_suggestions(lane.id, with_lane=False))

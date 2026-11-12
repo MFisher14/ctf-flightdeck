@@ -640,20 +640,20 @@ def test_doctor_says_what_a_100x30_terminal_leaves_out_of_the_console_and_from_w
     keys. doctor says what, and the size from which nothing is left out (4 lanes in docker)."""
     assert terminal_check(tmp_path, monkeypatch, (100, 30)) == [
         "warn terminal: 100x30: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
-        "tab focus, s sort, t take over, e escalate and f fork on the fleet view's key line (? lists every key); "
-        "pgup pgdn scroll on the focus view's key line",
-        "     fix: from 147x18 it leaves none of this out, with an event name of up to 40 characters (a column more for "
-        "each character more); team mode's key line, with c claim, needs 156 columns; the console still works smaller",
+        "tab focus, s sort, t take over, e escalate, f fork, x dismiss and r redirect on the fleet view's key line "
+        "(? lists every key); pgup pgdn scroll on the focus view's key line",
+        "     fix: from 173x18 it leaves none of this out, with an event name of up to 66 characters (a column more for "
+        "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
     ]
-    assert terminal_check(tmp_path, monkeypatch, (146, 18))[0] == (
-        "warn terminal: 146x18: on a busy run the console leaves out tab focus on the fleet view's key line (? lists every key)"
+    assert terminal_check(tmp_path, monkeypatch, (172, 18))[0] == (
+        "warn terminal: 172x18: on a busy run the console leaves out tab focus on the fleet view's key line (? lists every key)"
     )
-    assert terminal_check(tmp_path, monkeypatch, (147, 18)) == [
-        "ok   terminal: 147x18: on a busy run the console shows the whole header, the board, every key and a row for "
-        "each of your 4 lanes; team mode's key line, with c claim, needs 156 columns"
+    assert terminal_check(tmp_path, monkeypatch, (173, 18)) == [
+        "ok   terminal: 173x18: on a busy run the console shows the whole header, the board, every key and a row for "
+        "each of your 4 lanes; team mode's key line, with c claim, needs 182 columns"
     ]
-    assert terminal_check(tmp_path, monkeypatch, (156, 46)) == [
-        "ok   terminal: 156x46: on a busy run the console shows the whole header, the board, every key and a row for "
+    assert terminal_check(tmp_path, monkeypatch, (182, 46)) == [
+        "ok   terminal: 182x46: on a busy run the console shows the whole header, the board, every key and a row for "
         "each of your 4 lanes"
     ]
 
@@ -663,13 +663,13 @@ def test_doctor_measures_the_terminal_with_your_lanes_and_runtime(tmp_path, monk
     assert terminal_check(tmp_path, monkeypatch, (90, 19), six_on_host) == [
         "warn terminal: 90x19: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
         "the board (it shows from 100 columns); 1 of the lane list's 7 rows (6 lanes and the finished row): it has room "
-        "for 6 and scrolls to the rest; tab focus, s sort, t take over, e escalate, f fork and r redirect on the fleet "
-        "view's key line (? lists every key); pgup pgdn scroll on the focus view's key line",
-        "     fix: from 147x20 it leaves none of this out, with an event name of up to 42 characters (a column more for "
-        "each character more); team mode's key line, with c claim, needs 156 columns; the console still works smaller",
+        "for 6 and scrolls to the rest; tab focus, s sort, t take over, e escalate, f fork, x dismiss, r redirect and h hint "
+        "on the fleet view's key line (? lists every key); pgup pgdn scroll on the focus view's key line",
+        "     fix: from 173x20 it leaves none of this out, with an event name of up to 68 characters (a column more for "
+        "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
     ]  # host is two cells narrower than docker in the header: room for two more characters of the event's name
     one = Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host", max_lanes=1)
-    assert terminal_check(tmp_path, monkeypatch, (160, 15), one)[0].endswith("every key and a row for your lane")
+    assert terminal_check(tmp_path, monkeypatch, (182, 15), one)[0].endswith("every key and a row for your lane")
     assert "1 of the lane list's 2 rows (1 lane and the finished row)" in terminal_check(tmp_path, monkeypatch, (160, 14), one)[0]
 
 
@@ -679,7 +679,7 @@ def test_the_terminal_check_never_fails_doctor_and_is_left_out_away_from_a_termi
     monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size((60, 12)))
     (check,) = [c for c in doctor(cfg, environ={}) if c.name == "terminal"]
     assert not check.ok and not check.essential  # a warning: the console still works smaller
-    monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size((147, 18)))
+    monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size((173, 18)))
     check = {c.name: c for c in doctor(tmp_path / "none.toml", environ={})}["terminal"]
     assert check.ok and "each of your 4 lanes" in check.detail  # no config yet: measured with the defaults (4 lanes, docker)
 
@@ -688,3 +688,18 @@ def test_the_terminal_check_never_fails_doctor_and_is_left_out_away_from_a_termi
 
     monkeypatch.setattr(os, "get_terminal_size", no_terminal)
     assert "terminal" not in {c.name for c in doctor(cfg, environ={})}
+
+
+def test_doctor_says_a_phones_width_gets_the_compact_layout_and_what_that_leaves_out(tmp_path, monkeypatch):
+    assert terminal_check(tmp_path, monkeypatch, (56, 40)) == [
+        "warn terminal: 56x40: the compact layout, for 64 columns or fewer (what needs you and why, the one-key answers, "
+        "each lane's state and cost); on a busy run the console leaves out tokens, the event clock, the event's name, the "
+        "runtime (docker or host) and the flightdeck name in the header; the board (it shows from 100 columns); each "
+        "lane's model, turns, idle time and last action in the lane list (the lane's own view has them) and the files pane "
+        "of that view (the full layout starts at 65 columns); tab focus, s sort, t take over, e escalate, f fork, "
+        "x dismiss, r redirect, h hint, p pause, A approve all, k kill and o open on the fleet view's key line (? lists "
+        "every key); enter send, tab files and pgup pgdn scroll on the focus view's key line",
+        "     fix: from 173x18 it leaves none of this out, with an event name of up to 66 characters (a column more for "
+        "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
+    ]
+    assert "the compact layout" not in terminal_check(tmp_path, monkeypatch, (65, 40))[0]

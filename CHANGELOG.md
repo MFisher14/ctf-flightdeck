@@ -31,6 +31,21 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ### The console and lanes
 
+- `A` in the fleet (or `/approve all`) approves every flag that waits for a plain yes in one
+  action: a prompt lists each flag by lane and challenge, and `y` approves them, each as `a`
+  would. The flags of one challenge still go to the platform one at a time, a flag known wrong
+  is never sent, and a challenge whose tries the platform counts, a hand submit, more budget
+  and the live box are left for their own answer, each named (#30).
+- `x` in the fleet (or `/dismiss`) takes down a lane's alert about its course without touching
+  the lane. The alert stays quiet for the lane's next 3 turns, as an answered one does, and the
+  run log has it as your action; `flightdeck report` counts it as dismissed, not answered (#30).
+- The fleet's key line has `A approve all` and `x dismiss`, so it shows every key from 173
+  columns (182 in team mode); narrower, it leaves out focus and sort first, as before (#30).
+- At 64 columns or fewer the console has a compact layout, for a phone over SSH: the header
+  keeps what needs you and the run's dollars, each lane's row has its alert, state and cost,
+  the line under the list wraps the reason and puts one answer on a row, and a lane opens with
+  what it needs above its transcript (no files pane). `flightdeck doctor` says when your
+  terminal gets it, and `flightdeck mock --screenshot` saves it at 56x40 (#28).
 - The help screen (`?`) explains the `sending` chip, `queue held` in the header, and the `+`
   and `…` after a lane's dollars, and its board legend says which `…` is which (#17).
 - Codex lanes: a take-over that lands during a file edit or a tool step opens its shell only

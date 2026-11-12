@@ -88,13 +88,12 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
-- **Phone control.** Today: run flightdeck in tmux and attach over SSH (needs a compact layout for
-  50–60 columns). Option: serve the same console in a browser (textual-serve); touches D4 and must be
-  locked down. Best: push a notification when a lane needs you, with approve and decline from the
+- **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
+  layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
+  touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the
   phone; needs its own sign-in and permission design.
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
   in terminals that draw them; plain Unicode stays the default.
-- Batch approve (several waiting flags at once), dismissing an alert without intervening.
 - **Installs beyond PyPI.** Built, and first used by the release after 0.2.0: the release
   workflow builds a `.deb` for amd64 and arm64 that brings its own Python (Debian 12 has 3.11),
   installs each in a clean Debian 12 container and attaches them to the GitHub release, and it

@@ -1,4 +1,4 @@
-"""Modal screens: fork, kill and quit prompts, the take-over placeholder, a challenge card and
+"""Modal screens: fork, kill, approve-all and quit prompts, the take-over placeholder, a challenge card and
 help."""
 
 from __future__ import annotations
@@ -156,6 +156,41 @@ class QuitPrompt(ModalScreen[bool]):
         self.dismiss(yes)
 
 
+class ApprovePrompt(ModalScreen[bool]):
+    """Approve several waiting flags at once: y approves the flags listed; n, esc, or enter on
+    Cancel change nothing. Nothing is sent before the answer."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="ApprovePrompt") + "ApprovePrompt #approve-list { height: auto; max-height: 1fr; }"
+    BINDINGS = [
+        Binding("y", "choose(True)", "approve"),
+        Binding("n", "choose(False)", "cancel"),
+        Binding("escape", "choose(False)", "cancel"),
+    ]
+
+    def __init__(self, summary: Text) -> None:
+        super().__init__()
+        self.approve_summary = summary
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Approve these flags?", "bold"))
+            with VerticalScroll(id="approve-list"):
+                yield Static(self.approve_summary)
+            with Horizontal():
+                yield Button("Cancel (esc)", id="cancel")
+                yield Button("Approve (y)", id="approve", variant="success")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        self.action_choose(event.button.id == "approve")
+
+    def action_choose(self, yes: bool) -> None:
+        self.dismiss(yes)
+
+
 class TakeOverScreen(ModalScreen[None]):
     """M0 placeholder for taking over a lane's shell."""
 
@@ -296,6 +331,13 @@ KEY_HELP = (
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
     ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
 )
+# Approving several flags and dismissing an alert (kept apart from KEY_HELP's rows).
+BATCH_KEY_HELP = (
+    ("A", "Approve all: every flag that waits for a plain yes, after a prompt that lists them (y approves). Left out, "
+          "with the reason: a challenge whose tries the platform counts, a hand submit, more budget, the live box"),
+    ("x", "Dismiss the lane's most urgent alert about its course (effort, off-hint, wrong way, loop, stall): you judge "
+          "it wrong. The lane is not touched; the alert stays quiet as an answered one does"),
+)
 MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
@@ -350,7 +392,7 @@ class HelpScreen(ModalScreen[None]):
         keys = Table.grid(padding=(0, 2))
         keys.add_column(style="bold", no_wrap=True)
         keys.add_column()
-        for key, text in KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
+        for key, text in KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
             keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
         commands = Table.grid(padding=(0, 2))
         commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
