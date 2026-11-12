@@ -266,7 +266,8 @@ invented.
 [Vision](docs/VISION.md) · [Decisions](docs/DECISIONS.md) · [Roadmap](docs/ROADMAP.md) ·
 [Console spec](docs/CONSOLE-SPEC.md) · [Architecture](docs/ARCHITECTURE.md) ·
 [Model APIs](docs/MODEL-APIS.md) · [Models](docs/MODELS.md) ·
-[Screenshots](docs/SCREENSHOTS.md) · [Changelog](CHANGELOG.md)
+[Screenshots](docs/SCREENSHOTS.md) · [Changelog](CHANGELOG.md) ·
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 Development: `uv run pytest`. `ctfdeck` is an alias for `flightdeck`.
 
