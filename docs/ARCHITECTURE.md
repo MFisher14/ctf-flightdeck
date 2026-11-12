@@ -537,6 +537,9 @@ kind. The lane goes on while its flag is checked.
 | Event log | `eventlog.py` | Append-only `events.jsonl` per run, with credential values taken out. [More](#event-log). |
 | Transcripts | `transcript.py` | Each lane's whole log, `lanes/<lane>.jsonl`, written when the lane ends: every step with every tool call of its turn. [More](#transcripts). |
 | Leftovers | `leftovers.py` | The backstop for what outlives a killed flightdeck. [More](#leftovers). |
+| Headless | `headless.py` | `play --headless`: the run with no console, by the same deck rules. [More](#headless). |
+| Status file | `status.py` | `status.json` in every run folder: the run as it stands, written atomically. [More](#status-file). |
+| Notifications | `notify.py` | The opt-in webhook: a small JSON message when a flag is accepted, a lane needs the player or no more lanes start. [More](#notifications). |
 
 ### Run
 
@@ -548,8 +551,8 @@ server up stops the run); removes what runs whose flightdeck was killed left run
 (`leftovers.sweep`), records this run's (labels on its containers, `processes.json` in its folder),
 and notes the flag format it checks and where that came from; wires the deck, driver, event log and
 console; releases the board on the console's loop. Every run hands its driver every secret it
-holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the CTFd
-token), so a keys file that cannot be read stops a run before it starts.
+holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the
+notification webhook's URL, the CTFd token), so a keys file that cannot be read stops a run before it starts.
 
 ### Event log
 
@@ -602,6 +605,67 @@ same start time is in it and works under the run's folder. Its result says what 
 clean sweep would remove, and what it leaves alone, with why. Start times and working folders come
 from /proc on Linux and the kernel (sysctl, proc_pidinfo) on macOS; elsewhere nothing is removed,
 and the sweep says why.
+
+### Headless
+
+Where: `headless.py`, `cli.py`.
+
+`cli._fly(run, between)` flies a run whatever plays it: it awaits `between` on its own loop, then
+shuts the run down and prints the exit lines. The console is one `between`; `Headless(run,
+say=...).fly` is the other. It releases the board (`Run.release`), then waits for SIGTERM, SIGHUP
+or SIGINT (`loop.add_signal_handler`; a signal ignored at the start stays ignored, so nohup works;
+the handlers stay until the loop closes, so a second signal does not cut the shutdown short) or
+for nothing to be left to do, asked once a second and true twice in a row (`nothing_left`): no
+open lane, an empty queue that is not held, no flag on its way to the platform, and nothing that
+can bring more work (CTFd waves, a team folder, or the caller's `more_to_come`, for an autopilot).
+`stopped_by` is the signal, which `play` turns into exit status 128 + its number, as for the
+console. Nothing in it answers the deck: an approval waits as at the console, `RunOptions.confirm`
+is None (a pull policy of `confirm` stops the run before it starts, with the reason), and the exit
+lines name each flag left waiting.
+
+### Status file
+
+Where: `status.py`.
+
+`StatusFile` is a deck listener and a timer. `prepare_run` attaches it right after the event log
+(so every run has one, with the console too), `Run.release` starts its timer on the run's loop and
+`Run.close` writes it a last time with `closed` true. It writes after an event (at once, or once
+half a second has passed since the last write, so a burst is two writes) and every two seconds.
+Each write is the whole document to a new file in the run folder (`O_EXCL`, `O_NOFOLLOW`, mode
+600), flushed and renamed over `status.json` (`write_atomically`): a reader never sees a part of
+one, and a `status.json` that is a symbolic link is replaced, not followed. The document is format
+1 and is listed field by field in the module's docstring and in
+[the guide](GUIDE.md#the-status-file): the lanes with their approvals and alerts, what needs the
+player in the attention sort's order (`Deck.needing`), the queue and its hold, `Deck.totals`, the
+solves. Text from challenges and lanes is written as ASCII JSON strings and cut; every string has
+each held secret as `[NAME]` and lane text has credential values taken out, while the flags that
+wait stay. A write that fails is a deck warning, once while the failure lasts, and one of the
+run's exit lines; it never stops the run.
+
+### Notifications
+
+Where: `notify.py`, `config.py` (`[notify]`, `webhook_url`).
+
+`[notify] webhook_env` names the variable that holds the webhook's URL (D18: the environment, then
+`keys.env`; never the config, and a URL pasted there is refused without being shown).
+`prepare_run` reads it before anything starts, so a variable that is named and not set, or that
+holds no `http://` or `https://` URL, stops the run with the reason; the URL joins the run's held
+secrets (`_held_secrets`), so it shows as `[NAME]` wherever a lane's text would hold it.
+
+`Notifier` is a deck listener (`attach`) and one sending task on the run's loop (`start`, from
+`Run.release`; `aclose`, last in the run's shutdown, gives the queue six seconds to drain). The
+listener turns an event into a message and puts it on a bounded queue (32; one more is dropped,
+said once) without waiting: `submit` with `correct` true from the platform or the answers file is
+`flag`; a `pending`, or an `alert` that wants an answer and is not the flag alert, is `needs-you`
+(one per lane and need a minute); a `warning` whose data holds `"autopilot": "disengaged"` (with
+its `reason`) or `"held": true` is `disengaged`. `[notify] on` chooses among the three. The
+message is format 1, nine fields, listed in the module's docstring and in
+[the guide](GUIDE.md#notifications); it never holds a flag: the text for a flag is written by
+`notify.py`, and any other text has held secrets as `[NAME]`, credential values taken out, what
+matches the run's flag format as `[flag]` and control characters made visible. The task POSTs
+with httpx, five seconds for each message, no redirects, no proxy from the environment, no second
+try; a failure is one deck warning while the same failure lasts, described by the HTTP status or
+the exception's type alone (an exception's words can quote the URL).
 
 ## 9. After a run
 
@@ -670,7 +734,9 @@ timeout and max_tokens (no `fast`, no `effort`), the model ladder, prices (for a
 an `[agents]` ladder under the CLI's own name: codex reports no cost), lane defaults, the run
 folder, and an optional `[light]` light model (engine, model, base URL, key variable, timeout,
 price; the decider's confidence threshold; the openai engine's `thinking`, which `light_thinking()`
-makes false for a server on this machine when unset and true for any other).
+makes false for a server on this machine when unset and true for any other), and an optional
+`[notify]` webhook (the variable that holds its URL, and which kinds are sent:
+[Notifications](#notifications)).
 
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).

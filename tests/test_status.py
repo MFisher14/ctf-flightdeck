@@ -17,7 +17,7 @@ import pytest
 from ctf_flightdeck import __version__
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Alert, AlertKind, EventKind, Pending, PendingKind
+from ctf_flightdeck.core.model import Alert, AlertKind, EventKind, LaneState, Pending, PendingKind
 from ctf_flightdeck.status import FORMAT, MAX_NAME, MAX_TEXT, NAME, StatusFile, write_atomically
 
 from test_deck import good_flag, lane_on, make_deck
@@ -55,6 +55,26 @@ def test_the_file_is_there_once_attached_and_says_what_the_deck_holds(tmp_path):
     assert doc["queue"] == {"length": 1, "held": False, "held_reason": None}
     assert doc["totals"] == {"tokens": 1200, "dollars": 0.25, "unpriced": False}
     assert doc["challenges"] == {"total": 3, "solved": 0}
+
+
+def test_the_guide_lists_every_field_of_the_file_and_no_other(tmp_path):
+    guide = (Path(__file__).resolve().parent.parent / "docs" / "GUIDE.md").read_text(encoding="utf-8")
+    section = guide[guide.index("\n### The status file\n"):guide.index("\n### Notifications\n")]
+    rows = {line.split("|")[1].strip().strip("`"): line.split("|", 2)[2] for line in section.splitlines() if line.startswith("| `")}
+    deck, _, _ = make_deck(n=2, max_lanes=1)
+    status_for(tmp_path, deck)
+    deck.report("L01", TurnReport(action="solve.py", flag=good_flag("c0")))
+    assert deck.apply(iv.Approve("L01")).ok  # a solve, and the next lane starts
+    deck.report("L02", TurnReport(action="solve.py", flag=good_flag("c1")))
+    doc = read(tmp_path)
+    assert list(rows) == list(doc)
+    nested = {"lanes": doc["lanes"][1], "needs_you": doc["needs_you"][0], "queue": doc["queue"], "totals": doc["totals"],
+              "challenges": doc["challenges"], "solves": doc["solves"][0]}
+    for field, value in nested.items():
+        named = set(rows[field].split("`")[1::2])
+        assert set(value) <= named, (field, set(value) - named)
+    assert set(doc["lanes"][1]["pending"]) <= set(rows["lanes"].split("`")[1::2])
+    assert {state.value for state in LaneState} <= set(rows["lanes"].split("`")[1::2])
 
 
 def test_an_approval_and_an_alert_show_on_their_lanes_and_in_what_needs_you_most_urgent_first(tmp_path):

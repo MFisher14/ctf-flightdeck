@@ -312,13 +312,153 @@ are left. To let auto submit spend those tries without you, the last one include
 `submit_limited = "auto"` under `[lanes]`; a wrong flag can then use up the tries for your whole
 team. flightdeck says so when a run starts.
 
-Every run writes a run folder with an append-only `events.jsonl` and each lane's transcript; a
+Every run writes a run folder with an append-only `events.jsonl`, each lane's transcript and a
+`status.json` that says how the run stands ([the status file](#the-status-file)); a
 board with answers (like the practice set) ends with a scorecard, and any other run with one line
 that says what it spent: its tokens and dollars ("at least" when some spend had no price). If
 flightdeck itself is killed
 (kill -9, a power loss), what its lanes started can keep running: the next `play` or `practice`
 removes it and says what it removed, `flightdeck doctor` lists it and `flightdeck doctor --clean`
 removes it.
+
+## Headless runs and notifications
+
+```sh
+flightdeck play ~/ctf/some-board --headless                       # no console
+tmux new -d -s deck 'flightdeck play ~/ctf/some-board --headless'  # in tmux, detached
+nohup flightdeck play ~/ctf/some-board --headless > run.out 2>&1 &   # or under nohup
+```
+
+`play --headless` (and `practice --headless`) plays the board with no console. The rules are the
+same as at the console, and nobody is watching, so **nothing is approved or declined**: a flag
+under `submit = "confirm"`, a budget or a live box waits, exactly as it would on your screen. Under
+`--submit auto` the flags auto submit would send go out as usual and the rest wait. When the run
+ends, its exit lines name every flag that was left waiting.
+
+A headless run prints where its status file is, then flies until:
+
+- you stop it: `kill PID` (SIGTERM), Ctrl-C, or closing its terminal (SIGHUP; under `nohup` a
+  hang-up is ignored, as nohup means it to be). Every lane stops and every workspace closes, as
+  when you quit the console, and the exit status is 128 plus the signal's number (143 for
+  SIGTERM);
+- or nothing is left to do: no lane is open, nothing is queued, the queue is not held and no flag
+  is on its way to the platform. It then exits with status 0. A lane that waits for your approval
+  is open, so a waiting flag keeps the run up until you stop it. A run that can still get work (an
+  event whose board is pulled again for new challenges, a team folder) never ends on its own.
+
+An event whose pull policy is `confirm` cannot be played headless: there is nobody to ask before
+the pull. Set `pull = "auto"` in the profile.
+
+### The status file
+
+Every run, with the console or headless, keeps `RUN_DIR/status.json` up to date: after the run's
+events (within half a second), every two seconds besides, and a last time when the run has shut
+down. Each write replaces the whole file at once, so a reader never sees half of one. It is how a
+script, a tmux pane or a phone over SSH sees the run:
+
+```sh
+cd ~/.local/share/ctf-flightdeck/runs/20261112-101500     # the run folder play printed
+jq '.needs_you' status.json                                # who waits for you, most urgent first
+jq -r '.lanes[] | "\(.id) \(.state) \(.challenge.name) $\(.dollars)"' status.json
+jq '.queue, .totals' status.json
+watch -n 2 "jq -c '{needs: [.needs_you[].lane], solved: .challenges.solved, spent: .totals.dollars}' status.json"
+until jq -e '.closed' status.json > /dev/null; do sleep 5; done   # wait for the run to end
+```
+
+| Field | What it holds |
+|---|---|
+| `format` | 1. A change that breaks a reader raises it. |
+| `flightdeck` | The version that wrote the file. |
+| `written` | When this write was made (UTC, ISO 8601). |
+| `run` | The run folder's name. |
+| `event` | The event's name. |
+| `runtime_seconds` | Seconds since the run started. |
+| `closed` | `true` in the last write, once the run has shut down. |
+| `lanes` | Each lane, by number: `id`, `challenge` (`id`, `name`), `state` (`run`, `wait`, `paused`, `takeover`, `solved`, `killed`, `stopped`, `gave up`), `model`, `turns`, `tokens`, `dollars` (what is known), `unpriced` (some of its spend had no price), `needs_you`, `pending` (null, or the approval it waits for: `kind`, `detail`, `flag`), `waiting` (further approvals behind that one), `alerts` (each `kind` and `reason`), `result` (one line, once it ended). |
+| `needs_you` | The lanes that need you, most urgent first, in the console's attention order: `lane`, `challenge` (its name), `pending` (the approval's kind, or null), `alerts` (the kinds that want an answer). |
+| `queue` | `length`, `held`, and `held_reason` (null unless held). |
+| `totals` | `tokens`, `dollars` and `unpriced` over all lanes: the console's header. |
+| `challenges` | `total` and `solved`. |
+| `solves` | Each solved challenge: `id`, `name`, `points`, `by` (a lane, `me` or a teammate) and `teammate`. |
+
+Like the run log, the file names the flags lanes found, so it is readable by you alone (mode 600).
+It holds no key or token: each one flightdeck holds shows as its name in brackets, and anything
+shaped like a credential as `[redacted]`. Its text comes from challenges and lanes: long fields
+are cut, and a script should treat every string in it as data.
+
+Approving or declining from the status file, or from a phone, is not built: answer at the console
+(stop the headless run and play the board again, or play with the console in tmux from the start).
+
+### Notifications
+
+flightdeck can tell a webhook when a run has news. It is off unless you turn it on:
+
+```toml
+[notify]
+webhook_env = "FLIGHTDECK_WEBHOOK"            # the variable that holds the URL, never the URL itself
+on = ["flag", "needs-you", "disengaged"]     # the default: all three
+```
+
+```sh
+echo 'FLIGHTDECK_WEBHOOK=https://example.com/hooks/your-token' >> ~/.config/ctf-flightdeck/keys.env
+```
+
+A webhook's URL usually holds a token, so flightdeck treats it as a key: it comes from your
+environment or `keys.env`, the config only names its variable, and it is never logged, shown in
+an error or written to the run folder. A variable that is named and not set stops the run before
+it starts, and so does one that holds anything but an `http://` or `https://` URL.
+
+Each message is one HTTP `POST` with `Content-Type: application/json` and exactly this body:
+
+```json
+{
+  "flightdeck": "0.2.0",
+  "format": 1,
+  "run": "20261112-101500",
+  "event": "Some CTF",
+  "kind": "needs-you",
+  "lane": "L03",
+  "challenge": {"id": "crab-walk", "name": "Crab Walk"},
+  "need": "submit",
+  "text": "L03 has a flag for Crab Walk: it waits for your approval"
+}
+```
+
+| Field | What it holds |
+|---|---|
+| `flightdeck` | The version that sent it. |
+| `format` | 1. |
+| `run` | The run folder's name. |
+| `event` | The event's name, at most 80 characters. |
+| `kind` | `flag`, `needs-you` or `disengaged`. |
+| `lane` | The lane's id; null for `disengaged`. |
+| `challenge` | Its `id` and `name` (each at most 80 characters); null for `disengaged`. |
+| `need` | For `needs-you`: the approval's kind (`submit`, `confirm`, `budget`, `live box`) or the alert's (`budget`, `loop`, `stall`, `effort`, `hint`, `direction`). Null otherwise. |
+| `text` | One line for a person to read, at most 200 characters. |
+
+Nothing else is sent: no header beyond `User-Agent: ctf-flightdeck/VERSION`, no key, no path, no
+file, no description, no transcript.
+
+| `kind` | Sent when |
+|---|---|
+| `flag` | A flag was accepted, by the platform or by the board's answers file. Not when you confirm a hand submit yourself. |
+| `needs-you` | A lane waits for a new approval, or raised a new alert that wants an answer. At most one a minute for each lane and need, so a noisy lane cannot flood you. |
+| `disengaged` | No more lanes start: the queue is held (the model API refuses the key, or keeps failing), or autopilot disengaged. `text` says why. |
+
+**A flag's value is never sent.** A webhook is someone else's server, often a channel other people
+read, and a flag there before it is submitted is a flag given away. The message says that a flag
+waits or was accepted, and for which challenge; the flag itself is on your machine, in the console
+and in `status.json`. `text` is cleaned before it leaves: keys flightdeck holds show as their
+names, anything shaped like a credential as `[redacted]`, anything that matches the event's flag
+format as `[flag]`, and control characters are made visible. The challenge's name and the event's
+name come from the board, cut to length, with control characters made visible too.
+
+Sending never slows a run down. Messages go out one at a time from a background task, each with
+five seconds to be answered; at most 32 wait, and one more is dropped (said once). A message that
+fails is not sent again, a redirect is not followed, your proxy settings are not used, and a
+failure shows as one warning in the console and the run log while the same failure lasts, without
+the URL. The receiver is yours to choose: any service that takes a JSON `POST`, or a few lines of
+your own that pass `text` on to your phone.
 
 ## Your solvers first (L1)
 

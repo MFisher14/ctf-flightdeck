@@ -212,6 +212,41 @@ def test_text_from_a_lane_has_no_secret_no_credential_no_flag_no_control_charact
     assert len(second["text"]) == MAX_TEXT and second["text"].endswith("...")
 
 
+def guide_section(title: str) -> str:
+    """The text of docs/GUIDE.md under the heading `title`, up to the next heading of its level or above."""
+    text = (Path(__file__).resolve().parent.parent / "docs" / "GUIDE.md").read_text(encoding="utf-8")
+    level, _, _ = title.partition(" ")
+    start = text.index(f"\n{title}\n") + len(title) + 2
+    ends = [text.find(f"\n{'#' * n} ", start) for n in range(1, len(level) + 1)]
+    return text[start:min([end for end in ends if end != -1], default=len(text))]
+
+
+def test_the_guide_documents_exactly_the_message_that_is_sent():
+    """The issue's last clause: the docs say exactly what is sent. The guide's example body
+    and its table of fields have the fields of a real message, in its order, and no other;
+    every kind and every need the code can send is named."""
+    section = guide_section("### Notifications")
+    example = json.loads(section[section.index("```json") + len("```json"):section.index("```", section.index("```json") + 7)])
+    deck, _, _ = make_deck(n=1, max_lanes=1)
+    notifier = Notifier("http://127.0.0.1:9/x", deck, run=RUN)
+    deck.report("L01", TurnReport(action="solve.py", flag=good_flag("c0")))
+    message = notifier.message(next(e for e in deck.events if e.kind is EventKind.PENDING))
+    assert list(example) == list(message)
+    assert {key: type(value) for key, value in example.items()} == {key: type(value) for key, value in message.items()}
+    assert (example["format"], example["kind"], example["need"]) == (message["format"], message["kind"], message["need"])
+    assert example["text"] == message["text"].replace("L01", "L03").replace("Chall 0", "Crab Walk")
+    rows = [line.split("|")[1].strip().strip("`") for line in section.splitlines() if line.startswith("| `")]
+    assert rows[:len(message)] == list(message)  # the table of fields
+    assert rows[len(message):] == ["kind", *NOTIFY_KINDS]  # the table of kinds, under its heading row
+    needs = {kind.value for kind in PendingKind} | {kind.value for kind in AlertKind} - {"flag", "teammate"}
+    need_row = next(line for line in section.splitlines() if line.startswith("| `need` |"))
+    assert {word for word in needs} == set(need_row.split("`")[3::2]) - {"needs-you"}, need_row
+    for claim in ("**A flag's value is never sent.**", "User-Agent: ctf-flightdeck/VERSION", "at most 200 characters",
+                  "five seconds", "at most 32 wait", "a redirect is not followed", "At most one a minute for each lane and need"):
+        assert claim in section, claim
+    assert (MAX_TEXT, notifier.timeout, notifier.rate_seconds, notifier._queue.maxsize) == (200, 5.0, 60.0, 32)
+
+
 # ---------------------------------------------------------------------- a noisy lane, a bad receiver
 
 

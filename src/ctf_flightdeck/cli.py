@@ -222,7 +222,7 @@ def play(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
-    headless: Annotated[bool, typer.Option("--headless", help=HEADLESS_HELP)] = False,
+    headless: Annotated[bool, typer.Option("--headless", metavar="", help=HEADLESS_HELP)] = False,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
@@ -414,7 +414,7 @@ def practice(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
-    headless: Annotated[bool, typer.Option("--headless", help=HEADLESS_HELP)] = False,
+    headless: Annotated[bool, typer.Option("--headless", metavar="", help=HEADLESS_HELP)] = False,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends tokens like `play`."""
