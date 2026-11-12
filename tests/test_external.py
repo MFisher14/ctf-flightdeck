@@ -1678,6 +1678,40 @@ def test_a_codex_lane_that_gives_up_while_its_flag_is_under_check_starts_no_more
     run(main())
 
 
+def test_a_cli_lane_killed_while_its_flag_is_under_check_says_the_flag_was_not_submitted(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"think": 30.0, "text": "waiting"}]}]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.checking(lane.id), "the flag under check")
+                assert lab.deck.apply(iv.Kill(lane.id)).ok
+                await until(lambda: any(e.kind is EventKind.WARNING and e.data.get("job") == "flagcheck"
+                                        for e in lab.deck.events), "the player told")
+                assert not gate.checking(lane.id)
+                (warning,) = [e for e in lab.deck.events if e.kind is EventKind.WARNING and e.data.get("job") == "flagcheck"]
+                assert warning.text == (f"{lane.id} ended while the light model (openai light/m) checked t{{x}}, so it was "
+                                        "not submitted: submit it by hand if you think it is the flag")
+                release.set()
+                await asyncio.sleep(0.3)
+                assert lab.deck.sent == [] and lane.state is LaneState.KILLED
+            finally:
+                release.set()
+                await lab.finish()
+            assert lab.driver.errors == []
+
+    run(main())
+
+
 def test_a_cli_lanes_flag_still_under_check_when_the_run_ends_is_named_never_submitted(tmp_path):
     script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"think": 30.0, "text": "waiting"}]}]}
     release = threading.Event()
