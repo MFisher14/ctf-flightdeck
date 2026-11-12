@@ -185,6 +185,8 @@ MAX_NEW_FLAGS = 10  # new candidates raised from one step, and held at once; a d
 FLAG_SCAN = 1024 * 1024  # characters of one output scanned for flags
 SCAN_SECONDS = 5.0  # the flag search over one output (off the event loop) stops after this long, with a note
 CLAIM_CHARS = 1024  # a FLAG line longer than this claims nothing
+# The search for flags the challenge itself holds at a lane's start (plant) is bounded by these (and FLAG_SCAN,
+# SCAN_SECONDS): under auto a flag the agent claims is looked for in all of the handout before it goes out (vet).
 HANDOUT_FILE_BYTES = 1024 * 1024  # of a binary or big handout file, searched for flags the challenge itself holds
 HANDOUT_BYTES = 16 * 1024 * 1024  # of all of them
 MAX_PROBLEMS = 20  # unreadable-line notes per process

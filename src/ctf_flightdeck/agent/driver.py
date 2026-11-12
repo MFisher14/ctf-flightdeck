@@ -98,7 +98,9 @@ INSTANCE_POLICIES = ("auto", "confirm", "off")  # pre-flight's instance policy, 
 MAX_IDLE_TURNS = 3  # replies (a CLI lane's turns: agent/external.py) in a row that did nothing before the lane gives up
 MAX_SAID_FLAGS = 3  # candidates taken from one reply's text, at most
 SAID_SCAN = 20_000  # characters of a reply's text searched for flags
-PLANT_SECONDS = 5.0  # the search of the challenge's own text for flags (off the loop) stops after this long, with a note
+# The search of the challenge's own text for flags at a lane's start is bounded by these, and says nothing of what it
+# misses: under auto a flag a lane gives is looked for in all of that text before it goes out (_vet).
+PLANT_SECONDS = 5.0  # that search (off the loop) stops after this long
 PLANT_FILE_BYTES = 1024 * 1024  # of each handout file searched
 PLANT_BYTES = 16 * 1024 * 1024  # of all of them
 EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, and what the player should check
