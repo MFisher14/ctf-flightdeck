@@ -279,6 +279,28 @@ def test_each_wave_reads_the_tries_a_teammate_spent_and_none_left_stops_the_lane
         a.text for a in lane.actions]
 
 
+def test_a_new_run_works_a_challenge_whose_ctfd_count_of_tries_takes_partial_answers(tmp_path, token):
+    # CTFd's limit counts wrong flags only; its details count the partial answers too: 2 of 2 used, yet 1 try is left
+    two_parts = FakeChallenge(1, "Two Parts", category="Misc", value=50, flag="test{both}", partial=("test{half}",),
+                              max_attempts=2)
+    with FakeCTFd([two_parts]) as fake, FakeModelServer(responder=Model({"Two Parts": [submit("test{both}")]})) as server:
+        fake.teammate_partials(1)
+        fake.teammate_fails(1)
+        run = auto_run(tmp_path, fake, server)
+        notes = run.notes()
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            assert lane.pending.detail == "submit test{both} (2 tries in all, how many are left is not known yet)"
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: lane.state is LaneState.SOLVED, "CTFd's answer")
+
+        play(run, body)
+    assert submits(run) == [("test{both}", True, "platform")] and fake.solved == {1}
+    assert not [note for note in notes if "Two Parts" in note] and not [e for e in log(run) if e["kind"] == "warning"]
+
+
 def test_a_pull_carries_the_tries_ctfd_allows_onto_the_board(tmp_path):
     board = [FakeChallenge(1, "Capped", max_attempts=3), FakeChallenge(2, "Free"), FakeChallenge(3, "Unsaid", max_attempts=None)]
     with FakeCTFd(board) as fake:
@@ -301,6 +323,21 @@ def test_a_pull_reads_the_tries_left_from_the_attempts_ctfds_details_say_are_use
         fake.teammate_fails(4, 5)  # no limit, so no count
         result = pulled(fake, tmp_path / "board")
     assert result.tries == {"one-used": 1, "all-used": 0} and result.tries_unread == ()
+
+
+def test_a_pull_reads_no_tries_left_from_a_count_that_can_hold_partial_answers(tmp_path):
+    # CTFd's limit counts wrong flags only; its details count partial answers too, on a challenge whose logic takes them
+    board = [FakeChallenge(1, "Two Parts", max_attempts=2, partial=("test{half}",)),
+             FakeChallenge(2, "Team Flag", max_attempts=2, logic="team"),
+             FakeChallenge(3, "Untouched", max_attempts=2, partial=("test{half}",)),
+             FakeChallenge(4, "Plain", max_attempts=2)]
+    with FakeCTFd(board) as fake:
+        fake.teammate_partials(1)
+        fake.teammate_fails(1)  # 2 of 2 used as the details count them, 1 as the limit does
+        fake.teammate_fails(2, 2)  # wrong flags all, but nothing CTFd tells a player says so
+        fake.teammate_fails(4, 2)
+        result = pulled(fake, tmp_path / "board")
+    assert result.tries == {"untouched": 2, "plain": 0} and result.tries_unread == ()
 
 
 def test_a_pull_from_a_ctfd_whose_details_do_not_say_the_attempts_counts_none(tmp_path):

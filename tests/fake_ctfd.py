@@ -12,8 +12,9 @@ fake behaves as CTFd 3.x does:
   meta.pagination when `page_size` is set (CTFd itself does not page it). A challenge locked
   behind another is listed as CTFd lists it: type "hidden", name "???", value 0;
 - GET /api/v1/challenges/<id>: the details, whose "files" are URLs
-  /files/<dir>/<name>?token=<file token>, as CTFd's are, with max_attempts and the attempts
-  the account has used, which CTFd 3.8.9 counts as every correct, wrong or partial answer;
+  /files/<dir>/<name>?token=<file token>, as CTFd's are, with max_attempts, the attempts
+  the account has used, which CTFd 3.8.9 counts as every correct, wrong or partial answer,
+  and the challenge's logic ("any"; "all" for one that answers some flags "partial");
 - GET /files/<dir>/<name>: the file (the file token or the API token lets it through);
 - POST /api/v1/challenges/attempt: a status in the data whatever the HTTP status: correct,
   incorrect (with the tries left when max_attempts is set), already_solved (for any flag,
@@ -84,6 +85,12 @@ class FakeChallenge:
     type: str = "standard"  # "hidden": locked behind a prerequisite
     max_attempts: int = 0
     file_urls: list[str] | None = None
+    logic: str | None = None  # CTFd 3.8's flag logic; None: "all" when some flags are partial answers, else "any"
+
+    @property
+    def flag_logic(self) -> str:
+        """The logic its details say: a challenge that answers "partial" takes all its flags."""
+        return self.logic if self.logic is not None else ("all" if self.partial else "any")
 
 
 def sample() -> list[FakeChallenge]:
@@ -257,6 +264,12 @@ class FakeCTFd:
             self.fails[challenge_id] = self.fails.get(challenge_id, 0) + count
             self.attempts[challenge_id] = self.attempts.get(challenge_id, 0) + count
 
+    def teammate_partials(self, challenge_id: int, count: int = 1) -> None:
+        """A teammate's partial answers, sent to CTFd outside flightdeck: CTFd's details count
+        them as attempts, and its limit does not."""
+        with self._lock:
+            self.attempts[challenge_id] = self.attempts.get(challenge_id, 0) + count
+
     def script(self, method: str, path: str, *replies: Reply) -> None:
         """The next requests to `method path` (the path without its query) get these replies
         first, in order; after them, the fake answers as CTFd would."""
@@ -375,7 +388,7 @@ class FakeCTFd:
         data = {
             "id": c.id, "name": c.name, "value": c.value, "description": c.description, "attribution": None,
             "connection_info": c.connection_info, "next_id": None, "category": c.category, "state": "visible",
-            "max_attempts": c.max_attempts, "type": c.type,
+            "max_attempts": c.max_attempts, "logic": c.flag_logic, "type": c.type,
             "type_data": {"id": c.type, "name": c.type, "templates": {}, "scripts": {}},
             "solves": c.solves, "solved_by_me": c.id in self.solved, "attempts": self.attempts.get(c.id, 0),
             "files": files, "tags": [], "hints": [], "view": "<div class='challenge'></div>",

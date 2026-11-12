@@ -547,8 +547,30 @@ def test_the_fake_ctfd_answers_out_of_tries_as_the_ctfd_it_stands_for(lockout, a
         details = httpx.get(f"{fake.base_url}/api/v1/challenges/6", headers=headers, timeout=10).json()["data"]
     assert got == answers and 6 not in fake.solved
     assert (details["max_attempts"], details["attempts"]) == (2, 2)  # the two flags it checked; not the ones it refused
+    assert details["logic"] == "any"  # CTFd 3.8's details say it
     with pytest.raises(ValueError, match="lockout must be one of ratelimited, incorrect"):
         FakeCTFd([], lockout="locked")
+
+
+def test_the_fake_ctfds_details_count_a_partial_answer_that_its_limit_does_not():
+    # as CTFd 3.8.9 does: its details count every correct, wrong or partial answer; its lockout, the wrong ones
+    headers = {"Authorization": f"Token {TOKEN}", "Content-Type": "application/json"}
+    with FakeCTFd([FakeChallenge(7, "Two Parts", flag="test{both}", partial=("test{half}",), max_attempts=2)]) as fake:
+        def post(flag):
+            reply = httpx.post(f"{fake.base_url}/api/v1/challenges/attempt", json={"challenge_id": 7, "submission": flag},
+                               headers=headers, timeout=10)
+            return reply.status_code, reply.json()["data"]["status"], reply.json()["data"]["message"]
+
+        def details():
+            data = httpx.get(f"{fake.base_url}/api/v1/challenges/7", headers=headers, timeout=10).json()["data"]
+            return data["logic"], data["max_attempts"], data["attempts"]
+
+        got = [post("test{half}"), post("test{nope}")]
+        counted = details()
+        got.append(post("test{both}"))
+    assert got == [(200, "partial", "Partially correct"), (200, "incorrect", "Incorrect. You have 1 try remaining."),
+                   (200, "correct", "Correct")]
+    assert counted == ("all", 2, 2) and fake.fails == {7: 1}
 
 
 @pytest.mark.parametrize("http, data, expected", [

@@ -36,8 +36,12 @@ CTFd's API (v1), as this module uses it:
   Try again in N seconds": CTFd's timeout behaviour).
 - GET /api/v1/challenges/<id> gives a challenge's max_attempts and, in CTFd 3.8, the
   attempts the account (the team, in teams mode) has used on it: a pull reads them as the
-  tries left (Pull.tries). CTFd counts a partial answer there too, though not against the
-  limit, so on a challenge that takes partial answers the count errs low.
+  tries left (Pull.tries). CTFd counts its correct and partial answers there too, though
+  its limit counts wrong flags only, so the count is the limit's only on a challenge that
+  takes no partial answers (its "logic" is "any"); on one that does ("all", "team") a pull
+  says nothing of the tries left once any is used. Under CTFd's timeout behaviour (an
+  admin's choice CTFd does not show players) the count is of the last few minutes' tries
+  only, so a later pull can find tries left where an earlier one found none.
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
   403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead. In teams
   mode /api/v1/users/me/solves says which of the team's solves are this user's own.
@@ -1085,7 +1089,14 @@ def _tries_left_at(detail: Mapping[str, object], most: int) -> tuple[int | None,
     attempts the account (the team, in teams mode) has used: `most`, the tries it allows,
     less those, never below 0. None when it allows any number, says nothing of the attempts
     (an older CTFd), or the account has solved it (no try matters then); None and why when
-    its count is not one."""
+    its count is not one.
+
+    CTFd's limit counts wrong flags only, and its details count partial answers too: the
+    count is the limit's own on a challenge whose logic is "any" (or that says none: an
+    older CTFd), and on any other (CTFd 3.8's "all" and "team" take partial answers) it says
+    nothing of the tries left once any try is used (None): 0 there is no lockout. Under
+    CTFd's timeout behaviour both count only the last few minutes' tries, so a later count
+    can be higher (Deck.platform_tries takes one then)."""
     if not most or detail.get("solved_by_me") is True:
         return None, ""
     used = detail.get("attempts")
@@ -1093,6 +1104,8 @@ def _tries_left_at(detail: Mapping[str, object], most: int) -> tuple[int | None,
         return None, ""
     if not _is_count(used):
         return None, "CTFd's count of its tries used (attempts) is not a whole number, so how many are left is not known"
+    if used and detail.get("logic", "any") not in (None, "any"):
+        return None, ""
     return max(0, most - used), ""
 
 
