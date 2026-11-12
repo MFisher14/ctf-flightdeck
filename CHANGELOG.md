@@ -23,9 +23,9 @@ and the open issues of 0.1.x and 0.2.0.
 - `flightdeck play --autopilot` (and `practice`), or `[autopilot] engage = true`: flightdeck
   runs the event by rule while you are away, never looser than the event's rules and your
   config. It escalates a stalled lane, kills a looping one, redirects a lane that ignores the
-  hint, declines a lane's own budget request and sends unsolved challenges round again on the
-  next model up. It approves nothing and submits nothing itself. Before lanes start, `play`
-  says what it will and will not do under this run's policies (#13).
+  hint, gives a lane more budget when it asks (within the run budget) and sends unsolved
+  challenges round again on the next model up. It answers no flag and submits nothing itself.
+  Before lanes start, `play` says what it will and will not do under this run's policies (#13).
 - Autopilot needs a run budget (`--budget-dollars`, `--budget-tokens`, or `budget_dollars` and
   `budget_tokens` under `[autopilot]`) and the Docker runtime; without them `play` does not
   start and says which is missing. At the budget it holds the queue, pauses the lanes and

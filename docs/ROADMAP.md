@@ -16,7 +16,7 @@ back at any time (D20; the details are P19 to P28 in [DECISIONS.md](DECISIONS.md
   the queue runs dry, unsolved challenges go round again on the next model up, within the budget.
 - **Interventions by rule.** A stalled lane escalates one rung, a lane that gave up has its
   challenge queued again on the next model up, a looping lane is killed, a lane that ignores the
-  hint is redirected to it, and a lane's own budget request is declined. Code decides (D15); the
+  hint is redirected to it, and a lane's own budget request is approved within the run budget. Code decides (D15); the
   light hint judge has its say in the Watch, as before.
 - **Guardrails.** A run budget (dollars, tokens or both) is required to engage; at the budget no new
   lane starts and the lanes are paused. Docker only. No guessed flags, no last try spent, no refused request rerouted, nothing reached but a

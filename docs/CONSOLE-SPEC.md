@@ -315,6 +315,6 @@ The mock ships fake data that exercises every alert and at least these scenarios
 4. **Web wrong way**: a web lane brute-forcing directories while the source is in the handout.
 5. **Team**: a teammate solves a challenge a lane is working on; the lane stops by itself.
 6. **Flag found**: approve submit; the board updates.
-7. **Autopilot**: engaged from the start with a run budget; it kills the looping lane, declines a
-   lane's budget request, escalates the stalled lane, then reaches its budget and disengages: the
+7. **Autopilot**: engaged from the start with a run budget; it kills the looping lane, gives a
+   lane more budget, escalates the stalled lane, then reaches its budget and disengages: the
    queue is held and the lanes are paused.
