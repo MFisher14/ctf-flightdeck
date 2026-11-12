@@ -225,6 +225,8 @@ class Run:
                 f"no price in your config for {', '.join(unpriced)}: if the API does not report a cost, a lane "
                 f"on that model asks you once before it carries on without its ${lanes.dollar_cap:g} cap"
             )
+        if self.client is not None and self.config.api.provider == "anthropic":
+            out.extend(anthropic_price_notes(self.config, lanes.dollar_cap))
         return out
 
     @property
@@ -727,6 +729,29 @@ def _check_apis(config: Config, key: str | None, spare_key: str | None, notes: l
             notes += check(api, source=config.source)
         except CheckFailed as exc:
             raise RunError(str(exc)) from None
+
+
+def anthropic_price_notes(config: Config, cap: float | None) -> list[str]:
+    """What the config of a run on the Anthropic API prices below Anthropic's bill or not at
+    all, said before lanes start (a config written before init wrote these): a model the
+    refusal fallback answers with for the ladder (agent/refusal.py) with no price, whose
+    attempts are spend with no price (P7), and a price with no cache_write, at which a cache
+    write counts as input although Anthropic charges 1.25 times input for one."""
+    from .agent.refusal import answering
+
+    out = []
+    spare = [m for m in answering(config.models) if m not in config.prices]
+    if spare:
+        then = f"asks you once before it carries on without its ${cap:g} cap" if cap else "shows its dollars as not fully known"
+        out.append(f"no price in your config for {', '.join(spare)}, which Anthropic's refusal fallback answers with for "
+                   f"your ladder: a lane it answers for {then} ([prices.{json.dumps(spare[0])}] prices it; `flightdeck "
+                   "init --provider anthropic` writes these)")
+    flat = [m for m in (*config.models, *answering(config.models))
+            if m in config.prices and config.prices[m].cache_write is None]
+    if flat:
+        out.append(f"no cache_write in your price for {', '.join(flat)}: what a lane writes to Anthropic's prompt cache "
+                   "counts at the input rate, below the 1.25 times input Anthropic charges for it")
+    return out
 
 
 def _check_options(options: RunOptions) -> None:
