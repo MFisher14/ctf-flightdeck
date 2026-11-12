@@ -2572,6 +2572,62 @@ def test_the_take_over_shell_opens_only_once_the_step_of_the_command_it_waited_f
     run(main())
 
 
+@pytest.mark.parametrize("item, step", [
+    ({"file": ["lane-a.txt", "the agent's\n"]}, "edit lane-a.txt"),
+    ({"mcp": ["notes", "lookup"]}, "mcp_tool_call lookup"),
+    ({"search": "synthetic query"}, "web_search synthetic query"),
+    ({"collab": "spawn"}, "collab_tool_call spawn"),
+])
+def test_a_take_over_during_a_codex_edit_or_tool_step_opens_the_shell_only_once_that_step_is_on_the_lane(tmp_path, monkeypatch, item, step):
+    """Codex announces a file edit or a tool call only when it is done: nothing is in flight,
+    so a take-over freezes the CLI at once. The step's look at the workspace is still under
+    way then (held up here for half a second after the freeze). The shell waits for it: what
+    the player changes the moment the shell opens is the player's, never part of that step."""
+    real = external.take_snapshot
+    go, gate = tmp_path / "go", tmp_path / "answer"
+    script = {"turns": [{"items": [{"until": str(go)}, item, {"until": str(gate)}, {"command": "touch lane-b.txt"}]}]}
+    armed, looking = threading.Event(), threading.Event()
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex")
+
+        def held_up(root):
+            if armed.is_set() and not looking.is_set():  # the look of the step under test
+                looking.set()
+                pid, end = lab.pid(lane), time.monotonic() + 5
+                while not stopped(pid) and time.monotonic() < end:
+                    time.sleep(0.01)
+                time.sleep(0.5)
+            return real(root)
+
+        monkeypatch.setattr(external, "take_snapshot", held_up)
+        try:
+            lab.release()
+            lane = lab.lane()
+            work = lab.work(lane)
+            await until(lambda: lab.fake.records("prompt"), "the CLI started")
+            armed.set()
+            go.touch()
+            await until(looking.is_set, "the step's look at the workspace")
+            assert not lab.run(lane).in_flight  # nothing to wait for: the CLI freezes at once
+            session = lab.driver.takeover(lane)
+            assert lab.deck.apply(iv.TakeOver(lane.id)).ok
+            await asyncio.wait_for(session.begin(), 10)
+            (work / "player.txt").write_text("mine\n")  # the player's first edit, the moment the shell opens
+            assert steps(lane) == [step]  # the agent's step was on the lane before the shell opened
+            turn = next(a.turn for a in lane.actions if a.text == step)
+            if "file" in item:
+                assert lane.files["lane-a.txt"].by == "lane" and lane.files["lane-a.txt"].turn == turn
+            assert "player.txt" not in lane.files
+            assert session.finish() == "changed player.txt (added)"
+            assert lane.files["player.txt"].by == "player"
+            assert not (work / "lane-b.txt").exists()  # frozen: the step after it did not run
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def held_up_at_sigcont(monkeypatch, fake: Fake, step: Path) -> None:
     """A loaded machine (or docker, one `docker exec` per signal) can hold flightdeck up between
     the signals it sends a frozen CLI. Here each SIGCONT holds it up for as long as the CLI

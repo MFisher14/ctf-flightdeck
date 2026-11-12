@@ -228,8 +228,9 @@ Where: `agent/external.py`.
 
 `play --agent claude|codex`: the same LaneDriver protocol over the CLI's own event stream (Claude
 Code's stream-json, Codex's exec --json); messages, pause (SIGSTOP), take-over (the shell opens once
-the step of the command it waited for is recorded; a hand-back's SIGINT reaches the frozen CLI
-before its SIGCONT), escalation (a fresh session on the next model) and the CLI's own cost. Files
+the step of the command it waited for is recorded, and so for a Codex file edit or tool call whose
+step is going on the lane, so your first edit is never credited to the agent; a hand-back's SIGINT
+reaches the frozen CLI before its SIGCONT), escalation (a fresh session on the next model) and the CLI's own cost. Files
 the CLI would read as its configuration are moved out of the workspace first.
 
 The CLI gets the allowlist a lane's commands get, its own credential (from the environment or the
