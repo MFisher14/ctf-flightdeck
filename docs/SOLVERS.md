@@ -209,8 +209,12 @@ model call. Then:
 - With lanes in Docker, each engine runs in a container of its own, made from the lane image, with
   its copy of the challenge at `/work` and your pack mounted read-only. It has no network, unless
   the challenge has a live instance and lanes may reach it without asking (no event profile, or
-  the profile's instance policy is `auto`). The programs an engine needs, `python3` included, must
-  be in the lane image.
+  the profile's instance policy is `auto`). That network reaches the instance's hosts and ports
+  and nothing else, as a lane's does (the guide's [Docker or host](GUIDE.md#docker-or-host)): a
+  host name works as the challenge wrote it, but an instance given by IP address or as
+  `localhost` is reached as `instance-10-0-0-5` (for `10.0.0.5`) or `instance-localhost`, on the
+  same port, so an engine that reads `urls` from `challenge.json` must make that change itself.
+  The programs an engine needs, `python3` included, must be in the lane image.
 - With `--host`, each engine runs on this machine, as you, in a copy of the challenge, with an
   environment that holds no keys.
 

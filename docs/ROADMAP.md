@@ -73,13 +73,18 @@ back at any time (D20). A sketch, decided in detail when M5 starts:
 Planned in a milestone and not built:
 
 - **ACP agents.** The coding-agent lanes are the `claude` and `codex` CLIs only.
-- **A per-origin egress allowlist.** A Docker lane gets no network, or the open bridge network once
-  its instance is allowed.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
-  built from their docs.
+  built from their docs, and so is a coding-agent lane's fenced network (below): it has not been
+  run with the real CLIs.
 - **Timeline replay in `play`.** Releasing a board wave by wave from its `timeline.json` is built
   and tested, but `play` releases the whole board at the start. Scoring a past run against the
   board's answers works (`flightdeck score`).
+
+Built since (2026-11-12, issue #14): **the per-origin egress allowlist.** A Docker lane that may
+reach its instance reaches only the hosts and ports its challenge's `urls` name, and a
+coding-agent lane its CLI's API, through an internal Docker network and a proxy per host; it is
+never on the bridge network (P9; the guide's [Docker or host](GUIDE.md#docker-or-host)). That is
+the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
@@ -151,7 +156,7 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Team mode: claims, teammate-solved stop, live-box courtesy.
 
 Not done in M2: evaluating ACP, the per-origin egress allowlist and a real capture of the CLI
-streams (all under "Still open" above).
+streams (under "Still open" above; the egress allowlist was built later, issue #14).
 
 ### M3: detectors and practice
 

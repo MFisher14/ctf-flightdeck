@@ -123,6 +123,7 @@ asked about, and anything else in a late report is dropped.
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | flightdeck's own loop: one asyncio task per lane, one model call per turn. [More](#agent-driver). |
 | Tools | `agent/tools.py` | `shell`, `read_file`, `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane, on the host or in a container, and the take-over shell. [More](#workspaces). |
+| Lane network | `agent/egress.py`, `agent/egress_proxy.py` | The fence round a Docker lane's network: its challenge's instance, a coding-agent CLI's API, nothing else. [More](#lane-network). |
 | Lane summary | `core/summary.py` | What a lane did, in at most 3000 characters (plan, the newest steps, files, flags and what became of them, alerts, the player's messages). Escalation and the context refresh hand it to the model, fenced as data, after the L1 results. |
 | Own text | `agent/owntext.py` | Before a flag goes out without the player, it is looked for in the challenge's own text. [More](#own-text). |
 | Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx. [More](#model-client). |
@@ -160,6 +161,44 @@ the host gets a new owner-only HOME outside the workspace, removed at the hand-b
 workspace (readline reads `~/.inputrc` whatever bash's flags say, and the player's own HOME would
 show a script the lane wrote the player's credentials). A host workspace notes the process groups it
 starts in the run's process record (`leftovers.py`).
+
+### Lane network
+
+Where: `agent/egress.py` (the fence), `agent/egress_proxy.py` (the proxy's script), `run.py`
+(`lane_reach`: what each lane may reach).
+
+A Docker lane's container starts with `--network none` unless it may reach something: its
+challenge's instance (`urls`) under the instance policy `auto`, and for a coding-agent lane its
+CLI's API (`CLI_API` in `agent/egress.py`, the one list of hosts outside a challenge:
+`api.anthropic.com` and `api.openai.com`, port 443). Then it gets a fence of its own
+(`Egress`), never Docker's bridge network:
+
+- **An internal network** (`docker network create --internal`, bridge option
+  `gateway_mode_ipv4=isolated`): no route to the internet, to this machine or to another
+  container's network, and an embedded DNS that answers only for names on it. flightdeck reads
+  the network back and refuses one that got a gateway address (an older Docker), since the lane
+  could reach this machine through it.
+- **A proxy container per allowed host**, started from the lane image (`--pull never`; no image
+  of its own) as `python3 -I -c <script> <config>`: standard library only, no capability but
+  binding a low port, a read-only filesystem, packet forwarding off. It is on the bridge network
+  (the way out) and, once it has looked its host's address up, on the lane's network under the
+  host's own name (a network alias). It listens on exactly the ports `urls` names for that host
+  and carries each connection, byte for byte, to that host and port; nothing the lane sends
+  picks where a connection goes. So a name lookup in the lane finds the proxy, and
+  `nc host port` or an HTTPS request works as the challenge wrote it, TLS end to end.
+- **An address is not a name.** A host given by IP address, or as localhost, is on the lane's
+  network as `instance-<address>` (`instance-10-0-0-5`, `instance-localhost`); the lane's brief
+  says so (`prompts.shell_names`). localhost and loopback addresses mean this machine: their
+  proxy connects to Docker's host gateway.
+
+Under `confirm` the container starts with no network and nothing is made; when the player says
+yes, `DockerWorkspace.open_instance()` builds the fence and moves the container onto it. L1
+engines that run online share one fence per lane (`agent/l1stage.py`), made before the first
+engine starts and removed after the last. Network and proxies carry the run's labels, so
+`leftovers.py` finds and removes what a killed flightdeck left. When Docker cannot build any of
+it (no `python3` in the image, no room for another network, a host name that does not resolve),
+the lane gets a `WorkspaceError` that says which, and no network: nothing falls back to bridge.
+The player's guide lists what the fence does not do ([Docker or host](GUIDE.md#docker-or-host)).
 
 ### Own text
 
@@ -296,6 +335,8 @@ a refresh.
 Engines run where lanes do (D17): on the host runtime on this machine, as the player; with Docker
 each in a container of the lane image (`l1/container.py`), the pack and the boot script mounted
 read-only, with no network unless the instance policy is auto and the challenge has an instance.
+Then the lane's engines share a fenced network that reaches that instance and nothing else
+([Lane network](#lane-network)).
 
 ## 6. Platforms and events
 
@@ -304,7 +345,7 @@ read-only, with no network unless the instance policy is auto and the challenge 
 | Folder board | `platform/manual.py` | A folder of challenge folders ([BOARDS.md](BOARDS.md)); `answers.sha256.json` checks flags by hash; without it the player submits by hand and confirms (the deck's `CONFIRM` approval). |
 | CTFd | `platform/ctfd.py` | Pulls a CTFd board into a folder board, submits approved flags, and reads the team's solves and the tries left. [More](#ctfd). |
 | Pre-flight | `preflight.py` | The event profile (`event.toml`): what the rules allow, and a policy per stage (`pull`, `l1`, `agents`, `submit`, `instance`), never looser than the rules. `flightdeck preflight` checks it. |
-| Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins the bridge network. `off`: never. Pre-flight sets it from the event profile. |
+| Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins a fenced network that reaches the instance and nothing else ([Lane network](#lane-network)). `off`: never. Pre-flight sets it from the event profile. |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -639,6 +680,9 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **An unpack stage.** Lanes and L1 engines get the handout as it came; a lane unpacks an archive
   itself, in its workspace.
 - **ACP agents.** The coding-agent CLIs are `claude` and `codex` only.
-- **A per-origin egress allowlist.** A Docker lane has no network, or the open bridge network once
-  it may reach its instance (a coding-agent lane always has it, for its CLI's API).
+- **A fence for `--host` lanes.** A Docker lane's network reaches only its instance
+  ([Lane network](#lane-network)); a host lane's shell has this machine's network.
+- **A coding-agent lane that asks before it reaches its instance.** Its fence could hold it off
+  the instance until the player says yes, but the CLI lanes do not ask yet, so an event whose
+  instance policy is not `auto` still refuses them.
 - **Timeline replay in `play`.** `Release` exists (Practice mode, under After a run); `play` does not use it.

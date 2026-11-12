@@ -58,9 +58,42 @@ solvers run in containers too. `flightdeck image build` builds the image once, a
 `flightdeck image dockerfile` prints what it builds. A lane of flightdeck's own loop gets no
 network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
 `nc host port` (`tcp://host:port` in the challenge's `urls`). Under an event whose instance policy
-is `confirm`, the lane asks you first. It then gets Docker's bridge network, which reaches any
-host, not only the instance: there is no per-host allowlist yet. A coding-agent lane (`--agent`)
-is always on that network, for its CLI's API.
+is `confirm`, the lane asks you first.
+
+The network it then gets reaches **that instance and nothing else**: each host and port its
+challenge's `urls` name, and for a coding-agent lane (`--agent`) its CLI's API too
+(`api.anthropic.com` for claude, `api.openai.com` for codex, port 443). It is never Docker's
+bridge network. Per lane, flightdeck makes an internal Docker network, which routes nowhere and
+whose name lookups find nothing outside, and for each allowed host a small proxy container, from
+the lane image, that carries connections on the listed ports to that host. The proxy answers to
+the host's own name on the lane's network, so `nc chal.example.org 1337` or
+`curl https://chal.example.org/` works in the lane as the challenge wrote it. Your L1 solvers in
+Docker get the same fence. The proxies and the network are removed with the lane, and
+`flightdeck doctor` lists any a killed run left (`--clean` removes them).
+
+What that fence does not do:
+
+- **An instance given by IP address, or as `localhost`,** cannot be reached as written from the
+  lane's shell: the name `instance-10-0-0-5` stands for `10.0.0.5` and `instance-localhost` for
+  `localhost`, on the same ports. The lane's brief tells it so; an L1 solver has to know it. A TLS
+  certificate will not match such a name. flightdeck's own http tool takes the URL as written.
+- **Only the listed ports, and only TCP.** A port of the instance's host that `urls` does not
+  list, UDP and ping go nowhere. So does a redirect or a link to another host: add that host to
+  `urls` if it is part of the challenge.
+- **`localhost` means this machine.** The proxy reaches it through Docker's host gateway. With
+  Docker Desktop that finds a server listening on 127.0.0.1; with Docker Engine on Linux the
+  server must listen on an address the bridge network reaches.
+- **A proxy looks its host's address up once,** when it starts. An instance that moves to a new
+  address needs a new lane.
+- **The fence is by host and port.** A host that serves other sites at the same address and port
+  serves them to the lane too, and what a coding-agent CLI's API does on its own servers (a
+  hosted web search, say) is the API's business.
+- **It needs `python3` in the lane image** (the image `flightdeck image build` makes has it) and
+  a Docker Engine that can make an internal network without a gateway. Where either is missing,
+  or Docker has no room for another network, the lane does not start, or stays without a
+  network, and says why. It is never put on the bridge network instead.
+- **A coding-agent CLI reaches its API host and no other.** A CLI set up to use another endpoint
+  (a gateway, a cloud provider's) does not work in Docker.
 
 **`--host`** (or `runtime = "host"`) runs lane commands as you, on this machine. A lane can read
 your files, your keys file and flightdeck's own environment, and send what it reads to its model's
@@ -289,7 +322,8 @@ Each stage (pull, L1, agents, submit, live instance) has a policy in the event p
 `confirm` (you say yes first; for agents and L1, starting play is that yes), `manual` or `off`,
 never looser than the rules. With agents `manual` or `off`, `play` does not start. Under `confirm`
 for live instances, a lane asks before it may reach its challenge's instance and has no network
-until you allow it. The profile, key by key:
+until you allow it; then, and under `auto` from its start, a Docker lane's network reaches that
+instance and nothing else ([Docker or host](#docker-or-host)). The profile, key by key:
 [Boards](BOARDS.md#the-event-profile-eventtoml).
 
 Team mode shares claims, live-box holds and solves through a folder your teammates sync (a network
@@ -314,8 +348,13 @@ neither: build an image `FROM ctf-flightdeck-lane:1` that installs it and set `[
 it, or play with `--host`. `flightdeck doctor --agent claude` checks the CLI, its credential and
 the lane image.
 
-A coding-agent lane is always on Docker's bridge network, for its CLI's API, so an event whose
-instance policy is not `auto` refuses agent lanes. They do not run your L1 pack. A CLI says what a
+In Docker a coding-agent lane's network reaches its CLI's API (`api.anthropic.com` or
+`api.openai.com`, port 443) and its challenge's instance, and nothing else
+([Docker or host](#docker-or-host) says how, and what does not work). That has been tested with
+a stand-in CLI, not yet with the real ones: if your CLI needs another host to start, its lanes
+fail at their first turn, and `--host` is the way round until it is added. A coding-agent lane
+does not ask before it reaches its instance, so an event whose instance policy is not `auto`
+refuses agent lanes. They do not run your L1 pack. A CLI says what a
 turn cost only when the turn ends, so its lane's cost ends in `…` until then; codex reports no
 cost at all, so give its models a `[prices."<model>"]` table for their lanes to show dollars.
 
