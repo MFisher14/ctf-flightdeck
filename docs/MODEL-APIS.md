@@ -25,8 +25,10 @@ a ladder from a benchmark on one machine (`gpt-oss:20b` on Ollama,
 away from a terminal, never written unless you choose it. For any server on this machine it
 writes a longer wait and a larger reply cap (below), and for MLX it prints the command that
 starts the server with thinking off and replies of up to 8192 tokens (`mlx_lm.server --model
-... --max-tokens 8192 --chat-template-args '{"enable_thinking":false}'`). `flightdeck models ID`
-prints the config lines for a model from its catalog.
+... --max-tokens 8192 --chat-template-args '{"enable_thinking":false}'`). For Ollama it writes and
+prints how to give it room for a lane, with `context = 65536` to uncomment once Ollama has it
+([below](#context-on-a-server-on-your-machine)). `flightdeck models ID` prints the config lines for
+a model from its catalog.
 
 Your `[models]` ladder lists model ids weakest first: lanes start on the first, and escalating
 moves one step up. `flightdeck config --example` shows every key.
@@ -66,6 +68,26 @@ Anthropic API gets 16000. For a server on this machine, `init` writes `timeout =
 both for its own API. `flightdeck doctor` says what a lane's calls to a server on this machine
 send and how long each try may take, and where each comes from (`lane calls`, and `fallback
 calls` for a fallback there).
+
+## Context on a server on your machine
+
+A lane's context grows until flightdeck refreshes it at 50,000 prompt tokens: the lane goes on in
+a fresh context, with a summary in place of its history. Ollama gives a model 4,096 tokens of
+context on a machine with under 23 GiB of GPU memory (or no GPU), 32,768 from 23 GiB and 262,144
+from 47 GiB, unless `OLLAMA_CONTEXT_LENGTH` says otherwise, and past that it drops a lane's oldest
+messages without saying so. Set `OLLAMA_CONTEXT_LENGTH=65536` where Ollama runs, restart Ollama,
+and set `context = 65536` under `[api]`: a lane is then refreshed at 49,152 prompt tokens, which
+leaves room for two replies of up to `max_tokens` (8192). With a server you cannot change, set
+`context` to what it gives (`context = 32768`: refreshed at 16,384). `[fallback]` takes `context`
+too, and a lane is refreshed before it outgrows the smaller of the two. A context that would leave
+a lane under 8,192 tokens before its refresh is refused, and so is one for an API on another host
+without `max_tokens` (flightdeck sends none there, so it cannot keep room for a reply).
+
+`flightdeck doctor` (`lane context`, and `fallback context`) and `flightdeck models` say what
+Ollama gives your lanes' model and whether a lane fits: Ollama's own word for a model it has loaded
+(`ollama ps` shows it as CONTEXT), or else an estimate from `OLLAMA_CONTEXT_LENGTH` where
+flightdeck runs or from your machine's GPU memory, and the fix when it is too small. The light
+model's prompts are short and fit Ollama's smallest context, 4,096 tokens.
 
 ## The Anthropic API
 

@@ -600,6 +600,10 @@ def init(
         typer.echo(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
                    "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
                    "12B's replies in a benchmark on one machine); change timeout and max_tokens under [api]")
+    from .setup import OLLAMA_CONTEXT_NOTE, is_ollama
+
+    if dialect == "openai" and is_ollama(base_url):
+        typer.echo(f"context: {OLLAMA_CONTEXT_NOTE}")
     if provider == "mlx":
         typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
                    "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX in a "

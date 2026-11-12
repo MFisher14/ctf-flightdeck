@@ -75,12 +75,12 @@ from pathlib import Path
 from typing import Any
 
 from .agent.client import ChatClient
-from .agent.driver import AgentDriver
+from .agent.driver import COMPACT_AT, AgentDriver
 from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
 from .clock import RunClock
-from .config import Config, ConfigError, api_key, fallback_key, load_config
+from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at, load_config
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
@@ -674,6 +674,7 @@ def prepare_run(options: RunOptions) -> Run:
             files=files,
             urls=urls,
             prices=config.prices,
+            compact_at=lane_refresh_at(config, COMPACT_AT),  # sooner where [api] or [fallback] states a smaller context
             l1=l1,
             instance=instance,
         )

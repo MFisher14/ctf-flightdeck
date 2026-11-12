@@ -17,7 +17,10 @@ agent/fastmode.py lists for fast mode is accepted.
 [api] and [fallback] also take timeout (seconds one try of a lane's call may take) and
 max_tokens (the most tokens a lane's reply may hold). Unset, max_tokens is LOCAL_MAX_TOKENS
 for an OpenAI-compatible server on this machine and is not sent to any other: see
-lane_max_tokens().
+lane_max_tokens(). And context: the tokens of context the API's server gives a lane's model,
+when that is less than a lane grows to (Ollama gives 4,096 or 32,768 unless told otherwise, and
+drops the oldest messages past it without saying so). A lane is then refreshed before it
+outgrows that server: lane_refresh_at().
 
 The optional [light] table names the light model for flightdeck's small jobs (light.py):
 engine "rules" (the default: no model), "openai" (an OpenAI-compatible server; recommended:
@@ -65,8 +68,8 @@ RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
 _TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
-_API_KEYS = ("provider", "base_url", "key_env", "fast", "timeout", "max_tokens")
-_FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens")
+_API_KEYS = ("provider", "base_url", "key_env", "fast", "timeout", "max_tokens", "context")
+_FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
 API_PROVIDERS = ("openai", "anthropic")
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"  # the Anthropic SDK's default (it adds /v1/messages itself)
 PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves them out
@@ -113,6 +116,11 @@ MLX_URL = "http://127.0.0.1:8080/v1"  # an MLX server's (mlx_lm.server's default
 # set: mlx_lm.server's own default is 512, and a model that reasons first runs out mid-thought.
 LOCAL_MAX_TOKENS = 8192
 MAX_REPLY_TOKENS = 1_000_000  # the largest max_tokens accepted: more than any model writes in one reply
+MAX_CONTEXT = 10_000_000  # the largest [api] context accepted, in tokens: more than any model reads
+# The fewest prompt tokens a lane may reach before a stated context refreshes it: a fresh context
+# (the system prompt, the tools, the brief and the summary) takes a few thousand on its own, and a
+# lane refreshed every turn or two would do little else.
+MIN_REFRESH = 8192
 MAX_TRY_SECONDS = 3600.0  # the longest [api] timeout accepted: an hour for one try
 LOCAL_TIMEOUT = 600  # the [api] timeout `flightdeck init` writes for a server on this machine
 _PRICE_KEYS = RATES  # input, output, cached_input, cache_write
@@ -129,6 +137,7 @@ class ApiConfig:
     fast: tuple[str, ...] = ()  # ladder models a lane calls in fast mode (anthropic only; agent/fastmode.py)
     timeout: float | None = None  # seconds per try of a lane's call; None: the client's own (180, Anthropic 600)
     max_tokens: int | None = None  # a lane's reply cap as set; None: lane_max_tokens() decides
+    context: int | None = None  # tokens of context its server gives a lane's model; None: not stated
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,7 @@ class FallbackConfig:
     ladder: tuple[str, ...]  # ladder[i] is the fallback for models.ladder[i]
     timeout: float | None = None  # as ApiConfig's
     max_tokens: int | None = None  # as ApiConfig's
+    context: int | None = None  # as ApiConfig's
 
 
 @dataclass(frozen=True)
@@ -324,6 +334,40 @@ def lane_max_tokens(provider: str, base_url: str, max_tokens: int | None) -> int
     return LOCAL_MAX_TOKENS if provider == "openai" and on_this_machine(base_url) else None
 
 
+def reply_room(provider: str, base_url: str, max_tokens: int | None) -> int | None:
+    """The most tokens one reply of a lane's call to this API may hold: lane_max_tokens(), or the
+    Anthropic client's own default when nothing is set; None when nothing caps it (an
+    OpenAI-compatible API elsewhere, sent no max_tokens: its server decides)."""
+    tokens = lane_max_tokens(provider, base_url, max_tokens)
+    if tokens is None and provider == "anthropic":
+        from .agent.anthropic_client import DEFAULT_MAX_TOKENS
+
+        return DEFAULT_MAX_TOKENS
+    return tokens
+
+
+def refresh_point(context: int, reply: int) -> int:
+    """The prompt tokens at which a lane on a server that gives its model `context` tokens is
+    refreshed: the context less room for two replies of up to `reply` tokens, the next one and
+    as much again for what a turn adds before it (the reply the turn got, its tools' output). An
+    allowance, not a bound: a turn whose tools print more can still reach past it."""
+    return context - 2 * reply
+
+
+def lane_refresh_at(config: Config, default: int) -> int:
+    """The prompt tokens at which a lane continues in a fresh context with a summary (the driver's
+    compact_at): `default` (agent/driver.COMPACT_AT), or sooner where [api] or [fallback] states a
+    context it would outgrow. A lane can move to the fallback for the rest of a context, so the
+    smaller of the two wins."""
+    points = [default]
+    for table in (config.api, config.fallback):
+        if table is not None and table.context is not None:
+            reply = reply_room(table.provider, table.base_url, table.max_tokens)
+            assert reply is not None  # _context refuses a context with no reply cap to leave room for
+            points.append(refresh_point(table.context, reply))
+    return min(points)
+
+
 def light_thinking(light: LightConfig) -> bool:
     """Whether the light model may reason before it answers: [light] thinking when the table
     sets it; else False for the openai engine on a server on this machine (each request then
@@ -390,13 +434,22 @@ key_env = "OPENROUTER_API_KEY"
 # refuses max_tokens on its reasoning models, so leave it unset there. The Anthropic API always
 # gets one: 16000 unless set here.
 # max_tokens = 8192
+# The tokens of context the server gives a lane's model, when that is less than a lane grows to: a
+# lane is then refreshed (a summary replaces its history) before it outgrows the server, leaving
+# room for two replies of up to max_tokens; unset, a lane is refreshed at 50,000 prompt tokens.
+# Ollama gives a model 4,096 tokens on a machine with under 23 GiB of GPU memory (or none) and
+# 32,768 from 23 GiB, unless OLLAMA_CONTEXT_LENGTH says otherwise, and drops the oldest messages
+# past it without saying so: set OLLAMA_CONTEXT_LENGTH=65536 where Ollama runs, restart it, and set
+# context = 65536 here. `flightdeck doctor` checks what the server gives.
+# context = 65536
 
 # [fallback]
 # Optional: a second API a lane moves to when [api] keeps failing (rate limits, overload,
 # outages: still failing after every retry). The lane stays there for the rest of its context;
 # escalating, or the long-context refresh, tries [api] again. A refusal or a bad request never
-# moves a lane. provider, base_url, key_env, timeout and max_tokens as in [api], and a ladder:
-# one model id per [models] ladder entry, in the same order, in the fallback API's own naming.
+# moves a lane. provider, base_url, key_env, timeout, max_tokens and context as in [api], and a
+# ladder: one model id per [models] ladder entry, in the same order, in the fallback API's own
+# naming. A lane is refreshed before it outgrows the smaller context of the two.
 # provider = "openai"
 # base_url = "https://openrouter.ai/api/v1"
 # key_env = "OPENROUTER_API_KEY"
@@ -446,8 +499,9 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # (Ollama: http://127.0.0.1:11434/v1, an MLX server: http://127.0.0.1:8080/v1, key_env = ""), so
 # no provider's safety classifier declines security work. Measure one before you switch it on:
 #   flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> --compare rules
-# Models to measure, for example (examples, not endorsements: eval-local decides): Qwen3.5 9B,
-# Gemma 4 12B, gpt-oss-20b, Ministral 3 14B, Phi-4-mini. "anthropic" (a Claude model, e.g.
+# Models to measure, for example (examples, not endorsements: eval-local decides): Qwen3.5 9B or
+# 4B, Gemma 4 12B or E4B, gpt-oss-20b, Ministral 3 14B; `flightdeck models` says which jobs each
+# measured one did no worse at than no model. "anthropic" (a Claude model, e.g.
 # claude-haiku-5-5) and "cactus" (Cactus Needle, the [cactus] extra) are there too. The light
 # model never holds up a lane or an alert: when it refuses, fails, times out or answers outside
 # the options, the rules' answer stands and the run says so once.
@@ -556,8 +610,36 @@ def expand(path: Path) -> Path:
 def _api(path: Path, table: dict, ladder: tuple[str, ...]) -> ApiConfig:
     _known(path, ("api",), table, _API_KEYS)
     provider, base_url, key_env = _endpoint(path, "api", table)
+    max_tokens = _max_tokens(path, "api", table)
     return ApiConfig(base_url=base_url, key_env=key_env, provider=provider, fast=_fast(path, table, provider, ladder),
-                     timeout=_try_timeout(path, "api", table), max_tokens=_max_tokens(path, "api", table))
+                     timeout=_try_timeout(path, "api", table), max_tokens=max_tokens,
+                     context=_context(path, "api", table, provider, base_url, max_tokens))
+
+
+def _context(path: Path, name: str, table: dict, provider: str, base_url: str, max_tokens: int | None) -> int | None:
+    """[api] or [fallback] context: the tokens of context the API's server gives a lane's model;
+    None when absent. It must leave a lane room before its refresh (refresh_point()) of at least
+    MIN_REFRESH tokens, so a value a lane cannot work in is refused, with what would do."""
+    if "context" not in table:
+        return None
+    value = table["context"]
+    if not _is_int(value) or not 1 <= value <= MAX_CONTEXT:
+        raise _error(path, (name, "context"), f"must be a whole number of tokens from 1 to {MAX_CONTEXT}: the context "
+                                              f"the server gives a lane's model{_got(value)}")
+    reply = reply_room(provider, base_url, max_tokens)
+    if reply is None:
+        raise _error(path, (name, "context"), f"needs {name}.max_tokens too: flightdeck sends no reply cap to an "
+                                              "OpenAI-compatible API elsewhere, so it cannot leave room for a reply in "
+                                              f"the context{_got(value)}")
+    if refresh_point(value, reply) < MIN_REFRESH:
+        cap = f"{name}.max_tokens" if max_tokens is not None else "the default reply cap"
+        raise _error(path, (name, "context"), f"leaves a lane too little room: it is refreshed {2 * reply} tokens before "
+                                              f"the context ends, room for two replies of up to {reply} ({cap}), and a "
+                                              f"context under {MIN_REFRESH + 2 * reply} tokens leaves it less than "
+                                              f"{MIN_REFRESH}. Give the server a longer context (Ollama: "
+                                              "OLLAMA_CONTEXT_LENGTH=65536, then restart it) and set this to it"
+                                              f"{_got(value)}")
+    return value
 
 
 def _try_timeout(path: Path, name: str, table: dict) -> float | None:
@@ -780,8 +862,8 @@ def _decider(path: Path, table: dict, timeout: float, where: tuple[str, ...] = (
 
 
 def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfig:
-    """[fallback]: provider, base_url, key_env, timeout and max_tokens as in [api], and a
-    ladder like [models]'s."""
+    """[fallback]: provider, base_url, key_env, timeout, max_tokens and context as in [api], and
+    a ladder like [models]'s."""
     _known(path, ("fallback",), table, _FALLBACK_KEYS)
     provider, base_url, key_env = _endpoint(path, "fallback", table)
     one_each = "one for each model in models.ladder, in the same order"
@@ -801,8 +883,10 @@ def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfi
             f"has {len(models)} model(s) but models.ladder has {len(ladder)}: "
             "fallback.ladder[i] is the fallback for models.ladder[i]",
         )
+    max_tokens = _max_tokens(path, "fallback", table)
     return FallbackConfig(provider=provider, base_url=base_url, key_env=key_env, ladder=tuple(models),
-                          timeout=_try_timeout(path, "fallback", table), max_tokens=_max_tokens(path, "fallback", table))
+                          timeout=_try_timeout(path, "fallback", table), max_tokens=max_tokens,
+                          context=_context(path, "fallback", table, provider, base_url, max_tokens))
 
 
 def _endpoint(path: Path, where: str | tuple[str, ...], table: dict) -> tuple[str, str, str]:

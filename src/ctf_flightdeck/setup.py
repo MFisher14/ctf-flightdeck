@@ -93,7 +93,8 @@ OPENROUTER_NAMES = {
 
 
 LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # `init --light`
-LIGHT_EXAMPLES = "Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B or Phi-4-mini"  # to measure, not endorsements
+# To measure, not endorsements; not Phi-4-mini, which scored below the rules (docs/MODELS.md)
+LIGHT_EXAMPLES = "Qwen3.5 9B or 4B, Gemma 4 12B or E4B, gpt-oss-20b or Ministral 3 14B"
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
 # What init suggests for a server on this machine: the default at its prompt, named in its
@@ -270,8 +271,37 @@ def _toml(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 
 
+def is_ollama(base_url: str) -> bool:
+    """Whether `base_url` is Ollama on this machine, at its default port (what `init --provider
+    local` writes, or a custom URL to it)."""
+    from .light import on_this_machine
+    from .ollama_context import default_port
+
+    return on_this_machine(base_url) and default_port(base_url)
+
+
+OLLAMA_CONTEXT_NOTE = (
+    "Ollama gives a model 4,096 tokens of context on a machine with under 23 GiB of GPU memory (or none) and 32,768 "
+    "from 23 GiB, and drops a lane's oldest messages past it without saying so; a lane needs about 65,536. Set "
+    "OLLAMA_CONTEXT_LENGTH=65536 where Ollama runs, restart Ollama, then uncomment context = 65536 under [api] so lanes "
+    "are refreshed before they outgrow it (`flightdeck doctor` checks what Ollama gives). The light model's short "
+    "prompts fit 4,096."
+)
+
+
+def _ollama_context(answers: Answers) -> str:
+    """For lanes on Ollama: the context note, and [api] context to uncomment once Ollama has it."""
+    if answers.provider != "openai" or not is_ollama(answers.base_url):
+        return ""
+    import textwrap
+
+    note = "".join(f"# {line}\n" for line in textwrap.wrap(OLLAMA_CONTEXT_NOTE, 96))
+    return note + "# context = 65536\n"
+
+
 def _api_limits(answers: Answers) -> str:
-    """[api] timeout and max_tokens, each with why, when the answers set them."""
+    """[api] timeout and max_tokens, each with why, when the answers set them, and for lanes on
+    Ollama the context note (_ollama_context)."""
     out = ""
     if answers.timeout is not None:
         out += ("# Seconds a lane waits for one reply before it tries again (180 when unset). A model on this machine\n"
@@ -282,7 +312,7 @@ def _api_limits(answers: Answers) -> str:
         out += ("# The most tokens a lane's reply may hold (mlx_lm.server's own default is 512, too few for a model\n"
                 "# that reasons first). Leave it out for OpenAI's own API: its reasoning models refuse max_tokens.\n"
                 f"max_tokens = {answers.max_tokens}\n")
-    return out
+    return out + _ollama_context(answers)
 
 
 def _prices(prices: Mapping[str, Price], ladder: Sequence[str] = ()) -> str:
@@ -514,8 +544,10 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     version_ok = sys.version_info >= (3, 12)
     checks.append(Check("python", version_ok, f"Python {sys.version.split()[0]}, flightdeck {__version__}",
                         "flightdeck needs Python 3.12 or newer"))
-    from .hardware import doctor_line
-    checks.append(Check("machine", True, doctor_line(environ), essential=False))
+    from . import hardware
+
+    machine = hardware.probe(hardware.RealHost(environ), runtimes=False)  # no runtime or server asked
+    checks.append(Check("machine", True, hardware.doctor_line(environ, machine=machine), essential=False))
     path = (config_path or default_config_path()).expanduser()
     config = None
     if not path.exists():
@@ -537,10 +569,12 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
         if config.api.provider == "openai":
             checks += _local_server_check(config.api.base_url, config.models, source=config.source)
             checks += _lane_calls(config.api, "api")
+            checks += _lane_context(config, "api", machine, environ)
         spare = config.fallback
         if spare is not None and spare.provider == "openai":
             checks += _local_server_check(spare.base_url, spare.ladder, name="fallback server", source=config.source)
             checks += _lane_calls(spare, "fallback")
+            checks += _lane_context(config, "fallback", machine, environ)
         checks += _light_checks(config, environ)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
@@ -888,6 +922,62 @@ def _lane_calls(table, name: str) -> list[Check]:
                 f"timeout = {LOCAL_TIMEOUT} under [{name}] gives it {LOCAL_TIMEOUT // 60} minutes, as init writes)")
     detail = f"to {_shown(table.base_url)}: replies of up to {tokens} tokens (max_tokens, {said}), {wait}"
     return [Check("lane calls" if name == "api" else "fallback calls", True, detail)]
+
+
+NOT_OLLAMA = object()  # what _ollama_loaded() returns for a server that is not Ollama
+
+
+def _ollama_loaded(base_url: str):
+    """What the Ollama at `base_url` (on this machine) has loaded, with the context it gives each
+    ({model: tokens}, from GET /api/ps), and a note when it could not say: (None, why) for an
+    Ollama that does not answer at its default port, (NOT_OLLAMA, "") for a server that answers
+    as something else, or that does not answer at another port (the model server check says so)."""
+    import httpx
+
+    from .ollama_context import PS_PATH, default_port, ollama_root, parse_ps
+
+    root = ollama_root(base_url)
+    try:
+        answer = httpx.get(root + PS_PATH, timeout=2.0, follow_redirects=False)
+    except httpx.HTTPError as exc:
+        if default_port(base_url):
+            return None, f" (nothing answered {PS_PATH} there: {type(exc).__name__})"
+        return NOT_OLLAMA, ""
+    loaded = parse_ps(answer.content) if answer.status_code == 200 else None
+    if loaded is None:
+        return NOT_OLLAMA, ""
+    return loaded, ""
+
+
+def _lane_context(config, name: str, machine, environ: Mapping[str, str]) -> list[Check]:
+    """For [api] or [fallback] on an Ollama on this machine: whether a lane fits the context
+    Ollama gives the ladder's models (ollama_context.py: what Ollama says of a loaded model, else
+    an estimate from OLLAMA_CONTEXT_LENGTH here or this machine's GPU memory). Past it Ollama drops
+    a lane's oldest messages without saying so; a warning, never essential: a lane still runs.
+    Nothing for another server, and nothing for the light role, whose prompts fit any context
+    Ollama gives (4,096 tokens at the least)."""
+    from .agent.driver import COMPACT_AT
+    from .config import lane_refresh_at, reply_room
+    from .light import on_this_machine
+    from .ollama_context import default_contexts, lane_finding
+
+    table = config.api if name == "api" else config.fallback
+    if table is None or not on_this_machine(table.base_url):
+        return []
+    loaded, note = _ollama_loaded(table.base_url)
+    if loaded is NOT_OLLAMA:
+        return []
+    ladder = config.models if name == "api" else table.ladder
+    check = "lane context" if name == "api" else "fallback context"
+    finding = lane_finding(_shown(table.base_url).removesuffix("/v1").split("://", 1)[-1], ladder, loaded,
+                           default_contexts(machine, environ), lane_refresh_at(config, COMPACT_AT),
+                           reply_room(table.provider, table.base_url, table.max_tokens), table=f"[{name}]",
+                           stated_context=table.context, source=str(config.source or ""))
+    if finding is None:
+        return [Check(check, False, "flightdeck cannot tell the context Ollama gives a lane's model: none is loaded to "
+                                    f"ask, and this machine's GPU memory is unknown{note}",
+                      "`ollama ps` shows a loaded model's CONTEXT; a lane needs about 65,536 tokens", essential=False)]
+    return [Check(check, finding.ok, finding.detail + note, finding.fix, essential=False)]
 
 
 def _shown(url: str) -> str:

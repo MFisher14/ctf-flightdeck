@@ -16,11 +16,21 @@
 #     server_args   [local.mlx] only: the arguments mlx_lm.server was run with when it was measured;
 #                   `flightdeck models` prints them in the command that serves it. Thinking models
 #                   need theirs: served as they come, they spend their replies thinking.
+#     thinking      the [light] thinking its light results were measured with, when that is not
+#                   flightdeck's default for a server on this machine (thinking off): the [light]
+#                   lines `flightdeck models` prints for it set it, and eval-local's command too.
 #     not_for       per role, one line: why this build should not serve that role, with what was
 #                   measured. It is then listed as not for that role, with the line, and never as
 #                   a fit for it.
 #     measured      per role, a one-line result from docs/MODELS.md for this build as served here
 #                   (with its server_args)
+#     [local.<runtime>.jobs]  the light role job by job, as `flightdeck eval-local` scored each
+#                   job the way a run uses it, on the cases [eval] describes: hint (right; a run
+#                   uses the rules), judge and flagcheck (right in a run), and category, family and
+#                   recon as { right = N, wrong = N }, the answers right and wrong where a run asks
+#                   the model and has none without it (route's category where the board names none,
+#                   its specialist family, recon's brief). A build with jobs has no light line of its
+#                   own: model_catalog.py writes it from these (jobs_line()).
 # Every quantization and size below comes from the records of the benchmark behind
 # docs/MODELS.md (one machine: an Apple M4 Max with 36 GB): `ollama show` output
 # (logs/ollama-show-*.txt) and the "disk" record of each runtime's measure file
@@ -28,24 +38,51 @@
 # name theirs too. The first table of the benchmark's write-up gives the same sizes, rounded,
 # and the same quantizations. A value it did not record is left out: `flightdeck models` then
 # says it cannot tell whether that build fits, unless Ollama on the player's machine has pulled
-# it and gives its size.
+# it and gives its size. The five smaller models (Qwen3.5 0.8B, 2B and 4B, Gemma 4 E2B and E4B)
+# and every jobs table come from a second measurement on the same machine the same day, the
+# small-model one: its records are named beside each value (results/ollama-<tag>.measure.json,
+# .lane.json and .eval-head.json, the last eval-local at commit 3c7a64b with thinking off).
+# Ollama there was 0.34.2, running the llama.cpp (GGUF) builds these sizes are; Ollama 0.40 and
+# later on Apple Silicon runs many of these models on MLX, from builds of other sizes, which
+# nothing here measured.
 # Every result in measured and not_for comes from the tables of that write-up: "Tool calls" (5
 # tries in flightdeck's request shape), "Light role" (`flightdeck eval-local`, scored out of 44:
 # 30 hint and 14 judge jobs, where the rules, flightdeck's default, score 38) and "Lane" (four
 # practice challenges, Crab Walk, Half and Half, Mille Feuille and Welcome Mat, one lane at a
-# time, 480 s for all four). All were measured on 2026-11-11: one machine, under load, one run;
-# a lane's count in particular can differ from run to run.
+# time, 480 s for all four), or from the small-model measurement's records, made the same ways.
+# All were measured on 2026-11-11: one machine, under load (its load average often above 100),
+# one run; every number is approximate, and a lane's count in particular can differ from run to
+# run.
 # A build that measured badly for a role is not for it (not_for, with the numbers): for lanes, no
-# usable tool call or no practice challenge solved; for the light role, a score below the rules'
-# 38, flightdeck's default, which needs no model and costs nothing.
+# usable tool call or no practice challenge solved. For the light role, a build with jobs is for
+# each job it did no worse at than flightdeck's default, which needs no model and costs nothing
+# (model_catalog.py offered_jobs(), whose module doc gives the rule), and for the light role when
+# it is for one; a build measured only on the earlier set of 44 scored cases is not for the light
+# role below the rules' 38, and is for the judge alone, the one job of a run that set measured.
 # The memory a model needs is not stored here: model_catalog.py estimates it as its weights
 # (size_bytes) plus an allowance for the context (CONTEXT_ALLOWANCE). An estimate, not a
 # measurement.
+#
+# [eval]: the case set every jobs table was scored on, `flightdeck eval-local`'s bundled cases at
+# 3c7a64b (hint 30, judge 14, summary 14, route 40, recon 30, flagcheck 40), and flightdeck's
+# default on it: eval-local's rules column, a run with no light model (the rules for hint; the
+# judge's alert as the rules raised it; route's category from the board, and the 9 cases where
+# the board names none flightdeck knows, where a run asks a model; the planted-flag hold alone
+# for flagcheck). tests/test_model_catalog.py checks it against the bundled cases, so a changed
+# case set cannot quietly sit under results scored on this one.
 #
 # [[api]]: a model API. classifier = true: the provider's safety classifier can decline
 # security work. The Anthropic entry's ladder and prices are the ones `flightdeck init
 # --provider anthropic` writes (setup.py ANTHROPIC_LADDER and ANTHROPIC_PRICES), read from there
 # and never copied here. The OpenRouter entry names no models: its list changes.
+
+[eval]
+hint = { cases = 30, default = 30 }
+judge = { cases = 14, default = 8 }
+category = { cases = 40, default = 30, asked = 9 }
+family = { cases = 40 }
+recon = { cases = 30 }
+flagcheck = { cases = 40, default = 30 }
 
 [[local]]
 id = "qwen3.5-9b"
@@ -65,13 +102,21 @@ size_bytes = 6550825550    # results/ollama-qwen.measure.json: disk.size_bytes
 # fifth a well-formed call to set_plan, which the two-tool test did not offer but a lane does.
 lanes = "solved 1 of 4 practice challenges as served; tool calls 4/5, the fifth a well-formed call to set_plan, which the test did not offer"
 
-[local.ollama.not_for]
+[local.ollama.jobs]
 # Ollama runs it with thinking on unless a request turns that off ("reasoning_effort": "none"),
-# and flightdeck's requests do not: so served, nearly every light-role job got no answer
-# (logs/eval-ollama-qwen.log; with thinking off, logs/eval-ollama-qwen.reasoning-none.log).
-# 2026-11-11, one machine, under load, one run: "Light role": 2/44 as served, 56 of 58 replies
-# with no answer; 42/44 with reasoning_effort none, which the benchmark's wrapper added.
-light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off: so served, eval-local 2/44 against the rules' 38/44, with no answer in 56 of 58 replies; 42/44 with reasoning_effort none, which flightdeck does not send"
+# which flightdeck's light requests to a server on this machine do. Served with thinking on, 2/44
+# on the earlier set (56 of 58 replies with no answer: logs/eval-ollama-qwen.log); with
+# reasoning_effort none, 42/44 (logs/eval-ollama-qwen.reasoning-none.log). Job by job, the
+# small-model measurement's results/ollama-qwen9.eval-head.json (eval-local at 3c7a64b, thinking
+# off; 2026-11-11, one machine, under load, one run, approximate): its rows' correct (hint),
+# in_run_right (judge, flagcheck) and, case by case, the route category answers where the rules
+# give none, the route family answers and the recon briefs, right and wrong.
+hint = 27
+judge = 13
+category = { right = 5, wrong = 4 }
+family = { right = 37, wrong = 3 }
+recon = { right = 20, wrong = 10 }
+flagcheck = 35
 
 [local.mlx]
 model = "mlx-community/Qwen3.5-9B-MLX-4bit"
@@ -86,9 +131,10 @@ server_args = ["--chat-template-args", '{"enable_thinking":false}', "--max-token
 [local.mlx.measured]
 # 2026-11-11, one machine, under load, one run: "Lane": 2 of 4 with thinking off and --max-tokens
 # 8192, 0 of 4 served as it comes; "Tool calls": 5/5; "Light role": 41/44 with thinking off (the
-# MLX server flag), 0/44 served as it comes (58 of 58 replies with no answer).
+# MLX server flag; hints 28/30, judge 13/14), 0/44 served as it comes (58 of 58 replies with no
+# answer). Route, recon and flagcheck were not measured on it.
 lanes = "solved 2 of 4 practice challenges with thinking off and --max-tokens 8192 (0 of 4 served as it comes); tool calls 5/5"
-light = "eval-local 41/44 with thinking off, against the rules' 38/44"
+light = "for the judge, the one job of a run the earlier cases measured: eval-local 41/44 with thinking off, against the rules' 38/44 (hint 28/30, judge 13/14)"
 
 [[local]]
 id = "gpt-oss-20b"
@@ -102,12 +148,17 @@ roles = ["lanes", "light"]
 model = "gpt-oss:20b"
 quantization = "MXFP4"     # logs/ollama-show-gpt-oss_20b.txt: quantization
 size_bytes = 13793441566   # results/ollama-gptoss.measure.json: disk.size_bytes
+# Its light role was measured as served, with no thinking switch sent. flightdeck's default for a
+# server on this machine asks for thinking off ("reasoning_effort": "none", which Ollama reads for
+# gpt-oss as no thinking output), and that was not measured: its [light] lines set thinking = true.
+thinking = true
 
 [local.ollama.measured]
 # 2026-11-11, one machine, under load, one run: "Lane", as served: 2 of 4; "Tool calls": 5/5;
-# "Light role", as served: 38/44, the rules' own score (2 of 58 replies with no answer).
+# "Light role", as served: 38/44, the rules' own score (hints 27/30, judge 11/14; 2 of 58 replies
+# with no answer). Route, recon and flagcheck were not measured on it.
 lanes = "solved 2 of 4 practice challenges as served; tool calls 5/5"
-light = "eval-local 38/44 as served, against the rules' 38/44"
+light = "for the judge, the one job of a run the earlier cases measured: eval-local 38/44 with no thinking switch sent, against the rules' 38/44 (hint 27/30, judge 11/14); thinking off, flightdeck's default here, was not measured"
 
 [local.mlx]
 model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
@@ -136,15 +187,18 @@ model = "gemma4:12b"
 quantization = "Q4_K_M"    # logs/ollama-show-gemma4_12b.txt: quantization
 size_bytes = 8021618941    # results/ollama-gemma.measure.json: disk.size_bytes
 
+[local.ollama.measured]
+# As for Qwen3.5 9B on Ollama: served with thinking on, most light-role jobs got no answer
+# (logs/eval-ollama-gemma.log: 17/44, 39 of 58 replies with no answer); with "reasoning_effort":
+# "none", which the benchmark's wrapper added and flightdeck's light requests to a server on this
+# machine now send, 42/44 (logs/eval-ollama-gemma.reasoning-none.log: hints 29/30, judge 13/14).
+# 2026-11-11, one machine, under load, one run. Route, recon and flagcheck were not measured on it.
+light = "for the judge, the one job of a run the earlier cases measured: eval-local 42/44 with thinking off, against the rules' 38/44 (hint 29/30, judge 13/14)"
+
 [local.ollama.not_for]
 # 2026-11-11, one machine, under load, one run: "Lane", as served, in two runs: 0 of 4 each, both
 # stalled at their third model call (no reply within flightdeck's 180 s per try); "Tool calls": 5/5.
-# As for Qwen3.5 9B on Ollama: thinking on, and most light-role jobs got no answer
-# (logs/eval-ollama-gemma.log; with thinking off, logs/eval-ollama-gemma.reasoning-none.log):
-# "Light role": 17/44 as served, 39 of 58 replies with no answer; 42/44 with reasoning_effort
-# none, which the benchmark's wrapper added.
 lanes = "solved 0 of 4 practice challenges as served, in two runs: each stalled at its third model call, with no reply within flightdeck's 180 s per try; tool calls 5/5"
-light = "Ollama runs it with thinking on, which flightdeck's requests do not turn off: so served, eval-local 17/44 against the rules' 38/44, with no answer in 39 of 58 replies; 42/44 with reasoning_effort none, which flightdeck does not send"
 
 [local.mlx]
 model = "mlx-community/gemma-4-12B-it-4bit"
@@ -157,8 +211,9 @@ server_args = ["--chat-template-args", '{"enable_thinking":false}', "--max-token
 
 [local.mlx.measured]
 # 2026-11-11, one machine, under load, one run: "Light role": 41/44 with thinking off (the MLX
-# server flag), 24/44 served as it comes (34 of 58 replies with no answer).
-light = "eval-local 41/44 with thinking off, against the rules' 38/44"
+# server flag; hints 30/30, judge 11/14), 24/44 served as it comes (34 of 58 replies with no
+# answer). Route, recon and flagcheck were not measured on it.
+light = "for the judge, the one job of a run the earlier cases measured: eval-local 41/44 with thinking off, against the rules' 38/44 (hint 30/30, judge 11/14)"
 
 [local.mlx.not_for]
 # 2026-11-11, one machine, under load, one run: "Lane": 0 of 4 with thinking off and --max-tokens
@@ -208,6 +263,161 @@ size_bytes = 2158100796    # results/mlx-phi.measure.json: disk.weights_bytes
 # replies with no usable answer (not exactly one of the options).
 lanes = "mlx_lm.server gives its chat template no tools, so it makes no tool call: tool calls 0/5"
 light = "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model; 19 of 58 replies held no usable answer"
+
+# The five below: the small-model measurement (2026-11-11, the same machine, under load, one run,
+# approximate), on Ollama 0.34.2 only. Their license: each model card's, which Ollama's license
+# layer repeats (Apache License, Version 2.0).
+
+[[local]]
+id = "gemma4-e4b"
+name = "Gemma 4 E4B"
+family = "Gemma 4"
+parameters = "7.5B"        # results/ollama-gemmae4.measure.json: disk.details.parameter_size (embeddings counted)
+license = "Apache-2.0"
+roles = ["lanes", "light"]
+
+[local.ollama]
+model = "gemma4:e4b"
+quantization = "Q4_K_M"    # results/ollama-gemmae4.measure.json: disk.details.quantization_level
+size_bytes = 6583656505    # results/ollama-gemmae4.measure.json: disk.size_bytes
+
+[local.ollama.measured]
+# 2026-11-11, one machine, under load, one run, approximate: results/ollama-gemmae4.lane.json, as
+# served: Crab Walk solved in 4 turns; Half and Half ran until the 480 s were up, after 3 wrong
+# flags; the other two never started. results/ollama-gemmae4.measure.json: tool_calls 5 of 5.
+lanes = "solved 1 of 4 practice challenges as served; tool calls 5/5"
+
+[local.ollama.jobs]
+# results/ollama-gemmae4.eval-head.json, eval-local at 3c7a64b with thinking off (2026-11-11, one
+# machine, under load, one run, approximate): its rows' correct (hint) and in_run_right (judge,
+# flagcheck); case by case, route's category answers where the rules give none, its family
+# answers and the recon briefs, right and wrong.
+hint = 28
+judge = 11
+category = { right = 7, wrong = 2 }
+family = { right = 36, wrong = 4 }
+recon = { right = 23, wrong = 7 }
+flagcheck = 30
+
+[[local]]
+id = "gemma4-e2b"
+name = "Gemma 4 E2B"
+family = "Gemma 4"
+parameters = "4.6B"        # results/ollama-gemmae2.measure.json: disk.details.parameter_size (embeddings counted)
+license = "Apache-2.0"
+roles = ["lanes", "light"]
+
+[local.ollama]
+model = "gemma4:e2b"
+quantization = "Q4_K_M"    # results/ollama-gemmae2.measure.json: disk.details.quantization_level
+size_bytes = 4587156505    # results/ollama-gemmae2.measure.json: disk.size_bytes
+
+[local.ollama.not_for]
+# 2026-11-11, one machine, under load, one run, approximate: results/ollama-gemmae2.lane.json, as
+# served: Crab Walk ran into the 250,000-token cap after 52 turns and 5 wrong flags; Half and Half
+# ran until the 480 s were up, after 5 wrong flags; the other two never started.
+# results/ollama-gemmae2.measure.json: tool_calls 5 of 5.
+lanes = "solved 0 of 4 practice challenges as served, with 10 wrong flags in the two lanes that started; tool calls 5/5"
+
+[local.ollama.jobs]
+# results/ollama-gemmae2.eval-head.json, eval-local at 3c7a64b with thinking off (2026-11-11, one
+# machine, under load, one run, approximate), read as for Gemma 4 E4B above.
+hint = 24
+judge = 12
+category = { right = 2, wrong = 5 }
+family = { right = 33, wrong = 7 }
+recon = { right = 15, wrong = 15 }
+flagcheck = 28
+
+[[local]]
+id = "qwen3.5-4b"
+name = "Qwen3.5 4B"
+family = "Qwen3.5"
+parameters = "4.2B"        # results/ollama-qwen4.measure.json: disk.details.parameter_size
+license = "Apache-2.0"
+roles = ["lanes", "light"]
+
+[local.ollama]
+model = "qwen3.5:4b"
+quantization = "Q4_K_M"    # results/ollama-qwen4.measure.json: disk.details.quantization_level
+size_bytes = 3324173934    # results/ollama-qwen4.measure.json: disk.size_bytes
+
+[local.ollama.measured]
+# 2026-11-11, one machine, under load, one run, approximate: results/ollama-qwen4.lane.json, as
+# served (thinking on, its default): Crab Walk solved in 20 turns and Half and Half in 15; Mille
+# Feuille ran until the 480 s were up; Welcome Mat never started. results/ollama-qwen4.measure.json:
+# tool_calls 5 of 5.
+lanes = "solved 2 of 4 practice challenges as served; tool calls 5/5"
+
+[local.ollama.jobs]
+# results/ollama-qwen4.eval-head.json, eval-local at 3c7a64b with thinking off (2026-11-11, one
+# machine, under load, one run, approximate), read as for Gemma 4 E4B above.
+hint = 24
+judge = 10
+category = { right = 6, wrong = 3 }
+family = { right = 35, wrong = 5 }
+recon = { right = 15, wrong = 15 }
+flagcheck = 32
+
+[[local]]
+id = "qwen3.5-2b"
+name = "Qwen3.5 2B"
+family = "Qwen3.5"
+parameters = "1.9B"        # results/ollama-qwen2.measure.json: disk.details.parameter_size
+license = "Apache-2.0"
+roles = ["lanes", "light"]
+
+[local.ollama]
+model = "qwen3.5:2b"
+quantization = "Q8_0"      # results/ollama-qwen2.measure.json: disk.details.quantization_level
+size_bytes = 2683396812    # results/ollama-qwen2.measure.json: disk.size_bytes
+
+[local.ollama.not_for]
+# 2026-11-11, one machine, under load, one run, approximate: results/ollama-qwen2.lane.json, as
+# served: Crab Walk and Half and Half ran into the 250,000-token cap; Mille Feuille ran until the
+# 480 s were up; Welcome Mat never started. results/ollama-qwen2.measure.json: tool_calls 5 of 5.
+lanes = "solved 0 of 4 practice challenges as served: two lanes ran into the 250,000-token cap, a third until the 480 s were up, and the fourth never started; tool calls 5/5"
+
+[local.ollama.jobs]
+# results/ollama-qwen2.eval-head.json, eval-local at 3c7a64b with thinking off (2026-11-11, one
+# machine, under load, one run, approximate), read as for Gemma 4 E4B above.
+hint = 21
+judge = 12
+category = { right = 3, wrong = 6 }
+family = { right = 28, wrong = 10 }
+recon = { right = 7, wrong = 23 }
+flagcheck = 27
+
+[[local]]
+id = "qwen3.5-0.8b"
+name = "Qwen3.5 0.8B"
+family = "Qwen3.5"
+parameters = "752.39M"     # results/ollama-qwen08.measure.json: disk.details.parameter_size
+license = "Apache-2.0"
+roles = ["lanes", "light"]
+
+[local.ollama]
+model = "qwen3.5:0.8b"
+quantization = "Q8_0"      # results/ollama-qwen08.measure.json: disk.details.quantization_level
+size_bytes = 1322069277    # results/ollama-qwen08.measure.json: disk.size_bytes
+
+[local.ollama.not_for]
+# 2026-11-11, one machine, under load, one run, approximate: results/ollama-qwen08.lane.json, as
+# served: each of its four lanes ran into the 250,000-token cap without a flag, in 18 to 39 turns.
+# results/ollama-qwen08.measure.json: tool_calls 5 of 5.
+lanes = "solved 0 of 4 practice challenges as served: each lane ran into the 250,000-token cap without a flag; tool calls 5/5"
+
+[local.ollama.jobs]
+# results/ollama-qwen08.eval-head.json, eval-local at 3c7a64b with thinking off (2026-11-11, one
+# machine, under load, one run, approximate), read as for Gemma 4 E4B above. Each of its 30
+# replies to recon gave the challenge back as it was shown, fence and all (eval-local read one as
+# no answer); the two scored right passed on the keywords that text holds.
+hint = 17
+judge = 11
+category = { right = 1, wrong = 6 }
+family = { right = 9, wrong = 7 }
+recon = { right = 2, wrong = 27 }
+flagcheck = 20
 
 [[api]]
 id = "anthropic"

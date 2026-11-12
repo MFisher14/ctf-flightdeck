@@ -44,7 +44,8 @@ def test_init_needs_the_local_models_name_and_suggests_some_to_measure(tmp_path,
     result, target = init(tmp_path, monkeypatch, "--light", "ollama")
     assert result.exit_code == 2 and not target.exists()
     assert "--light ollama needs --light-model" in result.output
-    assert "examples to measure: Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B or Phi-4-mini" in result.output
+    assert "examples to measure: Qwen3.5 9B or 4B, Gemma 4 12B or E4B, gpt-oss-20b or Ministral 3 14B" in result.output
+    assert "Phi-4-mini" not in result.output  # it scored below the rules: not an example to measure
 
 
 def test_init_writes_claude_or_cactus_as_the_light_model_when_asked(tmp_path, monkeypatch):
