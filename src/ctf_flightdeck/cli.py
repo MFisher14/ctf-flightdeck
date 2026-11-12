@@ -164,6 +164,10 @@ class Agent(StrEnum):
 
 
 AGENT_HELP = "Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config) instead of flightdeck's own loop."
+AUTOPILOT_HELP = ("Engage autopilot: the run goes on by rule while you are away, never looser than the event's rules; "
+                  "needs a run budget and Docker (default: the config's [autopilot] engage).")
+BUDGET_DOLLARS_HELP = "The whole run's budget in dollars, for autopilot (default: the config's [autopilot] budget_dollars)."
+BUDGET_TOKENS_HELP = "The whole run's budget in tokens, for autopilot (default: the config's [autopilot] budget_tokens)."
 AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
 
 
@@ -218,6 +222,9 @@ def play(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
+    autopilot: Annotated[bool | None, typer.Option("--autopilot/--no-autopilot", metavar="", help=AUTOPILOT_HELP)] = None,
+    budget_dollars: Annotated[float | None, typer.Option("--budget-dollars", min=0.0, metavar="DOLLARS", help=BUDGET_DOLLARS_HELP)] = None,
+    budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
@@ -241,12 +248,17 @@ def play(
         confirm=_ask if _at_terminal() else None,
         agent=agent.value if agent else None,
         agent_auth=agent_auth,
+        autopilot=autopilot, budget_dollars=budget_dollars, budget_tokens=budget_tokens,
+        say=lambda line: typer.echo(f"flightdeck: {line}", err=True),
     )
     try:
         run = prepare_run(options)
     except RunError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
+    except KeyboardInterrupt:  # Ctrl-C in autopilot's wait for the event's start (the one wait before a run)
+        typer.echo("flightdeck: stopped before the run started: nothing was pulled and no lane started", err=True)
+        raise typer.Exit(130) from None
     if run.runtime == "host":
         typer.echo(f"flightdeck: {host_warning()}", err=True)
     for note in run.notes():
@@ -402,6 +414,9 @@ def practice(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
+    autopilot: Annotated[bool | None, typer.Option("--autopilot/--no-autopilot", metavar="", help=AUTOPILOT_HELP)] = None,
+    budget_dollars: Annotated[float | None, typer.Option("--budget-dollars", min=0.0, metavar="DOLLARS", help=BUDGET_DOLLARS_HELP)] = None,
+    budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends tokens like `play`."""
@@ -415,6 +430,7 @@ def practice(
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
         team=False, submit=None, model=model, run_dir=run_dir, pack=pack, agent=agent, agent_auth=agent_auth,
+        autopilot=autopilot, budget_dollars=budget_dollars, budget_tokens=budget_tokens,
     )
 
 
