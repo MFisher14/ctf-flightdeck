@@ -19,7 +19,7 @@ from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import ActionKind, Challenge, DeckConfig, EventKind
 
-from fake_model import FakeModelServer, text_reply
+from fake_model import FakeModelServer, FakeReply, text_reply
 
 FLAG = r"t\{[a-z0-9_]+\}"
 MODELS = ("small", "big")
@@ -52,11 +52,12 @@ def user_text(record: dict) -> str:
 
 
 class LightModel:
-    """A fake light model on 127.0.0.1. Each job gets its scripted answer; with a `gate`, no
-    answer goes out before the gate is set (leaving the context sets it)."""
+    """A fake light model on 127.0.0.1. Each job gets its scripted answer (text, or a FakeReply
+    as it is: an HTTP error, say); with a `gate`, no answer goes out before the gate is set
+    (leaving the context sets it)."""
 
-    def __init__(self, answers: dict[str, str], *, gate: threading.Event | None = None, cost: float | None = None,
-                 hold: set[str] | None = None) -> None:
+    def __init__(self, answers: dict[str, str | FakeReply], *, gate: threading.Event | None = None,
+                 cost: float | None = None, hold: set[str] | None = None) -> None:
         self.answers = dict(answers)
         self.gate = gate
         self.hold = hold  # the jobs the gate holds (None: every job)
@@ -67,7 +68,10 @@ class LightModel:
         job = job_of(record)
         if self.gate is not None and (self.hold is None or job in self.hold):
             self.gate.wait(60)
-        return text_reply(self.answers.get(job, "no idea"), prompt_tokens=40, completion_tokens=4, cost=self.cost)
+        said = self.answers.get(job, "no idea")
+        if isinstance(said, FakeReply):
+            return said
+        return text_reply(said, prompt_tokens=40, completion_tokens=4, cost=self.cost)
 
     def asked(self) -> list[str]:
         return [job_of(r) for r in self.server.chats()]

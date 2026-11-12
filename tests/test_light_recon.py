@@ -162,6 +162,7 @@ def test_escalation_and_refresh_reuse_the_same_recon(tmp_path):
                 assert first_look_of(first[1]["content"]) == (
                     "Specialist it suits: classical-crypto (classical ciphers and encodings: Caesar, Vigenere, substitution, "
                     "XOR, base64)\n" + BRIEF)
+                assert "The player asked you to take this approach" not in first[1]["content"]  # never the approach
                 assert second[:2] == first[:2] and "60,000 prompt tokens" in second[-1]["content"]  # the same prefix
                 assert lab.deck.apply(iv.Escalate(lane.id)).ok
                 await until(lambda: any(c["json"]["model"] == "big" for c in lanes.chats()), "the stronger model's call")
