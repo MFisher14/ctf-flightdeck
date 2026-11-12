@@ -908,27 +908,31 @@ def _run_table(reports: Sequence[EvalReport], row: Callable) -> list[str]:
     lines = ["", "in a run: the rules first, and the light model only where a run asks it (the rules column is a run "
                  "with no light model; route's instance is the rule's in every column)"]
     lines.append(row("", "cases", [report.label for report in reports], RUN_LABEL))
-    first = max(reports, key=lambda report: sum(r.in_run is not None for r in report.results))  # one a run reads
     for name in present:
         size = max(len(reading.get(name, ())) for reading in readings)
         lines.append(row(name, size, [_cell(sum(r[name]), len(r[name])) if name in r else "n/a" for r in readings],
                          RUN_LABEL))
         if name == "judge in a run":
-            judged = [r for r in first.results if r.kind == JUDGE]
-            false_alerts = sum(1 for r in judged if r.alert and r.expected == YES)
-            true_alerts = sum(1 for r in judged if r.alert and r.expected == NO)
-            lines.append(row("  false alerts down", false_alerts, [str(sum(1 for r in rep.results if r.kind == JUDGE and r.taken_down and r.expected == YES)) for rep in reports], RUN_LABEL))
-            lines.append(row("  true alerts down", true_alerts, [str(sum(1 for r in rep.results if r.kind == JUDGE and r.taken_down and r.expected == NO)) for rep in reports], RUN_LABEL))
+            # The case totals (how many alerts there are) come from a column that judges, never
+            # from one that does not (its _not_applicable judge rows have alert False); a column
+            # that does not judge shows n/a in these sub-rows, not 0.
+            judged = [r for r in _run_ref(reports, JUDGE).results if r.kind == JUDGE]
+            for sub, want in (("false alerts down", YES), ("true alerts down", NO)):
+                total = sum(1 for r in judged if r.alert and r.expected == want)
+                cells = [str(sum(1 for r in rep.results if r.kind == JUDGE and r.taken_down and r.expected == want))
+                         if _does_run_job(rep, JUDGE) else "n/a" for rep in reports]
+                lines.append(row(f"  {sub}", total, cells, RUN_LABEL))
         if name == "flagcheck in a run":
-            loose = [r for r in first.results if r.kind == FLAGCHECK and r.planted is False]
-            stand_ins = sum(1 for r in loose if r.expected == STAND_IN)
-            reals = sum(1 for r in loose if r.expected == REAL)
-            lines.append(row("  stand-ins held", stand_ins, [str(_held(rep, STAND_IN)) for rep in reports], RUN_LABEL))
-            lines.append(row("  real flags held", reals, [str(_held(rep, REAL)) for rep in reports], RUN_LABEL))
+            flags = _run_ref(reports, FLAGCHECK).results  # a column a run reads flagcheck for
+            loose = [r for r in flags if r.kind == FLAGCHECK and r.planted is False]
+            for sub, want in (("stand-ins held", STAND_IN), ("real flags held", REAL)):
+                total = sum(1 for r in loose if r.expected == want)
+                cells = [str(_held(rep, want)) if _does_run_job(rep, FLAGCHECK) else "n/a" for rep in reports]
+                lines.append(row(f"  {sub}", total, cells, RUN_LABEL))
             called = [str(sum(1 for r in rep.scored if r.kind == FLAGCHECK and r.expected == STAND_IN
                               and r.answered and r.predicted == REAL)) if any(r.kind == FLAGCHECK for r in rep.scored)
                       else "n/a" for rep in reports]
-            lines.append(row("  stand-ins called real", sum(1 for r in first.results if r.kind == FLAGCHECK
+            lines.append(row("  stand-ins called real", sum(1 for r in flags if r.kind == FLAGCHECK
                                                              and r.expected == STAND_IN), called, RUN_LABEL))
     lines.append("")
     if "judge in a run" in present:
@@ -948,6 +952,18 @@ def _run_table(reports: Sequence[EvalReport], row: Callable) -> list[str]:
 
 def _held(report: EvalReport, expected: str) -> int:
     return sum(1 for r in report.results if r.kind == FLAGCHECK and r.planted is False and r.held and r.expected == expected)
+
+
+def _does_run_job(report: EvalReport, kind: str) -> bool:
+    """Whether a run reads `kind` (the judge, flagcheck) for this column: a column whose engine
+    does not do the job has no in-a-run reading for it, and shows n/a in that job's sub-rows."""
+    return any(r.kind == kind and r.in_run is not None for r in report.results)
+
+
+def _run_ref(reports: Sequence[EvalReport], kind: str) -> EvalReport:
+    """A column a run reads `kind` for, so the sub-rows' case totals (how many alerts, how many
+    stand-ins) come from one that does the job, not from a column that leaves it to the rules."""
+    return next(report for report in reports if _does_run_job(report, kind))
 
 
 def _thresholds(reports: Sequence[EvalReport]) -> list[str]:

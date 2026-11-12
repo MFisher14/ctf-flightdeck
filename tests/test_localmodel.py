@@ -1076,6 +1076,53 @@ def test_a_stand_in_called_real_is_counted_apart():
     assert lines_of(text, "flagcheck in a run") == ["6", "3/6 50%", "3/6 50%"]  # the planted one is still held
 
 
+def evaluate_only(cases, jobs, responder_fn) -> lm.EvalReport:
+    """A column from the config: the engine asked only `jobs` (localmodel_cli._Only), over a fake
+    server, exactly as --from-config wraps a per-job engine."""
+    with FakeModelServer(responder=responder_fn) as server:
+        async def go():
+            client = ModelClient(server.base_url, None, max_retries=0, timeout=5.0)
+            engine = localmodel_cli._Only(
+                L.ModelLight("openai", client, "local/m", timeout=5.0, tokens=L.OPENAI_TOKENS, temperature=0.0), jobs)
+            try:
+                return await lm.evaluate_engine(engine, cases)
+            finally:
+                await engine.aclose()
+
+        return asyncio.run(go())
+
+
+def test_the_in_run_sub_rows_read_their_totals_from_a_column_that_does_the_job():
+    # Columns split by job (--from-config): one does the judge, one does route and flagcheck. The
+    # route+flagcheck column has the most in-a-run readings, so the old code read the judge and
+    # flagcheck sub-row case totals from it (it judges nothing: 0) and printed 0 for its own cells
+    # instead of n/a. The totals must come from a column that does the job.
+    routes = [route_case(f"R{i}", "Crypto", ("cry", "modern-crypto", "no")) for i in range(8)]
+    flags = [flag_case("Echo", "stand-in", own_text=False), flag_case("Real", "real", own_text=False)]
+    cases = judge_set() + routes + flags  # 5 judge, 8 route (3 questions each), 2 flagcheck
+
+    def route_and_flag(record):  # answers route by name, every flag "stand-in"
+        user = record["json"]["messages"][1]["content"]
+        if user.startswith("Is the candidate"):
+            return text_reply("stand-in")
+        key = next(k for start, k in QUESTION_OF.items() if user.startswith(start))
+        name = re.search(r"Challenge: (.*?)(?: \(|\n)", inside_fence(user)).group(1)
+        return text_reply({"category": "cry", "family": "modern-crypto", "instance": "no"}[key])
+
+    rules = lm.rules_baseline(cases)
+    judge_col = evaluate_only(cases, ("judge",), lambda record: text_reply("yes"))  # takes every alert down
+    route_flag_col = evaluate_only(cases, ("route", "flagcheck"), route_and_flag)
+    # The route+flagcheck column reads more in-a-run jobs than the rules, so it was the old `first`.
+    reads = lambda rep: sum(r.in_run is not None for r in rep.results)
+    assert reads(route_flag_col) > reads(rules) > reads(judge_col)
+
+    text = lm.format_scorecard([rules, judge_col, route_flag_col])
+    assert lines_of(text, "false alerts down") == ["2", "0", "2", "n/a"]  # cases 2, the judge column took both down
+    assert lines_of(text, "true alerts down") == ["1", "0", "1", "n/a"]  # route+flagcheck judges nothing: n/a
+    assert lines_of(text, "stand-ins held") == ["1", "0", "n/a", "1"]  # judge-only does no flagcheck: n/a
+    assert lines_of(text, "real flags held") == ["1", "0", "n/a", "1"]  # it called the real flag a stand-in
+
+
 # --------------------------------------------------------------------------- option lines, the decider, comparisons
 
 
