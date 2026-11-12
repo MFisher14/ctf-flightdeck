@@ -116,10 +116,12 @@ from ..core.model import (
     PendingKind,
 )
 from ..l1.runner import scan
+from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
+from .facts import FirstLooks, Look
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
@@ -1015,6 +1017,9 @@ class _Run:
         self.tasks: set[asyncio.Future[Any]] = set()
         self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
         self.homes: dict[str, str] = {}  # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME)
+        self.look: Look | None = None  # the challenge's first look (agent/facts.py), until the CLI's first start takes it
+        self.recon = ""  # what of the first look was back then: in every opening brief of the lane
+        self.opened = False  # the CLI has had its first opening: nothing more goes into the brief
         self._delivering = False
 
     # ------------------------------------------------------------------ the deck's view
@@ -1222,6 +1227,9 @@ class _Run:
             self.report(TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         self.ready = True
+        driver, cid = self.driver, self.challenge.id
+        self.look = driver.looks.start(driver.lights, driver.deck, self.lane_id, self.challenge, self.workspace,
+                                       driver.files.get(cid, self.challenge.files), driver.urls.get(cid, ()))  # never waited for
         self.cap_note()
         root = self.workspace.root
         try:
@@ -1325,12 +1333,19 @@ class _Run:
 
     def opening(self) -> str:
         """The start of a fresh context: the brief (the flag format in its fence, as data), and
-        the summary after an escalation."""
+        the summary after an escalation. The first opening is the CLI's first model call: the
+        brief takes the first look as far as it is back (agent/facts.py), and every later
+        opening repeats it as it was."""
+        if not self.opened:
+            self.opened = True
+            look, self.look = self.look, None
+            if look is not None:
+                self.recon = self.driver.looks.opening(look, self.driver.deck, self.lane_id, self.driver.flag_re)
         lane = self.lane()
         cid = self.challenge.id
         text = prompts.brief(
             self.challenge, self.driver.files.get(cid, self.challenge.files), self.driver.urls.get(cid, ()),
-            lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format,
+            lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format, recon=self.recon,
         )
         if self.escalation is not None:
             text += "\n\n" + prompts.escalation(self.escalation)
@@ -2154,10 +2169,12 @@ class ExternalDriver:
         secrets: Mapping[str, str] | None = None,
         stop_grace: float = STOP_GRACE,
         takeover_wait: float = TAKEOVER_WAIT,
+        lights: Lights | None = None,
     ) -> None:
         """`secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
         Like the agent's own credential, which is always one, a value is shown as [name]
-        wherever a lane's CLI writes it."""
+        wherever a lane's CLI writes it. `lights`: the run's light engines (light.Lights), for
+        route and recon at a lane's start (agent/facts.py)."""
         if agent.kind not in KINDS:
             raise ValueError(f"unknown agent kind {agent.kind!r}")
         self.agent = agent
@@ -2174,6 +2191,8 @@ class ExternalDriver:
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.deck: Any = None
         self.flag_re: re.Pattern[str] = re.compile(r"(?!)")
+        self.lights = lights
+        self.looks = FirstLooks(self.errors)
 
     # ------------------------------------------------------------------ LaneDriver
 
@@ -2261,7 +2280,9 @@ class ExternalDriver:
         return _Takeover(run, self)  # type: ignore[arg-type]
 
     async def shutdown(self) -> None:
-        """Stop every lane's CLI and close every workspace (the console calls this before it exits)."""
+        """Stop every lane's CLI and close every workspace (the console calls this before it
+        exits); a first look still under way first."""
+        await self.looks.aclose()
         for run in self.runs.values():
             run.stop()
         tasks = [run.task for run in self.runs.values() if run.task is not None]
