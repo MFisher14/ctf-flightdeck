@@ -776,6 +776,9 @@ class _Writer:
             elif action.by == "player" and action.text.startswith(NEW_PLAN):
                 last = action.text[len(NEW_PLAN):]
                 items.append(f"Turn {action.turn}, you redirected it: {self.t(last)}")
+            elif action.by == "autopilot" and action.text.startswith(NEW_PLAN):
+                last = action.text[len(NEW_PLAN):]
+                items.append(f"Turn {action.turn}, autopilot redirected it, by rule: {self.t(last)}")
         if lane.plan and not (last and _same_plan(last, lane.plan)):
             items.append(
                 f"Its plan at the end, set in a turn that also did other work (so the log does not "
@@ -916,13 +919,19 @@ class _Writer:
     def _interventions(self, lane: LaneRecord) -> None:
         self.out("## Your interventions", "")
         mine = [a for a in lane.actions if a.by == "player"]
+        by_rule = [a for a in lane.actions if a.by == "autopilot"]  # autopilot's, by rule: never listed as yours
         if not mine:
-            self.out("None: the lane worked on its own.", "")
-            return
+            self.out("None: the lane worked on its own." if not by_rule else "None of yours.", "")
         for action in mine:
             label, detail = _intervention(action)
             self.out(f"- Turn {action.turn}, {label}" + (f": {self.t(detail)}" if detail else ""))
-        self.out("")
+        if mine:
+            self.out("")
+        if by_rule:
+            self.out("Autopilot stepped in, by rule:", "")
+            for action in by_rule:
+                self.out(f"- Turn {action.turn}, {self.t(action.text)}")
+            self.out("")
 
     def _no_transcript(self) -> None:
         lane = self.solve.lane

@@ -52,6 +52,6 @@ OpenRouter account, a subscription CLI, a folder of Python scripts) and it shoul
   plain scripts (`flightdeck l1 import`) and build mode's engine stubs (`flightdeck build gap`);
   players bring their own L1.
 - Not a bot that replaces the player. Autonomy is a dial the player controls; at its far end,
-  Autopilot (planned: [ROADMAP.md](ROADMAP.md)) runs an event while you are away, never looser than
+  Autopilot ([GUIDE.md](GUIDE.md#autopilot)) runs an event while you are away, never looser than
   the event's rules, and hands the controls back when something needs a human.
 - Not a way around event rules.

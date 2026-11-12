@@ -137,3 +137,16 @@ def test_the_scorecard_counts_the_players_interventions_only(tmp_path):
     helped, _, board = flown(tmp_path / "b", player=("hint", "approve"))
     helped.close()
     assert score(helped.log.path, board).interventions == 2
+
+
+def test_a_writeup_draft_lists_autopilots_steps_apart_from_yours(tmp_path):
+    from ctf_flightdeck import writeup
+
+    run, _, _ = flown(tmp_path, player=("approve",))  # bravo: escalated by autopilot, solved with your approval
+    text = writeup.draft(run.close(), "bravo")
+    section = text.split("## Your interventions\n", 1)[1].split("\n## ", 1)[0]
+    assert "- Turn 2, approval: `submit t{bravo}`" in section
+    assert "Autopilot stepped in, by rule:\n\n- Turn 1, `escalated small → big with a summary`" in section
+    assert "the lane worked on its own" not in section
+    yours = section.split("Autopilot stepped in, by rule:")[0]
+    assert "escalat" not in yours
