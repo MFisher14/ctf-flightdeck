@@ -43,6 +43,17 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   Anthropic's default, a model or level the API would refuse is a config error that names the
   key, and it is not sent to the `[fallback]` API (the lane says so when it moves) (#27).
 
+- `flightdeck eval-local --repeat N` runs each engine N times over the same cases and shows
+  each run's score, the mean and the range for every job, so the spread between runs is there
+  to see. A paid engine is announced as its calls x N (#11).
+- `flightdeck eval-local --cases FILE` checks a case file of your own before anything is
+  scored or sent (hosts under `.test` only, no key material) and names the file and the line
+  of a bad case. The scorecard's second line says which case set its figures come from and
+  how many runs, and `docs/MODELS.md` says the same of each per-job figure (#22).
+- `flightdeck models` finds AMD and Intel GPUs on Linux and names them. It has no measured
+  results for them yet, so it says so, sizes its advice as for a machine with no GPU, and
+  points at `--gpu-memory` and the model results form (#25).
+
 ### Commands and docs
 
 - `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the
