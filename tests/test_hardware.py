@@ -427,3 +427,16 @@ def test_sysctl_is_found_where_macos_keeps_it_when_path_leaves_its_folder_out(mo
     monkeypatch.setattr(hardware.shutil, "which", lambda program, path=None: f"{folder}/{program}" if path == folder else None)
     assert host.which("sysctl") == "/usr/sbin/sysctl"
     assert host.which("nvidia-smi") is None  # only the system's own programs, only in their own folder
+
+
+def test_a_described_machine_has_only_what_the_player_said_and_no_runtime():
+    mac = hardware.described(8 * GIB, apple=True)
+    assert (mac.described, mac.os, mac.apple_silicon.value, mac.memory.value, mac.gpus.value, mac.runtimes) == (
+        True, "macOS", True, 8 * GIB, (), ())
+    box = hardware.described(64 * GIB, gpu=24 * GIB)
+    assert (box.apple_silicon.value, [(g.name, g.memory) for g in box.gpus.value]) == (False, [("NVIDIA GPU", 24 * GIB)])
+    assert box.as_json()["described"] is True and box.as_json()["runtimes"] == [] and box.chip.value is None
+    assert hardware.probe(linux_box(8 * 1024 * 1024), runtimes=False).described is False
+    for memory, apple, gpu in ((0, False, 0), (8 * GIB, False, -1), (8 * GIB, True, 4 * GIB)):
+        with pytest.raises(ValueError, match="a described machine has memory above 0"):
+            hardware.described(memory, apple=apple, gpu=gpu)

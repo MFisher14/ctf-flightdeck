@@ -68,7 +68,9 @@ Which models fit your machine? `flightdeck models` looks at it (chip, memory, NV
 the model servers running on it; it contacts nothing but 127.0.0.1) and lists, for lanes and for
 the light model, the models that fit and why: open-weight models on your machine first where
 they run well, then model APIs. `flightdeck models qwen3.5-9b` prints how to get one and the
-config lines that use it. It recommends; it never changes your config. How the models did:
+config lines that use it. For another machine, describe it: `flightdeck models --memory 16
+--apple` (a 16 GB Apple Silicon Mac) or `--memory 32 --gpu-memory 12` (a PC with a 12 GB NVIDIA
+GPU). It recommends; it never changes your config. How the models did:
 [`docs/MODELS.md`](docs/MODELS.md).
 
 ## Play a board

@@ -579,6 +579,17 @@ class Budget:
     why: str
 
 
+def here(machine: Machine) -> str:
+    """How the advice names where the machine is: "here", or "there" for a machine the player
+    described instead of this one (hardware.described())."""
+    return "there" if machine.described else "here"
+
+
+def this(machine: Machine) -> str:
+    """"this machine", or "the machine described" (hardware.described())."""
+    return "the machine described" if machine.described else "this machine"
+
+
 def budget(machine: Machine) -> Budget:
     """The memory local models may use here (see the module doc for the rule)."""
     from .text import untrusted
@@ -603,9 +614,10 @@ def budget(machine: Machine) -> Budget:
     if memory is None:
         return Budget(UNKNOWN, None, f"this machine's memory is unknown: {machine.memory.unknown}")
     share = memory * CPU_SHARE[0] // CPU_SHARE[1]
+    looked = "none was described" if machine.described else "it looks for Apple Silicon and NVIDIA GPUs"
     return Budget(CPU, share, (
         f"half of the {gib(memory)} of memory, leaving the rest to the system and the Docker lanes. With no GPU flightdeck "
-        "can use (it looks for Apple Silicon and NVIDIA GPUs), local models run on the CPU and will be slow"))
+        f"can use ({looked}), local models run on the CPU and will be slow"))
 
 
 @dataclass(frozen=True)
@@ -666,15 +678,16 @@ def judge(model: LocalModel, build: Build, role: str, machine: Machine, plan: Bu
             return option(CANNOT_TELL, f"MLX runs on Apple Silicon only, and {machine.apple_silicon.unknown}")
         return option(NOT_HERE, "MLX runs on Apple Silicon only")
     if size is None:
-        pull = f", and {RUNTIME_NAMES[OLLAMA]} here has not pulled it" if build.runtime == OLLAMA else ""
+        pulled = build.runtime == OLLAMA and not machine.described  # a described machine's servers are not asked
+        pull = f", and {RUNTIME_NAMES[OLLAMA]} here has not pulled it" if pulled else ""
         return option(CANNOT_TELL, f"its size on disk is not recorded in the catalog{pull}")
     source = f", as {RUNTIME_NAMES[build.runtime]} here gives them" if sized_by == SIZE_SERVER else ""
     parts = f"{gib(size)} of weights{source} + {gib(CONTEXT_ALLOWANCE[role])} for the context"
     if plan.bytes is None:
         return option(CANNOT_TELL, f"it needs about {gib(need)} ({parts}), and {plan.why}")
     if need <= plan.bytes:
-        return option(FITS, f"needs about {gib(need)} ({parts}) of the {gib(plan.bytes)} here")
-    return option(TOO_BIG, f"needs about {gib(need)} ({parts}), more than the {gib(plan.bytes)} here")
+        return option(FITS, f"needs about {gib(need)} ({parts}) of the {gib(plan.bytes)} {here(machine)}")
+    return option(TOO_BIG, f"needs about {gib(need)} ({parts}), more than the {gib(plan.bytes)} {here(machine)}")
 
 
 @dataclass(frozen=True)
@@ -734,11 +747,11 @@ def advise(catalog: Catalog, machine: Machine, role: str, plan: Budget | None = 
         lead, why = LOCAL, "No provider's safety classifier stands between it and security work, and it costs nothing."
     else:
         if plan.where == CPU:
-            why = "Local models would run on the CPU here, and slowly."
+            why = f"Local models would run on the CPU {here(machine)}, and slowly."
         elif plan.where == UNKNOWN:
-            why = "flightdeck cannot tell what fits this machine."
+            why = f"flightdeck cannot tell what fits {this(machine)}."
         else:  # a model that is not for the role may fit by size: it is not counted
-            why = f"No model the catalog offers for {ROLE_WORDS[role]} is known to fit this machine."
+            why = f"No model the catalog offers for {ROLE_WORDS[role]} is known to fit {this(machine)}."
         lead = RULES if role == LIGHT else API
     return Advice(
         role=role, where=plan.where, lead=lead, lead_why=why, fits=tuple(fits),

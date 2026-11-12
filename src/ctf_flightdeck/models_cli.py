@@ -9,18 +9,26 @@ measured (docs/MODELS.md) and which only fit by size, then the model APIs. `flig
 says how to get that model and the exact config lines that use it. --json prints the same as
 JSON, for scripts.
 
+--memory GB (with --apple for an Apple Silicon Mac, or --gpu-memory GB for an NVIDIA GPU)
+describes another machine instead (hardware.described()): the same advice, from its memory and
+GPU, said to be for the machine described; nothing here is probed for it, and what only this
+machine can tell (its runtimes, the models they have pulled) is left out. There is no option for
+CPU cores: speed follows memory bandwidth and the GPU, not the cores (and fits, the advice, follow
+memory alone).
+
 It recommends: it never picks for the player, and never writes or changes a config.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from typing import Annotated
 
 import typer
 
-from . import hardware
-from .hardware import DOWN, LLAMA_CPP, LM_STUDIO, MLX, OLLAMA, SERVING, Machine, Runtime, gib
+from . import hardware, model_catalog
+from .hardware import DOWN, GIB, LLAMA_CPP, LM_STUDIO, MLX, OLLAMA, SERVING, Machine, Runtime, gib
 from .model_catalog import (
     API,
     CONTEXT_ALLOWANCE,
@@ -89,6 +97,47 @@ def this_machine() -> Machine:
     return hardware.probe()
 
 
+MAX_GB = hardware.MAX_MEMORY // GIB  # the most memory a described machine may have, in GB (1 PiB)
+
+
+def described_machine(memory: float | None, apple: bool, gpu_memory: float | None) -> Machine | None:
+    """The machine --memory, --apple and --gpu-memory describe (memory in GB of 2^30 bytes, as a
+    machine's spec gives it), or None when none of them is given: this machine, then.
+    ValueError names the option and why it cannot be used."""
+    if memory is None:
+        if apple:
+            raise ValueError("--apple says the memory --memory gives is unified, on Apple Silicon: give --memory GB too")
+        if gpu_memory is not None:
+            raise ValueError("--gpu-memory describes another machine's NVIDIA GPU: give that machine's memory with "
+                             "--memory GB too")
+        return None
+    if not math.isfinite(memory) or not 0 < memory <= MAX_GB:
+        raise ValueError(f"--memory must be the machine's memory in GB, above 0 and at most {MAX_GB:,} "
+                         f"(got {memory:,.15g})")
+    gpu = 0.0 if gpu_memory is None else gpu_memory
+    if not math.isfinite(gpu) or not 0 <= gpu <= MAX_GB:
+        raise ValueError(f"--gpu-memory must be an NVIDIA GPU's memory in GB, 0 for none, and at most {MAX_GB:,} "
+                         f"(got {gpu:,.15g})")
+    if apple and gpu:
+        raise ValueError("an Apple Silicon Mac has no NVIDIA GPU: give --apple or --gpu-memory, not both")
+    memory_bytes, gpu_bytes = round(memory * GIB), round(gpu * GIB)
+    if not memory_bytes:
+        raise ValueError(f"--memory must be the machine's memory in GB, above 0 (got {memory:,.15g})")
+    return hardware.described(memory_bytes, apple=apple, gpu=gpu_bytes)
+
+
+def described_flags(machine: Machine) -> str:
+    """The options that describe `machine` again ("" for this machine), for the commands it suggests."""
+    if not machine.described:
+        return ""
+    flags = f" --memory {machine.memory.value / GIB:g}"
+    if machine.apple_silicon.value:
+        flags += " --apple"
+    if machine.gpus.value:
+        flags += f" --gpu-memory {machine.gpus.value[0].memory / GIB:g}"
+    return flags
+
+
 def models_command(
     entry: Annotated[
         str | None,
@@ -96,16 +145,31 @@ def models_command(
                        help="A model from the list: how to get it, and the config lines that use it."),
     ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Print the same as JSON, for scripts.")] = False,
+    memory: Annotated[float | None, typer.Option(
+        "--memory", metavar="GB", show_default=False,
+        help="Advise for another machine instead of this one: its memory (RAM) in GB, as its spec gives it.")] = None,
+    apple: Annotated[bool, typer.Option(
+        "--apple", help="With --memory: the machine is an Apple Silicon Mac, whose memory is unified (the GPU shares "
+                        "it).")] = False,
+    gpu_memory: Annotated[float | None, typer.Option(
+        "--gpu-memory", metavar="GB", show_default=False,
+        help="With --memory: the memory of its NVIDIA GPU, in GB (0 or left out: none).")] = None,
 ) -> None:
-    """Which models fit this machine, and where flightdeck would use each: local open-weight
-    models first, then model APIs. It recommends; it never changes your config."""
+    """Which models fit this machine (or one --memory describes), and where flightdeck would use
+    each: local open-weight models first, then model APIs. It recommends; it never changes your
+    config."""
+    try:
+        described = described_machine(memory, apple, gpu_memory)
+    except ValueError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
     try:
         catalog = load_catalog()
     except CatalogError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
     if entry is None:
-        machine = this_machine()
+        machine = described or this_machine()
         if as_json:
             typer.echo(json.dumps(overview_json(catalog, machine), indent=2))
         else:
@@ -116,7 +180,7 @@ def models_command(
         typer.echo(f"flightdeck: no model {untrusted(entry, one_line=True)!r} in the catalog; it has "
                    f"{', '.join(catalog.ids)}", err=True)
         raise typer.Exit(2)
-    machine = None if isinstance(choice, ApiChoice) else this_machine()  # an API: nothing here to look at
+    machine = None if isinstance(choice, ApiChoice) else (described or this_machine())  # an API: nothing to look at
     if as_json:
         typer.echo(json.dumps(entry_json(choice, machine), indent=2))
     else:
@@ -126,26 +190,56 @@ def models_command(
 # ---------------------------------------------------------------------- the overview
 
 
+DESCRIBED = ("The machine described, not this one: the advice below is for it. What only this machine can tell, its "
+             "model runtimes and the models they have pulled, is left out.")
+
+
 def overview_text(catalog: Catalog, machine: Machine) -> str:
     plan = budget(machine)
-    lines = ["This machine", *machine_lines(machine), "", f"{_budget_line(plan)}.", MEMORY_RULE, APPROXIMATE]
+    head = ["The machine described", *described_lines(machine), "", DESCRIBED] if machine.described else [
+        "This machine", *machine_lines(machine)]
+    lines = [*head, "", f"{_budget_line(plan, machine)}.", MEMORY_RULE, APPROXIMATE]
     for role in ROLES:
-        lines += ["", *role_lines(advise(catalog, machine, role, plan))]
+        lines += ["", *role_lines(advise(catalog, machine, role, plan), machine)]
     example = next((o.model.id for role in ROLES for o in advise(catalog, machine, role, plan).fits), catalog.local[0].id)
+    flags = described_flags(machine)
     lines += [
         "",
         AGENTS,
         f"Measured results: {MODELS_DOC}. How to get a model and the config lines that use it: "
-        f"flightdeck models ID (for example: flightdeck models {example}).",
+        f"flightdeck models ID{flags} (for example: flightdeck models {example}{flags}).",
         RECOMMENDS,
     ]
     return "\n".join(lines) + "\n"
 
 
-def _budget_line(plan: Budget) -> str:
+def _budget_line(plan: Budget, machine: Machine) -> str:
+    where = model_catalog.here(machine)
     if plan.bytes is None:
-        return f"Local models: flightdeck cannot tell what fits here: {plan.why}"
-    return f"Local models may use about {gib(plan.bytes)} here: {plan.why}"
+        return f"Local models: flightdeck cannot tell what fits {where}: {plan.why}"
+    return f"Local models may use about {gib(plan.bytes)} {where}: {plan.why}"
+
+
+def _said(machine: Machine) -> str:
+    """A described machine in a few words: "36 GiB of unified memory, on Apple Silicon"."""
+    memory = gib(machine.memory.value or 0)
+    if machine.apple_silicon.value:
+        return f"{memory} of unified memory, on Apple Silicon"
+    gpus = machine.gpus.value
+    return f"{memory} of memory, " + (f"an NVIDIA GPU with {gib(gpus[0].memory)}" if gpus else "no NVIDIA GPU")
+
+
+def described_lines(machine: Machine) -> list[str]:
+    """A described machine's facts, a line each: what the player gave, and nothing probed."""
+    memory = gib(machine.memory.value or 0)
+    if machine.apple_silicon.value:
+        rows = [("system", "an Apple Silicon Mac (--apple)"), ("memory", f"{memory}, unified: the CPU and GPU share it")]
+    else:
+        gpus = machine.gpus.value
+        rows = [("memory", memory),
+                ("NVIDIA GPU", f"one, with {gib(gpus[0].memory)} (--gpu-memory)" if gpus else "none described")]
+    width = max(len(name) for name, _ in rows)
+    return [f"  {name:<{width}}  {text}" for name, text in rows]
 
 
 def machine_lines(machine: Machine) -> list[str]:
@@ -215,14 +309,16 @@ def _models(names: tuple[str, ...]) -> str:
     return f"{len(names)} model{'s' if len(names) != 1 else ''}: {shown}{more}"
 
 
-def role_lines(advice: Advice) -> list[str]:
+def role_lines(advice: Advice, machine: Machine | None = None) -> list[str]:
     """One role's section: what comes first and why, the local models (fit, too big, cannot
     tell, not for this machine, not for this role) and the model APIs, in the order the advice
-    leads with."""
+    leads with. A described machine (hardware.described()) is "there", never "here"."""
     role = advice.role
-    lines = [ROLE_TITLES[role], f"  First: {_lead(advice)}"]
+    there = machine is not None and machine.described
+    where = "there" if there else "here"
+    lines = [ROLE_TITLES[role], f"  First: {_lead(advice, there)}"]
     fits = [f"    {_option_line(o)}" for o in advice.fits]
-    fit_here = "  Fit here, on the CPU (slow):" if advice.where == CPU else "  Fit here:"
+    fit_here = f"  Fit {where}, on the CPU (slow):" if advice.where == CPU else f"  Fit {where}:"
     api = [f"    {_api_line(a, role)}" for a in advice.api]
     if advice.lead == API:
         lines += ["  Model APIs:", *api]
@@ -235,13 +331,13 @@ def role_lines(advice: Advice) -> list[str]:
             lines += [fit_here, *fits]
         lines += ["  Model APIs:", *api]
     if advice.too_big:
-        lines += ["  Do not fit here:", *(f"    {_option_line(o)}" for o in advice.too_big)]
+        lines += [f"  Do not fit {where}:", *(f"    {_option_line(o)}" for o in advice.too_big)]
     if advice.cannot_tell:
         lines += ["  Cannot tell:", *(f"    {_option_line(o)}" for o in advice.cannot_tell)]
     if advice.not_here:
         named = ", ".join(f"{o.model.id} on {_runtime_label(o.build.runtime)}" for o in advice.not_here)
         why = "; ".join(dict.fromkeys(o.why for o in advice.not_here))
-        lines.append(f"  Not for this machine: {named} ({why})")
+        lines.append(f"  Not for {'that' if there else 'this'} machine: {named} ({why})")
     if advice.not_for:
         lines += [f"  Not for {ROLE_NAMES[role]}:", *(f"    {_not_for_name(item)}: {_safe(item.why)}" for item in advice.not_for)]
     return lines
@@ -251,9 +347,9 @@ def _not_for_name(item: NotFor) -> str:
     return item.model.id if item.build is None else f"{item.model.id} on {_runtime_label(item.build.runtime)}"
 
 
-def _lead(advice: Advice) -> str:
+def _lead(advice: Advice, there: bool = False) -> str:
     what = {
-        LOCAL: "an open-weight model on this machine.",
+        LOCAL: f"an open-weight model on {'that' if there else 'this'} machine.",
         RULES: "the rules (the default, no model), or a small model that fits.",
         API: "a model API.",
     }[advice.lead]
@@ -314,6 +410,10 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
     lines.append(f"Measured: {_measured(model)}")
     if any(b.measured or b.not_for for b in model.builds):
         lines.append(APPROXIMATE)
+    where = model_catalog.here(machine)
+    if machine.described:
+        lines.append(f"For the machine described ({_said(machine)}), not this one: whether a build is pulled or served "
+                     "there is left out.")
     for build in model.builds:
         found = sizing(build, machine)
         facts = [_safe(build.model)]
@@ -331,7 +431,7 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
                 lines.append(f"  not for {ROLE_HEADS[role]}: {_safe(build.not_for[role])}")
             else:
                 option = judge(model, build, role, machine, plan)
-                lines.append(f"  here, for {ROLE_HEADS[role]}: {option.verdict}: {option.why}")
+                lines.append(f"  {where}, for {ROLE_HEADS[role]}: {option.verdict}: {option.why}")
         serves = model.serves(build)
         if not serves:
             continue  # nothing to get it for, and no config lines to give
@@ -413,12 +513,14 @@ def _safe(text: str) -> str:
 def overview_json(catalog: Catalog, machine: Machine) -> dict:
     plan = budget(machine)
     return {
+        "described": machine.described,  # true: the machine --memory describes, not this one
         "machine": machine.as_json(),
         "local_models": {"where": plan.where, "memory_bytes": plan.bytes, "why": plan.why},
         "memory_rule": {"text": MEMORY_RULE, "estimate": True,
                         "context_allowance_bytes": dict(CONTEXT_ALLOWANCE)},
         "roles": {role: advice_json(advise(catalog, machine, role, plan)) for role in ROLES},
         "measured_results": MODELS_DOC,
+        "approximate": APPROXIMATE,
         "coding_agents": AGENTS,
         "changes_config": False,
     }
@@ -514,5 +616,6 @@ def entry_json(choice: LocalModel | ApiChoice, machine: Machine | None) -> dict:
         "id": choice.id, "name": choice.name, "family": choice.family, "parameters": choice.parameters,
         "license": choice.license, "roles": list(choice.offered_for),  # a build's not_for says why not the others
         "measured_results": MODELS_DOC, "builds": builds, "local_models": {"where": plan.where, "memory_bytes": plan.bytes},
+        "described": machine.described,
         "changes_config": False,
     }

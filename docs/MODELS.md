@@ -71,6 +71,10 @@ and `[light] thinking` change them; `flightdeck config --example` shows each.
 
 `flightdeck models` shows what your machine has (memory, GPU, which runtimes are installed and
 running, the models they serve) and which of these models fit, with the lines for your config.
+For another machine, describe it: `flightdeck models --memory 16 --apple` for a 16 GB Apple
+Silicon Mac, `--memory 32 --gpu-memory 12` for a PC with a 12 GB NVIDIA GPU, `--memory 32` alone
+for one with no GPU. The advice is the same as that machine would get; what only it can tell
+(its runtimes and the models they have pulled) is left out.
 
 ## What we measured
 

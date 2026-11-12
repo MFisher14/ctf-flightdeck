@@ -408,6 +408,90 @@ def test_a_machine_it_cannot_read_gets_cannot_tell_and_the_reason(monkeypatch):
     assert "Fit here" not in out and "First: a model API. flightdeck cannot tell what fits this machine." in out
 
 
+# ---------------------------------------------------------------------- a machine described instead of this one
+
+
+def advice_names(data: dict) -> dict:
+    """Each role's advice as ids, from --json: what leads, and the builds in each group."""
+    return {role: {"lead": advice["lead"], **{group: [(o["id"], o["runtime"]) for o in advice[group]]
+                                              for group in ("fits", "too_big", "cannot_tell", "not_here")},
+                   "not_for": [(n["id"], n["runtime"]) for n in advice["not_for"]]}
+            for role, advice in data["roles"].items()}
+
+
+@pytest.mark.parametrize(("flags", "host"), [
+    (("--memory", "8", "--apple"), apple_mac(memory=8 * GIB, chip="Apple M1")),
+    (("--memory", "36", "--apple"), apple_mac(memory=36 * GIB)),
+    (("--memory", "64", "--gpu-memory", "24"), linux_box(64 * 1024 * 1024, nvidia="NVIDIA GeForce RTX 4090, 24576\n")),
+    (("--memory", "16", "--gpu-memory", "0"), linux_box(16 * 1024 * 1024)),
+    (("--memory", "32"), linux_box(32 * 1024 * 1024)),
+], ids=["8-gb-mac", "36-gb-mac", "24-gb-gpu", "16-gb-no-gpu", "32-gb-no-gpu"])
+def test_a_described_machine_gets_the_advice_the_same_machine_gets_when_it_is_this_one(flags, host, monkeypatch):
+    """The advice comes from the machine's memory and GPU alone, so a machine described with
+    --memory (and --apple or --gpu-memory) gets what that machine gets probed, and nothing on this
+    machine is asked for it."""
+    described = json.loads(models(*flags, "--json").output)  # the autouse fixture refuses to probe this machine
+    on(monkeypatch, host)
+    probed = json.loads(models("--json").output)
+    assert described["described"] is True and probed["described"] is False
+    assert advice_names(described) == advice_names(probed)
+    assert described["local_models"] == probed["local_models"] | {"why": described["local_models"]["why"]}
+    assert described["machine"]["runtimes"] == []  # what only this machine can tell is left out
+
+
+def test_a_described_machine_is_said_to_be_that_machine_and_not_this_one(monkeypatch):
+    result = models("--memory", "16", "--gpu-memory", "12")
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert out.splitlines()[:3] == ["The machine described", "  memory      16 GiB", "  NVIDIA GPU  one, with 12 GiB (--gpu-memory)"]
+    assert ("The machine described, not this one: the advice below is for it. What only this machine can tell, its model "
+            "runtimes and the models they have pulled, is left out.") in out
+    assert "Local models may use about 12 GiB there: the memory of the NVIDIA GPU." in out
+    lanes = section(out, "Lanes:")
+    assert "First: an open-weight model on that machine." in lanes and "  Fit there:" in lanes and "Fit here" not in out
+    assert "qwen3.5-4b on Ollama (qwen3.5:4b): needs about 9.1 GiB (3.1 GiB of weights + 6 GiB for the context) of the 12 GiB " \
+           "there" in lanes
+    assert "  Do not fit there:" in lanes and "Not for that machine: qwen3.5-9b on MLX (MLX runs on Apple Silicon only)" in lanes
+    assert "This machine" not in out and "pulled here" not in out and " here" not in out.replace("there", "")
+    assert "flightdeck models ID --memory 16 --gpu-memory 12 (for example: flightdeck models " in out
+    cpu = models("--memory", "16").output
+    assert "  NVIDIA GPU  none described" in cpu and "With no GPU flightdeck can use (none was described)" in cpu
+    assert "First: a model API. Local models would run on the CPU there, and slowly." in cpu
+
+
+def test_one_model_on_a_described_machine_says_it_is_for_that_machine(monkeypatch):
+    out = models("qwen3.5-4b", "--memory", "8", "--apple").output
+    assert ("For the machine described (8 GiB of unified memory, on Apple Silicon), not this one: whether a build is "
+            "pulled or served there is left out.") in out
+    assert "  there, for lanes: too big: needs about 9.1 GiB" in out and "more than the 5.3 GiB there" in out
+    assert "  there, for the light role: fits: needs about 5.1 GiB" in out and "  here, for" not in out
+    assert "    ollama pull qwen3.5:4b" in out and "is not on PATH" not in out  # nothing is known of its programs
+    data = json.loads(models("qwen3.5-4b", "--memory", "8", "--apple", "--json").output)
+    assert data["described"] is True and data["local_models"]["memory_bytes"] == 8 * GIB * 2 // 3
+    assert [b["present"] for b in data["builds"]] == [False]
+
+
+@pytest.mark.parametrize(("flags", "message"), [
+    (("--memory", "0"), "--memory must be the machine's memory in GB, above 0 and at most 1,048,576 (got 0)"),
+    (("--memory", "-4"), "--memory must be the machine's memory in GB, above 0 and at most 1,048,576 (got -4)"),
+    (("--memory", "nan"), "--memory must be the machine's memory in GB, above 0 and at most 1,048,576 (got nan)"),
+    (("--memory", "inf"), "(got inf)"),
+    (("--memory", "2000000"), "at most 1,048,576 (got 2,000,000)"),
+    (("--memory", "0.0000000001"), "--memory must be the machine's memory in GB, above 0 (got 1e-10)"),
+    (("--memory", "16", "--gpu-memory", "-1"), "--gpu-memory must be an NVIDIA GPU's memory in GB, 0 for none"),
+    (("--memory", "16", "--gpu-memory", "nan"), "--gpu-memory must be an NVIDIA GPU's memory in GB, 0 for none"),
+    (("--memory", "16", "--apple", "--gpu-memory", "8"), "an Apple Silicon Mac has no NVIDIA GPU"),
+    (("--apple",), "--apple says the memory --memory gives is unified, on Apple Silicon: give --memory GB too"),
+    (("--gpu-memory", "8"), "--gpu-memory describes another machine's NVIDIA GPU: give that machine's memory with --memory"),
+    (("--memory", "lots"), "Invalid value for '--memory'"),
+])
+def test_a_bad_machine_description_fails_with_its_reason_and_probes_nothing(flags, message, monkeypatch):
+    result = models(*flags)
+    assert result.exit_code == 2
+    assert message in " ".join(result.output.replace("│", " ").split()), result.output
+    assert models("qwen3.5-4b", *flags).exit_code == 2  # one model's entry too
+
+
 # ---------------------------------------------------------------------- --json
 
 

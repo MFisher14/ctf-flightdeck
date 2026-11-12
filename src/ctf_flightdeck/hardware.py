@@ -184,17 +184,34 @@ class Machine:
     gpus: Fact[tuple[Gpu, ...]]  # NVIDIA GPUs; () when none was found, and gpu_note says why
     gpu_note: str = ""
     runtimes: tuple[Runtime, ...] = ()  # empty when they were not probed
+    described: bool = False  # True: given by the player (described()), not probed: another machine, perhaps
 
     def runtime(self, name: str) -> Runtime | None:
         return next((r for r in self.runtimes if r.name == name), None)
 
     def as_json(self) -> dict:
         return {
-            "os": self.os, "arch": self.arch, "wsl": self.wsl.as_json(), "chip": self.chip.as_json(),
-            "apple_silicon": self.apple_silicon.as_json(), "memory_bytes": self.memory.as_json(),
-            "nvidia_gpus": {**self.gpus.as_json(), "note": self.gpu_note or None},
+            "described": self.described, "os": self.os, "arch": self.arch, "wsl": self.wsl.as_json(),
+            "chip": self.chip.as_json(), "apple_silicon": self.apple_silicon.as_json(),
+            "memory_bytes": self.memory.as_json(), "nvidia_gpus": {**self.gpus.as_json(), "note": self.gpu_note or None},
             "runtimes": [r.as_json() for r in self.runtimes],
         }
+
+
+DESCRIBED_GPU = "NVIDIA GPU"  # a described machine's GPU: its memory is all flightdeck is told
+
+
+def described(memory: int, *, apple: bool = False, gpu: int = 0) -> Machine:
+    """A machine the player describes instead of this one (`flightdeck models --memory`): its
+    memory in bytes, unified on Apple Silicon (`apple`), and an NVIDIA GPU's memory (`gpu`; 0:
+    none). Nothing is probed, so it has no runtimes: what they serve is only this machine's to say."""
+    if memory <= 0 or gpu < 0 or (apple and gpu):
+        raise ValueError("a described machine has memory above 0, and an NVIDIA GPU (0 or more) only if not Apple Silicon")
+    return Machine(
+        os="macOS" if apple else "not described", arch="arm64" if apple else "not described", wsl=Fact(False),
+        chip=Fact(None, "not described"), apple_silicon=Fact(apple), memory=Fact(memory),
+        gpus=Fact((Gpu(DESCRIBED_GPU, gpu),) if gpu else ()), gpu_note="" if gpu else "none described", described=True,
+    )
 
 
 # ---------------------------------------------------------------------- probing
