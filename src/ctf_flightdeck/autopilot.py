@@ -236,7 +236,7 @@ class Autopilot:
             finally:
                 self._holding = False
         self.deck.warn(
-            f"autopilot disengaged: {reason}. The queue is held and its rules have stopped; lanes that run go on. "
+            f"autopilot disengaged: {reason}. The queue is held and its rules have stopped; its guardrails hold until you are back. "
             "/unhold lifts the hold, /autopilot on engages it again",
             data={"autopilot": "disengaged", "reason": reason},
         )

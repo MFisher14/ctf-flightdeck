@@ -16,7 +16,7 @@ from pathlib import Path
 from ..console.app import FlightdeckApp
 from ..console.focus import FocusScreen
 from ..core.attention import SortMode, sort_lanes
-from ..core.model import AlertKind, ChallengeStatus, Lane, LaneState, PendingKind
+from ..core.model import AlertKind, ChallengeStatus, EventKind, Lane, LaneState, PendingKind
 from . import scenarios
 from .scenarios import ReleaseAt
 from .world import FakeWorld
@@ -36,6 +36,9 @@ MOMENTS = (
     f"compact-{COMPACT[0]}x{COMPACT[1]}", f"compact-focus-{COMPACT[0]}x{COMPACT[1]}", "fork-prompt",
     "kill-prompt", "take-over", "challenge-card", "help",
 )
+
+
+AUTOPILOT_MOMENTS = ("autopilot-rule", "autopilot-disengaged")  # after "open", in a scenario that engages autopilot
 
 
 @dataclass
@@ -107,6 +110,20 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             return None
 
         await run.shot("open")
+
+        # Autopilot (the autopilot scenario only): a rule firing with the chip up, then the disengage.
+        if world.pilot is not None:
+            def by_rule() -> bool:
+                return any(e.kind is EventKind.INTERVENTION and e.data.get("by") == "autopilot" for e in deck.events)
+
+            if world.pilot.engaged and await run.advance_until(by_rule, limit=40):
+                await run.shot("autopilot-rule")
+            else:
+                result.skipped.append("autopilot-rule: autopilot made no intervention by rule (it is not engaged, or none was due)")
+            if await run.advance_until(lambda: world.pilot.state.value == "disengaged", limit=80):
+                await run.shot("autopilot-disengaged")
+            else:
+                result.skipped.append("autopilot-disengaged: autopilot did not disengage")
 
         # Wave drop: only if the scenario has one still to come.
         waves = [at for at, ev in world.scenario.timeline if isinstance(ev, ReleaseAt) and len(ev.ids) >= 10 and at > world.ticks]
