@@ -130,7 +130,8 @@ def test_unlisted_services_reads_connection_info_written_in_a_description():
     "The service runs at g.chal.example.test:1337.",  # a bare HOST:PORT: a description names a service with a command
     "A local copy listens on localhost:31337 when you run ./server",
     "Run ./server, then nc localhost 31337 to try it before the real one.",
-    "I tested it with nc 127.0.0.1 9000 before shipping, and with telnet [::1] 23.",
+    "I tested it with nc 127.0.0.1 9000 before shipping.",
+    "Locally the relay is socat - TCP:[::1]:9000.",
 ])
 def test_a_line_of_source_a_bare_address_or_a_local_copy_is_no_service_to_note(text):
     """In a description a bare HOST:PORT is often a line of source (vuln.c:57), and a loopback
