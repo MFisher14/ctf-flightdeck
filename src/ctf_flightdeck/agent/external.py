@@ -82,10 +82,15 @@ folder in the workspace to .flightdeck/held/<n>/, each name ending in .held so n
 takes it up there, says so on the lane, and tells the agent they are challenge data. The
 CLIs also read their own folder under HOME, which for a lane is in the workspace
 (.flightdeck/home), where a command the agent runs or an archive it unpacks could write
-it. So a host lane's CLI keeps that folder next to the workspace, outside it and out of
-reach of codex's workspace-write sandbox: <root>/../codex-home as CODEX_HOME,
-<root>/../claude-home as CLAUDE_CONFIG_DIR (a codex login's CODEX_HOME is the player's
-own). In docker the container is the boundary.
+it, to take effect at the CLI's next start while the CLI holds the player's credential. So
+no CLI keeps that folder in the workspace. A host lane's CLI keeps it next to the
+workspace, outside it and out of reach of codex's workspace-write sandbox:
+<root>/../codex-home as CODEX_HOME, <root>/../claude-home as CLAUDE_CONFIG_DIR (a codex
+login's CODEX_HOME is the player's own). A docker lane's CLI keeps it in its container,
+outside the bind-mounted /work: CONTAINER_HOME, which the wrapper that starts the CLI
+makes before every start, owner-only (a symlink or a file of that name is removed, never
+followed; a folder another user owns stops the CLI, saying why), and keeps for the lane's
+later starts (codex's resume finds its thread there).
 
 What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, which plays
 them in the tests (a real run spends the player's money). Nothing here has been checked
@@ -154,6 +159,10 @@ CLAUDE_AUTH = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")  # the CLI's own 
 CODEX_KEY = "CODEX_API_KEY"
 SECRET_NAMES = (*CLAUDE_AUTH, CODEX_KEY)  # the agent's credentials (CODEX_HOME, a login's folder, is a path, not one)
 AGENT_HOME = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}  # where each CLI reads its own configuration
+CONTAINER_HOME = {"claude": "/tmp/flightdeck-claude-home", "codex": "/tmp/flightdeck-codex-home"}
+"""docker: each CLI's own configuration folder (AGENT_HOME) in the lane's container, outside
+/work, where nothing in the workspace (a file the agent writes there, an archive it
+unpacks) can configure the CLI. /tmp: every image has it, writable whatever its user."""
 MIN_SECRET = 8  # a secret shorter than this is not looked for in what the CLI writes: it would hide too much
 CLI_ENV: Mapping[str, Mapping[str, str]] = {
     # flightdeck's own settings for the CLI process (not secrets): no telemetry, no self-update mid-run
@@ -206,7 +215,21 @@ _PLACEHOLDERS = ("...", "…")
 _THREAD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _EOF = object()
-_PID_WRAPPER = f'echo "{PID_LINE}$$" >&2; exec "$@"'  # docker: say the CLI's pid in the container, then become it
+_DOCKER_WRAPPER = (
+    'home=$1; shift; '
+    'if [ -L "$home" ] || { [ -e "$home" ] && [ ! -d "$home" ]; }; then rm -f "$home"; fi; '
+    'mkdir -m 700 "$home" 2>/dev/null; '
+    'if [ -d "$home" ] && [ ! -L "$home" ] && [ -O "$home" ] && chmod 700 "$home"; then :; else '
+    'echo "flightdeck: $home, the CLI\'s own configuration folder, cannot be made a folder of this user\'s alone, '
+    'so the CLI was not started" >&2; '
+    'exit 1; fi; '
+    f'echo "{PID_LINE}$$" >&2; exec "$@"'
+)
+"""docker: start the CLI ("$@") in its container, its own configuration folder ($1, outside
+/work) made first: a symlink or a file of that name removed, never followed; the folder
+made, or kept from the lane's last start, owner-only (mode 700); one that is not the
+user's own stops the CLI with the reason on stderr. Then it says the CLI's pid in the
+container, and becomes the CLI."""
 _SIGNAL_SCRIPT = r"""
 sig=$1; root=$2; tree=$3
 pids=$root
@@ -408,15 +431,21 @@ def codex_argv(executable: str, model: str, workdir: str, *, thread: str | None 
     return argv
 
 
-def docker_exec_argv(container: str, env: Mapping[str, str], secrets: Sequence[str], cli_argv: Sequence[str]) -> list[str]:
-    """`docker exec` running the CLI in a lane's container. Secrets go by NAME (`-e NAME`):
-    docker takes the value from its own environment, so it never shows in a process list."""
+def docker_exec_argv(container: str, env: Mapping[str, str], secrets: Sequence[str], cli_argv: Sequence[str], *,
+                     kind: str) -> list[str]:
+    """`docker exec` running the `kind` CLI in a lane's container, by way of _DOCKER_WRAPPER,
+    with its own configuration folder (AGENT_HOME) CONTAINER_HOME[kind], outside /work.
+    Secrets go by NAME (`-e NAME`): docker takes the value from its own environment, so it
+    never shows in a process list. ValueError when one of them would name that folder."""
+    variable, home = AGENT_HOME[kind], CONTAINER_HOME[kind]
+    if variable in secrets:
+        raise ValueError(f"{variable} is the {kind} CLI's own folder in its container, {home}: it is not passed by name")
     argv = ["docker", "exec", "-i", "-w", CONTAINER_ROOT]
-    for name, value in env.items():
+    for name, value in {**env, variable: home}.items():
         argv += ["-e", f"{name}={value}"]
     for name in secrets:
         argv += ["-e", name]
-    return argv + [container, "sh", "-c", _PID_WRAPPER, "sh", *cli_argv]
+    return argv + [container, "sh", "-c", _DOCKER_WRAPPER, "sh", home, *cli_argv]
 
 
 def lane_rules() -> str:
@@ -1031,7 +1060,8 @@ class _Run:
         self.cost_due = False  # steps were reported (dollars_later) in a turn whose cost the CLI has not reported yet
         self.tasks: set[asyncio.Future[Any]] = set()
         self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
-        self.homes: dict[str, str] = {}  # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME)
+        # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME); docker: CONTAINER_HOME
+        self.homes: dict[str, str] = {}
         self.look: Look | None = None  # the challenge's first look (agent/facts.py), until the CLI's first start takes it
         self.recon = ""  # what of the first look was back then: in every opening brief of the lane
         self.opened = False  # the CLI has had its first opening: nothing more goes into the brief
@@ -1413,7 +1443,8 @@ class _Run:
                 "TERM": "dumb",
                 **CLI_ENV[self.kind],
             }
-            argv = docker_exec_argv(workspace.name, env, list(secrets), argv)
+            # its own configuration folder is CONTAINER_HOME, outside /work: never in the workspace
+            argv = docker_exec_argv(workspace.name, env, list(secrets), argv, kind=self.kind)
             process_env: dict[str, str] = {**os.environ, **secrets}  # the docker client's, for `-e NAME`
             cwd: Path | None = None
         else:

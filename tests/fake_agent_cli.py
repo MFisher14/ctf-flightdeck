@@ -37,7 +37,9 @@ Claude Code: `claude -p --input-format stream-json --output-format stream-json -
   closed: it exits 0 (ASSUMED). SIGTERM: it exits (status 143).
 - Its own configuration (user settings: hooks, env such as ANTHROPIC_BASE_URL) is
   settings.json in $CLAUDE_CONFIG_DIR, else in $HOME/.claude (ASSUMED: CLAUDE_CONFIG_DIR as
-  the docs list it). The fake records the folder and that file's text at start.
+  the docs list it), and its global state (.claude.json: MCP servers among it) is
+  .claude.json in $CLAUDE_CONFIG_DIR, else in $HOME (ASSUMED: as Claude Code's own source
+  reads it). The fake records the folder and the text of both files at start.
 
 Codex: `codex exec --json ...`
 - Reads its prompt from stdin to the end: an open stdin hangs it. Options go before
@@ -50,7 +52,9 @@ Codex: `codex exec --json ...`
   {input_tokens, cached_input_tokens, output_tokens}} (ASSUMED: counted over the whole
   thread, resumed turns included; cached tokens are part of input_tokens), or turn.failed
   {error {message}} and exit 1. A top-level error {message} does not end the turn.
-- `resume <thread_id>` continues a thread; an unknown thread: exit 1.
+- A thread's rollout is kept in $CODEX_HOME/sessions (codex's docs: sessions live there):
+  `resume <thread_id>` continues a thread whose rollout is in this CODEX_HOME; any other
+  (unknown, or made under another CODEX_HOME): exit 1.
 - -c shell_environment_policy.inherit=core: commands get only the core variables.
 - SIGINT: exit 1 at once, with no turn event.
 - Its own configuration is config.toml in $CODEX_HOME, else in $HOME/.codex (codex's docs);
@@ -264,8 +268,9 @@ def claude(args: list[str]) -> None:
     allowed = opts.listed("--allowedTools", "--allowed-tools")
     model = opts.one("--model", "claude-default")
     config_dir, settings = own_config("CLAUDE_CONFIG_DIR", ".claude", "settings.json")
+    _, global_state = own_config("CLAUDE_CONFIG_DIR", "", ".claude.json")
     record("start", cli="claude", argv=args, cwd=os.getcwd(), env=dict(os.environ), pgid=os.getpgrp(),
-           files=sorted(os.listdir(".")), config_dir=config_dir, settings=settings)
+           files=sorted(os.listdir(".")), config_dir=config_dir, settings=settings, claude_json=global_state)
     session = str(uuid.uuid4())
     state = {"in_turn": False, "cost": 0.0, "init": False}
 
@@ -497,11 +502,14 @@ def codex(args: list[str]) -> None:
         print("codex (human output): this fake writes JSON events only with --json")
     if opts.resume is not None:
         thread = opts.resume
-        if not update_state(lambda state: thread in state["threads"]):
+        if not update_state(lambda state: thread in state["threads"]) or not os.path.isfile(rollout(codex_home, thread)):
             fail(f"Error: no rollout found for thread id {thread}", 1)
     else:
         thread = str(uuid.uuid4())
         update_state(lambda state: state["threads"].setdefault(thread, [0, 0, 0]))
+        os.makedirs(os.path.dirname(rollout(codex_home, thread)), exist_ok=True)
+        with open(rollout(codex_home, thread), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "session_meta", "id": thread}) + "\n")
     emit({"type": "thread.started", "thread_id": thread})
     turn = next_turn()
     if turn is None:
@@ -527,6 +535,11 @@ def codex(args: list[str]) -> None:
     emit({"type": "turn.completed", "usage": {"input_tokens": total[0], "cached_input_tokens": total[1], "output_tokens": total[2]}})
     record("exit", code=0)
     sys.exit(0)
+
+
+def rollout(codex_home: str, thread: str) -> str:
+    """Where codex keeps a thread's rollout (ASSUMED: one file per thread under sessions/)."""
+    return os.path.join(codex_home, "sessions", f"rollout-{thread}.jsonl")
 
 
 def codex_item(item: dict, item_id: str, env: dict[str, str]) -> None:
