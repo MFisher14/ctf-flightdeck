@@ -4,7 +4,7 @@
 
 ## How it was tested
 
-<!-- The tests you added or changed, and the summary line `uv run pytest` printed. Name any test that reported as not run (no Docker, no debian:bookworm-slim) and why. -->
+<!-- The tests you added or changed, and the summary line `uv run pytest` printed. Name any test that reported as not run, and why (no Docker here, say). -->
 
 ## Checklist
 
