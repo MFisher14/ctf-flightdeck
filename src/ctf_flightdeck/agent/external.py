@@ -1718,14 +1718,19 @@ class _Run:
         in all of the challenge's own text, its description and every file of the handout as
         it came (agent/owntext.py: the start's search, planted, is bounded). What was found is
         kept (own) for sort_out. Not for a flag already raised, already known to be the
-        challenge's, or known not to be the flag (the deck says why it does not ask)."""
+        challenge's, or known not to be the flag (the deck says why it does not ask). At most
+        MAX_NEW_FLAGS at a time, as sort_out raises no more: one past them is never raised now."""
         if not self.auto():
             return
+        searched = 0
         for flag in dict.fromkeys(claims):
+            if searched >= MAX_NEW_FLAGS:
+                break
             if flag in self.own or flag in self.flags or flag in self.planted:
                 continue
             if self.driver.deck.not_flag(self.challenge.id, flag) is not None:
                 continue
+            searched += 1
             handout = getattr(self.workspace, "handout", None)
             self.own[flag] = await owntext.look_for(self.challenge.description, handout, flag)
 
@@ -1765,10 +1770,11 @@ class _Run:
                 claimed = False
                 if flag in self.held:
                     continue
-                self.note(f"{flag} {why}, so it waits for you, though the agent gave it as its flag")
             if new >= MAX_NEW_FLAGS or (auto and not claimed and len(self.held) >= MAX_NEW_FLAGS):
                 skipped += 1
                 continue
+            if why:
+                self.note(f"{flag} {why}, so it waits for you, though the agent gave it as its flag")
             new += 1
             if claimed:
                 self.held.pop(flag, None)

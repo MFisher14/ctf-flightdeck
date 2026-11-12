@@ -2093,6 +2093,27 @@ def test_under_auto_a_claim_never_looked_for_in_the_handout_never_goes_out_alone
     run(main())
 
 
+def test_under_auto_no_more_claims_are_looked_for_at_once_than_are_raised_at_once(tmp_path):
+    most = external.MAX_NEW_FLAGS
+    claims = "\n".join(f"FLAG: t{{c{i:02d}}}" for i in range(most + 2))
+    script = {"turns": [{"calls": [{"text": claims}, {"think": 30.0, "text": "waiting"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or False)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(tried) == most, "the claims raised at once, each submitted", timeout=30)
+            assert sorted(lab.run(lane).own) == sorted(tried) == [f"t{{c{i:02d}}}" for i in range(most)]
+            assert f"2 more matches of the flag format were not raised (at most {most} at a time)" in notes(lane)
+            assert not any("was never looked for" in n for n in notes(lane))  # nothing said of the two not raised
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_a_claimed_flag_no_part_of_a_big_handout_holds_still_goes_out_at_once(tmp_path):
     files = {"firmware.bin": b"\x7fELF" + b"\x00" * (2 * 1024 * 1024) + b"t{other}\x00", "note.txt": "x\n"}
     script = {"turns": [{"calls": [{"text": "FLAG: t{real}"}, {"think": 30.0, "text": "waiting"}]}]}
