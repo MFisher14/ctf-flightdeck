@@ -31,6 +31,7 @@ from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import ActionKind, Challenge, DeckConfig, EventKind, Lane, LaneState, PendingKind
 from ctf_flightdeck.localmodel import default_cases_path, load_cases
 from fake_decider import FakeDeciderServer, picks
+from fake_light import Lingers
 from fake_model import FakeModelServer, error_reply, text_reply, tool_call_reply
 
 FLAG = r"t\{[a-z0-9_]+\}"
@@ -787,6 +788,83 @@ def test_a_flag_the_deck_could_not_take_after_its_check_is_said_and_its_lane_sti
             assert await gate.aclose() == [f"{lane_id}: flightdeck could not hand {CANDIDATE} to the deck after its "
                                            "check: RuntimeError: the deck broke"]
             await gate.light.aclose()
+            await lab.client.aclose()
+
+        asyncio.run(main())
+
+
+UNDER_CHECK_AT_THE_END = "{lane}: {flag} was still under the light model's check when the run ended; it was not submitted"
+
+
+def test_a_lane_that_submits_a_flag_as_the_run_ends_starts_no_check_that_outlives_it(tmp_path):
+    """The run ends while a flag is under check, and the lane's next turn, which submits another
+    flag, is answered just then (while the cancelled check winds down). Every lane stops before
+    the checks do, so that turn is never taken: no check outlives the run's end (to fail later on
+    the closed light model and say the flag goes as it would), nothing goes out, and the run's end
+    names the flag that was under check."""
+    go = threading.Event()
+
+    def lane_model(record):
+        n = calls(lanes)
+        if n == 1:
+            return tool_call_reply("submit_flag", {"flag": CANDIDATE})
+        if n == 2:
+            go.wait(30)  # the next turn: answered once the run's end is stopping the checks
+            return tool_call_reply("submit_flag", {"flag": "t{second_one}"})
+        time.sleep(0.05)
+        return tool_call_reply("set_plan", {"plan": "on"})
+
+    with FakeModelServer(responder=lane_model) as lanes:
+        engine = Lingers(on_cancel=go.set)
+        gate = FlagGate(engine, timeout=30.0)
+
+        async def main():
+            lab = Lab(tmp_path, lanes, gate=gate)
+            try:
+                lab.release()
+                lane = lab.lane()
+                run = lab.driver.runs[lane.id]
+                engine.done = lambda: run.task is not None and run.task.done()
+                await until(lambda: engine.asked == [CANDIDATE] and calls(lanes) == 2, "a flag under check, the next turn asked")
+                await lab.driver.shutdown()
+                assert not gate.checking(lane.id) and engine.asked == [CANDIDATE]
+                assert lab.driver.errors == [UNDER_CHECK_AT_THE_END.format(lane=lane.id, flag=CANDIDATE)]
+                await asyncio.sleep(0.2)
+                assert lab.sent == [] and warnings(lab.deck) == []
+            finally:
+                go.set()
+                await lab.finish()
+
+        asyncio.run(main())
+
+
+def test_no_check_starts_once_the_run_is_ending_and_the_flag_is_named(tmp_path):
+    """FlagGate.aclose stops every check before the run closes the light model. A flag a lane
+    claims while it waits for the cancelled ones starts no check (none outlives the run's end),
+    and is named with the run's closing problems, never submitted; from then on the gate covers
+    no flag, so a driver reports one as it would with no check (a stopped lane: not at all)."""
+    with FakeModelServer() as lanes:
+        lab = Lab(tmp_path, lanes)
+        engine = Lingers()
+        gate = FlagGate(engine, timeout=30.0)
+
+        async def main():
+            lab.deck.release([lab.challenge], [])  # on the board; the lane below is the gate's caller, not a driver's
+            lane = Lane(number=1, challenge_id="note", model="small")
+            lab.deck.lanes[lane.id] = lane
+            reported: list = []
+            engine.on_cancel = lambda: gate.start(lab.deck, lane.id, lab.challenge, "t{second_one}", SUBMITTED_ONLY,
+                                                  reported.append)
+            assert gate.covers(lab.deck, lane.id, "t{second_one}")
+            gate.start(lab.deck, lane.id, lab.challenge, CANDIDATE, SUBMITTED_ONLY, reported.append)
+            await until(lambda: engine.asked == [CANDIDATE], "the first flag under check")
+            lost = await gate.aclose()
+            await asyncio.sleep(0.1)
+            assert not gate.checking(lane.id) and engine.asked == [CANDIDATE] and reported == []
+            assert lost == [UNDER_CHECK_AT_THE_END.format(lane=lane.id, flag=CANDIDATE),
+                            f"{lane.id}: t{{second_one}} came as the run ended, after the light model's checks had "
+                            "stopped; it was not submitted"]
+            assert not gate.covers(lab.deck, lane.id, "t{second_one}")
             await lab.client.aclose()
 
         asyncio.run(main())

@@ -2304,11 +2304,12 @@ class ExternalDriver:
 
     async def shutdown(self) -> None:
         """Stop every lane's CLI and close every workspace (the console calls this before it
-        exits). The flag checks stop first (the run closes the light model after this)."""
-        if self.flaggate is not None:
-            self.errors += await self.flaggate.aclose()
+        exits). The flag checks stop once every lane has (output a stopped CLI still writes is
+        not the lane's: current), before the run closes the light model, after this."""
         for run in self.runs.values():
             run.stop()
+        if self.flaggate is not None:
+            self.errors += await self.flaggate.aclose()
         tasks = [run.task for run in self.runs.values() if run.task is not None]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)

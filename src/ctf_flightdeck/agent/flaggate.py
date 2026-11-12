@@ -146,7 +146,9 @@ class FlagGate:
         self.light = light
         self.timeout = timeout
         self.warned: set[str] = set()  # the kinds of failure said to the player
-        self.problems: list[str] = []  # flightdeck bugs met handing a checked flag to the deck, for the run's end
+        # for the run's end: flightdeck bugs met handing a checked flag to the deck, and flags that came once it ended
+        self.problems: list[str] = []
+        self.closed = False  # the run is ending (aclose): it covers no flag, and starts no check
         self._checks: dict[str, dict[str, asyncio.Task[None]]] = {}  # lane id -> flag -> its check
         self._gave_up: dict[str, str] = {}  # lane id -> why it gave up, held until its checks are in
 
@@ -157,9 +159,9 @@ class FlagGate:
         knows both), would go out without the player now, as Deck._candidate would send it:
         submit auto, the whole flag format, a challenge open and whose tries the platform does
         not count, not known not to be the flag, and not waiting for the player on this lane
-        or on its way to the platform already."""
+        or on its way to the platform already. None once the run is ending (aclose)."""
         lane = deck.lanes.get(lane_id)
-        if lane is None or lane.finished or deck.config.submit != "auto":
+        if self.closed or lane is None or lane.finished or deck.config.submit != "auto":
             return False
         ch = deck.challenges[lane.challenge_id]
         if ch.closed or ch.limited or not re.fullmatch(deck.config.flag_format, flag):
@@ -188,7 +190,12 @@ class FlagGate:
         """Check `flag` in the background (the caller has made sure it is covered and not under
         check), and hand it to the deck through `report` once the answer is in: claimed, as it
         would have gone at once, or, for a stand-in, not claimed, so that it waits for the
-        player. Nothing waits for it."""
+        player. Nothing waits for it. Once the run is ending (aclose), no check starts: the
+        flag is named with the run's closing problems, never submitted."""
+        if self.closed:
+            self.problems.append(f"{lane_id}: {flag} came as the run ended, after the light model's checks had "
+                                 "stopped; it was not submitted")
+            return
         task = asyncio.get_running_loop().create_task(
             self._check(deck, lane_id, challenge, flag, where, report), name=f"flightdeck flagcheck {lane_id}"
         )
@@ -320,9 +327,11 @@ class FlagGate:
         )
 
     async def aclose(self) -> list[str]:
-        """The run ends: every check stops (before the run closes the light engine). Returns a
-        line for each flag still under check, never submitted, and for each problem met, for the
-        run's closing problems."""
+        """The run ends: every check stops (before the run closes the light engine), and from
+        now on none starts (the drivers stop their lanes first, so none should be asked for).
+        Returns a line for each problem met, each flag still under check, never submitted, and
+        each flag that came while the checks stopped, for the run's closing problems."""
+        self.closed = True
         lost = [*self.problems]
         self.problems.clear()
         lost += [f"{lane_id}: {flag} was still under the light model's check when the run ended; it was not submitted"
@@ -334,6 +343,8 @@ class FlagGate:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        lost += self.problems  # the flags start() turned away meanwhile
+        self.problems.clear()
         return lost
 
 

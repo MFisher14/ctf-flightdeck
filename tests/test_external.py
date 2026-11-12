@@ -62,6 +62,7 @@ from ctf_flightdeck.core.model import (
 )
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.runrecord import load_run
+from fake_light import Lingers
 from fake_model import FakeModelServer, text_reply
 
 FAKE = Path(__file__).with_name("fake_agent_cli.py")
@@ -1735,6 +1736,36 @@ def test_a_cli_lanes_flag_still_under_check_when_the_run_ends_is_named_never_sub
             assert lab.deck.sent == [] and not gate.checking(lane.id)
             assert lab.driver.errors == [f"{lane.id}: t{{x}} was still under the light model's check when the run ended; "
                                          "it was not submitted"]
+
+    run(main())
+
+
+def test_a_cli_lane_that_claims_a_flag_as_the_run_ends_starts_no_check_that_outlives_it(tmp_path):
+    """The run ends while the agent's flag is under check, and the agent claims another just then
+    (its command waits for the cancelled check to wind down). Every CLI stops before the checks
+    do, and what a stopped CLI still writes is not the lane's: no check outlives the run's end,
+    nothing goes out, and the run's end names the flag that was under check."""
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"tools": [bash("while [ ! -e go ]; do sleep 0.02; done")]},
+                                   {"text": "FLAG: t{second}"}, {"think": 30.0, "text": "waiting"}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+        engine = Lingers()
+        gate = lab.driver.flaggate = FlagGate(engine, timeout=30.0)
+        try:
+            lab.release()
+            lane = lab.lane()
+            engine.on_cancel = lambda: (lab.work(lane) / "go").touch()  # the agent's command ends: it claims t{second}
+            engine.done = lambda: lab.run(lane).task is not None and lab.run(lane).task.done()
+            await until(lambda: engine.asked == ["t{x}"], "the flag under check")
+            await lab.driver.shutdown()
+            assert not gate.checking(lane.id) and engine.asked == ["t{x}"]
+            assert lab.driver.errors == [f"{lane.id}: t{{x}} was still under the light model's check when the run ended; "
+                                         "it was not submitted"]
+            await asyncio.sleep(0.2)
+            assert lab.deck.sent == []
+        finally:
+            await lab.finish()
 
     run(main())
 

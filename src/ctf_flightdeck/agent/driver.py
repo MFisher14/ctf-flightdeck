@@ -873,9 +873,8 @@ class AgentDriver:
 
     async def shutdown(self) -> None:
         """Stop every lane and close every workspace (the console calls this before it exits).
-        The flag checks stop first (the run closes the light model after this)."""
-        if self.flaggate is not None:
-            self.errors += await self.flaggate.aclose()
+        The flag checks stop once every lane has (so no lane asks for one after), before the
+        run closes the light model, which it does after this."""
         tasks = []
         for run in self.runs.values():
             run.stopped = True
@@ -884,6 +883,8 @@ class AgentDriver:
                 if run.closing is None:  # still working: cancel it (its finally closes the workspace)
                     run.task.cancel()
                 tasks.append(run.task)
+        if self.flaggate is not None:
+            self.errors += await self.flaggate.aclose()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         for run in self.runs.values():
