@@ -128,6 +128,25 @@ def test_a_local_light_model_never_makes_a_dollar_capped_lane_ask_about_its_budg
     assert lane.pending is None or lane.pending.kind.value != "budget"
 
 
+def test_the_run_closes_its_light_engine_on_shutdown(tmp_path):
+    # Closing the judge's light model moved from the judge (now owns=False) to Run.shutdown's
+    # Lights.aclose(); check a real run actually closes its engine, not just Lights in isolation.
+    with FakeModelServer(responder=lane_loops) as lanes, FakeModelServer([text_reply("yes")] * 20) as judge:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, light_table(judge.base_url))))
+        engine = run.lights.get("judge")  # the run's own light engine, which the judge shares
+        assert engine is not None and not engine.client._closed  # open while the run lives
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: asked(judge) >= 1 and not run.watch._judging, "the hint judge's verdict")
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    assert engine.client._closed  # Run.shutdown closed it once (Lights.aclose); the judge left closing to the run
+
+
 def test_without_a_light_table_a_run_has_no_judge(tmp_path):
     with FakeModelServer(responder=lane_loops) as lanes:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, "")))
