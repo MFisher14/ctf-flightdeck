@@ -2,8 +2,9 @@
 
 What flightdeck's own lanes can call, where their keys come from, and what happens when an API
 fails or a model declines. Coding-agent lanes (`play --agent claude|codex`) use their CLI's own
-login and models instead (`[agents]` in your config). Which models fit your machine:
-`flightdeck models`, and the measured results in [MODELS.md](MODELS.md).
+credential and models instead (`[agents]` in your config; see
+[Coding-agent lanes](../README.md#coding-agent-lanes) in the README). Which models fit your
+machine: `flightdeck models`, and the measured results in [MODELS.md](MODELS.md).
 
 ## Choosing one
 
@@ -18,17 +19,19 @@ login and models instead (`[agents]` in your config). Which models fit your mach
 | `mlx` | An MLX server on this machine, `http://127.0.0.1:8080/v1` | none |
 | `custom` | Any OpenAI-compatible API (`--base-url`, `--key-env`) | yours |
 
-A model on your own machine costs nothing, so `init` writes no dollar cap for it, and no
-provider's safety classifier stands in front of it. For Ollama and an MLX server, `init` suggests
-a ladder from a benchmark on one machine (`gpt-oss:20b` on Ollama,
-`mlx-community/Qwen3.5-9B-MLX-4bit` on MLX): the default at its prompt, and named in its message
-away from a terminal, never written unless you choose it. For any server on this machine it
-writes a longer wait and a larger reply cap (below), and for MLX it prints the command that
-starts the server with thinking off and replies of up to 8192 tokens (`mlx_lm.server --model
-... --max-tokens 8192 --chat-template-args '{"enable_thinking":false}'`). For Ollama it writes and
-prints how to give it room for a lane, with `context = 65536` to uncomment once Ollama has it
-([below](#context-on-a-server-on-your-machine)). `flightdeck models ID` prints the config lines for
-a model from its catalog.
+A model on Ollama or an MLX server (`--provider local` or `mlx`) costs nothing, so `init` writes
+no dollar cap for it, and no provider's safety classifier stands in front of it. A `custom`
+server on this machine keeps the $2 cap, since it may pass calls on to a paid API: set
+`dollar_cap = false` under `[lanes]` when it is free.
+
+For Ollama and an MLX server, `init` suggests the ladder that did best in flightdeck's benchmark
+([MODELS.md](MODELS.md) names the models and says how to serve them): the default at its prompt,
+and named in its message away from a terminal, never written unless you choose it. For any
+server on this machine it writes a longer wait and a larger reply cap
+([below](#time-and-reply-length)), and for MLX it prints the command that starts the server. For
+Ollama it writes and prints how to give it room for a lane, with `context = 65536` to uncomment
+once Ollama has it ([below](#context-on-a-server-on-your-machine)). `flightdeck models ID` prints
+the config lines for a model from its catalog.
 
 Your `[models]` ladder lists model ids weakest first: lanes start on the first, and escalating
 moves one step up. `flightdeck config --example` shows every key.
@@ -40,7 +43,7 @@ from its environment first, then from `~/.config/ctf-flightdeck/keys.env` (or th
 `$FLIGHTDECK_KEYS` names), which must be readable by you only (chmod 600). flightdeck never
 prints, logs or stores a key. A lane's commands get an environment built from an allowlist, so
 no key is handed to them; on the host runtime a lane still runs as you and can read your files
-(see [`--host` in the README](../README.md#play-a-board)). A coding-agent lane is different: its
+(see [Docker or host](../README.md#docker-or-host) in the README). A coding-agent lane is different: its
 CLI gets its own credential, and the commands the agent runs can read it, in Docker too, so give
 it a key you can revoke, with a low spending limit. `flightdeck doctor` checks that each
 variable is set, never its value.
@@ -124,20 +127,20 @@ With an Anthropic key, `init` offers OpenRouter as the fallback when `OPENROUTER
 
 With the Anthropic API, `[api] fast = ["claude-opus-5-5"]` calls those ladder models in fast
 mode: up to 2.5x the output speed at a premium price. Only a model Anthropic documents fast mode
-for is accepted:
+for is accepted. As of 2026-11-12, from Anthropic's fast-mode and pricing documentation:
 
 | Model | Fast price, input / output per million tokens |
 |---|---|
 | Claude Opus 5.5 | $8 / $40 (twice the standard price) |
 | Claude Fable 5.2, Claude Mythos 5.2 | $16 / $80 |
-| Claude Opus 5, Claude Opus 4.8 (research previews) | $10 / $50; Opus 5 needs access from Anthropic, and Opus 4.8's fast mode ends on 2026-11-30 |
+| Claude Opus 5, Claude Opus 4.8 (research previews) | $10 / $50; Opus 5 needs access from Anthropic. Opus 4.8 only until 2026-11-30: from that day Anthropic removes its fast mode, and flightdeck refuses it in `[api] fast` |
 
 A fast call is priced at the fast rate, and the tokens it reads from or writes to the prompt
 cache at that rate times Anthropic's cache multipliers (a read: 0.05 for Opus 5.5, 0.025 for
-Fable 5.2 and Mythos 5.2, 0.1 for the others; a 5-minute write: 1.25). `play` names the fast models and their price before
-lanes start. Fast mode has its own rate limit: on a 429 the lane goes on at standard speed at
-once and says so on its transcript. It stays at standard speed until an escalation starts a new
-session, since every switch of speed starts the prompt cache again.
+Fable 5.2 and Mythos 5.2, 0.1 for the others; a 5-minute write: 1.25). `play` names the fast
+models and their price before lanes start. Fast mode has its own rate limit: on a 429 the lane
+goes on at standard speed at once and says so on its transcript. It stays at standard speed until
+an escalation starts a new session, since every switch of speed starts the prompt cache again.
 
 ## Prices
 
