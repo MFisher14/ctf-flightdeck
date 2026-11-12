@@ -25,8 +25,13 @@ budget declined) loses the flag it was checking, and the player is told which.
 
 The candidate and where the lane found it (`where`: the newest tool output of the lane that
 holds the flag, WHERE_CHARS characters around it) are untrusted: light.render folds them into
-the model's fence, or into a decision model's state alone; nothing they say can do more than
-pick one of the two options, and either option can at most hold a flag.
+the model's fence, or into a decision model's state alone, after the challenge's description,
+which is cut first when the data would pass MAX_DATA (light.render_flag), so the model always
+reads them; nothing they say can do more than pick one of the two options, and either option
+can at most hold a flag.
+
+The run's end (aclose) stops every check, after the drivers have stopped every lane; from
+then on the gate covers no flag and starts no check.
 
 What the check spent is the lane's (a SPEND event, why "the flag check (<engine> <model>)").
 """
