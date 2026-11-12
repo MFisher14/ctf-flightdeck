@@ -35,7 +35,7 @@ from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace, Works
 from ctf_flightdeck.core.model import ActionKind, Challenge
 from ctf_flightdeck.lane import IMAGE as LANE_IMAGE
 
-from l1_kit import FAKE_IMAGE, install_fake_docker
+from l1_kit import FAKE_IMAGE, REQUIRE_LANE_IMAGE, docker_not_run, install_fake_docker
 
 
 def run(coro):
@@ -641,7 +641,7 @@ def _this_machine() -> str:
 def lane_image():
     reason = _lane_image_skip_reason()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}", require=REQUIRE_LANE_IMAGE)
 
 
 @pytest.fixture
@@ -650,7 +650,8 @@ def real_servers(lane_image):
     try:
         allowed, other = _Server("THE-INSTANCE", address), _Server("A-SECOND-SERVER", address)
     except OSError as exc:
-        pytest.skip(f"not run: cannot listen on {address or 'the bridge gateway'}, where a container reaches this machine: {exc}")
+        docker_not_run(f"not run: cannot listen on {address or 'the bridge gateway'}, where a container reaches this machine: {exc}",
+                       require=REQUIRE_LANE_IMAGE)
     yield address, allowed, other
     allowed.stop()
     other.stop()
