@@ -104,7 +104,8 @@ The file sits in the board folder, beside the challenge folders and never inside
 in a copy of its challenge folder and must not find the answers there. `play --answers FILE` names
 an answers file kept somewhere else. An answer for a challenge the board does not have is an error
 (a stale or mistyped id). A board with answers ends its run with a scorecard, and
-`flightdeck score RUN_DIR` scores the run again later.
+`flightdeck score RUN_DIR` scores the run again later (`flightdeck score latest`: the newest run in
+your config's `[run] dir`).
 
 ### Flags without an answers file
 

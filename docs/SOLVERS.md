@@ -234,7 +234,8 @@ add a solver to your pack; `l1 route` and `l1 run` refuse a challenge that is in
 
 ## From a gap to a new engine
 
-After a run, `flightdeck gaps RUN_DIR` lists the challenges no engine solved, with the engines that
+After a run, `flightdeck gaps RUN_DIR` (or `flightdeck gaps latest`, for the newest run in your
+config's `[run] dir`) lists the challenges no engine solved, with the engines that
 ran on each and why L1 did not solve it. An engine counts as having solved a challenge only when it
 reported `solved`; a `candidate` does not count, even when its flag was right. With `--pack` (and
 the board the run played: `--board`, else the one the run recorded) it also routes each gap against

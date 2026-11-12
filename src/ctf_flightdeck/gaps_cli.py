@@ -1,7 +1,8 @@
 """`flightdeck gaps RUN_DIR [--pack PACK] [--board PATH]`: the gap report for a run folder.
 
 Writes RUN_DIR/gaps.md (for you) and RUN_DIR/gaps.json (for build mode) and prints a short
-summary. RUN_DIR is the run folder or its events.jsonl (the path a run prints when it ends).
+summary. RUN_DIR is the run folder or its events.jsonl (the path a run prints when it ends),
+or `latest` for the newest run in the config's [run] dir, named on stderr (runrecord.resolve_run).
 With --pack, each gap is routed again offline against your pack, which needs the board the
 run played for the handouts: --board, else the one the run recorded (RUN_DIR/run.json),
 said on stderr; routing never runs an engine.
@@ -32,7 +33,8 @@ app = typer.Typer(add_completion=False, help="The gap report: the challenges no 
 def gaps_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(metavar="RUN_DIR", exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
+        typer.Argument(metavar="RUN_DIR", help="A run folder (it holds events.jsonl), its events.jsonl, or `latest`: "
+                       "the newest run in your config's [run] dir."),
     ],
     pack: Annotated[
         Path | None,
@@ -50,6 +52,11 @@ def gaps_command(
             "and the handouts --pack routes.",
         ),
     ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", dir_okay=False, help="Config file whose [run] dir `latest` looks in (default: "
+                     "$FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml)."),
+    ] = None,
 ) -> None:
     """The challenges no L1 engine solved, and why: written to RUN_DIR/gaps.md (for you) and
     RUN_DIR/gaps.json (for build mode), with a short summary printed."""
@@ -57,10 +64,10 @@ def gaps_command(
     from .gaps import JSON_FILE, MARKDOWN_FILE, GapError, gap_report, gaps_json, gaps_markdown, summary
     from .l1.manifest import ManifestError
     from .platform.manual import BoardError, load_board
-    from .runrecord import RunFolderError, load_run, read_run_info, run_folder
+    from .runrecord import RunFolderError, load_run, read_run_info, resolve_run
 
     try:
-        run_dir = run_folder(expand(run_dir))
+        run_dir = resolve_run(expand(run_dir), say=lambda line: typer.echo(f"flightdeck: {line}", err=True), config=config)
         record = load_run(run_dir)
     except (RunFolderError, ConfigError) as exc:
         _fail(str(exc))

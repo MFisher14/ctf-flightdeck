@@ -3,6 +3,8 @@
 The board is --board; else the one the run recorded when it started (RUN_DIR/run.json), said
 on stderr, with the answers file it was given; else, for a run older than run.json, the
 practice set. A recorded board that is gone is an error naming it, never another board.
+RUN_DIR is a run folder, an event log, or `latest` for the newest run in the config's [run] dir,
+named on stderr (runrecord.latest_run).
 
 Mounted on the main command line by cli.py with `app.add_typer(practice_cli.app)`; with no
 name of its own, the command joins the top level as `flightdeck score`.
@@ -26,7 +28,8 @@ app = typer.Typer(add_completion=False, rich_markup_mode="markdown")
 def score_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(metavar="RUN_DIR", help="A run folder (it holds events.jsonl), or an events.jsonl file.", show_default=False),
+        typer.Argument(metavar="RUN_DIR", help="A run folder (it holds events.jsonl), an events.jsonl file, or `latest`: "
+                       "the newest run in your config's [run] dir.", show_default=False),
     ],
     board: Annotated[
         Path | None,
@@ -44,6 +47,11 @@ def score_command(
             "answers.sha256.json in the board, if any).",
         ),
     ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", dir_okay=False, help="Config file whose [run] dir `latest` looks in (default: "
+                     "$FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml)."),
+    ] = None,
 ) -> None:
     """Score a past run from its event log: solves, points, first solve, cost per solve,
     interventions and wrong submissions. Reads only the run folder (the log, and the lane
@@ -51,10 +59,14 @@ def score_command(
     from .config import ConfigError, expand
     from .platform.manual import BoardError, load_board
     from .practice_mode import ScoreError, score, scorecard
+    from .runrecord import RunFolderError, asks_latest, latest_run
 
     try:
-        log = _events_file(expand(run_dir))
-    except ConfigError as exc:
+        path = expand(run_dir)
+        if asks_latest(path):  # the word, with nothing of that name here: the newest run (runrecord.resolve_run)
+            path = latest_run(say=lambda line: typer.echo(f"flightdeck: {line}", err=True), config=config)
+        log = _events_file(path)
+    except (ConfigError, RunFolderError) as exc:
         _fail(str(exc))
     try:
         if board is not None:

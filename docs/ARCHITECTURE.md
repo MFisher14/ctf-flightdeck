@@ -510,6 +510,17 @@ credentials taken out of every value it shows: `credentials.py`; both read an ol
 and transcripts cleaned the same way; it writes only in `RUN_DIR/writeups/`, so the run's own log
 and transcripts stay as they were written).
 
+`report`, `writeups`, `gaps` and `score` read their RUN_DIR one way (`runrecord.resolve_run`): a run
+folder, its `events.jsonl`, or the word `latest` for the newest run under the config's `[run] dir`
+(`$FLIGHTDECK_CONFIG` or `--config` names the config; no API key is read). Newest is by when each
+run started, the `wall` time of the run-start line that opens its `events.jsonl`: never a folder's
+modification time (a report written into a run changes it) and never its name (local time). A
+folder there without an `events.jsonl` is not a run; one whose log does not say when it started is
+left out and named. The command says the folder it took on stderr (`flightdeck: run: ...`). Whatever
+is really named `latest` in the current directory is taken as the path it is. No config, no runs
+folder or no run there fails in one line that names what is missing; a run played with
+`play --run-dir` elsewhere is not looked for.
+
 ### Practice mode
 
 Where: `practice_mode.py`.
