@@ -20,7 +20,9 @@ Anthropic client drops it, says so, and stays at standard speed for the rest of 
 context, because switching speed invalidates the prompt cache.
 
 A fast call is priced at the fast rate. The skill gives fast mode's input and output prices
-only, so a fast call's cached prompt tokens are priced at the fast input rate.
+only, so a fast call's prompt tokens read from the cache, and those it writes to the cache,
+are priced at the fast input rate. An attempt the refusal fallback ran on another model is
+priced as that model, from the config.
 
 Nothing here imports the Anthropic SDK: the config checks `[api] fast` with it.
 """
@@ -40,7 +42,7 @@ class FastMode:
     """One model's fast mode, as Anthropic's documentation lists it."""
 
     model: str
-    price: Price  # dollars per million tokens at fast speed (cached input: the input rate)
+    price: Price  # dollars per million tokens at fast speed (cache reads and writes: the input rate)
     beta: bool = False  # a research preview: the request needs FAST_BETA
     access: bool = False  # Anthropic must give the account access first
     until: date | None = None  # fast mode on this model is removed on this day

@@ -25,16 +25,21 @@ from ctf_flightdeck.agent.anthropic_client import (
     AnthropicClient,
     to_anthropic,
 )
-from ctf_flightdeck.agent.client import ModelError, Reply, ToolCall, Usage
+from ctf_flightdeck.agent.client import ModelError, Reply, ToolCall, Usage, call_dollars
 from ctf_flightdeck.agent.tools import TOOLS
 from ctf_flightdeck.config import ANTHROPIC_BASE_URL
-from fake_anthropic import FakeAnthropicServer, error, message, refusal, text_message, thinking, tool_message
+from ctf_flightdeck.pricing import Price
+from fake_anthropic import FakeAnthropicServer, attempt, error, message, refusal, text_message, thinking, tool_message
 from fake_model import FakeReply
 
 KEY = "test-anthropic-key-4Rq9-not-real"  # synthetic; the shape of no real provider's key
 SESSION = "flightdeck-run1-L01"
 SYSTEM = "You are a test lane."
 MESSAGES = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "Read the note."}]
+HAIKU = Price(0.10, 0.50, 0.01, 0.125)  # dollars per million: input, output, cache reads, 5-minute cache writes
+OPUS = Price(4.0, 20.0, 0.20, 5.0)
+FALLBACK_BLOCK = {"type": "fallback", "from": {"model": "claude-opus-5-5"}, "to": {"model": "claude-opus-4-8"},
+                  "trigger": {"type": "refusal", "category": "cyber"}}
 
 
 def chat(base_url: str, messages: list[dict] | None = None, *, model: str = "claude-haiku-5-5", tools=None,
@@ -236,11 +241,54 @@ def test_a_tool_use_reply_gives_its_text_calls_stop_reason_model_and_a_history_m
     }
 
 
-def test_usage_counts_cache_reads_and_writes_in_the_prompt_and_reads_as_cached_with_no_cost():
+def test_usage_counts_cache_reads_and_writes_in_the_prompt_and_says_which_is_which_with_no_cost():
     body = text_message("ok", input_tokens=100, output_tokens=50, cache_read=4000, cache_write=900)
     with FakeAnthropicServer([body]) as server:
         usage = chat(server.base_url).usage
-    assert usage == Usage(prompt_tokens=5000, completion_tokens=50, cached_tokens=4000, cost=None)
+    assert usage == Usage(prompt_tokens=5000, completion_tokens=50, cached_tokens=4000, cost=None, cache_write_tokens=900)
+    assert usage.parts() == (usage,) and call_dollars(usage, "claude-haiku-5-5", {"claude-haiku-5-5": HAIKU}.get) == (
+        pytest.approx((100 * 0.10 + 4000 * 0.01 + 900 * 0.125 + 50 * 0.50) / 1e6))  # each at its own rate
+
+
+def test_a_call_the_refusal_fallback_ran_on_two_models_is_told_per_model_and_counted_once():
+    # usage.iterations: the attempt on the model asked for, declined, then the fallback's, which
+    # answered; the top-level counts are the fallback attempt's, and are not counted again
+    body = message(
+        [FALLBACK_BLOCK, {"type": "text", "text": "Here is how."}], model="claude-opus-4-8",
+        iterations=[attempt("claude-opus-5-5", input_tokens=300, cache_read=6000, cache_write=700),
+                    attempt("claude-opus-4-8", kind="fallback_message", input_tokens=400, output_tokens=90, cache_write=6600)],
+    )
+    assert body["usage"]["input_tokens"] == 400  # the fake reports the top level as the API does
+    with FakeAnthropicServer([body]) as server:
+        reply = chat(server.base_url, model="claude-opus-5-5")
+    usage = reply.usage
+    assert usage == Usage(prompt_tokens=7000, completion_tokens=90, cache_write_tokens=6600, model="claude-opus-4-8",
+                          more=(Usage(prompt_tokens=7000, cached_tokens=6000, cache_write_tokens=700),))
+    assert sum(part.total for part in usage.parts()) == 7000 + 7090
+    prices = {"claude-opus-5-5": OPUS, "claude-opus-4-8": Price(5.0, 25.0, 0.50, 6.25)}
+    assert call_dollars(usage, "claude-opus-5-5", prices.get) == pytest.approx(
+        (300 * 4.0 + 6000 * 0.20 + 700 * 5.0) / 1e6 + (400 * 5.0 + 6600 * 6.25 + 90 * 25.0) / 1e6)
+    assert call_dollars(usage, "claude-opus-5-5", {"claude-opus-5-5": OPUS}.get) is None  # the fallback's model: no price
+
+
+def test_an_attempt_that_names_no_model_ran_on_the_one_asked_for_and_the_fallbacks_on_the_one_that_answered():
+    body = message([{"type": "text", "text": "ok"}], model="claude-sonnet-5",
+                   iterations=[attempt(None, input_tokens=50), attempt(None, kind="fallback_message", input_tokens=60)])
+    with FakeAnthropicServer([body]) as server:
+        usage = chat(server.base_url, model="claude-sonnet-5-5").usage
+    assert (usage.model, usage.prompt_tokens) == ("claude-sonnet-5", 60)
+    assert [(part.model, part.prompt_tokens) for part in usage.more] == [("", 50)]
+
+
+def test_attempts_on_one_model_are_summed_and_a_reply_with_no_attempts_listed_is_its_top_level_usage():
+    body = message([{"type": "text", "text": "ok"}], model="claude-opus-5-5",
+                   iterations=[attempt("claude-opus-5-5", input_tokens=10, output_tokens=1),
+                               attempt("claude-opus-5-5", input_tokens=20, output_tokens=2)])
+    with FakeAnthropicServer([body, message([{"type": "text", "text": "ok"}], iterations=[])]) as server:
+        summed = chat(server.base_url, model="claude-opus-5-5").usage
+        plain = chat(server.base_url).usage
+    assert summed == Usage(prompt_tokens=30, completion_tokens=3)
+    assert plain == Usage(prompt_tokens=100, completion_tokens=20)
 
 
 def test_a_refusal_is_a_declined_error_naming_its_category_never_retried_and_its_tokens_counted():
@@ -250,6 +298,15 @@ def test_a_refusal_is_a_declined_error_naming_its_category_never_retried_and_its
     assert str(err) == "the model declined (cyber)"
     assert err.declined and not err.retryable and err.status == 200
     assert err.usage == Usage(prompt_tokens=700, completion_tokens=0, cached_tokens=0, cost=None)
+
+
+def test_a_refusal_the_fallback_declined_too_carries_every_attempt():
+    declined = refusal("cyber", model="claude-sonnet-5",
+                       iterations=[attempt("claude-sonnet-5-5", input_tokens=800), attempt("claude-sonnet-5", input_tokens=900)])
+    with FakeAnthropicServer([declined]) as server:
+        err = fails(server.base_url, model="claude-sonnet-5-5")
+    assert err.declined
+    assert [(part.model, part.prompt_tokens) for part in err.usage.parts()] == [("claude-sonnet-5", 900), ("", 800)]
 
 
 def test_a_refusal_without_a_category_says_so_and_its_explanation_is_made_safe():

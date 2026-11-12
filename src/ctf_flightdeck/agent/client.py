@@ -40,12 +40,13 @@ import math
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http import HTTPStatus
 from typing import Protocol
 
 import httpx
 
+from ..pricing import Price, call_cost
 from ..text import untrusted
 
 RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
@@ -79,17 +80,46 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class Usage:
-    """The tokens a call used and, when the API says, what it cost."""
+    """The tokens a call used and, when the API says, what it cost.
+
+    A call can be made of attempts on more than one model: Anthropic's server-side refusal
+    fallback runs a declined request again on another model inside the same call, and its
+    usage.iterations reports each attempt (agent/anthropic_client.py). Then this Usage is the
+    part on the model of the call's last attempt (the one that answered, or the last to
+    decline), `model` names that model when it is not the one asked for, and `more` holds the
+    parts on the other models, one per model, each naming its own the same way. The fields
+    of a Usage never count its `more`: parts() gives the whole call, and call_dollars() what
+    it cost with each part at the price of the model that ran it."""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0  # of the prompt tokens, how many the API served from its cache
     cost: float | None = None  # dollars charged, when the API reports it (OpenRouter does), or a fast call's at the fast rate
     speed: str = ""  # "fast" or "standard" when the API says which speed the call ran at (Anthropic), else ""
+    cache_write_tokens: int = 0  # of the prompt tokens, how many the API wrote to its cache (Anthropic says), else 0
+    model: str = ""  # the model that ran this part, when it is not the model asked for; "" for that one
+    more: tuple[Usage, ...] = ()  # the call's parts on other models (see above); () for a call on one model
 
     @property
     def total(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+    def parts(self) -> tuple[Usage, ...]:
+        """The whole call, part by part: this part (without `more`), then the others."""
+        return (replace(self, more=()), *self.more) if self.more else (self,)
+
+
+def call_dollars(usage: Usage, model: str, price_of: Callable[[str], Price | None]) -> float | None:
+    """What a whole call to `model` cost: each of its parts at the API's figure for it (or a
+    fast call's), else at price_of(the model that ran it); None when any part's is unknown."""
+    total = 0.0
+    for part in usage.parts():
+        dollars = call_cost(part.cost, price_of(part.model or model), part.prompt_tokens, part.completion_tokens,
+                            part.cached_tokens, part.cache_write_tokens)
+        if dollars is None:
+            return None
+        total += dollars
+    return total
 
 
 @dataclass(frozen=True)

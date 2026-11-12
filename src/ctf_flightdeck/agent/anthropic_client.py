@@ -20,7 +20,10 @@ The reply comes back in ModelClient's terms: the assistant message for the histo
 OpenAI-style content and tool_calls, so an OpenAI-style API can take the context over, and
 the raw blocks under CONTENT_KEY), the text, the tool calls with their input as JSON text,
 the stop reason, the usage (prompt tokens = input + cache read + cache write, cached tokens
-= cache read, no cost: flightdeck prices it from the config) and the model that answered.
+= cache read, cache-write tokens = cache write, no cost: flightdeck prices it from the config)
+and the model that answered. A call the server-side refusal fallback ran on more than one
+model reports each attempt in usage.iterations: its usage is then told per model that ran
+it (agent/client.py Usage), so each attempt is priced as that model (_usage).
 
 What is sent, as Anthropic's documentation says for these models: no `thinking` (left out, they
 think adaptively), no `temperature` (they reject it, and SDK 2 has no such argument), no
@@ -81,17 +84,12 @@ from .client import (
     retry_delay,
 )
 from .fastmode import FAST_BETA, FAST_MODES, fast_problem
+from .refusal import FALLBACK_BETA, SERVER_FALLBACK_MODELS
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"  # the SDK's own default; it adds /v1/messages
 DEFAULT_TIMEOUT = 600.0  # seconds per try: the SDK's default request timeout (10 minutes)
 DEFAULT_MAX_TOKENS = 16_000  # when the caller gives none: Anthropic's documented default for a request that does not stream
 CONTENT_KEY = "_anthropic_content"  # the raw content blocks of a reply, on its history message
-FALLBACK_BETA = "server-side-fallback-2026-07-01"  # the beta that takes fallbacks="default"
-SERVER_FALLBACK_MODELS = frozenset(
-    {"claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5-2"}
-)
-"""The models whose requests carry the server-side refusal fallback by default (Anthropic's
-documentation). Claude Haiku 5.5 is not one: it has none, and a fallbacks list is a 400 there."""
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 EFFORT_MODELS = frozenset({
@@ -248,7 +246,7 @@ class AnthropicClient:
         while True:
             outcome = await self._try(params)
             if not isinstance(outcome, _Failure):
-                return self._reply(outcome, fast=model if fast else None, notice=notice)
+                return self._reply(outcome, model, fast=model if fast else None, notice=notice)
             failure = outcome
             if fast and failure.status == 429:
                 # Fast mode's own rate limit: go on at standard speed now, and stay there for this
@@ -317,10 +315,10 @@ class AnthropicClient:
         headers = exc.response.headers
         return _Failure(text, status, _retryable(status, headers.get("x-should-retry")), headers.get("retry-after"))
 
-    def _reply(self, data: dict, *, fast: str | None = None, notice: str = "") -> Reply:
-        """The reply, its usage priced at the fast rate when `fast` names the model of a fast
-        request, and `notice` in front of its own."""
-        outcome = parse(data)
+    def _reply(self, data: dict, asked: str = "", *, fast: str | None = None, notice: str = "") -> Reply:
+        """The reply to a call to `asked`, its usage priced at the fast rate when `fast` names
+        the model of a fast request, and `notice` in front of its own."""
+        outcome = parse(data, asked)
         if isinstance(outcome, Reply):
             reply = outcome if fast is None else replace(outcome, usage=fast_priced(outcome.usage, fast))
             if notice:
@@ -395,12 +393,21 @@ def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tok
 
 
 def fast_priced(usage: Usage, model: str) -> Usage:
-    """`usage` of a fast request to `model`, priced at its fast rate (cached tokens at the fast
-    input rate: the documentation gives no other), unless the API says it ran at standard speed."""
+    """`usage` of a fast request to `model`, its part on `model` priced at the fast rate (the
+    tokens read from the cache and those written to it at the fast input rate: the
+    documentation gives no other), unless the API says it ran at standard speed. A part
+    another model ran (the refusal fallback's) gets no cost here: the config prices it."""
     if usage.speed == "standard":
         return usage
-    dollars = cost(FAST_MODES[model].price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
-    return replace(usage, cost=dollars)
+    price = FAST_MODES[model].price
+
+    def priced(part: Usage) -> Usage:
+        if part.model:
+            return part
+        return replace(part, cost=cost(price, part.prompt_tokens, part.completion_tokens, part.cached_tokens,
+                                       part.cache_write_tokens))
+
+    return replace(priced(usage), more=tuple(priced(part) for part in usage.more))
 
 
 def _split_system(messages: Sequence[dict]) -> tuple[list[str], list[dict]]:
@@ -514,15 +521,16 @@ def _tool(tool: dict) -> dict:
 # ---------------------------------------------------------------------- the reply
 
 
-def parse(data: dict) -> Reply | _Malformed | _Declined:
-    """A message (as the SDK's to_dict() gives it) as a Reply; or what is wrong with it."""
+def parse(data: dict, asked: str = "") -> Reply | _Malformed | _Declined:
+    """A message (as the SDK's to_dict() gives it) of a call to the model `asked` as a Reply;
+    or what is wrong with it."""
     reported = data.get("error")
     if isinstance(reported, dict):  # an error in a 2xx answer
         return _Malformed("the Anthropic API reported an error", _string(reported.get("message")) or "no message given")
     content = data.get("content")
     if not isinstance(content, list) or not all(isinstance(block, dict) for block in content):
         return _Malformed("the Anthropic API sent a message without a list of content blocks")
-    usage = _usage(data.get("usage"))
+    usage = _usage(data.get("usage"), asked, _string(data.get("model")))
     stop = _string(data.get("stop_reason"))
     if stop == "refusal":
         details = data.get("stop_details")
@@ -568,16 +576,57 @@ def parse(data: dict) -> Reply | _Malformed | _Declined:
     )
 
 
-def _usage(raw: object) -> Usage:
-    """prompt tokens = input + cache read + cache write; cached = cache read; cost unknown; the
-    speed the API says the request ran at ("fast" or "standard"), "" when it says neither."""
+def _usage(raw: object, asked: str = "", served: str = "") -> Usage:
+    """What a call to the model `asked` used (Usage says how a call on several models is told):
+    prompt tokens = input + cache read + cache write; cached = cache read; cache write = what
+    the call wrote to the cache (cache_creation_input_tokens, all of it at the 5-minute rate:
+    flightdeck's requests never ask for the 1-hour cache); cost unknown; and the speed the API
+    says the request ran at ("fast" or "standard"), "" when it says neither.
+
+    With usage.iterations, the call's attempts are what counts: Anthropic's documentation
+    (shared/model-migration.md, the refusal section) says "`usage.iterations` is the per-attempt
+    source of truth; top-level `usage` covers only the attempt that produced the returned
+    message", and "fallback attempts bill at the fallback model's rates". So the attempts are
+    summed per model that ran them, and the top-level counts, the last attempt's, are not added
+    again. An attempt that names no model ran on the model asked for, except the fallback's
+    (fallback_message), which ran on the model the reply names (`served`). A declined attempt
+    counts as it is reported: whether one declined before any output is billed depends on its
+    category, so the meter may count one Anthropic does not bill, never leave out one it does."""
     if not isinstance(raw, dict):
         return Usage()
-    read = _count(raw.get("cache_read_input_tokens"))
-    prompt = _count(raw.get("input_tokens")) + read + _count(raw.get("cache_creation_input_tokens"))
     speed = raw.get("speed")
-    return Usage(prompt_tokens=prompt, completion_tokens=_count(raw.get("output_tokens")), cached_tokens=read, cost=None,
-                 speed=speed if speed in ("fast", "standard") else "")
+    speed = speed if speed in ("fast", "standard") else ""
+    entries = raw.get("iterations")
+    attempts = [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+    if not attempts:
+        return replace(_tokens(raw), speed=speed)
+    parts: dict[str, Usage] = {}
+    last = asked
+    for entry in attempts:
+        name = entry.get("model")
+        if not isinstance(name, str) or not name:
+            name = served if entry.get("type") == "fallback_message" and served else asked
+        parts[name] = _plus(parts.get(name, Usage()), _tokens(entry))
+        last = name
+
+    def named(name: str, part: Usage) -> Usage:
+        return replace(part, model="" if name == asked else untrusted(name, one_line=True)[:80])
+
+    top = named(last, parts.pop(last))
+    return replace(top, speed=speed, more=tuple(named(name, part) for name, part in parts.items()))
+
+
+def _tokens(raw: dict) -> Usage:
+    """One usage object's (or one attempt's) token counts."""
+    read = _count(raw.get("cache_read_input_tokens"))
+    written = _count(raw.get("cache_creation_input_tokens"))
+    return Usage(prompt_tokens=_count(raw.get("input_tokens")) + read + written,
+                 completion_tokens=_count(raw.get("output_tokens")), cached_tokens=read, cache_write_tokens=written)
+
+
+def _plus(a: Usage, b: Usage) -> Usage:
+    return replace(a, prompt_tokens=a.prompt_tokens + b.prompt_tokens, completion_tokens=a.completion_tokens + b.completion_tokens,
+                   cached_tokens=a.cached_tokens + b.cached_tokens, cache_write_tokens=a.cache_write_tokens + b.cache_write_tokens)
 
 
 def _fallback_notice(block: dict) -> str:

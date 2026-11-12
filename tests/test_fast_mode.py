@@ -18,7 +18,7 @@ from ctf_flightdeck.agent.anthropic_client import AnthropicClient
 from ctf_flightdeck.agent.client import ModelError, Reply
 from ctf_flightdeck.agent.fallback import build_client, client_for
 from ctf_flightdeck.config import load_config
-from fake_anthropic import FAST_BETA, FALLBACK_BETA, FakeAnthropicServer, error, refusal, text_message
+from fake_anthropic import FAST_BETA, FALLBACK_BETA, FakeAnthropicServer, attempt, error, message, refusal, text_message
 
 KEY = "test-anthropic-key-4Rq9-not-real"  # synthetic
 MESSAGES = [{"role": "system", "content": "You are a test lane."}, {"role": "user", "content": "Read the note."}]
@@ -201,6 +201,18 @@ def test_a_fast_call_is_priced_at_the_fast_rate(speed, expected):
         (reply,) = calls(server.base_url, ("claude-opus-5-5", "s1"), fast=["claude-opus-5-5"])
     assert reply.usage.speed == (speed or "")
     assert reply.usage.cost == (pytest.approx(expected) if expected is not None else None)
+
+
+def test_a_fast_calls_cache_writes_count_at_the_fast_input_rate_and_a_fallback_attempt_is_left_to_the_config():
+    body = message([{"type": "text", "text": "ok"}], model="claude-opus-4-8", speed="fast", iterations=[
+        attempt("claude-opus-5-5", input_tokens=500, cache_write=1_500),  # declined, in fast mode
+        attempt("claude-opus-4-8", kind="fallback_message", input_tokens=700, output_tokens=10),
+    ])
+    with FakeAnthropicServer([body]) as server:
+        (reply,) = calls(server.base_url, ("claude-opus-5-5", "s1"), fast=["claude-opus-5-5"])
+    (asked,) = reply.usage.more
+    assert asked.cache_write_tokens == 1_500 and asked.cost == pytest.approx((500 + 1_500) * 8.0 / 1e6)
+    assert reply.usage.model == "claude-opus-4-8" and reply.usage.cost is None  # priced as that model, from [prices]
 
 
 def test_a_standard_call_carries_no_cost_from_the_client():
