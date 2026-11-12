@@ -111,7 +111,7 @@ answer.
 ## A fallback API
 
 Any config can have a `[fallback]` table: a second API, with `provider`, `base_url`, `key_env`,
-`timeout` and `max_tokens` as in `[api]` (not `fast`, which is for `[api]` only), and a ladder of
+`timeout` and `max_tokens` as in `[api]` (not `fast` or `effort`, which are for `[api]` only), and a ladder of
 one model per `[models]` entry, in the same order and in the fallback API's own naming. A lane
 whose calls to `[api]` keep failing (rate limits, overload, an outage, no answer, after every
 retry) moves to the fallback's model at the same rung for the rest of its context, and its
@@ -141,6 +141,40 @@ Fable 5.2 and Mythos 5.2, 0.1 for the others; a 5-minute write: 1.25). `play` na
 models and their price before lanes start. Fast mode has its own rate limit: on a 429 the lane
 goes on at standard speed at once and says so on its transcript. It stays at standard speed until
 an escalation starts a new session, since every switch of speed starts the prompt cache again.
+
+## Effort
+
+With the Anthropic API, `[api] effort` sets `output_config.effort` (how much a model thinks, and
+so spends) for a lane's calls to each ladder model you name:
+
+```toml
+[api]
+provider = "anthropic"
+effort = { "claude-opus-5-5" = "high", "claude-haiku-5-5" = "low" }
+```
+
+A model with no entry is sent none and runs at Anthropic's default for it: `medium` for Claude
+Haiku 5.5 and Opus 5.5, `high` for Sonnet 5.5 (Anthropic's documentation, as of 2026-11-12). The
+top rung at `high` is for hard challenges; the first at `low` saves money. The levels are `low`,
+`medium`, `high`, `xhigh` and `max` (no `xhigh` on Claude Opus 4.6 and Sonnet 4.6; `low` to `high`
+only on Opus 4.5). The config is refused, in a line that names the key, when `[api] provider` is
+not `"anthropic"`, when an entry is for a model outside `models.ladder` or one that takes no
+effort (Claude Haiku 4.5, Sonnet 4.5), and when a level is not one that model takes: the API would
+refuse every call of the lane. `play` names the efforts before lanes start. The light model's
+calls are not affected: they go out at `low`.
+
+Two edges:
+
+- **The refusal fallback.** When Anthropic runs a declined request again on its fallback model
+  (above), it runs the same request, effort included: the model that answers works at the level
+  you set for the ladder model, not at one of its own. Every model Anthropic names as a fallback
+  takes every level of the model it answers for (a test holds flightdeck's tables to that).
+- **The fallback API.** `[api] effort` is never sent to the `[fallback]` API, which may be
+  OpenAI-compatible and take no `output_config`; its ladder has other names for the models, and
+  there is no `[fallback] effort`. A lane that moves there runs its model at that API's default,
+  and the notice of the move on its transcript says so ("without [api] effort high, which is for
+  Anthropic only"). Its next context (an escalation, or the long-context refresh) tries `[api]`
+  again, with the effort.
 
 ## Prices
 

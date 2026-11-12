@@ -206,6 +206,11 @@ fast rate unless `usage.speed` says standard; a 429 on a fast request is tried a
 standard speed, and that lane session stays at standard speed (switching speed invalidates the
 prompt cache), with a notice on the lane.
 
+Effort: a model in `[api] effort` is called with `output_config.effort` at its level
+(`EFFORT_LEVELS`: the levels each model takes, from Anthropic's API documentation); a model with no
+entry is sent none. It goes to the `[api]` client only: a lane that moves to the `[fallback]` API
+is sent none there, and the notice of the move says so.
+
 The SDK's own retries are off, so the driver's retry gate holds; the key and base URL are passed
 explicitly, never read from the environment by the SDK; no SDK exception is chained onto an error.
 Each try is bounded by `[api] timeout` (else 600 s), and a call that gives no `max_tokens` sends
@@ -537,10 +542,10 @@ Where: `config.py`.
 
 `~/.config/ctf-flightdeck/config.toml`: the API (`provider` openai or anthropic, base URL, the name
 of the key's environment variable, never the key; with anthropic, `fast`: the ladder models called
-in fast mode; `timeout`: seconds per try of a lane's call; `max_tokens`: a lane's reply cap, which
+in fast mode, and `effort`: a ladder model's effort level; `timeout`: seconds per try of a lane's call; `max_tokens`: a lane's reply cap, which
 `lane_max_tokens()` makes 8192 (`LOCAL_MAX_TOKENS`) for an OpenAI-compatible server on this machine
 when unset, and leaves unset for any other) and an optional `[fallback]` API with its own ladder,
-timeout and max_tokens (no `fast`), the model ladder, prices (for a ladder model, or for a model of
+timeout and max_tokens (no `fast`, no `effort`), the model ladder, prices (for a ladder model, or for a model of
 an `[agents]` ladder under the CLI's own name: codex reports no cost), lane defaults, the run
 folder, and an optional `[light]` light model (engine, model, base URL, key variable, timeout,
 price; the decider's confidence threshold; the openai engine's `thinking`, which `light_thinking()`

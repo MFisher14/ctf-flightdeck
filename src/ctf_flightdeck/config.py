@@ -12,7 +12,8 @@ Anthropic Messages API, through its SDK). The optional [fallback] table names a 
 that a lane moves to when the first keeps failing (agent/fallback.py), with a ladder of the
 same length as [models] ladder: position i is used for a lane on ladder[i]. With the
 Anthropic API, [api] fast lists the ladder models a lane calls in fast mode; only a model
-agent/fastmode.py lists for fast mode is accepted.
+agent/fastmode.py lists for fast mode is accepted. [api] effort, with the Anthropic API too, is
+a table of ladder model -> output_config.effort level for a lane's calls to that model.
 
 [api] and [fallback] also take timeout (seconds one try of a lane's call may take) and
 max_tokens (the most tokens a lane's reply may hold). Unset, max_tokens is LOCAL_MAX_TOKENS
@@ -68,7 +69,7 @@ RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
 _TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
-_API_KEYS = ("provider", "base_url", "key_env", "fast", "timeout", "max_tokens", "context")
+_API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
 API_PROVIDERS = ("openai", "anthropic")
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"  # the Anthropic SDK's default (it adds /v1/messages itself)
@@ -135,6 +136,7 @@ class ApiConfig:
     key_env: str = "OPENROUTER_API_KEY"  # "" for a local server that needs no key (openai provider only)
     provider: str = "openai"  # openai | anthropic: the API's dialect
     fast: tuple[str, ...] = ()  # ladder models a lane calls in fast mode (anthropic only; agent/fastmode.py)
+    effort: tuple[tuple[str, str], ...] = ()  # (ladder model, output_config.effort level) pairs (anthropic only)
     timeout: float | None = None  # seconds per try of a lane's call; None: the client's own (180, Anthropic 600)
     max_tokens: int | None = None  # a lane's reply cap as set; None: lane_max_tokens() decides
     context: int | None = None  # tokens of context its server gives a lane's model; None: not stated
@@ -424,6 +426,11 @@ key_env = "OPENROUTER_API_KEY"
 # standard price). Fast mode has its own rate limit; on a 429 the lane goes on at standard
 # speed for the rest of its session (until an escalation) and says so.
 # fast = ["claude-opus-5-5"]
+# With provider "anthropic" only: the effort (output_config.effort: how much a model thinks, and
+# so spends) of each ladder model named here, one of low, medium, high, xhigh, max. A model with
+# no entry is sent none and runs at Anthropic's default for it (medium for Claude Haiku 5.5 and
+# Opus 5.5, high for Sonnet 5.5). It is not sent to the [fallback] API.
+# effort = { "claude-opus-5-5" = "high" }
 # Seconds one try of a lane's model call may take; a reply not complete by then is given up and
 # tried again (the retries and their waits stay as they are). Default 180, or 600 with provider
 # "anthropic". A model on this machine can need minutes for one reply: `flightdeck init` writes
@@ -619,6 +626,7 @@ def _api(path: Path, table: dict, ladder: tuple[str, ...]) -> ApiConfig:
     provider, base_url, key_env = _endpoint(path, "api", table)
     max_tokens = _max_tokens(path, "api", table)
     return ApiConfig(base_url=base_url, key_env=key_env, provider=provider, fast=_fast(path, table, provider, ladder),
+                     effort=_effort(path, table, provider, ladder),
                      timeout=_try_timeout(path, "api", table), max_tokens=max_tokens,
                      context=_context(path, "api", table, provider, base_url, max_tokens))
 
@@ -704,6 +712,41 @@ def _fast(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tu
         if problem is not None:
             raise ConfigError(f"{path}: {key}: {problem}")
     return tuple(value)
+
+
+def _effort(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """[api] effort: a table of ladder model -> output_config.effort level. Only with the
+    Anthropic API, only models that take an effort and only a level that model takes
+    (agent/anthropic_client.py EFFORT_LEVELS, from Anthropic's documentation): the API refuses
+    any other, on every call of the lane. A model with no entry is sent none and runs at its
+    own default. An entry is named by its place in the table, and a model id is shown only
+    when it is one Anthropic documents: any other string could be a key pasted into the
+    wrong place."""
+    if "effort" not in table:
+        return ()
+    from .agent.anthropic_client import EFFORT_LEVELS, effort_problem
+
+    value = table["effort"]
+    if not isinstance(value, dict):
+        raise _error(path, ("api", "effort"), "must be a table of a model id from models.ladder and its effort level, "
+                                              f'as in effort = {{ "claude-opus-5-5" = "high" }}{_got(value)}')
+    if value and provider != "anthropic":
+        raise _error(
+            path, ("api", "effort"),
+            'is output_config.effort, a feature of the Anthropic Messages API: it needs [api] provider = "anthropic"',
+        )
+    out: list[tuple[str, str]] = []
+    for i, (model, level) in enumerate(value.items()):
+        key = _key("api", "effort", model) if model in EFFORT_LEVELS else f"api.effort (entry {i + 1})"
+        if model not in ladder:
+            raise ConfigError(f"{path}: {key} is not for a model in models.ladder: effort is set per ladder model")
+        if not isinstance(level, str):
+            raise ConfigError(f"{path}: {key} must be an effort level, a string{_got(level)}")
+        problem = effort_problem(model, level)
+        if problem is not None:
+            raise ConfigError(f"{path}: {key} {problem}")
+        out.append((model, level))
+    return tuple(out)
 
 
 def _light_tables(path: Path, table: dict) -> tuple[LightConfig, tuple[str, ...], dict[str, LightConfig]]:

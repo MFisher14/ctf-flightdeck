@@ -564,6 +564,9 @@ def prepare_run(options: RunOptions) -> Run:
             from .agent.fastmode import fast_note
 
             plan.notes.append(fast_note(config.api.fast))
+        if config.api.effort:
+            plan.notes.append("effort: " + ", ".join(f"{name} at {level}" for name, level in config.api.effort)
+                              + " (any other ladder model runs at Anthropic's default for it)")
     if runtime == "docker":
         _check_docker(config.lanes.image)
         if agent is not None:
