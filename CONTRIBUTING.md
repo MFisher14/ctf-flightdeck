@@ -11,7 +11,7 @@ Python 3.12+ and [uv](https://docs.astral.sh/uv/), on macOS or Linux (Windows th
 git clone https://github.com/MFisher14/ctf-flightdeck
 cd ctf-flightdeck
 uv sync                               # the dependencies, and pytest
-git config core.hooksPath .githooks   # the commit guard: secrets, private notes, big files
+git config core.hooksPath .githooks   # the commit guard: secrets and big files stay out
 uv run pytest
 ```
 
@@ -21,11 +21,11 @@ Docker answers and `debian:bookworm-slim` is already on your machine
 (`docker pull debian:bookworm-slim`); otherwise they report as not run. No test pulls an image.
 CI runs the tests and the secret scan on Linux and macOS for every push and pull request.
 
-The commit guard checks each commit for key and token shapes, credential files, private notes
-and files over 10 MB. If it blocks a value, take the value out; never skip it with
-`--no-verify`. `python3 -I .githooks/secret_scan.py --all` scans every tracked file, as CI does.
-To keep your own team name, handle or IPs out too, `python3 .githooks/secret_scan.py --add`
-stores their sha256 digests (never the strings) in `~/.config/ctf-flightdeck/denylist.sha256`.
+The commit guard checks each commit for key and token shapes, credential files and files over
+10 MB. If it blocks a value, take the value out; never skip it with `--no-verify`.
+`python3 -I .githooks/secret_scan.py --all` scans every tracked file, as CI does. To keep your
+own team name, handle or IPs out too, `python3 -I .githooks/secret_scan.py --add` stores their
+sha256 digests (never the strings) in `~/.config/ctf-flightdeck/denylist.sha256`.
 
 ## Rules for code
 
