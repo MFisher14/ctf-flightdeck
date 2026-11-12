@@ -19,9 +19,12 @@ two choices, waiting for retry-after or dropping `speed` to go on at standard sp
 Anthropic client drops it, says so, and stays at standard speed for the rest of that lane's
 context, because switching speed invalidates the prompt cache.
 
-A fast call is priced at the fast rate. The skill gives fast mode's input and output prices
-only, so a fast call's prompt tokens read from the cache, and those it writes to the cache,
-are priced at the fast input rate. An attempt the refusal fallback ran on another model is
+A fast call is priced at the fast rate. Anthropic's fast-mode and pricing pages give fast
+mode's input and output prices and say "Prompt caching multipliers apply on top of fast mode
+pricing", with no dollar figure for a cache rate. So a fast call's prompt tokens read from
+the cache cost the model's cache-read multiplier times the fast input rate (0.05 for Claude
+Opus 5.5, 0.025 for Claude Fable 5.2 and Claude Mythos 5.2, 0.1 for the others), and those it
+writes to the 5-minute cache 1.25 times it (fast_price). An attempt the refusal fallback ran on another model is
 priced as that model: at its fast rate here when the API says that attempt ran fast, else
 from the config (agent/anthropic_client.py fast_priced: the API says the speed of a call's
 last attempt only).
@@ -44,20 +47,30 @@ class FastMode:
     """One model's fast mode, as Anthropic's documentation lists it."""
 
     model: str
-    price: Price  # dollars per million tokens at fast speed (cache reads and writes: the input rate)
+    price: Price  # dollars per million tokens at fast speed (fast_price: the cache rates are multiples of the input)
     beta: bool = False  # a research preview: the request needs FAST_BETA
     access: bool = False  # Anthropic must give the account access first
     until: date | None = None  # fast mode on this model is removed on this day
 
 
+CACHE_WRITE = 1.25  # a 5-minute cache write, as a multiple of the input rate (every model)
+
+
+def fast_price(input: float, output: float, *, cache_read: float = 0.1) -> Price:
+    """A fast mode's price: its input and output rates as documented, and the cache rates the
+    prompt-caching multipliers make of the fast input rate (`cache_read`: the model's
+    cache-read multiplier; 0.1 on most models)."""
+    return Price(input=input, output=output, cached_input=input * cache_read, cache_write=input * CACHE_WRITE)
+
+
 FAST_MODES: dict[str, FastMode] = {
     mode.model: mode
     for mode in (
-        FastMode("claude-opus-5-5", Price(input=8.0, output=40.0)),
-        FastMode("claude-fable-5-2", Price(input=16.0, output=80.0)),
-        FastMode("claude-mythos-5-2", Price(input=16.0, output=80.0)),
-        FastMode("claude-opus-5", Price(input=10.0, output=50.0), beta=True, access=True),
-        FastMode("claude-opus-4-8", Price(input=10.0, output=50.0), beta=True, until=date(2026, 11, 30)),
+        FastMode("claude-opus-5-5", fast_price(8.0, 40.0, cache_read=0.05)),
+        FastMode("claude-fable-5-2", fast_price(16.0, 80.0, cache_read=0.025)),
+        FastMode("claude-mythos-5-2", fast_price(16.0, 80.0, cache_read=0.025)),
+        FastMode("claude-opus-5", fast_price(10.0, 50.0), beta=True, access=True),
+        FastMode("claude-opus-4-8", fast_price(10.0, 50.0), beta=True, until=date(2026, 11, 30)),
     )
 }
 

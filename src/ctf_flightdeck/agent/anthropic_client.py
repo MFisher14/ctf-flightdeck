@@ -394,8 +394,8 @@ def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tok
 
 def fast_priced(usage: Usage, model: str) -> Usage:
     """`usage` of a fast request to `model`, each part that ran fast priced at the fast rate of
-    the model that ran it (the tokens read from the cache and those written to it at the fast
-    input rate: the documentation gives no other). A part not known to have run fast gets no
+    the model that ran it (the tokens read from the cache and those written to it at that
+    rate's cache rates: agent/fastmode.py fast_price). A part not known to have run fast gets no
     cost here: the config prices it.
 
     The API says the speed of one attempt: usage.speed is in the top-level usage, and Anthropic's

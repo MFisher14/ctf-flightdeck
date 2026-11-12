@@ -191,8 +191,9 @@ def test_the_retry_gate_holds_the_standard_speed_try():
 
 
 @pytest.mark.parametrize("speed, expected", [
-    ("fast", (2_000 * 8.0 + 1_000 * 8.0 + 100 * 40.0) / 1e6),  # cached tokens at the fast input rate too
-    (None, (2_000 * 8.0 + 1_000 * 8.0 + 100 * 40.0) / 1e6),  # the API did not say: priced as asked, fast
+    # the 1,000 read from the cache at Claude Opus 5.5's cache-read multiplier (0.05) on the fast input rate: $0.40
+    ("fast", (2_000 * 8.0 + 1_000 * 0.40 + 100 * 40.0) / 1e6),
+    (None, (2_000 * 8.0 + 1_000 * 0.40 + 100 * 40.0) / 1e6),  # the API did not say: priced as asked, fast
     ("standard", None),  # it ran at standard speed: the config's price applies, as for any call
 ])
 def test_a_fast_call_is_priced_at_the_fast_rate(speed, expected):
@@ -219,9 +220,9 @@ def test_each_attempt_of_a_fast_call_the_refusal_fallback_ran_is_priced_at_the_s
     with FakeAnthropicServer([body]) as server:
         (reply,) = calls(server.base_url, ("claude-opus-5-5", "s1"), fast=["claude-opus-5-5"])
     asked, middle = reply.usage.more
-    # its prompt: 500 plain and 1,500 written to the cache, all at the fast input rate (the documentation gives no other)
+    # its prompt: 500 plain at the fast input rate, and 1,500 written to the cache at 1.25 times it ($10)
     assert (asked.model, asked.cache_write_tokens) == ("", 1_500)
-    assert asked.cost == pytest.approx((500 + 1_500) * 8.0 / 1e6)
+    assert asked.cost == pytest.approx((500 * 8.0 + 1_500 * 10.0) / 1e6)
     assert (middle.model, middle.cost) == ("claude-opus-5", None)  # not known to have run fast: the config prices it
     assert reply.usage.model == "claude-opus-4-8"
     assert reply.usage.cost == (pytest.approx(last) if last is not None else None)
