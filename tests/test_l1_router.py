@@ -11,7 +11,7 @@ import pytest
 
 from ctf_flightdeck.agent.workspace import HostWorkspace
 from ctf_flightdeck.l1.manifest import Entry, Manifest, Route
-from ctf_flightdeck.l1.router import MAX_FILES, HandoutFiles, Hit, route
+from ctf_flightdeck.l1.router import MAX_FILES, HandoutFiles, Hit, misses, route
 
 from l1_kit import challenge, run
 
@@ -41,6 +41,22 @@ def test_category_matches_the_boards_short_code(handout):
     assert ids(route([engine("e", rule)], challenge(category="cry"), handout)) == ["e"]
     assert ids(route([engine("e", rule)], challenge(category="Crypto"), handout)) == ["e"]  # a raw name is mapped
     assert ids(route([engine("e", rule)], challenge(category="web"), handout)) == []
+
+
+@pytest.mark.parametrize(("board", "code", "other"), [
+    ("Reverse Engineering", "rev", "pwn"),
+    ("Binary Exploitation", "pwn", "rev"),
+    ("Web Exploitation", "web", "pwn"),
+    ("Miscellaneous", "misc", "web"),
+    ("Cryptography", "cry", "for"),
+    ("Digital Forensics", "for", "cry"),
+])
+def test_a_boards_long_category_name_reaches_the_route_for_its_code_and_no_other(handout, board, code, other):
+    item = challenge(category=board)
+    assert ids(route([engine("e", Route(category=(code,)))], item, handout)) == ["e"]
+    assert ids(route([engine("e", Route(category=(other,)))], item, handout)) == []
+    [miss] = misses([engine("e", Route(category=(other,)))], item, handout)
+    assert miss.failed == (f"its category '{code}' is not {other}",)
 
 
 def test_a_keyword_is_a_substring_of_the_name_and_description_ignoring_case(handout):

@@ -43,7 +43,8 @@ Each gets the challenge folder as its last argument, and whatever it prints is s
 (output `text`, below). Its route comes from where it is and what it is called:
 
 - the **category** from its folder's name, when that names one: `crypto/` gives `cry`,
-  `forensics/` gives `for`, and so on for `web`, `rev`, `pwn`, `misc` and `osint`;
+  `forensics/` gives `for`, `reverse-engineering/` gives `rev`, and so on for every name a board
+  can use for `web`, `rev`, `pwn`, `misc` and `osint` ([BOARDS.md](BOARDS.md) lists them);
 - the **keywords** from its file name's words of three letters or more, split on `_`, `-`, `.` and
   spaces, leaving out `solve`, `solver`, `script`, `exploit` and `main`.
 
