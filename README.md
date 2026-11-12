@@ -9,14 +9,14 @@ way: a hint, a redirect, a fork, a kill, or taking over its shell yourself.
 ![The fleet view: a board of eight challenges on the left; on the right, six agent lanes sorted by what needs you, with chips for a found flag, a lane that ignores the hint, a web lane heading the wrong way and a live box a teammate holds; under the list, the found flag with 1 to submit it and 0 not to](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/fleet.png)
 
 *The fleet view, from `flightdeck mock`: scripted lanes on invented challenges. More in the
-[screenshot gallery](docs/SCREENSHOTS.md).*
+[screenshot gallery](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SCREENSHOTS.md).*
 
 Bring what you have: an API key (Anthropic, OpenRouter, OpenAI or a local model server), a
 coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
 
 > **Status: v0.2.0 (alpha).** The console, agent lanes, your L1 solvers, CTFd events, team mode,
 > alerts, practice scoring, post-flight reports and a light model per small job are built.
-> Next: Autopilot. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> Next: Autopilot. See [`docs/ROADMAP.md`](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md) and [`CHANGELOG.md`](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md).
 
 ## Quickstart
 
@@ -59,7 +59,7 @@ failing. OpenRouter, OpenAI, Ollama, an MLX server or any OpenAI-compatible API 
 For Ollama or an MLX server, `init` suggests a model, and for any server on your machine it lets
 a lane wait up to 10 minutes for a reply of up to 8192 tokens, since a local model can take
 minutes to answer. The fallback, what happens when a model declines, fast mode, time and reply
-limits, and prices: [`docs/MODEL-APIS.md`](docs/MODEL-APIS.md).
+limits, and prices: [`docs/MODEL-APIS.md`](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md).
 
 ## Models
 
@@ -70,7 +70,7 @@ they run well, then model APIs. `flightdeck models qwen3.5-9b` prints how to get
 config lines that use it. For another machine, describe it: `flightdeck models --memory 16
 --apple` (a 16 GB Apple Silicon Mac) or `--memory 32 --gpu-memory 12` (a PC with a 12 GB NVIDIA
 GPU). It recommends; it never changes your config. How the models did:
-[`docs/MODELS.md`](docs/MODELS.md).
+[`docs/MODELS.md`](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md).
 
 ## Play a board
 
@@ -79,7 +79,7 @@ flightdeck play ~/ctf/some-board --max-lanes 4
 ```
 
 A board is a folder of challenge folders, each with a `challenge.json` and its handout files
-(format in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). Lanes start cheapest-first; the rest
+(format in [`docs/ARCHITECTURE.md`](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md)). Lanes start cheapest-first; the rest
 queue. Every lane is a model conversation, capped per lane by `token_cap` and `dollar_cap` (an
 alert at 80%, your approval at 100%).
 
@@ -119,7 +119,7 @@ service like `nc host port`: `tcp://host:port` in a challenge's `urls`). `--host
 commands as you, on this machine: a lane can read your files, your keys file and flightdeck's
 own environment, and send what it reads to its model's API, which nothing can take back. The
 run log, the console, transcripts, reports and writeup drafts show a key's name but not its
-value (see [After a run](#after-a-run)), but that is cleanup, not a fence: use Docker, a
+value (see [After a run](https://github.com/MFisher14/ctf-flightdeck#after-a-run)), but that is cleanup, not a fence: use Docker, a
 disposable VM, or a separate low-limit key.
 
 Every run writes an append-only `events.jsonl` and each lane's transcript; a board with answers
@@ -224,7 +224,7 @@ rules. Five choices, in `[light]`:
   silicon add `--device mlx`, with its `mlx` extra: `pip install "strands-decider[mlx]>=0.3"`).
 
 Measure one before you switch it on: which models to try, and how they did, is in
-[`docs/MODELS.md`](docs/MODELS.md). `eval-local` decides:
+[`docs/MODELS.md`](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md). `eval-local` decides:
 
 ```sh
 flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> \
@@ -269,14 +269,14 @@ invented.
 
 ## Docs
 
-[Vision](docs/VISION.md) · [Decisions](docs/DECISIONS.md) · [Roadmap](docs/ROADMAP.md) ·
-[Console spec](docs/CONSOLE-SPEC.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Model APIs](docs/MODEL-APIS.md) · [Models](docs/MODELS.md) ·
-[Screenshots](docs/SCREENSHOTS.md) · [Changelog](CHANGELOG.md) ·
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+[Vision](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/VISION.md) · [Decisions](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/DECISIONS.md) · [Roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md) ·
+[Console spec](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/CONSOLE-SPEC.md) · [Architecture](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md) ·
+[Model APIs](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md) · [Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md) ·
+[Screenshots](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SCREENSHOTS.md) · [Changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) ·
+[Contributing](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md) · [Security](https://github.com/MFisher14/ctf-flightdeck/blob/main/SECURITY.md)
 
 Development: `uv run pytest`. `ctfdeck` is an alias for `flightdeck`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/MFisher14/ctf-flightdeck/blob/main/LICENSE).
