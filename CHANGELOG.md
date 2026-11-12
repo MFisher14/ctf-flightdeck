@@ -65,6 +65,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `flightdeck build gap CHALLENGE_DIR --pack PACK` command, in `gaps.md`, in the printed
   summary and in `gaps.json`, the paths filled in and shell-quoted, ready to paste (#19).
 
+- Docker on Linux: a Python L1 engine's result can be read again. The engine wrote it as the
+  container's root for its owner alone, so flightdeck, running as you, could not read it and
+  the engine counted as unsure. CI found it on its first run of the lane image (#7).
 - Coding-agent lanes (`--agent`) run your L1 pack too, before their CLI is started and in
   Docker when lanes run there. A flag an engine finds waits for you or goes out by the same
   rules as in flightdeck's own lanes, no CLI runs while it waits (none at all when it solves
