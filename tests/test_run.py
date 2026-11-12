@@ -25,6 +25,7 @@ from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
 
 from fake_model import FakeModelServer, FakeReply, tool_call_reply
+from l1_kit import docker_not_run
 
 FLAG = "t{note}"
 LADDER = ("fake/small", "fake/big")  # the test config's
@@ -395,9 +396,9 @@ def _image_present(image: str) -> bool:
 def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, network):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if not _image_present("debian:bookworm-slim"):
-        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+        docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     with FakeModelServer() as server:
         cfg = config(tmp_path, server.base_url, runtime="docker")
         run = prepare_run(RunOptions(board=board(tmp_path, urls=urls), config=cfg, instance=instance))
@@ -413,7 +414,7 @@ def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, n
 def test_a_docker_run_with_a_missing_image_names_the_command_that_builds_it(tmp_path):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if _image_present(IMAGE):
         pytest.skip(f"not run: {IMAGE} is built on this machine, so it is not missing")
     with pytest.raises(RunError, match="flightdeck image build"):
@@ -690,9 +691,9 @@ def test_l1_engines_run_where_the_lanes_do_and_the_notes_say_where(tmp_path, run
     if runtime == "docker":
         reason = docker_unavailable()
         if reason:
-            pytest.skip(f"not run: {reason}")
+            docker_not_run(f"not run: {reason}")
         if not _image_present("debian:bookworm-slim"):
-            pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+            docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     pack = tmp_path / "pack"
     python_engine(pack, "reader", READER, route='keywords = ["note"]')
     with FakeModelServer() as server:
@@ -1086,9 +1087,9 @@ def test_codex_lanes_get_the_configs_price_for_their_model_and_play_names_the_mo
 def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if not _image_present("debian:bookworm-slim"):
-        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+        docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     with FakeModelServer() as server:
         cfg = config(tmp_path, server.base_url, runtime="docker")
         with pytest.raises(RunError, match="the lane image debian:bookworm-slim has no claude CLI.*--host"):

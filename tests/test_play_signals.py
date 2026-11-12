@@ -43,6 +43,7 @@ from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.world import FakeWorld
 
 from fake_model import FakeModelServer, tool_call_reply
+from l1_kit import docker_not_run
 
 IMAGE = "debian:bookworm-slim"
 QUIET = "echo $$ > lane-pid.txt; sleep 240"  # the lane's command: prints nothing for minutes
@@ -226,7 +227,7 @@ def container_exists(name: str) -> bool:
 def test_a_sigterm_or_closing_the_terminal_removes_a_docker_lanes_container(tmp_path, how):
     missing = _docker_missing()
     if missing:
-        pytest.skip(f"not run: needs docker and {IMAGE}: {missing}")
+        docker_not_run(f"not run: needs docker and {IMAGE}: {missing}")
     with FakeModelServer([tool_call_reply("shell", {"command": QUIET, "timeout_seconds": 300})]) as server:
         cfg = make_config(tmp_path, server.base_url, runtime="docker")
         term = Terminal(["play", str(make_board(tmp_path)), "--config", str(cfg)], env_for(tmp_path), tmp_path)

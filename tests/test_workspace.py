@@ -44,6 +44,7 @@ from ctf_flightdeck.agent.workspace import (
     take_snapshot,
     write_inside,
 )
+from l1_kit import docker_not_run
 
 IMAGE = "debian:bookworm-slim"
 FAKE_KEY = "fake-key-value-for-the-env-test"
@@ -664,7 +665,7 @@ def test_docker_unavailable_names_a_missing_docker(monkeypatch, tmp_path):
 
 def test_docker_unavailable_names_a_daemon_that_is_not_running(monkeypatch, tmp_path):
     if shutil.which("docker") is None:
-        pytest.skip("the docker CLI is not installed here")
+        docker_not_run("not run: the docker CLI is not installed here")
     monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
     monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path}/no-daemon.sock")
     reason = docker_unavailable()
@@ -816,7 +817,7 @@ def _docker_skip_reason() -> str | None:
 def docker_ready():
     reason = _docker_skip_reason()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
 
 
 @pytest.fixture

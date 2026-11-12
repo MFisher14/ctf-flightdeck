@@ -53,8 +53,23 @@ uv run pytest
 `uv run flightdeck mock` opens the console on scripted data. No test needs a key: the tests use
 local fakes (a fake model server, a fake CTFd, fake agent CLIs). The Docker tests run only when
 Docker answers and `debian:bookworm-slim` is already on your machine
-(`docker pull debian:bookworm-slim`); otherwise they report as not run. No test pulls an image.
-CI runs the tests and the secret scan on Linux and macOS for every push and pull request.
+(`docker pull debian:bookworm-slim`); otherwise they report as not run. One more test runs a
+Python L1 engine in the real lane image, and only when `flightdeck image build` has built it.
+No test pulls or builds an image.
+
+CI runs the tests and the secret scan on Linux and macOS for every push and pull request. Its
+Linux job pulls `debian:bookworm-slim` first and sets `FLIGHTDECK_REQUIRE_DOCKER=1`: with that
+variable at 1, a Docker test that cannot run fails instead of being skipped, so the job never
+passes with those tests left out. A second job builds the lane image and runs its test with
+`FLIGHTDECK_REQUIRE_LANE_IMAGE=1`, which does the same for that test. Set either on your own
+machine to be sure nothing was skipped:
+
+```sh
+FLIGHTDECK_REQUIRE_DOCKER=1 FLIGHTDECK_REQUIRE_LANE_IMAGE=1 uv run pytest
+```
+
+A Docker test tells pytest it cannot run through `docker_not_run()` in `tests/l1_kit.py`, never
+a plain `pytest.skip`: that is what the variables turn into a failure.
 
 The commit guard checks each commit for key and token shapes, credential files and files over
 10 MB. If it blocks a value, take the value out; never skip it with `--no-verify`.
