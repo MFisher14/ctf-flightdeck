@@ -12,6 +12,10 @@ flag.txt, an example in a source comment; the agent's prose) waits for the playe
 wrong try can cost one of a challenge's limited attempts; under auto it is held until the
 agent's turn ends, so the agent can still claim it first. A claimed flag that the
 challenge's own text holds (its description, a handout file) waits for the player too.
+With the light model's flagcheck (agent/flaggate.py), a claimed flag that would go out
+without the player is checked first, in the background, as for AgentDriver's lanes: it
+reaches the deck once the light model has answered, and waits for the player if it called
+the flag a stand-in; a lane that gives up meanwhile is frozen and ends once the check is in.
 The flag search runs off the event loop (it also runs the console and every other lane),
 in windows (l1.runner.scan), for at most SCAN_SECONDS per output: no flag format and no
 output can hold the console up. The player's messages and flightdeck's notes go to the
@@ -126,6 +130,7 @@ from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
+from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
@@ -997,6 +1002,7 @@ class _Run:
         self.flags: set[str] = set()  # candidates already raised by this lane
         self.held: dict[str, None] = {}  # submit auto: unclaimed candidates, in order, until the agent's turn ends
         self.planted: set[str] = set()  # flag-format matches in the challenge's own text: its description, the handout
+        self.outputs = Outputs()  # its newest tool outputs: where a flag it claims was found (agent/flaggate.py)
         self.wake = asyncio.Event()
         self.idle = asyncio.Event()  # set while nothing of the agent's can run: no CLI, or it is frozen
         self.idle.set()
@@ -1048,8 +1054,21 @@ class _Run:
                 # mid-turn, killed): what was spent goes to the deck, which counts it on the lane
                 self.driver.deck.report(self.lane_id, rep)
             return
+        gate = self.driver.flaggate
+        if gate is not None:  # giving up while a flag is under check: it ends once the check is in
+            rep = gate.defer_gave_up(self.lane_id, rep)
+            if rep is None:
+                self.sync()  # frozen meanwhile: giving_up()
+                return
         self.driver.deck.report(self.lane_id, rep)
         self.sync()
+
+    def giving_up(self) -> bool:
+        """The agent gave up while a flag of it was under the light model's check: the lane
+        ends once the check is in, and until then nothing more goes to the agent, as for a
+        lane the deck holds open for its flags (gave_up_later)."""
+        gate = self.driver.flaggate
+        return gate is not None and gate.giving_up(self.lane_id)
 
     def note(self, text: str) -> None:
         if not self.over():
@@ -1067,7 +1086,7 @@ class _Run:
             lane = self.lane()
             if lane is None or lane.finished:
                 return False
-            if lane.state is LaneState.RUNNING and not lane.gave_up_later:
+            if lane.state is LaneState.RUNNING and not lane.gave_up_later and not self.giving_up():
                 return True
             self.wake.clear()
             await self.wake.wait()
@@ -1083,7 +1102,7 @@ class _Run:
         if lane is None or lane.finished or self.stopped:
             return
         self.wake.set()
-        if lane.state is LaneState.RUNNING and not lane.gave_up_later:
+        if lane.state is LaneState.RUNNING and not lane.gave_up_later and not self.giving_up():
             self.cancel_timer()
             if not self._delivering:  # first: a frozen CLI then wakes with the interrupt already there
                 self._delivering = True
@@ -1703,6 +1722,7 @@ class _Run:
         if files:
             known = {change.path for change in changed}
             changed += tuple(change for change in files if change.path not in known)
+        self.outputs.add(action, text)  # where a flag the agent claims later was found (agent/flaggate.py)
         flags, _ = await self.candidates(text, own=False)
         self.steps += 1
         self.cost_due = True  # the CLI reports what the turn cost when it ends (turn_end)
@@ -1725,6 +1745,8 @@ class _Run:
     def report_text(self, text: str, flags: list[tuple[str, bool]], new: int, *, show: bool) -> None:
         if new:
             self.steps += 1  # a turn that found a candidate did something
+        checked = self.checked_first(flags)
+        flags = [(flag, claimed) for flag, claimed in flags if flag not in checked]
         first = _first_line(text) if show else ""
         if first or flags:
             flag, claimed = flags[0] if flags else (None, True)
@@ -1732,6 +1754,21 @@ class _Run:
                                    flag=flag, claimed=claimed))
         for flag, claimed in flags[1:]:
             self.report(TurnReport(turn=False, flag=flag, claimed=claimed))
+        gate = self.driver.flaggate
+        for flag in checked:  # each reaches the deck once the light model has answered; the agent goes on
+            assert gate is not None
+            gate.start(self.driver.deck, self.lane_id, self.challenge, flag, self.outputs.where(flag, CLAIMED_ONLY),
+                       self.report)
+
+    def checked_first(self, flags: Sequence[tuple[str, bool]]) -> list[str]:
+        """Of the candidates to raise now: the claimed ones the light model checks before they go
+        to the deck (agent/flaggate.py: going out without the player now). A planted flag is not
+        claimed here (sort_out), and sort_out raises a flag once, so none is under check yet."""
+        gate = self.driver.flaggate
+        if gate is None:
+            return []
+        return [flag for flag, claimed in flags
+                if claimed and not gate.under_check(self.lane_id, flag) and gate.covers(self.driver.deck, self.lane_id, flag)]
 
     def idle_turn(self) -> bool:
         """A turn ended (not one flightdeck interrupted). True when the agent has now done
@@ -2181,10 +2218,12 @@ class ExternalDriver:
         secrets: Mapping[str, str] | None = None,
         stop_grace: float = STOP_GRACE,
         takeover_wait: float = TAKEOVER_WAIT,
+        flaggate: FlagGate | None = None,
     ) -> None:
         """`secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
         Like the agent's own credential, which is always one, a value is shown as [name]
-        wherever a lane's CLI writes it."""
+        wherever a lane's CLI writes it. `flaggate`: the light model's flagcheck (run.py sets
+        the run's before any lane starts); None: no flag is checked."""
         if agent.kind not in KINDS:
             raise ValueError(f"unknown agent kind {agent.kind!r}")
         self.agent = agent
@@ -2197,6 +2236,7 @@ class ExternalDriver:
         self.prices = dict(prices or {})  # model -> Price: a cost when the CLI reports none (codex)
         self.stop_grace = stop_grace
         self.takeover_wait = takeover_wait
+        self.flaggate = flaggate
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.deck: Any = None
@@ -2273,6 +2313,8 @@ class ExternalDriver:
             self._tell(lane, f"The player declined: {prompts.one(pending.detail, 200)}.")
 
     def stop(self, lane: Lane) -> None:
+        if self.flaggate is not None:
+            self.flaggate.stop(self.deck, lane.id)  # a flag still under check was never submitted: said so
         run = self.runs.get(lane.id)
         if run is not None:
             run.stop()
@@ -2288,9 +2330,13 @@ class ExternalDriver:
         return _Takeover(run, self)  # type: ignore[arg-type]
 
     async def shutdown(self) -> None:
-        """Stop every lane's CLI and close every workspace (the console calls this before it exits)."""
+        """Stop every lane's CLI and close every workspace (the console calls this before it
+        exits). The flag checks stop once every lane has (output a stopped CLI still writes is
+        not the lane's: current), before the run closes the light model, after this."""
         for run in self.runs.values():
             run.stop()
+        if self.flaggate is not None:
+            self.errors += await self.flaggate.aclose()
         tasks = [run.task for run in self.runs.values() if run.task is not None]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)

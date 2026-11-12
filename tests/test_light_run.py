@@ -5,8 +5,12 @@ are two fake OpenAI-compatible servers (no spend); lanes run on the host in tmp_
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import time
 from pathlib import Path
+
+import pytest
 
 from ctf_flightdeck.core.model import AlertKind, EventKind
 from ctf_flightdeck.run import RunOptions, prepare_run
@@ -166,8 +170,80 @@ def test_a_judge_table_whose_engine_cannot_be_made_leaves_the_judge_off_and_the_
         assert len(notes) == 2, notes
         assert notes[0].startswith("the light model is off for this run, the rules answer alone: ")
         assert "light.judge.key_env names the variable FLIGHTDECK_LIGHT_TEST_KEY" in notes[0]
-        assert notes[1] == ("[light] jobs lists flagcheck, which this build of flightdeck does not run yet: no light "
-                            "model is asked for them")
+        # submit is confirm (the default): no flag goes out without the player, so flagcheck gets no engine
+        assert notes[1] == ('[light] jobs lists flagcheck, but this run gives it nothing to do: submit is "confirm", so '
+                            "every flag waits for you already")
+        assert run.driver.flaggate is None
+        asyncio.run(run.shutdown())
+        run.close()
+
+
+FOUND = "t{off_the_wire}"
+
+
+def answers(root: Path, flag: str = FOUND) -> Path:
+    """The board's answers file: the flag of its one challenge (its folder's name is its id)."""
+    path = root / "answers.sha256.json"
+    path.write_text(json.dumps({"static": hashlib.sha256(flag.encode()).hexdigest()}))
+    return path
+
+
+def submits_then_works(record):
+    """The lane's model: submit FOUND first, then keep working."""
+    if not any(m["role"] == "tool" for m in record["json"]["messages"]):
+        return tool_call_reply("submit_flag", {"flag": FOUND})
+    time.sleep(0.05)
+    return tool_call_reply("shell", {"command": "ls"})
+
+
+def test_flagcheck_in_a_run_holds_a_stand_in_that_would_have_gone_out_on_its_own(tmp_path):
+    """An answers file under submit auto: the lane's flag would be checked against it at once.
+    The light model calls it a stand-in, so it waits for the player, though it is right."""
+    root = board(tmp_path)
+    answers(root)
+    with FakeModelServer(responder=submits_then_works) as lanes, \
+            FakeModelServer([text_reply("stand-in", prompt_tokens=250, completion_tokens=2)]) as light:
+        table = light_table(light.base_url) + 'jobs = ["flagcheck"]\n'
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, lanes.base_url, table), submit="auto"))
+        assert run.driver.flaggate is not None and run.driver.flaggate.light is run.lights.get("flagcheck")
+        assert run.watch.judge is None  # [light] jobs leaves the judge out
+        (note,) = [n for n in run.notes() if "light model" in n]
+        assert note.startswith("light model: openai light/m checks each flag a lane claims before it goes out without "
+                               "you (submit auto): one it calls a stand-in waits for you, and it never submits a flag")
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the flag held for the player")
+            pending = lane.pending
+            await run.shutdown()
+            return lane, pending
+
+        lane, pending = asyncio.run(main())
+        run.close()
+    assert (pending.kind.value, pending.flag) == ("submit", FOUND)
+    assert run.deck.challenges["static"].status.value != "solved"  # it never went to the answers file
+    assert any(a.text.startswith(f"the light model (openai light/m) calls {FOUND} a stand-in") for a in lane.actions)
+    (spend,) = spends(run.log.path)
+    assert spend["data"]["why"] == "the flag check (openai light/m)" and spend["data"]["tokens"] == 252
+    assert run.errors == []
+
+
+@pytest.mark.parametrize("submit, with_answers, why", [
+    ("confirm", True, 'submit is "confirm", so every flag waits for you already'),
+    ("auto", False, "flightdeck submits no flag in this run (no answers file and no platform to send it to): you submit "
+                    "each one yourself"),
+])
+def test_a_run_whose_flags_never_go_out_on_their_own_checks_none_and_says_why(tmp_path, submit, with_answers, why):
+    root = board(tmp_path)
+    if with_answers:
+        answers(root)
+    with FakeModelServer(responder=lane_loops) as lanes:
+        table = light_table("http://127.0.0.1:9/v1") + 'jobs = ["flagcheck"]\n'
+        run = prepare_run(RunOptions(board=root, config=config(tmp_path, lanes.base_url, table), submit=submit))
+        assert run.driver.flaggate is None and run.lights.get("flagcheck") is None  # no engine made for it
+        notes = [n for n in run.notes() if "light model" in n or "[light]" in n]
+        assert notes == [f"[light] jobs lists flagcheck, but this run gives it nothing to do: {why}"]
         asyncio.run(run.shutdown())
         run.close()
 

@@ -654,7 +654,9 @@ def prepare_run(options: RunOptions) -> Run:
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
-    lights = _lights(config, plan.notes)
+    idle = _flagcheck_idle(deck_config.submit, submits is not None or isinstance(verify, AnswerVerifier))
+    lights = _lights(config, plan.notes, idle={"flagcheck": idle} if idle else None)
+    driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
     watch = _watch(deck, config, plan.notes, lights)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
@@ -1173,26 +1175,52 @@ def _l1_manifests(pack: Path | None) -> list | None:
     return manifests
 
 
-# The [light] jobs a run of this build gives the light model. The config takes route, recon and
-# flagcheck too (config.RUN_JOBS); until a run wires one in, it is named in a note and its engine
-# is not made.
-RUN_LIGHT_JOBS = ("judge",)
+# The [light] jobs a run of this build gives the light model. The config takes route and recon too
+# (config.RUN_JOBS); until a run wires one in, it is named in a note and its engine is not made.
+RUN_LIGHT_JOBS = ("judge", "flagcheck")
 
 
-def _lights(config: Config, notes: list[str]):
+def _flagcheck_idle(submit: str, checks: bool) -> str:
+    """Why no flag of this run goes out without the player, so flagcheck (agent/flaggate.py),
+    which checks only such a flag, has nothing to do; "" when one may. `checks`: flags go to a
+    platform, or to an answers file, rather than to the player to submit by hand."""
+    if submit != "auto":
+        return f'submit is "{submit}", so every flag waits for you already'
+    if not checks:
+        return ("flightdeck submits no flag in this run (no answers file and no platform to send it to): you submit "
+                "each one yourself")
+    return ""
+
+
+def _lights(config: Config, notes: list[str], *, idle: dict[str, str] | None = None):
     """The run's light engines (light.build_all), one per distinct spec, for the [light] jobs a
     run wires in; a spec that cannot be made leaves its jobs off, said in `notes`, as is a job
-    [light] jobs lists that this build does not run yet."""
+    [light] jobs lists that this build does not run yet. `idle`: jobs this run gives nothing
+    to do, with why (said in `notes` for a job [light] jobs lists): no engine is made for them."""
     from .light import build_all
 
-    lights = build_all(config, jobs=RUN_LIGHT_JOBS)
+    idle = {job: why for job, why in (idle or {}).items() if job in config.light_jobs}
+    lights = build_all(config, jobs=[job for job in RUN_LIGHT_JOBS if job not in idle])
     notes.extend(lights.notes)
+    for job, why in idle.items():
+        notes.append(f"[light] jobs lists {job}, but this run gives it nothing to do: {why}")
     waiting = [job for job in config.light_jobs if job not in RUN_LIGHT_JOBS]
     if waiting:
         listed = waiting[0] if len(waiting) == 1 else ", ".join(waiting[:-1]) + " and " + waiting[-1]
         notes.append(f"[light] jobs lists {listed}, which this build of flightdeck does not run yet: no light model "
                      "is asked for them")
     return lights
+
+
+def _flaggate(config: Config, lights, notes: list[str]):
+    """The run's flagcheck (agent/flaggate.py), on the engine `lights` made for it, or None;
+    its line for the player goes in `notes`."""
+    from .agent.flaggate import from_lights
+
+    gate, note = from_lights(config, lights)
+    if note:
+        notes.append(note)
+    return gate
 
 
 def _watch(deck: Deck, config: Config | None = None, notes: list[str] | None = None, lights=None):

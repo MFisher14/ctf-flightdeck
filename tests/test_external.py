@@ -18,13 +18,17 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
+from ctf_flightdeck import light as L
 from ctf_flightdeck import postflight
 from ctf_flightdeck.agent import external
+from ctf_flightdeck.agent.client import ModelClient
+from ctf_flightdeck.agent.flaggate import FlagGate
 from ctf_flightdeck.agent.external import (
     NUDGE,
     AgentError,
@@ -58,6 +62,8 @@ from ctf_flightdeck.core.model import (
 )
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.runrecord import load_run
+from fake_light import Lingers
+from fake_model import FakeModelServer, text_reply
 
 FAKE = Path(__file__).with_name("fake_agent_cli.py")
 FLAG = r"t\{[a-z0-9_]+\}"
@@ -1521,6 +1527,245 @@ def test_a_codex_lane_under_auto_submits_only_what_the_agent_claims(tmp_path):
             assert lab.deck.apply(iv.Decline(lane.id)).ok
             await until(lambda: lane.finished, "the lane solved")
             assert lane.state is LaneState.SOLVED and tried == ["t{note}"]
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- flagcheck (agent/flaggate.py) for CLI lanes
+
+
+def light_engine(server: FakeModelServer, *, timeout: float = 5.0) -> L.ModelLight:
+    """The light model's openai engine over a fake server on this machine (one try per job)."""
+    client = ModelClient(server.base_url, None, max_retries=0, timeout=timeout)
+    return L.ModelLight("openai", client, "light/m", timeout=timeout, tokens=L.OPENAI_TOKENS, temperature=0.0, free=True)
+
+
+def test_under_auto_a_flag_the_agent_claims_is_checked_first_and_a_stand_in_waits_for_the_player(tmp_path):
+    script = {"turns": [{"calls": [{"tools": [bash("echo the flag is t{found_it}")]}, {"text": "FLAG: t{found_it}"},
+                                   {"think": 5.0, "text": "waiting"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        with FakeModelServer(responder=lambda r: text_reply("stand-in")) as light:
+            lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or True)
+            lab.driver.flaggate = FlagGate(light_engine(light), timeout=5.0)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: lane.pending is not None, "the flag held for the player")
+                assert flags_waiting(lane) == [(PendingKind.SUBMIT, "t{found_it}")] and tried == []
+                assert any(n.startswith("the light model (openai light/m) calls t{found_it} a stand-in") for n in notes(lane))
+                (request,) = [r for r in light.requests if r["json"]]
+                user = request["json"]["messages"][1]["content"]
+                inside = user.split(FENCE_OPEN, 1)[1].split(FENCE_CLOSE, 1)[0]
+                assert "Candidate flag: t{found_it}" in inside and "t{found_it}" not in user.replace(inside, "")
+                assert "Where the lane found it:\n$ echo the flag is t{found_it}\nthe flag is t{found_it}" in inside
+                pid = lab.pid(lane)
+                await until(lambda: stopped(pid), "the CLI frozen while its flag waits")
+                assert lab.deck.apply(iv.Approve(lane.id)).ok  # the player decides
+                assert tried == ["t{found_it}"] and lane.state is LaneState.SOLVED
+            finally:
+                await lab.finish()
+
+    run(main())
+
+
+def test_a_cli_lane_that_gives_up_while_its_flag_is_under_check_takes_no_more_turns_and_ends_once_it_is_in(tmp_path):
+    """The agent claims a flag, then ends three turns without doing anything while the light model
+    still checks it: the CLI is frozen and told nothing more; once the answer is in, the flag goes
+    to the platform first, and the lane stays open for the platform's answer, as it would have."""
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}]}, IDLE, IDLE, IDLE, RESUMED]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            deck = lab.deck
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.giving_up(lane.id), "the agent given up with its flag under check")
+                pid = lab.pid(lane)
+                await until(lambda: stopped(pid), "the CLI frozen while the check is out")
+                told = lab.fake.messages()
+                assert told[1:] == [NUDGE] * 3 and lane.state is LaneState.RUNNING and deck.sent == []
+                release.set()
+                await until(lambda: deck.sent, "the flag sent once the check is in")
+                assert deck.sent == ["t{x}"] and lane.gave_up_later  # open for the platform's answer
+                await asyncio.sleep(0.5)
+                assert lab.fake.messages() == told  # no nudge: the agent gave up
+                deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
+                assert lane.state is LaneState.GAVE_UP and lane.result.startswith("the agent ended 3 turns in a row")
+                await until(lambda: gone(pid), "the CLI ended with the lane")
+                assert lab.fake.messages() == told and not (lab.work(lane) / "resumed.txt").exists()
+            finally:
+                release.set()
+                await lab.finish()
+
+    run(main())
+
+
+def test_escalating_a_claude_lane_that_gave_up_while_its_flag_is_under_check_starts_no_cli(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}]}, IDLE, IDLE, IDLE, RESUMED]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            deck = lab.deck
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.giving_up(lane.id), "the agent given up with its flag under check")
+                pid = lab.pid(lane)
+                assert deck.apply(iv.Escalate(lane.id)).ok
+                await until(lambda: gone(pid), "the small model's CLI ended")
+                await asyncio.sleep(1.0)
+                assert len(lab.fake.starts()) == 1  # no CLI on the stronger model: the lane gave up
+                release.set()
+                await until(lambda: deck.sent, "the flag sent once the check is in")
+                deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
+                assert lane.state is LaneState.GAVE_UP
+                await asyncio.sleep(0.5)
+                assert len(lab.fake.starts()) == 1 and not (lab.work(lane) / "resumed.txt").exists()
+            finally:
+                release.set()
+                await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_lane_that_gives_up_while_its_flag_is_under_check_starts_no_more_codex(tmp_path):
+    idle = {"items": [{"message": "Nothing more to try."}], "usage": [10, 0, 1]}
+    script = {"turns": [{"items": [{"message": "Found it.\nFLAG: t{x}"}], "usage": [10, 0, 1]}, idle, idle, idle,
+                        {"items": [{"command": "echo resumed-after-giving-up > resumed.txt"}], "usage": [10, 0, 1]}]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("stand-in")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, kind="codex", submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.giving_up(lane.id), "codex given up with its flag under check")
+                await asyncio.sleep(0.5)
+                assert len(lab.fake.starts()) == 4 and not lane.finished
+                release.set()
+                await until(lambda: lane.pending is not None, "the stand-in held for the player")
+                assert flags_waiting(lane) == [(PendingKind.SUBMIT, "t{x}")] and lab.deck.sent == [] and lane.gave_up_later
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+                assert lane.state is LaneState.GAVE_UP
+                await asyncio.sleep(0.5)
+                assert len(lab.fake.starts()) == 4 and not (lab.work(lane) / "resumed.txt").exists()
+            finally:
+                release.set()
+                await lab.finish()
+
+    run(main())
+
+
+def test_a_cli_lane_killed_while_its_flag_is_under_check_says_the_flag_was_not_submitted(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"think": 30.0, "text": "waiting"}]}]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.checking(lane.id), "the flag under check")
+                assert lab.deck.apply(iv.Kill(lane.id)).ok
+                await until(lambda: any(e.kind is EventKind.WARNING and e.data.get("job") == "flagcheck"
+                                        for e in lab.deck.events), "the player told")
+                assert not gate.checking(lane.id)
+                (warning,) = [e for e in lab.deck.events if e.kind is EventKind.WARNING and e.data.get("job") == "flagcheck"]
+                assert warning.text == (f"{lane.id} ended while the light model (openai light/m) checked t{{x}}, so it was "
+                                        "not submitted: submit it by hand if you think it is the flag")
+                release.set()
+                await asyncio.sleep(0.3)
+                assert lab.deck.sent == [] and lane.state is LaneState.KILLED
+            finally:
+                release.set()
+                await lab.finish()
+            assert lab.driver.errors == []
+
+    run(main())
+
+
+def test_a_cli_lanes_flag_still_under_check_when_the_run_ends_is_named_never_submitted(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"think": 30.0, "text": "waiting"}]}]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.checking(lane.id) and len([r for r in light.requests if r["json"]]) == 1,
+                            "the flag under check")
+            finally:
+                await lab.finish()
+                release.set()
+            assert lab.deck.sent == [] and not gate.checking(lane.id)
+            assert lab.driver.errors == [f"{lane.id}: t{{x}} was still under the light model's check when the run ended; "
+                                         "it was not submitted"]
+
+    run(main())
+
+
+def test_a_cli_lane_that_claims_a_flag_as_the_run_ends_starts_no_check_that_outlives_it(tmp_path):
+    """The run ends while the agent's flag is under check, and the agent claims another just then
+    (its command waits for the cancelled check to wind down). Every CLI stops before the checks
+    do, and what a stopped CLI still writes is not the lane's: no check outlives the run's end,
+    nothing goes out, and the run's end names the flag that was under check."""
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"tools": [bash("while [ ! -e go ]; do sleep 0.02; done")]},
+                                   {"text": "FLAG: t{second}"}, {"think": 30.0, "text": "waiting"}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+        engine = Lingers()
+        gate = lab.driver.flaggate = FlagGate(engine, timeout=30.0)
+        try:
+            lab.release()
+            lane = lab.lane()
+            engine.on_cancel = lambda: (lab.work(lane) / "go").touch()  # the agent's command ends: it claims t{second}
+            engine.done = lambda: lab.run(lane).task is not None and lab.run(lane).task.done()
+            await until(lambda: engine.asked == ["t{x}"], "the flag under check")
+            await lab.driver.shutdown()
+            assert not gate.checking(lane.id) and engine.asked == ["t{x}"]
+            assert lab.driver.errors == [f"{lane.id}: t{{x}} was still under the light model's check when the run ended; "
+                                         "it was not submitted"]
+            await asyncio.sleep(0.2)
+            assert lab.deck.sent == []
         finally:
             await lab.finish()
 
