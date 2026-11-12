@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from ctf_flightdeck import writeup, writeup_cli
+from ctf_flightdeck import config, writeup, writeup_cli
 from ctf_flightdeck.runrecord import load_run
 from fake_model import FakeModelServer, FakeReply, text_reply
 from test_writeup import ALPHA, KEY_FLAG, OPENROUTER, alpha_run, frozen_of, l1_run, old_run, surrogate_run
@@ -234,6 +234,20 @@ def test_polish_without_a_usable_config_stops_before_writing_anything(tmp_path):
     result = invoke(record.dir, "--polish", "fake/model", "--config", tmp_path / "missing.toml")
     assert result.exit_code == 2
     assert "--polish needs the model API from your config:" in result.stderr and "no config file" in result.stderr
+    assert not (record.dir / "writeups").exists()
+
+
+def test_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(tmp_path, monkeypatch):
+    record = alpha_run(tmp_path)
+
+    def refuse(path):
+        raise config.ConfigError(f"{path}: starts with ~ for a user that does not exist (or there is no home directory)")
+
+    monkeypatch.setattr(config, "expand", refuse)
+    result = invoke(record.dir)
+    assert result.exit_code == 2, result.output
+    assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr
+    assert "Traceback" not in result.output
     assert not (record.dir / "writeups").exists()
 
 

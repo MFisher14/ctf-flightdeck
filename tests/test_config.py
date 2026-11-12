@@ -22,6 +22,7 @@ from ctf_flightdeck.config import (
     api_key,
     default_config_path,
     example_config,
+    expand,
     fallback_key,
     load_config,
 )
@@ -197,6 +198,16 @@ def test_false_disables_a_cap_and_an_absent_cap_keeps_its_default(tmp_path):
 def test_the_run_dir_expands_the_home_directory(tmp_path):
     config = load_config(write(tmp_path, LADDER + '[run]\ndir = "~/ctf/runs"\n'))
     assert config.run_dir == tmp_path / "home" / "ctf" / "runs"
+
+
+def test_expand_turns_a_home_it_cannot_find_into_a_config_error(monkeypatch, tmp_path):
+    def no_home(self):
+        raise RuntimeError("Could not determine home directory")
+
+    monkeypatch.setattr(Path, "expanduser", no_home)
+    with pytest.raises(ConfigError) as exc:
+        expand(tmp_path / "runs")
+    assert "starts with ~ for a user that does not exist" in str(exc.value)
 
 
 # ---------------------------------------------------------------------- where the file is

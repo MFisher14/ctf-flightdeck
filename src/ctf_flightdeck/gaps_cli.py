@@ -53,15 +53,16 @@ def gaps_command(
 ) -> None:
     """The challenges no L1 engine solved, and why: written to RUN_DIR/gaps.md (for you) and
     RUN_DIR/gaps.json (for build mode), with a short summary printed."""
+    from .config import ConfigError, expand
     from .gaps import JSON_FILE, MARKDOWN_FILE, GapError, gap_report, gaps_json, gaps_markdown, summary
     from .l1.manifest import ManifestError
     from .platform.manual import BoardError, load_board
     from .runrecord import RunFolderError, load_run, read_run_info, run_folder
 
     try:
-        run_dir = run_folder(run_dir.expanduser())
+        run_dir = run_folder(expand(run_dir))
         record = load_run(run_dir)
-    except RunFolderError as exc:
+    except (RunFolderError, ConfigError) as exc:
         _fail(str(exc))
     try:
         recorded = read_run_info(run_dir) if pack is not None and board is None else None
@@ -79,12 +80,12 @@ def gaps_command(
     loaded = None
     if board is not None:
         try:
-            loaded = load_board(board.expanduser())
-        except BoardError as exc:
+            loaded = load_board(expand(board))
+        except (BoardError, ConfigError) as exc:
             _fail(f"--board: {exc}")
     try:
-        rep = gap_report(record, pack=pack.expanduser() if pack is not None else None, board=loaded)
-    except ManifestError as exc:
+        rep = gap_report(record, pack=expand(pack) if pack is not None else None, board=loaded)
+    except (ManifestError, ConfigError) as exc:
         _fail(f"--pack: {exc}")
     except GapError as exc:
         _fail(str(exc))

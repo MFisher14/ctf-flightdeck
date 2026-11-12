@@ -22,7 +22,7 @@ import typer
 from markdown_it import MarkdownIt
 from typer.testing import CliRunner
 
-from ctf_flightdeck import cli, writeup
+from ctf_flightdeck import cli, config, writeup
 from ctf_flightdeck.agent.l1stage import FLAG_STATUSES
 from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core import interventions as iv
@@ -1672,6 +1672,20 @@ def test_report_with_a_board_that_cannot_be_read_fails_with_the_reason(played, t
     result = runner.invoke(mounted(), ["report", str(record.dir), "--board", str(empty)])
     assert result.exit_code == 2
     assert "--board:" in result.output and "no challenge directories" in result.output
+    assert not (record.dir / "report.md").exists()
+
+
+def test_report_on_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(played, monkeypatch):
+    _, record = played
+
+    def refuse(p):
+        raise config.ConfigError(f"{p}: starts with ~ for a user that does not exist (or there is no home directory)")
+
+    monkeypatch.setattr(config, "expand", refuse)
+    result = runner.invoke(mounted(), ["report", str(record.dir)])
+    assert result.exit_code == 2, result.output
+    assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr
+    assert "Traceback" not in result.output
     assert not (record.dir / "report.md").exists()
 
 

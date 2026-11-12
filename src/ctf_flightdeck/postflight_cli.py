@@ -37,15 +37,16 @@ def report_command(
     ] = None,
 ) -> None:
     """Write the post-flight report to RUN_DIR/report.md and print a short summary."""
+    from .config import ConfigError, expand
     from .platform.manual import BoardError, load_board
     from .postflight import report, summary
     from .runrecord import RunFolderError, load_run, run_folder
     from .text import untrusted
 
     try:
-        run_dir = run_folder(run_dir.expanduser())
+        run_dir = run_folder(expand(run_dir))
         record = load_run(run_dir)
-    except RunFolderError as exc:
+    except (RunFolderError, ConfigError) as exc:
         _fail(str(exc))
     except OSError as exc:  # a file in it that cannot be read (permissions, say)
         _fail(f"cannot read {exc.filename or run_dir}: {exc.strerror or exc}")
@@ -54,8 +55,8 @@ def report_command(
     loaded = None
     if board is not None:
         try:
-            loaded = load_board(board.expanduser())
-        except BoardError as exc:
+            loaded = load_board(expand(board))
+        except (BoardError, ConfigError) as exc:
             typer.echo(f"flightdeck: --board: {exc}", err=True)  # BoardError messages are already made safe
             raise typer.Exit(2) from None
         except OSError as exc:  # one load_board does not turn into a BoardError (a folder it cannot search)

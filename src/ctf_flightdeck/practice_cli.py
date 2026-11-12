@@ -48,19 +48,23 @@ def score_command(
     """Score a past run from its event log: solves, points, first solve, cost per solve,
     interventions and wrong submissions. Reads only the run folder (the log, and the lane
     transcripts for what was spent outside a turn) and the board; spends nothing."""
+    from .config import ConfigError, expand
     from .platform.manual import BoardError, load_board
     from .practice_mode import ScoreError, score, scorecard
 
-    log = _events_file(run_dir.expanduser())
+    try:
+        log = _events_file(expand(run_dir))
+    except ConfigError as exc:
+        _fail(str(exc))
     if board is not None:
-        folder = board.expanduser()
+        folder = expand(board)
     else:
         folder, recorded_answers = _recorded_board(log.parent)
         answers = answers if answers is not None else recorded_answers
     try:
-        played = load_board(folder, answers=answers.expanduser() if answers is not None else None)
+        played = load_board(folder, answers=expand(answers) if answers is not None else None)
         result = score(log, played)
-    except (BoardError, ScoreError) as exc:
+    except (BoardError, ConfigError, ScoreError) as exc:
         _fail(str(exc))
     typer.echo(scorecard(result), nl=False)
 
