@@ -22,7 +22,7 @@ problem: report it privately, never in a public issue.
   context). That is every model API key, the CTFd token and everything in your keys file.
 - **A flag sent without your approval when it should have waited.** Every flag waits under
   `submit = "confirm"`, and nothing reaches the platform while an event's submit stage is
-  `manual` or `off`. Under `auto` a flag still waits when the platform counts the challenge's
+  `manual` or `off`. Under auto submit a flag still waits when the platform counts the challenge's
   tries, when the challenge's own description or handout holds it, or when it is only a match in
   what an L1 engine printed; and a flag found wrong is never submitted again.
 
@@ -43,9 +43,9 @@ problem: report it privately, never in a public issue.
   tool still goes only to the instance.
 - **What auto submit does.** Under auto submit, a flag a lane claims goes to the platform at once,
   as you asked.
-- **Lower-case secrets in transcripts and drafts.** The cleanup takes out the values of upper-case
-  `NAME=value` names, Authorization and Cookie headers and keys with well-known prefixes; a
-  lower-case `password` stays on purpose, since it is everyday CTF content.
+- **What the cleanup leaves on purpose.** Transcripts and writeup drafts lose what looks like a
+  credential, as the README lists under "After a run"; anything else stays, lower-case names
+  included (a `password` is everyday CTF content). Read a draft before you share it.
 - **A bug in a challenge or a CTF platform.** Tell the event's organisers.
 
 ## How to report
