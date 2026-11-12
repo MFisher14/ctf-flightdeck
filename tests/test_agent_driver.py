@@ -611,6 +611,34 @@ def test_under_auto_a_submitted_flag_that_could_not_be_looked_for_in_all_of_the_
     run(main())
 
 
+def test_under_auto_a_flag_never_looked_for_in_the_handout_never_goes_out_alone(tmp_path):
+    """Every flag a lane gives is looked for (_vet) before it is reported; should one ever be
+    reported without it (a flightdeck bug), it waits for the player rather than go out unchecked."""
+    gate = threading.Event()
+
+    def responder(record):
+        gate.wait(30)
+        return text_reply("ok")
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto")
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: len(server.requests) >= 1, "the lane's first model call", timeout=30)
+                run_ = lab.driver.runs[lane.id]
+                assert lab.driver._own_text(run_, "t{unvetted}") == "was never looked for in the challenge's own text"
+                assert lab.driver._own_text(run_, "not a flag") == ""  # the deck refuses it anyway: nothing to say
+            finally:
+                gate.set()
+                await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_a_submitted_flag_no_part_of_a_big_handout_holds_still_goes_out_at_once(tmp_path):
     files = {"firmware.bin": b"\x7fELF" + b"\x00" * (2 * 1024 * 1024) + b"t{other}\x00", "note.txt": "x\n"}
     server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{real}"})])

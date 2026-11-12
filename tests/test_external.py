@@ -2005,18 +2005,20 @@ def test_under_auto_a_claimed_stand_in_the_start_s_search_missed_is_found_in_the
     run(main())
 
 
-@pytest.mark.parametrize("where", ["claude-last-words", "codex"])
-def test_under_auto_a_stand_in_past_the_start_s_search_waits_however_the_agent_claims_it(tmp_path, where):
-    """claude's last words (its turn's result) and codex's message: each claim is looked for."""
+@pytest.mark.parametrize("where", ["claude-last-words", "codex", "claude-in-docker"])
+def test_under_auto_a_stand_in_past_the_start_s_search_waits_however_the_agent_claims_it(tmp_path, monkeypatch, where):
+    """claude's last words (its turn's result), codex's message, and a lane in Docker (the
+    handout searched is the one on this machine): each claim is looked for."""
     files, _, _ = PAST["past-the-first-1-MB-of-a-file"]
     if where == "codex":
         script = {"turns": [{"items": [{"command": "true"}, {"message": f"Found it.\nFLAG: {STAND_IN}"}], "usage": [10, 0, 5]}]}
     else:
         script = {"turns": [{"calls": [{"tools": [bash("true")]}], "result": f"Found it.\nFLAG: {STAND_IN}"}]}
+    docker = FakeDocker(tmp_path, monkeypatch) if where == "claude-in-docker" else None
 
     async def main():
         tried: list[str] = []
-        lab = Lab(tmp_path, script, kind="codex" if where == "codex" else "claude", submit="auto",
+        lab = Lab(tmp_path, script, kind="codex" if where == "codex" else "claude", submit="auto", docker=docker,
                   verify=lambda cid, flag: tried.append(flag) or True, handouts={"note": handout_of(tmp_path, files)})
         try:
             lab.release()
