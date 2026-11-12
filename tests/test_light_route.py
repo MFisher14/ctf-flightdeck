@@ -338,3 +338,64 @@ def test_without_route_or_recon_no_facts_run_and_the_light_model_is_never_asked(
             assert marker.exists() and light.asked() == ["family"]
 
         asyncio.run(main())
+
+
+# ---------------------------------------------------------------------- in a run
+
+
+def run_board(tmp_path: Path) -> Path:
+    root = tmp_path / "board"
+    folder = root / "hiss"
+    folder.mkdir(parents=True)
+    (folder / "hiss.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt slow scan\x00")
+    spec = {"name": "Static Hiss", "category": "", "points": 100, "solves": 3, "description": "Read what the file holds."}  # nothing the hint judge would be asked about
+    (folder / "challenge.json").write_text(json.dumps(spec))
+    (root / "board.json").write_text(json.dumps({"event": "Light Test", "flag_format": r"t\{[a-z0-9_]+\}"}))
+    return root
+
+
+def run_config(tmp_path: Path, lanes_url: str, light_url: str, jobs: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'[api]\nbase_url = "{lanes_url}"\nkey_env = ""\n'
+        '[models]\nladder = ["fake/small", "fake/big"]\n'
+        '[lanes]\nmax_lanes = 1\nruntime = "host"\ntoken_cap = false\ndollar_cap = false\n'
+        f'[run]\ndir = "{tmp_path / "runs"}"\n'
+        f'[light]\nengine = "openai"\nmodel = "light/m"\nbase_url = "{light_url}"\nkey_env = ""\ntimeout = 5\n{jobs}'
+    )
+    return path
+
+
+@pytest.mark.parametrize("jobs", ['jobs = ["judge", "route", "recon", "flagcheck"]\n', ""])
+def test_a_run_gives_its_lanes_the_first_look_its_light_jobs_name(tmp_path, jobs):
+    from ctf_flightdeck.run import RunOptions, prepare_run
+
+    lanes = FakeModelServer(responder=looping)
+    with lanes, LightModel({"category": "for", "family": "audio-signal", "recon": "Files: a WAV."}) as light:
+        config = run_config(tmp_path, lanes.base_url, light.server.base_url, jobs)
+        run = prepare_run(RunOptions(board=run_board(tmp_path), config=config))
+        notes = run.notes()
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await until(lambda: lane.turns >= 2 and (not jobs or run.driver.looks.done("hiss")), "the lane at work")
+            await run.shutdown()
+            return lane
+
+        lane = asyncio.run(main())
+        run.close()
+    ch = run.deck.challenges["hiss"]
+    if jobs:
+        assert any(n.startswith("light model: openai light/m routes each challenge") and "writes a first look" in n
+                   for n in notes)
+        assert ("[light] jobs lists flagcheck, which this build of flightdeck does not run yet: no light model is asked "
+                "for them") in notes
+        assert sorted(light.asked()) == ["category", "family", "recon"]
+        assert (ch.category, ch.category_guess, ch.family) == ("", "for", "audio-signal")
+        logged = [json.loads(x) for x in run.log.path.read_text().splitlines()]
+        assert [e["data"]["family"] for e in logged if e.get("kind") == "route"] == ["audio-signal"]
+    else:  # [light] jobs left out: the judge alone, as before
+        assert not any("routes each challenge" in n for n in notes) and light.asked() == []
+        assert (ch.category_guess, ch.family) == ("", "")
+    assert lane.turns >= 2
