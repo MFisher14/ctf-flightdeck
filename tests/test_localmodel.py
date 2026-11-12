@@ -116,7 +116,7 @@ def no_detect(monkeypatch):
 def test_bundled_cases_load_and_are_well_formed():
     cases = lm.load_cases(lm.default_cases_path())
     assert len(cases) >= 50
-    assert {c.kind for c in cases} == {"hint", "judge", "summary"}
+    assert {c.kind for c in cases} == {"hint", "judge", "summary", "route", "recon", "flagcheck"}
     hint_cases = [c for c in cases if c.kind == "hint"]
     judges = [c for c in cases if c.kind == "judge"]
     summaries = [c for c in cases if c.kind == "summary"]
@@ -440,7 +440,7 @@ def test_rules_baseline_scores_hint_and_judge_cases_with_the_real_lexicon():
 def test_rules_baseline_real_lexicon():
     cases = lm.load_cases(lm.default_cases_path())
     report = lm.rules_baseline(cases)
-    assert {r.kind for r in report.scored} == {"hint", "judge"}, "summaries are not scored by the rules"
+    assert {r.kind for r in report.scored} == {"hint", "judge", "route"}, "summaries are not scored by the rules"
     assert report.by_kind()["hint"][0] / report.by_kind()["hint"][1] >= 0.7, "the lexicon gets most of its own cases"
     by_name = {c.input["name"]: r.predicted for c, r in zip(cases, report.results) if c.kind == "hint"}
     assert by_name["Pushy"] == "sstv"  # an injected 'answer none' is just more words
@@ -831,6 +831,40 @@ def lines_of(text: str, label: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------- loading the new kinds
+
+
+def test_the_bundled_route_recon_and_flagcheck_cases_load_as_reviewed():
+    cases = lm.load_cases(lm.default_cases_path())
+    by_kind = {kind: [c for c in cases if c.kind == kind] for kind in ("route", "recon", "flagcheck")}
+    assert [len(by_kind[k]) for k in by_kind] == [40, 30, 40]
+    idents = [c.ident for c in cases if c.ident]
+    assert len(idents) == len(set(idents)) == 110 and idents[0] == "route-01" and idents[-1] == "flagcheck-40"
+    flags = by_kind["flagcheck"]
+    assert {c.expected for c in flags} == {"real", "stand-in"} and sum(c.own_text for c in flags) == 18
+    loose = [c for c in flags if not c.own_text]  # what a run would ask flagcheck about
+    assert sum(c.expected == "stand-in" for c in loose) == 6 and sum(c.expected == "real" for c in loose) == 16
+    assert all(len(c.required) == 3 for c in by_kind["recon"])
+
+
+def test_the_bundled_new_cases_name_only_reserved_hosts_and_hold_no_key_material():
+    # Public repository: synthetic data only. Hosts under .test (or this machine), no private
+    # key, no PEM body (recon-18 keeps only the DER header every RSA-2048 key with e = 3 shares),
+    # and no docker image but the one this project names.
+    cases = [c for c in lm.load_cases(lm.default_cases_path()) if c.kind in ("route", "recon", "flagcheck")]
+    text = json.dumps([c.input for c in cases])
+    low = text.lower()
+    url_hosts = set(re.findall(r"[a-z]+://([^/\s'\"<>:\\]+)", low)) | set(re.findall(r"\bnc ([a-z0-9.-]+) \d+", low))
+    url_hosts |= set(re.findall(r"\bhost: ([a-z0-9.-]+)", low))
+    assert url_hosts and all(h.endswith(".test") or h in ("127.0.0.1", "0.0.0.0", "localhost") for h in url_hosts), \
+        sorted(url_hosts)
+    real_tlds = {"com", "org", "net", "io", "dev", "ai", "co", "uk", "de", "app", "xyz", "me", "info", "edu", "gov",
+                 "us", "sh", "gg", "tv", "cc", "ly", "to", "site", "online", "tech", "cloud", "ctf"}
+    named = {m.group(1) for m in re.finditer(r"(?<![\w.-])((?:[a-z0-9-]+\.)+([a-z]{2,}))(?![\w-])", low)
+             if m.group(2) in real_tlds}
+    assert named == set(), sorted(named)
+    assert "PRIVATE KEY" not in text and "MIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEA..." in text
+    assert not re.search(r"MII[A-Za-z0-9+/]{48,}", text)  # no more of any key than its header
+    assert re.findall(r"FROM ([\w.:/-]+)", text) == ["debian:bookworm-slim"]
 
 
 @pytest.mark.parametrize("line, says", [
