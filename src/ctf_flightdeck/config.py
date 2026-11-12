@@ -68,7 +68,7 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "autopilot")
 _API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
 API_PROVIDERS = ("openai", "anthropic")
@@ -187,6 +187,15 @@ class L1Config:
 
 
 @dataclass(frozen=True)
+class AutopilotConfig:
+    """[autopilot] (autopilot.py, D20): whether a run engages it, and the run budget it needs."""
+
+    engage: bool = False  # true: every play engages autopilot (as --autopilot does for one run)
+    budget_dollars: float | None = None  # the whole run's budget in dollars; None: none in dollars
+    budget_tokens: int | None = None  # and in tokens; engaging needs at least one of the two
+
+
+@dataclass(frozen=True)
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
@@ -200,6 +209,7 @@ class Config:
     light: LightConfig = LightConfig()  # [light]; rules only when the config has none
     light_jobs: tuple[str, ...] = DEFAULT_JOBS  # [light] jobs: the jobs a run gives the light model
     light_tables: dict[str, LightConfig] = field(default_factory=dict)  # [light.<job>]: a job's own engine
+    autopilot: AutopilotConfig = AutopilotConfig()  # [autopilot]; off, with no budget, when the config has none
 
 
 @dataclass(frozen=True)
@@ -257,6 +267,7 @@ def _config(path: Path, doc: dict) -> Config:
         run_dir=_run_dir(path, _table(path, doc, "run")),
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
+        autopilot=_autopilot(path, _table(path, doc, "autopilot")),
         agents=agents,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
         light=light,
@@ -553,6 +564,17 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 #     engine = "anthropic"
 #     model = "claude-haiku-5-5"
 #     key_env = "ANTHROPIC_API_KEY"
+
+[autopilot]
+# Autopilot runs an event end to end while you are away (`flightdeck play --autopilot`, or
+# engage = true here): every stage as automatic as the event's rules and this config allow,
+# never looser, and its own interventions by rule. It approves nothing and submits nothing
+# itself, never spends a challenge's last try, and reroutes no request a model declined. It
+# needs the Docker runtime and a run budget: at the budget it holds the queue, pauses the lanes
+# and disengages. `/autopilot off` in the console takes the controls back.
+# engage = false                # true: every play engages it
+# budget_dollars = 20.0         # the whole run's budget in dollars
+# budget_tokens = 20000000      # and, or instead, in tokens (needed when a model has no price)
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -1091,6 +1113,23 @@ def _l1(path: Path, table: dict) -> L1Config:
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
     return L1Config(pack=pack, concurrency=concurrency)
+
+
+def _autopilot(path: Path, table: dict) -> AutopilotConfig:
+    _known(path, ("autopilot",), table, ("engage", "budget_dollars", "budget_tokens"))
+    engage = table.get("engage", False)
+    if not isinstance(engage, bool):
+        raise _error(path, ("autopilot", "engage"), f"must be true or false{_got(engage)}")
+    dollars = table.get("budget_dollars")
+    if dollars is not None and (not _is_number(dollars) or not 0 < dollars < float("inf")):
+        raise _error(path, ("autopilot", "budget_dollars"), f"must be a number above 0: the whole run's budget in dollars{_got(dollars)}")
+    tokens = table.get("budget_tokens")
+    if tokens is not None and (not _is_int(tokens) or tokens < 1):
+        raise _error(path, ("autopilot", "budget_tokens"), f"must be a whole number above 0: the whole run's budget in tokens{_got(tokens)}")
+    if engage and dollars is None and tokens is None:
+        raise _error(path, ("autopilot", "engage"), "is true, and autopilot needs a run budget: set budget_dollars or "
+                                                    "budget_tokens beside it")
+    return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens)
 
 
 def _run_dir(path: Path, table: dict) -> Path:

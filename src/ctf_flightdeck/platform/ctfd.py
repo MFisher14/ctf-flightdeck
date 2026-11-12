@@ -170,6 +170,14 @@ class CTFdError(Exception):
         self.retryable = retryable
 
 
+class HumanCheck(CTFdError):
+    """CTFd's address answered an API request with a web page for a person instead of the
+    API's JSON: an HTML page with a 2xx status or a 4xx one (401 and 404 apart: a refused
+    token, a wrong address). That is what a login page looks like, or a check in front of the
+    site that wants a human (a CAPTCHA, a "checking your browser" page). flightdeck does not
+    guess which, or whose: it never tries to pass one, and autopilot disengages on it."""
+
+
 @dataclass(frozen=True)
 class Attempt:
     """CTFd's answer to a flag. `status` is one of ATTEMPT_STATUSES; `message` is CTFd's
@@ -524,6 +532,9 @@ class CTFdClient:
             raise self._site.refused(answer)
         doc = _parse(answer.body)
         where = f"CTFd at {self._site.root} answered {answer.endpoint}"
+        page = self._site.page(answer)
+        if page is not None:
+            raise page
         if not isinstance(doc, dict):
             what = "not JSON" if doc is _NOT_JSON else "not a JSON object"
             raise self._site.error(
@@ -703,6 +714,7 @@ class Verdict:
     ok: bool | None
     attempt: Attempt | None = None
     error: str | None = None
+    human_check: bool = False  # the error is a HumanCheck: a page for a person answered, not CTFd's API
 
 
 class CTFdVerifier:
@@ -798,13 +810,13 @@ class CTFdVerifier:
             return Verdict(None, error=str(answer))
         if isinstance(answer, _Failure):
             return Verdict(None, error=str(self._site.no_answer(endpoint, answer, 1, submit=True)))
-        error = None
+        error, human = None, False
         try:
             attempt = _attempt(self._site, answer)
         except CTFdError as exc:
-            error = str(exc)
+            error, human = str(exc), isinstance(exc, HumanCheck)
         if error is not None:
-            return Verdict(None, error=error)
+            return Verdict(None, error=error, human_check=human)
         if attempt.status == "correct":
             return Verdict(True, attempt)
         if attempt.status == "incorrect":
@@ -970,15 +982,18 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
         wait = answer.headers.get("retry-after")
         return Attempt("ratelimited", "the server answered HTTP 429 (Too Many Requests)" + (f", retry after {site.short(wait)}" if wait else ""))
     if 200 <= answer.status < 300 or answer.status >= 500:
-        error = site.refused(answer) if answer.status >= 500 else site.error(
+        error = site.refused(answer) if answer.status >= 500 else site.page(answer) or site.error(
             f"{where} with something that is not an answer to a flag", endpoint=answer.endpoint, status=answer.status
         )
         raise site.error(
             f"{error}; the flag may have reached CTFd: check the challenge there before submitting it again",
             endpoint=answer.endpoint,
             status=answer.status,
+            kind=type(error),
         )
-    raise site.error(f"{site.refused(answer)}; the flag was not checked", endpoint=answer.endpoint, status=answer.status)
+    refused = site.refused(answer)
+    raise site.error(f"{refused}; the flag was not checked", endpoint=answer.endpoint, status=answer.status,
+                     kind=type(refused))
 
 
 # ---------------------------------------------------------------------- pulling a board
@@ -1686,13 +1701,38 @@ class _Site:
         return text if len(text) <= MAX_SHOWN else text[: MAX_SHOWN - 3] + "..."
 
     def error(
-        self, message: str, *, endpoint: str | None = None, status: int | None = None, retryable: bool = False
+        self, message: str, *, endpoint: str | None = None, status: int | None = None, retryable: bool = False,
+        kind: type[CTFdError] = CTFdError,
     ) -> CTFdError:
         text = _FILE_TOKEN.sub(r"\1[file token]", _valid(message).replace(self._token, "[token]"))
-        return CTFdError(untrusted(text, one_line=True), endpoint=endpoint, status=status, retryable=retryable)
+        return kind(untrusted(text, one_line=True), endpoint=endpoint, status=status, retryable=retryable)
+
+    def page(self, answer: _Answer) -> HumanCheck | None:
+        """The HumanCheck for an answer from CTFd's address that is a web page for a person
+        (HTML that is not JSON) with a 2xx or a 4xx status, 401 and 404 apart; None for any
+        other answer. A 5xx page is the site failing, and a file host's page is not CTFd's."""
+        status = answer.status
+        if answer.host is not None or not (200 <= status < 300 or (400 <= status < 500 and status not in (401, 404))):
+            return None
+        if _parse(answer.body) is not _NOT_JSON:
+            return None
+        kind = answer.headers.get("content-type", "").lower()
+        head = answer.body[:512].lstrip().lower()
+        if not (kind.startswith(("text/html", "application/xhtml")) or head.startswith((b"<!doctype html", b"<html"))):
+            return None
+        return self.error(
+            f"CTFd at {self.root} answered {answer.endpoint} with a web page for a person, not a CTFd API answer (not "
+            f"JSON, HTTP {status}{_phrase(status)}): a login page, or a check that wants a human (a CAPTCHA), unless "
+            f"{self.root} is not the CTFd's address. Open it in a browser; flightdeck does not try to pass such a page",
+            endpoint=answer.endpoint, status=status, kind=HumanCheck,
+        )
 
     def refused(self, answer: _Answer) -> CTFdError:
-        """The CTFdError for an answer that is not a success."""
+        """The CTFdError for an answer that is not a success (a HumanCheck when it is a web
+        page for a person: page())."""
+        page = self.page(answer)
+        if page is not None:
+            return page
         status, endpoint = answer.status, answer.endpoint
         doc = _parse(answer.body)
         said = self.short(_message(doc)) if isinstance(doc, dict) else ""
