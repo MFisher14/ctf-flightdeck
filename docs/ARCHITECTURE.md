@@ -496,7 +496,7 @@ and the sweep says why.
 |---|---|---|
 | Post-flight | `postflight.py`, `writeup.py` | `flightdeck report` and `flightdeck writeups`. [More](#post-flight). |
 | Practice mode | `practice_mode.py` | Scores a past run against the board's answers (`flightdeck score`). [More](#practice-mode). |
-| Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run). |
+| Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run), and gives each gap on the board its `flightdeck build gap CHALLENGE_DIR --pack PACK` command, the paths absolute and shell-quoted: as a code span in `gaps.md`, one per line in the summary, and exactly in `gaps.json` (`folder`, `build`). A path with a newline or a control or invisible character gets no line to paste, and the report says so. |
 | Build mode | `build.py`, `build_cli.py` | `flightdeck build gap CHALLENGE_DIR --pack PACK`: an engine stub, its manifest and a case test on a copy of the challenge; nothing is overwritten. `flightdeck build check PACK` runs the pack's case tests with pytest (the `[build]` extra) and no keys from flightdeck's environment. |
 
 ### Post-flight
