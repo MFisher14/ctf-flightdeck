@@ -1438,7 +1438,7 @@ class _Run:
         text = prompts.brief(
             self.challenge, self.driver.files.get(cid, self.challenge.files), self.driver.urls.get(cid, ()),
             lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format, recon=self.recon,
-            instance=self.driver.instance,
+            instance=self.driver.instance, shell_hosts=getattr(self.workspace, "shell_hosts", None),
         )
         if self.l1_text is not None:
             text += "\n\n" + self.l1_text

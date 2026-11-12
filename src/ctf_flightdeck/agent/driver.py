@@ -608,12 +608,13 @@ class AgentDriver:
             run.messages.append(dict(run.l1_message))
 
     async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:
-        """The player allowed the live instance: connect a docker lane's container to the
-        network (it started with none) and let the http tool reach the instance."""
-        connect = getattr(run.workspace, "connect_network", None)
+        """The player allowed the live instance: give a docker lane's container (it started with
+        no network) a network that reaches the instance and nothing else
+        (DockerWorkspace.open_instance), and let the http tool reach the instance."""
+        connect = getattr(run.workspace, "open_instance", None)
         try:
             if connect is not None:
-                await connect("bridge")
+                await connect()
         except WorkspaceError as exc:
             run.instance = "failed"
             self._say(run.lane_id, f"could not open the network to the live instance: {exc}")
@@ -908,7 +909,7 @@ class AgentDriver:
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
                                          approach, flag_format=self.deck.config.flag_format, recon=run.recon,
-                                         instance=self.instance),
+                                         instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None)),
             },
         ]
         if run.l1_message is not None:

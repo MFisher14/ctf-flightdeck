@@ -8,6 +8,7 @@ the deck to reach a state (bounded, ~10 s at most).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import re
 import shlex
@@ -2132,12 +2133,13 @@ def l1_in_fake_docker(tmp_path: Path, handouts: dict[str, Path]):
 
 @pytest.mark.parametrize(
     "instance, has_instance, network",
-    [("auto", True, "bridge"), ("auto", False, "none"), ("confirm", True, "none"), ("off", True, "none")],
+    [("auto", True, "flightdeck-runs-l01-l1net-net"), ("auto", False, "none"), ("confirm", True, "none"), ("off", True, "none")],
 )
 def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_instance_at_once(
         tmp_path, monkeypatch, instance, has_instance, network):
     """Findings 1 and 7: under confirm (before the player is asked), manual and off no engine
-    gets a network; under auto only a challenge with an instance gives one."""
+    gets a network; under auto only a challenge with an instance gives one, and that one
+    is the lane's fenced network (never bridge), which reaches that instance alone."""
     from l1_kit import install_fake_docker
 
     runs_log = install_fake_docker(tmp_path, monkeypatch)
@@ -2147,12 +2149,20 @@ def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_insta
         with server:
             handouts = {"note": handout(tmp_path)}
             urls = {"note": ("http://127.0.0.1:9",)} if has_instance else None
-            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_in_fake_docker(tmp_path, handouts), urls=urls, instance=instance)
+            stage = dataclasses.replace(l1_in_fake_docker(tmp_path, handouts), urls=urls or {})
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, urls=urls, instance=instance)
             lab.release()
             await until(lambda: any(e.kind is EventKind.L1 for e in lab.deck.events), "the L1 result", timeout=30)
             (started,) = runs_log.read_text().splitlines()
             words = started.split()
-            assert words[words.index("--network") + 1] == network
+            assert words[words.index("--network") + 1] == network and "bridge" not in words
+            proxies = runs_log.with_name("proxies.log")
+            if network == "none":
+                assert not proxies.exists() and not runs_log.with_name("network.log").exists()
+            else:  # one proxy, for the instance's host and port: this machine, through docker's host gateway
+                (proxy,) = proxies.read_text().splitlines()
+                assert proxy.endswith('{"routes": [{"listen": 9, "host": "host.docker.internal", "port": 9}]}')
+                assert "--add-host host.docker.internal:host-gateway" in proxy
             await lab.finish()
 
     run(main())
@@ -2302,8 +2312,8 @@ def test_a_secret_the_run_holds_reaches_neither_the_model_nor_the_deck_by_value_
             await until(lambda: lane.pending is not None, "the candidate flag", timeout=30)
             assert lab.deck.apply(iv.Hint(lane.id, f"the key is {secret}")).ok
             assert lab.deck.apply(iv.Decline(lane.id)).ok  # the lane goes on, and reads the hint
-            await until(lambda: len(server.chats()) == 3, "the next model call")
-            first, second, third = server.chats()
+            await until(lambda: len(server.chats()) >= 3, "the next model call")  # the lane may already be on a fourth
+            first, second, third = server.chats()[:3]
             assert "leaks: none (the environment holds [HELD])" in first["json"]["messages"][2]["content"]
             assert "the key is [HELD]" in last_user(third)
             assert lane.plan == "use what held.txt holds"

@@ -907,8 +907,8 @@ def test_profile_fields_are_checked_when_built_in_code():
 @pytest.mark.parametrize(
     "instance, urls, network",
     [
-        (AUTO, ("http://127.0.0.1:8080",), "bridge"),
-        (CONFIRM, ("http://127.0.0.1:8080",), "none"),  # connected when the player allows it
+        (AUTO, ("http://127.0.0.1:8080",), "fenced"),
+        (CONFIRM, ("http://127.0.0.1:8080",), "none"),  # fenced onto it when the player allows it
         (MANUAL, ("http://127.0.0.1:8080",), "none"),
         (OFF, ("http://127.0.0.1:8080",), "none"),
         (AUTO, (), "none"),
@@ -1002,13 +1002,13 @@ def test_describe_shows_every_stage_with_its_meaning_and_what_the_rules_would_al
     assert "l1        off      no L1 solvers (the rules allow auto)" in lines
     assert "submit    confirm  each flag is submitted after you approve it (the rules allow auto)" in lines
     assert "instance  confirm  each lane asks you before it reaches its challenge's live instance" in lines
-    assert lines[-1] == "network   a docker lane has no network until you allow it its instance, then an open one (bridge: any host); a coding-agent lane (--agent) always has it"
+    assert lines[-1] == "network   a docker lane has no network until you allow it its instance, then one that reaches the instance and nothing else; a coding-agent lane (--agent) reaches its CLI's API in every case"
     assert [line.split()[0] for line in lines[4:9]] == list(STAGES)
     loose = describe(event, policies(instance=AUTO), environ=TOKEN_SET)
     assert "instance  auto     lanes may reach their challenge's live instance (looser than the rules allow: at most confirm)" in loose
-    assert loose[-1] == "network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none; a coding-agent lane (--agent) always has it"
-    assert describe(event, policies(instance=OFF), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "off"); a coding-agent lane (--agent) always has it'
-    assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "manual"); a coding-agent lane (--agent) always has it'
+    assert loose[-1] == "network   a docker lane's network reaches its challenge's live instance and nothing else; without one it has none; a coding-agent lane (--agent) reaches its CLI's API in every case"
+    assert describe(event, policies(instance=OFF), environ=TOKEN_SET)[-1] == "network   docker lanes get no network (instance \"off\"); a coding-agent lane (--agent) reaches its CLI's API in every case"
+    assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == "network   docker lanes get no network (instance \"manual\"); a coding-agent lane (--agent) reaches its CLI's API in every case"
 
 
 def test_describe_says_what_play_does_under_each_policy_not_what_the_policy_name_suggests():

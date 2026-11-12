@@ -43,8 +43,8 @@ whatever is shown is made safe with text.untrusted().
 
 Instance "confirm": a lane whose challenge has a live instance asks the player before its
 first model call. Until the player allows it, its http tool is off and a docker lane has no
-network; once allowed, the container joins the bridge network (open egress: any host, not only
-the instance). On the host runtime only the http tool waits (a lane's shell has this machine's
+network; once allowed, the container joins a fenced network that reaches the instance and
+nothing else (agent/egress.py). On the host runtime only the http tool waits (a lane's shell has this machine's
 network), so check() warns there.
 """
 
@@ -239,14 +239,15 @@ def defaults(profile: EventProfile) -> Policies:
 
 
 def lane_network(policies: Policies, urls: Sequence[str]) -> str:
-    """The docker network a lane starts with: "bridge" only when its challenge has a live
+    """The network a docker lane starts with: "fenced" only when its challenge has a live
     instance and lanes may reach it at once (instance auto); "none" otherwise, so the lane
-    cannot reach the instance or anything else. Under confirm the run connects the container
-    to bridge when the player allows it; under manual the player works the instance, not the
-    lane. Bridge is open egress, not only the instance."""
+    cannot reach the instance or anything else. Under confirm the run gives the container
+    the fenced network when the player allows it; under manual the player works the
+    instance, not the lane. A fenced network reaches the instance and nothing else
+    (agent/egress.py); no lane is put on Docker's open bridge network."""
     if policies.instance is not Policy.AUTO or not urls:
         return "none"
-    return "bridge"
+    return "fenced"
 
 
 class DeckSubmit(NamedTuple):
@@ -507,9 +508,9 @@ _MEANING = {
 
 
 FOLDER_BOARD = "a folder board: nothing to fetch"  # the pull line of a manual profile, whatever its policy
-# A coding-agent lane's container is on the bridge network whatever the instance policy: its
-# CLI needs its own API (run.py gives every such lane network="bridge").
-AGENT_NETWORK = "; a coding-agent lane (--agent) always has it"
+# A coding-agent lane's container reaches its CLI's own API whatever the instance policy
+# (run.lane_reach gives every such lane agent.egress.CLI_API), and nothing else but its instance.
+AGENT_NETWORK = "; a coding-agent lane (--agent) reaches its CLI's API in every case"
 
 NO_PACK = (
     "there is no [l1] pack in your config, so nothing runs at this stage: set pack = \"FOLDER\" under [l1] in it "
@@ -569,9 +570,9 @@ def describe(
             meaning = NO_PACK
         lines.append(f"{stage:<10}{policy.value:<9}{meaning}{note}")
     if policies.instance is Policy.AUTO:
-        network = "a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
+        network = "a docker lane's network reaches its challenge's live instance and nothing else; without one it has none"
     elif policies.instance is Policy.CONFIRM:
-        network = "a docker lane has no network until you allow it its instance, then an open one (bridge: any host)"
+        network = "a docker lane has no network until you allow it its instance, then one that reaches the instance and nothing else"
     else:
         network = f'docker lanes get no network (instance "{policies.instance}")'
     lines.append(f"network   {network}{AGENT_NETWORK}")

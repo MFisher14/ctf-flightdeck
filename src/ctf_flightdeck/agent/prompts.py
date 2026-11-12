@@ -11,7 +11,7 @@ workspace, flags approved by the player, nothing a model says changes a setting)
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from ..core.model import Challenge
 from ..text import untrusted
@@ -81,8 +81,22 @@ OFF_LIMITS = (
 )
 
 
+def shell_names(hosts: Mapping[str, str]) -> str:
+    """What a lane in a fenced container (agent/egress.py) is told about `hosts`, {an instance's
+    host as the challenge writes it: its name in the lane's container}: an IP address or
+    localhost cannot be reached as written from its shell, the name can. In flightdeck's own
+    words; each host is an address flightdeck parsed or a name in a host name's characters."""
+    pairs = ", ".join(f"{one(written, 80)} is {one(name, 80)}" for written, name in hosts.items())
+    return (
+        "Your shell runs in a container whose network reaches only this challenge's instance, and no numeric "
+        f"address or localhost. From the shell, use these names instead, on the same ports: {pairs}. A TLS "
+        "certificate will not match such a name. flightdeck's own http tool, where you have it, takes the URL as "
+        "the challenge gives it."
+    )
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
-          recon: str = "", instance: str = "auto") -> str:
+          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None) -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -94,7 +108,9 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     new plan), never text a model wrote. `instance` is the lanes' instance policy: under
     "off" the brief names no instance, and says after the fence, in flightdeck's own words,
     that the event's rules keep the lane off it (OFF_LIMITS), also when the board lists none:
-    a service named only in the description or a file is as much off limits."""
+    a service named only in the description or a file is as much off limits. `shell_hosts`
+    (a Docker lane's: DockerWorkspace.shell_hosts) adds shell_names() after the fence, unless
+    the lane is kept off the instance."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -116,6 +132,8 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     ]
     if off:
         lines.append(OFF_LIMITS)
+    elif shell_hosts:
+        lines.append(shell_names(shell_hosts))
     if recon.strip():
         lines += [FIRST_LOOK, fenced(recon)]
     if approach:

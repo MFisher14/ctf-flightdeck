@@ -21,7 +21,7 @@ from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace
 from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import ActionKind, Challenge, DeckConfig, PendingKind
-from ctf_flightdeck.run import RunOptions, lane_network, prepare_run
+from ctf_flightdeck.run import RunOptions, lane_reach, prepare_run
 from fake_model import FakeModelServer, text_reply, tool_call_reply, tool_calls_reply
 
 GATE = "The gate opens only for the right password. The checker binary is attached; nc gate.chal.example.test 6000"
@@ -41,12 +41,12 @@ async def until(cond, what: str, timeout: float = 20.0) -> None:
 
 class Recording(HostWorkspace):
     """A host workspace that notes every attempt to give it a network (a docker lane's
-    connect_network, which the driver calls once the player allows the live instance)."""
+    open_instance, which the driver calls once the player allows the live instance)."""
 
     connected: list[str] = []
 
-    async def connect_network(self, network: str) -> None:
-        Recording.connected.append(network)
+    async def open_instance(self) -> None:
+        Recording.connected.append("instance")
 
 
 def notes(lane) -> list[str]:
@@ -154,7 +154,8 @@ def test_in_a_container_with_no_network_the_note_says_the_lane_cannot_reach_it(t
     assert said.startswith("the description names tcp://a.chal.example.test:1337 (nc a.chal.example.test 1337), "
                            "tcp://c.chal.example.test:31337 (nc c.chal.example.test 31337), which the board does not list")
     assert "this lane's container has no network, so it cannot reach them. If they are the challenge's instance" in said
-    networked = DockerWorkspace(tmp_path / "w", tmp_path, image="debian:bookworm-slim", name="flightdeck-test-l02")
+    networked = DockerWorkspace(tmp_path / "w", tmp_path, image="debian:bookworm-slim", name="flightdeck-test-l02",
+                                reach=("tcp://b.chal.example.test:443",))  # fenced onto its own instance
     assert "flightdeck does not give them to this lane as its instance" in instance_note(services, networked)
 
 
@@ -186,4 +187,4 @@ def test_a_run_notes_the_service_and_its_lanes_stay_without_an_instance(tmp_path
         run.close()
     assert NOTE in notes(lane)
     (cid,) = run.driver.urls
-    assert run.driver.urls[cid] == () and lane_network(run.driver.urls[cid]) == "none"  # a docker lane would get none
+    assert run.driver.urls[cid] == () and lane_reach(run.driver.urls[cid], "auto") == ((), ())  # a docker lane would get no network

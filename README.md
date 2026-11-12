@@ -37,8 +37,8 @@ shell.
   live instances, flag formats and counted tries. It plays CTFd events and plain folders.
 - **Plays by the event's rules.** Every stage (pull, solvers, agents, submit, live instances) is
   `auto`, `confirm`, `manual` or `off`, checked before anything runs.
-- **Safe by default.** Each lane runs in its own Docker container with no network unless its
-  challenge has a live instance. Challenge text is treated as hostile data, never as
+- **Safe by default.** Each lane runs in its own Docker container with no network, or, when
+  its challenge has a live instance, a network that reaches that instance and nothing else. Challenge text is treated as hostile data, never as
   instructions. Lanes have token and dollar caps.
 - **Learns from each run.** A report of where lanes stalled and which interventions helped,
   writeup drafts, and the list of challenges your solvers missed.

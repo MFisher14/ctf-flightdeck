@@ -43,6 +43,20 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ### Safety
 
+- A Docker lane that may reach its challenge's instance now reaches that instance and nothing
+  else: each host and port in the challenge's `urls`, through an internal Docker network and a
+  small proxy per host, never Docker's bridge network. A coding-agent lane (`--agent`) reaches
+  its CLI's API (`api.anthropic.com` or `api.openai.com`) the same way, and L1 solvers that
+  run online get the same fence (#14).
+- In such a lane an instance given by IP address or as `localhost` is reached as
+  `instance-10-0-0-5` or `instance-localhost`, on the same ports; the lane's brief says so.
+  UDP, ping and ports that `urls` does not list go nowhere: the guide's "Docker or host" lists
+  what the fence does not do (#14).
+- A lane whose fence cannot be built (no `python3` in the lane image, a Docker Engine that
+  cannot make an internal network without a gateway, no room for another network) does not
+  start, or stays without a network, and says why. It is never put on the bridge network (#14).
+- `flightdeck doctor` lists the networks and proxy containers a killed run left, and
+  `doctor --clean` and the next `play` remove them (#14).
 - A lane of flightdeck's own loop no longer sends its model the keys flightdeck holds: every
   value in your keys file, the `[api]` and `[fallback]` keys and the CTFd token become `[NAME]`
   in what a lane's tool calls return, before the model, the console, the transcript or the run

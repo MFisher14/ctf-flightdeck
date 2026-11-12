@@ -686,7 +686,7 @@ def test_the_container_is_started_from_a_local_image_only_with_limits(tmp_path, 
     args = ws.run_args()
     assert args[args.index("--pull") + 1] == "never"
     assert "--init" in args and "--rm" in args
-    for flag, value in [("--memory", "1g"), ("--cpus", "1.5"), ("--pids-limit", "64"), ("--network", "bridge"), ("--name", "flightdeck-test-args")]:
+    for flag, value in [("--memory", "1g"), ("--cpus", "1.5"), ("--pids-limit", "64"), ("--network", "none"), ("--name", "flightdeck-test-args")]:
         assert args[args.index(flag) + 1] == value
     assert args[args.index("-v") + 1] == f"{(tmp_path / 'lane').resolve()}:/work"
     assert args[args.index("--entrypoint") + 1] == "sleep" and args[-2:] == [IMAGE, "infinity"]
@@ -878,7 +878,7 @@ def test_the_container_has_the_limits_an_init_and_the_bind_mount(box):
     assert host["Memory"] == 2 * 1024**3
     assert host["NanoCpus"] == 2 * 10**9
     assert host["PidsLimit"] == 512
-    assert host["NetworkMode"] == "bridge"
+    assert host["NetworkMode"] == "none"  # a lane with nothing to reach: never bridge
     assert host["Init"] is True and host["AutoRemove"] is True
     assert [(m["Source"], m["Destination"]) for m in info["Mounts"]] == [(str(box.root.resolve()), "/work")]
 
@@ -1060,17 +1060,26 @@ def test_close_removes_the_container_only_after_a_docker_run_it_interrupted_has_
     assert "rm" in calls and calls.index("run done") < calls.index("rm")
 
 
-def test_a_lane_container_started_with_no_network_can_be_connected_once_allowed(tmp_path, handout, container_name):
-    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name, network="none")
+def test_a_lane_whose_image_cannot_run_the_fences_proxy_stays_without_a_network_and_hears_why(tmp_path, handout, container_name):
+    """The plain Debian image has no python3, which the proxy that fences a lane runs on (the
+    lane image has it: tests/test_egress.py opens a real lane onto its instance with that).
+    Once the player allows the instance the lane is told why it cannot be opened, and its
+    container is on no network still: never on bridge instead. What the try made is removed."""
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name, later=("tcp://localhost:9",))
     run(ws.prepare())
     try:
-        before = docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container_name).stdout
-        assert "bridge" not in before
-        run(ws.connect_network("bridge"))
-        after = docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container_name).stdout
-        assert "bridge" in after
+        before = json.loads(docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container_name).stdout)
+        assert list(before) == ["none"]
+        with pytest.raises(WorkspaceError, match=f"image {IMAGE} has no python3, which the proxy that fences a lane's network runs on"):
+            run(ws.open_instance())
+        after = json.loads(docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container_name).stdout)
+        assert list(after) == ["none"] and ws.network == "none"
     finally:
         run(ws.close())
+        leftover = docker("rm", "-f", f"{container_name}-egress-1").stdout  # only if close() left it: the assert below says so
+        docker("network", "rm", f"{container_name}-net")
+    assert leftover.strip() == ""
+    assert docker("network", "inspect", f"{container_name}-net").returncode != 0
 
 
 def test_a_lane_command_never_finds_a_program_through_a_relative_path_entry(tmp_path, monkeypatch):
