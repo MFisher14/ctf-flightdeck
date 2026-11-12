@@ -214,7 +214,7 @@ What gives way when the terminal is narrow, least needed first:
   queue's reason gets its room the same way (dollars, tokens, the clock, then the event name give
   way to it) and is cut to the room left; with fewer than 12 cells left, the header names no
   reason.
-- **Board.** Under 100 columns the board hides (the lane list says so).
+- **Board.** Under 100 columns the board hides (the lane list says so, down to 65 columns).
 - **Fleet.** Low-value columns drop first, and the challenge name narrows before a column is cut.
 - **Key line.** The fleet's key line always shows `? help` and `q quit`; the keys needed least are
   left out whole rather than cut: focus and sort first, then take over, escalate and fork, then
@@ -223,6 +223,60 @@ What gives way when the terminal is narrow, least needed first:
 
 `flightdeck doctor` measures a terminal with the console's own layout code, so what it says a size
 leaves out is what the console leaves out.
+
+### Compact layout (64 columns or fewer)
+
+For a phone over SSH (flightdeck in tmux, 50 to 60 columns). At 64 columns or fewer both views
+switch to a layout made for that width; from 65 columns the rules above apply. It keeps what
+matters there: what needs you and why, the one-key answers, and each lane's state and cost.
+
+```
+ solo ╱ 4/4 · q3 ╱ ▲ 2 need you ╱ $3.18
+╭ fleet 4/4 · sort attention ────────────────────────╮
+│  !      lane  chall              state     cost    │
+│▌ flag   L04   Ticket Desk        wait      $.16    │
+│  hint   L01   Static Hiss        run       $.13    │
+│         L02   Bent Coin          run       $.02    │
+│▌L04 ▲ Flag found: Candidate mock{…} matches the    │
+│ flag format.                                       │
+│  1  submit mock{…}                                 │
+│  0  do not submit                                  │
+│                                                    │
+│ enter open                                         │
+╰────────────────────────────────────────────────────╯
+ ● wren solved Night Shift · stopped L05
+╭ / for commands · enter opens the selected lane · … ╮
+╰────────────────────────────────────────────────────╯
+ a yes  d no  1-9 answer  / cmd  ? help  q quit
+```
+
+- **Header.** What needs you ("▲ N need you", "all clear", "queue held" and why as room allows)
+  and the run's dollars always stay, with lanes used/limit and the queue's length in short
+  ("4/4 · q3"). The flightdeck name gives way first, then solo/team. Tokens, the event clock, the
+  event's name, the mock tag and docker/host are not shown.
+- **Fleet.** No board (as under 100 columns). Each lane row has the attention chip in four
+  letters at most (`flag`, `budg`, `loop`, `efrt`, `hint`, `wway`, `stal`, `mate`; an approval
+  alone: `sub`, `conf`, `budg`, `box`; `send` while a flag is on its way), the lane, the challenge
+  (it takes the room left and is cut first), the state in five letters at most (`run`, `wait`,
+  `pause`, `take`; ended: `done`, `kill`, `stop`, `gave`) and the lane's cost with its markers
+  (`$.42+`, `…`). Model, turns, idle time and the last action are in the focus view.
+- **Why line.** Six rows under the list, none cut mid-answer: why the selected lane is flagged
+  (two rows, wrapped), then its numbered answers, one a row (three at most; with more, the last
+  row says how many more the lane's needs-you card has), then `x dismiss` for an alert about its
+  course and `enter open`.
+- **Key lines.** Fleet: `a yes  d no  1-9 answer  / cmd  ? help  q quit`. Focus: `esc fleet
+  1-9 0 answer  / cmd  ctrl+n next`. Every other key still works (`?` lists them): only the line
+  is shorter.
+- **Focus view.** One pane: the needs-you card on top (half the pane at most), the transcript
+  under it; the title has the lane, its state and its cost first, then the challenge. The files
+  pane is hidden, and `/diff` says so (widen the terminal to read a diff). The strip of other
+  lanes needing you is `N more need you (ctrl+n):` and their chips.
+- Panels lose their side margin and padding, and the gaps under the header and over the why
+  line go, so the lane list has the rows and columns.
+
+`flightdeck doctor` says when a terminal gets the compact layout, and what that layout leaves
+out. `flightdeck mock --screenshot DIR` saves it as `compact-56x40` (the fleet) and
+`compact-focus-56x40` (a lane).
 
 ## Mock scenarios
 
