@@ -63,7 +63,7 @@ from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
-from .client import ChatClient, ModelError, Reply
+from .client import ChatClient, ModelError, Reply, Usage
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
 from .facts import FirstLooks, Look
 from .l1stage import FLAG_STATUSES, L1Stage, result_line
@@ -622,18 +622,17 @@ class AgentDriver:
         if check:
             self.deck.hold_queue(f"{run.lane_id}'s call to {model} failed in a way every lane would ({check}): {error}")
         usage = error.usage
+        self._apart(run, model, usage)  # before the lane ends: then nothing more is reported
         tokens = usage.total if usage else 0
         cached = usage.cached_tokens if usage else 0
-        dollars = 0.0
-        if usage is not None:
-            dollars = call_cost(usage.cost, self.prices.get(model), usage.prompt_tokens, usage.completion_tokens,
-                                usage.cached_tokens)
+        dollars = self._priced(usage.model or model, usage) if usage is not None else 0.0
         if error.declined:
             action, gave_up = f"{model} declined", str(error)
         else:
             action, gave_up = f"model call to {model} failed", f"model API error: {error}"
         self._report(run, TurnReport(turn=False, action=action, output=str(error), tokens=tokens, cached_tokens=cached,
-                                     dollars=dollars, hints_taken=hints_taken, gave_up=gave_up))
+                                     dollars=dollars, hints_taken=hints_taken, gave_up=gave_up,
+                                     model=(usage.model or None) if usage else None))
 
     def _every_lane(self, error: ModelError, model: str) -> str:
         """What the player should check when every lane would fail as this call did, else "".
@@ -663,6 +662,8 @@ class AgentDriver:
         if not same:
             run.notes[:0] = notes
         usage = reply.usage if reply is not None else None
+        why = "a reply dropped: the lane was escalated or taken over while the model answered"
+        self._apart(run, model, usage, why)
         self._report(
             run,
             TurnReport(
@@ -671,8 +672,8 @@ class AgentDriver:
                 cached_tokens=usage.cached_tokens if usage else 0,
                 dollars=self._dollars(model, reply) if reply is not None else 0.0,
                 hints_taken=len(hints) if same else 0,
-                why="a reply dropped: the lane was escalated or taken over while the model answered",
-                model=model or None,
+                why=why,
+                model=(usage.model if usage else "") or model or None,
             ),
         )
 
@@ -745,6 +746,7 @@ class AgentDriver:
         checked, again = self._checked_first(run, flags)
         raised = [flag for flag in flags if flag not in checked and flag not in again]  # the deck has these now
         usage = reply.usage
+        self._apart(run, model, usage)
         self._report(
             run,
             TurnReport(
@@ -758,7 +760,7 @@ class AgentDriver:
                 flag=raised[0] if raised else None,
                 claimed=not raised or raised[0] not in run.planted,
                 hints_taken=hints_taken if same else 0,
-                model=model,
+                model=usage.model or model,  # the refusal fallback's model, when it took the turn
             ),
         )
         for flag in raised[1:]:  # more candidates in one reply: each is its own approval
@@ -868,8 +870,30 @@ class AgentDriver:
         return messages
 
     def _dollars(self, model: str, reply: Reply) -> float | None:
-        usage = reply.usage
-        return call_cost(usage.cost, self.prices.get(model), usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
+        """What the reply's own part of a call to `model` cost (its other parts: _apart)."""
+        return self._priced(reply.usage.model or model, reply.usage)
+
+    def _priced(self, model: str, usage: Usage) -> float | None:
+        """What `usage` cost, `model` having run it: the API's figure (or a fast call's), else at
+        the config's price for `model`, else None (not known)."""
+        return call_cost(usage.cost, self.prices.get(model), usage.prompt_tokens, usage.completion_tokens,
+                         usage.cached_tokens, usage.cache_write_tokens)
+
+    def _apart(self, run: _Run, model: str, usage: Usage | None, why: str = "") -> None:
+        """The parts of a call to `model` that ran on other models than its last attempt (Usage:
+        Anthropic's refusal fallback reports each attempt), each reported as spend of the model
+        that ran it, at that model's price, or not known when the config has none: every attempt
+        counts on the lane, and the post-flight puts it in that model's row. Each is an attempt
+        that declined, and the fallback ran the call on the next model."""
+        if usage is None:
+            return
+        last = usage.model or model
+        for part in usage.more:
+            ran = part.model or model
+            said = f"{ran} declined, so Anthropic's refusal fallback ran the call on {last}"
+            self._report(run, TurnReport(turn=False, tokens=part.total, cached_tokens=part.cached_tokens,
+                                         dollars=self._priced(ran, part), why=f"{said}; {why}" if why else said,
+                                         model=ran))
 
     def _session(self, lane_id: str, escalations: int) -> str:
         session = f"flightdeck-{self.run_id}-{lane_id}" + (f"-e{escalations}" if escalations else "")

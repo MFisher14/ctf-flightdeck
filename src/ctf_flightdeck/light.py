@@ -69,7 +69,7 @@ import httpx
 from .agent.prompts import FENCE_CLOSE, FENCE_OPEN, fenced, one
 from .agent.prompts import data as fence_safe
 from .config import DECIDER_THRESHOLD, DECIDER_URL, LIGHT_JOBS
-from .pricing import Price, call_cost
+from .pricing import Price
 from .text import untrusted
 
 if TYPE_CHECKING:
@@ -786,7 +786,11 @@ class ModelLight:
         return answer, reply
 
     def _cost(self, usage) -> float | None:
-        dollars = call_cost(usage.cost, self.price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
+        """The call's cost at the light price (cache writes at its cache_write rate). A part another
+        model ran has no price here: the light client asks for no refusal fallback, so none comes."""
+        from .agent.client import call_dollars
+
+        dollars = call_dollars(usage, self.model, lambda model: self.price if model == self.model else None)
         return 0.0 if dollars is None and self.free else dollars
 
 
