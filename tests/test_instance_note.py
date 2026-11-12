@@ -118,7 +118,31 @@ def test_unlisted_services_reads_connection_info_written_in_a_description():
             "socat - TCP:c.chal.example.test:31337. Docs: https://d.chal.example.test:8443/ and nc a.chal.example.test 1337")
     assert unlisted_services(text, ("tcp://b.chal.example.test:443", "https://d.chal.example.test:8443")) == (
         "tcp://a.chal.example.test:1337", "tcp://c.chal.example.test:31337")
+    assert unlisted_services("telnet e.chal.example.test 23 or openssl s_client -connect f.chal.example.test:4433", ()) == (
+        "tcp://e.chal.example.test:23", "tcp://f.chal.example.test:4433")
     assert unlisted_services("No server: everything is in the attached file.", ()) == ()
+
+
+@pytest.mark.parametrize("text", [
+    "The crash is at vuln.c:57; the binary is attached.",
+    "Hint: look at main.rs:120 and lib.rs:44.",
+    "Our logger writes to app.log:1 every minute. Find the leak.",
+    "The service runs at g.chal.example.test:1337.",  # a bare HOST:PORT: a description names a service with a command
+    "A local copy listens on localhost:31337 when you run ./server",
+    "Run ./server, then nc localhost 31337 to try it before the real one.",
+    "I tested it with nc 127.0.0.1 9000 before shipping, and with telnet [::1] 23.",
+])
+def test_a_line_of_source_a_bare_address_or_a_local_copy_is_no_service_to_note(text):
+    """In a description a bare HOST:PORT is often a line of source (vuln.c:57), and a loopback
+    address is a copy of the service the player runs on their own machine: neither is an
+    instance the board might be missing."""
+    assert unlisted_services(text, ()) == ()
+
+
+def test_a_lane_on_a_challenge_that_names_its_source_lines_and_a_local_copy_gets_no_note(tmp_path):
+    lane, _, _ = lane_run(tmp_path, "The crash is at vuln.c:57 (see main.rs:120). Run ./checker, then nc localhost "
+                                    "31337 to try your input on it.")
+    assert not any("the description names" in n for n in notes(lane))
 
 
 def test_in_a_container_with_no_network_the_note_says_the_lane_cannot_reach_it(tmp_path):

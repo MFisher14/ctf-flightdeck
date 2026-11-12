@@ -1093,12 +1093,13 @@ _HOST_PORT = re.compile(r"(?<![\w.:/@-])(?P<host>[a-z0-9_-]+(?:\.[a-z0-9_-]+)+|l
 _PORT = re.compile(r"[0-9]{1,5}")
 
 
-def services_in(text: str | None) -> tuple[str, ...]:
+def services_in(text: str | None, *, bare: bool = True) -> tuple[str, ...]:
     """The TCP services, tcp://host:port, that connection info like `nc HOST PORT`, `ncat
     --ssl HOST PORT`, `telnet HOST PORT`, `socat - TCP:HOST:PORT`, `openssl s_client -connect
     HOST:PORT` or a bare `HOST:PORT` names, in order, each once. Only what a board's
     challenge.json takes is kept (manual.tcp_service); a URL's host and port are an origin,
-    not a service (origins_in)."""
+    not a service (origins_in). `bare` False: a bare HOST:PORT is not read as one, for free
+    text such as a description, where `vuln.c:57` is a line of source."""
     if not text:
         return ()
     found: list[str] = []
@@ -1115,7 +1116,7 @@ def services_in(text: str | None) -> tuple[str, ...]:
             if not host.startswith("-") and _PORT.fullmatch(port) and (re.search(r"[a-z]", host, re.IGNORECASE) or host.count(".") == 3):
                 add(host, port)
                 break
-    for pattern in (_TCP_ADDRESS, _HOST_PORT):
+    for pattern in (_TCP_ADDRESS, _HOST_PORT) if bare else (_TCP_ADDRESS,):
         for match in pattern.finditer(plain):
             add(match.group("host"), match.group("port"))
     return tuple(found)

@@ -20,9 +20,9 @@ the deck once the light model has answered, claimed as before unless it called t
 stand-in, which then waits for the player. The lane goes on meanwhile; one that gives up
 meanwhile ends once the check is in.
 
-A TCP service the description names (`nc host port`) that the board does not list as the
-challenge's instance is said to the player at the lane's start (no model: the instance rule).
-Nothing is opened or added for it.
+A TCP service the description names with a command (`nc host port`), on another machine, that
+the board does not list as the challenge's instance is said to the player at the lane's start
+(no model: the instance rule). Nothing is opened or added for it.
 
 A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call, and then calls the
 model no more, also while the deck keeps it open for a flag that still waits (for the player,
@@ -40,6 +40,7 @@ did. A reply that arrives after either is dropped (its cost still counts).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import re
 import time
@@ -104,13 +105,28 @@ def web_origins(urls: Sequence[str]) -> tuple[str, ...]:
 
 
 def unlisted_services(description: str, urls: Sequence[str]) -> tuple[str, ...]:
-    """The TCP services (tcp://host:port) a challenge's description names, as connection info
-    does (`nc host port`, `HOST:PORT`: platform/ctfd.services_in), that are not among the
-    instances the board lists for it: the instance rule, no model."""
+    """The TCP services (tcp://host:port) a challenge's description names with a command, as
+    connection info does (`nc host port`, `ncat`, `telnet`, `socat - TCP:host:port`, `openssl
+    s_client -connect host:port`: platform/ctfd.services_in), that are not among the instances
+    the board lists for it: the instance rule, no model. A bare HOST:PORT is not one there
+    (`vuln.c:57` is a line of source), nor is a loopback address (a copy of the service the
+    player runs on their own machine)."""
     from ..platform.ctfd import services_in
 
     listed = set(urls)
-    return tuple(service for service in services_in(description) if service not in listed)
+    return tuple(service for service in services_in(description, bare=False)
+                 if service not in listed and not _loopback(service))
+
+
+def _loopback(service: str) -> bool:
+    """tcp://host:port names this machine: localhost, or a loopback address."""
+    host = service.removeprefix("tcp://").rpartition(":")[0].removeprefix("[").removesuffix("]")
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def instance_note(services: Sequence[str], workspace: Workspace) -> str:
