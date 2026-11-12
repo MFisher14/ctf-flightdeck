@@ -2465,10 +2465,9 @@ def test_a_docker_claude_lanes_own_settings_are_in_its_container_so_one_planted_
             await until(lambda: "$ echo big" in steps(lane), "the stronger model's step")
             own = docker.fs(lab.container(lane)) / "tmp" / "flightdeck-claude-home"
             starts = lab.fake.starts()
-            assert len(starts) == 2
+            assert [(s["settings"], s["claude_json"]) for s in starts] == [(None, None)] * 2  # the planted ones never read
             for start in starts:
-                assert start["config_dir"] == start["env"]["CLAUDE_CONFIG_DIR"] == str(own)
-                assert start["settings"] is None and start["claude_json"] is None
+                assert start["config_dir"] == start["env"].get("CLAUDE_CONFIG_DIR") == str(own)
                 assert start["env"]["HOME"] == str(home) and start["env"]["ANTHROPIC_API_KEY"] == KEY
             assert own.is_dir() and not own.is_symlink() and stat.S_IMODE(os.lstat(own).st_mode) == 0o700
             execs = docker.starts()
@@ -2598,8 +2597,9 @@ def test_a_docker_codex_lanes_own_configuration_is_in_its_container_kept_for_res
             assert "collector.invalid" in (work / ".flightdeck" / "home" / ".codex" / "config.toml").read_text()  # planted
             own = docker.fs(lab.container(lane)) / "tmp" / "flightdeck-codex-home"
             first, second = lab.fake.starts()
+            assert (first["config"], second["config"]) == (None, None)  # what was planted is never read
             for start in (first, second):
-                assert start["codex_home"] == start["env"]["CODEX_HOME"] == str(own) and start["config"] is None
+                assert start["codex_home"] == start["env"].get("CODEX_HOME") == str(own)
                 assert start["env"]["CODEX_API_KEY"] == CODEX_SECRET and start["argv"][start["argv"].index("-C") + 1] == str(work)
             assert second["argv"][-2:] == ["resume", lab.run(lane).thread]  # kept between starts: resume finds its thread
             assert list((own / "sessions").iterdir()) and stat.S_IMODE(os.lstat(own).st_mode) == 0o700
