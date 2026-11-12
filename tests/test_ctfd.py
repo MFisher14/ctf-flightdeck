@@ -498,10 +498,14 @@ def test_an_attempt_sends_the_ctfd_id_and_the_flag():
     assert sent.method == "POST" and sent.json == {"challenge_id": 2, "submission": "test{rsa}"}
 
 
-def test_attempt_statuses_come_back_as_ctfd_gives_them():
+@pytest.mark.parametrize("lockout, said", [
+    ("ratelimited", "Not accepted. You have 0 tries remaining"),  # CTFd 3.8.9: 403 "ratelimited"
+    ("incorrect", "You have 0 tries remaining"),  # an older CTFd: 403 "incorrect"
+])
+def test_attempt_statuses_come_back_as_ctfd_gives_them(lockout, said):
     board = sample() + [FakeChallenge(6, "Two Tries", max_attempts=2, flag="test{two}"),
                         FakeChallenge(7, "Two Parts", flag="test{both}", partial=("test{half}",))]
-    with FakeCTFd(board) as fake:
+    with FakeCTFd(board, lockout=lockout) as fake:
         def statuses(*tries):
             return [call(fake, lambda c, t=t: c.attempt(*t)) for t in tries]
 
@@ -509,14 +513,38 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them():
                        (6, "test{two}"), (7, "test{half}"))
         fake.paused = True
         got += statuses((2, "test{rsa}"))
-    # out of tries, CTFd answers "incorrect" with HTTP 403 before it checks the flag: here the right one
+    # out of tries, CTFd answers with HTTP 403 before it checks the flag (here the right one), whichever status it says
     assert [a.status for a in got] == ["incorrect", "correct", "already_solved", "incorrect", "incorrect", "locked_out",
                                        "partial", "paused"]
     assert got[3].message == "Incorrect. You have 1 try remaining." and got[4].message == "Incorrect. You have 0 tries remaining."
-    assert got[5] == Attempt("locked_out", "You have 0 tries remaining", tries_left=0) and 6 not in fake.solved
+    assert got[5] == Attempt("locked_out", said, tries_left=0) and 6 not in fake.solved
     # the tries left, as CTFd says them: on a wrong flag of a capped challenge, and none once locked out
     assert [a.tries_left for a in got] == [None, None, None, 1, 0, 0, None, None]
     assert got[7] == Attempt("paused", "Fake CTF is paused")
+
+
+@pytest.mark.parametrize("http, data, expected", [
+    # out of tries, whichever status CTFd says it with: the flag was not checked
+    (403, {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"}, ("locked_out", 0)),
+    (403, {"status": "incorrect", "message": "You have 0 tries remaining"}, ("locked_out", 0)),
+    # a rate limit that passes: too fast, another submission being processed, CTFd's timeout behaviour
+    (429, {"status": "ratelimited", "message": "You're submitting flags too fast. Try again in 41 seconds."}, ("ratelimited", None)),
+    (403, {"status": "ratelimited", "message": "Another submission is already being processed. Try again shortly."},
+     ("ratelimited", None)),
+    (429, {"status": "ratelimited", "message": "Not accepted. Try again in 287 seconds"}, ("ratelimited", None)),
+    # the tries left from every answer that says them; a 0 that a wait gives back is no count
+    (200, {"status": "incorrect", "message": "Incorrect. You have 0 tries remaining."}, ("incorrect", 0)),
+    (200, {"status": "incorrect", "message": "Wrong! You have 3 tries remaining."}, ("incorrect", 3)),
+    (200, {"status": "partial", "message": "Half of it. You have 1 try remaining."}, ("partial", 1)),
+    (200, {"status": "incorrect", "message": "Incorrect. You have 0 tries remaining. Try again in 300 seconds"},
+     ("incorrect", None)),
+], ids=["3.8.9 out of tries", "older out of tries", "too fast", "being processed", "timeout behaviour",
+        "the last try", "tries left", "partial with tries", "timeout's last try"])
+def test_an_answer_that_says_no_tries_remain_is_locked_out_and_the_tries_left_are_read_from_any_answer(http, data, expected):
+    with FakeCTFd(sample()) as fake:
+        fake.script("POST", "/api/v1/challenges/attempt", Reply(http, {"success": True, "data": data}))
+        got = call(fake, lambda c: c.attempt(1, "test{hello}"))
+    assert (got.status, got.tries_left) == expected and got.message == data["message"]
 
 
 def test_a_ratelimited_attempt_is_returned_as_such_and_never_retried():
@@ -1154,22 +1182,35 @@ def one_lane_deck(verify, challenge: Challenge, driver: Driver, **config) -> tup
     return deck, lane
 
 
-def test_a_flag_ctfd_did_not_check_for_want_of_tries_is_not_remembered_as_wrong():
-    # Out of tries, CTFd answers {"status": "incorrect"} with HTTP 403 before it looks at the flag.
-    with FakeCTFd([FakeChallenge(1, "One Try", category="Crypto", flag="test{right}", max_attempts=1)]) as fake:
+@pytest.mark.parametrize("lockout", ["ratelimited", "incorrect"], ids=["CTFd 3.8.9", "older CTFd"])
+def test_a_flag_ctfd_did_not_check_for_want_of_tries_is_not_remembered_as_wrong(lockout):
+    # Out of tries, CTFd answers with HTTP 403 before it looks at the flag: 3.8.9 says "ratelimited", an older CTFd
+    # "incorrect". The deck gets the verifier's verdict as a run's submitter gives it (run._Submits.answer).
+    handed: list[str] = []
+    with FakeCTFd([FakeChallenge(1, "One Try", category="Crypto", flag="test{right}", max_attempts=1)], lockout=lockout) as fake:
         with CTFdVerifier(fake.base_url, TOKEN, {"one-try": 1}) as verify:
             assert verify("one-try", "test{wrong}") is False  # the last real try: CTFd checked it
             assert verify.last_attempt == Attempt("incorrect", "Incorrect. You have 0 tries remaining.", tries_left=0)
             driver = Driver()
-            deck, lane = one_lane_deck(verify, Challenge(id="one-try", name="One Try", category="cry", points=100), driver)
+            config = DeckConfig(event="Fake CTF", flag_format=FLAG_FORMAT, models=("m",), submit="confirm")
+            deck = Deck(config, driver, Clock(), verify=lambda cid, flag: None,
+                        submitter=lambda lane_id, cid, flag: handed.append(flag))
+            deck.release([Challenge(id="one-try", name="One Try", category="cry", points=100, max_attempts=1)],
+                         [QueueEntry("one-try", "m")])
+            (lane,) = deck.lanes_on("one-try")
             deck.report(lane.id, TurnReport(action="solve", flag="test{right}"))
             deck.apply(iv.Approve(lane.id))
-            assert verify.last_attempt == Attempt("locked_out", "You have 0 tries remaining", tries_left=0)
-            assert "did not check the flag" in verify.last_error and "no tries left" in verify.last_error
-            assert "You have 0 tries remaining" in verify.last_error
-            assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM  # the player says how it went
+            assert handed == ["test{right}"]
+            verdict = verify.submit("one-try", "test{right}")
+            assert verdict.ok is None and verdict.attempt.status == "locked_out" and verdict.attempt.tries_left == 0
+            assert "did not check the flag" in verdict.error and "no tries left" in verdict.error
+            assert "You have 0 tries remaining" in verdict.error and "Wait" not in verdict.error  # no wait helps
+            deck.platform_verdict(lane.id, "test{right}", verdict.ok, verdict.error, tries_left=verdict.attempt.tries_left)
+            assert lane.pending is None and lane.finished  # nobody is asked to submit it by hand: CTFd checks none
+            assert deck.challenges["one-try"].status is ChallengeStatus.BLOCKED
             assert deck.not_flag("one-try", "test{right}") is None and driver.rejected_flags == []
             assert deck.summary(lane).not_flags == ()
+            assert not [e for e in deck.events if e.kind is EventKind.SUBMIT and e.data["flag"] == "test{right}"]
         assert len(fake.to("/api/v1/challenges/attempt")) == 2
 
 

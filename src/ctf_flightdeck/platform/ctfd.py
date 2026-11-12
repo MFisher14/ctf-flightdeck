@@ -19,9 +19,16 @@ CTFd's API (v1), as this module uses it:
   followed when a server does. A challenge locked behind another is listed as type "hidden",
   name "???": it is left out until a later pull finds it unlocked.
 - POST /api/v1/challenges/attempt puts a status in its data whatever the HTTP status: paused
-  comes as 403, ratelimited as 429 or 403. A challenge out of tries comes as "incorrect" with
-  403, sent before CTFd looks at the flag (the last real try is "incorrect" with 200): this
-  module calls that "locked_out", since the flag was not checked and may be right.
+  comes as 403, ratelimited as 429 or 403. A challenge out of tries comes as 403 before CTFd
+  looks at the flag: CTFd 3.8.9 says "ratelimited", "Not accepted. You have 0 tries
+  remaining"; an older CTFd said "incorrect", "You have 0 tries remaining" (the last real
+  try is "incorrect" with 200, "... You have 0 tries remaining."). This module calls either
+  403 "locked_out", with no tries left, since the flag was not checked and may be right. A
+  ratelimited answer that says no such thing is a rate limit (submitting too fast, another
+  submission of the account's being processed, or CTFd's timeout behaviour: "Not accepted.
+  Try again in N seconds", 429), which passes. The tries left are read from every answer
+  that says them ("You have N tries remaining"), but for a 0 that a wait gives back ("...
+  Try again in N seconds": CTFd's timeout behaviour).
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
   403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead. In teams
   mode /api/v1/users/me/solves says which of the team's solves are this user's own.
@@ -94,8 +101,9 @@ STATE_FILE = "ctfd.json"
 
 ATTEMPT_STATUSES = ("correct", "incorrect", "already_solved", "paused", "ratelimited", "partial", "locked_out")
 """CTFd's answers to a flag. "partial": part of a multi-part answer was right (CTFd 3.8+).
-"locked_out": CTFd's "incorrect" sent with HTTP 403, which means this account has no tries
-left on the challenge: CTFd did not check the flag."""
+"locked_out": CTFd's answer sent with HTTP 403 that says this account has no tries left on
+the challenge ("ratelimited" with "0 tries remaining" from CTFd 3.8.9, "incorrect" from an
+older CTFd): CTFd did not check the flag, and checks no more for it."""
 
 MAX_WAIT = 30.0  # seconds: the longest pause between tries, whatever Retry-After asks for
 CONNECT_TIMEOUT = 10.0  # seconds: a connection that takes longer is not coming
@@ -121,6 +129,7 @@ _URL = re.compile(r"https?://[^\s<>\"'`\\]+", re.IGNORECASE)
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _FILE_TOKEN = re.compile(r"([?&]token=)[^&#\s]*", re.IGNORECASE)
 _TRIES_LEFT = re.compile(r"\bYou have (\d{1,9}) (?:try|tries) remaining\b")  # what CTFd adds to a wrong flag's message
+_TRY_AGAIN = re.compile(r"\bTry again in \d", re.IGNORECASE)  # CTFd's timeout behaviour: the tries come back after a wait
 _SURROGATE = re.compile(r"[\ud800-\udfff]")  # in a str only as a lone half of a pair: valid JSON, unprintable
 _NOT_JSON = object()
 _LATE = object()  # an answer that was not all in by the deadline
@@ -150,9 +159,11 @@ class CTFdError(Exception):
 class Attempt:
     """CTFd's answer to a flag. `status` is one of ATTEMPT_STATUSES; `message` is CTFd's
     own words, made safe to show (one line, control characters visible, cut short).
-    `tries_left` is how many tries the account has left on the challenge when CTFd says:
-    on a wrong flag of a challenge with a limit ("... You have 2 tries remaining."), and 0
-    once there are none ("locked_out"); None when it did not say."""
+    `tries_left` is how many tries the account has left on the challenge when CTFd says, in
+    any answer: on a wrong flag of a challenge with a limit ("... You have 2 tries
+    remaining."), and 0 once there are none ("locked_out"); None when it did not say, or when
+    the 0 it said comes back after a wait (CTFd's timeout behaviour: "Try again in N
+    seconds")."""
 
     status: str  # correct | incorrect | already_solved | paused | ratelimited | partial | locked_out
     message: str
@@ -680,7 +691,8 @@ class CTFdVerifier:
 
     True for correct, False for incorrect, None when CTFd did not judge the flag (already
     solved, paused, rate-limited, out of tries, a partial answer) or the outcome is unknown
-    (no answer, an error): the deck then asks the player to submit by hand and confirm. The
+    (no answer, an error): the deck then asks the player to submit by hand and confirm, but
+    out of tries, where no flag can be checked by hand either (Deck.platform_verdict). The
     Verdict's `error` says why for the console; its `attempt` holds CTFd's answer when there
     was one, and its status tells a caller what to do next: "already_solved" means the
     account (the team) solved the challenge already, without that flag being checked, and
@@ -828,11 +840,23 @@ def _unjudged(attempt: Attempt) -> str:
     if attempt.status == "ratelimited":
         return f"CTFd rate-limited the submission and did not check the flag{said}. Wait, then submit it by hand"
     if attempt.status == "locked_out":
-        return (
-            f"CTFd did not check the flag: this account has no tries left on this challenge{said}, so CTFd checks "
-            "no more flags for it. The flag is not known to be wrong"
-        )
+        # no wait and no hand submit helps: the deck closes the challenge for the run (Deck.platform_verdict)
+        return f"CTFd did not check the flag: this account has no tries left on this challenge{said}"
     return f"CTFd says the flag is only part of the answer{said}; the challenge is not solved yet"
+
+
+def _tries_left(message: object) -> int | None:
+    """The tries left that CTFd's words say ("You have N tries remaining"), read from the whole
+    message before it is cut short (its count comes last); None when they say none, or when
+    the 0 they say comes back after a wait ("... Try again in N seconds": CTFd's timeout
+    behaviour, under which the tries return once the wait is over)."""
+    if not isinstance(message, str):
+        return None
+    counts = _TRIES_LEFT.findall(message)
+    if not counts:
+        return None
+    left = int(counts[-1])
+    return None if left == 0 and _TRY_AGAIN.search(message) else left
 
 
 def _attempt(site: _Site, answer: _Answer) -> Attempt:
@@ -844,15 +868,13 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
     if isinstance(status, str):
         message = data.get("message")
         said = site.short(message) if isinstance(message, str) else ""
-        if status == "incorrect" and answer.status == 403:
-            # CTFd's answer when the account has no tries left, sent before it checks the flag
+        left = _tries_left(message)
+        if answer.status == 403 and (status == "incorrect" or (status == "ratelimited" and left == 0)):
+            # the account has no tries left, said before CTFd looks at the flag: CTFd 3.8.9's
+            # "ratelimited" ("Not accepted. You have 0 tries remaining"), an older CTFd's "incorrect"
             return Attempt("locked_out", said, 0)
-        if status == "incorrect" and isinstance(message, str):
-            # read from CTFd's whole message, before it is cut short: its count comes last
-            counts = _TRIES_LEFT.findall(message)
-            return Attempt(status, said, int(counts[-1]) if counts else None)
         if status in ATTEMPT_STATUSES:
-            return Attempt(status, said)
+            return Attempt(status, said, left)
         if status == "authentication_required":
             raise site.error(
                 f"{where} with authentication_required: it did not take the token, and the flag was not submitted",

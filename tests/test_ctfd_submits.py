@@ -183,6 +183,48 @@ def test_a_wrong_flag_ctfd_answers_with_the_tries_left_switches_the_challenge_to
     assert wrong["detail"] == "Incorrect. You have 2 tries remaining."
 
 
+@pytest.mark.parametrize("lockout, said", [
+    ("ratelimited", "Not accepted. You have 0 tries remaining"),  # CTFd 3.8.9
+    ("incorrect", "You have 0 tries remaining"),  # an older CTFd
+], ids=["CTFd 3.8.9", "older CTFd"])
+def test_out_of_tries_on_ctfd_the_challenge_closes_for_the_run_and_its_unchecked_flag_is_never_called_wrong(
+    tmp_path, token, lockout, said
+):
+    # the rehearsal's Two Strikes: a wrong flag through flightdeck, the team's last try spent by a teammate on CTFd,
+    # then the lane's right flag, which CTFd answers out of tries without checking it
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=2)
+    model = Model({"Warmup": [submit("test{nope}"), submit("test{hello}")]})
+    with FakeCTFd([capped], lockout=lockout) as fake, FakeModelServer(responder=model) as server:
+        run = auto_run(tmp_path, fake, server)
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None and lane.pending.flag == "test{nope}", "the wrong flag")
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: lane.pending is not None and lane.pending.flag == "test{hello}", "the right flag")
+            assert lane.pending.detail == "submit test{hello} (1 try left of 2: the last one)"
+            fake.teammate_fails(1)  # the teammate spends the team's last try
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: lane.finished, "CTFd's answer")
+
+        play(run, body)
+    ch, lane = run.deck.challenges["warmup"], run.deck.lanes["L01"]
+    assert (ch.status, ch.tries_left, ch.note) == (ChallengeStatus.BLOCKED, 0, "out of tries: the platform checks no more flags for it")
+    assert (lane.state, lane.result) == (LaneState.STOPPED, "Warmup is out of tries: the platform checks no more flags for it")
+    assert [r.json["submission"] for r in fake.to(ATTEMPT)] == ["test{nope}", "test{hello}"]
+    assert submits(run) == [("test{nope}", False, "platform")]  # the right flag is never recorded wrong
+    assert run.deck.not_flag("warmup", "test{hello}") is None and run.deck.not_flag("warmup", "test{nope}") is not None
+    assert not [e for e in log(run) if e["kind"] == "pending" and e["data"]["kind"] == "confirm"]  # no hand submit asked
+    (warning,) = [e for e in log(run) if e["kind"] == "warning"]  # one, and no advice to wait
+    assert warning["text"] == (
+        "Warmup is out of tries: the platform checks no more flags for it, so flightdeck closed it for this run and "
+        "stopped L01. test{hello} is not known to be wrong: CTFd did not check the flag: this account has no tries "
+        f"left on this challenge (CTFd says: {said})"
+    )
+    assert warning["data"] == {"out_of_tries": True, "tries_left": 0, "flag": "test{hello}", "checked": False,
+                               "stopped": ["L01"], "before_run": False}
+
+
 def test_a_pull_carries_the_tries_ctfd_allows_onto_the_board(tmp_path):
     board = [FakeChallenge(1, "Capped", max_attempts=3), FakeChallenge(2, "Free"), FakeChallenge(3, "Unsaid", max_attempts=None)]
     with FakeCTFd(board) as fake:

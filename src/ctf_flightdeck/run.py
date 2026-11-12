@@ -933,8 +933,10 @@ class _Submits:
     CTFdVerifier.submit() in a thread (asyncio.to_thread: the call returns its Verdict and
     sets nothing the loop reads), then, back on the loop, does the run's bookkeeping and gives
     the deck the answer (Deck.platform_verdict), with the tries CTFd says are left. When CTFd
-    did not judge the flag (paused, rate-limited, out of tries, no answer, part of the answer)
-    its reason is a warning on the deck, which then asks the player to submit it by hand.
+    did not judge the flag (paused, rate-limited, no answer, part of the answer) its reason
+    is a warning on the deck, which then asks the player to submit it by hand. Out of tries
+    ("locked_out") is no such warning: the deck closes the challenge for the run and says so,
+    with CTFd's words, and asks nobody to submit the flag by hand (CTFd checks none).
     "already solved" (by the account, so by the team) is news, not a problem: the run takes
     CTFd's word for it, as for a solve its poll finds, without waiting for the player's
     answer about this flag. A flag still on its way when the run ends is named then
@@ -989,7 +991,8 @@ class _Submits:
             if self.solved is not None:
                 self.solved()
             return
-        if verdict.ok is None and verdict.error:
+        locked = attempt is not None and attempt.status == "locked_out"  # the deck says it: the challenge is out of tries
+        if verdict.ok is None and verdict.error and not locked:
             ch = deck.challenges.get(challenge_id)
             name = untrusted(ch.name if ch is not None else challenge_id, one_line=True)
             deck.warn(
