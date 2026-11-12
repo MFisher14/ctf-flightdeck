@@ -39,12 +39,13 @@ Rules the deck enforces:
   solve stops every lane on it;
 - an intervention is the player's, or autopilot's by rule (apply's `by`): the log, the lane's
   transcript and every text say which. Autopilot may escalate, fork, kill, redirect, pause,
-  queue and decline a lane's budget request, and nothing else: it never approves anything, and
+  queue and approve a lane's budget request (within the run budget), and nothing else: it
   never answers a flag or a live-box request;
 - while autopilot guards the run (Deck.autopilot, autopilot.py: from engaging it until the
   player takes the controls back), no flag goes to the platform on its own when it would
-  spend the last try the platform counts at a challenge, or may (the count is not known),
-  `submit_limited = "auto"` or not: it waits for the player, and a warning says so (D20);
+  spend the last try the platform counts at a challenge (the count is 1), `submit_limited =
+  "auto"` or not: it waits for the player, and a warning says so (D20). A count the platform
+  has not given is not taken for the last try;
 - once the run is closing (close(): the player quit), its lanes stop at once without ending
   (each driver is told to stop its lane before close() returns), nothing raises an alert,
   asks the player or starts a lane, and what a lane reports counts its spend only, as after
@@ -109,7 +110,7 @@ from .model import (
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
 BUDGET_RAISE = 1.5  # approving more budget multiplies the caps by this
 ACTORS = {Actor.PLAYER: "the player", Actor.AUTOPILOT: "autopilot"}  # who an intervention can be by, as texts say it
-BY_RULE = (Escalate, Fork, Kill, Redirect, Pause, Queue, Decline)  # what autopilot may do (a Decline: a budget request only)
+BY_RULE = (Escalate, Fork, Kill, Redirect, Pause, Queue, Approve)  # what autopilot may do (an Approve: a lane's budget request only)
 
 
 @dataclass
@@ -691,17 +692,22 @@ class Deck:
 
     def _not_by_rule(self, iv: Intervention) -> Outcome | None:
         """Why autopilot may not make this intervention (None: it may, or it is the player's).
-        It never approves, takes over or claims, and it declines only a lane's budget request:
-        a flag and a live-box request wait for the player."""
+        It never takes over, claims or declines, and the one approval it gives is more budget for
+        a lane that asks for it (the run budget is the limit that counts): a flag, a live-box
+        request and a lane whose spend has no price wait for the player."""
         if self._by is not Actor.AUTOPILOT:
             return None
         if not isinstance(iv, BY_RULE):
             return Outcome(False, f"Autopilot does not {type(iv).__name__.lower()}: that is the player's to do")
-        if isinstance(iv, Decline):
+        if isinstance(iv, Approve):
             lane = self.lanes.get(iv.lane)
             pending = lane.pending if lane is not None else None
-            if pending is not None and pending.kind is not PendingKind.BUDGET:
-                return Outcome(False, f"Autopilot declines only a lane's budget request, and {iv.lane} waits for: {pending.detail}")
+            if pending is None or pending.kind is not PendingKind.BUDGET:
+                what = f"{iv.lane} waits for: {pending.detail}" if pending is not None else f"{iv.lane} asks for no budget"
+                return Outcome(False, f"Autopilot approves only a lane's budget request, and {what}")
+            if lane.no_price() and lane.dollar_cap:
+                return Outcome(False, f"{iv.lane} spent something with no known cost: going on without its dollar cap is "
+                                      "the player's to say")
         return None
 
     @property
@@ -906,7 +912,7 @@ class Deck:
                 self._note(lane, f"approved more budget: {self._cap_text(lane)}", Actor.PLAYER)
                 return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
             return Outcome(False, f"{lane.id} is not waiting for an approval")
-        self._note(lane, f"approved: {pending.detail}", Actor.PLAYER)
+        self._note(lane, f"approved: {pending.detail}" + (" (by autopilot)" if self._by is Actor.AUTOPILOT else ""), self._by)
         ch = self.challenges[lane.challenge_id]
         if pending.kind is PendingKind.CONFIRM:
             assert pending.flag is not None
@@ -1582,13 +1588,14 @@ class Deck:
 
     def _keeps_last_try(self, ch: Challenge) -> bool:
         """Autopilot guards the run, and a flag for `ch` would spend the last try the platform
-        counts at it, or may: the count is 1, or is not known (D20: autopilot never spends a
-        challenge's last try, whatever submit_limited says). False for a challenge whose tries
-        the platform does not count, and whenever autopilot does not guard the run."""
+        counts at it: the count is 1 or less (D20: autopilot never spends a challenge's last
+        try, whatever submit_limited says). A count the platform has not given is not taken for
+        the last try (P21, the maintainer's call). False for a challenge whose tries the platform
+        does not count, and whenever autopilot does not guard the run."""
         pilot = self.autopilot
         if pilot is None or not pilot.guarding or not ch.limited:
             return False
-        return ch.tries_left is None or ch.tries_left <= 1
+        return ch.tries_left is not None and ch.tries_left <= 1
 
     def _last_try_waits(self, lane: Lane, ch: Challenge, flag: str) -> None:
         """Say, once per flag, that autopilot's last-try rule keeps `flag` for the player: a

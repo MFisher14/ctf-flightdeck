@@ -769,8 +769,9 @@ def test_unknown_scenario_fails_naming_every_choice():
 
 def test_the_autopilot_scenario_shows_the_chip_a_rule_firing_and_a_disengage(tmp_path):
     """`flightdeck mock -s autopilot`: autopilot is engaged from the start, kills the looping
-    lane and escalates the stalled one by rule, declines a lane's budget request, and
-    disengages at its run budget, holding the queue and pausing the lanes."""
+    lane and escalates the stalled one by rule, approves a lane's budget request (its cap
+    goes up and it carries on), and disengages at its run budget, holding the queue and
+    pausing the lanes."""
     from ctf_flightdeck.console import views
     from ctf_flightdeck.core.model import EventKind, LaneState
     from ctf_flightdeck.mock import scenarios, screenshots
@@ -785,9 +786,9 @@ def test_the_autopilot_scenario_shows_the_chip_a_rule_firing_and_a_disengage(tmp
         world.tick()
     by_rule = [(e.data["intervention"], e.lane) for e in deck.events
                if e.kind is EventKind.INTERVENTION and e.data.get("by") == "autopilot"]
-    assert [step for step in by_rule if step[0] != "pause"] == [("kill", "L01"), ("decline", "L03"), ("escalate", "L02")]
+    assert [step for step in by_rule if step[0] != "pause"] == [("kill", "L01"), ("approve", "L03"), ("escalate", "L02")]
     assert deck.lanes["L01"].result == "by autopilot; parked" and deck.lanes["L02"].model == "sonnet"
-    assert deck.lanes["L03"].result == "autopilot declined more budget"
+    assert deck.lanes["L03"].result == "" and deck.lanes["L03"].token_cap > 400_000  # given more, it carried on
     assert pilot.state.value == "disengaged" and pilot.reason.startswith("the run budget is reached: ")
     assert deck.held == f"autopilot disengaged: {pilot.reason}"
     assert all(lane.state is LaneState.PAUSED for lane in deck.active_lanes()) and deck.active_lanes()

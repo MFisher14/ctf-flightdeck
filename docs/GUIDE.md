@@ -556,8 +556,8 @@ as quitting does. Under the pull policy `auto`, new waves are pulled on the usua
 | A lane stalls | escalates it one rung; at the top rung, kills it and parks the challenge |
 | A lane loops | kills it and parks the challenge for the next round |
 | A lane ignores the hint, or goes the wrong way on a web challenge | redirects it to the alert's suggestion, once per lane |
-| A lane's effort is out of proportion to the challenge | kills it and parks the challenge for you |
-| A lane asks for more budget (its own cap) | declines: the lane stops, and the challenge goes round again |
+| A lane's effort is out of proportion to the challenge | kills it and parks the challenge for the next round |
+| A lane asks for more budget (its own cap) | approves it while the run budget has room: the lane's caps go up a step and it carries on (a lane whose spend has no price waits for you) |
 | The queue is dry and no lane runs | queues each unsolved challenge a lane gave up on, on the next model up, lowest points first, once per rung |
 
 Under `submit = "auto"` a flag a lane claims is submitted, as without autopilot. A lane that is
@@ -565,11 +565,11 @@ paused or taken over, or that waits for your answer, is left alone.
 
 **What it never does:**
 
-- approve anything for you: a flag that waits (every flag under `confirm`, a scraped one, one the
-  flag check holds), a live-box request, more budget;
+- answer a flag or a live-box request for you: a flag that waits (every flag under `confirm`, a
+  scraped one, one the flag check holds) waits for you;
 - guess a flag, or submit anything itself;
 - spend a challenge's last counted try, `submit_limited = "auto"` or not: that flag waits for you,
-  and the run goes on;
+  and the run goes on. A challenge whose count the platform has not given is not held back;
 - send a request a model declined on to another model or provider: Anthropic's server-side refusal
   fallback is off while autopilot has the run, and a challenge a model declined stays parked;
 - start a lane, or go on spending, past the run budget.

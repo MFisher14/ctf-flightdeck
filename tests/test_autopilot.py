@@ -168,18 +168,51 @@ def test_a_budget_that_is_no_budget_is_refused(bad):
 # ---------------------------------------------------------------------- the rules
 
 
-def test_a_lanes_budget_request_is_declined_and_its_challenge_goes_round_again_on_the_next_model():
-    world = engaged()
+def test_a_lanes_budget_request_is_approved_so_its_cap_creeps_up_and_it_stays_on_its_model():
+    """P20 (the maintainer's call): a lane at its own cap gets more, step by step; the run
+    budget, not the lane's cap, is what stops the spend."""
+    world = engaged(budget=Budget(tokens=100_000))
     world.release(ch("a"), token_cap=1000)
-    first = world.lane("a")
-    world.turn(first.id, tokens=1000)  # at its cap: it asks for more
-    assert first.pending is not None and first.pending.kind is PendingKind.BUDGET
+    lane = world.lane("a")
+    world.turn(lane.id, tokens=1000)  # at its cap: it asks for more
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET
     world.pilot.step()
-    assert (first.state, first.result) == (LaneState.STOPPED, "autopilot declined more budget")
-    second = world.lane("a")
-    assert (second.model, second.attempt) == ("mid", 2)
-    (decline,) = world.events(EventKind.INTERVENTION, intervention="decline")
-    assert decline.data["by"] == "autopilot"
+    assert lane.pending is None and lane.state is LaneState.RUNNING and lane.model == "small"
+    assert lane.token_cap > 1000
+    first_raise = lane.token_cap
+    world.turn(lane.id, tokens=first_raise - 1000)  # at its new cap: it asks again, and gets more again
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET
+    world.pilot.step()
+    assert lane.pending is None and lane.token_cap > first_raise
+    approvals = world.events(EventKind.INTERVENTION, intervention="approve")
+    assert len(approvals) == 2 and all(event.data["by"] == "autopilot" for event in approvals)
+    assert [action.text for action in lane.actions if action.text.startswith("approved:")][-1].endswith("(by autopilot)")
+    assert len([candidate for candidate in world.deck.lanes.values() if candidate.challenge_id == "a"]) == 1  # no restart
+
+
+def test_a_lanes_budget_request_waits_for_the_player_once_the_run_budget_is_spent():
+    world = engaged(budget=Budget(tokens=1500))
+    world.release(ch("a"), token_cap=1000)
+    lane = world.lane("a")
+    world.turn(lane.id, tokens=1000)  # at its cap, with 500 tokens of run budget left: approved
+    world.pilot.step()
+    assert lane.pending is None
+    world.turn(lane.id, tokens=600)  # past the run budget
+    world.pilot.step()
+    assert not world.events(EventKind.INTERVENTION, intervention="approve")[1:]  # only the first was approved
+    assert not world.pilot.engaged  # the budget disengaged it
+
+
+def test_a_lane_whose_spend_has_no_price_is_not_given_more_by_autopilot():
+    world = engaged(budget=Budget(tokens=100_000))
+    world.release(ch("a"), dollar_cap=1.0)
+    lane = world.lane("a")
+    world.turn(lane.id, tokens=100, dollars=None)  # no price: under a dollar cap it asks the player once (P7)
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET
+    refused = world.deck.apply(iv.Approve(lane.id), by=Actor.AUTOPILOT)
+    assert not refused.ok and "no known cost" in refused.message
+    world.pilot.step()
+    assert lane.pending is not None and lane.dollar_cap == 1.0  # it waits for the player
 
 
 def test_a_looping_lane_is_killed_and_parked_then_taken_up_a_rung():
@@ -196,15 +229,17 @@ def test_a_looping_lane_is_killed_and_parked_then_taken_up_a_rung():
     assert {lane.challenge_id: lane.model for lane in world.deck.active_lanes()} == {"a": "mid", "b": "mid"}
 
 
-def test_effort_out_of_proportion_kills_the_lane_and_its_challenge_does_not_go_round_again():
+def test_effort_out_of_proportion_kills_the_lane_and_its_challenge_goes_round_again_one_rung_up():
+    """P23 (the maintainer's call): an effort alert is handled as a loop is."""
     world = engaged()
     world.release(ch("a"))
     lane = world.lane("a")
     world.alert(lane.id, AlertKind.EFFORT)
     world.pilot.step()
     assert (lane.state, lane.result) == (LaneState.KILLED, "by autopilot; parked")
-    assert world.deck.active_lanes() == [] and not world.deck.queue
-    assert world.deck.challenges["a"].status is ChallengeStatus.PARKED
+    world.pilot.step()  # the queue is dry and no lane runs: the next round
+    (again,) = world.deck.active_lanes()
+    assert (again.challenge_id, again.model, again.attempt) == ("a", "mid", 2)
 
 
 def test_a_stalled_lane_escalates_one_rung_and_at_the_top_is_killed_and_parked():
@@ -307,10 +342,10 @@ def test_the_deck_refuses_autopilot_an_approval_and_any_answer_to_a_flag():
     lane = world.lane("a")
     world.deck.report(lane.id, TurnReport(flag="t{maybe}"))
     approve = world.deck.apply(iv.Approve(lane.id), by=Actor.AUTOPILOT)
-    assert (approve.ok, approve.message) == (False, "Autopilot does not approve: that is the player's to do")
+    assert (approve.ok, approve.message) == (
+        False, f"Autopilot approves only a lane's budget request, and {lane.id} waits for: submit t{{maybe}}")
     decline = world.deck.apply(iv.Decline(lane.id), by=Actor.AUTOPILOT)
-    assert (decline.ok, decline.message) == (
-        False, f"Autopilot declines only a lane's budget request, and {lane.id} waits for: submit t{{maybe}}")
+    assert (decline.ok, decline.message) == (False, "Autopilot does not decline: that is the player's to do")
     assert lane.pending is not None and lane.pending.flag == "t{maybe}" and world.deck.not_flag("a", "t{maybe}") is None
     for refused in (iv.TakeOver(lane.id), iv.Hint(lane.id, "x"), iv.Claim("a"), iv.Dismiss(lane.id)):
         assert not world.deck.apply(refused, by=Actor.AUTOPILOT).ok
@@ -548,7 +583,18 @@ def test_under_autopilot_a_counted_challenges_flag_goes_out_while_more_than_one_
     assert world.sent == [(lane.id, "a", "t{one}")] and lane.pending is None
 
 
-@pytest.mark.parametrize(("left", "tries"), [(1, "1 try left of 3: the last one"), (None, "3 tries in all, how many are left is not known yet")])
+def test_under_autopilot_a_flag_whose_try_count_is_not_known_goes_out_as_auto_submit_sends_it():
+    """P21 (the maintainer's call): only a known last try waits; a count the platform has not
+    given is not taken for one."""
+    world = spending()
+    world.pilot.engage()
+    lane = counted(world, "a", most=3, left=None)
+    world.deck.report(lane.id, TurnReport(flag="t{one}"))
+    assert world.sent == [(lane.id, "a", "t{one}")]
+    assert lane.pending is None and not world.warnings("last_try")
+
+
+@pytest.mark.parametrize(("left", "tries"), [(1, "1 try left of 3: the last one")])
 def test_under_autopilot_the_last_try_is_never_spent_even_with_submit_limited_auto(left, tries):
     world = spending()
     world.pilot.engage()

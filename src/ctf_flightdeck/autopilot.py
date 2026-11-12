@@ -20,11 +20,13 @@ Three states:
 The rules, each on what the deck shows (a lane that is paused or taken over, that waits for
 the player's answer to a flag or a live-box request, or whose flag is on its way to the
 platform is left alone: those are the player's):
-- a lane's budget request (its own cap) is declined: the lane stops, and its challenge goes
-  round again on the next model up. The run budget is the limit that counts;
+- a lane's budget request (its own cap) is approved, so the lane carries on with its caps
+  raised: small lane caps let spend creep up a step at a time, and the run budget is the
+  limit that counts (at the budget nothing more is approved, and the lanes are paused). A
+  lane whose spend has no price waits for the player;
 - a loop alert: the lane is killed and its challenge parked for the next round;
 - an effort alert (effort out of proportion to the challenge's worth): the lane is killed
-  and the challenge parked for the player; it does not go round again;
+  and its challenge parked for the next round, on the next model up, as a loop's is;
 - a stall alert: the lane is escalated one rung; when it cannot go up (the top rung), it is
   killed and parked;
 - an "ignores the hint" or "wrong direction" alert: the lane is redirected to the alert's own
@@ -63,7 +65,7 @@ from enum import StrEnum
 
 from . import fmt
 from .core.deck import Deck
-from .core.interventions import Decline, Escalate, Kill, Outcome, Pause, Queue, Redirect
+from .core.interventions import Approve, Escalate, Kill, Outcome, Pause, Queue, Redirect
 from .core.model import (
     FLAG_PENDING,
     ME,
@@ -360,8 +362,8 @@ class Autopilot:
                 continue
             pending = lane.pending
             if pending is not None and pending.kind is PendingKind.BUDGET:
-                if self._apply(Decline(lane.id)).ok:
-                    self._parked.add(lane.id)
+                if not self._over_budget():
+                    self._apply(Approve(lane.id))  # refused for spend with no price: then it waits for the player
                 continue
             if pending is not None or self.deck.sending(lane.id) or any(p.kind in FLAG_PENDING for p in lane.waiting):
                 continue  # it waits for the player, or for the platform's answer: never ended under them
@@ -370,7 +372,7 @@ class Autopilot:
                     self._parked.add(lane.id)
             elif lane.alert(AlertKind.EFFORT) is not None:
                 if self._apply(Kill(lane.id, requeue=False)).ok:
-                    self._left.add(lane.challenge_id)
+                    self._parked.add(lane.id)  # round again on the next model up (P23)
             elif lane.alert(AlertKind.STALL) is not None:
                 if not self._apply(Escalate(lane.id)).ok and self._apply(Kill(lane.id, requeue=False)).ok:
                     self._parked.add(lane.id)
@@ -457,7 +459,7 @@ def start_notes(policies, *, submit: str, spends_tries: bool, instance: str, bud
                    "handout's own stand-in and one the flagcheck holds wait for you")
         if spends_tries:
             out.append('autopilot: submit_limited = "auto" spends a challenge\'s counted tries, but never the last one: '
-                       "at the last try, or when the count is not known, the flag waits for you")
+                       "at the last try the platform counts, the flag waits for you")
         else:
             out.append("autopilot: a flag for a challenge whose tries the platform counts waits for you")
     else:
@@ -473,9 +475,10 @@ def start_notes(policies, *, submit: str, spends_tries: bool, instance: str, bud
     if start is not None or end is not None:
         when = [f"{name} {value.isoformat()}" for name, value in (("starts", start), ("ends", end)) if value is not None]
         out.append(f"autopilot: the event {' and '.join(when)}" + ("; the run stops at the end, as when you quit" if end is not None else ""))
-    out.append("autopilot: by rule it declines a lane's own budget request, kills a looping lane and one whose effort is "
-               "out of proportion, escalates a stalled lane one rung, redirects a lane that ignores the hint, and sends "
-               "unsolved challenges round again on the next model up; it approves nothing and submits nothing itself")
+    out.append("autopilot: by rule it approves a lane's own budget request while the run budget has room, kills a "
+               "looping lane and one whose effort is out of proportion, escalates a stalled lane one rung, redirects a lane "
+               "that ignores the hint, and sends unsolved challenges round again on the next model up; it answers no flag "
+               "and submits nothing itself")
     if agent is not None:
         out.append(f"autopilot: lanes are {agent}, whose CLI talks to its own API: flightdeck reroutes no refusal, and "
                    "cannot see or change what the CLI does with one")

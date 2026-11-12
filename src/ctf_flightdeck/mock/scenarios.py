@@ -1041,7 +1041,7 @@ def autopilot() -> Scenario:
     specs = (RATCHET_RUN, QUIET_LEDGER, DEEP_ARCHIVE, *(s for s in WAVE_GENERIC if s.id in ("bent-coin", "jukebox", "origami")))
     return Scenario(
         name="autopilot",
-        summary="Autopilot engaged: it kills a looping lane, escalates a stalled one, then disengages at its run budget",
+        summary="Autopilot engaged: it kills a looping lane, gives a lane more budget, escalates a stalled one, then disengages at its run budget",
         specs=specs,
         timeline=((0, ReleaseAt(_ids(specs), "Board")),),
         max_lanes=4,
@@ -1050,7 +1050,7 @@ def autopilot() -> Scenario:
     )
 
 
-AUTOPILOT_TOKENS = 650_000  # the autopilot scenario's run budget: reached a few minutes after its rules have fired
+AUTOPILOT_TOKENS = 720_000  # the autopilot scenario's run budget: reached a few minutes after its rules have fired
 
 SCENARIOS: dict[str, Callable[[], Scenario]] = {
     "default": default,
