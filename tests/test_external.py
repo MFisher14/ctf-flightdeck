@@ -26,7 +26,8 @@ import pytest
 
 from ctf_flightdeck import light as L
 from ctf_flightdeck import postflight
-from ctf_flightdeck.agent import external
+from ctf_flightdeck.agent import external, owntext
+from ctf_flightdeck.agent import workspace as agent_workspace
 from ctf_flightdeck.agent.client import ModelClient
 from ctf_flightdeck.agent.flaggate import FlagGate
 from ctf_flightdeck.agent.external import (
@@ -253,9 +254,10 @@ class Lab:
         self.token_cap = token_cap
         self.dollar_cap = dollar_cap
 
-    def release(self) -> None:
+    def release(self, description: str | None = None) -> None:
         ids = tuple(self.handouts)
-        challenges = [Challenge(cid, cid.title(), "misc", 50, solves=10, description=f"About {cid}.") for cid in ids]
+        challenges = [Challenge(cid, cid.title(), "misc", 50, solves=10, description=description or f"About {cid}.")
+                      for cid in ids]
         self.deck.release(challenges, [QueueEntry(cid, "small", token_cap=self.token_cap, dollar_cap=self.dollar_cap)
                                        for cid in ids])
 
@@ -1954,6 +1956,154 @@ def test_a_flag_search_that_runs_out_of_time_stops_and_says_so_on_the_lane(tmp_p
             (said,) = [n for n in notes(lane) if "flag search" in n]
             assert said.startswith("the flag search over one output stopped after 0.05 s, before its end")
             assert lane.pending is None  # what was not searched raised nothing
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- a claimed flag the start's handout search missed
+
+STAND_IN = "t{stand_in}"
+OWN_TEXT = "is written in the challenge's own text (its description or a handout file)"
+PAST = {
+    # a stand-in where the search of the handout at the lane's start (planted) does not look:
+    # (the handout's files, its limits as set for the test, the description)
+    "past-the-first-1-MB-of-a-file": ({"firmware.bin": b"\x7fELF" + b"\x00" * (1536 * 1024) + STAND_IN.encode()}, {}, ""),
+    "past-the-bytes-in-all": ({"a.bin": b"\x00" * 8192, "b.bin": b"\x00" + STAND_IN.encode() + b"\x00"},
+                              {"bytes": 4096}, ""),
+    "past-the-seconds": ({"flag.txt": STAND_IN + "\n"}, {"seconds": -1.0}, ""),
+    "past-the-files": ({"a1.txt": "x\n", "a2.txt": "x\n", "a3.txt": "x\n", "z.txt": STAND_IN + "\n"}, {"files": 3}, ""),
+    "past-the-folder-depth": ({"d1/d2/flag.txt": STAND_IN + "\n"}, {"depth": 2}, ""),
+    "past-the-characters-of-the-description": ({"note.txt": "x\n"}, {"chars": 64}, "x" * 100 + f" {STAND_IN}"),
+    "as-utf-16-in-a-binary": ({"app.exe": b"MZ\x00\x00" + STAND_IN.encode("utf-16-le") + b"\x00\x00"}, {}, ""),
+}
+
+
+def handout_of(tmp_path: Path, files: dict[str, bytes | str], name: str = "note") -> Path:
+    folder = tmp_path / "board" / name
+    folder.mkdir(parents=True)
+    for file, data in files.items():
+        (folder / file).parent.mkdir(parents=True, exist_ok=True)
+        (folder / file).write_bytes(data.encode() if isinstance(data, str) else data)
+    return folder
+
+
+def cut_short(monkeypatch, limits: dict[str, float]) -> None:
+    """The limits of the search at a lane's start (_handout_texts, _search_all, the snapshot), made small."""
+    targets = {"bytes": (external, "HANDOUT_BYTES"), "seconds": (external, "SCAN_SECONDS"), "chars": (external, "FLAG_SCAN"),
+               "files": (agent_workspace, "SNAPSHOT_FILES"), "depth": (agent_workspace, "SNAPSHOT_DEPTH")}
+    for name, value in limits.items():
+        monkeypatch.setattr(*targets[name], value)
+
+
+async def held_for_the_player(lab: Lab, lane, flag: str, tried: list[str]) -> None:
+    await until(lambda: lane.pending is not None, f"{flag} held for the player")
+    assert flags_waiting(lane) == [(PendingKind.SUBMIT, flag)] and tried == []
+
+
+@pytest.mark.parametrize("case", list(PAST))
+def test_under_auto_a_claimed_stand_in_the_start_s_search_missed_is_found_in_the_whole_handout_and_waits(
+        tmp_path, monkeypatch, case):
+    files, limits, description = PAST[case]
+    cut_short(monkeypatch, limits)
+    script = {"turns": [{"calls": [{"text": f"Found it.\nFLAG: {STAND_IN}"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or True,
+                  handouts={"note": handout_of(tmp_path, files)})
+        try:
+            lab.release(description=description or None)
+            lane = lab.lane()
+            await held_for_the_player(lab, lane, STAND_IN, tried)
+            assert STAND_IN not in lab.run(lane).planted  # the search at the lane's start did miss it
+            assert f"{STAND_IN} {OWN_TEXT}, so it waits for you, though the agent gave it as its flag" in notes(lane)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("where", ["claude-last-words", "codex"])
+def test_under_auto_a_stand_in_past_the_start_s_search_waits_however_the_agent_claims_it(tmp_path, where):
+    """claude's last words (its turn's result) and codex's message: each claim is looked for."""
+    files, _, _ = PAST["past-the-first-1-MB-of-a-file"]
+    if where == "codex":
+        script = {"turns": [{"items": [{"command": "true"}, {"message": f"Found it.\nFLAG: {STAND_IN}"}], "usage": [10, 0, 5]}]}
+    else:
+        script = {"turns": [{"calls": [{"tools": [bash("true")]}], "result": f"Found it.\nFLAG: {STAND_IN}"}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, kind="codex" if where == "codex" else "claude", submit="auto",
+                  verify=lambda cid, flag: tried.append(flag) or True, handouts={"note": handout_of(tmp_path, files)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await held_for_the_player(lab, lane, STAND_IN, tried)
+            assert STAND_IN not in lab.run(lane).planted
+            assert f"{STAND_IN} {OWN_TEXT}, so it waits for you, though the agent gave it as its flag" in notes(lane)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("how", ["a-file-it-cannot-read", "out-of-time"])
+def test_under_auto_a_claim_that_could_not_be_looked_for_in_all_of_the_handout_waits_and_the_lane_says_why(
+        tmp_path, monkeypatch, how):
+    folder = handout_of(tmp_path, {"note.txt": "x\n", "secret.bin": b"\x00\x01nothing here\x00"})
+    gate = tmp_path / "claim-now"
+    if how == "out-of-time":
+        monkeypatch.setattr(owntext, "SEARCH_SECONDS", -1.0)
+        gate.touch()
+        why = "the search took longer than -1 s"
+    else:
+        why = "secret.bin could not be opened: Permission denied"
+    script = {"turns": [{"calls": [{"until": str(gate), "text": "FLAG: t{elsewhere}"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or True,
+                  handouts={"note": folder})
+        try:
+            lab.release()
+            lane = lab.lane()
+            if how == "a-file-it-cannot-read":
+                await until(lambda: lab.fake.starts(), "the CLI started on its copy of the handout")
+                (folder / "secret.bin").chmod(0)  # the handout as it came: a file of it can no longer be read
+                try:
+                    (folder / "secret.bin").read_bytes()
+                except PermissionError:
+                    pass
+                else:
+                    pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
+                gate.touch()
+            await held_for_the_player(lab, lane, "t{elsewhere}", tried)
+            assert ("t{elsewhere} may be written in the challenge's own text: flightdeck could not search all of it "
+                    f"({why}), so it waits for you, though the agent gave it as its flag") in notes(lane)
+        finally:
+            (folder / "secret.bin").chmod(0o644)
+            await lab.finish()
+
+    run(main())
+
+
+def test_under_auto_a_claimed_flag_no_part_of_a_big_handout_holds_still_goes_out_at_once(tmp_path):
+    files = {"firmware.bin": b"\x7fELF" + b"\x00" * (2 * 1024 * 1024) + b"t{other}\x00", "note.txt": "x\n"}
+    script = {"turns": [{"calls": [{"text": "FLAG: t{real}"}, {"think": 30.0, "text": "waiting"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or flag == "t{real}",
+                  handouts={"note": handout_of(tmp_path, files)})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished, "the claimed flag submitted at once")
+            assert lane.state is LaneState.SOLVED and tried == ["t{real}"]
+            assert lab.run(lane).own["t{real}"] == owntext.Found()  # all of it searched: nowhere
         finally:
             await lab.finish()
 

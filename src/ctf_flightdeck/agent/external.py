@@ -11,7 +11,9 @@ only those at once. Every other match (a command's output: a handout's local-tes
 flag.txt, an example in a source comment; the agent's prose) waits for the player, since a
 wrong try can cost one of a challenge's limited attempts; under auto it is held until the
 agent's turn ends, so the agent can still claim it first. A claimed flag that the
-challenge's own text holds (its description, a handout file) waits for the player too.
+challenge's own text holds (its description, a handout file) waits for the player too:
+under auto, before such a flag would go out, it is looked for in the whole of that text
+(agent/owntext.py), and it waits when it is there or when the search could not cover it all.
 With the light model's flagcheck (agent/flaggate.py), a claimed flag that would go out
 without the player is checked first, in the background, as for AgentDriver's lanes: it
 reaches the deck once the light model has answered, and waits for the player if it called
@@ -134,7 +136,7 @@ from ..l1.runner import scan
 from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
-from . import prompts
+from . import owntext, prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .facts import FirstLooks, Look
@@ -620,7 +622,9 @@ def _search(text: str, pattern: re.Pattern[str], deadline: float, own: bool) -> 
 def _handout_texts(root: Path, snapshot: Snapshot) -> list[str]:
     """The text of every file in a snapshot of a workspace: a text file as kept in the
     snapshot, any other (a binary, a big file) read from root, at most HANDOUT_FILE_BYTES
-    of each and HANDOUT_BYTES in all, as Latin-1 (a flag in a binary's strings shows)."""
+    of each and HANDOUT_BYTES in all, as Latin-1 (a flag in a binary's strings shows).
+    Bounded, so it may miss a flag: one the agent claims is looked for in all of the
+    challenge's own text before it goes out on its own (_Run.vet)."""
     texts: list[str] = []
     budget = HANDOUT_BYTES
     for path, (size, _, _) in snapshot.files.items():
@@ -640,13 +644,14 @@ def _handout_texts(root: Path, snapshot: Snapshot) -> list[str]:
     return texts
 
 
-def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool]:
-    """The matches of the flag format in all of `texts`; False if the search stopped at `deadline`."""
+def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float) -> set[str]:
+    """The matches of the flag format in `texts` (the first FLAG_SCAN characters of each),
+    as far as the search got by `deadline`."""
     found: dict[str, None] = {}
     for text in texts:
         if not scan(text[:FLAG_SCAN], pattern, deadline, found):
-            return set(found), False
-    return set(found), True
+            break
+    return set(found)
 
 
 def _blocks(content: Any) -> list[dict]:
@@ -1033,6 +1038,7 @@ class _Run:
         self.flags: set[str] = set()  # candidates already raised by this lane
         self.held: dict[str, None] = {}  # submit auto: unclaimed candidates, in order, until the agent's turn ends
         self.planted: set[str] = set()  # flag-format matches in the challenge's own text: its description, the handout
+        self.own: dict[str, owntext.Found] = {}  # submit auto: each claimed flag, looked for in all of that text (vet)
         self.outputs = Outputs()  # its newest tool outputs: where a flag it claims was found (agent/flaggate.py)
         self.wake = asyncio.Event()
         self.idle = asyncio.Event()  # set while nothing of the agent's can run: no CLI, or it is frozen
@@ -1385,15 +1391,13 @@ class _Run:
         """Remember the flag-format matches in the challenge's own text, its description and
         the handout as it came (a snapshot before the CLI first starts): a decoy flag.txt,
         an example in a comment, a flag in a readme. Even when the agent gives one as its
-        answer, it waits for the player (see sort_out)."""
+        answer, it waits for the player (see sort_out). This search is bounded (part of a big
+        file, so much in all, SCAN_SECONDS), so what it misses is not said: under auto a
+        flag the agent claims is looked for in all of that text before it goes out (vet)."""
         texts = await asyncio.to_thread(_handout_texts, self.workspace.root, snapshot)
-        found, done = await asyncio.to_thread(
+        self.planted = await asyncio.to_thread(
             _search_all, [self.challenge.description, *texts], self.driver.flag_re, time.monotonic() + SCAN_SECONDS
         )
-        self.planted = found
-        if not done:
-            self.note(f"the search of the handout for flags stopped after {SCAN_SECONDS:g} s; a flag the agent gives "
-                      "that is written in the rest of it may be submitted without you under submit auto")
 
     async def changes(self) -> tuple[FileChange, ...]:
         """Files changed since the last look."""
@@ -1705,7 +1709,36 @@ class _Run:
 
     async def candidates(self, text: str, *, own: bool) -> tuple[list[tuple[str, bool]], int]:
         """The new candidates in `text`: see sort_out."""
-        return self.sort_out(*await self.search(text, own=own))
+        found, claims = await self.search(text, own=own)
+        await self.vet(claims)
+        return self.sort_out(found, claims)
+
+    async def vet(self, claims: Sequence[str]) -> None:
+        """Under auto, before a flag the agent claims goes out without the player: look for it
+        in all of the challenge's own text, its description and every file of the handout as
+        it came (agent/owntext.py: the start's search, planted, is bounded). What was found is
+        kept (own) for sort_out. Not for a flag already raised, already known to be the
+        challenge's, or known not to be the flag (the deck says why it does not ask)."""
+        if not self.auto():
+            return
+        for flag in dict.fromkeys(claims):
+            if flag in self.own or flag in self.flags or flag in self.planted:
+                continue
+            if self.driver.deck.not_flag(self.challenge.id, flag) is not None:
+                continue
+            handout = getattr(self.workspace, "handout", None)
+            self.own[flag] = await owntext.look_for(self.challenge.description, handout, flag)
+
+    def own_text(self, flag: str) -> str:
+        """Why the agent's claim of `flag` waits for the player, as the challenge's own text
+        holds it or may (planted; vet's search: owntext.Found.says); "" when nothing says so.
+        Under auto a flag vet never looked for waits too (a flightdeck bug, never a submit)."""
+        if flag in self.planted:
+            return owntext.OWN_TEXT
+        if not self.auto() or self.driver.deck.not_flag(self.challenge.id, flag) is not None:
+            return ""
+        found = self.own.get(flag)
+        return owntext.UNSEARCHED if found is None else found.says()
 
     def sort_out(self, found: Sequence[str], claims: Sequence[str]) -> tuple[list[tuple[str, bool]], int]:
         """(the candidates to raise now, as (flag, claimed); how many were new, held ones too).
@@ -1717,9 +1750,9 @@ class _Run:
         can cost one of a challenge's limited attempts. Under auto such a candidate is held
         until the agent's turn ends (release_held), so the agent can still claim it first
         and the lane does not stop for a decoy; under confirm every candidate waits for the
-        player at once anyway. A claimed flag that the challenge's own text holds (planted)
-        is not claimed: an agent quoting a handout's FLAG line must not submit it.
-        At most MAX_NEW_FLAGS new ones at a time, and held at once."""
+        player at once anyway. A claimed flag that the challenge's own text holds, or may
+        (own_text: planted, or what vet found), is not claimed: an agent quoting a handout's
+        FLAG line must not submit it. At most MAX_NEW_FLAGS new ones at a time, and held at once."""
         now: list[tuple[str, bool]] = []
         new = skipped = 0
         auto = self.auto()
@@ -1727,12 +1760,12 @@ class _Run:
             claimed = flag in claims
             if not flag or flag in self.flags or (not claimed and flag in self.held):
                 continue
-            if claimed and flag in self.planted:
+            why = self.own_text(flag) if claimed else ""
+            if why:
                 claimed = False
                 if flag in self.held:
                     continue
-                self.note(f"{flag} is written in the challenge's own text (its description or a handout file), so it "
-                          "waits for you, though the agent gave it as its flag")
+                self.note(f"{flag} {why}, so it waits for you, though the agent gave it as its flag")
             if new >= MAX_NEW_FLAGS or (auto and not claimed and len(self.held) >= MAX_NEW_FLAGS):
                 skipped += 1
                 continue
@@ -1808,8 +1841,9 @@ class _Run:
 
     def checked_first(self, flags: Sequence[tuple[str, bool]]) -> list[str]:
         """Of the candidates to raise now: the claimed ones the light model checks before they go
-        to the deck (agent/flaggate.py: going out without the player now). A planted flag is not
-        claimed here (sort_out), and sort_out raises a flag once, so none is under check yet."""
+        to the deck (agent/flaggate.py: going out without the player now). A flag the challenge's
+        own text holds, or may, is not claimed here (sort_out: own_text), and sort_out raises a
+        flag once, so none is under check yet."""
         gate = self.driver.flaggate
         if gate is None:
             return []
@@ -1990,6 +2024,7 @@ class _ClaudeRun(_Run):
         last: tuple[list[str], list[str]] = ([], [])
         if current and not failed and not interrupted:
             last = await self.search(text, own=True)  # its last words, should they hold a flag its text blocks did not
+            await self.vet(last[1])  # a flag they claim, looked for in the challenge's own text
             current = self.current(proc)  # stopped or escalated while they were searched
         # from here on nothing waits: the turn is accounted for before anything goes to claude
         total = _dollars(event.get("total_cost_usd"))
