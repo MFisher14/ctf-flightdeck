@@ -1609,6 +1609,41 @@ def test_a_cli_lane_that_gives_up_while_its_flag_is_under_check_takes_no_more_tu
     run(main())
 
 
+def test_escalating_a_claude_lane_that_gave_up_while_its_flag_is_under_check_starts_no_cli(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}]}, IDLE, IDLE, IDLE, RESUMED]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            deck = lab.deck
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.giving_up(lane.id), "the agent given up with its flag under check")
+                pid = lab.pid(lane)
+                assert deck.apply(iv.Escalate(lane.id)).ok
+                await until(lambda: gone(pid), "the small model's CLI ended")
+                await asyncio.sleep(1.0)
+                assert len(lab.fake.starts()) == 1  # no CLI on the stronger model: the lane gave up
+                release.set()
+                await until(lambda: deck.sent, "the flag sent once the check is in")
+                deck.platform_verdict(lane.id, "t{x}", False, "Incorrect")
+                assert lane.state is LaneState.GAVE_UP
+                await asyncio.sleep(0.5)
+                assert len(lab.fake.starts()) == 1 and not (lab.work(lane) / "resumed.txt").exists()
+            finally:
+                release.set()
+                await lab.finish()
+
+    run(main())
+
+
 def test_a_codex_lane_that_gives_up_while_its_flag_is_under_check_starts_no_more_codex(tmp_path):
     idle = {"items": [{"message": "Nothing more to try."}], "usage": [10, 0, 1]}
     script = {"turns": [{"items": [{"message": "Found it.\nFLAG: t{x}"}], "usage": [10, 0, 1]}, idle, idle, idle,

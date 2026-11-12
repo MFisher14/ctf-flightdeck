@@ -566,11 +566,21 @@ def test_a_lane_killed_while_its_flag_is_under_check_says_the_flag_was_not_submi
 
 
 def test_a_flag_the_lane_solved_with_needs_no_word_when_its_lane_ends(tmp_path):
-    """Verified at once (an answers file): the check says real, the flag solves the challenge,
-    the lane ends, and nothing is said to be lost."""
-    with FakeModelServer(responder=lambda r: text_reply("real")) as light, \
-            FakeModelServer(responder=keeps_working(tool_call_reply("submit_flag", {"flag": CANDIDATE}))) as lanes:
-        gate = FlagGate(model_light(light), timeout=5.0)
+    """Verified at once (an answers file): the check says real, the flag solves the challenge and
+    the lane ends; the other flag it still had under check is cancelled, and nothing is said to
+    be lost: the challenge is solved."""
+    release = threading.Event()
+
+    def per_flag(record):
+        user = next(m["content"] for m in record["json"]["messages"] if m["role"] == "user")
+        if "t{other}" in user:
+            release.wait(30)
+        return text_reply("real")
+
+    both = tool_call_reply("submit_flag", {"flag": "t{other}"}), tool_call_reply("submit_flag", {"flag": CANDIDATE})
+    with FakeModelServer(responder=per_flag) as light, \
+            FakeModelServer(list(both), responder=lambda r: time.sleep(0.05) or tool_call_reply("set_plan", {"plan": "on"})) as lanes:
+        gate = FlagGate(model_light(light, timeout=30.0), timeout=30.0)
 
         async def main():
             lab = Lab(tmp_path, lanes, gate=gate, verify=lambda cid, flag: flag == CANDIDATE)
@@ -578,10 +588,57 @@ def test_a_flag_the_lane_solved_with_needs_no_word_when_its_lane_ends(tmp_path):
                 lab.release()
                 lane = lab.lane()
                 await until(lambda: lane.finished, "the lane solved")
-                assert lane.state is LaneState.SOLVED and warnings(lab.deck) == []
+                assert lane.state is LaneState.SOLVED and not gate.checking(lane.id)
+                await asyncio.sleep(0.2)
+                assert warnings(lab.deck) == [] and [flag for _, _, flag in lab.sent] == [CANDIDATE]
             finally:
+                release.set()
                 await lab.finish()
             assert lab.driver.errors == []
+
+        asyncio.run(main())
+
+
+class Stuck:
+    """A light engine that never answers a flag check, or raises: what the check's own time
+    limit and its guard are for (a real engine answers its own failures)."""
+
+    engine, model, label = "openai", "stuck/m", "openai stuck/m"
+
+    def __init__(self, raises: bool = False) -> None:
+        self.raises = raises
+
+    def does(self, job: str) -> bool:
+        return job == L.FLAGCHECK
+
+    async def ask_choice(self, job, data, question, choices):
+        if self.raises:
+            raise RuntimeError("the engine broke")
+        await asyncio.sleep(3600)
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("raises, failure, said", [
+    (False, L.TIMEOUT, "took too long to check t{found_it}: no answer within 0.2 s"),
+    (True, L.ERROR, "failed to check t{found_it}: the check broke: RuntimeError: the engine broke"),
+])
+def test_an_engine_that_never_answers_or_breaks_lets_the_flag_go_as_today(tmp_path, raises, failure, said):
+    with FakeModelServer(responder=keeps_working(tool_call_reply("submit_flag", {"flag": CANDIDATE}))) as lanes:
+        gate = FlagGate(Stuck(raises), timeout=0.2)
+
+        async def main():
+            lab = Lab(tmp_path, lanes, gate=gate)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: lab.sent, "the flag sent", timeout=10)
+                assert lab.sent == [(lane.id, "note", CANDIDATE)] and lane.pending is None
+                (warning,) = warnings(lab.deck)
+                assert warning.data["failure"] == failure and said in warning.text
+            finally:
+                await lab.finish()
 
         asyncio.run(main())
 
@@ -673,6 +730,32 @@ def test_a_flag_the_deck_could_not_take_after_its_check_is_said_and_its_lane_sti
             await lab.client.aclose()
 
         asyncio.run(main())
+
+
+LIGHT_CONFIG = (
+    '[api]\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = ""\n[models]\nladder = ["fake/a"]\n'
+    '[light]\nengine = "openai"\nmodel = "light/m"\nbase_url = "http://127.0.0.1:9/v1"\nkey_env = ""\ntimeout = 5\n'
+)
+
+
+def test_the_check_takes_the_flagcheck_tables_engine_and_time_limit(tmp_path, monkeypatch):
+    from ctf_flightdeck.agent.flaggate import from_lights
+    from ctf_flightdeck.config import parse_config
+
+    monkeypatch.setenv("FLIGHTDECK_FLAGCHECK_TEST_KEY", "not-a-real-key-for-tests")
+    text = (LIGHT_CONFIG + 'jobs = ["judge", "flagcheck"]\n[light.flagcheck]\nengine = "anthropic"\n'
+            'model = "claude-haiku-5-5"\nkey_env = "FLIGHTDECK_FLAGCHECK_TEST_KEY"\ntimeout = 7\n')
+    config = parse_config(text, tmp_path / "config.toml")
+    lights = L.build_all(config)
+    gate, note = from_lights(config, lights)
+    assert gate is not None and gate.timeout == 7 and gate.light is lights.get("flagcheck")
+    assert gate.light.label == "anthropic claude-haiku-5-5" and lights.get("judge").label == "openai light/m"
+    assert note.startswith("light model: anthropic claude-haiku-5-5 checks each flag a lane claims before it goes out")
+    assert note.endswith("; no price for it in your config, so its calls are unpriced: a dollar-capped lane asks you once "
+                         "before it carries on without its cap")
+    asyncio.run(lights.aclose())
+    config = parse_config(LIGHT_CONFIG, tmp_path / "config.toml")  # jobs: the judge alone
+    assert from_lights(config, L.build_all(config)) == (None, "")
 
 
 def test_a_gate_needs_an_engine_that_checks_flags():
