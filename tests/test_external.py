@@ -2072,6 +2072,37 @@ def test_under_auto_a_claim_that_could_not_be_looked_for_in_all_of_the_handout_w
     run(main())
 
 
+def test_under_auto_a_claim_holding_a_lone_surrogate_waits_for_the_player_and_the_lane_goes_on(tmp_path):
+    """A CLI's events are JSON, and an unpaired escape in one (\\udcff: a Node CLI that cuts a
+    string inside an emoji writes one) is a lone surrogate in the claim, which has no UTF-8
+    bytes to look for in the handout: it waits for the player, the lane says why, and its CLI
+    goes on to its next turn."""
+    lone = "t{\udcff}"
+    # its next turn thinks while the test looks: the lane is still at work
+    script = {"turns": [{"calls": [{"text": f"Found it.\nFLAG: {lone}"}]}, {"calls": [{"think": 30.0}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or True,
+                  flag_format=r"t\{[^{}\s]{1,256}\}")
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None or lane.finished, "the claim held for the player", timeout=30)
+            assert lane.pending is not None, (lane.state, lane.result, notes(lane)[-3:])  # it waits for the player
+            await held_for_the_player(lab, lane, lone, tried)
+            assert (f"{lone} may be written in the challenge's own text: flightdeck could not search all of it (the flag "
+                    "holds a lone surrogate, which UTF-8 cannot write), so it waits for you, though the agent gave it "
+                    "as its flag") in notes(lane)
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: len(lab.fake.messages()) >= 2, "the CLI's next turn", timeout=30)
+            assert not lane.finished and tried == []
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_a_claim_never_looked_for_in_the_handout_never_goes_out_alone(tmp_path):
     """Every claim is looked for (vet) before it is sorted out; should one ever reach sort_out
     without it (a flightdeck bug), it waits for the player rather than go out unchecked."""

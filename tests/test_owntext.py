@@ -131,6 +131,38 @@ def test_a_handout_folder_that_is_gone_or_not_named_holds_the_flag(tmp_path):
     assert look(None, "t{x}") == Found(problem="this lane's workspace names no handout folder")
 
 
+LONE = "t{\udcff}"  # a lone surrogate: a model's unpaired JSON escape (\udcff), a byte decoded with surrogateescape
+
+
+def test_a_flag_utf8_cannot_write_waits_for_the_player_and_its_search_never_raises(tmp_path):
+    """A flag that holds a lone surrogate has no UTF-8 bytes, so no byte search can tell that
+    the handout does not hold it (this one does, as the byte surrogateescape stands for): it
+    waits, and says why. The description is text, and is searched as before."""
+    folder = board(tmp_path, {"a.bin": b"\x00t{\xff}\x00", "b.txt": "nothing\n"})
+    assert forms(LONE) == ()
+    held = Found(problem="the flag holds a lone surrogate, which UTF-8 cannot write")
+    assert look(folder, LONE) == held and held.held
+    assert asyncio.run(look_for("", folder, LONE)) == held
+    assert look(folder, LONE, description=f"Flags look like {LONE}.") == Found(where="the description")
+
+
+def test_a_search_that_breaks_holds_the_flag_and_names_the_error_made_safe_to_show(tmp_path, monkeypatch):
+    """An error no part of the search expects (not an OSError: a path no system call takes,
+    or a flightdeck bug) never reaches the lane: the flag waits, and the error is named."""
+    found = look(tmp_path / "hand\x00out")
+    assert found.held and found.problem.startswith("the search failed: ValueError: "), found
+    assert asyncio.run(look_for("", tmp_path / "hand\x00out", FLAG)) == found
+
+    def broken(root, parts):
+        raise RuntimeError("bad \x1b[2J\nnews " + "x" * 500)
+
+    monkeypatch.setattr(owntext, "open_dir", broken)
+    found = look(board(tmp_path, {"a.txt": "x\n"}))
+    assert found.held and found.problem.startswith("the search failed: RuntimeError: bad ^[[2J \u23ce news xxx")
+    assert "\x1b" not in found.problem and "\n" not in found.problem
+    assert len(found.problem) == len("the search failed: ") + owntext.SHOWN and found.problem.endswith("x…")
+
+
 def test_a_search_out_of_time_holds_the_flag(tmp_path):
     folder = board(tmp_path, {"a.txt": "nothing\n"})
     assert look(folder, "t{x}", seconds=-1.0) == Found(problem="the search took longer than -1 s")

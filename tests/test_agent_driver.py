@@ -657,6 +657,50 @@ def test_under_auto_a_submitted_flag_no_part_of_a_big_handout_holds_still_goes_o
     run(main())
 
 
+LONE = "t{\udcff}"  # a lone surrogate: an unpaired JSON escape (\udcff), a byte decoded with surrogateescape
+LONE_FORMAT = r"t\{[^{}\s]{1,256}\}"  # the deck's default kind of format: [^{}\s] takes a lone surrogate
+LONE_WAITS = (f"{LONE} may be written in the challenge's own text: flightdeck could not search all of it (the flag "
+              "holds a lone surrogate, which UTF-8 cannot write), so it waits for you, though ")
+
+
+def test_under_auto_a_submitted_flag_holding_a_lone_surrogate_waits_for_the_player_and_the_lane_goes_on(tmp_path):
+    """The model's arguments are JSON, and an unpaired escape in them (\\udcff) is a lone
+    surrogate in the flag, which has no UTF-8 bytes to look for in the handout: it waits for
+    the player, the lane and the model hear why, and the lane goes on (its search never ends it)."""
+    gate = threading.Event()
+
+    def responder(record):
+        if calls_to(server) == 1:
+            return tool_call_reply("submit_flag", {"flag": LONE})
+        gate.wait(30)  # the lane's next call, held while the test looks: the lane is still at work
+        return text_reply("ok")
+
+    server = FakeModelServer(responder=responder)
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), flag_format=LONE_FORMAT)
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: lane.pending is not None or lane.finished, "the flag held for the player", timeout=30)
+                assert lane.pending is not None, (lane.state, lane.result, lab.driver.errors)  # it waits for the player
+                assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, LONE, [])
+                assert LONE_WAITS + "the lane submitted it" in [a.text for a in lane.actions]
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+                await until(lambda: calls_to(server) >= 2, "the next model call", timeout=30)
+                assert ("Note from flightdeck: flightdeck could not make sure that t{\\xff} is not written in the "
+                        "challenge's own text, so it is not submitted on its own: it waits for the player."
+                        ) in last_user(server.requests[1])
+                assert not lane.finished and lab.driver.errors == [] and tried == []
+            finally:
+                gate.set()
+                await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_a_lane_killed_while_the_flag_it_submitted_is_looked_for_ends_at_once_and_the_search_stops(
         tmp_path, monkeypatch):
     started = threading.Event()
@@ -1605,7 +1649,7 @@ def test_no_take_over_before_the_workspace_is_ready(tmp_path):
 # ---------------------------------------------------------------------- the L1 stage
 
 
-def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str]):
+def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str], flag_format: str = FLAG):
     """A pack in tmp with one python engine per entry (routed to every challenge: the brief's
     description says "About ...")."""
     from ctf_flightdeck.agent.l1stage import L1Stage
@@ -1616,7 +1660,7 @@ def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str])
     pack = tmp_path / "pack"
     for name, body in engines.items():
         python_engine(pack, name, body, route='keywords = ["about"]')
-    return L1Stage(discover(pack), handouts, tmp_path / "runs", FLAG)
+    return L1Stage(discover(pack), handouts, tmp_path / "runs", flag_format)
 
 
 SOLVES = """
@@ -2023,6 +2067,51 @@ def test_under_auto_an_l1_engines_flag_that_could_not_be_looked_for_in_all_of_th
                         ) in [a.text for a in lane.actions]
             finally:
                 secret.chmod(0o644)
+                await lab.finish()
+
+    run(main())
+
+
+READS_A_BYTE = """
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        flag = (challenge_dir / "note.bin").read_bytes().decode("utf-8", "surrogateescape").strip()
+        return SolverResult("solved", flags=[flag], evidence=[Evidence("read", "note.bin says so", "note.bin", 0)])
+    """
+
+
+def test_under_auto_an_l1_engines_flag_holding_a_lone_surrogate_waits_for_the_player_and_the_lane_goes_on(tmp_path):
+    """An engine that reads a byte no UTF-8 holds (surrogateescape) gives a flag with a lone
+    surrogate, which a result's JSON keeps and which has no UTF-8 bytes to look for in the
+    handout: it waits for the player, the lane says why, and the lane goes on to its model."""
+    gate = threading.Event()
+
+    def responder(record):
+        gate.wait(30)  # the lane's first call, held while the test looks: the lane is still at work
+        return text_reply("still looking")
+
+    server = FakeModelServer(responder=responder)
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            handouts = {"note": handout_of(tmp_path, {"note.bin": b"t{\xff}\n"})}
+            stage = l1_stage(tmp_path, handouts, {"reader": READS_A_BYTE}, flag_format=LONE_FORMAT)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=recording(tried),
+                      flag_format=LONE_FORMAT)
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: lane.pending is not None or lane.finished, "the engine's flag held", timeout=30)
+                assert lane.pending is not None, (lane.state, lane.result, lab.driver.errors)  # it waits for the player
+                assert (lane.pending.flag, tried, server.requests) == (LONE, [], [])
+                assert LONE_WAITS + "your L1 engine reader gave it as its flag" in [a.text for a in lane.actions]
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+                await until(lambda: calls_to(server) >= 1, "the lane's first model call", timeout=30)
+                assert not lane.finished and lab.driver.errors == [] and tried == []
+            finally:
+                gate.set()
                 await lab.finish()
 
     run(main())

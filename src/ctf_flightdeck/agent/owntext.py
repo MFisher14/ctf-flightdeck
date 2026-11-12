@@ -21,7 +21,10 @@ hit means the challenge hands that flag out as it is.
 
 No limit lets a flag through. A search that cannot cover all of the handout (a file or a
 folder it cannot read, a handout folder that is gone, SEARCH_SECONDS run out) holds the flag
-for the player as a hit does, and says why.
+for the player as a hit does, and says why. So does a flag with no bytes to look for (a lone
+surrogate, which UTF-8 cannot write: a model's unpaired JSON escape, a byte an engine decoded
+with surrogateescape), and a search that fails in a way nothing here expects (a flightdeck
+bug): it never raises into the lane that gave the flag.
 """
 
 from __future__ import annotations
@@ -41,9 +44,10 @@ from .workspace import open_dir
 
 SEARCH_SECONDS = 60.0  # one flag's search of the whole handout; past this the flag waits for the player
 CHUNK = 1024 * 1024  # bytes of a file read at a time
-SHOWN = 120  # characters of a handout path in a note
+SHOWN = 120  # characters of a handout path, or of an error, in a note
 OWN_TEXT = "is written in the challenge's own text (its description or a handout file)"
 UNSEARCHED = "was never looked for in the challenge's own text"  # a flightdeck bug: such a flag waits
+NO_BYTES = "the flag holds a lone surrogate, which UTF-8 cannot write"  # so no byte search can clear it
 
 _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK  # NONBLOCK: opening a FIFO must not hang
 
@@ -72,8 +76,12 @@ class Found:
 
 def forms(flag: str) -> tuple[bytes, ...]:
     """The flag's text as a handout file may hold it: UTF-8, as JSON writes it (both ways
-    json.dumps does), Latin-1 when it can be, and UTF-16 (LE, BE). Each once."""
-    found = [flag.encode("utf-8")]
+    json.dumps does), Latin-1 when it can be, and UTF-16 (LE, BE). Each once. None for a flag
+    UTF-8 cannot write (a lone surrogate); what UTF-8 writes, every form below writes too."""
+    try:
+        found = [flag.encode("utf-8")]
+    except UnicodeEncodeError:
+        return ()
     found += [json.dumps(flag, ensure_ascii=escaped)[1:-1].encode("utf-8") for escaped in (True, False)]
     try:
         found.append(flag.encode("latin-1"))
@@ -116,15 +124,19 @@ async def look_for(description: str, handout: Path | None, flag: str, *, seconds
 
 def search(description: str, handout: Path | None, flag: str, *, seconds: float, stop: Stop | None = None) -> Found:
     """Where the challenge's own text holds `flag`: its description, else the first file of
-    the handout folder (in name order, depth first) that holds one of its forms(). Blocking."""
-    if flag in description:
-        return Found(where="the description")
-    if handout is None:
-        return Found(problem="this lane's workspace names no handout folder")
-    needles = forms(flag)
-    if not needles:
-        return Found(problem="the flag is empty")
-    return _folder(Path(handout), needles, time.monotonic() + seconds, seconds, stop)
+    the handout folder (in name order, depth first) that holds one of its forms(). Blocking.
+    It never raises: a search that fails in a way nothing here expects holds the flag, named."""
+    try:
+        if flag in description:  # an empty flag too: every description holds it
+            return Found(where="the description")
+        if handout is None:
+            return Found(problem="this lane's workspace names no handout folder")
+        needles = forms(flag)
+        if not needles:
+            return Found(problem=NO_BYTES)
+        return _folder(Path(handout), needles, time.monotonic() + seconds, seconds, stop)
+    except Exception as exc:  # a flightdeck bug: the flag waits for the player rather than end the lane
+        return Found(problem=f"the search failed: {_cut(untrusted(f'{type(exc).__name__}: {exc}', one_line=True))}")
 
 
 def _folder(root: Path, needles: tuple[bytes, ...], deadline: float, seconds: float, stop: Stop | None) -> Found:
@@ -214,3 +226,8 @@ def _shown(parts: tuple[str, ...]) -> str:
     """A handout path for a note: made safe, its end kept when it is long (the file's name)."""
     text = untrusted("/".join(parts), one_line=True)
     return text if len(text) <= SHOWN else "…" + text[1 - SHOWN:]
+
+
+def _cut(text: str) -> str:
+    """Safe text for a note, its start kept when it is long (an error's name and first words)."""
+    return text if len(text) <= SHOWN else text[:SHOWN - 1] + "…"
