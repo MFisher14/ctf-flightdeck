@@ -146,6 +146,7 @@ class FlagGate:
         self.light = light
         self.timeout = timeout
         self.warned: set[str] = set()  # the kinds of failure said to the player
+        self.problems: list[str] = []  # flightdeck bugs met handing a checked flag to the deck, for the run's end
         self._checks: dict[str, dict[str, asyncio.Task[None]]] = {}  # lane id -> flag -> its check
         self._gave_up: dict[str, str] = {}  # lane id -> why it gave up, held until its checks are in
 
@@ -188,11 +189,11 @@ class FlagGate:
         check), and hand it to the deck through `report` once the answer is in: claimed, as it
         would have gone at once, or, for a stand-in, not claimed, so that it waits for the
         player. Nothing waits for it."""
-        deck.note(lane_id, f"the light model ({self.light.label}) checks {flag} before it goes out without you")
         task = asyncio.get_running_loop().create_task(
             self._check(deck, lane_id, challenge, flag, where, report), name=f"flightdeck flagcheck {lane_id}"
         )
         self._checks.setdefault(lane_id, {})[flag] = task
+        deck.note(lane_id, f"the light model ({self.light.label}) checks {flag} before it goes out without you")
 
     async def ask(self, challenge: Challenge, flag: str, where: str, flag_format: str) -> Answer:
         """The light model's answer on `flag`: one flagcheck question, within the time limit,
@@ -230,25 +231,36 @@ class FlagGate:
         if checks is None or checks.get(flag) is not asyncio.current_task():
             return  # the lane ended meanwhile (stop): it said what became of the flag
         del checks[flag]  # no longer under check: from here the deck has it
+        try:
+            self._settle(deck, lane_id, flag, answer, report)
+        except Exception as exc:  # a flightdeck bug: the flag must not vanish quietly
+            problem = f"{lane_id}: flightdeck could not hand {flag} to the deck after its check: {type(exc).__name__}: {exc}"
+            self.problems.append(problem)
+            deck.warn(f"{problem}; it was not submitted: submit it by hand if you think it is the flag",
+                      challenge=challenge.id, data={"source": "light", "job": FLAGCHECK, "lane": lane_id, "error": problem})
+        finally:
+            if not checks and self._checks.get(lane_id) is checks:
+                del self._checks[lane_id]
+                why = self._gave_up.pop(lane_id, None)
+                if why is not None:  # the lane gave up meanwhile: now that its flag is with the deck, it may end
+                    report(TurnReport(turn=False, gave_up=why))
+
+    def _settle(self, deck: Deck, lane_id: str, flag: str, answer: Answer, report: Report) -> None:
+        """The check is in: what it spent, then the flag, to the deck through `report`."""
         lane = deck.lanes.get(lane_id)
-        if lane is not None and not lane.finished:
-            if answer.spent:
-                report(TurnReport(turn=False, tokens=answer.tokens, cached_tokens=answer.cached_tokens, dollars=answer.cost,
-                                  why=f"the flag check ({self.light.label})", model=self.light.model or None))
-            held = self.holds(answer)
-            if held:
-                deck.note(lane_id, f"the light model ({self.light.label}) calls {flag} a stand-in, not this challenge's "
-                                   "real flag (a format example, a local-testing value, a decoy, another challenge's flag "
-                                   "or the lane's own text coming back), so it waits for you instead of going out on its "
-                                   "own")
-            elif not answer.ok:
-                self._warn(deck, lane_id, lane.challenge_id, flag, answer)
-            report(TurnReport(turn=False, flag=flag, claimed=not held))
-        if not checks and self._checks.get(lane_id) is checks:
-            del self._checks[lane_id]
-            why = self._gave_up.pop(lane_id, None)
-            if why is not None:  # the lane gave up meanwhile: now that its flag is with the deck, it may end
-                report(TurnReport(turn=False, gave_up=why))
+        if lane is None or lane.finished:
+            return
+        if answer.spent:
+            report(TurnReport(turn=False, tokens=answer.tokens, cached_tokens=answer.cached_tokens, dollars=answer.cost,
+                              why=f"the flag check ({self.light.label})", model=self.light.model or None))
+        held = self.holds(answer)
+        if held:
+            deck.note(lane_id, f"the light model ({self.light.label}) calls {flag} a stand-in, not this challenge's real "
+                               "flag (a format example, a local-testing value, a decoy, another challenge's flag or the "
+                               "lane's own text coming back), so it waits for you instead of going out on its own")
+        elif not answer.ok:
+            self._warn(deck, lane_id, lane.challenge_id, flag, answer)
+        report(TurnReport(turn=False, flag=flag, claimed=not held))
 
     def _warn(self, deck: Deck, lane_id: str, challenge_id: str, flag: str, answer: Answer) -> None:
         if answer.failure in self.warned:
@@ -309,9 +321,12 @@ class FlagGate:
 
     async def aclose(self) -> list[str]:
         """The run ends: every check stops (before the run closes the light engine). Returns a
-        line for each flag still under check, never submitted, for the run's closing problems."""
-        lost = [f"{lane_id}: {flag} was still under the light model's check when the run ended; it was not submitted"
-                for lane_id, checks in self._checks.items() for flag in checks]
+        line for each flag still under check, never submitted, and for each problem met, for the
+        run's closing problems."""
+        lost = [*self.problems]
+        self.problems.clear()
+        lost += [f"{lane_id}: {flag} was still under the light model's check when the run ended; it was not submitted"
+                 for lane_id, checks in self._checks.items() for flag in checks]
         tasks = [task for checks in self._checks.values() for task in checks.values()]
         self._checks.clear()
         self._gave_up.clear()

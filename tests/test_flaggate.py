@@ -27,7 +27,8 @@ from ctf_flightdeck.agent.workspace import HostWorkspace
 from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
-from ctf_flightdeck.core.model import ActionKind, Challenge, DeckConfig, EventKind, LaneState, PendingKind
+from ctf_flightdeck.core.driver import TurnReport
+from ctf_flightdeck.core.model import ActionKind, Challenge, DeckConfig, EventKind, Lane, LaneState, PendingKind
 from ctf_flightdeck.localmodel import default_cases_path, load_cases
 from fake_decider import FakeDeciderServer, picks
 from fake_model import FakeModelServer, error_reply, text_reply, tool_call_reply
@@ -637,6 +638,41 @@ def test_a_check_never_sends_a_credential_the_lanes_output_held(tmp_path):
     assert answer.ok and answer.choice == "real"
     (user,) = light_users(light)
     assert "abcdefghijklmnop" not in user and "OPENROUTER_API_KEY=[redacted]" in user and "t{found_it}" in user
+
+
+def test_a_flag_the_deck_could_not_take_after_its_check_is_said_and_its_lane_still_ends(tmp_path):
+    """A flightdeck bug where the checked flag goes to the deck: the player hears the flag was not
+    submitted, the run's end names the problem, and a lane that gave up meanwhile still ends."""
+    with FakeModelServer(responder=lambda r: text_reply("real")) as light, FakeModelServer() as lanes:
+        gate = FlagGate(model_light(light), timeout=5.0)
+
+        async def main():
+            lab = Lab(tmp_path, lanes, gate=gate)
+            lab.deck.release([lab.challenge], [])  # on the board; the lane below is the gate's caller, not a driver's
+            lane = Lane(number=1, challenge_id="note", model="small")
+            lab.deck.lanes[lane.id] = lane
+            lane_id = lane.id
+            reported: list = []
+
+            def report(rep):
+                reported.append(rep)
+                if rep.flag is not None:
+                    raise RuntimeError("the deck broke")
+
+            gate.start(lab.deck, lane_id, lab.challenge, CANDIDATE, SUBMITTED_ONLY, report)
+            assert gate.defer_gave_up(lane_id, TurnReport(turn=False, gave_up="nothing more to try")) is None
+            await until(lambda: not gate.checking(lane_id), "the check in")
+            assert [r.gave_up for r in reported if r.gave_up] == ["nothing more to try"]  # the lane may end all the same
+            (warning,) = [e for e in lab.deck.events if e.kind is EventKind.WARNING and e.data.get("lane") == lane_id]
+            assert warning.text == (f"{lane_id}: flightdeck could not hand {CANDIDATE} to the deck after its check: "
+                                    "RuntimeError: the deck broke; it was not submitted: submit it by hand if you think "
+                                    "it is the flag")
+            assert await gate.aclose() == [f"{lane_id}: flightdeck could not hand {CANDIDATE} to the deck after its "
+                                           "check: RuntimeError: the deck broke"]
+            await gate.light.aclose()
+            await lab.client.aclose()
+
+        asyncio.run(main())
 
 
 def test_a_gate_needs_an_engine_that_checks_flags():
