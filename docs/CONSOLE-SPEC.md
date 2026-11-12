@@ -28,7 +28,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Header**: event, solo/team, docker/host, lanes used/limit, queue length, **how many lanes need
   you** ("all clear" when none), tokens, dollars (ending in `…` while a coding-agent CLI's turn is
   under way, whose cost comes when the turn ends; `+` when some spend has no price), event clock. While the queue is held (a model
-  API failure every lane would hit), "queue held" stands where "all clear" would be (or beside
+  API failure every lane would hit, or a model API that keeps failing: two lanes in a row ended on
+  a rate limit, a 5xx or an overload within a few minutes, with no reply in between), "queue held" stands where "all clear" would be (or beside
   "▲ N need you"), followed by why: never "all clear", since nothing starts until the player
   lifts the hold with `/unhold`.
 - **Board**: every challenge with category, points, solve count, status (new ·, queued …, running ▶,
@@ -54,7 +55,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   names no lane: it is the fleet's `A` (Interventions, below), in either view.
 - **Status line**: the latest intervention outcome or deck event (no toasts over the lanes); it
   clears after 12 seconds. When the queue is held it says so and how to lift it: "queue held until
-  you /unhold it: <why>".
+  you /unhold it: <why>". Lifting a hold that an API outage caused says how many of the challenges
+  it parked were queued again.
 
 ## Focus view (enter on a lane)
 
@@ -135,7 +137,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 |  | `/diff [file]` | Show the files the lane changed |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
-|  | `/unhold` | Lift the hold on the queue once its cause is fixed: queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
+|  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help: every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks |
 | `q`, `ctrl+q` | `/quit` | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
@@ -202,10 +204,16 @@ intervention is refused.
 
 During a run, closing the terminal (or an SSH drop) and a SIGTERM stop the run the way quitting
 does, without asking: every lane stops and every workspace closes, and `play` exits with 128 plus
-the signal's number. On the way out `play` prints the scorecard (when the board has answers), the
+the signal's number. On the way out `play` prints the scorecard (when the board has answers; otherwise
+one line with the tokens and dollars the run spent, "at least" when some spend had no price), the
 run folder and the commands that read it, and names any flag still waiting for your approval
 (never submitted) and any flag still on its way to the platform (not known to have been
 submitted).
+
+If the console itself fails (an error in it that nothing handles), the run is stopped the same
+way before `play` exits: every lane stops, every workspace closes and your live-box holds leave the
+team folder. `play` prints the same lines on the way out, says that the console failed, and exits
+with status 1.
 
 ## Narrow terminals
 

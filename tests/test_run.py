@@ -115,25 +115,22 @@ def test_play_names_a_flag_left_waiting_for_approval_when_the_player_quits(tmp_p
     from ctf_flightdeck.console.app import FlightdeckApp
     from ctf_flightdeck.console.screens import QuitPrompt
 
-    def player(self, *args, **kwargs) -> None:  # the console, headless, with a player who quits
-        async def main() -> None:
-            async with self.run_test(size=(160, 46)) as pilot:
-                for _ in range(500):
-                    if any(lane.pending is not None for lane in self.deck.lanes.values()):
-                        break
-                    await pilot.pause(0.01)
-                await pilot.press("q")
-                await pilot.pause()
-                assert isinstance(self.screen, QuitPrompt)
-                await pilot.press("y")
-                for _ in range(200):
-                    if not self.is_running:
-                        break
-                    await pilot.pause(0.01)
+    async def player(self, *args, **kwargs) -> None:  # the console, headless, with a player who quits
+        async with self.run_test(size=(160, 46)) as pilot:
+            for _ in range(500):
+                if any(lane.pending is not None for lane in self.deck.lanes.values()):
+                    break
+                await pilot.pause(0.01)
+            await pilot.press("q")
+            await pilot.pause()
+            assert isinstance(self.screen, QuitPrompt)
+            await pilot.press("y")
+            for _ in range(200):
+                if not self.is_running:
+                    break
+                await pilot.pause(0.01)
 
-        asyncio.run(main())
-
-    monkeypatch.setattr(FlightdeckApp, "run", player)
+    monkeypatch.setattr(FlightdeckApp, "run_async", player)  # what play awaits on its own loop
     root = board(tmp_path)
     spec = root / "note" / "challenge.json"
     spec.write_text(json.dumps({**json.loads(spec.read_text()), "name": "Note\x1b]0;pwned\x07"}))  # board text is untrusted
@@ -147,21 +144,20 @@ def test_play_names_a_flag_left_waiting_for_approval_when_the_player_quits(tmp_p
 
 def headless(monkeypatch, player) -> None:
     """`play` opens the console headless (160x46) and `player(app, pilot)` plays it; then the
-    console is given time to quit, as `q` with no lane open does."""
+    console is given time to quit, as `q` with no lane open does. It stands in for the
+    console's run_async, which play awaits on its own loop; what the console raises (an
+    unhandled exception in the app, or the player's own) comes out of it."""
     from ctf_flightdeck.console.app import FlightdeckApp
 
-    def run(self, *args, **kwargs) -> None:
-        async def main() -> None:
-            async with self.run_test(size=(160, 46)) as pilot:
-                await player(self, pilot)
-                for _ in range(400):
-                    if not self.is_running:
-                        break
-                    await pilot.pause(0.01)
+    async def run_async(self, *args, **kwargs) -> None:
+        async with self.run_test(size=(160, 46)) as pilot:
+            await player(self, pilot)
+            for _ in range(400):
+                if not self.is_running:
+                    break
+                await pilot.pause(0.01)
 
-        asyncio.run(main())
-
-    monkeypatch.setattr(FlightdeckApp, "run", run)
+    monkeypatch.setattr(FlightdeckApp, "run_async", run_async)
 
 
 async def until(pilot, cond, what: str, seconds: float = 20.0) -> None:
@@ -222,7 +218,7 @@ def test_play_ends_with_the_run_folder_and_the_commands_that_read_it_and_each_wo
     folder, commands = next_steps(result.stdout)
     assert folder.parent == tmp_path / "runs" and (folder / "events.jsonl").is_file()
     assert result.stdout.index("solved 1 of 1") < result.stdout.index("run log: ")  # the scorecard comes first
-    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "score")]
+    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "share", "score")]
     for command in commands:
         ran = CliRunner().invoke(cli.app, shlex.split(command)[1:])
         assert ran.exit_code == 0, (command, ran.output)
@@ -241,7 +237,7 @@ def test_play_offers_score_only_for_a_board_with_answers_and_finds_an_answers_fi
         given = CliRunner().invoke(cli.app, ["play", str(root), "--config", cfg, "--submit", "auto", "--answers", str(answers)])
     assert plain.exit_code == 0 and given.exit_code == 0, plain.output + given.output
     _, commands = next_steps(plain.stdout)
-    assert [command.split()[1] for command in commands] == ["report", "writeups", "gaps"]  # nothing to score against
+    assert [command.split()[1] for command in commands] == ["report", "writeups", "gaps", "share"]  # nothing to score against
     folder, commands = next_steps(given.stdout)
     assert commands[-1] == f"flightdeck score {folder}"
     scored = CliRunner().invoke(cli.app, shlex.split(commands[-1])[1:])
@@ -318,11 +314,146 @@ def test_practice_ends_as_play_does_with_a_held_queue_the_run_folder_and_the_com
     out = result.output
     assert out.index("Practice Range: solved 0 of 14") < out.index(held) < out.index("run log: ")
     folder, commands = next_steps(result.stdout)
-    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "score")]
+    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "share", "score")]
     for command in commands:
         ran = CliRunner().invoke(cli.app, shlex.split(command)[1:])
         assert ran.exit_code == 0, (command, ran.output)
     assert "Flags checked against answers.sha256.json" in ran.stdout  # score, last: against the set's answers
+
+
+def _alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def test_a_console_that_fails_mid_run_stops_the_run_as_quitting_does_and_play_still_prints_its_exit_lines(tmp_path, monkeypatch):
+    """Team mode, one lane on a challenge with a live instance, its shell command running for
+    minutes; then the console raises (an unhandled exception in the app, not a quit). play
+    shuts the run down all the same: the deck is closed, the lane's command is stopped with
+    its workspace, our live-box hold leaves the team folder, the run log ends, and the exit
+    lines are printed before the console's failure comes out."""
+    from ctf_flightdeck.core import interventions as iv
+    from ctf_flightdeck.team import TeamChannel, init_folder
+
+    shared = init_folder(tmp_path / "team")
+    teammate = TeamChannel(shared, "bravo")
+    seen: dict = {}
+
+    def pid_file() -> Path | None:
+        found = sorted((tmp_path / "runs").glob("*/**/lane-pid.txt"))
+        return found[0] if found and found[0].read_text().strip() else None
+
+    def boom() -> None:
+        raise RuntimeError("the console broke")
+
+    async def player(app, pilot) -> None:
+        seen["deck"] = app.deck
+        await until(pilot, lambda: any(lane.pending is not None for lane in app.deck.lanes.values()), "the live-box question")
+        (lane,) = app.deck.lanes.values()
+        assert app.deck.apply(iv.Approve(lane.id)).ok  # the lane may reach the instance: our hold goes in the team folder
+        await until(pilot, lambda: pid_file() is not None, "the lane's command")
+        seen["pgid"] = int(pid_file().read_text())  # the command's shell leads its own process group
+        await until(pilot, lambda: teammate.current("boxes", "note") is not None, "our live-box hold")
+        assert teammate.current("boxes", "note").who == "alpha" and _alive(seen["pgid"]) and not app.deck.closing
+        app.call_later(boom)  # no quit: the app's message loop gets an exception nobody handles
+        await until(pilot, lambda: not app.is_running, "the console to fail")
+        assert not app.deck.closing and _alive(seen["pgid"])  # the console went down without stopping anything
+
+    headless(monkeypatch, player)
+    quiet = "echo $$ > lane-pid.txt; sleep 240"
+    root = board(tmp_path, urls=("http://127.0.0.1:9",))
+    profile = tmp_path / "event.toml"  # a folder board whose rules make each lane ask before it reaches a live instance
+    profile.write_text(
+        f"[event]\nname = \"Test Event\"\nplatform = \"manual\"\nboard = '{root}'\n"
+        '[rules]\nai_allowed = true\nplatform_automation = true\nlive_targets = "confirm"\n'
+    )
+    try:
+        with FakeModelServer([tool_call_reply("shell", {"command": quiet, "timeout_seconds": 300})]) as server:
+            result = CliRunner().invoke(cli.app, [
+                "play", "--event", str(profile), "--config", str(config(tmp_path, server.base_url)),
+                "--team-dir", str(shared), "--handle", "alpha",
+            ])
+        assert isinstance(result.exception, RuntimeError) and str(result.exception) == "the console broke", result.output
+        assert seen["deck"].closing  # Deck.close: the first thing the run's shutdown does
+        assert not _alive(seen["pgid"]), "the lane's command outlived play"
+        assert teammate.current("boxes", "note") is None  # freed, as when you quit
+        folder, commands = next_steps(result.stdout)  # the exit lines: run log, run folder, next
+        assert commands[0] == f"flightdeck report {folder}" and "Test Event: solved 0 of 1" in result.stdout
+        kinds = [json.loads(line)["kind"] for line in (folder / "events.jsonl").read_text().splitlines()]
+        assert kinds[-1] == "run-end"
+        (lane,) = seen["deck"].lanes.values()
+        assert lane.state is LaneState.RUNNING  # stopped, not ended: as quitting leaves it
+    finally:
+        if "pgid" in seen and _alive(seen["pgid"]):
+            os.killpg(seen["pgid"], signal.SIGKILL)
+
+
+def test_play_exits_1_and_says_the_console_failed_when_textual_ends_on_an_exception_it_does_not_raise(tmp_path, monkeypatch):
+    """Textual's own run_async (headless here) does not raise what broke the app: it prints
+    it and returns. play then shuts the run down, prints its exit lines, says the console
+    failed and exits 1, not 0 as after a quit."""
+    from ctf_flightdeck.console.app import FlightdeckApp
+
+    seen: dict = {}
+    real = FlightdeckApp.run_async
+
+    def boom() -> None:
+        raise RuntimeError("the console broke")
+
+    async def pilot_breaks_it(pilot) -> None:
+        app = pilot.app
+        seen["deck"] = app.deck
+        await until(pilot, lambda: app.deck.lanes, "the first lane")
+        assert not app.deck.closing
+        app.call_later(boom)
+
+    async def run_async(self, *args, **kwargs):
+        return await real(self, headless=True, size=(160, 46), auto_pilot=pilot_breaks_it)
+
+    monkeypatch.setattr(FlightdeckApp, "run_async", run_async)
+    with FakeModelServer([tool_call_reply("shell", {"command": "sleep 240", "timeout_seconds": 300})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url))])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert seen["deck"].closing
+    assert result.stderr.splitlines()[-1] == "flightdeck: the console failed: the run's lanes were stopped as when you quit"
+    folder, _ = next_steps(result.stdout)
+    assert json.loads((folder / "events.jsonl").read_text().splitlines()[-1])["kind"] == "run-end"
+
+
+def test_shutting_a_run_down_twice_stops_it_once(tmp_path):
+    """The console's quit and play's way out both shut the run down: the second only waits for
+    the first, so nothing is stopped, closed or said twice."""
+    with FakeModelServer([tool_call_reply("shell", {"command": "sleep 240", "timeout_seconds": 300})]) as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+        calls = []
+        stop_lanes = run.driver.shutdown
+
+        async def counted() -> None:
+            calls.append("lanes")
+            await stop_lanes()
+            await asyncio.sleep(0.05)  # the first shutdown is still under way when the second is asked for
+
+        run.driver.shutdown = counted
+
+        async def main() -> None:
+            run.release()
+            await wait_for(lambda: server.chats(), "the lane's model call")
+            first =asyncio.ensure_future(run.shutdown())
+            await wait_for(lambda: calls, "the first shutdown to reach the lanes")
+            assert not first.done()
+            await run.shutdown()  # joins the one under way
+            assert first.done() and first.exception() is None
+            await run.shutdown()  # and one already over
+            assert calls == ["lanes"]
+
+        asyncio.run(main())
+        run.close()
+    assert run.errors == []
 
 
 def test_the_event_log_and_the_lane_workspaces_go_in_a_new_folder_per_run(tmp_path):
@@ -1081,6 +1212,76 @@ def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_c
     assert result.exit_code == 0, result.output
     assert "Spent 110 tokens · $0.50" in result.stdout.splitlines(), result.stdout
     assert "Test Event: solved 0 of 1" in result.stdout and result.stdout.index("Spent 110") < result.stdout.index("run log: ")
+
+
+def spend_line(stdout: str) -> str:
+    """The one line play prints for what the run spent when it has no scorecard: just before the run log line."""
+    lines = stdout.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("run log: "))
+    assert [line for line in lines if line.startswith("Spent ")] == [lines[at - 1]], stdout  # one, and there
+    return lines[at - 1]
+
+
+def test_play_on_a_board_without_answers_says_what_the_run_spent_counted_after_quitting_stopped_the_lanes(
+        tmp_path, monkeypatch, scripted_claude):
+    """No answers, so no scorecard (as on a CTFd event): play prints one line with the run's
+    tokens and dollars instead, before the run log line. It reads them after the run's
+    shutdown: the $0.50 is the cost of the turn quitting cut, which claude takes 1.5 s to
+    report once it is stopped. `flightdeck report` on the run folder gives the same figures."""
+    (turn,) = CUT_BY_QUITTING["turns"]
+    scripted_claude({"turns": [{**turn, "linger": 1.5}]})
+
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.turns for lane in app.deck.lanes.values()), "claude's step")
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+        await until(pilot, lambda: not app.is_running, "the console to quit once its lanes have stopped")
+
+    headless(monkeypatch, player)
+    root = board(tmp_path)
+    (root / "answers.sha256.json").unlink()
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url)),
+                                              "--agent", "claude", "--host"])
+    assert result.exit_code == 0, result.output
+    assert spend_line(result.stdout) == "Spent 110 tokens · $0.50"
+    assert "Test Event: solved" not in result.stdout  # no scorecard
+    folder, _ = next_steps(result.stdout)
+    report = CliRunner().invoke(cli.app, ["report", str(folder)])
+    assert report.exit_code == 0, report.output
+    (spend,) = [line for line in report.stdout.splitlines() if line.startswith("Spend: ")]
+    assert spend.startswith("Spend: 110 tokens (") and spend.endswith(", $0.50"), spend
+
+
+def test_plays_spend_line_says_at_least_when_some_spend_had_no_price(tmp_path, monkeypatch):
+    """A lane on a model with no price in the config (fake/big), on an API that reports no
+    cost: its tokens are counted, its dollars are not known. The line says so."""
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.tokens and lane.dollars is None for lane in app.deck.lanes.values()), "a reply with no price")
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+
+    headless(monkeypatch, player)
+    root = board(tmp_path)
+    (root / "answers.sha256.json").unlink()
+    with FakeModelServer([tool_call_reply("shell", {"command": "cat note.txt"})] * 3) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url)),
+                                              "--model", "fake/big"])
+    assert result.exit_code == 0, result.output
+    said = re.fullmatch(r"Spent (\d+) tokens · at least \$0\.00 \(some of it has no known cost\)", spend_line(result.stdout))
+    assert said is not None and int(said.group(1)) > 0, result.stdout
+
+
+def test_play_prints_no_spend_line_beside_a_scorecard(tmp_path, monkeypatch):
+    headless(monkeypatch, solve_then_quit)
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url)),
+                                              "--submit", "auto"])
+    assert result.exit_code == 0, result.output
+    spent = [line for line in result.stdout.splitlines() if line.startswith("Spent ")]
+    assert len(spent) == 1 and "Test Event: solved 1 of 1" in result.stdout  # the scorecard's own, once
 
 
 @pytest.mark.parametrize("instance", ["confirm", "off"])

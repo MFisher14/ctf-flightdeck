@@ -243,6 +243,12 @@ When a model API failure would hit every lane (a refused key, an unknown model, 
 queue is held and the header says why. Once you have fixed it, `/unhold` starts the queued lanes
 (a key or model id changed in your config needs a new run).
 
+The queue is held too when the model API keeps failing in a way that may pass (a rate limit, a
+5xx, an overload): two lanes in a row end on it within a few minutes, with no reply in between.
+The challenges still queued stay queued instead of each being parked in turn. Once the API answers
+again, `/unhold` puts the challenges that outage parked back in front of the queue and starts lanes
+again. With a `[fallback]` API, a lane moves to it instead of ending.
+
 When several lanes wait with a flag each, `A` (or `/approve all`) answers them together: a prompt
 lists each flag by lane and challenge, and `y` approves them, each as `a` would. The flags of one
 challenge still go to the platform one at a time, a flag already known wrong is never sent, and
@@ -307,7 +313,9 @@ are left. To let auto submit spend those tries without you, the last one include
 team. flightdeck says so when a run starts.
 
 Every run writes a run folder with an append-only `events.jsonl` and each lane's transcript; a
-board with answers (like the practice set) ends with a scorecard. If flightdeck itself is killed
+board with answers (like the practice set) ends with a scorecard, and any other run with one line
+that says what it spent: its tokens and dollars ("at least" when some spend had no price). If
+flightdeck itself is killed
 (kill -9, a power loss), what its lanes started can keep running: the next `play` or `practice`
 removes it and says what it removed, `flightdeck doctor` lists it and `flightdeck doctor --clean`
 removes it.

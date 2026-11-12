@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -251,13 +252,40 @@ def play(
     for note in run.notes():
         typer.echo(f"flightdeck: {note}", err=True)
     console = run.app()
+    _fly(run, console.run_async)  # the console releases the board itself once it is up (on_start)
+    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
+        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(128 + console.stopped_by)
+    if console.return_code:  # the console failed (Textual has printed why): not a run that ended as asked
+        typer.echo("flightdeck: the console failed: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(1)
+
+
+def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
+    """One run from its release to its exit lines, whatever plays it. `between` is awaited on
+    an event loop of this function's own and is what runs from the board's release to the
+    run's shutdown: the console (which releases the board itself once it is up), or anything
+    that calls run.release() and waits. However it ends (it returns, it raises, it is
+    cancelled), the run is shut down on that same loop, where its lanes and background tasks
+    live (Run.shutdown: once, also when `between` already did it), then closed, and the exit
+    lines are printed. What `between` raised is raised again after them."""
+    import asyncio
+
+    async def flight() -> None:
+        try:
+            await between()
+        finally:
+            await run.shutdown()
+
     try:
-        console.run()
+        asyncio.run(flight())
     finally:
         run.close()
         card = run.scorecard()
         if card:
             typer.echo(card, nl=False)
+        else:  # no answers to score against (a real event): the scorecard's spend line alone
+            typer.echo(_spent(run.deck))
         held = _held_at_the_end(run.deck)
         if held:
             typer.echo(f"flightdeck: {held}", err=True)
@@ -269,9 +297,21 @@ def play(
             typer.echo(f"flightdeck: not submitted, still waiting for your approval when the run ended: {'; '.join(waiting)}", err=True)
         for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
-    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
-        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
-        raise typer.Exit(128 + console.stopped_by)
+
+
+def _spent(deck) -> str:
+    """What the run spent, in one line, for a run with no scorecard to say it: the deck's own
+    totals (Deck.totals: every lane's turns and its spend outside a turn, a light model's
+    among it), which the console's header showed and each lane's transcript records, so the
+    post-flight report gives the same figures. Read it after Run.shutdown(), which counts
+    what the lanes report as they stop. The dollars are "at least" when some spend had no
+    price or a turn's cost never came."""
+    from . import fmt
+
+    tokens, dollars, unpriced = deck.totals()
+    if unpriced:
+        return f"Spent {fmt.tokens(tokens)} tokens · at least ${fmt.dollars(dollars)} (some of it has no known cost)"
+    return f"Spent {fmt.tokens(tokens)} tokens · ${fmt.dollars(dollars)}"
 
 
 def _held_at_the_end(deck) -> str:
@@ -287,9 +327,9 @@ def _held_at_the_end(deck) -> str:
 
 
 def _after_the_run(run_dir: Path) -> list[str]:
-    """The run folder and the commands that read it, ready to paste: report, writeups and gaps
-    for every run; score only when it can score this one, that is when the run recorded a
-    board (run.json) that is still there with answers to check flags against."""
+    """The run folder and the commands that read it, ready to paste: report, writeups, gaps and
+    share for every run; score only when it can score this one, that is when the run recorded
+    a board (run.json) that is still there with answers to check flags against."""
     import shlex
 
     from .text import untrusted
@@ -300,6 +340,7 @@ def _after_the_run(run_dir: Path) -> list[str]:
         (f"flightdeck report {folder}", "the post-flight report: solves, interventions, spend"),
         (f"flightdeck writeups {folder}", "a writeup draft for each solve"),
         (f"flightdeck gaps {folder}", "what no L1 engine solved, and why"),
+        (f"flightdeck share {folder}", "the flight card, to post: your setup and how it went, no flags"),
     ]
     if _scorable(run_dir):
         steps.append((f"flightdeck score {folder}", "the scorecard, against the board's answers"))

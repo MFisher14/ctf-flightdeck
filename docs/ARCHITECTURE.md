@@ -93,10 +93,16 @@ format and submit policy, a per-lane queue of approvals, 80%/100% caps, team-mod
 interventions and logs every change as an `Event` with a structured payload (the M1 JSONL log is the
 event stream). Must be called from one thread.
 
-A failure every lane would hit holds the queue (`hold_queue()`, a warning event with `held` true)
-until the player lifts it (`release_hold()`, the console's `/unhold`: refused when the queue is not
-held, logged as a warning with `held` false before the lanes it lets start; reports list both among
-the run's warnings).
+A failure every lane would hit, or a model API that keeps failing, holds the queue (`hold_queue()`,
+a warning event with `held` true) until the player lifts it (`release_hold()`, the console's
+`/unhold`: refused when the queue is not held, logged as a warning with `held` false before the
+lanes it lets start; reports list both among the run's warnings). `hold_queue()` can name the lanes
+that what it is about ended (`ended`, also in a later call while the queue is held). Lifting the
+hold queues their challenges again, in front of the queue, each on a new attempt with its lane's
+model and caps, and the warning lists them (`requeued`). Only a challenge still as such a lane left
+it is queued again: the lane gave up and was the last on it, and the challenge is parked, workable,
+not queued and not being worked. One the player killed or queued again, or that failed for another
+reason, is left alone.
 
 With a submitter (a platform over the network) a flag goes out without waiting for its answer, one
 at a time per challenge, and `platform_verdict()` applies the answer later, also after the lane
@@ -114,7 +120,10 @@ submit auto, such a challenge's claimed flags go out like any other's, the last 
 `Deck.report` applies a spend-only report (`spend_only`: tokens, cached tokens or dollars, and
 nothing else) to a lane that has ended: it counts for the lane and the run, is logged as a spend
 event with the model that spent it and why, and the lane's transcript is written again; no cap is
-asked about, and anything else in a late report is dropped.
+asked about, and anything else in a late report is dropped. flightdeck's own lanes report this way
+a reply that a kill, a solve or quitting cut short (`_count_cut()` in `agent/driver.py`). A call
+still in flight when quitting (or a kill) cancels it brings back no usage, so its cost is not
+counted: the run's totals can be below what the API bills by that one call per lane.
 
 ## 4. Lanes
 
@@ -146,7 +155,14 @@ text, the flag format among it, fenced as data).
 
 Escalation starts a fresh context with the deck's summary. Three replies in a row with no tool call
 end the lane (a flag written in one waits for the player); a model API failure every lane would hit
-(no answer, a refused key, an unknown model) holds the queue, saying why, before the lane ends.
+(no answer, a refused key, an unknown model) holds the queue, saying why, before the lane ends. A
+failure that may pass (a 408 or 429, any 5xx, Anthropic's 529) ends only its own lane once the model
+has answered in the run, until `OUTAGE_LANES` (2) lanes in a row end on one, each within
+`OUTAGE_SECONDS` (300) of the one before and with no reply from the API in between
+(`AgentDriver._outage()`): then the queue is held as well, and the hold names those lanes, so their
+challenges are queued again when it is lifted. Only a failure that ends a lane counts: not a
+superseded call's, nor one a `[fallback]` API took over. A lane the same outage ends while the hold
+stands is added, and once the hold is lifted the count starts again.
 
 A flag the model submits that the challenge's description or handout, as it came, holds is not
 claimed: it waits for the player under auto too, and the model hears why; the lane says what that
@@ -407,6 +423,13 @@ waves are released as they appear, flags go to CTFd from one worker task off the
 loop through `Deck.platform_verdict`), the team's solves stop our lanes; the team folder is mirrored
 and watched. Background tasks run on the console's loop and stop at shutdown; a flag still on its
 way then is named on the way out, as not known to have been submitted.
+
+Every run, with or without `--event`, ends through one path. `play` awaits the console on an event
+loop of its own (`_fly()` in `cli.py`, which takes what runs between the board's release and the
+shutdown) and awaits `Run.shutdown()` on that loop however the console ended: a quit, a signal, or
+an exception in the console that nothing handled (`play` then exits 1). `Run.shutdown()` runs once:
+the console's quit starts it, and a later call only waits for it. Then `play` closes the run and
+prints its exit lines.
 
 Board format: a folder in which each subfolder with a `challenge.json` is a challenge, with an
 optional `board.json` (the event's name and flag format) and an optional `answers.sha256.json`

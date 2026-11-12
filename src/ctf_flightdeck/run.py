@@ -209,6 +209,7 @@ class Run:
     _watcher: TeamWatcher | None = field(default=None, repr=False)
     _team_stop: asyncio.Event | None = field(default=None, repr=False)
     _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
+    _stopping: asyncio.Future | None = field(default=None, repr=False)  # the one shutdown, once begun
     _errors: list[str] = field(default_factory=list, repr=False)
     _submits: _Submits | None = field(default=None, repr=False)  # the deck's submitter, with the verifier
     processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
@@ -285,6 +286,16 @@ class Run:
             self._tasks.append(asyncio.create_task(watching, name="flightdeck team watcher"))
 
     async def shutdown(self) -> None:
+        """Stop the run, once: the console's quit (on_exit) and whatever ran the console
+        (cli._fly, on every way out) both call this, and the second call only waits for the
+        first to end. Await it on the loop release() ran on: the lanes and the background
+        tasks live there. Whoever awaits it may be cancelled (a console that fails while it
+        quits) without the shutdown stopping half way."""
+        if self._stopping is None:
+            self._stopping = asyncio.ensure_future(self._shutdown())
+        await asyncio.shield(self._stopping)
+
+    async def _shutdown(self) -> None:
         """Close the deck first (Deck.close: each lane's work stops at once, before anything
         here awaits, and without ending the lane; nothing raises an alert, asks the player or
         starts a lane from then on, yet what the lanes report as they stop counts, a

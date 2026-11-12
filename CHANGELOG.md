@@ -46,6 +46,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the line under the list wraps the reason and puts one answer on a row, and a lane opens with
   what it needs above its transcript (no files pane). `flightdeck doctor` says when your
   terminal gets it, and `flightdeck mock --screenshot` saves it at 56x40 (#28).
+- A model API that keeps failing with a rate limit, a 5xx or an overload now holds the queue
+  once two lanes in a row end on it, instead of parking challenge after challenge; `/unhold`
+  puts the challenges the outage parked back in front of the queue (#2).
+- If the console itself fails, `play` and `practice` now stop the run the way quitting does
+  (lanes stopped, workspaces closed, your live-box holds freed in the team folder), print the
+  usual exit lines and exit with status 1 (#9).
+- `play` on a board without answers (a CTFd event, say) ends with one line that says what the
+  run spent: its tokens and dollars, "at least" when some spend had no price (#16).
 - The help screen (`?`) explains the `sending` chip, `queue held` in the header, and the `+`
   and `…` after a lane's dollars, and its board legend says which `…` is which (#17).
 - Codex lanes: a take-over that lands during a file edit or a tool step opens its shell only
