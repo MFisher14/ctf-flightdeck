@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ctf_flightdeck.agent import owntext
 from ctf_flightdeck.agent.client import ModelClient
 from ctf_flightdeck.agent.driver import AgentDriver
 from ctf_flightdeck.agent.tools import TOOLS
@@ -34,6 +35,7 @@ from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, Ev
 from ctf_flightdeck.pricing import Price
 
 from fake_model import FakeModelServer, FakeReply, text_reply, tool_call_reply, tool_calls_reply
+from stand_in_kit import PAST, STAND_IN as STAND_IN_FLAG, cut_short, handout_of
 
 FLAG = r"t\{[a-z0-9_]+\}"
 MODELS = ("small", "big")
@@ -505,35 +507,74 @@ def test_under_auto_a_flag_the_lane_wrote_itself_still_goes_out_at_once(tmp_path
     run(main())
 
 
-def test_a_search_of_the_handout_cut_short_is_said_on_the_lane(tmp_path, monkeypatch):
-    from ctf_flightdeck.agent import driver as agent_driver
+PAST_HERE = {
+    **PAST,
+    # this lane's start searches the description whole, but only until PLANT_SECONDS run out
+    "past-the-seconds-in-the-description": ({"note.txt": "x\n"}, {"seconds": -1.0}, f"About note: see {STAND_IN_FLAG}."),
+}
 
-    monkeypatch.setattr(agent_driver, "PLANT_SECONDS", -1.0)  # out of time before it starts
-    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+
+def limits_here() -> dict:
+    """The limits of the search at a lane's start (_own_flags, the snapshot), by the names stand_in_kit uses."""
+    from ctf_flightdeck.agent import driver as agent_driver
+    from ctf_flightdeck.agent import workspace as agent_workspace
+
+    return {"bytes": (agent_driver, "PLANT_BYTES"), "seconds": (agent_driver, "PLANT_SECONDS"),
+            "files": (agent_workspace, "SNAPSHOT_FILES"), "depth": (agent_workspace, "SNAPSHOT_DEPTH")}
+
+
+def release_with(lab: Lab, description: str) -> None:
+    ch = Challenge("note", "Note", "misc", 50, solves=10, description=description or "About note.")
+    lab.deck.release([ch], [QueueEntry("note", "small")])
+
+
+@pytest.mark.parametrize("case", list(PAST_HERE))
+def test_under_auto_a_submitted_stand_in_the_start_s_search_missed_is_found_in_the_whole_handout_and_waits(
+        tmp_path, monkeypatch, case):
+    files, limits, description = PAST_HERE[case]
+    cut_short(monkeypatch, limits, limits_here())
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": STAND_IN_FLAG}), text_reply("ok")])
     tried: list[str] = []
 
     async def main():
         with server:
-            lab = Lab(tmp_path, server, submit="auto", verify=lambda cid, flag: tried.append(flag) or False)
-            lab.release()
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), handouts={"note": handout_of(tmp_path, files)})
+            release_with(lab, description)
             lane = lab.lane()
-            await until(lambda: tried, "the flag submitted")
-            assert tried == ["t{note}"]  # not known to be the handout's, so it went out: as the note warns
-            assert any(a.text.startswith("the search of the handout for flags stopped after -1 s; a flag the model "
-                                         "or an L1 engine gives that is written in the rest of it may be submitted "
-                                         "without you")
-                       for a in lane.actions)
+            await until(lambda: lane.pending is not None or lane.finished, "the stand-in held for the player", timeout=30)
+            assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
+            assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, STAND_IN_FLAG, [])
+            assert STAND_IN_FLAG not in lab.driver.runs[lane.id].planted  # the search at the lane's start did miss it
+            assert f"{STAND_IN_FLAG} {OWN_TEXT}, so it waits for you, though the lane submitted it" in [a.text for a in lane.actions]
+            assert lab.deck.apply(iv.Decline(lane.id)).ok
+            await until(lambda: len(server.requests) >= 2, "the next model call", timeout=30)
+            told = last_user(server.requests[1])
+            assert f"Note from flightdeck: {STAND_IN_FLAG} {OWN_TEXT}, so it is not submitted on its own: it waits for the player." in told
+            assert tried == []
             await lab.finish()
 
     run(main())
 
 
-def test_what_the_search_of_a_big_handout_left_out_is_said_on_the_lane(tmp_path):
-    folder = tmp_path / "board" / "note"
-    folder.mkdir(parents=True)
-    tail = b"\x00" * (1536 * 1024) + b"t{in_tail}\x00"  # past the first 1 MB of the file: not searched
-    (folder / "firmware.bin").write_bytes(b"\x7fELF" + tail)
-    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{in_tail}"})])
+@pytest.mark.parametrize("how", ["a-file-it-cannot-read", "out-of-time"])
+def test_under_auto_a_submitted_flag_that_could_not_be_looked_for_in_all_of_the_handout_waits_and_says_why(
+        tmp_path, monkeypatch, how):
+    folder = handout_of(tmp_path, {"note.txt": "x\n", "secret.bin": b"\x00\x01nothing here\x00"})
+    go = threading.Event()
+    if how == "out-of-time":
+        monkeypatch.setattr(owntext, "SEARCH_SECONDS", -1.0)
+        go.set()
+        why = "the search took longer than -1 s"
+    else:
+        why = "secret.bin could not be opened: Permission denied"
+
+    def responder(record):
+        if calls_to(server) == 1:
+            go.wait(30)  # the model answers once the test has made a file of the handout unreadable
+            return tool_call_reply("submit_flag", {"flag": "t{elsewhere}"})
+        return text_reply("ok")
+
+    server = FakeModelServer(responder=responder)
     tried: list[str] = []
 
     async def main():
@@ -541,17 +582,165 @@ def test_what_the_search_of_a_big_handout_left_out_is_said_on_the_lane(tmp_path)
             lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), handouts={"note": folder})
             lab.release()
             lane = lab.lane()
-            await until(lambda: tried, "the flag submitted")
-            assert tried == ["t{in_tail}"]  # not known to be the handout's, so it went out: as the note warns
-            assert ("the search of the handout for flags left out the rest of 1 file past its first 1 MB; a flag the "
-                    "model or an L1 engine gives that is written there may be submitted without you under submit auto"
-                    ) in [a.text for a in lane.actions]
+            try:
+                if how == "a-file-it-cannot-read":
+                    await until(lambda: len(server.requests) >= 1, "the lane's first model call", timeout=30)
+                    (folder / "secret.bin").chmod(0)  # the handout as it came: a file of it can no longer be read
+                    try:
+                        (folder / "secret.bin").read_bytes()
+                    except PermissionError:
+                        pass
+                    else:
+                        pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
+                    go.set()
+                await until(lambda: lane.pending is not None or lane.finished, "the flag held for the player", timeout=30)
+                assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
+                assert (lane.pending.flag, tried) == ("t{elsewhere}", [])
+                assert ("t{elsewhere} may be written in the challenge's own text: flightdeck could not search all of it "
+                        f"({why}), so it waits for you, though the lane submitted it") in [a.text for a in lane.actions]
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+                await until(lambda: len(server.requests) >= 2, "the next model call", timeout=30)
+                assert ("Note from flightdeck: flightdeck could not make sure that t{elsewhere} is not written in the "
+                        "challenge's own text, so it is not submitted on its own: it waits for the player."
+                        ) in last_user(server.requests[1])
+            finally:
+                go.set()
+                (folder / "secret.bin").chmod(0o644)
+                await lab.finish()
+
+    run(main())
+
+
+def test_under_auto_a_flag_never_looked_for_in_the_handout_never_goes_out_alone(tmp_path):
+    """Every flag a lane gives is looked for (_vet) before it is reported; should one ever be
+    reported without it (a flightdeck bug), it waits for the player rather than go out unchecked."""
+    gate = threading.Event()
+
+    def responder(record):
+        gate.wait(30)
+        return text_reply("ok")
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto")
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: len(server.requests) >= 1, "the lane's first model call", timeout=30)
+                run_ = lab.driver.runs[lane.id]
+                assert lab.driver._own_text(run_, "t{unvetted}") == "was never looked for in the challenge's own text"
+                assert lab.driver._own_text(run_, "not a flag") == ""  # the deck refuses it anyway: nothing to say
+            finally:
+                gate.set()
+                await lab.finish()
+
+    run(main())
+
+
+def test_under_auto_a_submitted_flag_no_part_of_a_big_handout_holds_still_goes_out_at_once(tmp_path):
+    files = {"firmware.bin": b"\x7fELF" + b"\x00" * (2 * 1024 * 1024) + b"t{other}\x00", "note.txt": "x\n"}
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{real}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), handouts={"note": handout_of(tmp_path, files)})
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.finished, "the flag submitted at once", timeout=30)
+            assert lane.state is LaneState.SOLVED and tried == ["t{real}"]
+            assert lab.driver.runs[lane.id].own["t{real}"] == owntext.Found()  # all of it searched: nowhere
             await lab.finish()
 
     run(main())
 
 
-def test_the_search_of_the_challenges_own_text_names_every_part_it_left_out(tmp_path, monkeypatch):
+LONE = "t{\udcff}"  # a lone surrogate: an unpaired JSON escape (\udcff), a byte decoded with surrogateescape
+LONE_FORMAT = r"t\{[^{}\s]{1,256}\}"  # the deck's default kind of format: [^{}\s] takes a lone surrogate
+LONE_WAITS = (f"{LONE} may be written in the challenge's own text: flightdeck could not search all of it (the flag "
+              "holds a lone surrogate, which UTF-8 cannot write), so it waits for you, though ")
+
+
+def test_under_auto_a_submitted_flag_holding_a_lone_surrogate_waits_for_the_player_and_the_lane_goes_on(tmp_path):
+    """The model's arguments are JSON, and an unpaired escape in them (\\udcff) is a lone
+    surrogate in the flag, which has no UTF-8 bytes to look for in the handout: it waits for
+    the player, the lane and the model hear why, and the lane goes on (its search never ends it)."""
+    gate = threading.Event()
+
+    def responder(record):
+        if calls_to(server) == 1:
+            return tool_call_reply("submit_flag", {"flag": LONE})
+        gate.wait(30)  # the lane's next call, held while the test looks: the lane is still at work
+        return text_reply("ok")
+
+    server = FakeModelServer(responder=responder)
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried), flag_format=LONE_FORMAT)
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: lane.pending is not None or lane.finished or tried, "the flag held for the player",
+                            timeout=30)
+                assert lane.pending is not None, (lane.state, lane.result, lab.driver.errors)  # it waits for the player
+                assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, LONE, [])
+                assert LONE_WAITS + "the lane submitted it" in [a.text for a in lane.actions]
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+                await until(lambda: calls_to(server) >= 2, "the next model call", timeout=30)
+                assert ("Note from flightdeck: flightdeck could not make sure that t{\\xff} is not written in the "
+                        "challenge's own text, so it is not submitted on its own: it waits for the player."
+                        ) in last_user(server.requests[1])
+                assert not lane.finished and lab.driver.errors == [] and tried == []
+            finally:
+                gate.set()
+                await lab.finish()
+
+    run(main())
+
+
+def test_under_auto_a_lane_killed_while_the_flag_it_submitted_is_looked_for_ends_at_once_and_the_search_stops(
+        tmp_path, monkeypatch):
+    started = threading.Event()
+    ended: list[owntext.Found] = []
+    real_late = owntext._late
+
+    def late(*args):  # each chunk of the search held up: a handout as slow to search as a huge one's
+        started.set()
+        found = real_late(*args)
+        if found is None:
+            time.sleep(0.05)
+        else:
+            ended.append(found)
+        return found
+
+    monkeypatch.setattr(owntext, "_late", late)
+    monkeypatch.setattr(owntext, "CHUNK", 1)  # 100,000 chunks of the handout below, each held up: far past the 30 s waited
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{real}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried),
+                      handouts={"note": handout_of(tmp_path, {"big.bin": b"\x00" * 100_000})})
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(started.is_set, "the flag being looked for", timeout=30)
+                assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+                await until(lambda: lab.driver.runs[lane.id].closed, "the lane closed, the search not waited for", timeout=30)
+                await until(lambda: ended, "the search to end", timeout=30)
+                assert ended == [owntext.Found(problem="the search was stopped")] and tried == []  # by the kill, not its time
+            finally:
+                await lab.finish()
+
+    run(main())
+
+
+def test_the_search_at_a_lanes_start_is_bounded_and_the_search_for_one_flag_covers_what_it_misses(tmp_path, monkeypatch):
     from ctf_flightdeck.agent import driver as agent_driver
     from ctf_flightdeck.agent import workspace as agent_workspace
 
@@ -574,12 +763,15 @@ def test_the_search_of_the_challenges_own_text_names_every_part_it_left_out(tmp_
             pass
         else:
             pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
-        found, done, left = agent_driver._own_flags(tmp_path, "see t{desc}", re.compile(FLAG), time.monotonic() + 30)
+        found = agent_driver._own_flags(tmp_path, "see t{desc}", re.compile(FLAG), time.monotonic() + 30)
+        held = owntext.search("see t{desc}", tmp_path, "t{nowhere}", seconds=30)
     finally:
         locked.chmod(0o644)
-    assert (found, done) == ({"t{desc}", "t{a}", "t{c}"}, True)
-    assert left == ["the rest of 1 file past its first 64 bytes", "2 files past the first 120 bytes in all",
-                    "1 file it could not read", "the files past the first 5"]
+    assert found == {"t{desc}", "t{a}", "t{c}"}  # bounded, and silent on the rest: nothing it misses goes out alone
+    assert held == owntext.Found(problem="b-locked.txt could not be opened: Permission denied")  # so the flag waits
+    for flag, where in (("t{a_tail}", "a-cut.bin"), ("t{locked}", "b-locked.txt"), ("t{d}", "d-fill.bin"),
+                        ("t{e}", "e-over.bin"), ("t{late}", "f.txt"), ("t{desc}", "the description")):
+        assert owntext.search("see t{desc}", tmp_path, flag, seconds=30) == owntext.Found(where=where), flag
 
 
 # ---------------------------------------------------------------------- a flag on its way to the platform
@@ -1458,7 +1650,7 @@ def test_no_take_over_before_the_workspace_is_ready(tmp_path):
 # ---------------------------------------------------------------------- the L1 stage
 
 
-def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str]):
+def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str], flag_format: str = FLAG):
     """A pack in tmp with one python engine per entry (routed to every challenge: the brief's
     description says "About ...")."""
     from ctf_flightdeck.agent.l1stage import L1Stage
@@ -1469,7 +1661,7 @@ def l1_stage(tmp_path: Path, handouts: dict[str, Path], engines: dict[str, str])
     pack = tmp_path / "pack"
     for name, body in engines.items():
         python_engine(pack, name, body, route='keywords = ["about"]')
-    return L1Stage(discover(pack), handouts, tmp_path / "runs", FLAG)
+    return L1Stage(discover(pack), handouts, tmp_path / "runs", flag_format)
 
 
 SOLVES = """
@@ -1794,6 +1986,135 @@ def test_an_l1_flag_from_the_handout_the_player_declined_is_not_said_to_wait_on_
             await until(lambda: again in [a.text for a in fresh.actions], "the stand-in on the fresh lane", timeout=30)
             assert fresh.pending is None and not [a.text for a in fresh.actions if OWN_TEXT in a.text]
             await lab.finish()
+
+    run(main())
+
+
+GIVES_STAND_IN = """
+    import os
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        LOCK
+        return SolverResult("solved", flags=["t{stand_in}"], evidence=[Evidence("read", "read it out", "note.txt", 0)])
+    """
+
+
+def l1_stand_in(tmp_path: Path, files: dict, *, lock: Path | None = None):
+    """A lab whose L1 engine (reader) gives t{stand_in} as its result; with `lock`, it first
+    makes that file of the handout as it came unreadable (after the lane and it made their copies)."""
+    handouts = {"note": handout_of(tmp_path, files)}
+    body = GIVES_STAND_IN.replace("LOCK", f"os.chmod({str(lock)!r}, 0)" if lock is not None else "pass")
+    return handouts, l1_stage(tmp_path, handouts, {"reader": body})
+
+
+@pytest.mark.parametrize("case", list(PAST_HERE))
+def test_under_auto_an_l1_engines_stand_in_the_start_s_search_missed_is_found_in_the_whole_handout_and_waits(
+        tmp_path, monkeypatch, case):
+    files, limits, description = PAST_HERE[case]
+    cut_short(monkeypatch, limits, limits_here())
+    server = FakeModelServer(responder=lambda record: text_reply("should not be asked"))
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            handouts, stage = l1_stand_in(tmp_path, files)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=recording(tried))
+            release_with(lab, description)
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None or lane.finished, "the engine's flag held", timeout=30)
+            assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
+            assert (lane.pending.flag, tried, server.requests) == (STAND_IN_FLAG, [], [])
+            assert STAND_IN_FLAG not in lab.driver.runs[lane.id].planted  # the search at the lane's start did miss it
+            assert (f"{STAND_IN_FLAG} {OWN_TEXT}, so it waits for you, though your L1 engine reader gave it as its flag"
+                    in [a.text for a in lane.actions])
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("how", ["a-file-it-cannot-read", "out-of-time"])
+def test_under_auto_an_l1_engines_flag_that_could_not_be_looked_for_in_all_of_the_handout_waits_and_says_why(
+        tmp_path, monkeypatch, how):
+    server = FakeModelServer(responder=lambda record: text_reply("should not be asked"))
+    tried: list[str] = []
+    secret = tmp_path / "board" / "note" / "secret.bin"
+    if how == "out-of-time":
+        monkeypatch.setattr(owntext, "SEARCH_SECONDS", -1.0)
+        why = "the search took longer than -1 s"
+    else:
+        why = "secret.bin could not be opened: Permission denied"
+
+    async def main():
+        with server:
+            handouts, stage = l1_stand_in(tmp_path, {"note.txt": "x\n", "secret.bin": b"\x00nothing\x00"},
+                                          lock=secret if how == "a-file-it-cannot-read" else None)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=recording(tried))
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: lane.pending is not None or lane.finished, "the engine's flag held", timeout=30)
+                if how == "a-file-it-cannot-read":
+                    try:
+                        secret.read_bytes()
+                    except PermissionError:
+                        pass
+                    else:
+                        pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
+                assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
+                assert (lane.pending.flag, tried) == (STAND_IN_FLAG, [])
+                assert (f"{STAND_IN_FLAG} may be written in the challenge's own text: flightdeck could not search all of it "
+                        f"({why}), so it waits for you, though your L1 engine reader gave it as its flag"
+                        ) in [a.text for a in lane.actions]
+            finally:
+                secret.chmod(0o644)
+                await lab.finish()
+
+    run(main())
+
+
+READS_A_BYTE = """
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        flag = (challenge_dir / "note.bin").read_bytes().decode("utf-8", "surrogateescape").strip()
+        return SolverResult("solved", flags=[flag], evidence=[Evidence("read", "note.bin says so", "note.bin", 0)])
+    """
+
+
+def test_under_auto_an_l1_engines_flag_holding_a_lone_surrogate_waits_for_the_player_and_the_lane_goes_on(tmp_path):
+    """An engine that reads a byte no UTF-8 holds (surrogateescape) gives a flag with a lone
+    surrogate, which a result's JSON keeps and which has no UTF-8 bytes to look for in the
+    handout: it waits for the player, the lane says why, and the lane goes on to its model."""
+    gate = threading.Event()
+
+    def responder(record):
+        gate.wait(30)  # the lane's first call, held while the test looks: the lane is still at work
+        return text_reply("still looking")
+
+    server = FakeModelServer(responder=responder)
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            handouts = {"note": handout_of(tmp_path, {"note.bin": b"t{\xff}\n"})}
+            stage = l1_stage(tmp_path, handouts, {"reader": READS_A_BYTE}, flag_format=LONE_FORMAT)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, submit="auto", verify=recording(tried),
+                      flag_format=LONE_FORMAT)
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(lambda: lane.pending is not None or lane.finished or tried, "the engine's flag held",
+                            timeout=30)
+                assert lane.pending is not None, (lane.state, lane.result, lab.driver.errors)  # it waits for the player
+                assert (lane.pending.flag, tried, server.requests) == (LONE, [], [])
+                assert LONE_WAITS + "your L1 engine reader gave it as its flag" in [a.text for a in lane.actions]
+                assert lab.deck.apply(iv.Decline(lane.id)).ok
+                await until(lambda: calls_to(server) >= 1, "the lane's first model call", timeout=30)
+                assert not lane.finished and lab.driver.errors == [] and tried == []
+            finally:
+                gate.set()
+                await lab.finish()
 
     run(main())
 

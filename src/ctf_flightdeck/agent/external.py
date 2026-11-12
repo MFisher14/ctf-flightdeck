@@ -11,7 +11,9 @@ only those at once. Every other match (a command's output: a handout's local-tes
 flag.txt, an example in a source comment; the agent's prose) waits for the player, since a
 wrong try can cost one of a challenge's limited attempts; under auto it is held until the
 agent's turn ends, so the agent can still claim it first. A claimed flag that the
-challenge's own text holds (its description, a handout file) waits for the player too.
+challenge's own text holds (its description, a handout file) waits for the player too:
+under auto, before such a flag would go out, it is looked for in the whole of that text
+(agent/owntext.py), and it waits when it is there or when the search could not cover it all.
 With the light model's flagcheck (agent/flaggate.py), a claimed flag that would go out
 without the player is checked first, in the background, as for AgentDriver's lanes: it
 reaches the deck once the light model has answered, and waits for the player if it called
@@ -82,10 +84,15 @@ folder in the workspace to .flightdeck/held/<n>/, each name ending in .held so n
 takes it up there, says so on the lane, and tells the agent they are challenge data. The
 CLIs also read their own folder under HOME, which for a lane is in the workspace
 (.flightdeck/home), where a command the agent runs or an archive it unpacks could write
-it. So a host lane's CLI keeps that folder next to the workspace, outside it and out of
-reach of codex's workspace-write sandbox: <root>/../codex-home as CODEX_HOME,
-<root>/../claude-home as CLAUDE_CONFIG_DIR (a codex login's CODEX_HOME is the player's
-own). In docker the container is the boundary.
+it, to take effect at the CLI's next start while the CLI holds the player's credential. So
+no CLI keeps that folder in the workspace. A host lane's CLI keeps it next to the
+workspace, outside it and out of reach of codex's workspace-write sandbox:
+<root>/../codex-home as CODEX_HOME, <root>/../claude-home as CLAUDE_CONFIG_DIR (a codex
+login's CODEX_HOME is the player's own). A docker lane's CLI keeps it in its container,
+outside the bind-mounted /work: CONTAINER_HOME, which the wrapper that starts the CLI
+makes before every start, owner-only (a symlink or a file of that name is removed, never
+followed; a folder another user owns stops the CLI, saying why), and keeps for the lane's
+later starts (codex's resume finds its thread there).
 
 What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, which plays
 them in the tests (a real run spends the player's money). Nothing here has been checked
@@ -106,6 +113,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import threading
 import time
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
@@ -129,7 +137,7 @@ from ..l1.runner import scan
 from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
-from . import prompts
+from . import owntext, prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .facts import FirstLooks, Look
@@ -154,6 +162,10 @@ CLAUDE_AUTH = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")  # the CLI's own 
 CODEX_KEY = "CODEX_API_KEY"
 SECRET_NAMES = (*CLAUDE_AUTH, CODEX_KEY)  # the agent's credentials (CODEX_HOME, a login's folder, is a path, not one)
 AGENT_HOME = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}  # where each CLI reads its own configuration
+CONTAINER_HOME = {"claude": "/tmp/flightdeck-claude-home", "codex": "/tmp/flightdeck-codex-home"}
+"""docker: each CLI's own configuration folder (AGENT_HOME) in the lane's container, outside
+/work, where nothing in the workspace (a file the agent writes there, an archive it
+unpacks) can configure the CLI. /tmp: every image has it, writable whatever its user."""
 MIN_SECRET = 8  # a secret shorter than this is not looked for in what the CLI writes: it would hide too much
 CLI_ENV: Mapping[str, Mapping[str, str]] = {
     # flightdeck's own settings for the CLI process (not secrets): no telemetry, no self-update mid-run
@@ -173,6 +185,8 @@ MAX_NEW_FLAGS = 10  # new candidates raised from one step, and held at once; a d
 FLAG_SCAN = 1024 * 1024  # characters of one output scanned for flags
 SCAN_SECONDS = 5.0  # the flag search over one output (off the event loop) stops after this long, with a note
 CLAIM_CHARS = 1024  # a FLAG line longer than this claims nothing
+# The search for flags the challenge itself holds at a lane's start (plant) is bounded by these (and FLAG_SCAN,
+# SCAN_SECONDS): under auto a flag the agent claims is looked for in all of the handout before it goes out (vet).
 HANDOUT_FILE_BYTES = 1024 * 1024  # of a binary or big handout file, searched for flags the challenge itself holds
 HANDOUT_BYTES = 16 * 1024 * 1024  # of all of them
 MAX_PROBLEMS = 20  # unreadable-line notes per process
@@ -206,7 +220,21 @@ _PLACEHOLDERS = ("...", "…")
 _THREAD = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _EOF = object()
-_PID_WRAPPER = f'echo "{PID_LINE}$$" >&2; exec "$@"'  # docker: say the CLI's pid in the container, then become it
+_DOCKER_WRAPPER = (
+    'home=$1; shift; '
+    'if [ -L "$home" ] || { [ -e "$home" ] && [ ! -d "$home" ]; }; then rm -f "$home"; fi; '
+    'mkdir -m 700 "$home" 2>/dev/null; '
+    'if [ -d "$home" ] && [ ! -L "$home" ] && [ -O "$home" ] && chmod 700 "$home"; then :; else '
+    'echo "flightdeck: $home, the CLI\'s own configuration folder, cannot be made a folder of this user\'s alone, '
+    'so the CLI was not started" >&2; '
+    'exit 1; fi; '
+    f'echo "{PID_LINE}$$" >&2; exec "$@"'
+)
+"""docker: start the CLI ("$@") in its container, its own configuration folder ($1, outside
+/work) made first: a symlink or a file of that name removed, never followed; the folder
+made, or kept from the lane's last start, owner-only (mode 700); one that is not the
+user's own stops the CLI with the reason on stderr. Then it says the CLI's pid in the
+container, and becomes the CLI."""
 _SIGNAL_SCRIPT = r"""
 sig=$1; root=$2; tree=$3
 pids=$root
@@ -408,15 +436,21 @@ def codex_argv(executable: str, model: str, workdir: str, *, thread: str | None 
     return argv
 
 
-def docker_exec_argv(container: str, env: Mapping[str, str], secrets: Sequence[str], cli_argv: Sequence[str]) -> list[str]:
-    """`docker exec` running the CLI in a lane's container. Secrets go by NAME (`-e NAME`):
-    docker takes the value from its own environment, so it never shows in a process list."""
+def docker_exec_argv(container: str, env: Mapping[str, str], secrets: Sequence[str], cli_argv: Sequence[str], *,
+                     kind: str) -> list[str]:
+    """`docker exec` running the `kind` CLI in a lane's container, by way of _DOCKER_WRAPPER,
+    with its own configuration folder (AGENT_HOME) CONTAINER_HOME[kind], outside /work.
+    Secrets go by NAME (`-e NAME`): docker takes the value from its own environment, so it
+    never shows in a process list. ValueError when one of them would name that folder."""
+    variable, home = AGENT_HOME[kind], CONTAINER_HOME[kind]
+    if variable in secrets:
+        raise ValueError(f"{variable} is the {kind} CLI's own folder in its container, {home}: it is not passed by name")
     argv = ["docker", "exec", "-i", "-w", CONTAINER_ROOT]
-    for name, value in env.items():
+    for name, value in {**env, variable: home}.items():
         argv += ["-e", f"{name}={value}"]
     for name in secrets:
         argv += ["-e", name]
-    return argv + [container, "sh", "-c", _PID_WRAPPER, "sh", *cli_argv]
+    return argv + [container, "sh", "-c", _DOCKER_WRAPPER, "sh", home, *cli_argv]
 
 
 def lane_rules() -> str:
@@ -591,7 +625,9 @@ def _search(text: str, pattern: re.Pattern[str], deadline: float, own: bool) -> 
 def _handout_texts(root: Path, snapshot: Snapshot) -> list[str]:
     """The text of every file in a snapshot of a workspace: a text file as kept in the
     snapshot, any other (a binary, a big file) read from root, at most HANDOUT_FILE_BYTES
-    of each and HANDOUT_BYTES in all, as Latin-1 (a flag in a binary's strings shows)."""
+    of each and HANDOUT_BYTES in all, as Latin-1 (a flag in a binary's strings shows).
+    Bounded, so it may miss a flag: one the agent claims is looked for in all of the
+    challenge's own text before it goes out on its own (_Run.vet)."""
     texts: list[str] = []
     budget = HANDOUT_BYTES
     for path, (size, _, _) in snapshot.files.items():
@@ -611,13 +647,14 @@ def _handout_texts(root: Path, snapshot: Snapshot) -> list[str]:
     return texts
 
 
-def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool]:
-    """The matches of the flag format in all of `texts`; False if the search stopped at `deadline`."""
+def _search_all(texts: Sequence[str], pattern: re.Pattern[str], deadline: float) -> set[str]:
+    """The matches of the flag format in `texts` (the first FLAG_SCAN characters of each),
+    as far as the search got by `deadline`."""
     found: dict[str, None] = {}
     for text in texts:
         if not scan(text[:FLAG_SCAN], pattern, deadline, found):
-            return set(found), False
-    return set(found), True
+            break
+    return set(found)
 
 
 def _blocks(content: Any) -> list[dict]:
@@ -1004,6 +1041,8 @@ class _Run:
         self.flags: set[str] = set()  # candidates already raised by this lane
         self.held: dict[str, None] = {}  # submit auto: unclaimed candidates, in order, until the agent's turn ends
         self.planted: set[str] = set()  # flag-format matches in the challenge's own text: its description, the handout
+        self.own: dict[str, owntext.Found] = {}  # submit auto: each claimed flag, looked for in all of that text (vet)
+        self.halt = threading.Event()  # set when the lane stops: a search vet started ends at its next chunk
         self.outputs = Outputs()  # its newest tool outputs: where a flag it claims was found (agent/flaggate.py)
         self.wake = asyncio.Event()
         self.idle = asyncio.Event()  # set while nothing of the agent's can run: no CLI, or it is frozen
@@ -1031,7 +1070,9 @@ class _Run:
         self.cost_due = False  # steps were reported (dollars_later) in a turn whose cost the CLI has not reported yet
         self.tasks: set[asyncio.Future[Any]] = set()
         self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
-        self.homes: dict[str, str] = {}  # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME)
+        # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME); empty for a docker lane, whose
+        # folder is CONTAINER_HOME in its container (docker_exec_argv)
+        self.homes: dict[str, str] = {}
         self.look: Look | None = None  # the challenge's first look (agent/facts.py), until the CLI's first start takes it
         self.recon = ""  # what of the first look was back then: in every opening brief of the lane
         self.opened = False  # the CLI has had its first opening: nothing more goes into the brief
@@ -1242,6 +1283,7 @@ class _Run:
 
     def stop(self) -> None:
         self.stopped = True
+        self.halt.set()  # a search of the handout under way (vet) ends: nothing more of this lane goes out
         self.cancel_timer()
         self.wake.set()
         if self.proc is not None:
@@ -1355,15 +1397,13 @@ class _Run:
         """Remember the flag-format matches in the challenge's own text, its description and
         the handout as it came (a snapshot before the CLI first starts): a decoy flag.txt,
         an example in a comment, a flag in a readme. Even when the agent gives one as its
-        answer, it waits for the player (see sort_out)."""
+        answer, it waits for the player (see sort_out). This search is bounded (part of a big
+        file, so much in all, SCAN_SECONDS), so what it misses is not said: under auto a
+        flag the agent claims is looked for in all of that text before it goes out (vet)."""
         texts = await asyncio.to_thread(_handout_texts, self.workspace.root, snapshot)
-        found, done = await asyncio.to_thread(
+        self.planted = await asyncio.to_thread(
             _search_all, [self.challenge.description, *texts], self.driver.flag_re, time.monotonic() + SCAN_SECONDS
         )
-        self.planted = found
-        if not done:
-            self.note(f"the search of the handout for flags stopped after {SCAN_SECONDS:g} s; a flag the agent gives "
-                      "that is written in the rest of it may be submitted without you under submit auto")
 
     async def changes(self) -> tuple[FileChange, ...]:
         """Files changed since the last look."""
@@ -1413,7 +1453,8 @@ class _Run:
                 "TERM": "dumb",
                 **CLI_ENV[self.kind],
             }
-            argv = docker_exec_argv(workspace.name, env, list(secrets), argv)
+            # its own configuration folder is CONTAINER_HOME, outside /work: never in the workspace
+            argv = docker_exec_argv(workspace.name, env, list(secrets), argv, kind=self.kind)
             process_env: dict[str, str] = {**os.environ, **secrets}  # the docker client's, for `-e NAME`
             cwd: Path | None = None
         else:
@@ -1674,7 +1715,41 @@ class _Run:
 
     async def candidates(self, text: str, *, own: bool) -> tuple[list[tuple[str, bool]], int]:
         """The new candidates in `text`: see sort_out."""
-        return self.sort_out(*await self.search(text, own=own))
+        found, claims = await self.search(text, own=own)
+        await self.vet(claims)
+        return self.sort_out(found, claims)
+
+    async def vet(self, claims: Sequence[str]) -> None:
+        """Under auto, before a flag the agent claims goes out without the player: look for it
+        in all of the challenge's own text, its description and every file of the handout as
+        it came (agent/owntext.py: the start's search, planted, is bounded). What was found is
+        kept (own) for sort_out. Not for a flag already raised, already known to be the
+        challenge's, or known not to be the flag (the deck says why it does not ask). At most
+        MAX_NEW_FLAGS at a time, as sort_out raises no more: one past them is never raised now."""
+        if not self.auto():
+            return
+        searched = 0
+        for flag in dict.fromkeys(claims):
+            if searched >= MAX_NEW_FLAGS:
+                break
+            if flag in self.own or flag in self.flags or flag in self.planted:
+                continue
+            if self.driver.deck.not_flag(self.challenge.id, flag) is not None:
+                continue
+            searched += 1
+            handout = getattr(self.workspace, "handout", None)
+            self.own[flag] = await owntext.look_for(self.challenge.description, handout, flag, halt=self.halt)
+
+    def own_text(self, flag: str) -> str:
+        """Why the agent's claim of `flag` waits for the player, as the challenge's own text
+        holds it or may (planted; vet's search: owntext.Found.says); "" when nothing says so.
+        Under auto a flag vet never looked for waits too (a flightdeck bug, never a submit)."""
+        if flag in self.planted:
+            return owntext.OWN_TEXT
+        if not self.auto() or self.driver.deck.not_flag(self.challenge.id, flag) is not None:
+            return ""
+        found = self.own.get(flag)
+        return owntext.UNSEARCHED if found is None else found.says()
 
     def sort_out(self, found: Sequence[str], claims: Sequence[str]) -> tuple[list[tuple[str, bool]], int]:
         """(the candidates to raise now, as (flag, claimed); how many were new, held ones too).
@@ -1686,9 +1761,9 @@ class _Run:
         can cost one of a challenge's limited attempts. Under auto such a candidate is held
         until the agent's turn ends (release_held), so the agent can still claim it first
         and the lane does not stop for a decoy; under confirm every candidate waits for the
-        player at once anyway. A claimed flag that the challenge's own text holds (planted)
-        is not claimed: an agent quoting a handout's FLAG line must not submit it.
-        At most MAX_NEW_FLAGS new ones at a time, and held at once."""
+        player at once anyway. A claimed flag that the challenge's own text holds, or may
+        (own_text: planted, or what vet found), is not claimed: an agent quoting a handout's
+        FLAG line must not submit it. At most MAX_NEW_FLAGS new ones at a time, and held at once."""
         now: list[tuple[str, bool]] = []
         new = skipped = 0
         auto = self.auto()
@@ -1696,15 +1771,16 @@ class _Run:
             claimed = flag in claims
             if not flag or flag in self.flags or (not claimed and flag in self.held):
                 continue
-            if claimed and flag in self.planted:
+            why = self.own_text(flag) if claimed else ""
+            if why:
                 claimed = False
                 if flag in self.held:
                     continue
-                self.note(f"{flag} is written in the challenge's own text (its description or a handout file), so it "
-                          "waits for you, though the agent gave it as its flag")
             if new >= MAX_NEW_FLAGS or (auto and not claimed and len(self.held) >= MAX_NEW_FLAGS):
                 skipped += 1
                 continue
+            if why:
+                self.note(f"{flag} {why}, so it waits for you, though the agent gave it as its flag")
             new += 1
             if claimed:
                 self.held.pop(flag, None)
@@ -1777,8 +1853,9 @@ class _Run:
 
     def checked_first(self, flags: Sequence[tuple[str, bool]]) -> list[str]:
         """Of the candidates to raise now: the claimed ones the light model checks before they go
-        to the deck (agent/flaggate.py: going out without the player now). A planted flag is not
-        claimed here (sort_out), and sort_out raises a flag once, so none is under check yet."""
+        to the deck (agent/flaggate.py: going out without the player now). A flag the challenge's
+        own text holds, or may, is not claimed here (sort_out: own_text), and sort_out raises a
+        flag once, so none is under check yet."""
         gate = self.driver.flaggate
         if gate is None:
             return []
@@ -1959,6 +2036,7 @@ class _ClaudeRun(_Run):
         last: tuple[list[str], list[str]] = ([], [])
         if current and not failed and not interrupted:
             last = await self.search(text, own=True)  # its last words, should they hold a flag its text blocks did not
+            await self.vet(last[1])  # a flag they claim, looked for in the challenge's own text
             current = self.current(proc)  # stopped or escalated while they were searched
         # from here on nothing waits: the turn is accounted for before anything goes to claude
         total = _dollars(event.get("total_cost_usd"))
