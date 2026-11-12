@@ -158,8 +158,8 @@ every challenge back as it was shown instead of a brief, and held all 16 real fl
 about; the larger models held fewer.
 
 On the CPU alone (Ollama with no GPU, 4 or 8 threads, under the same load), Qwen3.5 0.8B and 2B
-scored within three cases of their GPU runs on each job, at about 1 to 2 seconds a job; 8 threads
-were no faster than 4.
+scored within three cases of their GPU runs on each job, at about 1 to 2 seconds a job; 4 and 8
+threads came out alike.
 
 ### Strands Decider: a decision model for the light role
 
@@ -189,7 +189,7 @@ cases (14 to 40 a job), one run each, the same rough conditions as above:
 | route: instance | whether a challenge needs a live instance | a rule: a URL, or `nc host port` (40/40) | the rule | the rule |
 | route: family | which kind of specialist should take it | Claude Haiku 5.5 (39/40) | Gemma 4 12B (39/40) | none |
 | recon | a first-pass brief for the lane: file kinds, likely technique, first steps | Claude Haiku 5.5 (26/30) | Gemma 4 12B (25/30) | none |
-| flagcheck | whether a found flag is the real one or a stand-in | Claude Haiku 5.5 (39/40) | none safe alone (see below) | flightdeck's own rule |
+| flagcheck | whether a found flag is the real one or a stand-in | Claude Haiku 5.5 (39/40) | none safe alone (see below); Qwen3.5 9B as a hold on top of flightdeck's own rule | flightdeck's own rule |
 | summary | what a lane did, for escalation | no model: flightdeck's own summary | | |
 
 - **Claude Haiku 5.5 cost $0.024 for all 248 calls** of this measurement: about $0.0002 to route
