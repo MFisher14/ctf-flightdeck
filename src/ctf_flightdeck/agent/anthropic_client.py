@@ -393,21 +393,30 @@ def request(model: str, messages: Sequence[dict], tools: Sequence[dict], max_tok
 
 
 def fast_priced(usage: Usage, model: str) -> Usage:
-    """`usage` of a fast request to `model`, its part on `model` priced at the fast rate (the
-    tokens read from the cache and those written to it at the fast input rate: the
-    documentation gives no other), unless the API says it ran at standard speed. A part
-    another model ran (the refusal fallback's) gets no cost here: the config prices it."""
-    if usage.speed == "standard":
-        return usage
-    price = FAST_MODES[model].price
+    """`usage` of a fast request to `model`, each part that ran fast priced at the fast rate of
+    the model that ran it (the tokens read from the cache and those written to it at the fast
+    input rate: the documentation gives no other). A part not known to have run fast gets no
+    cost here: the config prices it.
 
-    def priced(part: Usage) -> Usage:
-        if part.model:
+    The API says the speed of one attempt: usage.speed is in the top-level usage, and Anthropic's
+    documentation (shared/model-migration.md, the refusal section) says "top-level `usage`
+    covers only the attempt that produced the returned message". So the part of that last
+    attempt ran at usage.speed: on `model`, fast unless the API says standard (it was asked
+    for); on a model the refusal fallback ran, fast only when the API says so, at that model's
+    fast rate ("fallback attempts bill at the fallback model's rates"). An attempt before it
+    on `model` (one the classifiers declined) ran as the request asked, fast: what usage.speed
+    says is not about it. One on another model (a fallback model that declined too) is not
+    known to have run fast."""
+
+    def priced(part: Usage, speed: str) -> Usage:
+        fast = speed == "fast" if part.model else speed != "standard"
+        mode = FAST_MODES.get(part.model or model)
+        if not fast or mode is None:
             return part
-        return replace(part, cost=cost(price, part.prompt_tokens, part.completion_tokens, part.cached_tokens,
+        return replace(part, cost=cost(mode.price, part.prompt_tokens, part.completion_tokens, part.cached_tokens,
                                        part.cache_write_tokens))
 
-    return replace(priced(usage), more=tuple(priced(part) for part in usage.more))
+    return replace(priced(usage, usage.speed), more=tuple(priced(part, "") for part in usage.more))
 
 
 def _split_system(messages: Sequence[dict]) -> tuple[list[str], list[dict]]:

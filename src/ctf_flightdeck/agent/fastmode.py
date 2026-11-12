@@ -22,7 +22,9 @@ context, because switching speed invalidates the prompt cache.
 A fast call is priced at the fast rate. The skill gives fast mode's input and output prices
 only, so a fast call's prompt tokens read from the cache, and those it writes to the cache,
 are priced at the fast input rate. An attempt the refusal fallback ran on another model is
-priced as that model, from the config.
+priced as that model: at its fast rate here when the API says that attempt ran fast, else
+from the config (agent/anthropic_client.py fast_priced: the API says the speed of a call's
+last attempt only).
 
 Nothing here imports the Anthropic SDK: the config checks `[api] fast` with it.
 """
