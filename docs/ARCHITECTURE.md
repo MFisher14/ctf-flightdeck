@@ -129,6 +129,7 @@ asked about, and anything else in a late report is dropped.
 | Anthropic client | `agent/anthropic_client.py` | The Anthropic Messages API through the official SDK, and fast mode. [More](#anthropic-client). |
 | Fallback | `agent/fallback.py` | An optional second API that a lane moves to when the first keeps failing. [More](#fallback). |
 | Coding-agent lanes | `agent/external.py` | `play --agent claude\|codex`: the `LaneDriver` protocol over the CLI's own event stream. [More](#coding-agent-lanes). |
+| Held secrets | `agent/held.py` | The first redaction layer for both kinds of lane: each secret the run holds becomes `[NAME]`, by value, in a lane's text. [More](#credentials). |
 
 ### Agent driver
 
@@ -148,6 +149,13 @@ claimed: it waits for the player under auto too, and the model hears why; the la
 search of the handout left out (past 1 MB of a file, 16 MB in all, 5000 files, or 5 seconds). A lane
 that gives up while a flag of it still waits (for the player, or for the platform's answer) calls
 the model no more.
+
+Every secret the run holds (`_held_secrets`, the map a coding-agent lane gets too) becomes `[NAME]`
+in what a lane's tool calls give, before the model or the deck has it (`agent/held.py`): a tool's
+output where it arrives, before anything cuts it, then every report to the deck (never its flag),
+the driver's notes on the lane, and what else the driver writes into the lane's context (L1
+results, the first look, the player's messages, a summary). A `--host` lane that reads the keys
+file sends its model the names, not the values.
 
 ### Workspaces
 
@@ -239,7 +247,8 @@ the codex process), and `find_agent()`'s warnings say so before lanes start.
 
 The flag format is the board's data, in the opening brief's fence, never in claude's appended system
 prompt or in the rules that open codex's first prompt. Every secret the run holds becomes `[NAME]`
-in what the CLI writes, before anything is shown, logged or kept.
+in what the CLI writes, before anything is shown, logged or kept (`agent/held.py`, as for
+flightdeck's own lanes).
 
 A CLI reports a turn's cost when the turn ends: its steps carry `dollars_later`, and its report is a
 spend-only `turn_end` report, which still counts after the lane ended. claude's turn end is two
@@ -453,9 +462,9 @@ once whether it takes the key and serves the ladder (a refused key, a model it d
 server up stops the run); removes what runs whose flightdeck was killed left running
 (`leftovers.sweep`), records this run's (labels on its containers, `processes.json` in its folder),
 and notes the flag format it checks and where that came from; wires the deck, driver, event log and
-console; releases the board on the console's loop. A coding-agent run hands the driver every secret
-it holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the CTFd
-token).
+console; releases the board on the console's loop. Every run hands its driver every secret it
+holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the CTFd
+token), so a keys file that cannot be read stops a run before it starts.
 
 ### Event log
 
@@ -556,10 +565,16 @@ machine send and wait (`lane calls`).
 
 ### Credentials
 
-Where: `credentials.py`, `transcript.py`.
+Where: `agent/held.py`, `credentials.py`, `transcript.py`.
 
-The second redaction layer, after the first (the allowlisted environment, and a coding-agent lane's
-`[NAME]` for every secret the run holds). What flightdeck keeps of a run and what it shows lose the
+The first redaction layer is the allowlisted environment, and `[NAME]` for every secret the run
+holds (`agent/held.py`): the exact value of each keys-file entry, of the `[api]` and `[fallback]`
+keys and of the CTFd token, 8 characters or longer, as written and as JSON escapes it, replaced
+before anything cuts the text. flightdeck's own lanes do it to what a tool call gives, before the
+model or the deck has it; a coding-agent lane to what its CLI writes (the CLI's model has seen it
+by then). It hides the value wherever it stands, in any shape, and nothing the run does not hold.
+
+The second layer is by shape, for what the first cannot know. What flightdeck keeps of a run and what it shows lose the
 value of anything shaped like a credential: the run log (`eventlog.py`), a lane's transcript (when
 it is written), the steps a post-flight report quotes, every value a writeup draft shows, and what
 the console shows of a lane.

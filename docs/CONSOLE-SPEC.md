@@ -75,7 +75,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Transcript**: the lane's steps (⏺ command, ⎿ output), your messages (› you), flightdeck notes,
   alerts and approvals, in order. It follows the lane; scroll back (`pgup`) and it stays where you
   are reading until you scroll to the end again. What a lane did shows a credential's name but
-  not its value, as its transcript file keeps it; the lane's model had the text as it was.
+  not its value, as its transcript file keeps it. A key flightdeck holds shows as `[NAME]`, and
+  the lane's model had it so too; anything else shaped like a credential shows as `[redacted]`,
+  and the lane's model had that text as it was.
 - **Needs you now**: the lane's open alerts with their reasons and the suggested answers as commands.
   It takes at most half the pane, so the transcript keeps its rows on a small terminal.
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
