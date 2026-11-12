@@ -205,7 +205,8 @@ async def _file_says(workspace: Workspace, names: Sequence[str], timeout: float)
     """What `file -b` says of each name, run in the workspace, and why it said nothing ("")."""
     if not names:
         return {}, ""
-    where = f"the lane's container (image {workspace.image})" if isinstance(getattr(workspace, "image", None), str) else "the lane's workspace"
+    image = getattr(workspace, "image", None)  # a docker lane's
+    where = f"the lane's container (image {image})" if isinstance(image, str) else "the lane's workspace"
     try:
         result = await workspace.run(file_command(names), timeout=timeout)
     except (WorkspaceError, ValueError) as exc:
@@ -291,11 +292,9 @@ class Look:
     brief) after the facts, and the lane it was started for (its spend and its notes are that
     lane's)."""
 
-    def __init__(self, challenge: Challenge, lane_id: str, route: Light | None, recon: Light | None) -> None:
+    def __init__(self, challenge: Challenge, lane_id: str) -> None:
         self.challenge = challenge
         self.lane_id = lane_id
-        self.route_engine = route
-        self.recon_engine = recon
         self.facts: asyncio.Task[HandoutFacts] | None = None
         self.route: asyncio.Task[tuple[str, str]] | None = None  # (family, category guess)
         self.recon: asyncio.Task[str] | None = None  # the brief as the light model wrote it ("" when it failed)
@@ -318,7 +317,8 @@ class FirstLooks:
     def __init__(self, errors: list[str] | None = None) -> None:
         self._looks: dict[str, Look] = {}  # challenge id -> its first look
         self._said: set[str] = set()  # what the run has told the player once
-        self.errors = errors if errors is not None else []  # a first look that broke (a flightdeck bug): the driver's, shown when the run ends
+        # a first look that broke (a flightdeck bug): the driver's errors, shown when the run ends
+        self.errors = errors if errors is not None else []
 
     def start(self, lights: Lights | None, deck: Deck, lane_id: str, challenge: Challenge, workspace: Workspace,
               files: Sequence[str], urls: Sequence[str]) -> Look | None:
@@ -333,7 +333,7 @@ class FirstLooks:
         look = self._looks.get(challenge.id)
         if look is not None:
             return look
-        look = self._looks[challenge.id] = Look(challenge, lane_id, route, recon)
+        look = self._looks[challenge.id] = Look(challenge, lane_id)
         loop = asyncio.get_running_loop()
         name = f"flightdeck first look {lane_id}"
         look.facts = loop.create_task(self._guarded(deck, look, "facts", self._facts(deck, look, workspace, files),
