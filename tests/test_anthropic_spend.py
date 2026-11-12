@@ -35,20 +35,20 @@ SWITCH = {"type": "fallback", "from": {"model": SONNET}, "to": {"model": SPARE},
 
 
 class Lane:
-    """One lane on SONNET, with the driver on an AnthropicClient against `server`."""
+    """One lane on `model` (SONNET), with the driver on an AnthropicClient against `server`."""
 
     def __init__(self, tmp_path: Path, server: FakeAnthropicServer, prices: dict[str, Price], *,
-                 dollar_cap: float | None = None) -> None:
+                 dollar_cap: float | None = None, model: str = SONNET) -> None:
         folder = tmp_path / "board" / "note"
         folder.mkdir(parents=True)
         (folder / "note.txt").write_text("the flag is t{note}\n")
         self.client = AnthropicClient(server.base_url, KEY, max_retries=0)
         self.driver = AgentDriver(self.client, lambda lane, ch: HostWorkspace(tmp_path / "runs" / lane.id / "work", folder),
                                   run_id="run1", files={"note": ["note.txt"]}, prices=prices)
-        config = DeckConfig(event="t", flag_format=FLAG, models=(SONNET,), max_lanes=1)
+        config = DeckConfig(event="t", flag_format=FLAG, models=(model,), max_lanes=1)
         self.deck = Deck(config, self.driver, RunClock(), lambda cid, flag: flag == "t{note}")
         self.deck.release([Challenge("note", "Note", "misc", 50, solves=10, description="About note.")],
-                          [QueueEntry("note", SONNET, dollar_cap=dollar_cap)])
+                          [QueueEntry("note", model, dollar_cap=dollar_cap)])
         (self.lane,) = self.deck.lanes.values()
 
     def events(self, kind: EventKind) -> list[dict]:
@@ -137,6 +137,32 @@ def test_an_attempt_by_a_model_with_no_price_leaves_the_lanes_dollars_not_fully_
             assert lane.tokens == 3500 + 3550
             budget = next(p for p in (lane.pending, *lane.waiting) if p and p.kind is PendingKind.BUDGET)
             assert budget.detail == f"carry on with no dollar cap (no price for {SPARE})"  # the model that ran it, named
+            await lab.finish()
+
+    run(main)
+
+
+def test_an_attempt_on_a_model_between_the_one_asked_for_and_the_one_that_answered_is_priced_as_its_own(tmp_path):
+    # Claude Opus 5.5 declined, Claude Opus 5 declined too, Claude Opus 4.8 answered
+    opus, middle, last = "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"
+    prices = {opus: Price(4.0, 20.0, 0.20, 5.0), middle: Price(5.0, 25.0, 0.50, 6.25), last: Price(5.0, 25.0, 0.50, 6.25)}
+    chain = message(submit()["content"], stop_reason="tool_use", model=last, iterations=[
+        attempt(opus, input_tokens=1000), attempt(middle, input_tokens=2000),
+        attempt(last, kind="fallback_message", input_tokens=3000, output_tokens=100)])
+    server = FakeAnthropicServer([chain])
+
+    async def main():
+        with server:
+            lab = Lane(tmp_path, server, prices, model=opus)
+            lane = lab.lane
+            await until(lambda: lane.pending is not None or lane.finished, "the candidate flag")
+            assert lane.tokens == 1000 + 2000 + 3100
+            assert lane.dollars == pytest.approx(per_million((1000, 4.0), (2000, 5.0), (3000, 5.0), (100, 25.0)))
+            spent = {e["model"]: (e["tokens"], e["dollars"]) for e in lab.events(EventKind.SPEND)}
+            assert spent == {opus: (1000, pytest.approx(per_million((1000, 4.0)))),
+                             middle: (2000, pytest.approx(per_million((2000, 5.0))))}  # Claude Opus 5's rate, not 5.5's
+            (turn,) = lab.events(EventKind.TURN)
+            assert (turn["model"], turn["tokens"]) == (last, 3100)
             await lab.finish()
 
     run(main)
