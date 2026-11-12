@@ -117,6 +117,29 @@ These come from [AGENTS.md](AGENTS.md), and they hold for people and agents alik
 Work on a branch, in small commits. The pull request template asks what changed and why, and
 how it was tested.
 
+### Releases
+
+For the maintainer. `.github/workflows/release.yml` publishes a tag `vX.Y.Z` to PyPI (Trusted
+Publishing: no token anywhere), then creates the GitHub release with a `.deb` for amd64 and
+arm64, and writes the Homebrew formula to the tap. A rehearsal (Run workflow, target testpypi)
+builds and tests the `.deb`s too, and publishes neither them nor the formula.
+
+- **The `.deb`** brings its own Python. `packaging/deb/build-in-docker.sh WHEEL OUT_DIR` builds
+  it in a debian:12 container, and `packaging/deb/test-in-docker.sh DEB VERSION` installs it in
+  a clean one and runs `flightdeck --version` and `flightdeck doctor` there. Both run on your
+  machine as they do in CI, with Docker and uv.
+- **The formula** is `packaging/homebrew/ctf-flightdeck.rb.in` with the release's sdist and one
+  resource for each locked dependency, rendered by `packaging/homebrew/render_formula.py`
+  (standard library only). Before the first release with it, try a rendered formula by hand:
+  `brew install --build-from-source ./ctf-flightdeck.rb`, then `brew test ctf-flightdeck`.
+- **The tap** is the repository `MFisher14/homebrew-tap`, which the workflow does not create.
+  It needs one commit (a README will do) and a token that can write to it and to nothing else:
+  a fine-grained personal access token for that one repository with Contents read and write.
+  Store it as the secret `HOMEBREW_TAP_TOKEN` of an environment named `homebrew-tap` in this
+  repository, with yourself as required reviewer, as for `pypi`. Without the secret the
+  `homebrew-tap` job says so and passes, and the tap is not touched. The token is never in this
+  repository.
+
 ### Adding a practice challenge
 
 The practice set is the board that `flightdeck practice` plays

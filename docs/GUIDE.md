@@ -24,6 +24,24 @@ lane image and your terminal's size. Before the console opens, `play` and `pract
 API whether it takes your key and serves every model in your ladder, and stop with what to fix if
 not. `ctfdeck` and `ctf-flightdeck` are other names for the `flightdeck` command.
 
+### Install with Homebrew or apt
+
+Not yet: 0.2.0 is on PyPI only. Both arrive with the first release after 0.2.0, and until then
+the commands below find nothing.
+
+```sh
+brew install mfisher14/tap/ctf-flightdeck        # macOS or Linux, from flightdeck's own tap
+
+# Debian or Ubuntu: the .deb for your machine (amd64 or arm64) from the release's page,
+# https://github.com/MFisher14/ctf-flightdeck/releases
+sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
+```
+
+The `.deb` brings a Python of its own under `/opt/ctf-flightdeck` (Debian 12 has 3.11, and
+flightdeck needs 3.12), so it needs no Python from your system and changes none. There is no apt
+repository yet, so `apt upgrade` does not find a new release: install the next `.deb` over the
+old one. Neither way installs Docker.
+
 ## What a run costs
 
 `practice` and `play` spend money on your model API. Each lane waits for your approval at 400,000
