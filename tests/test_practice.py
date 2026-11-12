@@ -744,5 +744,9 @@ def test_the_readmes_no_network_promise_matches_what_runs_do():
     readme = " ".join((PRACTICE / "README.md").read_text(encoding="utf-8").split())  # line breaks do not matter
     assert "a docker lane gets no network when its challenge lists no `urls`" in readme.lower()
     assert lane_network(()) == "none"
+    # and it says where the promise ends: a coding-agent lane always has the bridge network
+    # (tests/test_run.py checks that a run gives it one)
+    assert "A coding-agent lane (`--agent`) is always on Docker's bridge network" in readme
+    assert "practice with `--agent` is not honest practice" in readme
     for spec in (PRACTICE).glob("*/challenge.json"):
         assert not json.loads(spec.read_text(encoding="utf-8")).get("urls"), spec.parent.name

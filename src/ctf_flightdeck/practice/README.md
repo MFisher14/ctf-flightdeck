@@ -1,9 +1,9 @@
-# Practice Range
+# The practice set
 
-Fourteen small challenges for trying ctf-flightdeck without a live event. Everything here was
-invented for this repository (names, stories, files and flags) and is MIT licensed like the rest
-of it. Nothing needs a network or a server, and no handout is a compiled program or an executable
-file.
+Fourteen small challenges for trying ctf-flightdeck without a live event (its board is called
+Practice Range: `board.json`'s event). Everything here was invented for this repository (names,
+stories, files and flags) and is MIT licensed like the rest of it. Nothing needs a network or a
+server, and no handout is a compiled program or an executable file.
 
 | Challenge | Category | Points | Handout |
 |---|---|---|---|
@@ -50,6 +50,10 @@ A docker lane gets no network when its challenge lists no `urls`, and no challen
 practice lane in docker can read nothing but its own copy and reach nothing at all: it cannot
 download this repository's solutions.
 
+That holds for flightdeck's own lanes. A coding-agent lane (`--agent`) is always on Docker's bridge
+network, for its CLI's API, so it can download this repository, solutions included: practice with
+`--agent` is not honest practice.
+
 The lane's python tool runs `python3` inside the container. Build the lane image once with
 `flightdeck image build` (it adds `python3`, `file`, `xxd`, `unzip`, `strings` and other common
 tools to Debian); `flightdeck init` sets it as the image.
@@ -64,9 +68,9 @@ printf '%s' 'practice{...}' | shasum -a 256
 
 ## Hints
 
-Most descriptions give the kind of nudge real CTFs give. Three name their technique outright
-(Fine Print, Harbour Memo and Signal Lamp); later milestones use them to test the "ignores the
-hint" alert.
+Most descriptions give the kind of nudge real CTFs give; Fine Print, Harbour Memo and Signal Lamp
+name their technique outright. flightdeck's hint rules are tested on every description here
+(`tests/test_detect_lexicon.py`).
 
 ## Tests (spoilers)
 
