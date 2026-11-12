@@ -285,6 +285,9 @@ def check(
 ) -> list[Problem]:
     """What stands in the way of a run with these policies: refusals first, then warnings.
 
+    An agents policy of manual or off is a refusal (no_agents()): `flightdeck play` plays with
+    agent lanes and starts no run without them, so no refusal here means play will start.
+
     max_lanes is how many lanes the run would start at once (None: not known yet, not checked).
     environ (default os.environ) is only asked whether the token and API key variables are set.
     model_config is the player's config, or the ConfigError that loading it raised, or None to
@@ -310,7 +313,9 @@ def check(
     for key, platform in _PLATFORM_ONLY.items():
         if getattr(profile, key) is not None and profile.platform != platform:
             warn.append(f'event.{key} is only for platform "{platform}", so this {profile.platform} profile does not use it')
-    agents_on = requested.agents is not Policy.OFF
+    agents_on = requested.agents in (Policy.AUTO, Policy.CONFIRM)  # the policies under which play starts lanes
+    if not agents_on:
+        refuse.append(no_agents(profile, requested))
     if agents_on and profile.max_lanes is not None and max_lanes is not None and max_lanes > profile.max_lanes:
         refuse.append(
             f"{max_lanes} lanes at once is more than the rules allow (rules.max_lanes = {profile.max_lanes}): "
@@ -342,6 +347,19 @@ def check(
             "shaped like word{...}. Set it from the event's rules, so flags in its format are caught"
         )
     return [Problem(True, m) for m in refuse] + [Problem(False, m) for m in warn]
+
+
+def no_agents(profile: EventProfile, policies: Policies) -> str:
+    """Why a profile whose agents policy is manual or off starts no run: `flightdeck play` plays
+    with agent lanes. play says the same, before it calls check()."""
+    if not profile.ai_allowed:
+        why = "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off"
+    else:
+        why = f'the event profile sets agents = "{policies.agents}"'
+    return (
+        f"{why}: `flightdeck play` plays with agent lanes, so it does not start. Play by hand; `flightdeck l1 run` "
+        "runs your no-model solvers"
+    )
 
 
 def _check_ctfd(
@@ -448,21 +466,21 @@ def _is_set(environ: Mapping[str, str], name: str) -> bool:
 _MEANING = {
     "pull": {
         Policy.AUTO: "flightdeck gets the board itself",
-        Policy.CONFIRM: "flightdeck gets the board after you say yes",
+        Policy.CONFIRM: "flightdeck pulls the board once, after you say yes (no new waves)",
         Policy.MANUAL: "you put the challenges in the board folder",
         Policy.OFF: "the board is not fetched or updated",
     },
     "l1": {
         Policy.AUTO: "your no-model solvers run on each challenge",
-        Policy.CONFIRM: "your no-model solvers run after you say yes",
-        Policy.MANUAL: "flightdeck lists the solvers that match; you run them",
+        Policy.CONFIRM: "your no-model solvers run first on each challenge (starting play is your yes)",
+        Policy.MANUAL: "your solvers do not run in lanes; `flightdeck l1 route` lists those that match a challenge",
         Policy.OFF: "no L1 solvers",
     },
     "agents": {
         Policy.AUTO: "model-driven lanes start on their own, up to the lane limit",
-        Policy.CONFIRM: "each model-driven lane starts after you say yes",
-        Policy.MANUAL: "a lane starts only when you queue it",
-        Policy.OFF: "no model-driven lanes",
+        Policy.CONFIRM: "lanes start on their own, up to the lane limit (starting play is your yes)",
+        Policy.MANUAL: "`flightdeck play` does not start: it plays with agent lanes",
+        Policy.OFF: "no model-driven lanes: `flightdeck play` does not start",
     },
     "submit": {
         Policy.AUTO: (
@@ -482,6 +500,11 @@ _MEANING = {
     },
 }
 
+
+FOLDER_BOARD = "a folder board: nothing to fetch"  # the pull line of a manual profile, whatever its policy
+# A coding-agent lane's container is on the bridge network whatever the instance policy: its
+# CLI needs its own API (run.py gives every such lane network="bridge").
+AGENT_NETWORK = "; a coding-agent lane (--agent) always has it"
 
 NO_PACK = (
     "there is no [l1] pack in your config, so nothing runs at this stage: set pack = \"FOLDER\" under [l1] in it "
@@ -533,15 +556,18 @@ def describe(
         elif policy is not limit:
             note = f" (the rules allow {limit})"
         meaning = _MEANING[stage][policy]
+        if stage == "pull" and profile.platform == "manual":
+            meaning = FOLDER_BOARD
         if stage == "l1" and policy is not Policy.OFF and no_pack:
             meaning = NO_PACK
         lines.append(f"{stage:<10}{policy.value:<9}{meaning}{note}")
     if policies.instance is Policy.AUTO:
-        lines.append("network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none")
+        network = "a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
     elif policies.instance is Policy.CONFIRM:
-        lines.append("network   a docker lane has no network until you allow it its instance, then an open one (bridge: any host)")
+        network = "a docker lane has no network until you allow it its instance, then an open one (bridge: any host)"
     else:
-        lines.append(f'network   docker lanes get no network (instance "{policies.instance}")')
+        network = f'docker lanes get no network (instance "{policies.instance}")'
+    lines.append(f"network   {network}{AGENT_NETWORK}")
     return lines
 
 
