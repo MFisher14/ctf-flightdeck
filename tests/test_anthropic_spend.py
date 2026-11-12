@@ -24,6 +24,7 @@ from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import Challenge, DeckConfig, EventKind, LaneState, PendingKind
 from ctf_flightdeck.pricing import Price
 from fake_anthropic import FakeAnthropicServer, attempt, message, refusal, tool_message
+from test_agent_driver import Gate
 from test_fallback import until
 
 KEY = "test-anthropic-key-6Hc1-not-real"
@@ -240,5 +241,93 @@ def test_a_call_every_model_declined_after_the_lane_was_escalated_or_taken_over_
             assert lane.dollars == pytest.approx(sonnet + spare + last)
             assert lab.deck.totals()[0] == 4800
             await lab.finish()
+
+    run(main)
+
+
+@pytest.mark.parametrize("cut", ["killed while its reply waits", "killed during its tool call", "quit while its reply waits"])
+def test_a_reply_the_lane_stopped_before_its_turn_was_done_still_counts_every_attempt(tmp_path, cut):
+    # the reply came (Anthropic billed both attempts of its call), and then the lane stopped:
+    # the player killed it, or quit, while the reply waited for the paused lane or its tool call ran
+    hold = Gate(tmp_path)  # the tool call runs until the test has stopped the lane
+    call = tool_message("shell", {"command": hold.command("true")})
+    reply = message([SWITCH, *call["content"]], stop_reason="tool_use", model=SPARE, iterations=[
+        attempt(SONNET, input_tokens=800, cache_read=1000),
+        attempt(SPARE, kind="fallback_message", input_tokens=900, output_tokens=10)])
+    gate = threading.Event()
+
+    def responder(record):
+        gate.wait(5)  # held until the test is ready for it (the lane paused, or not)
+        return reply
+
+    server = FakeAnthropicServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lane(tmp_path, server, PRICES)
+            lane = lab.lane
+            if "waits" in cut:
+                await until(lambda: len(server.requests) >= 1, "the call")
+                assert lab.deck.apply(iv.Pause(lane.id)).ok
+                gate.set()
+                await until(lambda: SONNET in lab.driver.answered, "the reply, held: the lane is paused")
+            else:
+                gate.set()
+                await until(hold.started.exists, "the tool call running")
+            if cut.startswith("quit"):
+                lab.deck.close()  # as the run does when the player quits, before the driver's shutdown
+                await lab.driver.shutdown()
+            else:
+                assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            hold.open()
+            await until(lambda: lane.tokens >= 2710, "the reply's tokens counted")
+            assert (lane.tokens, lane.cached_tokens, lane.turns) == (1800 + 910, 1000, 0)
+            sonnet, spare = per_million((800, 2.0), (1000, 0.10)), per_million((900, 2.0), (10, 10.0))
+            assert lane.dollars == pytest.approx(sonnet + spare)
+            spent = {e["model"]: (e["tokens"], e["dollars"], e["why"]) for e in lab.events(EventKind.SPEND)}
+            stopped = "a reply cut short: the lane stopped before its turn was done"
+            assert spent == {
+                SONNET: (1800, pytest.approx(sonnet), f"{SONNET} declined, so Anthropic's refusal fallback ran the call on "
+                                                      f"{SPARE}; {stopped}"),
+                SPARE: (910, pytest.approx(spare), stopped)}
+            assert lab.deck.totals()[:2] == (2710, pytest.approx(sonnet + spare))
+            await lab.finish()
+
+    run(main)
+
+
+@pytest.mark.parametrize("counted", ["by its turn", "by its drop"])
+def test_a_reply_already_counted_is_not_counted_again_when_the_lane_stops(tmp_path, counted):
+    # its turn reported it (then the flag was approved), or it was dropped on an escalation (then
+    # the lane was killed while the stronger model's call was under way: that call is cancelled)
+    gates = [threading.Event(), threading.Event()]
+
+    def responder(record):
+        n = len(server.requests)
+        if counted == "by its turn":
+            return submit(input_tokens=300, output_tokens=40)
+        gates[min(n, 2) - 1].wait(5)
+        return tool_message("shell", {"command": "ls"}, input_tokens=300, output_tokens=40)
+
+    server = FakeAnthropicServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lane(tmp_path, server, {**PRICES, OPUS: OPUS_PRICE}, ladder=(SONNET, OPUS))
+            lane = lab.lane
+            if counted == "by its turn":
+                await until(lambda: lane.pending is not None, "the candidate flag")
+                assert lab.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            else:
+                await until(lambda: len(server.requests) >= 1, "the call to Claude Sonnet 5.5")
+                assert lab.deck.apply(iv.Escalate(lane.id)).ok
+                gates[0].set()
+                await until(lambda: len(server.requests) >= 2, "the call to Claude Opus 5.5")
+                assert lane.tokens == 340  # the dropped reply, counted
+                assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            await lab.finish()  # the lane's task has ended: nothing more is reported
+            gates[1].set()
+            assert lane.tokens == 340 and lab.deck.totals()[0] == 340
+            assert len(lab.events(EventKind.SPEND)) == (0 if counted == "by its turn" else 1)
 
     run(main)

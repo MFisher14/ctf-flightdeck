@@ -41,7 +41,9 @@ Escalation and take-over are turn boundaries. Each bumps the lane's generation, 
 asked for in an older generation runs no further tool call. After an escalation none of
 it goes into the new context (it belongs to the old one). After a take-over the calls it
 had not run yet are answered "not run", and the next call tells the model what the player
-did. A reply that arrives after either is dropped (its cost still counts).
+did. A reply that arrives after either is dropped (its cost still counts). So is one the lane's
+stop cuts short (a kill, a solve, quitting) while it waits for the paused lane or its tool calls
+run: what its call cost is reported as spend, which the deck counts after a lane's end too.
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ..core.driver import TakeoverRefused, TurnReport
+from ..core.driver import TakeoverRefused, TurnReport, spend_only
 from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..core.summary import lane_summary
 from ..l1.runner import scan
@@ -197,6 +199,7 @@ class _Run:
     said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
     planted: frozenset[str] = frozenset()  # flag-format matches in the challenge's own text: never claimed when submitted
     outputs: Outputs = field(default_factory=Outputs)  # its newest tool outputs: where a flag it submits was found
+    uncounted: tuple[str, Usage] | None = None  # a reply's call (its model, its usage) not reported yet: _count_cut
     look: Look | None = None  # the challenge's first look (agent/facts.py), until the lane's first model call takes it
     recon: str = ""  # what of the first look was back then: in the brief of every fresh context of the lane
     opened: bool = False  # the lane's first model call is made (or about to be): nothing more goes into its brief
@@ -440,6 +443,10 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, action="flightdeck error", output=f"{type(exc).__name__}: {exc}",
                                          gave_up=f"flightdeck error: {type(exc).__name__}: {exc}"))
         finally:
+            try:
+                self._count_cut(run)
+            except Exception as exc:  # a flightdeck bug: reported when the console exits; the workspace still closes
+                self.errors.append(f"{run.lane_id}: counting what a cut reply cost failed: {type(exc).__name__}: {exc}")
             await self._close(run)
 
     async def _work(self, run: _Run) -> None:
@@ -492,6 +499,7 @@ class AgentDriver:
                     continue
                 self._failed(run, exc, model, len(hints))
                 return
+            run.uncounted = (model, reply.usage)  # until its turn (or its drop) reports what it cost
             self.answered.add(model)
             if reply.notice:
                 self.deck.note(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
@@ -664,6 +672,7 @@ class AgentDriver:
         same = run.messages is messages
         if not same:
             run.notes[:0] = notes
+        run.uncounted = None  # reported here
         dropped = "a refusal" if declined else "a reply"
         why = f"{dropped} dropped: the lane was escalated or taken over while the model answered"
         self._apart(run, model, usage, why)
@@ -749,6 +758,7 @@ class AgentDriver:
         checked, again = self._checked_first(run, flags)
         raised = [flag for flag in flags if flag not in checked and flag not in again]  # the deck has these now
         usage = reply.usage
+        run.uncounted = None  # reported here
         self._apart(run, model, usage)
         self._report(
             run,
@@ -912,9 +922,30 @@ class AgentDriver:
         lane = self._lane(run)
         return run.stopped or lane is None or lane.finished
 
+    def _count_cut(self, run: _Run) -> None:
+        """The cost of a reply the lane's stop cut short (a kill, a solve, quitting), the reply
+        having come while the lane was paused or while its tool calls ran: its call was paid
+        for, so what it cost is reported as spend, every attempt of it (_apart), which the deck
+        counts on the lane and the run after the lane's end and once the run is closing. A
+        call still under way when the lane stops is cancelled with the lane's task: no reply
+        comes, and nothing says what it used."""
+        if run.uncounted is None:
+            return
+        model, usage = run.uncounted
+        run.uncounted = None
+        why = "a reply cut short: the lane stopped before its turn was done"
+        self._apart(run, model, usage, why)
+        self._report(run, TurnReport(turn=False, tokens=usage.total, cached_tokens=usage.cached_tokens,
+                                     dollars=self._priced(usage.model or model, usage), why=why,
+                                     model=usage.model or model))
+
     def _report(self, run: _Run, report: TurnReport) -> None:
         lane = self._lane(run)
-        if lane is None or lane.finished or run.stopped:
+        if lane is None:
+            return
+        if lane.finished or run.stopped:
+            if spend_only(report):  # what was spent counts after the lane's end too (Deck.report): _count_cut
+                self.deck.report(run.lane_id, report)
             return
         if self.flaggate is not None:  # giving up while a flag is under check: it ends once the check is in
             report = self.flaggate.defer_gave_up(run.lane_id, report)
