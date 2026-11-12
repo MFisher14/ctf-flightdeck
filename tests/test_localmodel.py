@@ -905,6 +905,26 @@ def test_a_summary_case_can_take_keyword_groups_with_synonyms(tmp_path):
     assert result.correct and result.missing == ()
 
 
+def test_the_bundled_summary_cases_credit_inflected_keywords():
+    # Whole-word matching (test_steganography_...) marks an inflected keyword or a tool name
+    # wrong, so the bundled summary cases that need it carry their keyword as a group with the
+    # forms a correct summary uses. Without those groups each reply here, which never writes the
+    # bare keyword, would score wrong and every engine's summary row would drop below what the
+    # function eval measured (Haiku 10/14, gemma 9, gpt-oss 8, phi4 9, qwen 9).
+    reply_for = {
+        "xor, key length": "Used xortool to recover the repeating-key cipher; the key length is 5.",  # xortool, not XOR
+        "base64, decode": "Decoded the base64 blob to a gzip header, then read it.",  # Decoded, not decode
+        "exif, metadata": "Read the metadata: exiftool photo.jpg shows a UserComment.",  # exiftool, not exif
+        "solve.py, repeat": "The lane is stuck repeating solve.py --mode a with no output.",  # repeating, not repeat
+    }
+    by_expected = {c.expected: c for c in lm.load_cases(lm.default_cases_path()) if c.kind == "summary"}
+    picked = [by_expected[expected] for expected in reply_for]  # KeyError if a bundled wording changed
+    assert all(c.required for c in picked), "the bundled summary cases these replies need carry no keyword group"
+    with FakeModelServer([text_reply(reply_for[c.expected]) for c in picked]) as server:
+        report = run_eval(server.base_url, picked)
+    assert [(r.correct, r.missing) for r in report.results] == [(True, ())] * len(picked)
+
+
 # --------------------------------------------------------------------------- whole-word keywords
 
 
