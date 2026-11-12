@@ -258,6 +258,7 @@ class Lane:
     known_dollars: float = 0.0  # every priced amount, turn or not, also after a turn with no price
     unpriced: int = 0  # reports that had no known price
     unreported: int = 0  # of those, coding-agent CLI turns whose cost never came (TurnReport.unreported): no price was missing for them
+    light_unpriced: int = 0  # of those, a light model's first look (TurnReport.light): it never holds up the lane, so nothing was asked for them
     dollars_later: bool = False  # a coding-agent CLI's turn is under way: its cost comes when the turn ends, so `dollars` is not settled
     token_cap: int | None = None
     dollar_cap: float | None = None
@@ -306,8 +307,9 @@ class Lane:
 
     def budget_used(self) -> float | None:
         """Largest fraction of a cap used so far, or None if the lane has no caps. When the
-        only spend with no known cost is CLI turns whose cost never came (unreported), the
-        dollar cap holds on what is known; spend with no price leaves it unenforceable."""
+        only spend with no known cost is CLI turns whose cost never came (unreported) or a
+        light model's first look (light_unpriced), the dollar cap holds on what is known;
+        spend with no price leaves it unenforceable."""
         used = []
         if self.token_cap:
             used.append(self.tokens / self.token_cap)
@@ -317,8 +319,9 @@ class Lane:
         return max(used) if used else None
 
     def no_price(self) -> bool:
-        """Whether some of the lane's spend had no price (not only a CLI turn whose cost never came)."""
-        return self.unpriced > self.unreported
+        """Whether some of the lane's spend had no price (not only a CLI turn whose cost never
+        came, or a light model's first look)."""
+        return self.unpriced > self.unreported + self.light_unpriced
 
 
 class EventKind(StrEnum):

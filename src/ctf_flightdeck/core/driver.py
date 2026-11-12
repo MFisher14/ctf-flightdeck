@@ -66,6 +66,7 @@ class TurnReport:
     dollars_later: bool = False  # a coding-agent CLI's step: the CLI reports what it cost only when its turn ends (turn_end), so `dollars` is not known yet, rather than $0.00
     turn_end: bool = False  # what a coding-agent CLI reported for a turn that ended (or was cut short, or that it exited in): the turn's own cost, which its steps (dollars_later) did not carry
     unreported: bool = False  # with turn_end and dollars None: the CLI never said what the turn cost (it was stopped in it, or exited), so its cost is not known though no price is missing; a dollar cap then holds on what is known (Lane.unreported)
+    light: bool = False  # spend of a light model's first look at the lane's challenge (agent/facts.py), which never holds up a lane: with dollars None its cost is not known, but nothing is asked and a dollar cap holds on what is known (Lane.light_unpriced)
 
 
 def spend_only(rep: TurnReport) -> bool:

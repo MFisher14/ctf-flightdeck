@@ -1467,7 +1467,10 @@ class Deck:
         marked turn_end: the CLI's own cost of its turn, not spend outside a turn. A turn whose
         cost never came (unreported: the CLI was stopped in it, or exited) leaves the lane's
         total not known, but no price is missing for it: nothing is asked, and a dollar cap
-        holds on what is known (Lane.budget_used). Spend with no price asks once (P7)."""
+        holds on what is known (Lane.budget_used). So does a light model's first look with no
+        known cost (light: agent/facts.py), said once on the lane: a first look never holds up
+        a lane, and its few calls must not lift the cap off the lane's own model. Other spend
+        with no price asks once (P7)."""
         due = lane.dollars_later  # a turn_end that settles it is logged even when it adds nothing: the log says so too
         lane.tokens += rep.tokens
         lane.cached_tokens += rep.cached_tokens
@@ -1481,7 +1484,13 @@ class Deck:
                     self._note(lane, f"the cost of a turn of {rep.model or lane.model} never came (its CLI did not report "
                                      f"it): the ${fmt.dollars(lane.dollar_cap)} cap holds on the "
                                      f"${fmt.dollars(lane.known_dollars)} that is known")
-            elif not lane.finished and lane.dollar_cap and lane.unpriced - lane.unreported == 1:
+            elif rep.light:
+                lane.light_unpriced += 1
+                if not lane.finished and lane.dollar_cap and lane.light_unpriced == 1:
+                    self._note(lane, f"{rep.why or 'a light model spent something that'} has no known cost: the "
+                                     f"${fmt.dollars(lane.dollar_cap)} cap holds on the ${fmt.dollars(lane.known_dollars)} "
+                                     "that is known (a light model's first look never holds up a lane)")
+            elif not lane.finished and lane.dollar_cap and lane.unpriced - lane.unreported - lane.light_unpriced == 1:
                 self._unpriced(lane, rep)  # the first spend with no price: the cap cannot be enforced any more
             lane.dollars = None
         else:
