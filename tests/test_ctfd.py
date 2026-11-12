@@ -523,6 +523,34 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them(lockout, said):
     assert got[7] == Attempt("paused", "Fake CTF is paused")
 
 
+@pytest.mark.parametrize("lockout, answers", [
+    # as the real CTFd 3.8.9 answered on 127.0.0.1 (CTFd/api/v1/challenges.py: the lockout is asked before the solve)
+    ("ratelimited", [(200, "incorrect", "Incorrect. You have 1 try remaining."),
+                     (200, "incorrect", "Incorrect. You have 0 tries remaining."),
+                     (403, "ratelimited", "Not accepted. You have 0 tries remaining"),
+                     (403, "ratelimited", "Not accepted. You have 0 tries remaining")]),
+    # as an older CTFd answered: "incorrect" with 403, asked once it knew the challenge was not solved
+    ("incorrect", [(200, "incorrect", "Incorrect. You have 1 try remaining."),
+                   (200, "incorrect", "Incorrect. You have 0 tries remaining."),
+                   (403, "incorrect", "You have 0 tries remaining"),
+                   (403, "incorrect", "You have 0 tries remaining")]),
+], ids=["CTFd 3.8.9", "older CTFd"])
+def test_the_fake_ctfd_answers_out_of_tries_as_the_ctfd_it_stands_for(lockout, answers):
+    headers = {"Authorization": f"Token {TOKEN}", "Content-Type": "application/json"}  # CTFd reads a token from JSON only
+    with FakeCTFd([FakeChallenge(6, "Two Tries", max_attempts=2, flag="test{two}")], lockout=lockout) as fake:
+        got = []
+        for flag in ("test{one}", "test{nope}", "test{two}", "test{two}"):  # the right flag twice, once out of tries
+            reply = httpx.post(f"{fake.base_url}/api/v1/challenges/attempt", json={"challenge_id": 6, "submission": flag},
+                               headers=headers, timeout=10)
+            data = reply.json()["data"]
+            got.append((reply.status_code, data["status"], data["message"]))
+        details = httpx.get(f"{fake.base_url}/api/v1/challenges/6", headers=headers, timeout=10).json()["data"]
+    assert got == answers and 6 not in fake.solved
+    assert (details["max_attempts"], details["attempts"]) == (2, 2)  # the two flags it checked; not the ones it refused
+    with pytest.raises(ValueError, match="lockout must be one of ratelimited, incorrect"):
+        FakeCTFd([], lockout="locked")
+
+
 @pytest.mark.parametrize("http, data, expected", [
     # out of tries, whichever status CTFd says it with: the flag was not checked
     (403, {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"}, ("locked_out", 0)),
