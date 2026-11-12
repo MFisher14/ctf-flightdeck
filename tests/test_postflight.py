@@ -1339,7 +1339,7 @@ def test_the_report_the_scorecard_and_the_console_give_the_same_floor_for_dollar
     assert record.lanes[alpha].known_dollars == pytest.approx(0.50)
     card = score(record.dir / "events.jsonl", board)
     assert card.known_dollars == pytest.approx(0.80) and card.dollars is None
-    assert "Spent 6k tokens · $0.80+ · $0.40+ per solve" in scorecard(card).splitlines()
+    assert "Spent 6k tokens · $0.80+ · $0.40+ per lane solve" in scorecard(card).splitlines()
 
 
 # ---------------------------------------------------------------------- lanes that gave up or were killed

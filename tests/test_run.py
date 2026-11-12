@@ -855,7 +855,7 @@ def test_what_claude_reports_after_its_lane_solved_is_in_the_scorecard_play_prin
     assert (lane.tokens, lane.dollars, lane.dollars_later) == (165, pytest.approx(0.03), False)
     assert run.deck.totals() == (165, pytest.approx(0.03), False)  # the console's header
     card = run.scorecard()
-    assert card is not None and "Spent 165 tokens · $0.03 · $0.03 per solve" in card.splitlines(), card
+    assert card is not None and "Spent 165 tokens · $0.03 · $0.03 per lane solve" in card.splitlines(), card
     summary = postflight.summary(load_run(run.dir))
     assert "Spend: 165 tokens (0% cached), $0.03, $0.03 per lane solve" in summary.splitlines(), summary
 

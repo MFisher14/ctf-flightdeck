@@ -14,12 +14,17 @@ An archive is a folder board (platform/manual.py) with, optionally:
 timer of its own: call tick() from one on the console's event loop (the deck's thread).
 
 `score()` reads a run's events.jsonl, so it works on any past run: what was solved, when
-and by which lane, the tokens and dollars of the model turns, the player's interventions
-and the wrong submissions. With an answers file on the board, each submitted flag is
-checked against it again, so a run is scored against the answers and not only by what it
-was told at the time. Who a solve goes to (a lane, or the L1 engine whose flag it was) is the
-rule every report uses (runrecord.Credit); a teammate's solve, or one the platform lists
-for you or your team, is shown on its row but earns the run nothing.
+and by whom, the tokens and dollars of the model turns, the player's interventions and the
+wrong submissions. With an answers file on the board, each submitted flag is checked
+against it again, so a run is scored against the answers and not only by what it was told
+at the time. What counts as a solve, and who it goes to, is the rule every report uses
+(runrecord.Credit, the first solve in the log): a lane's flag, the L1 engine's whose flag it
+was, yours, a teammate's, or one the platform lists for you or your team, each counted and
+said as the post-flight report counts and says them (runrecord.solvers), so the two agree on
+a run; the cost per solve is per lane solve, as the report gives it. A run is scored against
+the board it played, as its log recorded it (played()): a challenge that came into the board
+folder after the run (a later run's CTFd wave adds one) is left out, with a note, as the
+report leaves it out.
 
 Tokens and dollars come from the log's turn events and spend events: what a lane spent
 outside a turn (a model reply dropped on escalation, for one), and a coding-agent CLI's own
@@ -45,7 +50,7 @@ import math
 import re
 import stat
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -56,7 +61,7 @@ from . import fmt
 from .core.deck import Deck, QueueEntry
 from .core.model import ME, EventKind
 from .platform.manual import AnswerVerifier, Board
-from .runrecord import L1, LANES, Credit, Solve, event_line, turn_end
+from .runrecord import L1, LANE, LANES, Credit, Solve, event_line, solvers, turn_end
 from .text import untrusted
 
 TIMELINE_FILE = "timeline.json"
@@ -270,6 +275,38 @@ def _check_covers(timeline: Timeline, ids: list[str]) -> None:
 # ---------------------------------------------------------------------- scoring
 
 
+def played(board: Board, released: Iterable[str]) -> tuple[Board, tuple[str, ...]]:
+    """The board a run played, from the board folder as it is now and the challenges the run's
+    log released: that board, and the ids of the folder's challenges left off it, in board
+    order. A challenge the log released is on it, and so is one it never released that the
+    board's timeline holds for a wave after the start, which the run did not reach (a practice
+    archive). One the board puts out at the start (every challenge of a board with no
+    timeline) was on the board the run played only if the log released it: else it came into
+    the folder since (a later run's CTFd wave adds one), and is left out. A log that released
+    nothing leaves the board as it is, as nothing says what it played. TimelineError when the
+    board's timeline is needed and cannot be read."""
+    seen = set(released)
+    unreleased = [item.challenge.id for item in board.challenges if item.challenge.id not in seen]
+    if not seen or not unreleased:
+        return board, ()
+    later = {cid for wave in load_timeline(board).waves if wave.at > 0 for cid in wave.ids}
+    left = tuple(cid for cid in unreleased if cid not in later)
+    if not left:
+        return board, ()
+    out = set(left)
+    return replace(board, challenges=tuple(item for item in board.challenges if item.challenge.id not in out)), left
+
+
+def _left_out(ids: tuple[str, ...]) -> str:
+    """The note on challenges of the board folder that the run did not play (played())."""
+    why = "the folder has grown since: a later pull's wave adds challenges to it"
+    if len(ids) == 1:
+        return f"{_quote(ids[0])} is in the board folder but was not on the board when this run played it ({why}): it is left out."
+    names = ", ".join(_quote(cid) for cid in ids[:10]) + (", ..." if len(ids) > 10 else "")
+    return (f"{len(ids)} challenges in the board folder were not on the board when this run played it ({why}): {names}; "
+            "they are left out.")
+
+
 @dataclass(frozen=True)
 class LaneScore:
     """One lane, from the log and its transcript: what it worked on and what it cost."""
@@ -293,9 +330,9 @@ class ChallengeScore:
     category: str
     points: int
     released_at: float | None  # when it reached the board; None if it never did in this run
-    solved_at: float | None  # the first accepted submission
-    solved_by: str | None  # the lane that submitted it (ME when the log names no lane)
-    checked: str | None  # how the solve was checked: "answers" (the answers file), "platform", "player"
+    solved_at: float | None  # when its solve came in this run (the first, of any kind); None: not solved, or before the run
+    solved_by: str | None  # the lane whose flag solved it (ME when the log names no lane); None: solved with no flag of this run's
+    checked: str | None  # how the solving flag was checked: "answers" (the answers file), "platform", "player"
     lanes: tuple[str, ...]  # the lanes that worked it, in start order
     turns: int
     tokens: int  # every lane on it, forks and killed attempts included
@@ -306,10 +343,11 @@ class ChallengeScore:
     overruled: bool = False  # the run took a flag for it, and the answers file rejects every one it took
     l1: str | None = None  # the L1 engine whose flag the solve was (runrecord.Credit); None: the lane's own
     platform: bool = False  # `teammate` is the platform's word: it lists the challenge as solved
+    credit: Solve | None = None  # who solved it, by the rule every report uses (runrecord.Credit); None: not solved
 
     @property
     def solved(self) -> bool:
-        return self.solved_at is not None
+        return self.credit is not None
 
     @property
     def time_to_solve(self) -> float | None:
@@ -325,11 +363,11 @@ def _empty() -> Mapping:
 
 @dataclass(frozen=True)
 class Score:
-    solved: tuple[str, ...]  # challenge ids, in solve order
+    solved: tuple[str, ...]  # challenge ids, in solve order: every solve, by whomever (ChallengeScore.credit)
     points: int  # the board's points for them
-    possible: int  # every challenge on the board
-    first_solve_at: float | None
-    per_challenge: Mapping[str, ChallengeScore]  # every challenge on the board, in board order
+    possible: int  # every challenge on the board it played (played())
+    first_solve_at: float | None  # the first solve that came in the run (not one from before it)
+    per_challenge: Mapping[str, ChallengeScore]  # every challenge on the board it played, in board order
     tokens: int  # every lane's tokens: its turns, and what its transcript counts outside them
     dollars: float | None  # the same in dollars; None when any of it had no price (known_dollars has the priced part)
     interventions: int  # the player's interventions that the deck carried out (not the refused ones)
@@ -344,11 +382,18 @@ class Score:
     notes: tuple[str, ...] = ()  # what the player should know about the log
 
     @property
+    def lane_solves(self) -> int:
+        """The solves a lane's own flag made (runrecord.LANE): what the run's dollars bought,
+        as the post-flight report counts them for its cost per solve."""
+        return sum(1 for row in self.per_challenge.values() if row.credit is not None and row.credit.by == LANE)
+
+    @property
     def cost_per_solve(self) -> float | None:
-        """The run's dollars over its solves; None with no solve or an unknown cost."""
-        if not self.solved or self.dollars is None:
+        """The run's dollars over its lane solves, as the post-flight report gives them; None
+        with no lane solve or an unknown cost."""
+        if not self.lane_solves or self.dollars is None:
             return None
-        return self.dollars / len(self.solved)
+        return self.dollars / self.lane_solves
 
 
 class ScoreError(Exception):
@@ -396,12 +441,14 @@ class _Asked:
 
 
 def score(events_jsonl: Path, board: Board) -> Score:
-    """Score a run from its event log (events.jsonl), against the board it played. The lane
-    transcripts in lanes/ beside the log, when there are any, add what the lanes spent
-    outside their turns.
+    """Score a run from its event log (events.jsonl), against the board it played: `board`'s
+    challenges as the log released them (played(); one that came into the folder since is
+    left out, with a note). The lane transcripts in lanes/ beside the log, when there are
+    any, add what the lanes spent outside their turns.
 
     Raises ScoreError when the file is not a flightdeck event log, holds more than one run,
-    has a malformed event, or names challenges that are not on the board.
+    has a malformed event, names challenges that are not on the board, or the board's
+    timeline, needed to tell which challenges the run played, cannot be read.
     """
     path = Path(events_jsonl).expanduser()
     where = _show(path)
@@ -543,6 +590,13 @@ def score(events_jsonl: Path, board: Board) -> Score:
             f"{where}: the run played challenges that are not on the board {_quote(board.event)}: {names}; "
             "score it against the board it played (--board)"
         )
+    try:
+        board, left_out = played(board, released)  # the board as the run played it: not one a later wave grew
+    except TimelineError as exc:
+        raise ScoreError(f"cannot tell which challenges this run played: {exc}") from None
+    if left_out:
+        notes.append(_left_out(left_out))
+    on_board = {item.challenge.id: item.challenge for item in board.challenges}
     spent_outside = _add_transcripts(path.parent / LANES, lanes, log_format)  # before the sums below, so they hold it
     for acc in lanes.values():
         if acc.cost_due:  # the log ends inside a turn of its CLI: that turn's cost never came
@@ -550,7 +604,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
 
     verifier = AnswerVerifier(board.answers) if board.answers is not None else None
     per: dict[str, ChallengeScore] = {}
-    firsts: dict[str, _Submit] = {}  # challenge id -> its first accepted submission
+    credits: dict[str, Solve] = {}  # challenge id -> its solve: the first in the log, of any kind (as solves() takes it)
     total_wrong = 0
     lane_challenge = {lane: acc.challenge for lane, acc in lanes.items()}
     iv_by_challenge = Counter(
@@ -577,9 +631,17 @@ def score(events_jsonl: Path, board: Board) -> Score:
                 first, checked = sub, how
         on_it = [lane for lane, acc in lanes.items() if acc.challenge == ch.id]
         costs = [lanes[lane].dollars for lane in on_it]
-        if first is not None:
-            firsts[ch.id] = first
-        other = others.get(ch.id) if first is None else None
+        overruled = took and first is None
+        # the solve is the first in the log, as every report takes it: the run's first accepted flag, or a
+        # teammate's or the platform's solve that came before it
+        other = others.get(ch.id)
+        if first is not None and (other is None or first.line < other.index):
+            other = None
+        else:
+            first, checked = None, None
+        credit = first.credit if first is not None else other
+        if credit is not None:
+            credits[ch.id] = credit
         total_wrong += wrong
         per[ch.id] = ChallengeScore(
             id=ch.id,
@@ -587,7 +649,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
             category=ch.category,
             points=ch.points,
             released_at=released.get(ch.id),
-            solved_at=first.at if first else None,
+            solved_at=None if credit is None or credit.before_run else first.at if first else credit.at,
             solved_by=(first.lane or ME) if first else None,
             checked=checked,
             lanes=tuple(on_it),
@@ -597,11 +659,12 @@ def score(events_jsonl: Path, board: Board) -> Score:
             interventions=iv_by_challenge[ch.id],
             wrong_submissions=wrong,
             teammate=other.who if other is not None else None,
-            overruled=took and first is None,
+            overruled=overruled,
             l1=first.credit.who if first is not None and first.credit.by == L1 else None,
             platform=other is not None and other.platform,
+            credit=credit,
         )
-    solved = tuple(sorted(firsts, key=lambda cid: (firsts[cid].at, firsts[cid].line)))  # log order on a time tie
+    solved = tuple(sorted(credits, key=lambda cid: credits[cid].index))  # in the order of the log, as they came
     unpriced = tuple(lane for lane, acc in lanes.items() if acc.dollars is None)
     for lane, acc in lanes.items():
         if acc.unpriced_turn:
@@ -629,7 +692,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
         solved=solved,
         points=sum(on_board[cid].points for cid in solved),
         possible=sum(item.challenge.points for item in board.challenges),
-        first_solve_at=min((sub.at for sub in firsts.values()), default=None),
+        first_solve_at=min((row.solved_at for row in per.values() if row.solved_at is not None), default=None),
         per_challenge=MappingProxyType(per),
         tokens=sum(acc.tokens for acc in lanes.values()),
         dollars=None if unpriced else known_dollars,
@@ -912,6 +975,8 @@ def scorecard(score: Score) -> str:
     rows = list(score.per_challenge.values())
     total = len(rows)
     lines = [f"{_one(score.event) or 'Board'}: solved {len(score.solved)} of {total} · {score.points:,} of {score.possible:,} points"]
+    credits = [score.per_challenge[cid].credit for cid in score.solved]
+    lines.append(f"Solves: {len(score.solved)} ({solvers(c for c in credits if c is not None)})")  # as the report says them
     released = sum(1 for row in rows if row.released_at is not None)
     if released < total:
         lines.append(f"Released {released} of {total}: {total - released} never reached the board in this run")
@@ -921,8 +986,8 @@ def scorecard(score: Score) -> str:
     lines.append(when)
     partial = score.dollars is None  # some turns had no price: what is shown is a floor
     spent = f"Spent {fmt.tokens(score.tokens)} tokens · {_money(score.known_dollars, partial)}"
-    if score.solved:
-        spent += f" · {_money(score.known_dollars / len(score.solved), partial)} per solve"
+    if score.lane_solves:  # what the dollars bought, as the report counts it
+        spent += f" · {_money(score.known_dollars / score.lane_solves, partial)} per lane solve"
     lines.append(spent)
     kinds = ", ".join(f"{_one(name)} {count}" for name, count in score.intervention_kinds.items())
     lines.append(
@@ -946,15 +1011,13 @@ def scorecard(score: Score) -> str:
 
 
 def _ordered(rows: list[ChallengeScore], score: Score) -> list[ChallengeScore]:
-    """Solved first (in solve order), then tried (most tokens first), then the rest, then
-    those never released; board order within each."""
+    """Solved first (in solve order, by whomever), then tried (most tokens first), then the
+    rest, then those never released; board order within each."""
     order = {cid: i for i, cid in enumerate(score.solved)}
 
     def key(row: ChallengeScore):
         if row.solved:
             return (0, order[row.id], 0)
-        if row.teammate:
-            return (1, 0, 0)
         if row.lanes:
             return (2, -row.tokens, 0)
         if row.released_at is not None:
@@ -965,6 +1028,10 @@ def _ordered(rows: list[ChallengeScore], score: Score) -> list[ChallengeScore]:
 
 
 def _result(row: ChallengeScore, lanes: Mapping[str, LaneScore]) -> str:
+    if row.teammate:  # solved with no flag of this run's: a teammate's solve, or the platform's
+        if row.platform:
+            return f"{_one(row.teammate)} on the platform"
+        return "you" if row.teammate == ME else f"teammate {_one(row.teammate)}"
     if row.solved:
         mark = MARKS.get(row.checked or "")
         if row.l1:  # the L1 engine's flag, which went through a lane's approval: credited as the report credits it
@@ -973,10 +1040,6 @@ def _result(row: ChallengeScore, lanes: Mapping[str, LaneScore]) -> str:
         else:
             who = "by you" if row.solved_by in (None, ME) else _one(row.solved_by)
         return f"solved {who}" + (f" {mark}" if mark else "")
-    if row.teammate:
-        if row.platform:
-            return f"{_one(row.teammate)} on the platform"
-        return "you" if row.teammate == ME else f"teammate {_one(row.teammate)}"
     if row.overruled:  # whatever state its lanes ended in: the run thought it was solved
         return "tried (flag rejected by answers)"
     if row.lanes:
