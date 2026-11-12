@@ -59,6 +59,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the
   newest run in your config's `[run] dir`, by when the run started; the command names the
   folder it took, and a folder really named `latest` still wins (#20).
+- Install with Homebrew or apt, from this release on:
+  `brew install mfisher14/tap/ctf-flightdeck`, or the `.deb` for amd64 or arm64 on the GitHub
+  release (`sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb`). The `.deb` brings its own
+  Python 3.12 under `/opt/ctf-flightdeck`, since Debian 12 has 3.11. There is no apt
+  repository yet, so `apt upgrade` does not find a new release (#29).
+- For contributors: CI now runs the Docker tests on Linux and fails if one was skipped
+  (`FLIGHTDECK_REQUIRE_DOCKER=1`), and a second job builds the lane image and runs a Python L1
+  engine in it (`FLIGHTDECK_REQUIRE_LANE_IMAGE=1`) (#7).
 - The README is a short front page. What it held is the player's guide, `docs/GUIDE.md`.
   `llms.txt` maps the docs for AI agents.
 
