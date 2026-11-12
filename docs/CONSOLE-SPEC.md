@@ -27,7 +27,8 @@ work one lane, with one-key interventions in the fleet and a chat box with slash
 corner in any font). The header's segments are solid blocks with a `╱` between them on the page.
 
 - **Header**: event, solo/team, docker/host, lanes used/limit, queue length, **how many lanes need
-  you** ("all clear" when none), tokens, dollars, event clock. While the queue is held (a model
+  you** ("all clear" when none), tokens, dollars (ending in `…` while a coding-agent CLI's turn is
+  under way, whose cost comes when the turn ends; `+` when some spend has no price), event clock. While the queue is held (a model
   API failure every lane would hit), "queue held" stands where "all clear" would be (or beside
   "▲ N need you"), followed by why: never "all clear", since nothing starts until the player
   lifts the hold with `/unhold`. On a narrow terminal the dollars go first, then tokens, the event
@@ -80,7 +81,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 
 - **Transcript**: the lane's steps (⏺ command, ⎿ output), your messages (› you), flightdeck notes,
   alerts and approvals, in order. It follows the lane; scroll back (`pgup`) and it stays where you
-  are reading until you scroll to the end again.
+  are reading until you scroll to the end again. What a lane did shows a credential's name but
+  not its value, as its transcript file keeps it; the lane's model had the text as it was.
 - **Needs you now**: the lane's open alerts with their reasons and the suggested answers as commands.
   It takes at most half the pane, so the transcript keeps its rows on a small terminal.
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
@@ -131,7 +133,11 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help |
-| `q`, `ctrl+q` | `/quit` | Quit. While lanes are open it asks first, saying what is at stake: the open lanes by state, what each lane waiting for you waits for (five at most, then a count), the challenges queued and not started, that nothing waiting for you is submitted or approved, and where the run's log and transcripts stay. `y` stops every lane and closes its workspace (a run cannot be resumed); `n`, `esc` or enter on Stay stays (`q` is not an answer, so a double tap never quits) |
+| `q`, `ctrl+q` | `/quit` | Quit. While lanes are open, or a flag is on its way to the platform, it asks first, saying what is at stake (each flag on its way is named: quitting leaves its answer unknown): the open lanes by state, what each lane waiting for you waits for (five at most, then a count), the challenges queued and not started, that nothing waiting for you is submitted or approved, and where the run's log and transcripts stay. `y` stops every lane and closes its workspace (a run cannot be resumed); `n`, `esc` or enter on Stay stays (`q` is not an answer, so a double tap never quits) |
+
+`h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
+takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer. While
+the run is closing (after `q`, `y`), every intervention is refused.
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
 back to the fleet and `ctrl+n` goes on to the next lane that needs you.
