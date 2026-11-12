@@ -487,6 +487,13 @@ def fit_columns(
     return [(key, label, width if key != stretch else stretch_min + max(0, spare)) for key, label, width, _ in kept]
 
 
+SENDING = "sending"  # the attention cell while a flag of the lane is on its way to the platform
+
+
+def sending_chip() -> Text:
+    return theme.chip(SENDING, theme.WHITE, theme.BLUE)
+
+
 def attention_cell(lane: Lane, sending: bool = False) -> Text:
     """The lane's most urgent alert or approval; else, when `sending`, that a flag of it is on
     its way to the platform (nothing to answer: its answer comes back on its own)."""
@@ -502,7 +509,7 @@ def attention_cell(lane: Lane, sending: bool = False) -> Text:
     if lane.pending is not None:
         return theme.chip(PENDING_TAG[lane.pending.kind], *theme.PENDING_COLORS)
     if sending:
-        return theme.chip("sending", theme.WHITE, theme.BLUE)
+        return sending_chip()
     if lane.alerts:
         return theme.chip(lane.alerts[0].kind.tag, *theme.alert_colors(lane.alerts[0].kind))
     return Text("")

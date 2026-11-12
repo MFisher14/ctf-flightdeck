@@ -17,6 +17,7 @@ from ..core.model import AlertKind, Challenge, ChallengeStatus
 from ..text import untrusted
 from . import theme
 from .commands import COMMANDS
+from .views import HELD, LATER, sending_chip
 
 MODAL_CSS = """
 {name} {{ align: center middle; background: $background 60%; }}
@@ -313,8 +314,18 @@ ALERT_HELP = (
     (AlertKind.BUDGET, "The lane is near or at its token or dollar cap"),
     (AlertKind.FLAG, "A candidate flag matches the flag format"),
 )
+SENDING_HELP = "A flag of the lane is on its way to the platform: nothing to answer, its answer comes back on its own"
+HELD_HELP = (  # the header and the status line while the queue is held
+    "In the header where \"all clear\" would be, followed by why: a model API failure every lane would hit "
+    "holds the queue, and nothing starts until you lift the hold with /unhold"
+)
+COST_HELP = (  # the marks after dollars: a lane's cost column and the header's total
+    ("$0.42+", "Some spend had no price: what is known, as \"at least\""),
+    (f"$0.42{LATER}", f"A coding-agent CLI's turn is under way: it reports the turn's cost when the turn ends "
+                      f"(on the board, {LATER} is a queued challenge)"),
+)
 BOARD_HELP = (
-    ("·", "new"), ("…", "queued"), ("▶", "running"), ("✓", "solved (green: us, cyan: teammate)"),
+    ("·", "new"), ("…", "queued (after dollars: a cost still to come)"), ("▶", "running"), ("✓", "solved (green: us, cyan: teammate)"),
     ("✗", "blocked"), ("‖", "parked"), ("*", "after a lane id: claimed by you"),
     ("L1·name", "solved with the flag your L1 engine of that name found"),
 )
@@ -352,6 +363,13 @@ class HelpScreen(ModalScreen[None]):
         for kind, text in ALERT_HELP:
             alerts.add_row(theme.chip(kind.tag, *theme.alert_colors(kind)), Text(f"{kind.label}: {text}"))
         alerts.add_row(theme.chip("submit", *theme.PENDING_COLORS), Text("Waiting for your approval (press a, or /approve)"))
+        alerts.add_row(sending_chip(), Text(SENDING_HELP))
+        marks = Table.grid(padding=(0, 2))
+        marks.add_column(no_wrap=True)
+        marks.add_column()
+        marks.add_row(theme.chip(HELD, theme.INK, theme.YELLOW), Text(HELD_HELP))
+        for mark, meaning in COST_HELP:
+            marks.add_row(Text(mark, "bold"), Text(meaning))
         board = Text()
         for mark, meaning in BOARD_HELP:
             board.append(f"{mark} ", "bold")
@@ -360,6 +378,7 @@ class HelpScreen(ModalScreen[None]):
             Text("Keys (fleet)", "bold underline"), keys, Text(""),
             Text("Commands (the bar at the bottom; plain text is a message to the lane)", "bold underline"), commands, Text(""),
             Text("Alerts (lanes that need you come first, most urgent first)", "bold underline"), alerts, Text(""),
+            Text("Header and cost (the marks after dollars, on a lane and in the header)", "bold underline"), marks, Text(""),
             Text("Board", "bold underline"), board,
         )
         with Vertical():
