@@ -331,6 +331,10 @@ flightdeck build check ~/ctf/solvers                       # run the pack's test
 flightdeck share RUN_DIR       # the run's flight card, to post: no flags, no challenge names
 ```
 
+In place of RUN_DIR, the word `latest` means your newest run (the newest by start time under
+`[run] dir` in your config), and the command names the folder it took. With `--pack`, each gap
+`flightdeck gaps` lists ends with the `flightdeck build gap` command for it, ready to paste.
+
 When a run ends, `play` prints its run folder with the report, writeups and gaps commands for it
 (and score, when the board has answers), ready to paste. `writeups --polish MODEL` has MODEL tidy
 the prose through the API in your config: it spends tokens, and never sees the run's flags,

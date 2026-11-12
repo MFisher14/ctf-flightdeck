@@ -497,7 +497,7 @@ and the sweep says why.
 | Post-flight | `postflight.py`, `writeup.py` | `flightdeck report` and `flightdeck writeups`. [More](#post-flight). |
 | Practice mode | `practice_mode.py` | Scores a past run against the board's answers (`flightdeck score`). [More](#practice-mode). |
 | Flight card | `share.py`, `share_cli.py` | `flightdeck share RUN_DIR` prints a run's flight card for the player to post (D22): the setup a run recorded in `setup.json` when it started (`run.py`'s `_setup`: models and settings, never a path, key, address, event or challenge), solves by category code, time, spend by model, the player's interventions and the mode. No flag, challenge name or challenge text is in it, and nothing is sent. |
-| Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run). |
+| Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run), and gives each gap on the board its `flightdeck build gap CHALLENGE_DIR --pack PACK` command, the paths absolute and shell-quoted: as a code span in `gaps.md`, one per line in the summary, and exactly in `gaps.json` (`folder`, `build`). A path with a newline or a control or invisible character gets no line to paste, and the report says so. |
 | Build mode | `build.py`, `build_cli.py` | `flightdeck build gap CHALLENGE_DIR --pack PACK`: an engine stub, its manifest and a case test on a copy of the challenge; nothing is overwritten. `flightdeck build check PACK` runs the pack's case tests with pytest (the `[build]` extra) and no keys from flightdeck's environment. |
 
 ### Post-flight
@@ -510,6 +510,17 @@ and `flightdeck writeups RUN_DIR` (a draft per solved challenge, from its transc
 credentials taken out of every value it shows: `credentials.py`; both read an older run folder's log
 and transcripts cleaned the same way; it writes only in `RUN_DIR/writeups/`, so the run's own log
 and transcripts stay as they were written).
+
+`report`, `writeups`, `gaps` and `score` read their RUN_DIR one way (`runrecord.resolve_run`): a run
+folder, its `events.jsonl`, or the word `latest` for the newest run under the config's `[run] dir`
+(`$FLIGHTDECK_CONFIG` or `--config` names the config; no API key is read). Newest is by when each
+run started, the `wall` time of the run-start line that opens its `events.jsonl`: never a folder's
+modification time (a report written into a run changes it) and never its name (local time). A
+folder there without an `events.jsonl` is not a run; one whose log does not say when it started is
+left out and named. The command says the folder it took on stderr (`flightdeck: run: ...`). Whatever
+is really named `latest` in the current directory is taken as the path it is. No config, no runs
+folder or no run there fails in one line that names what is missing; a run played with
+`play --run-dir` elsewhere is not looked for.
 
 ### Practice mode
 

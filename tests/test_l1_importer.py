@@ -177,6 +177,15 @@ def test_a_script_at_the_top_takes_the_category_of_the_folder_itself(tmp_path):
     assert m.routes[0].category == ("cry",) and m.entry.argv == ("python3", "./solve.py")
 
 
+@pytest.mark.parametrize(("name", "code"), [
+    ("Reverse Engineering", "rev"), ("reverse_engineering", "rev"), ("binary-exploitation", "pwn"), ("Miscellaneous", "misc"),
+])
+def test_a_folder_with_a_boards_long_category_name_gives_its_code(tmp_path, name, code):
+    script(tmp_path / "s", f"{name}/xor_brute.py", MAIN)
+    [path] = import_scripts(tmp_path / "s").written
+    assert load(path).routes == (Route(category=(code,), keywords=("xor", "brute"), priority=20),)
+
+
 def test_symlinked_scripts_are_listed_and_not_imported(tmp_path):
     folder = tmp_path / "s"
     real = script(tmp_path / "elsewhere", "crypto/rsa_tool.py", MAIN)

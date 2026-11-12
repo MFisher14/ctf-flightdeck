@@ -48,7 +48,7 @@ the files, write a `challenge.json`, and submit the flags yourself (see
 | Key | Required | What it is |
 |---|---|---|
 | `name` | yes | The challenge's name, as the console shows it. |
-| `category` | yes | The category, as the platform names it. `web`, `crypto` (or `cryptography`), `rev` (`reverse`, `reversing`), `pwn` (`binary`), `forensics`, `misc` and `osint` become the console's short codes `web`, `cry`, `rev`, `pwn`, `for`, `misc` and `osint`; any other name is kept, in lower case. |
+| `category` | yes | The category, as the platform names it. `web` (`web exploitation`, `web security`), `crypto` (`cryptography`), `rev` (`reverse`, `reversing`, `reverse engineering`), `pwn` (`pwnable`, `pwnables`, `binary`, `binary exploitation`, `binexp`, `exploitation`), `forensics` (`forensic`, `digital forensics`), `misc` (`miscellaneous`) and `osint` (`open source intelligence`) become the console's short codes `web`, `cry`, `rev`, `pwn`, `for`, `misc` and `osint`, whatever their case and whether the words are joined by spaces, `-` or `_`; any other name is kept, in lower case. |
 | `points` | yes | A whole number, 0 or more. Lanes start on the lowest-point challenges first. |
 | `solves` | no | How many teams have solved it: a whole number, 0 by default. Among challenges worth the same, the one with more solves starts first. |
 | `description` | no | The challenge's text. A lane reads it as data, and the "ignores the hint" alert reads it for the technique it hints at. |
@@ -104,7 +104,8 @@ The file sits in the board folder, beside the challenge folders and never inside
 in a copy of its challenge folder and must not find the answers there. `play --answers FILE` names
 an answers file kept somewhere else. An answer for a challenge the board does not have is an error
 (a stale or mistyped id). A board with answers ends its run with a scorecard, and
-`flightdeck score RUN_DIR` scores the run again later.
+`flightdeck score RUN_DIR` scores the run again later (`flightdeck score latest`: the newest run in
+your config's `[run] dir`).
 
 ### Flags without an answers file
 

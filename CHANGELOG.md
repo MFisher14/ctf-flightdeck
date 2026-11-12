@@ -13,8 +13,22 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A leaderboard of the events flightdeck was used in, `docs/LEADERBOARD.md`, with an issue form
   to add yours, and an issue form for flight cards.
 
+### Solvers (L1)
+
+- Categories: the long names boards use (Reverse Engineering, Binary Exploitation, Web
+  Exploitation, Miscellaneous, Digital Forensics and the like, in any case, joined by spaces,
+  `-` or `_`) now become the short codes `rev`, `pwn`, `web`, `misc` and `for`, so L1 routes
+  reach those challenges, the board sorts them by code and build mode routes a new engine by
+  category (#4).
+- `flightdeck gaps --pack PACK`: each gap on the board now ends with its
+  `flightdeck build gap CHALLENGE_DIR --pack PACK` command, in `gaps.md`, in the printed
+  summary and in `gaps.json`, the paths filled in and shell-quoted, ready to paste (#19).
+
 ### Commands and docs
 
+- `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the
+  newest run in your config's `[run] dir`, by when the run started; the command names the
+  folder it took, and a folder really named `latest` still wins (#20).
 - The README is a short front page. What it held is the player's guide, `docs/GUIDE.md`.
   `llms.txt` maps the docs for AI agents.
 

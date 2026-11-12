@@ -1700,7 +1700,7 @@ def test_report_takes_the_event_log_the_run_printed_too(played):
 def test_report_needs_an_existing_folder(tmp_path):
     result = runner.invoke(mounted(), ["report", str(tmp_path / "nope")])
     assert result.exit_code == 2
-    assert "Invalid value for 'RUN_DIR'" in result.output  # not "No such command"
+    assert result.stderr == f"flightdeck: {tmp_path / 'nope'}: no such run folder or events.jsonl\n"  # not "No such command"
 
 
 needs_permissions = pytest.mark.skipif(

@@ -10,6 +10,13 @@ A run folder also holds run.json, written as the run starts (write_run_info): th
 folder and the answers file the run played, so the commands after a run can find them.
 Those are paths on the player's machine, so they stay out of the event log, which holds the
 deck's events and nothing else.
+
+`resolve_run(arg, say=...)` is how every command that takes RUN_DIR reads it: a run folder,
+its events.jsonl, or the word `latest` for the newest run under the config's [run] dir
+(latest_run). Newest is by the time each run started, the "wall" of the run-start line that
+opens its events.jsonl, never a folder's modification time (reading a run writes reports into
+it) and never its name (local time). Whatever is really there under the name `latest` is
+taken as the path it is.
 """
 
 from __future__ import annotations
@@ -19,8 +26,9 @@ import math
 import os
 import stat
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .core.model import ME
@@ -30,6 +38,8 @@ LANES = "lanes"
 RUN_INFO = "run.json"
 RUN_SETUP = "setup.json"  # how the run was set up, for `flightdeck share`
 MAX_RUN_INFO = 64 * 1024  # a run.json bigger than this was not written by a run
+LATEST = "latest"  # in place of a run folder: the newest run under the config's [run] dir
+MAX_RUN_START = 64 * 1024  # a first line of events.jsonl longer than this is not a run-start line
 
 # Who solved a challenge (Solve.by).
 LANE, L1, TEAMMATE, PLAYER, TEAM = "lane", "l1", "teammate", "player", "team"
@@ -198,6 +208,88 @@ def run_folder(path: Path) -> Path:
     if path.exists():
         raise RunFolderError(f"{path}: not a run folder; give the run folder (the one holding {EVENTS}) or its {EVENTS}")
     raise RunFolderError(f"{path}: no such run folder or {EVENTS}")
+
+
+def asks_latest(arg: Path | str) -> bool:
+    """Whether a RUN_DIR argument is the word `latest` with nothing of that name where it
+    points (the current directory): a folder or file really named latest is that path."""
+    return str(arg) == LATEST and not os.path.lexists(LATEST)
+
+
+def resolve_run(arg: Path | str, *, say: Callable[[str], None], config: Path | None = None) -> Path:
+    """The run folder a command's RUN_DIR argument names: a run folder or its events.jsonl
+    (run_folder), or `latest` for the newest run under the config's [run] dir (latest_run),
+    unless something named latest is really there, which is taken as the path it is.
+
+    `say` gets one line, safe to print, naming the folder whenever the word chose it (the
+    caller prints it on stderr as `flightdeck: <line>`); it is not called for a path the
+    player named. `config` names the config file `latest` reads, by default the usual one
+    ($FLIGHTDECK_CONFIG, else ~/.config/ctf-flightdeck/config.toml); it is read only for
+    `latest`, and no API key is. RunFolderError when the path is not a run folder or there
+    is no run to pick; config.ConfigError when `latest` cannot read the config."""
+    if asks_latest(arg):
+        return latest_run(say=say, config=config)
+    return run_folder(Path(arg))
+
+
+def latest_run(*, say: Callable[[str], None], config: Path | None = None) -> Path:
+    """The newest run folder under the config's [run] dir: of the folders there that hold an
+    events.jsonl, the one whose run started last (equal times: the last by name). `say` gets
+    the line that names it, and the folders left out because their log does not say when
+    the run started. RunFolderError, in one line, when there is none; config.ConfigError
+    when the config cannot be read (resolve_run has the rest)."""
+    from .config import load_config
+    from .text import untrusted
+
+    loaded = load_config(config)
+    runs = loaded.run_dir
+    where = f"{runs} ([run] dir in {loaded.source})"
+    try:
+        folders = sorted(entry for entry in runs.iterdir() if (entry / EVENTS).is_file())
+    except FileNotFoundError:
+        raise RunFolderError(f"{LATEST}: there is no runs folder {where} yet: no run has been written there") from None
+    except OSError as exc:
+        raise RunFolderError(f"{LATEST}: cannot read the runs folder {where}: {exc.strerror or exc}") from None
+    if not folders:
+        raise RunFolderError(f"{LATEST}: no run in {where}: no folder there holds an {EVENTS}")
+    dated = [(started, folder) for folder in folders if (started := run_started(folder)) is not None]
+    undated = [folder.name for folder in folders if folder not in {f for _, f in dated}]
+    if not dated:
+        raise RunFolderError(
+            f"{LATEST}: no run in {where} says when it started: {_count_of(len(folders), 'folder')} there "
+            f"with an {EVENTS}, none with a run-start line and its time; name the run folder"
+        )
+    picked = max(dated, key=lambda pair: (pair[0], pair[1].name))[1]
+    line = f"run: {picked} ({LATEST}: the newest of {_count_of(len(dated), 'run')} in {runs})"
+    if undated:
+        line += f"; left out, with no run-start time in its {EVENTS}: {', '.join(undated)}"
+    say(untrusted(line, one_line=True))
+    return picked
+
+
+def run_started(run_dir: Path) -> datetime | None:
+    """When the run in `run_dir` started: the "wall" time of the run-start line that opens its
+    events.jsonl (a time without a zone is UTC, as the log writes it). None when the log
+    cannot be read or its first line is not a run-start line with a time: untrusted, like
+    every line of a log."""
+    try:
+        with (Path(run_dir) / EVENTS).open("rb") as handle:
+            first = b""
+            while not first.strip():  # the first line with anything on it, as load_run reads
+                first = handle.readline(MAX_RUN_START + 1)
+                if not first or len(first) > MAX_RUN_START:
+                    return None
+        raw = json.loads(first)
+        if not isinstance(raw, dict) or raw.get("kind") != "run-start" or not isinstance(raw.get("wall"), str):
+            return None
+        started = datetime.fromisoformat(raw["wall"])
+    except (OSError, ValueError, RecursionError):
+        return None
+    return started if started.tzinfo is not None else started.replace(tzinfo=timezone.utc)
+
+
+def _count_of(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
 
 
 def _lines(path: Path, problems: list[str]):

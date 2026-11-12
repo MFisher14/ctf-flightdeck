@@ -40,6 +40,15 @@ offline with l1.router.route: `routed` names the engines that would reach it now
 with the router's reasons. Routing reads manifests and the first bytes of handout files; it
 never runs an engine and writes nothing.
 
+With a pack and the board, each gap on the board also carries the build mode command that
+starts an engine for it (`Gap.build`): `flightdeck build gap CHALLENGE_DIR --pack PACK`, its
+challenge folder (`Gap.folder`, the board's) and the pack as absolute paths, each quoted for
+a POSIX shell (shlex.quote) so the line can be pasted. A gap that is not on the board has
+no folder, so no command. gaps.md gives it as a code span and summary() one per line; both
+give the line only when it can be shown exactly as it is (`pasteable`): a path with a
+newline, a control or an invisible character is shown made visible instead, with the reason
+there is no line to paste. gaps.json has the folder and the command exactly.
+
 Everything read from a run is untrusted: challenge ids and names, engine ids, statuses, notes.
 A Gap keeps ids and names as the run has them; a reason is our words around untrusted pieces,
 each folded onto one line with control and invisible characters made visible
@@ -53,7 +62,9 @@ its own words).
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -62,7 +73,7 @@ from typing import TYPE_CHECKING
 
 from .core.model import EventKind, PendingKind
 from .l1.result import STATUSES
-from .postflight import md_text
+from .postflight import md_code, md_text
 from .runrecord import L1 as BY_L1
 from .runrecord import EventLine, RunRecord, Solve, solves
 from .text import MARK, untrusted
@@ -73,7 +84,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MARKDOWN_FILE", "JSON_FILE", "NO_L1", "NO_ROUTE", "SCHEMA", "Gap", "GapError", "GapReport", "L1Solve",
-    "Routed", "gap_report", "gaps", "gaps_json", "gaps_markdown", "summary",
+    "Routed", "build_command", "gap_report", "gaps", "gaps_json", "gaps_markdown", "pasteable", "summary",
 ]
 
 SCHEMA = 1  # gaps.json's "schema"
@@ -84,6 +95,8 @@ NO_L1 = "no L1 run: this run has no L1 results at all"
 NOTES_LIMIT = 120  # an engine's notes are cut to this many characters in a reason
 ID_LIMIT = 60  # an engine id or status in a reason
 REASON_LIMIT = 4000  # a reason in the Markdown (its parts are cut already)
+PATH_LIMIT = 4096  # a challenge folder's path in the Markdown
+NO_PASTE = "no line to paste: a path in it has a character that cannot be shown as it is"
 
 L1 = EventKind.L1.value
 SKIPPED = frozenset({EventKind.INTERVENTION.value, EventKind.OUTCOME.value})
@@ -130,6 +143,8 @@ class Gap:
     l1: tuple[tuple[str, str], ...]  # (engine, status) for every L1 run on it, in log order
     reason: str  # why L1 did not solve it (module docstring)
     routed: tuple[Routed, ...] | None = None  # with a pack: the engines that reach it now; None: not routed
+    folder: str | None = None  # with a board that has it: its challenge folder there, an absolute path
+    build: str | None = None  # with a pack too: the `flightdeck build gap` command for it (build_command)
 
 
 @dataclass(frozen=True)
@@ -293,9 +308,12 @@ def gap_report(record: RunRecord, *, pack: Path | None = None, board: Board | No
         if winner is not None:
             solved.append(L1Solve(cid, info.name, winner.engine))
             continue
+        known = on_board.get(cid)
+        folder = os.path.abspath(known.handout) if known is not None else None
         found.append(Gap(
             cid, info.name, info.category, info.points, first.get(cid, ""),
             tuple((run.engine, run.status) for run in on), _reason(cid, on, flags, l1_count > 0),
+            folder=folder, build=build_command(folder, pack) if folder is not None and pack is not None else None,
         ))
 
     if manifests is not None:
@@ -306,6 +324,20 @@ def gap_report(record: RunRecord, *, pack: Path | None = None, board: Board | No
         pack=str(pack) if pack is not None else None, engines=len(manifests) if manifests is not None else None,
         notes=tuple(notes),
     )
+
+
+def build_command(folder: str | Path, pack: str | Path) -> str:
+    """The command that starts an engine for the challenge in `folder` in `pack`, both as
+    absolute paths quoted for a POSIX shell: a path is untrusted text, and quoted it is one
+    word to the shell whatever is in it."""
+    return f"flightdeck build gap {shlex.quote(os.path.abspath(folder))} --pack {shlex.quote(os.path.abspath(pack))}"
+
+
+def pasteable(command: str) -> bool:
+    """Whether `command` can be shown exactly as it is, on one line: it has no newline, tab,
+    control or invisible character and no lone surrogate (the report shows those made visible,
+    which is no longer the command)."""
+    return _visible(untrusted(command, one_line=True)) == command
 
 
 def gaps(record: RunRecord, *, pack: Path | None = None, board: Board | None = None) -> list[Gap]:
@@ -473,8 +505,20 @@ def _gap_sections(rep: GapReport) -> list[str]:
             out.append(f"- Routed now: {now or 'no engine in the pack'}")
         elif rep.pack is not None:
             out.append("- Routed now: not routed (see the problems below)")
+        if gap.build is not None:
+            out.append(f"- Build an engine for it: {_build_md(gap)}")
         out.append("")
     return out
+
+
+def _build_md(gap: Gap) -> str:
+    """A gap's build command as a code span, which shows every character as it is; or, when
+    the line cannot be shown as it is, what to run with its folder made visible."""
+    if pasteable(gap.build):
+        return md_code(gap.build, len(gap.build))
+    return (
+        f"`flightdeck build gap CHALLENGE_DIR --pack PACK`, with its folder {_md(gap.folder, PATH_LIMIT)} ({NO_PASTE})"
+    )
 
 
 def _where(gap: Gap) -> str:
@@ -505,7 +549,9 @@ def _outcome(solved_by: str) -> str:
 def gaps_json(gaps: Sequence[Gap] | GapReport) -> str:
     """The gap report as ASCII JSON for build mode: {"schema": 1, ..., "gaps": [...]}. Ids,
     names and reasons as the report has them; "points" is null when unknown, "routed" null
-    when the gap was not routed with a pack."""
+    when the gap was not routed with a pack, "folder" (its challenge folder) null when no board
+    was given or the board does not have it, "build" (the build mode command for it, exactly)
+    null without a folder or a pack."""
     rep = _report_of(gaps)
     data = {
         "schema": SCHEMA,
@@ -524,6 +570,7 @@ def gaps_json(gaps: Sequence[Gap] | GapReport) -> str:
                 "routed": None if gap.routed is None else [
                     {"engine": r.engine, "priority": r.priority, "why": r.why} for r in gap.routed
                 ],
+                "folder": gap.folder, "build": gap.build,
             }
             for gap in rep.gaps
         ],
@@ -534,7 +581,8 @@ def gaps_json(gaps: Sequence[Gap] | GapReport) -> str:
 
 
 def summary(rep: GapReport) -> str:
-    """The report in a few plain lines for the terminal (untrusted text folded and made visible)."""
+    """The report in a few plain lines for the terminal (untrusted text folded and made visible),
+    then, with a pack, the build mode command for each gap on the board."""
     another = sum(1 for gap in rep.gaps if gap.solved_by)
     of = f" of {rep.challenges}" if rep.challenges is not None else ""
     lines = [
@@ -545,6 +593,16 @@ def summary(rep: GapReport) -> str:
         routed = [gap for gap in rep.gaps if gap.routed is not None]
         reach = sum(1 for gap in routed if gap.routed)
         lines.append(f"Routed now: {reach} of {_plural(len(routed), 'gap')} on the board reach an engine in the pack")
+    commands = [gap.build for gap in rep.gaps if gap.build is not None]
+    if commands:
+        ready = [command for command in commands if pasteable(command)]
+        if ready:
+            lines.append(f"Build an engine for a gap ({_plural(len(ready), 'gap')} on the board, one line each):")
+            lines += [f"  {command}" for command in ready]
+        if len(ready) < len(commands):
+            lines.append(
+                f"{_plural(len(commands) - len(ready), 'gap has', 'gaps have')} {NO_PASTE}: see {MARKDOWN_FILE}"
+            )
     if rep.notes:
         lines.append(f"{_plural(len(rep.notes), 'problem')} reading the run: see {MARKDOWN_FILE}")
     return "\n".join(_visible(line) for line in lines) + "\n"

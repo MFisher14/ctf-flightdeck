@@ -184,6 +184,22 @@ def test_every_field_of_challenge_json_is_read(board):
         ("OSINT", "osint"),
         ("Hardware", "hardware"),
         (" Web ", "web"),
+        ("Reverse Engineering", "rev"),
+        ("reverse-engineering", "rev"),
+        ("Reverse_Engineering", "rev"),
+        ("Binary Exploitation", "pwn"),
+        ("Pwnable", "pwn"),
+        ("Pwnables", "pwn"),
+        ("Exploitation", "pwn"),
+        ("BinExp", "pwn"),
+        ("Web Exploitation", "web"),
+        ("Web  Security", "web"),
+        ("Miscellaneous", "misc"),
+        ("Forensic", "for"),
+        ("Digital Forensics", "for"),
+        ("Open-Source Intelligence", "osint"),
+        ("Web 3", "web 3"),  # not a name the table knows: kept, and not read as web
+        ("Smart-Contracts", "smart-contracts"),  # kept as written, lower-cased
     ],
 )
 def test_category_names_map_to_the_console_codes(board, given, code):

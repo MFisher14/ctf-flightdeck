@@ -52,18 +52,33 @@ BOARD_KEYS = ("event", "flag_format")
 
 CATEGORY_CODES = {
     "web": "web",
+    "web exploitation": "web",
+    "web security": "web",
     "crypto": "cry",
     "cryptography": "cry",
     "rev": "rev",
     "reverse": "rev",
     "reversing": "rev",
+    "reverse engineering": "rev",
     "pwn": "pwn",
+    "pwnable": "pwn",
+    "pwnables": "pwn",
     "binary": "pwn",
+    "binary exploitation": "pwn",
+    "binexp": "pwn",
+    "exploitation": "pwn",
+    "forensic": "for",
     "forensics": "for",
+    "digital forensics": "for",
     "misc": "misc",
+    "miscellaneous": "misc",
     "osint": "osint",
+    "open source intelligence": "osint",
 }
-"""Category names to the console's short codes. Any other name is kept, lower-cased."""
+"""Category names to the console's short codes, keyed as `category_key` writes a name (lower
+case, single spaces). Any other name is kept, lower-cased."""
+
+_CATEGORY_GAP = re.compile(r"[\s_-]+")
 
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _NUMBER = re.compile(r"[0-9]+|0x[0-9a-f]*")  # a last label a browser reads as part of an IPv4 address
@@ -90,10 +105,16 @@ class BoardError(Exception):
     """The board cannot be used. The message names the file and what is wrong."""
 
 
+def category_key(category: str) -> str:
+    """A category name as CATEGORY_CODES keys it: lower case, with each run of spaces, - and _
+    as one space, so Reverse Engineering, reverse-engineering and reverse_engineering are one name."""
+    return _CATEGORY_GAP.sub(" ", category.strip().lower()).strip()
+
+
 def category_code(category: str) -> str:
-    """The console's short code for a category: Crypto -> cry, forensics -> for, hardware -> hardware."""
-    name = category.strip().lower()
-    return CATEGORY_CODES.get(name, name)
+    """The console's short code for a category: Crypto -> cry, Reverse Engineering -> rev,
+    forensics -> for. A name the table does not know is kept as it is, lower-cased: hardware."""
+    return CATEGORY_CODES.get(category_key(category), category.strip().lower())
 
 
 def load_board(folder: Path, *, answers: Path | None = None) -> Board:

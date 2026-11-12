@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from ..agent.workspace import PRIVATE
-from ..platform.manual import CATEGORY_CODES
+from ..platform.manual import CATEGORY_CODES, category_key
 from ..text import untrusted
 from .manifest import GENERATED, MAX_ID, SUFFIX, Manifest, ManifestError, challenge_files, load, manifest_files
 
@@ -52,7 +52,8 @@ STOPWORDS = frozenset({"solve", "solver", "script", "exploit", "main"})
 MIN_LETTERS = 3
 MAX_SCRIPT_BYTES = 5 * 1024 * 1024  # a .py bigger than this is not read for a main block
 FOLDER_CATEGORIES = {**CATEGORY_CODES, **{code: code for code in CATEGORY_CODES.values()}}
-"""Folder names (lower-cased) that name a category: the board's names and its short codes."""
+"""Folder names (as platform/manual.category_key writes them) that name a category: the
+board's names and its short codes."""
 
 # A main block at the top level: `if __name__ == "__main__":`, also parenthesised, the other
 # way round, or with more conditions after it (`... and len(sys.argv) > 1:`).
@@ -104,7 +105,7 @@ def import_scripts(folder: Path) -> ImportReport:
         if by is not None:
             skipped.append((script.path, f"already run by the manifest {_show(_relative(by, root))}"))
             continue
-        category = FOLDER_CATEGORIES.get(_folder_name(script, root).lower())
+        category = FOLDER_CATEGORIES.get(category_key(_folder_name(script, root)))
         keywords = keywords_of(PurePosixPath(script.rel).name)
         if category is None and not keywords:
             skipped.append((

@@ -43,7 +43,8 @@ Each gets the challenge folder as its last argument, and whatever it prints is s
 (output `text`, below). Its route comes from where it is and what it is called:
 
 - the **category** from its folder's name, when that names one: `crypto/` gives `cry`,
-  `forensics/` gives `for`, and so on for `web`, `rev`, `pwn`, `misc` and `osint`;
+  `forensics/` gives `for`, `reverse-engineering/` gives `rev`, and so on for every name a board
+  can use for `web`, `rev`, `pwn`, `misc` and `osint` ([BOARDS.md](BOARDS.md) lists them);
 - the **keywords** from its file name's words of three letters or more, split on `_`, `-`, `.` and
   spaces, leaving out `solve`, `solver`, `script`, `exploit` and `main`.
 
@@ -233,10 +234,15 @@ add a solver to your pack; `l1 route` and `l1 run` refuse a challenge that is in
 
 ## From a gap to a new engine
 
-After a run, `flightdeck gaps RUN_DIR` lists the challenges no engine solved, with the engines that
+After a run, `flightdeck gaps RUN_DIR` (or `flightdeck gaps latest`, for the newest run in your
+config's `[run] dir`) lists the challenges no engine solved, with the engines that
 ran on each and why L1 did not solve it. An engine counts as having solved a challenge only when it
-reported `solved`; a `candidate` does not count, even when its flag was right. Build mode turns a
-gap into an engine:
+reported `solved`; a `candidate` does not count, even when its flag was right. With `--pack` (and
+the board the run played: `--board`, else the one the run recorded) it also routes each gap against
+your pack as it is now, and ends each gap in `gaps.md`, and its printed summary, with the build
+mode command for it, its challenge folder and your pack filled in and quoted for the shell, ready
+to paste. A gap whose challenge is not on the board has no folder, so no command. Build mode turns
+a gap into an engine:
 
 ```sh
 flightdeck build gap ~/ctf/some-board/half-and-half --pack ~/ctf/solvers
