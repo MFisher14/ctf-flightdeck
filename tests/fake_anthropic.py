@@ -22,6 +22,10 @@ not_found_error. A model is an id (active), or a dict with its id and lifecycle.
 a request without that key (in x-api-key, or as the Bearer token the SDK sends) gets 401
 authentication_error.
 
+Replies carry usage as the API reports it (message()): the tokens written to the cache,
+split by TTL under cache_creation, and, for a call the server-side refusal fallback ran on
+more than one model, one usage.iterations entry per attempt (attempt()).
+
 Nothing here is a real key, a real model answer or a real event: replies are scripted.
 """
 
@@ -240,16 +244,27 @@ def message(
     output_tokens: int = 20,
     cache_read: int = 0,
     cache_write: int = 0,
+    cache_write_1h: int = 0,
     stop_details: dict | None = None,
     speed: str | None = None,
+    iterations: list[dict] | None = None,
 ) -> dict:
-    """A complete Messages API response body; `speed` goes in usage.speed when given."""
-    usage = {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cache_read_input_tokens": cache_read,
-        "cache_creation_input_tokens": cache_write,
-    }
+    """A complete Messages API response body; `speed` goes in usage.speed when given.
+
+    The usage is the API's: cache_creation_input_tokens is every token written to the cache,
+    cache_creation splits it by TTL (`cache_write` to the 5-minute cache, `cache_write_1h` to
+    the 1-hour one). `iterations` is usage.iterations, one entry per attempt (attempt()), as a
+    server-side refusal fallback reports them; the top-level counts are then the last
+    attempt's, since the API's "top-level `usage` covers only the attempt that produced the
+    returned message"."""
+    if iterations:
+        last = iterations[-1]
+        input_tokens, output_tokens, cache_read = last["input_tokens"], last["output_tokens"], last["cache_read_input_tokens"]
+        cache_write = last["cache_creation"]["ephemeral_5m_input_tokens"]
+        cache_write_1h = last["cache_creation"]["ephemeral_1h_input_tokens"]
+    usage = _counts(input_tokens, output_tokens, cache_read, cache_write, cache_write_1h)
+    if iterations is not None:
+        usage["iterations"] = iterations
     if speed is not None:
         usage["speed"] = speed
     return {
@@ -263,6 +278,35 @@ def message(
         "stop_details": stop_details,
         "usage": usage,
     }
+
+
+def _counts(input_tokens: int, output_tokens: int, cache_read: int, cache_write: int, cache_write_1h: int) -> dict:
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_write + cache_write_1h,
+        "cache_creation": {"ephemeral_5m_input_tokens": cache_write, "ephemeral_1h_input_tokens": cache_write_1h},
+    }
+
+
+def attempt(
+    model: str | None,
+    *,
+    kind: str = "message",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read: int = 0,
+    cache_write: int = 0,
+    cache_write_1h: int = 0,
+) -> dict:
+    """One entry of usage.iterations: an attempt of the call on `model` (None: an entry that
+    names none). `kind` "message" is an attempt on the model asked for, or one the classifiers
+    declined; "fallback_message" the attempt the fallback answered with."""
+    entry: dict = {"type": kind, **_counts(input_tokens, output_tokens, cache_read, cache_write, cache_write_1h)}
+    if model is not None:
+        entry["model"] = model
+    return entry
 
 
 def thinking(signature: str = "fake-signature-1", text: str = "") -> dict:

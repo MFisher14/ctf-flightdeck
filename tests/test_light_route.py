@@ -642,5 +642,11 @@ def test_a_run_whose_light_model_has_no_price_never_stops_a_dollar_capped_lane(t
     logged = [json.loads(x) for x in run.log.path.read_text().splitlines()]
     assert not [e for e in logged if e.get("kind") == "pending"]
     spends = [e["data"] for e in logged if e.get("kind") == "spend"]
-    assert len(spends) == 3 and all(s["dollars"] is None and s["model"] == "claude-haiku-5-5" for s in spends)
+    light = [s for s in spends if s["model"] == "claude-haiku-5-5"]
+    assert len(light) == 3 and all(s["dollars"] is None for s in light)
+    # besides the light model's: at most the lane's reply that quitting cut short (it came while the
+    # lane's tool call ran), priced as the lane's model
+    cut = [s for s in spends if s["model"] != "claude-haiku-5-5"]
+    assert len(cut) <= 1 and all(s["model"] == "fake/small" and s["dollars"] is not None
+                                 and s["why"] == "a reply cut short: the lane stopped before its turn was done" for s in cut)
     assert run.deck.challenges["hiss"].family == "audio-signal"

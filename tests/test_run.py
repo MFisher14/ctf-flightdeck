@@ -484,6 +484,37 @@ def test_a_run_on_anthropic_with_a_fallback_needs_both_keys_and_says_where_a_fai
     assert [r["path"] for r in router.requests] == ["/v1/models"]
 
 
+def test_a_run_on_anthropic_says_what_its_prices_leave_unpriced_or_price_below_anthropics_bill(tmp_path, monkeypatch):
+    """A config from before init wrote cache writes and the refusal fallback's prices: play says so before lanes start."""
+    from ctf_flightdeck import setup
+    from ctf_flightdeck.config import parse_config
+    from ctf_flightdeck.run import anthropic_price_notes
+    from fake_anthropic import FakeAnthropicServer
+
+    ladder = ("claude-haiku-5-5", "claude-sonnet-5-5")
+    monkeypatch.setenv("FD_TEST_CLAUDE_KEY", "fake-claude-key-NOT-SHOWN")
+    with FakeAnthropicServer(models=list(ladder), key="fake-claude-key-NOT-SHOWN") as claude:
+        path = tmp_path / "config.toml"
+        path.write_text(
+            f'[api]\nprovider = "anthropic"\nbase_url = "{claude.base_url}"\nkey_env = "FD_TEST_CLAUDE_KEY"\n'
+            '[models]\nladder = ["claude-haiku-5-5", "claude-sonnet-5-5"]\n'
+            '[prices."claude-haiku-5-5"]\ninput = 0.1\noutput = 0.5\ncached_input = 0.01\ncache_write = 0.125\n'
+            '[prices."claude-sonnet-5-5"]\ninput = 2\noutput = 10\ncached_input = 0.1\n'
+            f'[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+        )
+        run = prepare_run(RunOptions(board=board(tmp_path), config=path))
+        run.close()
+    notes = run.notes()
+    assert ("no price in your config for claude-sonnet-5, which Anthropic's refusal fallback answers with for your "
+            "ladder: a lane it answers for asks you once before it carries on without its $2 cap "
+            '([prices."claude-sonnet-5"] prices it; `flightdeck init --provider anthropic` writes these)') in notes
+    assert ("no cache_write in your price for claude-sonnet-5-5: what a lane writes to Anthropic's prompt cache counts "
+            "at the input rate, below the 1.25 times input Anthropic charges for it") in notes
+    written = setup.render(setup.Answers("https://api.anthropic.com", "ANTHROPIC_API_KEY", ladder, "host",
+                                         provider="anthropic", prices=setup.anthropic_prices(ladder)))
+    assert anthropic_price_notes(parse_config(written, path), 2.0) == []  # what init writes prices it all
+
+
 # ---------------------------------------------------------------------- the model APIs, asked before anything starts
 
 

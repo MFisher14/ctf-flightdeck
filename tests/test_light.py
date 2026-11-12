@@ -262,6 +262,17 @@ def test_claude_answers_with_room_to_think_at_low_effort_and_no_refusal_fallback
     assert "fallbacks" not in body and "temperature" not in body
 
 
+def test_a_claude_call_that_wrote_to_the_cache_is_priced_at_the_light_prices_cache_write_rate():
+    reply = claude_says("sstv", input_tokens=100, output_tokens=5, cache_read=2_000, cache_write=3_000)
+    with FakeAnthropicServer([reply]) as server:
+        client = AnthropicClient(server.base_url, KEY, max_retries=0, effort="low", server_fallback=False)
+        priced = L.ModelLight("anthropic", client, "claude-haiku-5-5", price=Price(0.10, 0.50, 0.01, 0.125), timeout=5.0,
+                              tokens=L.ANTHROPIC_TOKENS)
+        answer = ask(priced)
+    assert answer.choice == "sstv" and answer.tokens == 5_105
+    assert answer.cost == pytest.approx((100 * 0.10 + 2_000 * 0.01 + 3_000 * 0.125 + 5 * 0.50) / 1e6)
+
+
 def test_a_claude_refusal_is_a_refusal_and_its_tokens_count():
     with FakeAnthropicServer([refusal("cyber", input_tokens=400, output_tokens=0)]) as server:
         answer = ask(claude(server))

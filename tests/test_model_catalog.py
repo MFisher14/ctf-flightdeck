@@ -209,14 +209,16 @@ def test_thinking_models_are_served_as_the_benchmark_found_they_work_and_never_o
 def test_the_anthropic_entry_is_inits_ladder_and_prices_imported_not_copied(monkeypatch):
     anthropic = load_catalog().get("anthropic")
     assert anthropic.ladder == setup.ANTHROPIC_LADDER and anthropic.classifier is True
-    assert dict(anthropic.prices) == {m: setup.ANTHROPIC_PRICES[m] for m in setup.ANTHROPIC_LADDER}
+    assert dict(anthropic.prices) == setup.anthropic_prices(setup.ANTHROPIC_LADDER)  # the refusal fallback's models too
     assert (anthropic.base_url, anthropic.key_env, anthropic.light_model) == (*setup.ANTHROPIC, setup.LIGHT_ANTHROPIC)
     monkeypatch.setattr(setup, "ANTHROPIC_LADDER", ("claude-haiku-5-5", "claude-opus-5-5"))
     monkeypatch.setitem(setup.ANTHROPIC_PRICES, "claude-opus-5-5", Price(input=1.0, output=2.0))
     changed = load_catalog().get("anthropic")
     assert changed.ladder == ("claude-haiku-5-5", "claude-opus-5-5")
     assert dict(changed.prices) == {"claude-haiku-5-5": setup.ANTHROPIC_PRICES["claude-haiku-5-5"],
-                                    "claude-opus-5-5": Price(input=1.0, output=2.0)}  # no model init no longer writes
+                                    "claude-opus-5-5": Price(input=1.0, output=2.0),
+                                    "claude-opus-5": setup.ANTHROPIC_PRICES["claude-opus-5"],
+                                    "claude-opus-4-8": setup.ANTHROPIC_PRICES["claude-opus-4-8"]}  # no model init no longer writes
 
 
 def test_openrouter_names_no_models_and_says_its_providers_classifiers_still_apply():
@@ -526,7 +528,7 @@ def without(text: str, *tables: str) -> str:
 
 INIT_CONFIG = setup.render(setup.Answers(
     "https://api.anthropic.com", "ANTHROPIC_API_KEY", setup.ANTHROPIC_LADDER, "host", provider="anthropic",
-    prices={m: setup.ANTHROPIC_PRICES[m] for m in setup.ANTHROPIC_LADDER},
+    prices=setup.anthropic_prices(setup.ANTHROPIC_LADDER),
     fallback=setup.anthropic_fallback(setup.ANTHROPIC_LADDER),
     light=setup.LightAnswers("anthropic", "claude-haiku-5-5", *setup.ANTHROPIC, setup.ANTHROPIC_PRICES["claude-haiku-5-5"]),
 ))
@@ -561,7 +563,7 @@ def test_the_api_config_lines_replace_the_tables_they_name_and_load(tmp_path):
     config = parse_config(without(local, *LANE_TABLES) + "\n" + api_lines(anthropic, LANES), tmp_path / "c.toml")
     assert (config.api.provider, config.api.base_url, config.api.key_env) == ("anthropic", *setup.ANTHROPIC)
     assert config.models == setup.ANTHROPIC_LADDER
-    assert config.prices == {m: setup.ANTHROPIC_PRICES[m] for m in setup.ANTHROPIC_LADDER}
+    assert config.prices == setup.anthropic_prices(setup.ANTHROPIC_LADDER)  # each with its cache rates, as init writes them
     light = parse_config(without(local, "light") + "\n" + api_lines(anthropic, LIGHT), tmp_path / "c.toml").light
     assert (light.engine, light.model, light.key_env, light.price) == (
         "anthropic", setup.LIGHT_ANTHROPIC, "ANTHROPIC_API_KEY", setup.ANTHROPIC_PRICES[setup.LIGHT_ANTHROPIC])

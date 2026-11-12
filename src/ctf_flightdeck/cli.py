@@ -433,13 +433,13 @@ def init(
     from .setup import (
         ANTHROPIC,
         ANTHROPIC_LADDER,
-        ANTHROPIC_PRICES,
         LOCAL_PROVIDERS,
         PROVIDERS,
         SUGGESTED_LADDERS,
         AnswerError,
         Answers,
         anthropic_fallback,
+        anthropic_prices,
         base_url_answer,
         key_env_answer,
         light_model_answer,
@@ -545,7 +545,7 @@ def init(
         if suggested is not None:
             typer.echo(f"Suggested: {suggested}, {why}. Press Enter to take it, or give your own.")
         ladder = ask(question, models_answer, suggested)
-    prices = {m: ANTHROPIC_PRICES[m] for m in ladder if m in ANTHROPIC_PRICES} if dialect == "anthropic" else {}
+    prices = anthropic_prices(ladder) if dialect == "anthropic" else {}  # the refusal fallback's models too
     spare, offer = None, ""
     if dialect == "anthropic":
         candidate = anthropic_fallback(ladder)
@@ -692,7 +692,7 @@ def config_command(
                    + (f" is {'set' if environment_has_key(loaded, fallback=True) else 'NOT set'}" if spare.key_env else ""))
         typer.echo(f"fallback models: {', '.join(spare.ladder)}")
     named = dict.fromkeys([*loaded.models, *(m for ladder in loaded.agents.values() for m in ladder)])  # [agents] models too
-    priced = [m for m in named if m in loaded.prices]
+    priced = [m for m in named if m in loaded.prices] + [m for m in loaded.prices if m not in named]  # the refusal fallback's
     typer.echo(f"prices from config: {', '.join(priced) or 'none (the API reports cost, or it shows as unknown)'}")
     typer.echo(f"lanes: {lanes.max_lanes} at a time, runtime {lanes.runtime}" + (f" ({lanes.image})" if lanes.runtime == "docker" else ""))
     tokens = f"{lanes.token_cap} tokens" if lanes.token_cap else "no token cap"

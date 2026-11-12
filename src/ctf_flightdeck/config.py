@@ -57,7 +57,7 @@ from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
 from .core.model import SUBMIT_POLICIES
-from .pricing import Price
+from .pricing import RATES, Price
 from .text import untrusted
 
 CONFIG_ENV = "FLIGHTDECK_CONFIG"
@@ -115,7 +115,7 @@ LOCAL_MAX_TOKENS = 8192
 MAX_REPLY_TOKENS = 1_000_000  # the largest max_tokens accepted: more than any model writes in one reply
 MAX_TRY_SECONDS = 3600.0  # the longest [api] timeout accepted: an hour for one try
 LOCAL_TIMEOUT = 600  # the [api] timeout `flightdeck init` writes for a server on this machine
-_PRICE_KEYS = ("input", "output", "cached_input")
+_PRICE_KEYS = RATES  # input, output, cached_input, cache_write
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 _MAX_ENV_NAME = 64
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
@@ -177,7 +177,7 @@ class L1Config:
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
-    prices: dict[str, Price]  # dollars per million tokens, for models in the ladder or in an [agents] ladder
+    prices: dict[str, Price]  # dollars per million tokens, for models in the ladder or in an [agents] ladder (and the refusal fallback's: _prices)
     lanes: LaneConfig
     run_dir: Path  # expanded (~)
     source: Path | None  # the file it was read from
@@ -235,10 +235,11 @@ def _config(path: Path, doc: dict) -> Config:
     ladder = _ladder(path, _table(path, doc, "models"))
     agents = _agents(path, _table(path, doc, "agents"))  # before [prices], which may name their models
     light, jobs, tables = _light_tables(path, _table(path, doc, "light"))
+    api = _api(path, _table(path, doc, "api"), ladder)
     return Config(
-        api=_api(path, _table(path, doc, "api"), ladder),
+        api=api,
         models=ladder,
-        prices=_prices(path, _table(path, doc, "prices"), ladder, agents),
+        prices=_prices(path, _table(path, doc, "prices"), ladder, agents, api.provider),
         lanes=_lanes(path, _table(path, doc, "lanes")),
         run_dir=_run_dir(path, _table(path, doc, "run")),
         source=path,
@@ -410,7 +411,12 @@ ladder = []
 # does). Optional, per model in the ladder; with neither, the console shows dollars as "-".
 # A model in an [agents] ladder below (the CLI's own name for it) can have one too: codex
 # reports its tokens but no cost, so its price is how its lanes get dollars. A CLI that
-# reports its own cost (claude) keeps its number.
+# reports its own cost (claude) keeps its number. cached_input prices the prompt tokens read
+# from the API's cache and cache_write those written to it (the Anthropic API charges 1.25
+# times input for a write); either left out is the input rate. With provider = "anthropic", a
+# model its refusal fallback answers with for a ladder model (claude-sonnet-5 for
+# claude-sonnet-5-5; claude-opus-5 and claude-opus-4-8 for claude-opus-5-5) can have a price
+# too: a declined call runs again on it, and that attempt is priced as it.
 # [prices."vendor/small-model"]
 # input = 0.10
 # output = 0.40
@@ -854,18 +860,27 @@ def _ladder(path: Path, table: dict) -> tuple[str, ...]:
     return tuple(ladder)
 
 
-def _prices(path: Path, table: dict, ladder: tuple[str, ...], agents: dict[str, tuple[str, ...]]) -> dict[str, Price]:
+def _prices(path: Path, table: dict, ladder: tuple[str, ...], agents: dict[str, tuple[str, ...]],
+            provider: str) -> dict[str, Price]:
     """[prices]: dollars per million tokens, per model in models.ladder or in an [agents] ladder
     (the CLI's own model names). For a CLI it prices what the CLI reports as tokens with no cost
-    (codex), or a turn the CLI never reported; a cost the CLI reports itself (claude) wins."""
+    (codex), or a turn the CLI never reported; a cost the CLI reports itself (claude) wins. With
+    the Anthropic API, also per model its server-side refusal fallback answers with for a model
+    of the ladder (agent/refusal.py): that attempt is priced as the model that ran it."""
     named = set(ladder).union(*agents.values())
+    answering: tuple[str, ...] = ()
+    if provider == "anthropic":
+        from .agent.refusal import answering as fallback_models
+
+        answering = tuple(m for m in fallback_models(ladder) if m not in named)
     prices = {}
     for model, entry in table.items():
         where = ("prices", model)
         if not isinstance(entry, dict):
             raise _error(path, where, f"must be a table of dollars per million tokens (input, output){_got(entry)}")
-        if model not in named:
-            raise _error(path, where, "is for a model that is not in models.ladder or in an [agents] ladder")
+        if model not in named and model not in answering:
+            also = f", nor one Anthropic's refusal fallback answers with for the ladder ({', '.join(answering)})" if answering else ""
+            raise _error(path, where, f"is for a model that is not in models.ladder or in an [agents] ladder{also}")
         prices[model] = _price(path, where, entry)
     return prices
 

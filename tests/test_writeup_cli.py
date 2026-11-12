@@ -197,6 +197,50 @@ def test_polish_writes_the_tidied_draft_and_what_it_cost(tmp_path):
     assert request["json"]["model"] == "fake/model" and ALPHA not in json.dumps(request["json"])
 
 
+def claude_config(tmp_path: Path, monkeypatch, server) -> Path:
+    """[api] on the fake Anthropic server, Claude Opus 5.5 in the ladder, and its and Claude Opus 4.8's prices."""
+    monkeypatch.setenv("FLIGHTDECK_TEST_ANTHROPIC_KEY", "test-anthropic-key-3Pd8-not-real")
+    path = tmp_path / "config.toml"
+    path.write_text(f'[api]\nprovider = "anthropic"\nbase_url = "{server.base_url}"\nkey_env = "FLIGHTDECK_TEST_ANTHROPIC_KEY"\n'
+                    '[models]\nladder = ["claude-opus-5-5"]\n'
+                    '[prices."claude-opus-5-5"]\ninput = 4\noutput = 20\n[prices."claude-opus-4-8"]\ninput = 5\noutput = 25\n')
+    return path
+
+
+def test_a_polish_on_anthropic_prices_each_attempt_of_its_call_as_the_model_that_ran_it(tmp_path, monkeypatch):
+    """Claude Opus 5.5 declined and Anthropic's refusal fallback answered on Claude Opus 4.8: usage.iterations
+    tells both attempts, and each is priced at its own model's [prices]."""
+    from fake_anthropic import FakeAnthropicServer, attempt, message
+
+    def reply(record: dict) -> dict:
+        frozen = record["json"]["messages"][0]["content"][0]["text"]
+        return message([{"type": "text", "text": frozen.replace("## Approach", "## How it went")}], model="claude-opus-4-8",
+                       iterations=[attempt("claude-opus-5-5", input_tokens=200_000),
+                                   attempt("claude-opus-4-8", kind="fallback_message", input_tokens=300_000, output_tokens=40_000)])
+
+    record = alpha_run(tmp_path)
+    with FakeAnthropicServer(responder=reply) as server:
+        result = invoke(record.dir, "--polish", "claude-opus-5-5", "--config", claude_config(tmp_path, monkeypatch, server))
+    assert result.exit_code == 0, result.output
+    # 200k at $4 on Claude Opus 5.5; 300k at $5 and 40k at $25 on Claude Opus 4.8
+    assert result.stdout.splitlines()[-1] == "polish: 1 of 1 drafts with claude-opus-5-5, 540k tokens, $3.30"
+
+
+def test_a_polish_every_model_declined_keeps_the_plain_draft_and_counts_what_the_call_cost(tmp_path, monkeypatch):
+    from fake_anthropic import FakeAnthropicServer, attempt, refusal
+
+    declined = refusal("cyber", model="claude-opus-4-8", iterations=[attempt("claude-opus-5-5", input_tokens=200_000),
+                                                                     attempt("claude-opus-4-8", input_tokens=300_000)])
+    record = alpha_run(tmp_path)
+    with FakeAnthropicServer([declined]) as server:
+        result = invoke(record.dir, "--polish", "claude-opus-5-5", "--config", claude_config(tmp_path, monkeypatch, server))
+    assert result.exit_code == 1
+    assert (record.dir / "writeups" / "a.md").read_text(encoding="utf-8") == writeup.draft(record, "a")
+    assert "not polished: the model declined (cyber)" in result.stderr
+    # declined, but paid for: 200k at $4 on Claude Opus 5.5 and 300k at $5 on Claude Opus 4.8
+    assert "polish: 0 of 1 drafts with claude-opus-5-5, 500k tokens, $2.30" in result.stdout
+
+
 def test_a_refused_polish_keeps_the_plain_draft_and_says_why(tmp_path):
     record = alpha_run(tmp_path)
     with FakeModelServer(responder=lambda r: text_reply(frozen_of(r) + "\nSee [this](http://example.com).")) as server:

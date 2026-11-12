@@ -18,7 +18,7 @@ from ctf_flightdeck.agent.anthropic_client import AnthropicClient
 from ctf_flightdeck.agent.client import ModelError, Reply
 from ctf_flightdeck.agent.fallback import build_client, client_for
 from ctf_flightdeck.config import load_config
-from fake_anthropic import FAST_BETA, FALLBACK_BETA, FakeAnthropicServer, error, refusal, text_message
+from fake_anthropic import FAST_BETA, FALLBACK_BETA, FakeAnthropicServer, attempt, error, message, refusal, text_message
 
 KEY = "test-anthropic-key-4Rq9-not-real"  # synthetic
 MESSAGES = [{"role": "system", "content": "You are a test lane."}, {"role": "user", "content": "Read the note."}]
@@ -201,6 +201,30 @@ def test_a_fast_call_is_priced_at_the_fast_rate(speed, expected):
         (reply,) = calls(server.base_url, ("claude-opus-5-5", "s1"), fast=["claude-opus-5-5"])
     assert reply.usage.speed == (speed or "")
     assert reply.usage.cost == (pytest.approx(expected) if expected is not None else None)
+
+
+@pytest.mark.parametrize("speed, last", [
+    ("fast", (700 * 10.0 + 10 * 50.0) / 1e6),  # the fallback's attempt ran fast: at Claude Opus 4.8's fast rate
+    ("standard", None),  # it ran at standard speed: the config prices it
+    (None, None),  # the API did not say: the config prices it (the request asked for fast on Claude Opus 5.5 only)
+])
+def test_each_attempt_of_a_fast_call_the_refusal_fallback_ran_is_priced_at_the_speed_it_ran(speed, last):
+    # usage.speed is in the top-level usage, which covers only the last attempt (the fallback's
+    # here); Claude Opus 5.5's attempt before it ran as the request asked, fast, whatever that says
+    body = message([{"type": "text", "text": "ok"}], model="claude-opus-4-8", speed=speed, iterations=[
+        attempt("claude-opus-5-5", input_tokens=500, cache_write=1_500),  # declined
+        attempt("claude-opus-5", input_tokens=300),  # declined too: no speed is reported for it
+        attempt("claude-opus-4-8", kind="fallback_message", input_tokens=700, output_tokens=10),
+    ])
+    with FakeAnthropicServer([body]) as server:
+        (reply,) = calls(server.base_url, ("claude-opus-5-5", "s1"), fast=["claude-opus-5-5"])
+    asked, middle = reply.usage.more
+    # its prompt: 500 plain and 1,500 written to the cache, all at the fast input rate (the documentation gives no other)
+    assert (asked.model, asked.cache_write_tokens) == ("", 1_500)
+    assert asked.cost == pytest.approx((500 + 1_500) * 8.0 / 1e6)
+    assert (middle.model, middle.cost) == ("claude-opus-5", None)  # not known to have run fast: the config prices it
+    assert reply.usage.model == "claude-opus-4-8"
+    assert reply.usage.cost == (pytest.approx(last) if last is not None else None)
 
 
 def test_a_standard_call_carries_no_cost_from_the_client():

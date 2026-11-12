@@ -113,6 +113,46 @@ dir = "/srv/flightdeck runs"
 
 
 AGENTS = '[agents]\ncodex = ["cx-small", "cx-big"]\nclaude = ["sonnet", "opus"]\n'
+CLAUDE = '[api]\nprovider = "anthropic"\n[models]\nladder = ["claude-haiku-5-5", "claude-sonnet-5-5"]\n'
+
+
+def test_a_price_takes_a_rate_for_tokens_written_to_the_cache(tmp_path):
+    config = load_config(write(tmp_path, CLAUDE + (
+        '[prices."claude-sonnet-5-5"]\ninput = 2\noutput = 10\ncached_input = 0.1\ncache_write = 2.5\n'
+        '[prices."claude-haiku-5-5"]\ninput = 0.1\noutput = 0.5\ncache_write = 0\n'
+    )))
+    assert config.prices == {
+        "claude-sonnet-5-5": Price(input=2.0, output=10.0, cached_input=0.1, cache_write=2.5),
+        "claude-haiku-5-5": Price(input=0.1, output=0.5, cache_write=0.0),
+    }
+
+
+@pytest.mark.parametrize("value", ["-1", '"cheap"', "true", "inf", "nan", "[2.5]"])
+def test_a_cache_write_rate_that_is_not_a_non_negative_number_is_an_error_naming_the_key(tmp_path, value):
+    path = write(tmp_path, LADDER + f'[prices."vendor/small"]\ninput = 1\noutput = 2\ncache_write = {value}\n')
+    message = error(path)
+    assert message.startswith(f'{path}: prices."vendor/small".cache_write must be a number of dollars per million tokens, 0 or more')
+    assert "cheap" not in message
+
+
+def test_with_the_anthropic_api_a_model_its_refusal_fallback_answers_with_can_have_a_price(tmp_path):
+    """The fallback's attempt bills at its own model's rates: claude-sonnet-5 answers for claude-sonnet-5-5."""
+    config = load_config(write(tmp_path, CLAUDE + '[prices."claude-sonnet-5"]\ninput = 2\noutput = 10\ncache_write = 2.5\n'))
+    assert config.prices == {"claude-sonnet-5": Price(input=2.0, output=10.0, cache_write=2.5)}
+
+
+@pytest.mark.parametrize("text, says", [
+    # not the Anthropic API: no refusal fallback, so no model outside the ladders has a price
+    (CLAUDE.replace('provider = "anthropic"', 'provider = "openai"') + '[prices."claude-sonnet-5"]\ninput = 1\noutput = 2\n',
+     "prices.claude-sonnet-5 is for a model that is not in models.ladder or in an [agents] ladder"),
+    # claude-opus-4-8 answers for claude-opus-5-5 and the Fable models, none of them in this ladder
+    (CLAUDE + '[prices."claude-opus-4-8"]\ninput = 5\noutput = 25\n',
+     "prices.claude-opus-4-8 is for a model that is not in models.ladder or in an [agents] ladder, nor one "
+     "Anthropic's refusal fallback answers with for the ladder (claude-sonnet-5)"),
+], ids=["openai", "not this ladder's"])
+def test_a_price_for_a_model_no_lane_and_no_refusal_fallback_of_the_ladder_runs_is_an_error(tmp_path, text, says):
+    path = write(tmp_path, text)
+    assert error(path) == f"{path}: {says}"
 
 
 def test_a_model_in_an_agents_ladder_can_have_a_price(tmp_path):

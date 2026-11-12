@@ -160,19 +160,18 @@ def _polish_config(path: Path | None):
 async def _polished(record, ids, model, client_config, board, redact) -> tuple[dict[str, tuple[str, str]], str]:
     """Each draft polished, or plain with the reason it is not; and a line on what it cost."""
     from . import writeup
-    from .agent.client import ModelError
+    from .agent.client import ModelError, call_dollars
     from .agent.fallback import client_for
-    from .pricing import call_cost
 
     loaded, key = client_config
-    price = loaded.prices.get(model)
     drafts: dict[str, tuple[str, str]] = {}
     tokens, dollars, unknown = 0, 0.0, False
 
     def spend(usage) -> None:
+        """Every part of the call (a refusal fallback's attempts too), each at its model's price."""
         nonlocal tokens, dollars, unknown
-        tokens += usage.total
-        cost = call_cost(usage.cost, price, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens)
+        tokens += sum(part.total for part in usage.parts())
+        cost = call_dollars(usage, model, loaded.prices.get)
         if cost is None:
             unknown = True
         else:
@@ -187,8 +186,8 @@ async def _polished(record, ids, model, client_config, board, redact) -> tuple[d
             try:
                 done = await writeup.polish(record, cid, client=client, model=model, board=board, redact=redact)
             except (writeup.PolishError, ModelError) as exc:
-                if isinstance(exc, writeup.PolishError) and exc.usage is not None:
-                    spend(exc.usage)  # refused, but the call was made and paid for
+                if exc.usage is not None:  # refused, or the model declined: the call was made and paid for
+                    spend(exc.usage)
                 drafts[cid] = (writeup.draft(record, cid, board=board, redact=redact), str(exc))
                 continue
             drafts[cid] = (done.markdown, "")

@@ -69,11 +69,12 @@ def test_an_open_weight_model_on_this_machine_needs_no_key(tmp_path, monkeypatch
 
 
 def test_the_anthropic_engine_has_the_sdks_url_and_variable_by_default_and_reads_its_key(tmp_path, monkeypatch):
-    text = LADDER + '[light]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\nprice = { input = 0.1, output = 0.5, cached_input = 0.01 }\n'
+    text = (LADDER + '[light]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\n'
+            'price = { input = 0.1, output = 0.5, cached_input = 0.01, cache_write = 0.125 }\n')
     config = load_config(write(tmp_path, text))
     assert config.light == LightConfig(
         "anthropic", "claude-haiku-5-5", "https://api.anthropic.com", "ANTHROPIC_API_KEY", LIGHT_TIMEOUT,
-        Price(0.1, 0.5, 0.01),
+        Price(0.1, 0.5, 0.01, 0.125),
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_KEY)
     assert light_key(config) == FAKE_KEY
@@ -113,6 +114,8 @@ LIGHT_ERRORS = {
     "price negative": (OLLAMA + "price = { input = -1, output = 1 }\n", "light.price.input must be a number of dollars"),
     "price not a table": (OLLAMA + "price = 3\n", "light.price must be a table of dollars per million tokens"),
     "price unknown key": (OLLAMA + "price = { input = 1, output = 1, write = 2 }\n", "unknown key light.price.write"),
+    "price cache_write a string": (OLLAMA + 'price = { input = 1, output = 1, cache_write = "x" }\n',
+                                   "light.price.cache_write must be a number of dollars"),
     "light not a table": ("light = 1\n", "light must be a table"),
 }
 

@@ -141,7 +141,7 @@ class ApiChoice:
     base_url: str
     key_env: str
     ladder: tuple[str, ...]  # weakest first; () when the player chooses (OpenRouter)
-    prices: Mapping[str, Price]  # dollars per million tokens, per ladder model
+    prices: Mapping[str, Price]  # dollars per million tokens: per ladder model, its refusal fallback's, the light model
     light_model: str  # the model `init --light` writes for it; "" when the player chooses
 
 
@@ -324,13 +324,15 @@ def _api(entry: object, where: str) -> ApiChoice:
 def _provider(provider: str, name: str) -> dict:
     """The endpoint, ladder and prices `flightdeck init` writes for the provider (setup.py),
     imported so the catalog never holds a copy of them."""
-    from .setup import ANTHROPIC, ANTHROPIC_LADDER, ANTHROPIC_PRICES, LIGHT_ANTHROPIC, PROVIDERS as INIT_PROVIDERS
+    from .setup import ANTHROPIC, ANTHROPIC_LADDER, ANTHROPIC_PRICES, LIGHT_ANTHROPIC, anthropic_prices
+    from .setup import PROVIDERS as INIT_PROVIDERS
 
     if provider == "anthropic":
         unpriced = [m for m in (*ANTHROPIC_LADDER, LIGHT_ANTHROPIC) if m not in ANTHROPIC_PRICES]
         if not ANTHROPIC_LADDER or unpriced:
             raise CatalogError(f"{name}: init's Anthropic ladder has no price for {', '.join(unpriced) or 'any model'}")
-        prices = {m: ANTHROPIC_PRICES[m] for m in dict.fromkeys((*ANTHROPIC_LADDER, LIGHT_ANTHROPIC))}
+        # init's [prices] (the ladder's and its refusal fallback's models), and the light model's
+        prices = {**anthropic_prices(ANTHROPIC_LADDER), LIGHT_ANTHROPIC: ANTHROPIC_PRICES[LIGHT_ANTHROPIC]}
         return {"base_url": ANTHROPIC[0], "key_env": ANTHROPIC[1], "ladder": tuple(ANTHROPIC_LADDER),
                 "prices": MappingProxyType(prices), "light_model": LIGHT_ANTHROPIC}
     url, key_env = INIT_PROVIDERS["openrouter"]
@@ -602,12 +604,13 @@ def api_lines(api: ApiChoice, role: str) -> str:
             f"ladder = [{', '.join(_toml(m) for m in ladder)}]   # weakest first; "
             f"{'ids from ' + api.models_page if api.models_page and not api.ladder else 'escalation climbs it'}\n"
         )
-        for model in api.ladder:
+        from .agent.refusal import answering
+        from .setup import price_lines
+
+        for model in (*api.ladder, *answering(api.ladder)):  # the refusal fallback's models too, as init writes them
             price = api.prices.get(model)
             if price is not None:
-                out += f"\n[prices.{_toml(model)}]\ninput = {price.input:g}\noutput = {price.output:g}\n"
-                if price.cached_input is not None:
-                    out += f"cached_input = {price.cached_input:g}\n"
+                out += f"\n[prices.{_toml(model)}]\n" + price_lines(price)
         return out
     model = api.light_model or PLACEHOLDER_MODEL
     engine = "anthropic" if api.provider == "anthropic" else "openai"
@@ -620,10 +623,9 @@ def api_lines(api: ApiChoice, role: str) -> str:
     )
     price = api.prices.get(model)
     if price is not None:
-        parts = [f"input = {price.input:g}", f"output = {price.output:g}"]
-        if price.cached_input is not None:
-            parts.append(f"cached_input = {price.cached_input:g}")
-        out += "price = { " + ", ".join(parts) + " }   # dollars per million tokens\n"
+        from .setup import price_table
+
+        out += f"price = {price_table(price)}   # dollars per million tokens\n"
     return out
 
 
