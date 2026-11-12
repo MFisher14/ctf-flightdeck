@@ -138,3 +138,29 @@ def test_the_first_look_replaces_every_flag_and_cuts_at_a_line():
     assert F.cut_at_line("one two three", 100) == "one two three"
     cut = F.cut_at_line("x" * 30 + " " + "y" * 200, 120)
     assert cut.startswith("x" * 30 + "\n[cut:") and len(cut) <= 120  # no line break in reach: cut at a space
+
+
+# ---------------------------------------------------------------------- what the run says
+
+
+def test_the_run_says_what_route_and_recon_do_and_whether_their_calls_are_priced():
+    from ctf_flightdeck import light as L
+    from ctf_flightdeck.config import LightConfig
+
+    local = L.build(LightConfig(engine="openai", model="m", base_url="http://127.0.0.1:9/v1"), None)
+    paid = L.build(LightConfig(engine="anthropic", model="claude-haiku-5-5", base_url="http://127.0.0.1:9"), "unit-test-key")
+    try:
+        (shared,) = F.first_look_notes(L.Lights(engines={"judge": local, "route": local, "recon": local}))
+        assert shared.startswith("light model: openai m routes each challenge (the specialist family it suits, and its "
+                                 "category where the board names none flightdeck knows, shown as a guess, never in "
+                                 "place of the board's) and writes a first look at each challenge's handout")
+        assert "a lane never waits for it: what is not back by its first model call is left out of its brief" in shared
+        assert "unpriced" not in shared  # a server on this machine costs nothing
+        route, recon = F.first_look_notes(L.Lights(engines={"route": local, "recon": paid}))
+        assert "routes each challenge" in route and "writes a first look" not in route
+        assert recon.startswith("light model: anthropic claude-haiku-5-5 writes a first look")
+        assert "unpriced: a dollar-capped lane asks you once before it carries on without its cap" in recon
+        assert F.first_look_notes(L.Lights(engines={"judge": local})) == [] and F.first_look_notes(None) == []
+    finally:
+        asyncio.run(local.aclose())
+        asyncio.run(paid.aclose())

@@ -161,6 +161,9 @@ def test_a_missing_category_is_filled_and_marked_as_a_guess(tmp_path, board):
                 inside = first_look_of(brief)
                 assert "Category: osint? (a guess: the board names no category flightdeck knows)" in inside
                 assert "Specialist it suits: osint-lookup (finding public information" in inside
+                held = [n for n in notes(lane) if n.startswith("its opening brief holds the light model's first look")]
+                assert held == [f"its opening brief holds the light model's first look at the handout (route and recon, "
+                                f"{len(inside):,} characters, fenced as data)"]
                 assert any(n.startswith("light model (openai light/m) routed it: family osint-lookup, category osint?")
                            for n in notes(lane))
                 assert views.category_cell(ch).plain == "osint?"  # on the board, as a guess

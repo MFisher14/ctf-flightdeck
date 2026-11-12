@@ -175,6 +175,29 @@ def test_escalation_and_refresh_reuse_the_same_recon(tmp_path):
         asyncio.run(main())
 
 
+def test_an_escalation_before_the_first_call_still_takes_the_first_look(tmp_path):
+    lanes = FakeModelServer(responder=looping)
+    with lanes, LightModel({"recon": BRIEF}) as light:
+        async def main():
+            lab = Lab(tmp_path, lanes, note_handout(tmp_path), lights=lights(light.engine(), ("recon",)))
+            try:
+                lab.release(challenge("note", "misc", NOTE))
+                lane = lab.lane("note")
+                assert lab.deck.apply(iv.Pause(lane.id)).ok
+                await until(lambda: lab.looked("note"), "the first look")
+                assert lab.deck.apply(iv.Escalate(lane.id)).ok  # before the lane's first model call
+                assert lab.deck.apply(iv.Resume(lane.id)).ok
+                await until(lambda: lanes.chats(), "the lane's first model call")
+                first = lanes.chats()[0]["json"]
+                assert first["model"] == "big" and first_look_of(first["messages"][1]["content"]) == BRIEF
+                assert first["messages"][1]["content"].startswith(TODAY + "\n" + FIRST_LOOK)
+                assert "Another model worked on this challenge before you" in first["messages"][2]["content"]
+            finally:
+                await lab.finish()
+
+        asyncio.run(main())
+
+
 def test_recon_is_cut_at_its_cap(tmp_path):
     long = "\n".join(f"Step {n}: look at the bytes at offset {n * 16} and compare them with the header." for n in range(80))
     lanes = FakeModelServer(responder=looping)
