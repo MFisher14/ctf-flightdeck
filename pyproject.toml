@@ -1,6 +1,6 @@
 [project]
 name = "ctf-flightdeck"
-version = "0.2.0"
+version = "0.3.0"
 description = "A terminal harness for playing CTFs with AI agents, where the player runs the loop."
 readme = "README.md"
 license = "MIT"

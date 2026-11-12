@@ -48,7 +48,7 @@ shell.
 - **Learns from each run.** A report of where lanes stalled and which interventions helped,
   writeup drafts, and the list of challenges your solvers missed.
 
-> **Status: v0.2.0 (alpha).** See the
+> **Status: v0.3.0 (alpha).** See the
 > [changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) and the
 > [roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md).
 

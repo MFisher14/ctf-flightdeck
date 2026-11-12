@@ -2,7 +2,12 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.3.0 (2026-11-12)
+
+Autopilot (M5): flightdeck runs an event by rule while you are away, inside a run budget,
+never looser than the event's rules. With it: headless runs with a status file and a webhook,
+a Docker lane's network fenced to its challenge's instance, flight cards and a leaderboard,
+and the open issues of 0.1.x and 0.2.0.
 
 ### Sharing what you ran
 

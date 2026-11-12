@@ -3,7 +3,7 @@
 ctf-flightdeck is an open-source terminal harness for playing CTFs with AI agents. The player is the
 operator: the harness pulls and triages challenges, runs no-model (L1) solvers, spins up agent lanes,
 and submits. The player watches every lane and steps in when something looks wrong.
-**Status: 0.2.0 is released (PyPI, public on GitHub). M5 Autopilot is built and not yet released.**
+**Status: 0.3.0 is released (PyPI, public on GitHub), with M5 Autopilot. Next: the issues in the Later milestone.**
 Keep this file short: every agent re-reads it on every turn.
 
 ## Where things are
