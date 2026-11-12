@@ -23,7 +23,7 @@ problem: report it privately, never in a public issue.
 - **A flag sent without your approval when it should have waited.** Every flag waits under
   `submit = "confirm"`, and nothing reaches the platform while an event's submit stage is
   `manual` or `off`. Under auto submit a flag still waits when the platform counts the challenge's
-  tries, when the challenge's own description or handout holds it or flightdeck could not search all
+  tries (unless your config says `submit_limited = "auto"`), when the challenge's own description or handout holds it or flightdeck could not search all
   of it for that flag, when it is only a match in what an L1 engine printed, or when the light
   model's flag check (`flagcheck` in `[light] jobs`) holds it; and a flag found wrong is never
   submitted again.

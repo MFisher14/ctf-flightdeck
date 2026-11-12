@@ -164,6 +164,55 @@ def test_under_auto_a_ctfd_challenge_with_limited_tries_waits_for_the_player(tmp
     assert run.deck.challenges["warmup"].max_attempts == 3
 
 
+def spending(tmp_path, base_url):
+    """The config of auto_run, with the player's opt-in to spending counted tries."""
+    path = config(tmp_path, base_url, max_lanes=1)
+    path.write_text(path.read_text().replace('runtime = "host"\n', 'runtime = "host"\nsubmit_limited = "auto"\n'))
+    assert 'submit_limited = "auto"' in path.read_text()
+    return path
+
+
+def test_under_auto_with_submit_limited_auto_the_counted_tries_are_spent_without_the_player_the_last_one_too(tmp_path, token):
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=3)
+    model = Model({"Warmup": [submit("test{nope}"), submit("test{maybe}"), submit("test{hello}")]})
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=model) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url, submit="auto"),
+                                     config=spending(tmp_path, server.base_url)))
+        asked: list[str] = []
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+
+            def solved() -> bool:
+                if lane.pending is not None and lane.pending.kind is PendingKind.SUBMIT:
+                    asked.append(lane.pending.detail)
+                return lane.state is LaneState.SOLVED
+
+            await wait_for(solved, "CTFd's answer to the third flag")
+
+        play(run, body)
+    assert asked == []  # the player was never asked: every try went on its own
+    assert [r.json["submission"] for r in fake.to(ATTEMPT)] == ["test{nope}", "test{maybe}", "test{hello}"]
+    assert any(note.startswith('submit_limited = "auto" in your config: a flag for a challenge whose tries') for note in run.notes())
+
+
+def test_submit_limited_auto_does_nothing_under_submit_confirm_and_the_run_says_so(tmp_path, token):
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=3)
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url, submit="confirm"),
+                                     config=spending(tmp_path, server.base_url)))
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            assert lane.pending.detail == "submit test{hello} (3 tries left of 3)"
+            await asyncio.sleep(0.2)
+            assert fake.to(ATTEMPT) == []
+
+        play(run, body)
+    assert 'submit_limited = "auto" in your config does nothing in this run: submit is "confirm", so every flag waits for you' in run.notes()
+
+
 def test_a_wrong_flag_ctfd_answers_with_the_tries_left_switches_the_challenge_to_confirm(tmp_path, token):
     left = {"success": True, "data": {"status": "incorrect", "message": "Incorrect. You have 2 tries remaining."}}
     model = Model({"Warmup": [submit("test{nope}"), submit("test{maybe}")]})

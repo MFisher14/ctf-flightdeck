@@ -76,7 +76,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
-_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit")
+_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
@@ -175,6 +175,7 @@ class LaneConfig:
     token_cap: int | None = 400_000  # None: no cap
     dollar_cap: float | None = 2.0  # None: no cap
     submit: str = "confirm"  # confirm | auto
+    submit_limited: str = "confirm"  # confirm | auto: under submit auto, spend a challenge's counted tries without the player
 
 
 @dataclass(frozen=True)
@@ -482,6 +483,9 @@ image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image bui
 token_cap = 400000              # per lane; false for no cap
 dollar_cap = 2.0                # per lane; false for no cap
 submit = "confirm"              # "confirm": you approve each flag; "auto": a flag a lane claims goes at once; the rest wait for you
+submit_limited = "confirm"      # a challenge whose tries the platform counts (CTFd's max attempts). "confirm": its flags
+                                # wait for you, under submit "auto" too. "auto": under submit "auto" they go without you,
+                                # the last try included: a wrong flag can use up the tries, for your whole team
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
@@ -1008,6 +1012,7 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         token_cap=_cap(path, table, "token_cap", defaults.token_cap, whole=True),
         dollar_cap=_cap(path, table, "dollar_cap", defaults.dollar_cap, whole=False),
         submit=_choice(path, table, ("lanes", "submit"), defaults.submit, SUBMIT_POLICIES),
+        submit_limited=_choice(path, table, ("lanes", "submit_limited"), defaults.submit_limited, SUBMIT_POLICIES),
     )
 
 

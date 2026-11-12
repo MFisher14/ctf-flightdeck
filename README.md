@@ -244,6 +244,12 @@ Under auto submit (`submit = "auto"`, or `play --submit auto`) a flag the model 
 once, unless it is written in the challenge's own description or handout files (often a decoy):
 that one still waits for you. A flag found wrong is never asked about again.
 
+Some platforms limit the tries at a challenge's flag (CTFd's "max attempts"). Every flag for such
+a challenge waits for your approval, under auto submit too, and the approval says how many tries
+are left. To let auto submit spend those tries without you, the last one included, set
+`submit_limited = "auto"` under `[lanes]`; a wrong flag can then use up the tries for your whole
+team. flightdeck says so when a run starts.
+
 Every run writes a run folder with an append-only `events.jsonl` and each lane's transcript; a
 board with answers (like the practice set) ends with a scorecard. If flightdeck itself is killed
 (kill -9, a power loss), what its lanes started can keep running: the next `play` or `practice`

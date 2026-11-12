@@ -23,7 +23,8 @@ Rules the deck enforces:
 - when that platform counts the tries at a challenge's flag (Challenge.limited: the board
   says so, or the platform did), a flag for it waits for the player under "auto" too, so
   flightdeck never spends one of those tries on its own; each approval says how many are
-  left, and a platform's answer that first says so is a warning under "auto";
+  left, and a platform's answer that first says so is a warning under "auto". The player
+  can opt out of that hold (DeckConfig.submit_limited "auto": DeckConfig.holds);
 - once the platform says no tries are left at a challenge's flag (its answer to a flag, or
   its count at a pull: platform_tries), the challenge is out of tries: blocked, out of the
   queue, its lanes stopped, and a warning says so, until a newer count says tries are left
@@ -1249,7 +1250,7 @@ class Deck:
         if self.config.submit == "auto" and claimed and self.submitter is None:
             self._submit(lane, flag)  # an answers file checks it, or the player submits it by hand: no try is spent
             return
-        if self.config.submit == "auto" and claimed and not ch.limited:
+        if self.config.submit == "auto" and claimed and not self.config.holds(ch):
             self._send(lane, flag)
             return
         # under auto, a match scraped from text the lane read (a decoy flag.txt, an example
@@ -1425,9 +1426,9 @@ class Deck:
                 wrong.append((item, known))
             elif ok is None:
                 back.append((item, "the platform gave no verdict on the flag before it"))
-            elif ch.limited and not item.approved:
+            elif self.config.holds(ch) and not item.approved:
                 back.append((item, "the platform counts the tries at this challenge's flag"))
-            elif last:
+            elif last and self.config.holds(ch):
                 back.append((item, f"the platform now says {_tries_text(ch)}"))
             else:
                 keep.append(item)
@@ -1475,8 +1476,9 @@ class Deck:
         counted = ch.limited
         ch.tries_left = max(0, left)
         if not counted and self.config.submit == "auto" and not ch.closed and ch.tries_left:
-            self._emit(EventKind.WARNING, f"the platform counts the tries at the flag of {ch.name} ({_tries_text(ch)}): "
-                                          "from now on its flags wait for you, under submit auto too",
+            what = ("its flags still go out without you (submit_limited auto)" if self.config.spends_tries
+                    else "from now on its flags wait for you, under submit auto too")
+            self._emit(EventKind.WARNING, f"the platform counts the tries at the flag of {ch.name} ({_tries_text(ch)}): {what}",
                        challenge=ch.id, data={"tries_left": ch.tries_left})
         for lane in self.lanes_on(ch.id):
             for pending in [lane.pending, *lane.waiting]:

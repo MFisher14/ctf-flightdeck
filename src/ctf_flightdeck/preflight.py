@@ -463,6 +463,12 @@ def _is_set(environ: Mapping[str, str], name: str) -> bool:
 # ---------------------------------------------------------------------- what a run will do
 
 
+COUNTED_WAIT = ", and so does every flag of a challenge whose tries the platform counts"
+COUNTED_GO = (  # the player's config opts in ([lanes] submit_limited "auto")
+    '; submit_limited = "auto" in your config: a challenge whose tries the platform counts gets a claimed flag at once too, '
+    "the last try included"
+)
+
 _MEANING = {
     "pull": {
         Policy.AUTO: "flightdeck gets the board itself",
@@ -485,8 +491,7 @@ _MEANING = {
     "submit": {
         Policy.AUTO: (
             "a flag a lane claims goes to the platform at once (a model's submit_flag, a coding agent's FLAG: line, "
-            "a flag an L1 engine returns as its result); any other match waits for your approval, and so does every "
-            "flag of a challenge whose tries the platform counts"
+            "a flag an L1 engine returns as its result); any other match waits for your approval" + COUNTED_WAIT
         ),
         Policy.CONFIRM: "each flag is submitted after you approve it",
         Policy.MANUAL: "you submit flags yourself and tell flightdeck how it went",
@@ -558,6 +563,8 @@ def describe(
         meaning = _MEANING[stage][policy]
         if stage == "pull" and profile.platform == "manual":
             meaning = FOLDER_BOARD
+        if stage == "submit" and policy is Policy.AUTO and isinstance(config, Config) and config.lanes.submit_limited == "auto":
+            meaning = meaning.removesuffix(COUNTED_WAIT) + COUNTED_GO
         if stage == "l1" and policy is not Policy.OFF and no_pack:
             meaning = NO_PACK
         lines.append(f"{stage:<10}{policy.value:<9}{meaning}{note}")

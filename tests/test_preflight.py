@@ -1084,6 +1084,19 @@ def test_describe_says_under_submit_auto_only_a_flag_a_lane_claims_goes_at_once_
     ) in lines
 
 
+def test_describe_says_when_the_players_config_spends_counted_tries_under_submit_auto(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[models]\nladder = ["vendor/small"]\n[lanes]\nsubmit_limited = "auto"\n')
+    spends = load_config(path)
+    (auto,) = [x for x in describe(profile(), policies(submit=AUTO), environ=TOKEN_SET, config=spends) if x.startswith("submit")]
+    assert auto.endswith(
+        'any other match waits for your approval; submit_limited = "auto" in your config: a challenge whose tries the '
+        "platform counts gets a claimed flag at once too, the last try included"
+    ) and "and so does every flag" not in auto
+    (confirm,) = [x for x in describe(profile(), policies(), environ=TOKEN_SET, config=spends) if x.startswith("submit")]
+    assert confirm.startswith("submit    confirm  each flag is submitted after you approve it") and "submit_limited" not in confirm
+
+
 def test_describe_draws_a_hostile_profile_safely(tmp_path):
     event = manual(tmp_path, name="Night\x1b[2J\x1b]52;c;cGFzdGU=\x07Shift\u202e", flag_format="a\x1b[31m")
     text = "\n".join(describe(event, policies(), environ={}))

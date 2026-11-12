@@ -107,7 +107,9 @@ lane at work sent it.
 
 A challenge whose tries the platform counts (`Challenge.limited`) never gets a flag without the
 player, and a flag the player approved keeps its turn after a count of tries unless it would spend
-the last one.
+the last one. The player can opt out of that hold: with `[lanes] submit_limited = "auto"`, under
+submit auto, such a challenge's claimed flags go out like any other's, the last try included
+(`DeckConfig.holds`), and the run's opening notes say so.
 
 `Deck.report` applies a spend-only report (`spend_only`: tokens, cached tokens or dollars, and
 nothing else) to a lane that has ended: it counts for the lane and the run, is logged as a spend

@@ -62,6 +62,9 @@ the first pricing issue.
   and says the event's rules keep the lane off it.
 - `flightdeck preflight`'s submit auto line says that every flag of a challenge whose tries
   the platform counts waits for you.
+- `[lanes] submit_limited = "auto"` lets auto submit spend a challenge's counted tries without
+  you, the last one included. It is off by default: a wrong flag can use up the tries for your
+  whole team. `flightdeck preflight` and the start of a run say when it is on.
 - `flightdeck score` counts a run's solves the way `flightdeck report` does, against the board
   the run played. A solve from before the run (on the platform, or in the team folder) is not
   a solve during it.
@@ -78,6 +81,27 @@ the first pricing issue.
 - Fast mode: tokens read from or written to the cache are priced with the cache multipliers on
   the fast rate. 0.1.0 priced them at the full fast input rate, which showed a fast lane at
   about twice its cost.
+
+### Commands and docs
+
+- `flightdeck preflight` describes each policy as `play` follows it, and refuses an event
+  profile whose agents policy is `manual` or `off`, as `play` does. "preflight: ok" means
+  `play` will start. Its token line reads your keys file as well as the environment.
+- `flightdeck init` says what the host runtime means where it asks for the runtime, and
+  `flightdeck doctor` warns when your config runs lanes on the host: lanes run as you, and can
+  read your files and keys.
+- `flightdeck writeups`, `score` and `build gap` answer a path that starts with `~` for a user
+  that does not exist with one line, not a traceback (#18; thanks to bfs2021 for the fix).
+- `flightdeck models ID` prints `timeout = 600` with a local model's `[api]` lines, as `init`
+  writes it.
+- `flightdeck --help` groups the commands as Set up, Play, Before and during an event, After a
+  run, and Solvers (L1); arguments are named in upper case (`RUN_DIR`, `BOARD`, `PACK`).
+- The practice set's README says that a coding-agent lane (`--agent`) is always on the network,
+  so it can download the reference solutions: practice with `--agent` is not honest practice.
+- The README is reordered, with sections for Docker or host, the words flightdeck uses,
+  coding-agent lanes, and configuration and files; its links work on PyPI. Two new guides:
+  `docs/BOARDS.md` (the board folder, `challenge.json`, the event profile) and
+  `docs/SOLVERS.md` (L1 packs, manifests, `l1 import`, build mode).
 
 ## 0.1.0 (2026-11-11)
 

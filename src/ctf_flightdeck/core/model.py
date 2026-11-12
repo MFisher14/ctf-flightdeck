@@ -364,6 +364,7 @@ class DeckConfig:
     max_lanes: int = 16
     flag_format: str = r"\w{1,64}\{[^{}\s]{1,256}\}"  # bounded: searched over megabytes of output
     submit: str = "confirm"  # stage policy for submitting flags
+    submit_limited: str = "confirm"  # "auto": under submit auto, a challenge's counted tries are spent without the player
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
 
     def __post_init__(self) -> None:
@@ -373,4 +374,17 @@ class DeckConfig:
             raise ValueError(
                 f"submit policy {self.submit!r} is not supported yet; known: {', '.join(SUBMIT_POLICIES)}"
             )
+        if self.submit_limited not in SUBMIT_POLICIES:
+            raise ValueError(f"submit_limited {self.submit_limited!r} is not known; known: {', '.join(SUBMIT_POLICIES)}")
         check_flag_format(self.flag_format, "the deck's flag_format")  # the backstop: every loader checks it first
+
+    @property
+    def spends_tries(self) -> bool:
+        """The player opted in (submit_limited "auto", under submit "auto"): a flag for a
+        challenge whose tries the platform counts goes out without them, the last try too."""
+        return self.submit == "auto" and self.submit_limited == "auto"
+
+    def holds(self, ch: Challenge) -> bool:
+        """`ch`'s flags wait for the player whatever the submit policy: the platform counts
+        the tries at its flag, and the player has not opted in to spending them."""
+        return ch.limited and not self.spends_tries

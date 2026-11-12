@@ -169,7 +169,7 @@ class FlagGate:
         if self.closed or lane is None or lane.finished or deck.config.submit != "auto":
             return False
         ch = deck.challenges[lane.challenge_id]
-        if ch.closed or ch.limited or not re.fullmatch(deck.config.flag_format, flag):
+        if ch.closed or deck.config.holds(ch) or not re.fullmatch(deck.config.flag_format, flag):
             return False
         if deck.not_flag(ch.id, flag) is not None:
             return False

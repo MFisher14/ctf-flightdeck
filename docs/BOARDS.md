@@ -55,7 +55,7 @@ the files, write a `challenge.json`, and submit the flags yourself (see
 | `files` | no | The handout files, as paths inside the challenge folder. Left out, it is every regular file in the folder and its subfolders, except `challenge.json` itself. |
 | `urls` | no | The challenge's live instance, if it has one: web origins such as `"http://127.0.0.1:8080"`, and TCP services such as `"tcp://127.0.0.1:1337"` (what `nc 127.0.0.1 1337` reaches). An origin is a scheme, a host and an optional port, with no path, query or user name; a TCP service needs its port. |
 | `id` | no | The challenge's id: lower-case letters, digits, `_`, `.` and `-` (a letter or digit first), at most 64 characters. Left out, it is the folder's name, which must then follow the same rule. Two challenges cannot share an id. |
-| `max_attempts` | no | How many tries the platform allows at the flag (0, the default: any number). A flag for a challenge with a limit always waits for you, under auto submit too. |
+| `max_attempts` | no | How many tries the platform allows at the flag (0, the default: any number). A flag for a challenge with a limit waits for you, under auto submit too, unless your config says `submit_limited = "auto"` under `[lanes]`. |
 
 A key that is not in this table is an error, so a typo fails loudly instead of being ignored.
 So is a `files` entry that does not exist, that leaves the challenge folder (`..` or an absolute

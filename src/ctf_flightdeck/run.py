@@ -37,7 +37,8 @@ an error.
 A CTFd run's flags go to CTFd from one worker task (_Submits, the deck's submitter), one at a
 time and off the console's loop: the lane carries on, and CTFd's answer reaches the deck when
 it is in (Deck.platform_verdict). A challenge whose tries CTFd counts (its max_attempts, or a
-wrong flag's "N tries remaining") gets no flag without the player, under auto too. The tries
+wrong flag's "N tries remaining") gets no flag without the player, under auto too (unless
+the player's config says `submit_limited = "auto"`: DeckConfig.holds). The tries
 left are what CTFd last said: in its answer to a flag, or in the challenge's details at each
 pull (the attempts used, by you or a teammate: Pull.tries, Deck.platform_tries), so a new run
 starts with them. With none left the challenge is out of tries: no lane starts on it, those
@@ -599,10 +600,15 @@ def prepare_run(options: RunOptions) -> Run:
         containerized=runtime == "docker",
         max_lanes=options.max_lanes,
         submit=options.submit,
+        submit_limited=config.lanes.submit_limited,
         models=ladder,
         **({"flag_format": flag_format} if flag_format else {}),
     )
     plan.notes.append(_flag_format_note(deck_config.flag_format, profile, board, options.board))
+    if deck_config.spends_tries:
+        plan.notes.append(SPENDS_TRIES)
+    elif config.lanes.submit_limited == "auto":
+        plan.notes.append(f'submit_limited = "auto" in your config does nothing in this run: submit is "{deck_config.submit}", so every flag waits for you')
     handouts = {b.challenge.id: b.handout for b in board.challenges}
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
@@ -893,6 +899,12 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
         instance=strictest(options.instance, for_lanes).value,
     )
     return _Plan(effective, profile, policies, submit.platform, notes)
+
+
+SPENDS_TRIES = (
+    'submit_limited = "auto" in your config: a flag for a challenge whose tries the platform counts goes out without you, '
+    "the last try included; a wrong flag can use up the tries"
+)
 
 
 def _event_submit(options: RunOptions, policies: Policies):

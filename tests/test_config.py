@@ -235,6 +235,13 @@ def test_false_disables_a_cap_and_an_absent_cap_keeps_its_default(tmp_path):
     assert (config.lanes.token_cap, config.lanes.dollar_cap) == (400_000, None)
 
 
+def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
+    assert load_config(write(tmp_path, LADDER)).lanes.submit_limited == "confirm"
+    assert load_config(write(tmp_path, LADDER + '[lanes]\nsubmit_limited = "auto"\n')).lanes.submit_limited == "auto"
+    for bad in ("true", '"yes"', '"off"'):
+        assert 'lanes.submit_limited must be "auto" or "confirm"' in error(write(tmp_path, LADDER + f"[lanes]\nsubmit_limited = {bad}\n"))
+
+
 def test_the_run_dir_expands_the_home_directory(tmp_path):
     config = load_config(write(tmp_path, LADDER + '[run]\ndir = "~/ctf/runs"\n'))
     assert config.run_dir == tmp_path / "home" / "ctf" / "runs"
