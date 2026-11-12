@@ -23,8 +23,11 @@ def test_under_instance_off_the_brief_offers_no_instance_and_says_the_events_rul
     assert "tcp://127.0.0.1:31337" not in text  # flightdeck offers none; the description says what it says, as data
     assert after.strip() == OFF_LIMITS  # flightdeck's own words, outside the challenge's fence
     assert "The event's rules keep you off this challenge's live instance: do not try to reach it" in OFF_LIMITS
-    nothing = brief(PORT, ["session.log"], [], instance="off")  # no instance: nothing to keep the lane off
-    assert "Live instance: none" in nothing and OFF_LIMITS not in nothing
+    unlisted = brief(PORT, ["session.log"], [], instance="off")  # the board lists none; PORT's description names one
+    fence, after = unlisted.split(FENCE_CLOSE)
+    assert "Live instance: none" in fence.splitlines() and "nc 127.0.0.1 31337" in fence
+    assert after.strip() == OFF_LIMITS  # the lane is told to stay off what the description names
+    assert OFF_LIMITS not in brief(PORT, ["session.log"], [], instance="auto")
 
 
 def test_the_brief_names_the_handout_and_fences_the_description():

@@ -93,12 +93,13 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     gets the brief it always got. `approach` is the player's own words (a fork's approach, a
     new plan), never text a model wrote. `instance` is the lanes' instance policy: under
     "off" the brief names no instance, and says after the fence, in flightdeck's own words,
-    that the event's rules keep the lane off it (OFF_LIMITS)."""
+    that the event's rules keep the lane off it (OFF_LIMITS), also when the board lists none:
+    a service named only in the description or a file is as much off limits."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
-    off = instance == "off" and bool(urls)
-    if off:
+    off = instance == "off"  # said whether or not the board lists one: a description or a file may name a service
+    if off and urls:
         live = "not yours to reach (the event's rules; see below)"
     else:
         live = ", ".join(_instance(url) for url in urls) if urls else "none"
