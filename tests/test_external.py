@@ -1678,6 +1678,33 @@ def test_a_codex_lane_that_gives_up_while_its_flag_is_under_check_starts_no_more
     run(main())
 
 
+def test_a_cli_lanes_flag_still_under_check_when_the_run_ends_is_named_never_submitted(tmp_path):
+    script = {"turns": [{"calls": [{"text": "FLAG: t{x}"}, {"think": 30.0, "text": "waiting"}]}]}
+    release = threading.Event()
+
+    def slow(record):
+        release.wait(30)
+        return text_reply("real")
+
+    async def main():
+        with FakeModelServer(responder=slow) as light:
+            lab = Lab(tmp_path, script, submit="auto", deck_class=ToThePlatform)
+            gate = lab.driver.flaggate = FlagGate(light_engine(light, timeout=30.0), timeout=30.0)
+            try:
+                lab.release()
+                lane = lab.lane()
+                await until(lambda: gate.checking(lane.id) and len([r for r in light.requests if r["json"]]) == 1,
+                            "the flag under check")
+            finally:
+                await lab.finish()
+                release.set()
+            assert lab.deck.sent == [] and not gate.checking(lane.id)
+            assert lab.driver.errors == [f"{lane.id}: t{{x}} was still under the light model's check when the run ended; "
+                                         "it was not submitted"]
+
+    run(main())
+
+
 @pytest.mark.parametrize(
     "text, claims",
     [
