@@ -49,28 +49,31 @@ would use Ollama for lanes and either for the light model.
 What `flightdeck models --memory GB` advises for a machine of each size (add `--apple` for an
 Apple silicon Mac, `--gpu-memory GB` for an NVIDIA GPU). It sizes a model as its weights plus
 room for its context (6 GiB for a lane, 2 GiB for the light model), an estimate that runs high
-for the small models. A lane's model and a light model at once must both fit. Only the 36 GB Mac
-was measured: every other row is that sizing applied to models measured there.
+for the small models. The Lanes and Light model columns each judge one model on its own. A lane's
+model and a light model running at once must fit together, so the last column names a pair whose
+two needs add up to less than the memory local models get. Only the 36 GB Mac was measured: every
+other row is that sizing applied to models measured there.
 
 **Apple silicon Mac** (the GPU shares the memory; local models get about two thirds of it):
 
-| Memory | Lanes | Light model |
-|---:|---|---|
-| 4 GB | a model API | the rules (no model) |
-| 8 GB | a model API | Qwen3.5 4B (all four jobs), or 2B (the judge, route) |
-| 12 GB | a model API | Qwen3.5 9B on MLX, or Qwen3.5 4B |
-| 16 GB | Qwen3.5 4B (2 of 4 practice challenges) | Qwen3.5 9B or Gemma 4 12B |
-| 24 GB | Qwen3.5 9B, or Qwen3.5 4B | Qwen3.5 9B or Gemma 4 12B |
-| 32 GB, 36 GB | `gpt-oss:20b` on Ollama, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B |
+| Memory | Lanes | Light model | Both on the machine at once |
+|---:|---|---|---|
+| 4 GB | a model API | the rules (no model) | |
+| 8 GB | a model API | Qwen3.5 4B (all four jobs), or 2B (the judge, route) | |
+| 12 GB | a model API | Qwen3.5 9B on MLX, or Qwen3.5 4B | |
+| 16 GB | Qwen3.5 4B (2 of 4 practice challenges) | Qwen3.5 9B or Gemma 4 12B | no pair fits: beside Qwen3.5 4B lanes, keep the rules or use an API for the light model |
+| 24 GB | Qwen3.5 9B, or Qwen3.5 4B | Qwen3.5 9B or Gemma 4 12B | Qwen3.5 4B for both; or Qwen3.5 9B lanes with Qwen3.5 0.8B (the judge only) |
+| 32 GB | `gpt-oss:20b` on Ollama, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B | Qwen3.5 9B for both; `gpt-oss:20b` leaves no room for a light model |
+| 36 GB | `gpt-oss:20b` on Ollama, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B | `gpt-oss:20b` lanes with Qwen3.5 4B; or Qwen3.5 9B for both |
 
 **A PC with an NVIDIA GPU** (local models get the GPU's memory):
 
-| GPU memory | Lanes | Light model |
-|---:|---|---|
-| 8 GB | a model API | Qwen3.5 4B, or Gemma 4 E2B (the judge, route, recon) |
-| 12 GB | Qwen3.5 4B | Qwen3.5 9B or Gemma 4 12B |
-| 16 GB | Qwen3.5 9B, or Gemma 4 E4B | Qwen3.5 9B or Gemma 4 12B |
-| 24 GB | `gpt-oss:20b`, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B |
+| GPU memory | Lanes | Light model | Both on the GPU at once |
+|---:|---|---|---|
+| 8 GB | a model API | Qwen3.5 4B, or Gemma 4 E2B (the judge, route, recon) | |
+| 12 GB | Qwen3.5 4B | Qwen3.5 9B or Gemma 4 12B | no pair fits: beside Qwen3.5 4B lanes, keep the rules or use an API for the light model |
+| 16 GB | Qwen3.5 9B, or Gemma 4 E4B | Qwen3.5 9B or Gemma 4 12B | Qwen3.5 4B for both; or Qwen3.5 9B lanes with Qwen3.5 0.8B (the judge only) |
+| 24 GB | `gpt-oss:20b`, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B | `gpt-oss:20b` lanes with Qwen3.5 4B; or Qwen3.5 9B for both |
 
 **No GPU** (local models get about half the memory, on the CPU): a model API for lanes up to
 16 GB, then Qwen3.5 4B at 24 GB and Qwen3.5 9B from 32 GB, though no lane was measured on a CPU
@@ -91,11 +94,13 @@ the [model results form](https://github.com/MFisher14/ctf-flightdeck/issues/new?
 Ollama:
 
 ```sh
-ollama pull gpt-oss:20b            # lanes
-ollama pull qwen3.5:9b             # the light model
-flightdeck init --provider ollama --models gpt-oss:20b --light ollama --light-model qwen3.5:9b
+ollama pull qwen3.5:9b             # lanes, and the light model
+flightdeck init --provider ollama --models qwen3.5:9b --light ollama --light-model qwen3.5:9b
 flightdeck doctor                  # checks that the server answers and serves your models
 ```
+
+That pair fits a 32 GB Mac or a 24 GB GPU. Pick yours from [By memory](#by-memory): on a 36 GB
+Mac, `gpt-oss:20b` for lanes with `qwen3.5:4b` as the light model.
 
 Give Ollama room for a lane. Unless told otherwise, it gives a model 4,096 tokens of context on a
 machine with under 23 GiB of GPU memory (or none) and 32,768 from 23 GiB, and drops a lane's

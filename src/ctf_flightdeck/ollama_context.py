@@ -57,9 +57,13 @@ def default_contexts(machine: Machine, environ: Mapping[str, str] | None = None)
     """The context Ollama would give a model on `machine`, by OLLAMA_CONTEXT_LENGTH in `environ`
     when it sets a whole number, else by the machine's GPU memory; None when the memory is unknown."""
     named = (environ or {}).get(CONTEXT_ENV, "").strip()
-    if named.isdigit() and int(named) > 0:
+    if named.isascii() and named.isdigit() and int(named) > 0:
         return Estimate((int(named),), f"{CONTEXT_ENV} is {int(named)} where flightdeck runs, and Ollama has it if it "
                                        "was started there too", named=True)
+    if named:  # set, but not a whole number of tokens: said, not passed over as if it were unset
+        estimate = default_contexts(machine, {})
+        unusable = f"{CONTEXT_ENV} where flightdeck runs is not a whole number above 0, so it is not counted"
+        return None if estimate is None else Estimate(estimate.tokens, f"{estimate.why} ({unusable})")
     where = "there" if machine.described else "here"
     if machine.os == "macOS" and machine.apple_silicon.value is None:
         return None  # an Intel Mac's Ollama runs on the CPU, an Apple Silicon one's on the GPU: cannot tell which
@@ -106,6 +110,12 @@ def parse_ps(raw: bytes) -> dict[str, int] | None:
 
 def ollama_root(base_url: str) -> str:
     """Ollama's own address from its OpenAI-compatible base URL (http://127.0.0.1:11434/v1 -> ...:11434)."""
+    try:
+        parts = urlsplit(base_url)
+    except ValueError:
+        parts = None
+    if parts is not None and parts.scheme and parts.netloc:  # without a query or fragment: neither is Ollama's, and one may hold a token
+        base_url = f"{parts.scheme}://{parts.netloc}{parts.path}"
     return base_url.rstrip("/").removesuffix("/v1")
 
 
@@ -194,8 +204,10 @@ def lane_finding(address: str, ladder: tuple[str, ...], loaded: Mapping[str, int
         return Finding(True, detail, "", model, tokens, stated, need, refresh_at)
     detail += ", and past its context Ollama drops a lane's oldest messages without saying so"
     where = f" in {source}" if source else ""
-    more = (f"set {CONTEXT_ENV}={ADVISED} where Ollama runs and restart Ollama, then set context = {ADVISED} under "
-            f"{table}{where} (a lane is then refreshed at {refresh_point(ADVISED, reply):,} prompt tokens)")
+    more = f"set {CONTEXT_ENV}={ADVISED} where Ollama runs and restart Ollama"
+    if stated_context != ADVISED:  # else the config says it already
+        more += (f", then set context = {ADVISED} under {table}{where} (a lane is then refreshed at "
+                 f"{refresh_point(ADVISED, reply):,} prompt tokens)")
     keep = (f"set context = {tokens} under {table}{where}, so a lane is refreshed at {refresh_point(tokens, reply):,} "
             "prompt tokens, before it outgrows Ollama")
     workable = refresh_point(tokens, reply) >= MIN_REFRESH  # a lane can work in what Ollama gives

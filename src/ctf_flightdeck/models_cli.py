@@ -40,6 +40,7 @@ from .model_catalog import (
     LIGHT,
     LOCAL,
     MODELS_DOC,
+    NOT_HERE,
     ROLES,
     RULES,
     SIZE_SERVER,
@@ -82,7 +83,8 @@ MEMORY_RULE = (
     f"A local model needs about its weights (its size on disk) plus room for its context: "
     f"{gib(CONTEXT_ALLOWANCE[LANES])} for a lane, whose context grows long over a tool loop, and "
     f"{gib(CONTEXT_ALLOWANCE[LIGHT])} for the light role, whose prompts are short. An estimate: the real need depends "
-    "on the runtime, its context length and the model."
+    "on the runtime, its context length and the model. Each role is judged on its own: a lane's model and a "
+    "light model running at once must fit together, so add their two needs."
 )
 TABLES = {  # where a role's config lines go
     LANES: "in your config, these replace its [api], [models] and [prices] tables (keep a [fallback] table only with one "
@@ -125,6 +127,8 @@ def described_machine(memory: float | None, apple: bool, gpu_memory: float | Non
     memory_bytes, gpu_bytes = round(memory * GIB), round(gpu * GIB)
     if not memory_bytes:
         raise ValueError(f"--memory must be the machine's memory in GB, above 0 (got {memory:,.15g})")
+    if gpu and not gpu_bytes:  # not read as "no GPU"
+        raise ValueError(f"--gpu-memory is too small to be a GPU's memory in GB (got {gpu:,.15g}); give 0 for none")
     return hardware.described(memory_bytes, apple=apple, gpu=gpu_bytes)
 
 
@@ -496,15 +500,20 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
         if found.present:
             facts.append("pulled here" if build.runtime == OLLAMA else "a server here lists it")
         lines += ["", f"On {_runtime_label(build.runtime)}: {', '.join(facts)}"]
+        verdicts: list[str] = []
         for role in model.roles:
             if role in build.not_for:
                 lines.append(f"  not for {ROLE_HEADS[role]}: {_safe(build.not_for[role])}")
             else:
                 option = judge(model, build, role, machine, plan)
-                lines.append(f"  {where}, for {ROLE_HEADS[role]}: {option.verdict}: {option.why}")
+                verdicts.append(option.verdict)
+                verdict = "not on that machine" if option.verdict == NOT_HERE and machine.described else option.verdict
+                lines.append(f"  {where}, for {ROLE_HEADS[role]}: {verdict}: {option.why}")
         serves = model.serves(build)
         if not serves:
             continue  # nothing to get it for, and no config lines to give
+        if verdicts and all(v == NOT_HERE for v in verdicts):
+            continue  # it cannot run there: no command to get it, and no config lines
         lines += ["  get it:", *(f"    {command}" for command in get_commands(build, machine))]
         for role in serves:
             lines.append(f"  {ROLE_HEADS[role]}: {TABLES[role]}")

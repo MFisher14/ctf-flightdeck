@@ -733,3 +733,22 @@ def test_every_entry_can_be_shown_in_text_and_json(ident, monkeypatch):
     text, data = models(ident), models(ident, "--json")
     assert text.exit_code == 0 and data.exit_code == 0, text.output + data.output
     assert json.loads(data.output)["id"] == ident
+
+
+def test_a_gpu_memory_too_small_to_count_is_refused_and_not_read_as_no_gpu():
+    result = models("--memory", "16", "--gpu-memory", "1e-12")
+    assert result.exit_code == 2 and "--gpu-memory is too small to be a GPU's memory in GB (got 1e-12); give 0 for none" in result.output
+    assert models("--memory", "16", "--gpu-memory", "0").exit_code == 0  # 0 still says none
+
+
+def test_a_build_that_cannot_run_on_the_machine_described_gets_no_command_and_no_config_lines():
+    out = models("qwen3.5-9b", "--memory", "16").output  # no --apple: MLX cannot run there
+    mlx = out[out.index("\nOn MLX:"):]
+    assert "for lanes: not on that machine: MLX runs on Apple Silicon only" in mlx and "this machine" not in mlx
+    assert "get it:" not in mlx and "mlx_lm.server" not in mlx and "flightdeck init" not in mlx
+    assert "get it:" in out[:out.index("\nOn MLX:")]  # the Ollama build, which can, keeps its lines
+
+
+def test_the_memory_rule_says_a_lane_model_and_a_light_model_at_once_share_the_memory():
+    assert "a lane's model and a light model running at once must fit together, so add their two needs" in models("--memory", "16", "--apple").output
+

@@ -21,6 +21,7 @@ from ctf_flightdeck.ollama_context import (
     lane_finding,
     loaded_contexts,
     ollama_default,
+    ollama_root,
 )
 from ctf_flightdeck.setup import doctor
 
@@ -70,7 +71,10 @@ def test_ollama_context_length_where_flightdeck_runs_is_taken_and_said_to_be_so(
     estimate = default_contexts(mac, {"OLLAMA_CONTEXT_LENGTH": "65536"})
     assert (estimate.tokens, estimate.named) == ((65_536,), True)
     assert "OLLAMA_CONTEXT_LENGTH is 65536 where flightdeck runs, and Ollama has it if it was started there too" == estimate.why
-    assert default_contexts(mac, {"OLLAMA_CONTEXT_LENGTH": "lots"}).tokens == (4_096,)  # not a number: not taken
+    for unusable in ("lots", "64k", "0", "\u00b2"):  # not a whole number above 0 (the last one: a digit int() cannot read)
+        estimate = default_contexts(mac, {"OLLAMA_CONTEXT_LENGTH": unusable})
+        assert (estimate.tokens, estimate.named) == ((4_096,), False)  # not taken,
+        assert estimate.why.endswith("(OLLAMA_CONTEXT_LENGTH where flightdeck runs is not a whole number above 0, so it is not counted)")  # and said
     assert default_contexts(hardware.described(16 * GIB, apple=True), {}).tokens == (4_096,)
 
 
@@ -307,3 +311,19 @@ def test_models_for_a_described_machine_notes_its_default_and_never_reads_this_o
     data = json.loads(runner.invoke(cli.app, ["models", "--memory", "24", "--gpu-memory", "24", "--json"]).output)
     assert data["roles"]["lanes"]["ollama_context"] == {"config": False, "ok": False, "tokens": [32_768],
                                                         "detail": data["roles"]["lanes"]["ollama_context"]["detail"]}
+
+
+def test_ollamas_address_leaves_out_a_base_urls_query_and_fragment():
+    """Neither is Ollama's, and a query may hold a token: it is not printed, and not asked for /api/ps."""
+    assert ollama_root("http://127.0.0.1:11434/v1") == "http://127.0.0.1:11434"
+    assert ollama_root("http://127.0.0.1:11434/v1/?token=not-a-real-token#x") == "http://127.0.0.1:11434"
+    assert ollama_root("http://[::1]:11434/v1?k=v") == "http://[::1]:11434"
+
+
+def test_the_fix_does_not_tell_the_player_to_set_the_context_their_config_already_states():
+    estimate = Estimate((32_768,), "the GPU memory says so")
+    stated = lane_finding("127.0.0.1:11434", ("gpt-oss:20b",), None, estimate, 49_152, 8_192, stated_context=65_536)
+    unstated = lane_finding("127.0.0.1:11434", ("gpt-oss:20b",), None, estimate, 49_152, 8_192)
+    assert not stated.ok and not unstated.ok
+    assert "then set context = 65536" in unstated.fix
+    assert stated.fix.startswith("set OLLAMA_CONTEXT_LENGTH=65536 where Ollama runs and restart Ollama;") and "then set context" not in stated.fix
