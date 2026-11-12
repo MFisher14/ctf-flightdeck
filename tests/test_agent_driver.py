@@ -542,6 +542,7 @@ def test_under_auto_a_submitted_stand_in_the_start_s_search_missed_is_found_in_t
             release_with(lab, description)
             lane = lab.lane()
             await until(lambda: lane.pending is not None or lane.finished, "the stand-in held for the player", timeout=30)
+            assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
             assert (lane.pending.kind, lane.pending.flag, tried) == (PendingKind.SUBMIT, STAND_IN_FLAG, [])
             assert STAND_IN_FLAG not in lab.driver.runs[lane.id].planted  # the search at the lane's start did miss it
             assert f"{STAND_IN_FLAG} {OWN_TEXT}, so it waits for you, though the lane submitted it" in [a.text for a in lane.actions]
@@ -593,6 +594,7 @@ def test_under_auto_a_submitted_flag_that_could_not_be_looked_for_in_all_of_the_
                         pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
                     go.set()
                 await until(lambda: lane.pending is not None or lane.finished, "the flag held for the player", timeout=30)
+                assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
                 assert (lane.pending.flag, tried) == ("t{elsewhere}", [])
                 assert ("t{elsewhere} may be written in the challenge's own text: flightdeck could not search all of it "
                         f"({why}), so it waits for you, though the lane submitted it") in [a.text for a in lane.actions]
@@ -1910,6 +1912,7 @@ def test_under_auto_an_l1_engines_stand_in_the_start_s_search_missed_is_found_in
             release_with(lab, description)
             lane = lab.lane()
             await until(lambda: lane.pending is not None or lane.finished, "the engine's flag held", timeout=30)
+            assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
             assert (lane.pending.flag, tried, server.requests) == (STAND_IN_FLAG, [], [])
             assert STAND_IN_FLAG not in lab.driver.runs[lane.id].planted  # the search at the lane's start did miss it
             assert (f"{STAND_IN_FLAG} {OWN_TEXT}, so it waits for you, though your L1 engine reader gave it as its flag"
@@ -1947,6 +1950,7 @@ def test_under_auto_an_l1_engines_flag_that_could_not_be_looked_for_in_all_of_th
                         pass
                     else:
                         pytest.skip("not run: this user can read a file with mode 000 (root), so no file is unreadable here")
+                assert lane.pending is not None, (lane.state, lane.result, tried)  # it waits for the player
                 assert (lane.pending.flag, tried) == (STAND_IN_FLAG, [])
                 assert (f"{STAND_IN_FLAG} may be written in the challenge's own text: flightdeck could not search all of it "
                         f"({why}), so it waits for you, though your L1 engine reader gave it as its flag"
