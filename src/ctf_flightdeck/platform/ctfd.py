@@ -27,8 +27,10 @@ CTFd's API (v1), as this module uses it:
   "ratelimited" one that says no tries remain whatever its HTTP status: the timeout
   behaviour's words say when the tries come back instead). CTFd 3.8.9 also says it once the
   account has made as many tries at the challenge as its limit within about a minute (that
-  count takes partial and refused answers too), which passes; nothing in the answer tells
-  the two apart, so this module takes the words as they come. A
+  count takes partial and refused answers too), which passes: the verifier asks the
+  challenge's details then (one GET), and when they count fewer tries used than the limit
+  (its lockout counts wrong flags only, which they count among the rest) the answer is a
+  rate limit; else it stands as locked_out. A
   ratelimited answer that says no such thing is a rate limit (submitting too fast, another
   submission of the account's being processed, or CTFd's timeout behaviour: "Not accepted.
   Try again in N seconds", 429), which passes. The tries left are read from every answer
@@ -714,14 +716,17 @@ class CTFdVerifier:
     Verdict's `error` says why for the console; its `attempt` holds CTFd's answer when there
     was one, and its status tells a caller what to do next: "already_solved" means the
     account (the team) solved the challenge already, without that flag being checked, and
-    "locked_out" that no flag for it can be checked any more; its `tries_left` is what CTFd
-    said of the tries left. A call sets `last_error` and `last_attempt` from them; submit()
-    sets nothing, so a run calls it from a worker thread (asyncio.to_thread) and the
-    console's loop never waits for CTFd (run.py's submitter).
+    "locked_out" that no flag for it can be checked any more (unless the challenge's
+    details show that answer was CTFd's limit on tries within a minute: then it is
+    "ratelimited", _lockout); its `tries_left` is what CTFd said of the tries left. A call
+    sets `last_error` and `last_attempt` from them; submit() sets nothing, so a run calls it
+    from a worker thread (asyncio.to_thread) and the console's loop never waits for CTFd
+    (run.py's submitter).
 
-    It never touches asyncio: one request with its own httpx.Client, and never longer than
+    It never touches asyncio: one request with its own httpx.Client (two when CTFd answers
+    that no tries are left: the challenge's details are asked next), and never longer than
     `timeout` seconds in all. httpx's timeouts bound each step of a request only (a server
-    that sends a byte now and then never trips them), so the request runs in a worker
+    that sends a byte now and then never trips them), so each request runs in a worker
     thread the call waits for; one still going when the time is up is left to end on its
     own, and the answer is unknown. It never retries: a retried submit could count twice.
     `ids` maps board ids (slugs) to CTFd ids: Pull.ids, or load_ids(board folder); after a
@@ -776,16 +781,19 @@ class CTFdVerifier:
 
     def submit(self, challenge_id: str, flag: str) -> Verdict:
         """Submit `flag` for the board's challenge `challenge_id`, once: CTFd's verdict, or
-        why there is none. It changes nothing on the verifier, so any thread may call it."""
+        why there is none. It changes nothing on the verifier, so any thread may call it.
+        CTFd's answer that no tries are left is checked against the challenge's details
+        first (_lockout), within the same `timeout`."""
         number = self.ids.get(challenge_id)
         if number is None:
             return Verdict(None, error=(
                 f"{untrusted(str(challenge_id), one_line=True)} was not pulled from CTFd, so flightdeck has no CTFd id to "
                 "submit it to: submit it by hand, then say whether it was accepted"
             ))
+        deadline = time.monotonic() + self.timeout
         endpoint = f"POST {API}/challenges/attempt"
         content = json.dumps({"challenge_id": number, "submission": flag}, ensure_ascii=True).encode("ascii")
-        answer = self._submit(content, endpoint)
+        answer = self._submit(content, endpoint, deadline)
         if isinstance(answer, CTFdError):
             return Verdict(None, error=str(answer))
         if isinstance(answer, _Failure):
@@ -801,51 +809,102 @@ class CTFdVerifier:
             return Verdict(True, attempt)
         if attempt.status == "incorrect":
             return Verdict(False, attempt)
+        if attempt.status == "locked_out":
+            return self._lockout(number, attempt, deadline)
         return Verdict(None, attempt, _unjudged(attempt))
 
-    def _submit(self, content: bytes, endpoint: str) -> _Answer | _Failure | CTFdError:
-        """The submission's one request, in a worker thread the call waits for, at most
-        `timeout` seconds from now: CTFd's answer, the failure that left none, or the error
-        that says none came in time (or one too big to be CTFd's)."""
-        deadline = time.monotonic() + self.timeout
+    def _lockout(self, number: int, attempt: Attempt, deadline: float) -> Verdict:
+        """CTFd's answer that no tries are left ("locked_out") as it stands, unless the
+        challenge's details (one GET, by `deadline`) count fewer tries used than its limit.
+        CTFd's lockout counts wrong flags only, and the details count those among the rest, so
+        the answer was CTFd 3.8.9's limit on tries within a minute (as many tries at the
+        challenge as its limit, partial and refused ones too), which passes: a rate limit,
+        with the tries left the details say. Details that cannot be read in time, or that
+        count as many tries used as the limit, leave CTFd's word as it is (with partial
+        answers among them, that can still be the minute's limit: nothing CTFd says tells)."""
+        detail = self._details(number, deadline)
+        most = detail.get("max_attempts") if detail is not None else None
+        used = detail.get("attempts") if detail is not None else None
+        if (detail is None or detail.get("solved_by_me") is True or not _is_count(most) or not most
+                or not _is_count(used) or used >= most):
+            return Verdict(None, attempt, _unjudged(attempt))
+        left, _ = _tries_left_at(detail, most)
+        said = f" (CTFd says: {attempt.message})" if attempt.message else ""
+        return Verdict(None, Attempt("ratelimited", attempt.message, left), (
+            f"CTFd did not check the flag{said}, but it counts {used} of its {most} tries as used, so that was its "
+            "limit on tries within a minute, which passes: wait a minute, then submit it by hand"
+        ))
+
+    def _submit(self, content: bytes, endpoint: str, deadline: float) -> _Answer | _Failure | CTFdError:
+        """The submission's one request, in a worker thread the call waits for until
+        `deadline` (a time.monotonic() value): CTFd's answer, the failure that left none, or
+        the error that says none came in time (or one too big to be CTFd's)."""
         unknown = "; the flag may have reached CTFd: check the challenge there before submitting it again"
         late = self._site.error(
             f"no complete answer from CTFd at {self._site.root} to {endpoint} within {self.timeout:g} s{unknown}",
             endpoint=endpoint,
         )
-        box: list[_Answer | _Failure | CTFdError | BaseException] = []
 
-        def exchange() -> None:
+        def exchange() -> _Answer | _Failure | CTFdError:
             try:
                 with self._http.stream("POST", self._site.root + API + "/challenges/attempt", content=content) as response:
                     body = _read_sync(response, MAX_ATTEMPT_BYTES, deadline)
                     if isinstance(body, bytes):
-                        box.append(_Answer(endpoint, response.status_code, response.headers, body))
-                    elif body is None:
-                        box.append(
-                            self._site.error(
-                                f"CTFd at {self._site.root} answered {endpoint} with more than {MAX_ATTEMPT_BYTES:,} "
-                                f"bytes, which is not an answer to a flag{unknown}",
-                                endpoint=endpoint,
-                                status=response.status_code,
-                            )
+                        return _Answer(endpoint, response.status_code, response.headers, body)
+                    if body is None:
+                        return self._site.error(
+                            f"CTFd at {self._site.root} answered {endpoint} with more than {MAX_ATTEMPT_BYTES:,} "
+                            f"bytes, which is not an answer to a flag{unknown}",
+                            endpoint=endpoint,
+                            status=response.status_code,
                         )
-                    else:
-                        box.append(late)
+                    return late
             except httpx.HTTPError as exc:
-                box.append(_describe(exc))  # the error itself is dropped: its request holds the token
-            except BaseException as exc:  # a bug: raised again in the caller's thread, never lost
-                box.append(exc)
+                return _describe(exc)  # the error itself is dropped: its request holds the token
 
-        worker = threading.Thread(target=exchange, name="ctfd-submit", daemon=True)
-        worker.start()
-        worker.join(max(0.0, deadline - time.monotonic()))
-        if not box:
-            return late  # the worker ends when the server answers, gives up or hangs up; its result is dropped
-        outcome = box[0]
-        if isinstance(outcome, BaseException) and not isinstance(outcome, CTFdError):
-            raise outcome
-        return outcome
+        outcome = _by(deadline, "ctfd-submit", exchange)
+        return late if outcome is _LATE else outcome
+
+    def _details(self, number: int, deadline: float) -> dict | None:
+        """The challenge's details (GET /api/v1/challenges/<id>, CTFd's own dict, untrusted)
+        by `deadline`; None when they did not come in time, or are not CTFd's details of it."""
+
+        def exchange() -> bytes | None:
+            try:
+                with self._http.stream("GET", f"{self._site.root}{API}/challenges/{number}") as response:
+                    if response.status_code != 200:
+                        return None
+                    body = _read_sync(response, MAX_API_BYTES, deadline)
+                    return body if isinstance(body, bytes) else None
+            except httpx.HTTPError:  # dropped, never chained: its request holds the token
+                return None
+
+        body = _by(deadline, "ctfd-details", exchange)
+        doc = _parse(body) if isinstance(body, bytes) else None
+        data = doc.get("data") if isinstance(doc, dict) and doc.get("success") is True else None
+        return data if isinstance(data, dict) and data.get("id") == number else None
+
+
+def _by(deadline: float, name: str, work: Callable[[], object]) -> object:
+    """`work()` in a worker thread the call waits for until `deadline` (a time.monotonic()
+    value): its result, or _LATE when it is not done by then (the thread ends when the server
+    answers, gives up or hangs up, and its result is dropped). A bug in it is raised here,
+    in the caller's thread, never lost."""
+    box: list[object] = []
+    failed: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            box.append(work())
+        except BaseException as exc:  # a bug
+            failed.append(exc)
+
+    worker = threading.Thread(target=run, name=name, daemon=True)
+    worker.start()
+    worker.join(max(0.0, deadline - time.monotonic()))
+    if failed:
+        raise failed[0]
+    return box[0] if box else _LATE
 
 
 def _unjudged(attempt: Attempt) -> str:

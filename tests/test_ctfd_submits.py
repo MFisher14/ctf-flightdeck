@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 
 import pytest
 
@@ -328,6 +329,35 @@ def test_under_ctfds_timeout_behaviour_a_wave_that_finds_tries_left_again_opens_
     assert opened["data"] == {"out_of_tries": False, "tries_left": 2}
 
 
+MINUTE = {"success": True, "data": {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"}}
+
+
+def test_a_no_tries_answer_that_is_ctfds_limit_within_a_minute_leaves_the_challenge_open(tmp_path, token):
+    # CTFd 3.8.9 says it too once the account made as many tries as the limit within a minute, refused ones among them
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=2)
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        fake.teammate_fails(1)  # one try of the two is spent
+        run = auto_run(tmp_path, fake, server)
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag")
+            fake.script("POST", ATTEMPT, Reply(403, MINUTE))
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM, "a hand submit")
+
+        play(run, body)
+    ch, lane = run.deck.challenges["warmup"], run.deck.lanes["L01"]
+    assert (ch.status, ch.tries_left, lane.finished) == (ChallengeStatus.RUNNING, 1, False)
+    assert run.deck.not_flag("warmup", "test{hello}") is None and submits(run) == []
+    (warning,) = [e for e in log(run) if e["kind"] == "warning"]
+    assert warning["text"] == (
+        "CTFd did not judge test{hello} for Warmup: CTFd did not check the flag (CTFd says: Not accepted. You have 0 "
+        "tries remaining), but it counts 1 of its 2 tries as used, so that was its limit on tries within a minute, "
+        "which passes: wait a minute, then submit it by hand"
+    )
+
+
 def test_a_pull_carries_the_tries_ctfd_allows_onto_the_board(tmp_path):
     board = [FakeChallenge(1, "Capped", max_attempts=3), FakeChallenge(2, "Free"), FakeChallenge(3, "Unsaid", max_attempts=None)]
     with FakeCTFd(board) as fake:
@@ -429,3 +459,47 @@ def test_the_verifiers_submit_returns_its_verdict_and_sets_nothing():
             assert (verify.last_error, verify.last_attempt) == (None, None)  # a call from any thread changes nothing
             unpulled = verify.submit("not-pulled", "test{x}")
             assert unpulled.ok is None and "was not pulled from CTFd" in unpulled.error and unpulled.attempt is None
+
+
+def test_a_no_tries_answer_is_ctfds_limit_within_a_minute_when_its_details_count_fewer_tries_used():
+    # CTFd's lockout counts wrong flags; its details count them among the rest: fewer used than the limit, no lockout
+    with FakeCTFd([FakeChallenge(6, "Two Tries", max_attempts=2, flag="test{two}")]) as fake:
+        fake.teammate_fails(6)
+        fake.script("POST", ATTEMPT, Reply(403, MINUTE))
+        with CTFdVerifier(fake.base_url, TOKEN, {"two-tries": 6}) as verify:
+            verdict = verify.submit("two-tries", "test{two}")
+        asked = [(r.method, r.route) for r in fake.requests]
+    assert verdict.ok is None and verdict.attempt == Attempt("ratelimited", "Not accepted. You have 0 tries remaining", 1)
+    assert verdict.error == (
+        "CTFd did not check the flag (CTFd says: Not accepted. You have 0 tries remaining), but it counts 1 of its 2 "
+        "tries as used, so that was its limit on tries within a minute, which passes: wait a minute, then submit it by hand"
+    )
+    assert asked == [("POST", ATTEMPT), ("GET", "/api/v1/challenges/6")]
+
+
+@pytest.mark.parametrize("case", ["all used", "older CTFd", "partial answers", "no details", "solved", "late"])
+def test_a_no_tries_answer_stands_when_ctfds_details_do_not_show_tries_left(case):
+    lockout = "incorrect" if case == "older CTFd" else "ratelimited"
+    partial = ("test{half}",) if case == "partial answers" else ()
+    with FakeCTFd([FakeChallenge(6, "Two Tries", max_attempts=2, flag="test{two}", partial=partial)], lockout=lockout) as fake:
+        if case in ("all used", "older CTFd"):
+            fake.teammate_fails(6, 2)  # CTFd answers out of tries on its own
+        else:
+            fake.teammate_fails(6)
+            fake.script("POST", ATTEMPT, Reply(403, MINUTE))
+        if case == "partial answers":
+            fake.teammate_partials(6)  # 2 of 2 used as the details count them: the minute's limit, or the lockout
+        elif case == "no details":
+            fake.script("GET", "/api/v1/challenges/6", *[Reply(500, {"message": "the database is broken"})] * 2)
+        elif case == "solved":
+            fake.solved = {6}  # a teammate's solve meanwhile: the run's poll of the solves closes it
+        elif case == "late":  # details that would show a try left, a byte every 0.2 s: past the verifier's timeout
+            one_left = {"id": 6, "max_attempts": 2, "attempts": 1, "logic": "any", "solved_by_me": False}
+            fake.script("GET", "/api/v1/challenges/6", Reply(200, {"success": True, "data": one_left}, drip=0.2))
+        with CTFdVerifier(fake.base_url, TOKEN, {"two-tries": 6}, timeout=1.0) as verify:
+            started = time.monotonic()
+            verdict = verify.submit("two-tries", "test{two}")
+            took = time.monotonic() - started
+    assert verdict.ok is None and (verdict.attempt.status, verdict.attempt.tries_left) == ("locked_out", 0)
+    assert verdict.error.startswith("CTFd did not check the flag: this account has no tries left on this challenge")
+    assert took < 2.5  # the flag and the details within the one timeout
