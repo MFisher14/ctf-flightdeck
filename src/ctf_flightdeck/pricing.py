@@ -8,7 +8,8 @@ A prompt token is priced by what the API's prompt cache did with it: read from t
 (cached_input), written to it (cache_write), or neither (input). The Anthropic API charges
 for a write: 1.25 times the input price for the 5-minute cache, the one flightdeck's
 requests use (agent/anthropic_client.py); the 1-hour cache, at 2 times, is never asked for,
-so no rate here is for it. An OpenAI-compatible API reports no writes.
+so no rate here is for it. The OpenAI-compatible client (agent/client.py) reads no writes:
+OpenRouter reports what a call cost itself.
 """
 
 from __future__ import annotations
