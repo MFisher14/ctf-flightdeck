@@ -18,6 +18,7 @@ import pytest
 from ctf_flightdeck import light as L
 from ctf_flightdeck.agent.anthropic_client import AnthropicClient
 from ctf_flightdeck.agent.client import ModelClient
+from ctf_flightdeck.agent.prompts import FENCE_OPEN
 from ctf_flightdeck.config import LightConfig, load_config
 from ctf_flightdeck.detect.hints import lexicon
 from ctf_flightdeck.detect.judge import HintJudge, from_config
@@ -223,6 +224,29 @@ def test_the_judge_and_the_summary_jobs():
         judge_body = server.requests[0]["json"]
     assert judged.choice == "no" and judge_body["max_tokens"] == L.OPENAI_TOKENS["judge"]
     assert summary.choice is None and summary.ok and "SSTV" in summary.text
+
+
+def test_the_hint_prompt_lists_the_options_and_asks_for_the_id_alone():
+    # The hint job (eval-local) asks for the id alone, like route and flagcheck: the same wording
+    # the player decided on, tested here too, not only on the route prompt.
+    with FakeModelServer([text_reply("sstv")]) as server:
+        ask(local(server))
+        user = server.requests[0]["json"]["messages"][1]["content"]
+    before = user.split(FENCE_OPEN, 1)[0]  # the instruction, before the fenced description
+    assert L.ID_ALONE in before and "the id alone (the word before the colon)" in before
+    assert f"- {L.listed(CHOICES[0])}" in before  # the options, one "- id: description" line each
+
+
+def test_an_echoed_hint_option_line_is_read_as_its_technique():
+    # A reply that is exactly one option's whole line is read as that option on the hint job too
+    # (ask_technique lists the options, so it reads them back): without it phi4-mini's echoed
+    # "jwt: JWT tampering" would read as no answer again.
+    line = L.listed(CHOICES[0])  # "id: description", as the hint prompt lists it
+    with FakeModelServer([text_reply(line), text_reply(f"{line}, probably")]) as server:
+        echoed = ask(local(server))
+        more = ask(local(server))
+    assert echoed.choice == CHOICES[0].id and echoed.echoed and echoed.failure == ""
+    assert more.choice is None and more.failure == L.OUTSIDE  # a line with anything more stays no answer
 
 
 # ---------------------------------------------------------------------- Claude
