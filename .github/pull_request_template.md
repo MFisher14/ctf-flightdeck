@@ -10,6 +10,7 @@
 
 - [ ] `uv run pytest` passes, and I saw it pass.
 - [ ] Each new behaviour has a test that fails when the behaviour is wrong: no tautologies, no mocking the unit under test, no skip-as-pass.
+- [ ] A change a player will notice has a CHANGELOG line under `## Unreleased`, and the docs that describe it are updated.
 - [ ] No secrets: no key, token, cookie or Authorization value, not even a fake one shaped like a real one.
 - [ ] No real event data: no real challenge, flag, team or player name. Fixtures are synthetic.
 - [ ] The pre-commit guard ran on every commit (`git config core.hooksPath .githooks` turns it on), and no commit used `--no-verify`.
