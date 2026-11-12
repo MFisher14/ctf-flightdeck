@@ -291,9 +291,15 @@ def test_models_without_a_config_notes_ollamas_default_for_this_machine(models_o
     assert "  Your config is not read here (" in lanes and "`flightdeck doctor` says what is wrong with it." in lanes
 
 
-def test_models_for_a_described_machine_notes_its_default_and_never_reads_this_ones_config(models_on, tmp_path):
+def test_models_for_a_described_machine_notes_its_default_and_never_reads_this_ones_config(models_on, tmp_path, monkeypatch):
     write_config(tmp_path, "http://127.0.0.1:11434/v1")
+
+    def probed(environ=os.environ):
+        raise AssertionError("a described machine is never probed: this one is not it")
+
+    monkeypatch.setattr(hardware, "RealHost", probed)
     result = runner.invoke(cli.app, ["models", "--memory", "24", "--gpu-memory", "24"], terminal_width=400)
+    assert result.exit_code == 0, result.output
     out = result.output
     assert "Your config" not in out
     assert ("  Ollama's context: with no OLLAMA_CONTEXT_LENGTH, Ollama gives a model 32,768 tokens there (the NVIDIA GPU "
