@@ -23,6 +23,15 @@ in windows (l1.runner.scan), for at most SCAN_SECONDS per output: no flag format
 output can hold the console up. The player's messages and flightdeck's notes go to the
 CLI as user messages. Same LaneDriver protocol as AgentDriver (agent/driver.py).
 
+With an L1 pack (ExternalDriver's `l1`), a lane runs the player's no-model solvers routed
+to its challenge before its CLI is first started: the stage flightdeck's own lanes run
+before their first model call (agent/l1stage.py: run_stage), in Docker when lanes run
+there, each engine in a container of its own, never in the lane's. A flag an engine found
+waits or goes out by the rules above (an engine's own result is claimed; a match in what a
+text engine printed is not, and neither is a flag the challenge's own text holds), and
+while it waits, or once it solved the challenge, no CLI is started. What the engines found
+goes into the CLI's opening brief, fenced as data, and into each later one (an escalation).
+
 Claude Code runs as one process per lane (`--input-format stream-json`: one JSON line per
 user message on stdin). Codex runs one `codex exec` process per turn: the prompt on stdin,
 then stdin closed; later turns resume the thread (`codex exec ... resume <thread id>`).
@@ -141,6 +150,7 @@ from . import owntext, prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .facts import FirstLooks, Look
+from .l1stage import L1Stage, StageLane, run_stage
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
@@ -1076,6 +1086,7 @@ class _Run:
         self.look: Look | None = None  # the challenge's first look (agent/facts.py), until the CLI's first start takes it
         self.recon = ""  # what of the first look was back then: in every opening brief of the lane
         self.opened = False  # the CLI has had its first opening: nothing more goes into the brief
+        self.l1_text: str | None = None  # what the L1 engines found (prompts.l1_results): after the brief in every opening
         self._delivering = False
 
     # ------------------------------------------------------------------ the deck's view
@@ -1376,6 +1387,10 @@ class _Run:
         self.spawns += 1
         if self.spawns == 1:  # the handout as it came, its agent files too (they are held below)
             await self.plant(await asyncio.to_thread(take_snapshot, root))
+            if self.driver.l1 is not None:
+                await self.l1_stage(self.driver.l1)
+                if self.over():  # an engine's flag solved it (or the lane was killed meanwhile): no CLI starts
+                    return
         try:
             moved = await asyncio.to_thread(hold_agent_config, root, self.spawns)
         except OSError as exc:
@@ -1406,6 +1421,36 @@ class _Run:
             _search_all, [self.challenge.description, *texts], self.driver.flag_re, time.monotonic() + SCAN_SECONDS
         )
 
+    async def l1_stage(self, stage: L1Stage) -> None:
+        """Before the CLI is first started, and after plant(): run the player's L1 engines
+        routed to the challenge (agent/l1stage.py: run_stage, the stage of flightdeck's own
+        lanes), outside the lane's workspace. A flag one found is the lane's candidate by the
+        rules for the agent's own (vet, own_text): an engine's own result is claimed, unless
+        the challenge's own text holds it or may (a handout's stand-in flag.txt it read out),
+        and a match in what a text engine printed never is, so each of those waits for the
+        player under auto too. The session starts no CLI while the lane waits for the player,
+        or once it is solved. What the engines found is kept for every opening brief
+        (l1_text), with the driver's secrets out of it, as out of all a lane shows."""
+        driver = self.driver
+
+        def report(rep: TurnReport) -> None:
+            if rep.flag:
+                self.flags.add(rep.flag)  # raised: the agent finding it again does not raise it again
+            self.report(rep)
+
+        self.l1_text = await run_stage(stage, driver.deck, StageLane(
+            lane_id=self.lane_id,
+            challenge=self.challenge,
+            online=bool(driver.urls.get(self.challenge.id)) and driver.instance == "auto",
+            over=self.over,
+            note=self.note,
+            error=lambda said: driver.errors.append(driver.redact(said)),
+            vet=self.vet,
+            own_text=self.own_text,
+            report=report,
+            redact=driver.redact,
+        ))
+
     async def changes(self) -> tuple[FileChange, ...]:
         """Files changed since the last look."""
         root = self.workspace.root
@@ -1417,10 +1462,12 @@ class _Run:
         return tuple(found[:MAX_FILES_PER_STEP])
 
     def opening(self) -> str:
-        """The start of a fresh context: the brief (the flag format in its fence, as data), and
-        the summary after an escalation. The first opening is the CLI's first model call: the
-        brief takes the first look as far as it is back (agent/facts.py), and every later
-        opening repeats it as it was."""
+        """The start of a fresh context: the brief (the flag format in its fence, as data), what
+        the L1 engines found (once they have run: fenced as data, the same text every time, so
+        a stronger model never pays to redo what they did or ruled out), and the summary after
+        an escalation. The first opening is the CLI's first model call: the brief takes the
+        first look as far as it is back (agent/facts.py), and every later opening repeats it as
+        it was."""
         if not self.opened:
             self.opened = True
             look, self.look = self.look, None
@@ -1433,6 +1480,8 @@ class _Run:
             lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format, recon=self.recon,
             instance=self.driver.instance,
         )
+        if self.l1_text is not None:
+            text += "\n\n" + self.l1_text
         if self.escalation is not None:
             text += "\n\n" + prompts.escalation(self.escalation)
         return text
@@ -2319,8 +2368,11 @@ class ExternalDriver:
         flaggate: FlagGate | None = None,
         lights: Lights | None = None,
         instance: str = "auto",
+        l1: L1Stage | None = None,
     ) -> None:
-        """`secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
+        """`l1`: the run's L1 stage (agent/l1stage.py): each lane runs the engines routed to
+        its challenge before its CLI is first started (_Run.l1_stage); None: no pack, no L1.
+        `secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
         Like the agent's own credential, which is always one, a value is shown as [name]
         wherever a lane's CLI writes it. `flaggate`: the light model's flagcheck (run.py sets
         the run's before any lane starts); None: no flag is checked. `lights`: the run's light
@@ -2350,6 +2402,7 @@ class ExternalDriver:
         self.lights = lights
         self.looks = FirstLooks(self.errors)
         self.instance = instance
+        self.l1 = l1
 
     # ------------------------------------------------------------------ LaneDriver
 
