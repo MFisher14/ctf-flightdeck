@@ -441,6 +441,34 @@ class Deck:
             data={"engine": engine, "status": status, "flags": list(flags), "seconds": seconds, "notes": notes},
         )
 
+    def record_route(self, challenge_id: str, *, family: str = "", category: str = "", by: str = "",
+                     lane_id: str | None = None) -> None:
+        """A light model routed a challenge at a lane's start (agent/facts.py): the specialist
+        family it suits, and a guess at its category where the board names none flightdeck
+        knows. Kept on the challenge (Challenge.family, Challenge.category_guess: its category
+        stays the board's), logged as a `route` event, and noted on the lane it ran for. `by`
+        names the light model."""
+        self._on_thread("record_route")
+        ch = self.challenges[challenge_id]
+        if family:
+            ch.family = family
+        if category:
+            ch.category_guess = category
+        parts = ([f"family {family}"] if family else []) + (
+            [f"category {category}? (a guess: the board names none flightdeck knows)"] if category else [])
+        if not parts:
+            return
+        lane = self.lanes.get(lane_id) if lane_id else None
+        if lane is not None and not lane.finished:
+            self._note(lane, f"light model ({by}) routed it: {', '.join(parts)}")
+        self._emit(
+            EventKind.ROUTE,
+            f"light model ({by}) routed {ch.name}: {', '.join(parts)}",
+            lane_id,
+            challenge_id,
+            data={"family": family, "category": category, "board_category": ch.category, "by": by},
+        )
+
     def warn(self, text: str, *, challenge: str | None = None, data: dict | None = None) -> None:
         """A warning for the player that belongs to no lane (a team folder problem, a failed
         poll): a WARNING event, which the console shows and the run log keeps."""

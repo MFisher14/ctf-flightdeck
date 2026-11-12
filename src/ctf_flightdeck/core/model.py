@@ -50,6 +50,8 @@ class Challenge:
     note: str = ""  # why it is blocked or parked
     max_attempts: int = 0  # the tries the platform allows at its flag (the board says); 0: any number
     tries_left: int | None = None  # the tries left, as the platform last said; None: it has not said
+    family: str = ""  # the specialist family a light model routed it to (agent/facts.py); "" when none did
+    category_guess: str = ""  # a light model's guess at its category, where the board names none flightdeck knows: never `category`
 
     @property
     def closed(self) -> bool:
@@ -334,6 +336,7 @@ class EventKind(StrEnum):
     WARNING = "warning"  # something did not happen as asked, with the reason
     L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
     SPEND = "spend"  # tokens or dollars spent outside a turn (a reply dropped at escalation, a judge): why, model
+    ROUTE = "route"  # a light model routed a challenge at a lane's start: its family, a category guess, by whom
 
 
 @dataclass(frozen=True)

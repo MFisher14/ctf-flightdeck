@@ -225,7 +225,7 @@ class ChallengeCard(ModalScreen[str | None]):
         self.card_challenge, self.card_lanes, self.card_owner, self.card_team = challenge, lanes, owner, team
 
     def compose(self) -> ComposeResult:
-        from .views import BOARD_MARK
+        from .views import BOARD_MARK, route_text
 
         ch = self.card_challenge
         mark, color = BOARD_MARK[ch.status]
@@ -238,6 +238,8 @@ class ChallengeCard(ModalScreen[str | None]):
         grid.add_column()
         grid.add_row("about", Text(untrusted(ch.description or "-", one_line=True)))
         grid.add_row("files", Text(untrusted(", ".join(ch.files) or "-", one_line=True) + (" · live instance" if ch.live else ""), "dim"))
+        if route_text(ch):  # a guess, beside the board's category: never in its place
+            grid.add_row("route", Text(route_text(ch), theme.CYAN))
         if self.card_owner:
             grid.add_row("owner", Text(untrusted(self.card_owner, one_line=True)))
         if ch.note:

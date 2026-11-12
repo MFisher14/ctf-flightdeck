@@ -244,9 +244,10 @@ def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200) -> T
 
 # ---------------------------------------------------------------------- board
 
-# (key, label, width, drop rank: 0 never, higher drops first). "name" stretches.
+# (key, label, width, drop rank: 0 never, higher drops first). "name" stretches. "cat" fits a
+# light model's guess with its question mark ("osint?").
 BOARD_COLUMNS = (
-    ("cat", "cat", 5, 2),
+    ("cat", "cat", 6, 2),
     ("name", "name", 0, 0),
     ("pts", "pts", 4, 0),
     ("solv", "solv", 5, 3),
@@ -326,6 +327,27 @@ def owner(deck: Deck, ch: Challenge) -> tuple[str, str]:
 
 
 OWNER_STYLE = {"mate": theme.CYAN, "me": "bold", "lane": "", "l1": theme.GREEN, "": ""}
+GUESSED = "?"  # after a light model's guess at a category the board does not name
+
+
+def category_cell(ch: Challenge) -> Text:
+    """The board's category; where the board names none flightdeck knows and a light model
+    guessed one (agent/facts.py), the guess with a question mark, in italics: never the board's
+    own word dressed up as one."""
+    if ch.category_guess:
+        return safe(f"{ch.category_guess}{GUESSED}", f"italic {theme.YELLOW}")
+    return safe(ch.category, theme.MUTED)
+
+
+def route_text(ch: Challenge) -> str:
+    """What a light model said of the challenge's route, for a why line: its family, and its
+    guess at the category ("" when it said nothing)."""
+    parts = []
+    if ch.family:
+        parts.append(f"family {untrusted(ch.family, one_line=True)}")
+    if ch.category_guess:
+        parts.append(f"category {untrusted(ch.category_guess, one_line=True)}{GUESSED}")
+    return "light model: " + ", ".join(parts) if parts else ""
 
 
 def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
@@ -335,7 +357,7 @@ def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
     if ch.claimed_by == ME and kind == "lane":
         own = f"{own}*"  # ours, and claimed for the team
     return {
-        "cat": safe(ch.category, theme.MUTED),
+        "cat": category_cell(ch),
         "name": safe(ch.name, dim),
         "pts": safe(ch.points, dim, justify="right"),
         "solv": safe(ch.solves, theme.MUTED, justify="right"),
@@ -523,7 +545,7 @@ def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
         return True
     ch = deck.challenges[lane.challenge_id]
     hay = " ".join(
-        [lane.id, ch.name, ch.category, lane.model, lane.state.value, lane.last_action, lane.plan]
+        [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model, lane.state.value, lane.last_action, lane.plan]
         + [a.kind.tag for a in lane.alerts]
         + ([PENDING_TAG[lane.pending.kind]] if lane.pending else [])
     ).lower()
@@ -591,6 +613,10 @@ def lane_why(deck: Deck, lane: Lane) -> Text:
         out.append(untrusted(lane.alerts[0].reason, one_line=True), theme.MUTED)
         out.append("\n  nothing to do   enter open", theme.MUTED)
         return out
+    family = deck.challenges[lane.challenge_id].family
+    if family:  # the specialist a light model routed the challenge to
+        out.append(untrusted(family, one_line=True), theme.CYAN)
+        out.append(" · ", theme.MUTED)
     out.append("plan: ", theme.MUTED)
     out.append(untrusted(lane.plan or "-", one_line=True))
     out.append("\n  last: ", theme.MUTED)
@@ -615,6 +641,9 @@ def challenge_why(deck: Deck, ch: Challenge) -> Text:
             out.append(f" by {untrusted(own, one_line=True)}", color)
     if ch.note:
         out.append(f" ({untrusted(ch.note, one_line=True)})", theme.YELLOW)
+    route = route_text(ch)
+    if route:
+        out.append(f" · {route}", theme.CYAN)
     out.append("\n  ")
     out.append(untrusted(ch.description or "-", one_line=True), theme.MUTED)
     out.append("   enter for more", theme.MUTED)
