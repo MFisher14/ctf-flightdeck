@@ -879,7 +879,7 @@ def _prices(path: Path, table: dict, ladder: tuple[str, ...], agents: dict[str, 
         if not isinstance(entry, dict):
             raise _error(path, where, f"must be a table of dollars per million tokens (input, output){_got(entry)}")
         if model not in named and model not in answering:
-            also = f", nor one Anthropic's refusal fallback answers with for it ({', '.join(answering)})" if answering else ""
+            also = f", nor one Anthropic's refusal fallback answers with for the ladder ({', '.join(answering)})" if answering else ""
             raise _error(path, where, f"is for a model that is not in models.ladder or in an [agents] ladder{also}")
         prices[model] = _price(path, where, entry)
     return prices

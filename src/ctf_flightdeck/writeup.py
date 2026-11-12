@@ -711,7 +711,8 @@ class _Writer:
         self.out("")
 
     def _models(self, lane: LaneRecord) -> list[str]:
-        """The models the lane's turns ran on, in order (it changes on an escalation)."""
+        """The models the lane's turns ran on, in order (it changes on an escalation, and for a turn
+        Anthropic's refusal fallback answered on another model)."""
         models: list[str] = []
         for event in self.record.events:
             model = event.data.get("model") if event.kind == "turn" and event.lane == lane.lane else None

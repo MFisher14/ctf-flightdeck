@@ -90,13 +90,12 @@ def test_a_turn_that_wrote_to_the_cache_is_priced_at_the_cache_write_rate(tmp_pa
     run(main)
 
 
-def fell_back(**spare) -> dict:
+def fell_back() -> dict:
     """A reply Claude Sonnet 5.5 declined and Claude Sonnet 5 answered, as usage.iterations tells it."""
-    answer = submit()
     return message(
-        [SWITCH, *answer["content"]], stop_reason="tool_use", model=SPARE,
+        [SWITCH, *submit()["content"]], stop_reason="tool_use", model=SPARE,
         iterations=[attempt(SONNET, input_tokens=500, cache_read=3000),
-                    attempt(SPARE, kind="fallback_message", **{"input_tokens": 600, "output_tokens": 50, "cache_write": 2900, **spare})],
+                    attempt(SPARE, kind="fallback_message", input_tokens=600, output_tokens=50, cache_write=2900)],
     )
 
 

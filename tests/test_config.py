@@ -148,7 +148,7 @@ def test_with_the_anthropic_api_a_model_its_refusal_fallback_answers_with_can_ha
     # claude-opus-4-8 answers for claude-opus-5-5 and the Fable models, none of them in this ladder
     (CLAUDE + '[prices."claude-opus-4-8"]\ninput = 5\noutput = 25\n',
      "prices.claude-opus-4-8 is for a model that is not in models.ladder or in an [agents] ladder, nor one "
-     "Anthropic's refusal fallback answers with for it (claude-sonnet-5)"),
+     "Anthropic's refusal fallback answers with for the ladder (claude-sonnet-5)"),
 ], ids=["openai", "not this ladder's"])
 def test_a_price_for_a_model_no_lane_and_no_refusal_fallback_of_the_ladder_runs_is_an_error(tmp_path, text, says):
     path = write(tmp_path, text)

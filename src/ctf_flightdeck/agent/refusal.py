@@ -7,8 +7,9 @@ recommends for that category. Anthropic's documentation (the claude-api skill's
 shared/model-migration.md, its refusal section) says "fallback attempts bill at the fallback
 model's rates", so a lane's meter prices that attempt as the model that ran it, from [prices].
 FALLBACK_TARGETS are the models the documentation names as answering for each one; with [api]
-provider = "anthropic", [prices] may price those of the ladder's models (config.py), and
-`flightdeck init --provider anthropic` writes their prices (setup.py). From the same file:
+provider = "anthropic", [prices] may price those that answer for a model of the ladder
+(config.py), and `flightdeck init --provider anthropic` writes their prices (setup.py). From
+the same file:
 
 - Claude Sonnet 5.5: the fallback "retries `"cyber"` and `"frontier_llm"` declines on Claude
   Sonnet 5".
