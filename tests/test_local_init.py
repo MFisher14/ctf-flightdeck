@@ -116,6 +116,45 @@ def test_a_custom_server_on_this_machine_gets_them_too(tmp_path, monkeypatch):
     assert (load_config(target).api.timeout, load_config(target).api.max_tokens) == (600.0, 8192)
 
 
+# ---------------------------------------------------------------------- Ollama's context
+
+CONTEXT_NOTE = ("Ollama gives a model 4,096 tokens of context on a machine with under 23 GiB of GPU memory (or none) and "
+                "32,768 from 23 GiB, and drops a lane's oldest messages past it without saying so; a lane needs about "
+                "65,536. Set OLLAMA_CONTEXT_LENGTH=65536 where Ollama runs, restart Ollama, then uncomment context = 65536 "
+                "under [api] so lanes are refreshed before they outgrow it (`flightdeck doctor` checks what Ollama gives). "
+                "The light model's short prompts fit 4,096.")
+
+
+def test_init_for_ollama_writes_and_says_how_to_give_it_room_for_a_lane(tmp_path, monkeypatch):
+    """The note is a comment above [api] context, written commented out: uncommented once Ollama has
+    the context, it loads, and lanes are refreshed at 49,152 prompt tokens, before they outgrow it."""
+    from ctf_flightdeck.agent.driver import COMPACT_AT
+    from ctf_flightdeck.config import lane_refresh_at, parse_config
+
+    result, target = init(monkeypatch, tmp_path, "--provider", "local", "--models", "gpt-oss:20b", "--host")
+    assert result.exit_code == 0, result.output
+    assert f"context: {CONTEXT_NOTE}" in result.output
+    text = target.read_text()
+    api = text.split("[models]")[0]
+    assert CONTEXT_NOTE in one_line(api) and "\n# context = 65536\n" in api
+    config = load_config(target)
+    assert config.api.context is None and lane_refresh_at(config, COMPACT_AT) == 50_000  # commented out: not stated yet
+    uncommented = parse_config(text.replace("\n# context = 65536\n", "\ncontext = 65536\n"), target)
+    assert uncommented.api.context == 65_536 and lane_refresh_at(uncommented, COMPACT_AT) == 49_152
+    custom, target = init(monkeypatch, tmp_path, "--provider", "custom", "--base-url", "http://localhost:11434/v1",
+                          "--key-env", "", "--models", "m", "--host", name="custom.toml")
+    assert custom.exit_code == 0 and "context: Ollama gives" in custom.output and "# context = 65536" in target.read_text()
+
+
+def test_init_for_any_other_api_says_nothing_of_ollamas_context(tmp_path, monkeypatch):
+    for args in (("--provider", "mlx", "--models", "m"), ("--provider", "openrouter", "--models", "a/b"),
+                 ("--provider", "custom", "--base-url", "http://127.0.0.1:8000/v1", "--key-env", "", "--models", "m"),
+                 ("--provider", "openrouter", "--models", "a/b", "--light", "ollama", "--light-model", "qwen3.5:9b")):
+        result, target = init(monkeypatch, tmp_path, *args, "--host", name=f"{args[1]}-{len(args)}.toml")
+        assert result.exit_code == 0, result.output
+        assert "context:" not in result.output and "context = " not in target.read_text()  # the light model's fit 4,096
+
+
 # ---------------------------------------------------------------------- the light model
 
 

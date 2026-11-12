@@ -25,8 +25,10 @@ a ladder from a benchmark on one machine (`gpt-oss:20b` on Ollama,
 away from a terminal, never written unless you choose it. For any server on this machine it
 writes a longer wait and a larger reply cap (below), and for MLX it prints the command that
 starts the server with thinking off and replies of up to 8192 tokens (`mlx_lm.server --model
-... --max-tokens 8192 --chat-template-args '{"enable_thinking":false}'`). `flightdeck models ID`
-prints the config lines for a model from its catalog.
+... --max-tokens 8192 --chat-template-args '{"enable_thinking":false}'`). For Ollama it writes and
+prints how to give it room for a lane, with `context = 65536` to uncomment once Ollama has it
+([below](#context-on-a-server-on-your-machine)). `flightdeck models ID` prints the config lines for
+a model from its catalog.
 
 Your `[models]` ladder lists model ids weakest first: lanes start on the first, and escalating
 moves one step up. `flightdeck config --example` shows every key.

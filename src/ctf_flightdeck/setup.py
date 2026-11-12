@@ -235,8 +235,37 @@ def _toml(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 
 
+def is_ollama(base_url: str) -> bool:
+    """Whether `base_url` is Ollama on this machine, at its default port (what `init --provider
+    local` writes, or a custom URL to it)."""
+    from .light import on_this_machine
+    from .ollama_context import default_port
+
+    return on_this_machine(base_url) and default_port(base_url)
+
+
+OLLAMA_CONTEXT_NOTE = (
+    "Ollama gives a model 4,096 tokens of context on a machine with under 23 GiB of GPU memory (or none) and 32,768 "
+    "from 23 GiB, and drops a lane's oldest messages past it without saying so; a lane needs about 65,536. Set "
+    "OLLAMA_CONTEXT_LENGTH=65536 where Ollama runs, restart Ollama, then uncomment context = 65536 under [api] so lanes "
+    "are refreshed before they outgrow it (`flightdeck doctor` checks what Ollama gives). The light model's short "
+    "prompts fit 4,096."
+)
+
+
+def _ollama_context(answers: Answers) -> str:
+    """For lanes on Ollama: the context note, and [api] context to uncomment once Ollama has it."""
+    if answers.provider != "openai" or not is_ollama(answers.base_url):
+        return ""
+    import textwrap
+
+    note = "".join(f"# {line}\n" for line in textwrap.wrap(OLLAMA_CONTEXT_NOTE, 96))
+    return note + "# context = 65536\n"
+
+
 def _api_limits(answers: Answers) -> str:
-    """[api] timeout and max_tokens, each with why, when the answers set them."""
+    """[api] timeout and max_tokens, each with why, when the answers set them, and for lanes on
+    Ollama the context note (_ollama_context)."""
     out = ""
     if answers.timeout is not None:
         out += ("# Seconds a lane waits for one reply before it tries again (180 when unset). A model on this machine\n"
@@ -247,7 +276,7 @@ def _api_limits(answers: Answers) -> str:
         out += ("# The most tokens a lane's reply may hold (mlx_lm.server's own default is 512, too few for a model\n"
                 "# that reasons first). Leave it out for OpenAI's own API: its reasoning models refuse max_tokens.\n"
                 f"max_tokens = {answers.max_tokens}\n")
-    return out
+    return out + _ollama_context(answers)
 
 
 def _prices(prices: Mapping[str, Price]) -> str:
