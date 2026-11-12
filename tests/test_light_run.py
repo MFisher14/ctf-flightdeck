@@ -128,10 +128,46 @@ def test_a_local_light_model_never_makes_a_dollar_capped_lane_ask_about_its_budg
     assert lane.pending is None or lane.pending.kind.value != "budget"
 
 
+def test_the_run_closes_its_light_engine_on_shutdown(tmp_path):
+    # Closing the judge's light model moved from the judge (now owns=False) to Run.shutdown's
+    # Lights.aclose(); check a real run actually closes its engine, not just Lights in isolation.
+    with FakeModelServer(responder=lane_loops) as lanes, FakeModelServer([text_reply("yes")] * 20) as judge:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, light_table(judge.base_url))))
+        engine = run.lights.get("judge")  # the run's own light engine, which the judge shares
+        assert engine is not None and not engine.client._closed  # open while the run lives
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: asked(judge) >= 1 and not run.watch._judging, "the hint judge's verdict")
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    assert engine.client._closed  # Run.shutdown closed it once (Lights.aclose); the judge left closing to the run
+
+
 def test_without_a_light_table_a_run_has_no_judge(tmp_path):
     with FakeModelServer(responder=lane_loops) as lanes:
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, "")))
         assert run.watch.judge is None and not any("light model" in n for n in run.notes())
+        asyncio.run(run.shutdown())
+        run.close()
+
+
+def test_a_judge_table_whose_engine_cannot_be_made_leaves_the_judge_off_and_the_run_going(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLIGHTDECK_LIGHT_TEST_KEY", raising=False)
+    with FakeModelServer(responder=lane_loops) as lanes:
+        light = (light_table("http://127.0.0.1:9/v1") + 'jobs = ["judge", "flagcheck"]\n'
+                 '[light.judge]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\nkey_env = "FLIGHTDECK_LIGHT_TEST_KEY"\n')
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, lanes.base_url, light)))
+        assert run.watch.judge is None and run.lights.engines == {}
+        notes = [n for n in run.notes() if "light model" in n or "[light]" in n]
+        assert len(notes) == 2, notes
+        assert notes[0].startswith("the light model is off for this run, the rules answer alone: ")
+        assert "light.judge.key_env names the variable FLIGHTDECK_LIGHT_TEST_KEY" in notes[0]
+        assert notes[1] == ("[light] jobs lists flagcheck, which this build of flightdeck does not run yet: no light "
+                            "model is asked for them")
         asyncio.run(run.shutdown())
         run.close()
 

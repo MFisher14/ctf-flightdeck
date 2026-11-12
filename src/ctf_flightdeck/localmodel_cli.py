@@ -19,8 +19,14 @@ the light role falls back to):
   is right. Summary cases are n/a (a decision model writes no text). It is always announced
   first: the server it calls and at most how many times (one call per hint and judge case).
 - `--engine rules`: the rules alone.
+- `--from-config`: the engines your config gives the jobs, as a run builds them: each job's
+  [light.<job>] table, else [light] (a run job [light] jobs leaves out gets none, so only the
+  rules score it), one column per distinct engine, doing only its jobs.
 - `--compare SPEC`, as often as you like: another column, `rules`, `cactus`,
   `anthropic:MODEL`, `openai:MODEL@BASE_URL` (a server with no key) or `decider@BASE_URL`.
+- `--jobs JOB,...`: only these jobs' cases (hint, judge, summary, route, recon, flagcheck).
+- `--show-misses`: after the scorecard, every job each column got wrong, with what it said
+  (keyword verdicts on briefs and summaries under-credit: read them).
 - `--thinking on|off`: whether an openai column's model may reason before it answers, as
   [light] thinking says in a run (off sends light.THINKING_OFF with each request). Default:
   for a column on [light]'s own server, [light] thinking as your config sets it; for any
@@ -30,8 +36,9 @@ the light role falls back to):
 Before any call the cases are checked and the rules scored (no network): a missing lexicon, or
 a case that names an id it lacks, stops the command before anything is spent. A paid API
 (Claude, or an OpenAI-compatible server not on this machine) is said first: how many calls it
-makes (one per case it does, never a retry, so never more than the case set) and how they are
-priced (`--price`, else for Claude its list price as flightdeck knows it, else unknown).
+makes (one per job it does, a route case being three, never a retry, so never more than the
+case set) and how they are priced (`--price`, or the config's [light] price with
+--from-config, else for Claude its list price as flightdeck knows it, else unknown).
 
 --base-url may carry credentials (a user name and password, or a token in the query string,
 for a server behind a proxy). They are sent, never shown: messages name the endpoint without
@@ -49,7 +56,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 from urllib.parse import urlsplit
@@ -61,32 +68,51 @@ from . import light as L
 from . import localmodel
 
 if TYPE_CHECKING:
-    from .config import LightConfig
+    from .config import Config, LightConfig
 
 app = typer.Typer(no_args_is_help=True, help="Measure a light model against the rules on small jobs (D15).")
 
 EXAMPLE_URL = "http://127.0.0.1:11434/v1"
 MIN_SECRET = 4  # shorter parts of --base-url are not cut out of server text: that would garble it
+DEFAULT_TIMEOUT = 30.0  # seconds a job may take, unless --timeout (or, with --from-config, the config) says
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
 
 
 @dataclass(frozen=True)
 class Spec:
-    """One engine to evaluate, as the options give it."""
+    """One engine to evaluate, as the options give it. From the config (--from-config):
+    `light` is its engine spec, built as a run builds it, and `jobs` the jobs it does there."""
 
     engine: str
     model: str = ""
     base_url: str = ""
     key_env: str = ""
+    light: LightConfig | None = None
+    jobs: tuple[str, ...] | None = None  # None: every job its engine does
+
+
+class _Only:
+    """An engine asked only some jobs (a column from the config: the jobs it has there)."""
+
+    def __init__(self, engine: L.Light, jobs: tuple[str, ...]) -> None:
+        self._engine = engine
+        self._jobs = jobs
+
+    def does(self, job: str) -> bool:
+        return job in self._jobs and self._engine.does(job)
+
+    def __getattr__(self, name: str):
+        return getattr(self._engine, name)
 
 
 @app.command("eval-local")
 def eval_local(
     engine: Annotated[
-        str, typer.Option("--engine", help="openai (an OpenAI-compatible server; recommended: an open-weight model on "
-                                            "this machine), anthropic, cactus, decider (a Strands Decider server) or rules.")
-    ] = "openai",
+        str | None, typer.Option("--engine", help="openai (an OpenAI-compatible server; recommended: an open-weight model "
+                                                  "on this machine), anthropic, cactus, decider (a Strands Decider server) "
+                                                  "or rules. Default openai.")
+    ] = None,
     base_url: Annotated[
         str | None,
         typer.Option("--base-url", help=f"The OpenAI-compatible base URL, e.g. {EXAMPLE_URL} (Ollama) or "
@@ -103,7 +129,10 @@ def eval_local(
         str | None, typer.Option("--price", metavar="IN,OUT[,CACHED]",
                                  help="Dollars per million tokens, for an API that reports no cost.")
     ] = None,
-    timeout: Annotated[float, typer.Option("--timeout", help="Seconds one job may take.")] = 30.0,
+    timeout: Annotated[
+        float | None, typer.Option("--timeout", help="Seconds one job may take (default 30; with --from-config, each "
+                                                     "engine's [light] timeout).")
+    ] = None,
     threshold: Annotated[
         float | None, typer.Option("--threshold", help=f"Decider columns: the confidence below which an answer is "
                                                        f"unsure (default {L.DECIDER_THRESHOLD:g}).")
@@ -125,28 +154,51 @@ def eval_local(
                           "request. Default: [light] thinking from your config for [light]'s own server, else off for a "
                           "server on this machine and on elsewhere.")
     ] = None,
+    jobs: Annotated[
+        str | None, typer.Option("--jobs", metavar="JOB,...",
+                                 help="Only these jobs' cases: hint, judge, summary, route, recon, flagcheck.")
+    ] = None,
+    from_config: Annotated[
+        bool, typer.Option("--from-config", help="Score each job with the engine your config gives it ([light.<job>], "
+                                                 "else [light]), beside the rules.")
+    ] = False,
+    show_misses: Annotated[
+        bool, typer.Option("--show-misses", help="Also list every job each column got wrong, with what it said.")
+    ] = False,
 ) -> None:
-    """Score light models and the rules side by side on hints, hint judging and lane summaries."""
-    if not math.isfinite(timeout) or timeout <= 0:
+    """Score light models and the rules side by side on the light jobs: hints, hint judging, lane
+    summaries, routing, first-pass briefs and flag checks, alone and as a run uses each."""
+    if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
         _fail("--timeout must be a positive number of seconds")
     think = _thinking_option(thinking) if thinking is not None else None
-    specs = [_main_spec(engine, base_url, model, key_env)] + [_compare_spec(text) for text in compare or ()]
-    if threshold is not None and not any(spec.engine == "decider" for spec in specs):
+    wanted = _jobs_option(jobs) if jobs is not None else None
+    config = None
+    if from_config:
+        given = [name for name, value in (("--engine", engine), ("--base-url", base_url), ("--model", model),
+                                          ("--key-env", key_env), ("--price", price)) if value is not None]
+        if given:
+            _fail(f"--from-config takes each engine from your config: drop {', '.join(given)} (--compare adds columns)")
+        config = _config_for_columns()
+        specs = [Spec("rules")]
+    else:
+        specs = [_main_spec(engine or "openai", base_url, model, key_env)]
+    specs += [_compare_spec(text) for text in compare or ()]
+    if threshold is not None and not any(spec.engine == "decider" for spec in specs) and config is None:
         _fail("--threshold is for a decider column (--engine decider or --compare decider@BASE_URL)")
     if threshold is not None and not (math.isfinite(threshold) and 0 < threshold <= 1):
         _fail("--threshold must be a number above 0 and at most 1: the confidence below which an answer is unsure")
-    sure = L.DECIDER_THRESHOLD if threshold is None else threshold
     if price is not None and specs[0].engine == "decider":
         _fail("--price is not for --engine decider: a decision model server is your own, with no bill per call")
-    if think is not None and not any(spec.engine == "openai" for spec in specs):
-        _fail("--thinking is for an openai engine (a model on an OpenAI-compatible server); give --engine openai or "
-              "--compare openai:MODEL@BASE_URL")
     priced = _price(price) if price is not None else None
 
     try:
         loaded = localmodel.load_cases(cases or localmodel.default_cases_path())
     except (localmodel.CaseError, FileNotFoundError) as exc:
         _fail(str(exc))
+    if wanted is not None:
+        loaded = [case for case in loaded if case.kind in wanted]
+        if not loaded:
+            _fail(f"the case set has no {' or '.join(wanted)} cases")
 
     # The baseline is cheap and needs no network, so compute it first: if the lexicon is
     # missing, or a case names an id it does not have, we stop before any model call.
@@ -155,20 +207,28 @@ def eval_local(
     except localmodel.LocalModelError as exc:
         _fail(str(exc))
 
-    columns: list[Spec] = []
+    columns: list[Spec] = _config_columns(config, loaded) if config is not None else []
     for spec in specs:
         if spec.engine != "rules" and spec not in columns:
             columns.append(spec)
+    if threshold is not None and not any(spec.engine == "decider" for spec in columns):
+        _fail("--threshold is for a decider column (--engine decider or --compare decider@BASE_URL)")
+    if think is not None and not any(spec.engine == "openai" for spec in columns):
+        _fail("--thinking is for an openai engine (a model on an OpenAI-compatible server); give --engine openai or "
+              "--compare openai:MODEL@BASE_URL")
     thinks = _thinks(columns, think)
-    keys = {spec: _key(spec) for spec in columns}
+    keys = {spec: _config_key(config, spec) if spec.light is not None else _key(spec) for spec in columns}
+    main = specs[0] if specs[0].engine != "rules" else None
     for spec in columns:
-        notice = _spend_notice(spec, loaded, priced if spec == specs[0] else None) or _decider_notice(spec, loaded, sure)
+        sure = threshold if threshold is not None else (spec.light.threshold if spec.light else L.DECIDER_THRESHOLD)
+        price_of = priced if spec == main else (spec.light.price if spec.light else None)
+        notice = _spend_notice(spec, loaded, price_of) or _decider_notice(spec, loaded, sure)
         if notice:
             typer.echo(f"flightdeck: {notice}", err=True)
 
-    reports = asyncio.run(_run(columns, keys, loaded, priced if specs[0] in columns else None, specs[0], timeout, sure,
+    reports = asyncio.run(_run(columns, keys, loaded, priced if main in columns else None, main, timeout, threshold,
                                thinks))
-    typer.echo(localmodel.format_scorecard([rules, *reports]), nl=False)
+    typer.echo(localmodel.format_scorecard([rules, *reports], show_misses=show_misses), nl=False)
     worst = [message for spec, report in zip(columns, reports) if (message := _unmeasured(report, thinks.get(spec)))]
     for message in worst:
         typer.echo(f"flightdeck: {message}", err=True)
@@ -240,8 +300,65 @@ def _thinking_option(text: str) -> bool:
     return value == "on"
 
 
+def _jobs_option(text: str) -> tuple[str, ...]:
+    """--jobs: the job names, each once, in KINDS order."""
+    named = [part.strip() for part in text.split(",") if part.strip()]
+    unknown = [name for name in named if name not in localmodel.KINDS]
+    if not named or unknown:
+        _fail(f"--jobs takes job names separated by commas: {', '.join(localmodel.KINDS)}")
+    return tuple(kind for kind in localmodel.KINDS if kind in named)
+
+
+def _config_for_columns() -> Config:
+    """The player's config, for --from-config; one that cannot be read stops here, named."""
+    from .config import ConfigError, default_config_path, load_config
+
+    try:
+        return load_config(default_config_path())
+    except ConfigError as exc:
+        _fail(f"--from-config: {exc}")
+
+
+def _config_columns(config: Config, cases: list[localmodel.Case]) -> list[Spec]:
+    """A column for each distinct engine the config gives the cases' jobs ([light.<job>], else
+    [light]), doing only those jobs. A run job [light] jobs leaves out has no engine (only the
+    rules score it), nor has a job whose engine is the rules; hint and summary, which no run
+    uses, take [light.hint] or [light.summary], else [light]."""
+    from .config import EVAL_JOBS, light_for
+
+    grouped: dict[LightConfig, list[str]] = {}
+    for kind in localmodel.KINDS:
+        if not any(case.kind == kind for case in cases):
+            continue
+        if kind not in EVAL_JOBS and kind not in config.light_jobs:
+            continue
+        light = light_for(config, kind)
+        if light.engine != "rules" and kind in L.DOES[light.engine]:
+            grouped.setdefault(light, []).append(kind)
+    columns = [Spec(light.engine, light.model, light.base_url, light.key_env, light=light, jobs=tuple(kinds))
+               for light, kinds in grouped.items()]
+    for spec in columns:
+        typer.echo(f"flightdeck: from {config.source}: {spec.engine} {spec.model or _shown(spec.base_url)} does "
+                   f"{_and(list(spec.jobs or ()))}", err=True)
+    if not columns:
+        typer.echo(f"flightdeck: {config.source} gives these jobs no light model: the rules alone", err=True)
+    return columns
+
+
+def _config_key(config: Config | None, spec: Spec) -> str | None:
+    """The key of a column from the config, read as a run reads it; a missing one stops here."""
+    from .config import ConfigError, light_key
+
+    assert config is not None and spec.jobs
+    try:
+        return light_key(config, spec.jobs[0])
+    except ConfigError as exc:
+        _fail(str(exc))
+
+
 def _thinks(columns: list[Spec], think: bool | None) -> dict[Spec, bool]:
     """Whether each openai column's model may reason before it answers: --thinking when given;
+    for a column from the config, its own thinking as a run reads it (config.light_thinking());
     else, for a column on [light]'s own server, [light] thinking as the player's config sets it
     (their word for that server, said on stderr); else the default for the column's server
     (config.light_thinking(): off on this machine, on elsewhere). So [light] thinking = false,
@@ -254,8 +371,12 @@ def _thinks(columns: list[Spec], think: bool | None) -> dict[Spec, bool]:
         return {}
     from .config import LightConfig, light_thinking
 
+    thinks = {spec: light_thinking(spec.light) for spec in openai if spec.light is not None}
+    openai = [spec for spec in openai if spec.light is None]
+    if not openai:
+        return thinks
     light, where = _configured_light()
-    thinks, said = {}, set()
+    said = set()
     for spec in openai:
         mine = light is not None and light.thinking is not None and _same_server(spec.base_url, light.base_url)
         thinks[spec] = light_thinking(LightConfig("openai", spec.model, spec.base_url, spec.key_env,
@@ -348,15 +469,27 @@ def _paid(spec: Spec) -> bool:
     return False
 
 
+def _does(spec: Spec, kind: str) -> bool:
+    """Whether a column's engine does `kind`'s jobs (from the config: only its own jobs there)."""
+    return kind in L.DOES[spec.engine] and (spec.jobs is None or kind in spec.jobs)
+
+
+def _and(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | None) -> str:
     """What a paid engine is about to spend, said before any call; "" for a free one."""
     if not _paid(spec):
         return ""
-    calls = sum(1 for case in cases if case.kind in L.JOBS)
+    calls = localmodel.count_jobs(cases, lambda kind: _does(spec, kind))
+    routed = any(case.kind == L.ROUTE and _does(spec, case.kind) for case in cases)
     tokens = L.ANTHROPIC_TOKENS if spec.engine == "anthropic" else L.OPENAI_TOKENS
+    most = max([tokens[kind] for kind in {case.kind for case in cases} if _does(spec, kind)] or [0])
     label = f"{spec.engine} {spec.model}"
     if price is not None:
-        how = f"priced at --price (${price.input:g} / ${price.output:g} per million tokens)"
+        given = "your config's [light] price" if spec.light is not None else "--price"
+        how = f"priced at {given} (${price.input:g} / ${price.output:g} per million tokens)"
     elif spec.engine == "anthropic" and _list_price(spec.model) is not None:
         listed = _list_price(spec.model)
         how = (f"priced at Anthropic's list price for {spec.model} as flightdeck knows it "
@@ -366,25 +499,41 @@ def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | Non
     else:
         how = "priced as the API reports, else unknown (--price sets one)"
     where = "" if spec.engine == "anthropic" else f" at {_shown(spec.base_url)}"
-    return (f"{label}{where} is a paid API: at most {calls} calls, one per case (no retries), each with at most "
-            f"{max(tokens.values())} output tokens; {how}")
+    per = "one per job, three for a route case" if routed else "one per case"
+    return (f"{label}{where} is a paid API: at most {calls} calls, {per} (no retries), each with at most "
+            f"{most} output tokens; {how}")
 
 
 def _decider_notice(spec: Spec, cases: list[localmodel.Case], threshold: float) -> str:
     """What a decider column will do, said before any call; "" for another engine."""
     if spec.engine != "decider":
         return ""
-    calls = sum(1 for case in cases if case.kind in (L.HINT, L.JUDGE))
-    skipped = sum(1 for case in cases if case.kind == L.SUMMARY)
+    calls = localmodel.count_jobs(cases, lambda kind: _does(spec, kind))
+    asked = [kind for kind in localmodel.KINDS if kind != L.ROUTE and _does(spec, kind) and any(c.kind == kind for c in cases)]
+    per = f"one per {_and(asked)} case" if asked else ""
+    if any(case.kind == L.ROUTE and _does(spec, case.kind) for case in cases):
+        per += (", " if per else "") + "three per route case"
+    skipped = {kind: sum(1 for case in cases if case.kind == kind) for kind in (L.SUMMARY, L.RECON)
+               if not _does(spec, kind) and any(case.kind == kind for case in cases)}
     where = urlsplit(spec.base_url).hostname
     elsewhere = "" if L.on_this_machine(spec.base_url) else f"; its requests (descriptions, lane steps) go to {where}"
-    na = f"; its {skipped} summary case{'s are' if skipped != 1 else ' is'} n/a: a decision model writes no text" if skipped else ""
-    return (f"decider at {_shown(spec.base_url)}: at most {calls} calls to the decision model server, one per hint and "
-            f"judge case (no retries){na}; an answer below confidence {threshold:g} counts as unsure{elsewhere}")
+    na = ""
+    if skipped:
+        many = sum(skipped.values()) != 1
+        listed = _and([f"{n} {kind}" for kind, n in skipped.items()])
+        na = f"; its {listed} case{'s are' if many else ' is'} n/a: a decision model writes no text"
+    return (f"decider at {_shown(spec.base_url)}: at most {calls} calls to the decision model server, {per} "
+            f"(no retries){na}; an answer below confidence {threshold:g} counts as unsure{elsewhere}")
 
 
-def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float,
-            threshold: float = L.DECIDER_THRESHOLD, thinks: bool = True) -> L.Light:
+def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float | None,
+            threshold: float | None = None, thinks: bool = True) -> L.Light:
+    """The engine of a column: from the options, or from the config as a run builds it (with
+    --timeout, --threshold and --thinking over the config's when given), asked only its jobs."""
+    if spec.light is not None:
+        return _Only(_config_engine(spec, key, timeout, threshold, thinks), spec.jobs or ())
+    timeout = DEFAULT_TIMEOUT if timeout is None else timeout
+    threshold = L.DECIDER_THRESHOLD if threshold is None else threshold
     if spec.engine == "cactus":
         return L.CactusLight(timeout)
     if spec.engine == "decider":
@@ -415,8 +564,32 @@ def _engine(spec: Spec, key: str | None, price: L.Price | None, timeout: float,
                         tokens=L.ANTHROPIC_TOKENS)
 
 
-async def _run(columns: list[Spec], keys: dict, cases: list[localmodel.Case], price: L.Price | None, main: Spec,
-               timeout: float, threshold: float = L.DECIDER_THRESHOLD,
+def _config_engine(spec: Spec, key: str | None, timeout: float | None, threshold: float | None,
+                   thinks: bool) -> L.Light:
+    """A column from the config, built as a run builds it (light.build), with the options
+    that measure it another way applied; Claude with no [light] price is priced at its list
+    price, as every Claude column here is."""
+    from .config import light_thinking
+
+    light = spec.light
+    assert light is not None
+    if timeout is not None:
+        light = replace(light, timeout=timeout)
+    if threshold is not None and light.engine == "decider":
+        light = replace(light, threshold=threshold)
+    if light.engine == "openai":
+        light = replace(light, thinking=thinks)
+    engine = L.build(light, key)
+    if isinstance(engine, L.ModelLight):
+        if light.engine == "openai":
+            engine.label = f"{engine.label} (thinking {'on' if light_thinking(light) else 'off'})"
+        elif engine.price is None:
+            engine.price = _list_price(light.model)
+    return engine
+
+
+async def _run(columns: list[Spec], keys: dict, cases: list[localmodel.Case], price: L.Price | None, main: Spec | None,
+               timeout: float | None, threshold: float | None = None,
                thinks: dict[Spec, bool] | None = None) -> list[localmodel.EvalReport]:
     reports = []
     for spec in columns:

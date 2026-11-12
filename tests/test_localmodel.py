@@ -116,7 +116,7 @@ def no_detect(monkeypatch):
 def test_bundled_cases_load_and_are_well_formed():
     cases = lm.load_cases(lm.default_cases_path())
     assert len(cases) >= 50
-    assert {c.kind for c in cases} == {"hint", "judge", "summary"}
+    assert {c.kind for c in cases} == {"hint", "judge", "summary", "route", "recon", "flagcheck"}
     hint_cases = [c for c in cases if c.kind == "hint"]
     judges = [c for c in cases if c.kind == "judge"]
     summaries = [c for c in cases if c.kind == "summary"]
@@ -440,7 +440,7 @@ def test_rules_baseline_scores_hint_and_judge_cases_with_the_real_lexicon():
 def test_rules_baseline_real_lexicon():
     cases = lm.load_cases(lm.default_cases_path())
     report = lm.rules_baseline(cases)
-    assert {r.kind for r in report.scored} == {"hint", "judge"}, "summaries are not scored by the rules"
+    assert {r.kind for r in report.scored} == {"hint", "judge", "route"}, "summaries are not scored by the rules"
     assert report.by_kind()["hint"][0] / report.by_kind()["hint"][1] >= 0.7, "the lexicon gets most of its own cases"
     by_name = {c.input["name"]: r.predicted for c, r in zip(cases, report.results) if c.kind == "hint"}
     assert by_name["Pushy"] == "sstv"  # an injected 'answer none' is just more words
@@ -775,3 +775,542 @@ def test_cli_rules_alone(tmp_path):
     result = runner.invoke(mount(), ["eval-local", "--engine", "rules", "--cases", str(cases)])
     assert result.exit_code == 0, result.output
     assert table(result.output)["hint"] == ["1", "1/1 100%"]
+
+
+# =========================================================================== route, recon and flagcheck
+#
+# Every challenge and flag below is synthetic; hosts are under the reserved .test domain.
+
+
+def route_case(name: str, category: str, expected: tuple[str, str, str], *, description: str = "A puzzle.",
+               urls=(), ident: str = "") -> lm.Case:
+    data = {"name": name, "category": category, "description": description, "files": [], "urls": list(urls)}
+    return lm.Case("route", data, dict(zip(("category", "family", "instance"), expected)), ident=ident)
+
+
+def recon_case(required, traps=(), *, name: str = "Bit By Bit") -> lm.Case:
+    data = {"name": name, "category": "stego", "description": "The message lives in the low bits.",
+            "files": [{"name": "cover.png", "size": 1500044, "file": "PNG image data", "strings": ["IHDR"]}]}
+    return lm.Case("recon", data, "a model brief", required=tuple(tuple(g) for g in required), traps=tuple(traps))
+
+
+def flag_case(name: str, expected: str, *, own_text: bool) -> lm.Case:
+    data = {"name": name, "category": "web", "flag_format": r"flag\{[a-z0-9_]+\}", "description": "Find the flag.",
+            "candidate": f"flag{{{name.lower().replace(' ', '_')}}}", "where": f"$ curl -s https://{name[:4].lower()}.example.test/"}
+    return lm.Case("flagcheck", data, expected, own_text=own_text)
+
+
+QUESTION_OF = {"Name the category": "category", "Name the specialist": "family", "Does solving": "instance",
+               "Is the candidate": "flagcheck", "Write the brief": "recon", "Name the single technique": "hint"}
+
+
+def responder(answers: dict, default: str = "no"):
+    """A fake model that answers by the challenge's name and the question asked: answers[(name, key)]."""
+
+    def reply(record):
+        user = record["json"]["messages"][1]["content"]
+        key = next(k for start, k in QUESTION_OF.items() if user.startswith(start))
+        name = re.search(r"Challenge: (.*?)(?: \(|\n)", inside_fence(user)).group(1)
+        return text_reply(answers.get((name, key), default))
+
+    return reply
+
+
+def evaluate(cases, answers, default: str = "no") -> lm.EvalReport:
+    with FakeModelServer(responder=responder(answers, default)) as server:
+        return run_eval(server.base_url, cases)
+
+
+def lines_of(text: str, label: str) -> list[str]:
+    """The cells of the scorecard's line whose label is `label` (cells are 2+ spaces apart)."""
+    for line in text.splitlines():
+        cells = re.split(r"\s{2,}", line.strip())
+        if cells and cells[0] == label.strip():
+            return cells[1:]
+    raise AssertionError(f"no line {label!r} in:\n{text}")
+
+
+# --------------------------------------------------------------------------- loading the new kinds
+
+
+def test_the_bundled_route_recon_and_flagcheck_cases_load_as_reviewed():
+    cases = lm.load_cases(lm.default_cases_path())
+    by_kind = {kind: [c for c in cases if c.kind == kind] for kind in ("route", "recon", "flagcheck")}
+    assert [len(by_kind[k]) for k in by_kind] == [40, 30, 40]
+    idents = [c.ident for c in cases if c.ident]
+    assert len(idents) == len(set(idents)) == 110 and idents[0] == "route-01" and idents[-1] == "flagcheck-40"
+    flags = by_kind["flagcheck"]
+    assert {c.expected for c in flags} == {"real", "stand-in"} and sum(c.own_text for c in flags) == 18
+    loose = [c for c in flags if not c.own_text]  # what a run would ask flagcheck about
+    assert sum(c.expected == "stand-in" for c in loose) == 6 and sum(c.expected == "real" for c in loose) == 16
+    assert all(len(c.required) == 3 for c in by_kind["recon"])
+
+
+def test_the_bundled_new_cases_name_only_reserved_hosts_and_hold_no_key_material():
+    # Public repository: synthetic data only. Hosts under .test (or this machine), no private
+    # key, no PEM body (recon-18 keeps only the DER header every RSA-2048 key with e = 3 shares),
+    # and no docker image but the one this project names.
+    cases = [c for c in lm.load_cases(lm.default_cases_path()) if c.kind in ("route", "recon", "flagcheck")]
+    text = json.dumps([c.input for c in cases])
+    low = text.lower()
+    url_hosts = set(re.findall(r"[a-z]+://([^/\s'\"<>:\\]+)", low)) | set(re.findall(r"\bnc ([a-z0-9.-]+) \d+", low))
+    url_hosts |= set(re.findall(r"\bhost: ([a-z0-9.-]+)", low))
+    assert url_hosts and all(h.endswith(".test") or h in ("127.0.0.1", "0.0.0.0", "localhost") for h in url_hosts), \
+        sorted(url_hosts)
+    real_tlds = {"com", "org", "net", "io", "dev", "ai", "co", "uk", "de", "app", "xyz", "me", "info", "edu", "gov",
+                 "us", "sh", "gg", "tv", "cc", "ly", "to", "site", "online", "tech", "cloud", "ctf"}
+    named = {m.group(1) for m in re.finditer(r"(?<![\w.-])((?:[a-z0-9-]+\.)+([a-z]{2,}))(?![\w-])", low)
+             if m.group(2) in real_tlds}
+    assert named == set(), sorted(named)
+    assert "PRIVATE KEY" not in text and "MIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEA..." in text
+    assert not re.search(r"MII[A-Za-z0-9+/]{48,}", text)  # no more of any key than its header
+    assert re.findall(r"FROM ([\w.:/-]+)", text) == ["debian:bookworm-slim"]
+
+
+@pytest.mark.parametrize("line, says", [
+    ('{"kind": "route", "input": {"description": "x"}, "expected": "web"}', "a route case expects an object with exactly category, family, instance"),
+    ('{"kind": "route", "input": {}, "expected": {"category": "crypto", "family": "osint-lookup", "instance": "no"}}', "a route case's category must be one of web, cry"),
+    ('{"kind": "route", "input": {}, "expected": {"category": "cry", "family": "rsa", "instance": "no"}}', "family must be one of audio-signal"),
+    ('{"kind": "route", "input": {}, "expected": {"category": "cry", "family": "modern-crypto", "instance": "maybe"}}', "instance must be one of yes, no"),
+    ('{"kind": "recon", "input": {"name": "x"}, "expected": "brief"}', "a recon case needs required"),
+    ('{"kind": "recon", "input": {"name": "x"}, "expected": "brief", "required": [["wav", 3]]}', "each required group is a keyword or a non-empty list"),
+    ('{"kind": "recon", "input": {"name": "x"}, "expected": "brief", "required": ["ab"]}', "required keyword 'ab' is too short"),
+    ('{"kind": "recon", "input": {"name": "x"}, "expected": "brief", "required": ["wav|audio"]}', "holds '|'"),
+    ('{"kind": "recon", "input": {"name": "x"}, "expected": "b", "required": ["zsteg"], "traps": ["zsteg"]}', "zsteg is both required and a trap"),
+    ('{"kind": "flagcheck", "input": {"candidate": "flag{x}"}, "expected": "maybe", "own_text": false}', "a flagcheck case expects 'real' or 'stand-in'"),
+    ('{"kind": "flagcheck", "input": {"candidate": "flag{x}"}, "expected": "real"}', "a flagcheck case needs own_text"),
+    ('{"kind": "flagcheck", "input": {}, "expected": "real", "own_text": false}', "needs input.candidate"),
+    ('{"kind": "hint", "input": {"description": "x"}, "expected": "none", "own_text": true}', "own_text is for flagcheck cases only"),
+    ('{"kind": "hint", "input": {"description": "x"}, "expected": "none", "traps": ["abc"]}', "traps is for recon cases only"),
+    ('{"kind": "hint", "input": {"description": "x"}, "expected": "none", "id": ""}', "id must be a non-empty string"),
+    ('{"kind": "hint", "input": {"description": "x"}, "expected": "none", "id": "a"}\n'
+     '{"kind": "hint", "input": {"description": "y"}, "expected": "none", "id": "a"}', "line 2: id 'a' is used on line 1 too"),
+])
+def test_a_bad_new_case_is_refused_naming_its_line(tmp_path, line, says):
+    path = tmp_path / "cases.jsonl"
+    path.write_text(line + "\n", encoding="utf-8")
+    with pytest.raises(lm.CaseError) as caught:
+        lm.load_cases(path)
+    assert says in str(caught.value)
+
+
+def test_a_summary_case_can_take_keyword_groups_with_synonyms(tmp_path):
+    path = tmp_path / "cases.jsonl"
+    path.write_text('{"kind": "summary", "input": {"steps": [{"command": "sqlmap -u x"}]}, "expected": "sqli", '
+                    '"required": [["sqli", "sql injection"]]}\n', encoding="utf-8")
+    (case,) = lm.load_cases(path)
+    assert case.required == (("sqli", "sql injection"),)
+    with FakeModelServer([text_reply("The lane tried SQL injection on the login form.")]) as server:
+        (result,) = run_eval(server.base_url, [case]).results
+    assert result.correct and result.missing == ()
+
+
+def test_the_bundled_summary_cases_credit_inflected_keywords():
+    # Whole-word matching (test_steganography_...) marks an inflected keyword or a tool name
+    # wrong, so the bundled summary cases that need it carry their keyword as a group with the
+    # forms a correct summary uses. Without those groups each reply here, which never writes the
+    # bare keyword, would score wrong and every engine's summary row would drop below what the
+    # function eval measured (Haiku 10/14, gemma 9, gpt-oss 8, phi4 9, qwen 9).
+    reply_for = {
+        "xor, key length": "Used xortool to recover the repeating-key cipher; the key length is 5.",  # xortool, not XOR
+        "base64, decode": "Decoded the base64 blob to a gzip header, then read it.",  # Decoded, not decode
+        "exif, metadata": "Read the metadata: exiftool photo.jpg shows a UserComment.",  # exiftool, not exif
+        "solve.py, repeat": "The lane is stuck repeating solve.py --mode a with no output.",  # repeating, not repeat
+    }
+    by_expected = {c.expected: c for c in lm.load_cases(lm.default_cases_path()) if c.kind == "summary"}
+    picked = [by_expected[expected] for expected in reply_for]  # KeyError if a bundled wording changed
+    assert all(c.required for c in picked), "the bundled summary cases these replies need carry no keyword group"
+    with FakeModelServer([text_reply(reply_for[c.expected]) for c in picked]) as server:
+        report = run_eval(server.base_url, picked)
+    assert [(r.correct, r.missing) for r in report.results] == [(True, ())] * len(picked)
+
+
+# --------------------------------------------------------------------------- whole-word keywords
+
+
+def test_steganography_does_not_satisfy_the_keyword_stegano():
+    assert not lm.has_word("Run some steganography tools on it.", "stegano")
+    assert lm.has_word("Try stegano, then zsteg.", "stegano")
+    assert not lm.has_word("The message is short.", "sage") and lm.has_word("Use Sage to solve it.", "sage")
+    assert lm.has_word("Follow the TCP\n  stream.", "tcp stream")  # letter case and white space aside
+    cases = [recon_case([["png", "image"], ["lsb", "least significant"], ["zsteg", "stegano"]], ["jpeg image"])]
+    with FakeModelServer([text_reply("Files: a PNG image.\nLikely: LSB.\nFirst steps: steganography tools."),
+                          text_reply("Files: a PNG image.\nLikely: LSB.\nFirst steps: zsteg cover.png.")]) as server:
+        (substring,) = run_eval(server.base_url, cases).results
+        (whole,) = run_eval(server.base_url, cases).results
+    assert not substring.correct and substring.missing == ("zsteg / stegano",)
+    assert whole.correct and whole.missing == () and whole.traps_hit == ()
+
+
+def test_a_brief_that_holds_a_trap_is_wrong_and_its_length_is_said():
+    cases = [recon_case([["png"]], ["jpeg image"]), recon_case([["png"]], ["jpeg image"], name="Two")]
+    long = "Files: a PNG. " + "word " * 300
+    with FakeModelServer([text_reply("Files: a PNG, not a JPEG image."), text_reply(long)]) as server:
+        report = run_eval(server.base_url, cases)
+    trapped, wordy = report.results
+    assert not trapped.correct and trapped.traps_hit == ("jpeg image",) and "traps: jpeg image" in trapped.detail
+    assert wordy.correct and wordy.words == 303
+    text = lm.format_scorecard([lm.rules_baseline(cases), report])
+    assert (f"recon length: openai local/m: the longest {len(long.strip()):,} characters, 1 of 2 over the 120 words "
+            "asked, 1 over the run's 1,200-character cap.") in text
+
+
+# --------------------------------------------------------------------------- as a run uses each job
+
+
+def judge_set() -> list[lm.Case]:
+    cue = [("qsstv -i a.wav", "")]  # an action cue: the rules see the lane using SSTV, no alert
+    none = [("strings a.wav", "")]  # no cue: the alert goes up, and a run asks the judge
+    return [judge_case("yes", "sstv", "scan it", cue), judge_case("no", "sstv", "scan it", cue),
+            judge_case("yes", "sstv", "scan it", none), judge_case("yes", "sstv", "scan it", none),
+            judge_case("no", "sstv", "scan it", none)]
+
+
+def test_a_judge_that_always_says_yes_takes_down_every_alert_and_the_wrong_ones_are_counted():
+    cases = judge_set()
+    with FakeModelServer(responder=lambda record: text_reply("yes")) as server:
+        report = run_eval(server.base_url, cases)
+    rules = lm.rules_baseline(cases)
+    assert [r.alert for r in report.results] == [False, False, True, True, True]
+    assert [r.taken_down for r in report.results] == [False, False, True, True, True]  # every alert down
+    assert [r.in_run for r in report.results] == [True, False, True, True, False]
+    assert [r.in_run for r in rules.results] == [True, False, False, False, True]  # the rules alone: the alert stays
+    text = lm.format_scorecard([rules, report])
+    assert lines_of(text, "judge in a run") == ["5", "2/5 40%", "3/5 60%"]
+    assert lines_of(text, "false alerts down") == ["2", "0", "2"]  # alerts on a lane that does follow the hint
+    assert lines_of(text, "true alerts down") == ["1", "0", "1"]  # the wrong one, counted apart
+    assert lines_of(text, "judge") == ["5", "2/5 40%", "3/5 60%"]  # stand-alone: every "yes" is right on 3 of 5
+
+
+def test_a_judge_that_always_says_no_never_raises_an_alert_the_rules_did_not():
+    cases = judge_set()
+    with FakeModelServer(responder=lambda record: text_reply("no")) as server:
+        report = run_eval(server.base_url, cases)
+    rules = lm.rules_baseline(cases)
+    # Where the rules see the technique there is no alert, and a run never asks the judge: its "no" changes nothing.
+    assert [r.in_run for r in report.results] == [r.in_run for r in rules.results] == [True, False, False, False, True]
+    assert not any(r.taken_down for r in report.results)
+    assert [r.correct for r in report.results] == [False, True, False, False, True]  # stand-alone, its "no" is scored
+
+
+def test_a_judge_that_fails_leaves_the_alert_up_in_a_run():
+    cases = judge_set()[2:]
+    with FakeModelServer([error_reply(500, "down"), text_reply("I'm sorry, I can't."), text_reply("yes")]) as server:
+        report = run_eval(server.base_url, cases)
+    assert [r.taken_down for r in report.results] == [False, False, True]
+    assert [r.in_run for r in report.results] == [False, False, False]  # the rules' "no" stands where it failed
+
+
+def test_route_category_in_a_run_uses_the_engine_only_where_the_board_gives_no_known_code():
+    cases = [route_case("Known", "Crypto", ("cry", "modern-crypto", "no")),
+             route_case("Warm", "Warmup", ("osint", "osint-lookup", "no")),
+             route_case("Blank", "", ("for", "network-capture", "no")),
+             route_case("Wrong Board", "misc", ("cry", "modern-crypto", "no"))]
+    answers = {("Known", "category"): "web", ("Warm", "category"): "osint", ("Blank", "category"): "rev",
+               ("Wrong Board", "category"): "cry"}
+    report = evaluate(cases, answers)
+    category = [r for r in report.results if r.question == "category"]
+    assert [r.correct for r in category] == [False, True, False, True]  # stand-alone: the engine's own answers
+    assert [r.in_run for r in category] == [True, True, False, False]  # the board wins where it names a known code
+    rules = lm.rules_baseline(cases)
+    assert [r.in_run for r in rules.results if r.question == "category"] == [True, False, False, False]
+    text = lm.format_scorecard([rules, report])
+    assert lines_of(text, "route category in a run") == ["4", "1/4 25%", "2/4 50%"]
+    assert lines_of(text, "route category") == ["4", "1/4 25%", "2/4 50%"]
+
+
+def test_route_instance_in_a_run_is_the_rule_and_all_three_needs_the_family():
+    cases = [route_case("Echo Oracle", "", ("cry", "modern-crypto", "yes"), description="nc oracle.chal.example.test 4141"),
+             route_case("Front", "web", ("web", "web-request", "yes"), urls=["https://frontdoor.chal.example.test/"]),
+             route_case("Typed", "forensics", ("for", "network-capture", "no"))]
+    answers = {("Echo Oracle", "category"): "cry", ("Echo Oracle", "family"): "modern-crypto",
+               ("Echo Oracle", "instance"): "no", ("Front", "family"): "web-request", ("Front", "instance"): "no",
+               ("Typed", "family"): "image-stego"}
+    report = evaluate(cases, answers)
+    instance = [r for r in report.results if r.question == "instance"]
+    assert [r.correct for r in instance] == [False, False, True]  # the model missed both services
+    assert [r.in_run for r in instance] == [True, True, True]  # the rule finds them: no model is asked in a run
+    rules = lm.rules_baseline(cases)
+    text = lm.format_scorecard([rules, report])
+    assert lines_of(text, "route instance in a run") == ["3", "3/3 100%", "3/3 100%"]
+    assert lines_of(text, "route all three in a run") == ["3", "n/a", "2/3 67%"]  # the rules name no family
+    assert lines_of(text, "route family") == ["3", "n/a", "2/3 67%"]
+
+
+def flag_set() -> list[lm.Case]:
+    return [flag_case("Planted Fake", "stand-in", own_text=True), flag_case("Probe Echo", "stand-in", own_text=False),
+            flag_case("Test Port", "stand-in", own_text=False), flag_case("Live One", "real", own_text=False),
+            flag_case("Live Two", "real", own_text=False), flag_case("Check In", "real", own_text=True)]
+
+
+def test_an_engine_that_always_says_stand_in_holds_every_real_flag_in_the_hold_reading():
+    cases = flag_set()
+    with FakeModelServer(responder=lambda record: text_reply("stand-in")) as server:
+        report = run_eval(server.base_url, cases)
+    assert [r.held for r in report.results] == [True] * 6
+    assert [r.in_run for r in report.results] == [True, True, True, False, False, False]
+    rules = lm.rules_baseline(cases)
+    assert [r.in_run for r in rules.results] == [True, False, False, True, True, False]  # the planted hold alone
+    text = lm.format_scorecard([rules, report])
+    assert lines_of(text, "flagcheck in a run") == ["6", "3/6 50%", "3/6 50%"]
+    assert lines_of(text, "stand-ins held") == ["2", "0", "2"]  # beyond the planted hold
+    assert lines_of(text, "real flags held") == ["2", "0", "2"]  # every real flag it was asked about
+    assert lines_of(text, "stand-ins called real") == ["3", "n/a", "0"]
+
+
+def test_a_flag_check_that_fails_holds_nothing_in_a_run():
+    cases = [flag_case("Probe Echo", "stand-in", own_text=False), flag_case("Live One", "real", own_text=False),
+             flag_case("Odd", "stand-in", own_text=False)]
+    with FakeModelServer([error_reply(500, "down"), text_reply("I'm sorry, I can't help."), text_reply("maybe")]) as server:
+        report = run_eval(server.base_url, cases)
+    assert [r.held for r in report.results] == [False, False, False]  # a failure, a refusal, an answer outside: no hold
+    assert [r.in_run for r in report.results] == [False, True, False]  # each goes as it does today
+
+
+def test_a_stand_in_called_real_is_counted_apart():
+    cases = flag_set()
+    with FakeModelServer(responder=lambda record: text_reply("real")) as server:
+        report = run_eval(server.base_url, cases)
+    text = lm.format_scorecard([lm.rules_baseline(cases), report])
+    assert lines_of(text, "stand-ins called real") == ["3", "n/a", "3"]
+    assert lines_of(text, "flagcheck in a run") == ["6", "3/6 50%", "3/6 50%"]  # the planted one is still held
+
+
+def evaluate_only(cases, jobs, responder_fn) -> lm.EvalReport:
+    """A column from the config: the engine asked only `jobs` (localmodel_cli._Only), over a fake
+    server, exactly as --from-config wraps a per-job engine."""
+    with FakeModelServer(responder=responder_fn) as server:
+        async def go():
+            client = ModelClient(server.base_url, None, max_retries=0, timeout=5.0)
+            engine = localmodel_cli._Only(
+                L.ModelLight("openai", client, "local/m", timeout=5.0, tokens=L.OPENAI_TOKENS, temperature=0.0), jobs)
+            try:
+                return await lm.evaluate_engine(engine, cases)
+            finally:
+                await engine.aclose()
+
+        return asyncio.run(go())
+
+
+def test_the_in_run_sub_rows_read_their_totals_from_a_column_that_does_the_job():
+    # Columns split by job (--from-config): one does the judge, one does route and flagcheck. The
+    # route+flagcheck column has the most in-a-run readings, so the old code read the judge and
+    # flagcheck sub-row case totals from it (it judges nothing: 0) and printed 0 for its own cells
+    # instead of n/a. The totals must come from a column that does the job.
+    routes = [route_case(f"R{i}", "Crypto", ("cry", "modern-crypto", "no")) for i in range(8)]
+    flags = [flag_case("Echo", "stand-in", own_text=False), flag_case("Real", "real", own_text=False)]
+    cases = judge_set() + routes + flags  # 5 judge, 8 route (3 questions each), 2 flagcheck
+
+    def route_and_flag(record):  # answers route by name, every flag "stand-in"
+        user = record["json"]["messages"][1]["content"]
+        if user.startswith("Is the candidate"):
+            return text_reply("stand-in")
+        key = next(k for start, k in QUESTION_OF.items() if user.startswith(start))
+        name = re.search(r"Challenge: (.*?)(?: \(|\n)", inside_fence(user)).group(1)
+        return text_reply({"category": "cry", "family": "modern-crypto", "instance": "no"}[key])
+
+    rules = lm.rules_baseline(cases)
+    judge_col = evaluate_only(cases, ("judge",), lambda record: text_reply("yes"))  # takes every alert down
+    route_flag_col = evaluate_only(cases, ("route", "flagcheck"), route_and_flag)
+    # The route+flagcheck column reads more in-a-run jobs than the rules, so it was the old `first`.
+    reads = lambda rep: sum(r.in_run is not None for r in rep.results)
+    assert reads(route_flag_col) > reads(rules) > reads(judge_col)
+
+    text = lm.format_scorecard([rules, judge_col, route_flag_col])
+    assert lines_of(text, "false alerts down") == ["2", "0", "2", "n/a"]  # cases 2, the judge column took both down
+    assert lines_of(text, "true alerts down") == ["1", "0", "1", "n/a"]  # route+flagcheck judges nothing: n/a
+    assert lines_of(text, "stand-ins held") == ["1", "0", "n/a", "1"]  # judge-only does no flagcheck: n/a
+    assert lines_of(text, "real flags held") == ["1", "0", "n/a", "1"]  # it called the real flag a stand-in
+
+
+# --------------------------------------------------------------------------- option lines, the decider, comparisons
+
+
+def test_an_echoed_option_line_is_its_own_row_and_counts_as_that_option():
+    cases = [route_case("Front", "web", ("web", "web-request", "yes"), urls=["https://front.chal.example.test/"]),
+             route_case("Typed", "forensics", ("for", "network-capture", "no"))]
+    answers = {("Front", "category"): "web: web exploitation: a web application or API",  # right, as a line
+               ("Front", "family"): "image-stego: data hidden in an image: LSB, metadata, PNG chunks, steghide",  # wrong
+               ("Front", "instance"): "yes: it needs a live instance, as the URL shows",  # more than the line
+               ("Typed", "category"): "for", ("Typed", "family"): "network-capture", ("Typed", "instance"): "no"}
+    report = evaluate(cases, answers)
+    by_question = {(r.case, r.question): r for r in report.results}
+    assert by_question[(1, "category")].correct and by_question[(1, "category")].echoed
+    family = by_question[(1, "family")]
+    assert family.echoed and family.answered and not family.correct and family.predicted == "image-stego"
+    instance = by_question[(1, "instance")]
+    assert not instance.echoed and instance.failure == L.OUTSIDE
+    assert report.echoed == 2
+    text = lm.format_scorecard([lm.rules_baseline(cases), report])
+    assert lines_of(text, "option line") == ["-", "2/6 33%"] and lines_of(text, "no answer") == ["-", "1/6 17%"]
+    assert "option line: answers given as one option's whole line as the prompt listed it" in text
+
+
+def test_the_decider_threshold_table_comes_from_one_run(tmp_path):
+    from fake_decider import FakeDeciderServer, picks
+
+    cases = [flag_case("A", "stand-in", own_text=False), flag_case("B", "real", own_text=False),
+             flag_case("C", "real", own_text=False), flag_case("D", "stand-in", own_text=False)]
+    replies = [picks("stand-in", 0.95), picks("stand-in", 0.75), picks("real", 0.55), picks("real", 0.3)]
+    with FakeDeciderServer(replies) as server:
+        result = runner.invoke(mount(), ["eval-local", "--engine", "decider", "--base-url", server.base_url,
+                                         "--cases", str(write_new_cases(tmp_path, cases))])
+        assert len(server.asked()) == 4  # one run: each job asked once, whatever the thresholds read
+    assert result.exit_code == 0, result.output
+    assert "- flagcheck (4 jobs): best guess 2 of 4; at 0.5 2 of 3; at 0.7 1 of 2; at 0.9 1 of 1" in result.output
+    assert lines_of(result.output, "unsure") == ["-", "3/4 75%"]  # at the column's own 0.9
+
+
+def write_new_cases(folder: Path, cases) -> Path:
+    """`cases` as a case file in `folder`, in eval-local's format."""
+    path = folder / "cases.jsonl"
+    rows = []
+    for c in cases:
+        row = {"kind": c.kind, "input": c.input, "expected": c.expected}
+        if c.required:
+            row["required"] = [list(g) for g in c.required]
+        if c.traps:
+            row["traps"] = list(c.traps)
+        if c.own_text is not None:
+            row["own_text"] = c.own_text
+        if c.ident:
+            row["id"] = c.ident
+        rows.append(json.dumps(row))
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("only_one, only_other, p", [(6, 0, 0.03125), (5, 0, 0.0625), (9, 1, 0.021484375),
+                                                      (0, 0, 1.0), (3, 3, 1.0), (0, 9, 0.00390625)])
+def test_mcnemar_is_the_exact_two_sided_binomial(only_one, only_other, p):
+    assert lm.mcnemar(only_one, only_other) == pytest.approx(p)
+
+
+def test_each_engine_is_compared_with_the_rules_and_the_best_column():
+    cases = judge_set() + [judge_case("yes", "sstv", "scan it", [("strings b.wav", "")]) for _ in range(5)]
+    with FakeModelServer(responder=lambda record: text_reply("yes")) as server:
+        yes = run_eval(server.base_url, cases)
+    with FakeModelServer(responder=lambda record: text_reply("no")) as server:
+        no = run_eval(server.base_url, cases)
+    no = lm.EvalReport("openai never/m", no.results, no.tokens, no.dollars, no.engine)
+    text = lm.format_scorecard([lm.rules_baseline(cases), yes, no])
+    # in a run: the rules right on 2 of 10; "yes" takes every alert down (7 right that the rules miss, 1 wrong)
+    assert ("- judge in a run: openai local/m 8/10 against the rules 2/10: 7 right only for it, 1 only for the other; "
+            "p = 0.070: this set cannot tell them apart") in text
+    assert ("- judge in a run: openai never/m 2/10 against the rules 2/10: 0 right only for it, 0 only for the other; "
+            "p = 1.000: this set cannot tell them apart") in text
+    assert ("- judge in a run: openai never/m 2/10 against openai local/m (the best column) 8/10: 1 right only for it, "
+            "7 only for the other; p = 0.070: this set cannot tell them apart") in text
+    assert "openai local/m 8/10 against openai local/m" not in text  # the best column is not compared with itself
+    more = cases + [judge_case("yes", "sstv", "scan it", [("strings c.wav", "")]) for _ in range(3)]
+    with FakeModelServer(responder=lambda record: text_reply("yes")) as server:
+        better = run_eval(server.base_url, more)
+    text = lm.format_scorecard([lm.rules_baseline(more), better])
+    assert "11/13 against the rules 2/13: 10 right only for it, 1 only for the other; p = 0.012: better on this set" in text
+
+
+# --------------------------------------------------------------------------- the CLI: --jobs, --from-config, --show-misses
+
+
+def test_cli_jobs_picks_the_jobs_and_asks_nothing_else(tmp_path):
+    cases = write_new_cases(tmp_path, [hint_case("sstv", "slow scan tv"), flag_case("Live One", "real", own_text=False),
+                                       route_case("Front", "web", ("web", "web-request", "yes"))])
+    with FakeModelServer(responder=lambda record: text_reply("real")) as server:
+        result = invoke(server.base_url, cases, "--jobs", "flagcheck")
+        asked = len(server.chats())
+    assert result.exit_code == 0, result.output
+    assert asked == 1 and "eval-local: 1 cases (flagcheck 1)" in result.output
+    bad = invoke("http://127.0.0.1:9/v1", cases, "--jobs", "flagcheck,triage")
+    assert bad.exit_code == 2 and "--jobs takes job names separated by commas" in bad.output
+    none = invoke("http://127.0.0.1:9/v1", cases, "--jobs", "recon")
+    assert none.exit_code == 2 and "the case set has no recon cases" in none.output
+
+
+def test_cli_a_paid_engine_says_a_route_case_is_three_calls(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_TEST_ANTHROPIC_KEY", "fake-anthropic-key-0451")
+    cases = write_new_cases(tmp_path, [route_case("Front", "web", ("web", "web-request", "yes")),
+                                       recon_case([["png"]])])
+    with FakeAnthropicServer([claude_says("web"), claude_says("web-request"), claude_says("yes"),
+                              claude_says("Files: a PNG image.")]) as claude:
+        result = runner.invoke(mount(), ["eval-local", "--engine", "anthropic", "--model", "claude-haiku-5-5",
+                                         "--base-url", claude.base_url, "--key-env", "FLIGHTDECK_TEST_ANTHROPIC_KEY",
+                                         "--cases", str(cases)])
+        assert len(claude.requests) == 4
+    assert result.exit_code == 0, result.output
+    assert "at most 4 calls, one per job, three for a route case (no retries), each with at most 1024 output tokens" in result.output
+
+
+def test_cli_a_decider_says_what_it_asks_and_what_is_n_a(tmp_path):
+    from fake_decider import FakeDeciderServer, picks
+
+    cases = write_new_cases(tmp_path, [route_case("Front", "web", ("web", "web-request", "yes")),
+                                       flag_case("Live One", "real", own_text=False), recon_case([["png"]])])
+    with FakeDeciderServer([picks("web", 0.95), picks("web-request", 0.95), picks("yes", 0.95), picks("real", 0.95)]) as server:
+        result = runner.invoke(mount(), ["eval-local", "--engine", "decider", "--base-url", server.base_url,
+                                         "--cases", str(cases)])
+        assert len(server.asked()) == 4
+    assert result.exit_code == 0, result.output
+    assert ("at most 4 calls to the decision model server, one per flagcheck case, three per route case (no retries); "
+            "its 1 recon case is n/a: a decision model writes no text") in result.output
+
+
+def test_cli_show_misses_lists_what_each_column_got_wrong(tmp_path):
+    cases = write_new_cases(tmp_path, [recon_case([["png"], ["zsteg", "stegano"]]),
+                                       flag_case("Live One", "real", own_text=False)])
+    with FakeModelServer([text_reply("Files: a PNG.\nFirst steps: steganography tools."), text_reply("stand-in")]) as server:
+        result = invoke(server.base_url, cases, "--show-misses")
+    assert result.exit_code == 0, result.output
+    assert "misses (what each column got wrong, as it said it; replies are untrusted text):" in result.output
+    assert ("case 1 (recon): expected png; zsteg / stegano; missing: zsteg / stegano; it said: Files: a PNG. "
+            "⏎ First steps: steganography tools.") in result.output
+    assert "case 2 (flagcheck): expected real; answered stand-in" in result.output
+
+
+def config_with(tmp_path, light: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text('[models]\nladder = ["vendor/small"]\n' + light, encoding="utf-8")
+    return path
+
+
+def test_cli_from_config_scores_each_job_with_the_engine_the_config_gives_it(tmp_path, monkeypatch):
+    cases = write_new_cases(tmp_path, [hint_case("sstv", "slow scan tv"),
+                                       judge_case("yes", "sstv", "scan it", [("strings a.wav", "")]),
+                                       flag_case("Live One", "real", own_text=False),
+                                       route_case("Front", "web", ("web", "web-request", "yes"))])
+    with FakeModelServer(responder=lambda record: text_reply("yes")) as judge, \
+            FakeModelServer(responder=lambda record: text_reply("real")) as checker:
+        light = (f'[light]\nengine = "openai"\nmodel = "judge/m"\nbase_url = "{judge.base_url}"\nkey_env = ""\n'
+                 'jobs = ["judge", "flagcheck"]\n'
+                 f'[light.flagcheck]\nengine = "openai"\nmodel = "flag/m"\nbase_url = "{checker.base_url}"\nkey_env = ""\n')
+        monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config_with(tmp_path, light)))
+        result = runner.invoke(mount(), ["eval-local", "--from-config", "--cases", str(cases)])
+        judged = [r["json"]["messages"][1]["content"] for r in judge.chats()]
+        checked = [r["json"]["messages"][1]["content"] for r in checker.chats()]
+    assert result.exit_code == 0, result.output
+    assert len(judged) == 2 and len(checked) == 1  # [light] does the judge and hint (eval-local's); flagcheck its own
+    assert all("Is the candidate" in user for user in checked)
+    rows = lines_of(result.output, "cases")  # the header row: the rules, then one column per engine
+    assert rows == ["rules", "openai judge/m (thinking off)", "openai flag/m (thinking off)"]
+    assert lines_of(result.output, "flagcheck") == ["1", "n/a", "n/a", "1/1 100%"]
+    assert lines_of(result.output, "route category") == ["1", "1/1 100%", "n/a", "n/a"]  # route is not in jobs
+    assert "does judge and hint" not in result.output and "does hint and judge" in result.output
+
+
+def test_cli_from_config_takes_no_engine_options_and_needs_a_config(tmp_path, monkeypatch):
+    cases = write_new_cases(tmp_path, [hint_case("sstv", "slow scan tv")])
+    result = runner.invoke(mount(), ["eval-local", "--from-config", "--model", "m", "--cases", str(cases)])
+    assert result.exit_code == 2 and "--from-config takes each engine from your config: drop --model" in result.output
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "missing.toml"))
+    result = runner.invoke(mount(), ["eval-local", "--from-config", "--cases", str(cases)])
+    assert result.exit_code == 2 and "--from-config:" in result.output and "no config file yet" in result.output
+
+
+def test_cli_from_config_reads_each_jobs_own_key_and_never_shows_it(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLIGHTDECK_TEST_FLAG_KEY", raising=False)
+    cases = write_new_cases(tmp_path, [flag_case("Live One", "real", own_text=False)])
+    light = ('[light]\njobs = ["flagcheck"]\n[light.flagcheck]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\n'
+             'key_env = "FLIGHTDECK_TEST_FLAG_KEY"\n')
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config_with(tmp_path, light)))
+    result = runner.invoke(mount(), ["eval-local", "--from-config", "--cases", str(cases)])
+    assert result.exit_code == 2
+    assert "light.flagcheck.key_env names the variable FLIGHTDECK_TEST_FLAG_KEY, which is not set" in result.output

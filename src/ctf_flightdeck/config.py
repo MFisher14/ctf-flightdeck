@@ -26,6 +26,15 @@ server: a decision model, with a confidence threshold and no key). Its key, like
 read from the variable its key_env names, by light_key(). With the openai engine, thinking
 says whether the model may reason before it answers: see light_thinking().
 
+[light] jobs lists the jobs a run gives the light model (RUN_JOBS: judge, route, recon,
+flagcheck); without it, the hint judge alone, as before jobs existed. A job may have an engine
+of its own, [light.<job>] (any of LIGHT_JOBS: hint and summary are for eval-local only): a
+whole engine spec that must name its engine and inherits nothing from [light], so a key for
+one API never meets another's server. light_for() gives the spec a job uses, light_key() its
+key. A job whose engine cannot do it (JOB_ENGINES), a table for a run job that jobs leaves out
+(it would look on and be off), and recon or flagcheck with no model for them are errors, each
+naming its key.
+
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
 fails loudly instead of quietly leaving the default in place. Every error names the file
@@ -68,6 +77,29 @@ _LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submi
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
+LIGHT_JOBS = ("hint", "judge", "summary", "route", "recon", "flagcheck")  # each may have a [light.<job>] table
+RUN_JOBS = ("judge", "route", "recon", "flagcheck")  # what [light] jobs may list: the jobs a run gives the light model
+EVAL_JOBS = ("hint", "summary")  # measured by eval-local, never used in a run
+DEFAULT_JOBS = ("judge",)  # [light] jobs when the table does not set it: the hint judge alone
+# The engines that can do each job, from the function eval of 2026-11-11: the rules answer the judge
+# and route's category and instance questions, but write no brief and check no flag; Cactus Needle
+# called no tool on half the route questions; the decider was near chance on flags.
+JOB_ENGINES = {
+    "hint": LIGHT_ENGINES,
+    "judge": LIGHT_ENGINES,
+    "summary": MODEL_ENGINES,
+    "route": ("rules", "decider", "openai", "anthropic"),
+    "recon": MODEL_ENGINES,
+    "flagcheck": MODEL_ENGINES,
+}
+_CANNOT = {  # why an engine cannot do a job, after "<engine> cannot do <job>: "
+    "summary": "a summary is text, which only a model writes (openai or anthropic)",
+    "route": "Cactus Needle called no tool on half the route questions when measured (route takes rules, decider, "
+             "openai or anthropic)",
+    "recon": "a brief is text, which only a model writes (openai or anthropic)",
+    "flagcheck": "the rules check no flag (the planted-flag hold is on whatever the light model), and Cactus Needle and "
+                 "the decider were near chance on flags when measured (flagcheck takes openai or anthropic)",
+}
 LIGHT_TIMEOUT = 30.0  # seconds a light job may take, all its tries; then the rules' answer stands
 DECIDER_URL = "http://127.0.0.1:8000"  # `strands-decider serve MODEL --port 8000`, its README's example
 # The decider's confidence below which its answer is "unsure" and the rules' answer stands. 0.9 is
@@ -153,6 +185,19 @@ class Config:
     agents: dict[str, tuple[str, ...]] = field(default_factory=dict)  # coding-agent CLI -> its model ladder, weakest first
     fallback: FallbackConfig | None = None  # [fallback], when the config has one
     light: LightConfig = LightConfig()  # [light]; rules only when the config has none
+    light_jobs: tuple[str, ...] = DEFAULT_JOBS  # [light] jobs: the jobs a run gives the light model
+    light_tables: dict[str, LightConfig] = field(default_factory=dict)  # [light.<job>]: a job's own engine
+
+
+@dataclass(frozen=True)
+class LightSpec:
+    """One distinct light engine spec of a config, and where it is used: `jobs`, the jobs that
+    use it (a run's, from [light] jobs, and hint or summary for eval-local), and `tables`, the
+    tables that set it ("light", "light.flagcheck", ...)."""
+
+    config: LightConfig
+    jobs: tuple[str, ...]
+    tables: tuple[str, ...]
 
 
 class ConfigError(Exception):
@@ -189,6 +234,7 @@ def _config(path: Path, doc: dict) -> Config:
     _known(path, (), doc, _TABLES)
     ladder = _ladder(path, _table(path, doc, "models"))
     agents = _agents(path, _table(path, doc, "agents"))  # before [prices], which may name their models
+    light, jobs, tables = _light_tables(path, _table(path, doc, "light"))
     return Config(
         api=_api(path, _table(path, doc, "api"), ladder),
         models=ladder,
@@ -199,7 +245,9 @@ def _config(path: Path, doc: dict) -> Config:
         l1=_l1(path, _table(path, doc, "l1")),
         agents=agents,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
-        light=_light(path, _table(path, doc, "light")),
+        light=light,
+        light_jobs=jobs,
+        light_tables=tables,
     )
 
 
@@ -226,13 +274,40 @@ def fallback_key(config: Config) -> str | None:
     return _read_key(config, "fallback", config.fallback.key_env, "or remove [fallback] from the config")
 
 
-def light_key(config: Config) -> str | None:
-    """The [light] API's key, read as api_key() reads the [api] one; None for an engine that
-    takes no key (rules, cactus) or a key_env of ""."""
-    light = config.light
+def light_for(config: Config, job: str) -> LightConfig:
+    """The engine spec `job` uses: its own [light.<job>] table, else [light]. (Whether a run
+    gives the job the light model at all is [light] jobs: config.light_jobs.)"""
+    if job not in LIGHT_JOBS:
+        raise ValueError(f"unknown light job {job!r}: one of {', '.join(LIGHT_JOBS)}")
+    return config.light_tables.get(job, config.light)
+
+
+def light_key(config: Config, job: str | None = None) -> str | None:
+    """The key of the engine `job` uses (light_for), or of [light]'s when `job` is None, read
+    as api_key() reads the [api] one; None for an engine that takes no key (rules, cactus,
+    decider) or a key_env of "". An error names the table the key_env is in."""
+    light = config.light if job is None else light_for(config, job)
     if light.engine not in MODEL_ENGINES:
         return None
+    if job is not None and job in config.light_tables:
+        # Removing the table is the always-valid escape: a run job taken out of [light] jobs while
+        # its [light.<job>] table stays is itself an error (_check_jobs), so name the table too.
+        otherwise = f"or remove [light.{job}]" if job in EVAL_JOBS else f'or take "{job}" out of [light] jobs and remove [light.{job}]'
+        return _read_key(config, f"light.{job}", light.key_env, otherwise)
     return _read_key(config, "light", light.key_env, 'or set [light] engine = "rules"')
+
+
+def light_specs(config: Config) -> list[LightSpec]:
+    """Each distinct engine spec of [light] and its job tables, [light]'s first, with the jobs
+    that use it: [light]'s by each job in [light] jobs with no table of its own, a table's by
+    its job. A spec set the same way in two tables is one spec, used by both their jobs."""
+    found: dict[LightConfig, tuple[list[str], list[str]]] = {}
+    found[config.light] = ([job for job in config.light_jobs if job not in config.light_tables], ["light"])
+    for job, spec in config.light_tables.items():
+        jobs, tables = found.setdefault(spec, ([], []))
+        jobs.append(job)
+        tables.append(f"light.{job}")
+    return [LightSpec(spec, tuple(jobs), tuple(tables)) for spec, (jobs, tables) in found.items()]
 
 
 def lane_max_tokens(provider: str, base_url: str, max_tokens: int | None) -> int | None:
@@ -392,6 +467,20 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # an answer is unsure and the rules' answer stands). No key: the server is your own process.
 # For any engine:
 #   timeout = 30                              # seconds a job may take; then the rules' answer stands
+# jobs: the jobs a run gives the light model. Default ["judge"], the hint judge alone. The others:
+# "route" (a challenge's category where the board names none, and the specialist it suits), "recon"
+# (a first look at the handout for the lane's opening brief) and "flagcheck" (a check of a flag
+# before it is submitted without you, under submit "auto": it can only hold a flag for you, never
+# submit one). The rules come first in every job and the light model only advises. recon and
+# flagcheck need a model (openai or anthropic); route takes rules, decider, openai or anthropic.
+#   jobs = ["judge", "flagcheck"]
+# A job can have an engine of its own, [light.<job>]: a whole engine spec, as above, that inherits
+# nothing from [light] (so the key for one API never goes to another's server). Its job must be in
+# jobs. For example, Claude for flagcheck with an open-weight model on this machine for the rest:
+#   [light.flagcheck]
+#     engine = "anthropic"
+#     model = "claude-haiku-5-5"
+#     key_env = "ANTHROPIC_API_KEY"
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -522,88 +611,165 @@ def _fast(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tu
     return tuple(value)
 
 
-def _light(path: Path, table: dict) -> LightConfig:
-    """[light]: the engine, and for a model engine its model, endpoint, key variable and price."""
-    _known(path, ("light",), table, _LIGHT_KEYS)
-    engine = _choice(path, table, ("light", "engine"), "rules", LIGHT_ENGINES)
+def _light_tables(path: Path, table: dict) -> tuple[LightConfig, tuple[str, ...], dict[str, LightConfig]]:
+    """[light], its jobs and its job tables ([light.<job>]), checked against each other."""
+    known = (*_LIGHT_KEYS, "jobs", *LIGHT_JOBS)
+    for key, value in table.items():
+        if key not in known and isinstance(value, dict):
+            raise ConfigError(f"{path}: unknown table [{_key('light', key)}]: a job's own engine goes in [light.<job>], "
+                              f"for one of the jobs {', '.join(LIGHT_JOBS)}")
+    _known(path, ("light",), table, known)
+    light = _light(path, {key: value for key, value in table.items() if key in _LIGHT_KEYS}, ("light",))
+    jobs = _jobs(path, table)
+    tables: dict[str, LightConfig] = {}
+    for job in LIGHT_JOBS:
+        if job not in table:
+            continue
+        where = ("light", job)
+        sub = table[job]
+        if not isinstance(sub, dict):
+            raise _error(path, where, f"must be a table ([light.{job}]): {job}'s own engine{_got(sub)}")
+        if "jobs" in sub:
+            raise _error(path, (*where, "jobs"), "is set in [light] only: it lists the jobs of every engine")
+        for key, value in sub.items():
+            if key not in _LIGHT_KEYS and isinstance(value, dict):
+                raise ConfigError(f"{path}: unknown table [{_key(*where, key)}]: a job's table holds one engine spec, "
+                                  f"with the keys {', '.join(_LIGHT_KEYS)}")
+        _known(path, where, sub, _LIGHT_KEYS)
+        if "engine" not in sub:
+            raise _error(path, (*where, "engine"), f"is required: [light.{job}] is a whole engine spec of its own and "
+                                                   "inherits nothing from [light]")
+        tables[job] = _light(path, sub, where)
+    _check_jobs(path, light, jobs, tables)
+    return light, jobs, tables
+
+
+def _jobs(path: Path, table: dict) -> tuple[str, ...]:
+    """[light] jobs: the jobs a run gives the light model, each once; DEFAULT_JOBS when absent."""
+    if "jobs" not in table:
+        return DEFAULT_JOBS
+    listed = ", ".join(RUN_JOBS)
+    value = table["jobs"]
+    if not isinstance(value, list):
+        raise _error(path, ("light", "jobs"), f"must be a list of the jobs a run gives the light model, from {listed}"
+                                              f"{_got(value)}")
+    seen: dict[str, int] = {}
+    for i, job in enumerate(value):
+        key = f"light.jobs[{i}]"
+        if not isinstance(job, str):
+            raise ConfigError(f"{path}: {key} must be the name of a job, one of {listed}{_got(job)}")
+        if job in EVAL_JOBS:
+            raise ConfigError(f"{path}: {key} is {job}: measured by eval-local, not used in a run (a run's jobs are "
+                              f"{listed})")
+        if job not in RUN_JOBS:
+            raise ConfigError(f"{path}: {key} is not a job a run gives the light model: one of {listed}")
+        if job in seen:
+            raise ConfigError(f"{path}: {key} repeats light.jobs[{seen[job]}]; each job is listed once")
+        seen[job] = i
+    return tuple(value)
+
+
+def _check_jobs(path: Path, light: LightConfig, jobs: tuple[str, ...], tables: dict[str, LightConfig]) -> None:
+    """Every job table is for a job that is on (a run job must be in jobs), and every job's
+    engine can do it: a job without a table of its own uses [light]'s."""
+    for job, spec in tables.items():
+        if job in RUN_JOBS and job not in jobs:
+            raise _error(path, ("light", job), f'is {job}\'s engine, but light.jobs does not list "{job}", so it would look '
+                                               f'on and be off: add "{job}" to light.jobs, or remove [light.{job}]')
+        if spec.engine not in JOB_ENGINES[job]:
+            raise _error(path, ("light", job, "engine"), f'is "{spec.engine}", which cannot do {job}: {_CANNOT[job]}')
+    for i, job in enumerate(jobs):
+        if job in tables or light.engine in JOB_ENGINES[job]:
+            continue
+        if light.engine == "rules":
+            raise ConfigError(f"{path}: light.jobs[{i}] is {job}, which needs a model: {_CANNOT[job]}. Name one in "
+                              f"[light], or give {job} its own [light.{job}] table")
+        raise ConfigError(f'{path}: light.jobs[{i}] is {job}, but [light]\'s engine "{light.engine}" cannot do it: '
+                          f"{_CANNOT[job]}. Give {job} its own [light.{job}] table")
+
+
+def _light(path: Path, table: dict, where: tuple[str, ...] = ("light",)) -> LightConfig:
+    """One engine spec, [light]'s or a job table's (`where` is its key path, which every error
+    names): the engine, and for a model engine its model, endpoint, key variable and price."""
+    engine = _choice(path, table, (*where, "engine"), "rules", LIGHT_ENGINES)
     timeout = table.get("timeout", LIGHT_TIMEOUT)
     if not _is_number(timeout) or not math.isfinite(timeout) or timeout <= 0:
-        raise _error(path, ("light", "timeout"), f"must be a positive number of seconds{_got(timeout)}")
+        raise _error(path, (*where, "timeout"), f"must be a positive number of seconds{_got(timeout)}")
     thinking = table.get("thinking")
     if "thinking" in table and engine != "openai":
-        raise _error(path, ("light", "thinking"), f'is for the openai engine (a model on an OpenAI-compatible server), not "{engine}"')
+        raise _error(path, (*where, "thinking"), f'is for the openai engine (a model on an OpenAI-compatible server), not "{engine}"')
     if "thinking" in table and not isinstance(thinking, bool):
-        raise _error(path, ("light", "thinking"), f"must be true or false: whether the model may reason before it answers{_got(thinking)}")
+        raise _error(path, (*where, "thinking"), f"must be true or false: whether the model may reason before it answers{_got(thinking)}")
     if "threshold" in table and engine != "decider":
-        raise _error(path, ("light", "threshold"), f'is for the decider engine, not "{engine}"')
+        raise _error(path, (*where, "threshold"), f'is for the decider engine, not "{engine}"')
     if engine == "decider":
-        return _decider(path, table, float(timeout))
+        return _decider(path, table, float(timeout), where)
     if engine not in MODEL_ENGINES:
         for key in ("model", "base_url", "key_env", "price"):
             if key in table:
                 which = "openai, anthropic and decider" if key in ("model", "base_url") else "openai and anthropic"
-                raise _error(path, ("light", key), f'is for the {which} engines, not "{engine}"')
+                raise _error(path, (*where, key), f'is for the {which} engines, not "{engine}"')
         return LightConfig(engine=engine, timeout=float(timeout))
     example = "for example claude-haiku-5-5" if engine == "anthropic" else "the name your server gives the model"
     if "model" not in table:
-        raise _error(path, ("light", "model"), f"is required for the {engine} engine: the model id ({example})")
-    model = _string(path, table, ("light", "model"), "")
+        raise _error(path, (*where, "model"), f"is required for the {engine} engine: the model id ({example})")
+    model = _string(path, table, (*where, "model"), "")
     if model != model.strip() or not _plain(model):
-        raise _error(path, ("light", "model"), "must be a model id: no spaces or control characters")
+        raise _error(path, (*where, "model"), "must be a model id: no spaces or control characters")
     if engine == "openai":
         for key in ("base_url", "key_env"):
             if key not in table:
                 raise _error(
-                    path, ("light", key),
+                    path, (*where, key),
                     f'is required for the openai engine (it has no default): for a server on this machine, base_url = '
                     f'"{OLLAMA_URL}" (Ollama) or "{MLX_URL}" (an MLX server), and key_env = ""',
                 )
     endpoint = {key: table[key] for key in ("base_url", "key_env") if key in table}
-    _, base_url, key_env = _endpoint(path, "light", {"provider": engine, **endpoint})
+    _, base_url, key_env = _endpoint(path, where, {"provider": engine, **endpoint})
     price = None
     if "price" in table:
         entry = table["price"]
         if not isinstance(entry, dict):
-            raise _error(path, ("light", "price"), f"must be a table of dollars per million tokens (input, output){_got(entry)}")
-        price = _price(path, ("light", "price"), entry)
+            raise _error(path, (*where, "price"), f"must be a table of dollars per million tokens (input, output){_got(entry)}")
+        price = _price(path, (*where, "price"), entry)
     return LightConfig(engine=engine, model=model, base_url=base_url, key_env=key_env, timeout=float(timeout), price=price,
                        thinking=thinking)
 
 
-def _decider(path: Path, table: dict, timeout: float) -> LightConfig:
-    """[light] engine = "decider": a Strands Decider server's address (required), the model it
-    serves (optional, checked against what the server reports) and the confidence threshold. No
-    key and no price: the server is the player's own process, with no authentication."""
+def _decider(path: Path, table: dict, timeout: float, where: tuple[str, ...] = ("light",)) -> LightConfig:
+    """engine = "decider": a Strands Decider server's address (required), the model it serves
+    (optional, checked against what the server reports) and the confidence threshold. No key
+    and no price: the server is the player's own process, with no authentication."""
     from .light import DECIDER_PATH
 
     for key in ("key_env", "price"):
         if key in table:
-            raise _error(path, ("light", key), "is not for the decider engine: a decision model server is your own "
-                                               "process, with no key and no bill per call")
+            raise _error(path, (*where, key), "is not for the decider engine: a decision model server is your own "
+                                              "process, with no key and no bill per call")
     if "base_url" not in table:
-        raise _error(path, ("light", "base_url"), f'is required for the decider engine: the address its server listens '
-                                                  f'on, for one on this machine base_url = "{DECIDER_URL}"')
-    base_url = _string(path, table, ("light", "base_url"), "")
+        raise _error(path, (*where, "base_url"), f'is required for the decider engine: the address its server listens '
+                                                 f'on, for one on this machine base_url = "{DECIDER_URL}"')
+    base_url = _string(path, table, (*where, "base_url"), "")
     if not _plain(base_url):
-        raise _error(path, ("light", "base_url"), "must not contain spaces or control characters")
+        raise _error(path, (*where, "base_url"), "must not contain spaces or control characters")
     url = _split_url(base_url)
     if url is None or url.scheme not in ("http", "https") or not url.hostname:
-        raise _error(path, ("light", "base_url"), f'must start with http:// or https:// and name a host, like "{DECIDER_URL}"')
+        raise _error(path, (*where, "base_url"), f'must start with http:// or https:// and name a host, like "{DECIDER_URL}"')
     if url.username is not None or url.password is not None:
-        raise _error(path, ("light", "base_url"), "must not carry a user name or password: a decision model server takes none")
+        raise _error(path, (*where, "base_url"), "must not carry a user name or password: a decision model server takes none")
     if url.path.rstrip("/").endswith(("/v1", DECIDER_PATH)):
-        raise _error(path, ("light", "base_url"), f'is the server\'s address without {DECIDER_PATH}, which flightdeck '
-                                                  f'adds itself: like "{DECIDER_URL}"')
+        raise _error(path, (*where, "base_url"), f'is the server\'s address without {DECIDER_PATH}, which flightdeck '
+                                                 f'adds itself: like "{DECIDER_URL}"')
     model = ""
     if "model" in table:
-        model = _string(path, table, ("light", "model"), "")
+        model = _string(path, table, (*where, "model"), "")
         if model != model.strip() or not _plain(model):
-            raise _error(path, ("light", "model"), "must be a model id: no spaces or control characters")
+            raise _error(path, (*where, "model"), "must be a model id: no spaces or control characters")
     threshold = table.get("threshold", DECIDER_THRESHOLD)
     if not _is_number(threshold) or not math.isfinite(threshold) or not 0 < threshold <= 1:
-        raise _error(path, ("light", "threshold"), "must be a number above 0 and at most 1: the confidence below which "
-                                                   f"the decider's answer is unsure (default {DECIDER_THRESHOLD:g})"
-                                                   f"{_got(threshold)}")
+        raise _error(path, (*where, "threshold"), "must be a number above 0 and at most 1: the confidence below which "
+                                                  f"the decider's answer is unsure (default {DECIDER_THRESHOLD:g})"
+                                                  f"{_got(threshold)}")
     return LightConfig(engine="decider", model=model, base_url=base_url, timeout=timeout, threshold=float(threshold))
 
 
@@ -633,30 +799,33 @@ def _fallback(path: Path, table: dict, ladder: tuple[str, ...]) -> FallbackConfi
                           timeout=_try_timeout(path, "fallback", table), max_tokens=_max_tokens(path, "fallback", table))
 
 
-def _endpoint(path: Path, name: str, table: dict) -> tuple[str, str, str]:
-    """(provider, base_url, key_env) of [api] or [fallback], with the provider's defaults."""
-    provider = _choice(path, table, (name, "provider"), "openai", API_PROVIDERS)
+def _endpoint(path: Path, where: str | tuple[str, ...], table: dict) -> tuple[str, str, str]:
+    """(provider, base_url, key_env) of [api], [fallback] or a light engine spec (`where`: the
+    table's name, or its key path), with the provider's defaults."""
+    where = (where,) if isinstance(where, str) else where
+    name = _key(*where)
+    provider = _choice(path, table, (*where, "provider"), "openai", API_PROVIDERS)
     default_url, default_env = PROVIDER_DEFAULTS[provider]
-    base_url = _string(path, table, (name, "base_url"), default_url)
+    base_url = _string(path, table, (*where, "base_url"), default_url)
     if not _plain(base_url):  # urlsplit would quietly drop them, and the client would not
-        raise _error(path, (name, "base_url"), "must not contain spaces or control characters")
+        raise _error(path, (*where, "base_url"), "must not contain spaces or control characters")
     url = _split_url(base_url)
     if url is None or url.scheme not in ("http", "https") or not url.hostname:
-        raise _error(path, (name, "base_url"), "must start with http:// or https:// and name a host")
+        raise _error(path, (*where, "base_url"), "must start with http:// or https:// and name a host")
     if url.username is not None or url.password is not None:
         raise _error(
             path,
-            (name, "base_url"),
+            (*where, "base_url"),
             f"must not carry a user name or password; the key goes in the environment variable {name}.key_env names",
         )
     if provider == "anthropic" and url.path.rstrip("/").endswith("/v1"):
-        raise _error(path, (name, "base_url"), "ends in /v1, but the Anthropic SDK adds /v1/messages itself: drop the /v1")
-    key_env = _string(path, table, (name, "key_env"), default_env, empty=True)
+        raise _error(path, (*where, "base_url"), "ends in /v1, but the Anthropic SDK adds /v1/messages itself: drop the /v1")
+    key_env = _string(path, table, (*where, "key_env"), default_env, empty=True)
     if key_env and not _is_env_name(key_env):
-        raise _error(path, (name, "key_env"), _NOT_A_NAME)
+        raise _error(path, (*where, "key_env"), _NOT_A_NAME)
     if provider == "anthropic" and not key_env:
         raise _error(
-            path, (name, "key_env"),
+            path, (*where, "key_env"),
             "is empty, but the Anthropic API needs a key: name the variable that holds it, like ANTHROPIC_API_KEY",
         )
     return provider, base_url, key_env
@@ -809,8 +978,8 @@ def _known(path: Path, where: tuple[str, ...], table: dict, known: tuple[str, ..
     raise ConfigError(f"{path}: unknown {names} (the known tables are {', '.join(f'[{t}]' for t in known)})")
 
 
-def _string(path: Path, table: dict, key: tuple[str, str], default: str, *, empty: bool = False) -> str:
-    value = table.get(key[1], default)
+def _string(path: Path, table: dict, key: tuple[str, ...], default: str, *, empty: bool = False) -> str:
+    value = table.get(key[-1], default)
     if not isinstance(value, str):
         raise _error(path, key, f"must be a string{_got(value)}")
     if not empty and not value.strip():
@@ -818,8 +987,8 @@ def _string(path: Path, table: dict, key: tuple[str, str], default: str, *, empt
     return value
 
 
-def _choice(path: Path, table: dict, key: tuple[str, str], default: str, choices: tuple[str, ...]) -> str:
-    value = table.get(key[1], default)
+def _choice(path: Path, table: dict, key: tuple[str, ...], default: str, choices: tuple[str, ...]) -> str:
+    value = table.get(key[-1], default)
     if not isinstance(value, str) or value not in choices:
         options = " or ".join(f'"{choice}"' for choice in choices)
         raise _error(path, key, f"must be {options}{_got(value)}")

@@ -18,6 +18,7 @@ import pytest
 from ctf_flightdeck import light as L
 from ctf_flightdeck.agent.anthropic_client import AnthropicClient
 from ctf_flightdeck.agent.client import ModelClient
+from ctf_flightdeck.agent.prompts import FENCE_OPEN
 from ctf_flightdeck.config import LightConfig, load_config
 from ctf_flightdeck.detect.hints import lexicon
 from ctf_flightdeck.detect.judge import HintJudge, from_config
@@ -225,6 +226,29 @@ def test_the_judge_and_the_summary_jobs():
     assert summary.choice is None and summary.ok and "SSTV" in summary.text
 
 
+def test_the_hint_prompt_lists_the_options_and_asks_for_the_id_alone():
+    # The hint job (eval-local) asks for the id alone, like route and flagcheck: the same wording
+    # the player decided on, tested here too, not only on the route prompt.
+    with FakeModelServer([text_reply("sstv")]) as server:
+        ask(local(server))
+        user = server.requests[0]["json"]["messages"][1]["content"]
+    before = user.split(FENCE_OPEN, 1)[0]  # the instruction, before the fenced description
+    assert L.ID_ALONE in before and "the id alone (the word before the colon)" in before
+    assert f"- {L.listed(CHOICES[0])}" in before  # the options, one "- id: description" line each
+
+
+def test_an_echoed_hint_option_line_is_read_as_its_technique():
+    # A reply that is exactly one option's whole line is read as that option on the hint job too
+    # (ask_technique lists the options, so it reads them back): without it phi4-mini's echoed
+    # "jwt: JWT tampering" would read as no answer again.
+    line = L.listed(CHOICES[0])  # "id: description", as the hint prompt lists it
+    with FakeModelServer([text_reply(line), text_reply(f"{line}, probably")]) as server:
+        echoed = ask(local(server))
+        more = ask(local(server))
+    assert echoed.choice == CHOICES[0].id and echoed.echoed and echoed.failure == ""
+    assert more.choice is None and more.failure == L.OUTSIDE  # a line with anything more stays no answer
+
+
 # ---------------------------------------------------------------------- Claude
 
 
@@ -383,6 +407,41 @@ def test_a_light_model_that_cannot_be_made_leaves_the_judge_off_and_says_why(tmp
     monkeypatch.setitem(sys.modules, "cactus", None)
     judge, note = from_config(config_file(tmp_path, '[light]\nengine = "cactus"\n'))
     assert judge is None and "Cactus is not installed" in note
+
+
+LOCAL = '[light]\nengine = "openai"\nmodel = "qwen"\nbase_url = "http://127.0.0.1:11434/v1"\nkey_env = ""\n'
+
+
+def test_the_judge_uses_its_own_table_and_is_off_when_jobs_leaves_it_out(tmp_path):
+    table = ('[light.judge]\nengine = "openai"\nmodel = "judge-model"\nbase_url = "http://127.0.0.1:8080/v1"\n'
+             'key_env = ""\n')
+    judge, note = from_config(config_file(tmp_path, LOCAL + table))
+    assert judge is not None and judge.light.label == "openai judge-model" and judge.owns
+    assert note.startswith("light model: openai judge-model judges each 'ignores the hint' alert")
+    asyncio.run(judge.aclose())
+    assert from_config(config_file(tmp_path, LOCAL + 'jobs = ["route"]\n')) == (None, "")
+
+
+def test_the_judge_shares_the_runs_engine_and_leaves_closing_it_to_them(tmp_path):
+    config = config_file(tmp_path, LOCAL + 'jobs = ["judge", "route"]\n')
+    lights = L.build_all(config)
+    judge, note = from_config(config, lights=lights)
+    assert judge is not None and judge.light is lights.get("judge") is lights.get("route") and not judge.owns
+    assert note.startswith("light model: openai qwen judges")
+    asyncio.run(judge.aclose())
+    assert not judge.light.client._closed  # route still has it
+    asyncio.run(lights.aclose())
+    assert judge.light.client._closed
+
+
+def test_with_the_runs_engines_a_judge_that_could_not_be_made_gives_no_second_note(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLIGHTDECK_LIGHT_TEST_KEY", raising=False)
+    config = config_file(tmp_path, '[light]\nengine = "anthropic"\nmodel = "claude-haiku-5-5"\n'
+                                   'key_env = "FLIGHTDECK_LIGHT_TEST_KEY"\n')
+    lights = L.build_all(config)
+    assert from_config(config, lights=lights) == (None, "")
+    (note,) = lights.notes
+    assert note.startswith("the light model is off for this run, the rules answer alone") and "FLIGHTDECK_LIGHT_TEST_KEY" in note
 
 
 def test_claude_without_a_light_price_is_said_to_be_unpriced(tmp_path, monkeypatch):
