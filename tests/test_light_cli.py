@@ -7,6 +7,7 @@ model is a fake server (light_kit.py)."""
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -72,6 +73,30 @@ def test_a_cli_lanes_opening_carries_the_first_look_and_its_escalation_repeats_i
                 assert first_look_of(again) == first_look_of(first)  # the brief as the lane first took it
                 assert "Another model worked on this challenge before you" in again
                 assert sorted(light.asked()) == ["family", "recon"]  # asked once
+            finally:
+                await lab.finish()
+                await engines.aclose()
+
+        asyncio.run(main())
+
+
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_a_cli_lane_never_waits_for_the_first_look(tmp_path, kind):
+    gate = threading.Event()
+    script = {"turns": [{"calls": [{"text": "Looking around."}]}]} if kind == "claude" else {
+        "turns": [{"items": [{"message": "Looking around."}]}]}
+    with LightModel({"family": "classical-crypto", "recon": BRIEF}, gate=gate) as light:
+        async def main():
+            lab = CliLab(tmp_path, script, kind=kind)
+            engines = lab.driver.lights = lights(light.engine())
+            told = lab.fake.messages if kind == "claude" else lab.fake.prompts
+            try:
+                lab.release()
+                await until(lambda: told(), "the CLI's first message")
+                assert FIRST_LOOK not in told()[0] and told()[0].endswith(TODAY)  # it went while the light model had not answered
+                gate.set()
+                await until(lambda: lab.driver.looks.done("note"), "the light model's answers")
+                assert lab.deck.challenges["note"].family == "classical-crypto"  # on the board all the same
             finally:
                 await lab.finish()
                 await engines.aclose()

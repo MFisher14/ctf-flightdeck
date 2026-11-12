@@ -372,7 +372,7 @@ class FirstLooks:
                 f"{lane_id}: the light model's {jobs} {were} not back by the lane's first model call, so the lane started "
                 f"without {'them' if len(late) > 1 else 'it'}; a lane never waits for the light model, and nothing is added "
                 "to a brief later (route's answers still show on the board when they come). Said once."),
-                look, job=jobs)
+                look, job=jobs, failure="late")
         return text
 
     def done(self, challenge_id: str) -> bool:
@@ -439,7 +439,8 @@ class FirstLooks:
         except Exception as exc:
             problem = f"{look.lane_id}: the light model's first look ({job}) broke: {type(exc).__name__}: {exc}"
             self.errors.append(problem)
-            self._once(deck, f"broke: {job}", f"{shown(problem)}. The rules' answer stands. Said once.", look, job=job)
+            self._once(deck, f"broke: {job}", f"{shown(problem)}. The rules' answer stands. Said once.", look, job=job,
+                       failure="broke")
             return neutral
 
     # ------------------------------------------------------------------ what the run is told
