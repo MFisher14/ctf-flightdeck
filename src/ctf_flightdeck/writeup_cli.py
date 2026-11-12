@@ -65,12 +65,13 @@ def writeups(
 ) -> None:
     """Draft a writeup for every challenge the run solved, in RUN_DIR/writeups/."""
     from . import writeup
+    from .config import ConfigError, expand
     from .runrecord import RunFolderError, load_run, run_folder
 
     try:
-        run_dir = run_folder(run_dir.expanduser())
+        run_dir = run_folder(expand(run_dir))
         record = load_run(run_dir)
-    except RunFolderError as exc:
+    except (RunFolderError, ConfigError) as exc:
         _fail(str(exc))
     loaded_board = _board(board) if board is not None else None
     for problem in record.problems:
@@ -138,20 +139,21 @@ def writeups(
 
 
 def _board(path: Path):
+    from .config import ConfigError, expand
     from .platform.manual import BoardError, load_board
 
     try:
-        return load_board(path.expanduser())
-    except BoardError as exc:
+        return load_board(expand(path))
+    except (BoardError, ConfigError) as exc:
         _fail(str(exc))
 
 
 def _polish_config(path: Path | None):
     """The config and API key --polish needs, checked before anything is written."""
-    from .config import ConfigError, api_key, load_config
+    from .config import ConfigError, api_key, expand, load_config
 
     try:
-        loaded = load_config(path.expanduser() if path is not None else None)
+        loaded = load_config(expand(path) if path is not None else None)
         return loaded, api_key(loaded)
     except ConfigError as exc:
         _fail(f"--polish needs the model API from your config: {exc}")

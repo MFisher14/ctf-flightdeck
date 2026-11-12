@@ -56,6 +56,7 @@ def gap_command(
     """Write a new engine for a challenge: a solver stub, its manifest, and a test on a copy of
     the challenge that passes once the engine solves it. Nothing is overwritten."""
     from .build import BOARD, BuildError, case_ids, case_size, scaffold
+    from .config import ConfigError, expand
     from .l1.manifest import ManifestError, load
     from .platform.manual import ANSWERS_FILE
 
@@ -63,7 +64,10 @@ def gap_command(
         solver, manifest, test, case = scaffold(pack, challenge_dir, engine_id=name, answers=answers)
     except BuildError as exc:
         _fail(str(exc))
-    root = pack.expanduser().absolute()
+    try:
+        root = expand(pack).absolute()
+    except ConfigError as exc:  # scaffold already ran on the literal path; say so before printing it
+        _fail(str(exc))
     try:
         routes = load(manifest).routes
     except ManifestError as exc:  # scaffold checked it loads; only a change since could do this

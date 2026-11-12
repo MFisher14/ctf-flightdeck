@@ -21,7 +21,7 @@ import typer
 from markdown_it import MarkdownIt
 from typer.testing import CliRunner
 
-from ctf_flightdeck import gaps_cli
+from ctf_flightdeck import config, gaps_cli
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -826,6 +826,21 @@ def test_gaps_with_a_pack_but_no_board_fails_before_writing(played, tmp_path):
     result = runner.invoke(mounted(), ["gaps", str(record.dir), "--pack", str(pack)])
     assert result.exit_code == 2
     assert "flightdeck: --pack needs --board" in result.stderr and "(this run recorded none)" in result.stderr
+    assert not (record.dir / "gaps.md").exists() and not (record.dir / "gaps.json").exists()
+
+
+def test_gaps_on_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(played, tmp_path, monkeypatch):
+    _, _, record = played
+    pack = write_pack(tmp_path / "pack", tmp_path / "marker")
+
+    def refuse(p):
+        raise config.ConfigError(f"{p}: starts with ~ for a user that does not exist (or there is no home directory)")
+
+    monkeypatch.setattr(config, "expand", refuse)
+    result = runner.invoke(mounted(), ["gaps", str(record.dir), "--board", "somewhere/board", "--pack", str(pack)])
+    assert result.exit_code == 2, result.output
+    assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr
+    assert "Traceback" not in result.output
     assert not (record.dir / "gaps.md").exists() and not (record.dir / "gaps.json").exists()
 
 

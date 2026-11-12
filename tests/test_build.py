@@ -33,6 +33,7 @@ from ctf_flightdeck.build import (
     scaffold,
 )
 from ctf_flightdeck.build_cli import app
+from ctf_flightdeck.config import ConfigError
 from ctf_flightdeck.l1.importer import import_scripts
 from ctf_flightdeck.l1.manifest import Route, discover, load
 from ctf_flightdeck.l1.router import route
@@ -621,6 +622,17 @@ def test_build_gap_writes_the_engine_and_says_what_to_do_next(board, pack):
                                     f"(3 files, {size} bytes), and the sha256 of its flag")
     assert lines[4] == f"next: write solve() in cry/cry_layers.py, then run `flightdeck build check {pack}`; the engine is done when its test passes"
     assert result.stderr == ""
+
+
+def test_build_gap_on_a_tilde_pack_for_a_user_that_does_not_exist_fails_in_one_line(board, pack, monkeypatch):
+    def refuse(p):
+        raise ConfigError(f"{p}: starts with ~ for a user that does not exist (or there is no home directory)")
+
+    monkeypatch.setattr(config, "expand", refuse)
+    result = invoke("gap", board / "layers", "--pack", pack)
+    assert result.exit_code == 2, result.output
+    assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr
+    assert "Traceback" not in result.output
 
 
 def test_build_gap_takes_a_name_and_an_answers_file_and_warns_when_there_is_no_answer(board, pack, tmp_path):
