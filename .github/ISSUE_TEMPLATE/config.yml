@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/MFisher14/ctf-flightdeck/security/advisories/new
+    about: Challenge text that steers flightdeck, a lane out of its sandbox, a key or token that leaks, a flag sent without you. Never in a public issue.
+  - name: Read the docs
+    url: https://github.com/MFisher14/ctf-flightdeck#readme
+    about: Install, keys and model APIs, playing a board or an event, after a run. flightdeck doctor checks your setup and says how to fix each problem.

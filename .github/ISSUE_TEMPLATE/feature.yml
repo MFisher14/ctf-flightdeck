@@ -1,0 +1,31 @@
+name: Feature idea
+description: A problem flightdeck could solve, and how.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Nothing from a real event: describe a challenge in your own words, or make one up like it. Never paste a key or a token.
+
+        For anything big, this issue is where we agree on it before anyone builds it. The decisions already made, with their dates, are in [docs/DECISIONS.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/DECISIONS.md): to change one, name it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What gets in your way, in a run or around one, and what it costs you.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What flightdeck could do about it. A key, a command, a setting, an alert, whatever you picture.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+      description: Your workaround, another tool, or nothing.
+    validations:
+      required: true
