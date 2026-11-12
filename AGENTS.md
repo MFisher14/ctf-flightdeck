@@ -3,7 +3,7 @@
 ctf-flightdeck is an open-source terminal harness for playing CTFs with AI agents. The player is the
 operator: the harness pulls and triages challenges, runs no-model (L1) solvers, spins up agent lanes,
 and submits. The player watches every lane and steps in when something looks wrong.
-**Status: 0.2.0 is released (PyPI, public on GitHub). Next: M5 Autopilot.**
+**Status: 0.2.0 is released (PyPI, public on GitHub). M5 Autopilot is built and not yet released.**
 Keep this file short: every agent re-reads it on every turn.
 
 ## Where things are
@@ -11,7 +11,7 @@ Keep this file short: every agent re-reads it on every turn.
 - `docs/VISION.md`: what we are building and for whom. Read first.
 - `docs/DECISIONS.md`: decisions already made, with dates. Do not re-litigate them; propose the
   change in an issue or a pull request instead.
-- `docs/ROADMAP.md`: what is released, what is next (M5 Autopilot) and what is still open.
+- `docs/ROADMAP.md`: what is released, what is built and what is still open.
 - `docs/CONSOLE-SPEC.md`: the console layout, lanes, alerts and intervention keys.
 - `docs/ARCHITECTURE.md`: the pipeline, its stages and policies, and every component by subsystem.
 - `README.md`: the front page, and the PyPI page: short, absolute links only. `llms.txt` maps the

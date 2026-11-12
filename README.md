@@ -41,6 +41,10 @@ shell.
 - **Safe by default.** Each lane runs in its own Docker container with no network, or, when
   its challenge has a live instance, a network that reaches that instance and nothing else. Challenge text is treated as hostile data, never as
   instructions. Lanes have token and dollar caps.
+- **Hands-on or hands-off.** Steer every lane yourself, or engage **Autopilot**: it runs the
+  event by rule while you are away, inside a budget you set, never looser than the event's
+  rules, and hands back when something needs a human. Runs can go headless, with a status file
+  and a webhook that pings you.
 - **Learns from each run.** A report of where lanes stalled and which interventions helped,
   writeup drafts, and the list of challenges your solvers missed.
 
@@ -65,6 +69,7 @@ Then play a real board:
 ```sh
 flightdeck play ~/ctf/some-board                      # a folder of challenges
 flightdeck play ~/ctf/event-board --event event.toml  # a CTFd event, by its rules
+flightdeck play ~/ctf/event-board --event event.toml --autopilot --budget-dollars 20   # while you sleep
 ```
 
 `practice` and `play` spend money on your model API unless the model runs on your machine. Each
@@ -74,7 +79,7 @@ and it says what to do next.
 **Everything else is in the
 [player's guide](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md):** models
 and keys, the console's keys, boards, your own solvers, events and teams, coding-agent lanes,
-reports.
+Autopilot, headless runs, reports.
 
 ## The console
 
@@ -97,6 +102,8 @@ It talks only to what you point it at:
   as with any AI tool. Choose a model on your own machine (Ollama, MLX) and nothing leaves it.
 - **The CTF platform in your event profile**, to pull the board and submit the flags you
   approve.
+- **A webhook of your own**, only if you set one up for notifications. It gets a short
+  message (a lane needs you, a flag was accepted) and never a flag.
 
 Your keys stay in your environment or a file only you can read, never in the config, and logs,
 transcripts and reports replace anything shaped like a credential. Runs are written to a folder

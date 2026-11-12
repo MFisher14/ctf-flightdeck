@@ -145,6 +145,12 @@ class FlightdeckApp(App[None]):
             await self._on_exit()
         self.exit()
 
+    def stop_run(self, why: str = "") -> None:
+        """Quit as the player would, without asking (nobody may be there to answer): the run's
+        own end, such as the event's end under autopilot. `why` starts the line the console
+        shows while the lanes stop ("the event ended (...): ")."""
+        self.call_later(self._quit_now, why)
+
     def _catch_signals(self) -> None:
         """SIGHUP and SIGTERM stop the run as quitting does, instead of ending flightdeck
         with its lanes still running. A signal ignored when flightdeck started (nohup) stays
@@ -520,6 +526,31 @@ class FlightdeckApp(App[None]):
         except Exception as exc:
             return f"the workspace could not be checked: {exc}", f"handed back, but its workspace could not be checked: {exc}"
 
+    def autopilot(self, arg: str) -> None:
+        """/autopilot on: engage autopilot (refused, with the reason, without a run budget, off
+        Docker, while the queue is held or once the budget is spent). /autopilot off: take the
+        controls back. /autopilot: say which it is."""
+        pilot = self.deck.autopilot
+        word = arg.strip().lower()
+        if pilot is None:
+            self.warn("This run has no autopilot (the mock has one in its autopilot scenario; a real run always has)")
+            return
+        if word == "on":
+            outcome = pilot.engage()
+        elif word == "off":
+            outcome = pilot.off()
+        elif not word:
+            state = {"engaged": "engaged", "disengaged": f"disengaged ({pilot.reason}); its guardrails hold until you "
+                     "touch the controls", "off": "off"}[pilot.state.value]
+            self.say(f"Autopilot is {state}; run budget {pilot.budget.text()}. /autopilot on engages it, /autopilot off "
+                     "takes the controls back")
+            return
+        else:
+            self.warn("/autopilot takes on or off")
+            return
+        self.say(outcome.message, "information" if outcome.ok else "warning")
+        self.refresh_view()
+
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""
         outcome = self.deck.release_hold()
@@ -565,6 +596,8 @@ class FlightdeckApp(App[None]):
                 self.claim_toggle(cid)
         elif name == "unhold":
             self.unhold()
+        elif name == "autopilot":
+            self.autopilot(arg)
         elif name == "filter":
             self.show_fleet()
             self._fleet.set_filter(arg)

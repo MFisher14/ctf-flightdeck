@@ -38,6 +38,7 @@ from ..core.model import (
     ME,
     Action,
     ActionKind,
+    Actor,
     Alert,
     AlertKind,
     Challenge,
@@ -314,6 +315,7 @@ class HeaderFacts:
     clock: float  # seconds since the event started
     mock: str = ""  # the mock's tag; "" in a run
     later: bool = False  # a lane's coding-agent CLI turn is under way (an ended lane's too): its cost is still to come
+    autopilot: bool = False  # autopilot is engaged (Deck.autopilot): the header says so
 
 
 def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
@@ -323,10 +325,12 @@ def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
         cfg.event, cfg.team, cfg.containerized, len(deck.active_lanes()), cfg.max_lanes, len(deck.queue),
         len(deck.needing()), deck.held, tokens, dollars, unpriced, deck.now, mock,
         later=any(lane.dollars_later for lane in deck.lanes.values()),
+        autopilot=deck.autopilot is not None and bool(deck.autopilot.engaged),
     )
 
 
 HELD = "queue held"
+AUTOPILOT, AUTOPILOT_SHORT = "AUTOPILOT", "AP"  # the header's chip while autopilot is engaged; the compact layout's
 HELD_WHY_MIN = 12  # cells: less room than this after the other pieces, and the header names no reason
 WHY_OUTRANKS = 3  # pieces of this drop rank or more (the event's name, the clock, tokens, dollars) make room for it
 HEADER_WORDS = {  # the pieces that can drop, as doctor names them (console/room.py)
@@ -360,6 +364,8 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
             ("runtime", 1, ("docker", theme.TEXT, theme.SEGMENT, False) if facts.containerized else ("host", theme.INK, theme.YELLOW, True)),
             ("lanes", 0, (f"lanes {facts.lanes}/{facts.max_lanes} · queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)),
         ]
+    if facts.autopilot:  # never dropped: who has the controls is not a detail
+        out.append(("autopilot", 0, (AUTOPILOT_SHORT if compact else AUTOPILOT, theme.INK, theme.GREEN, True)))
     if facts.need:
         out.append(("need", 0, (f"▲ {facts.need} need you", theme.WHITE, theme.RED, True)))
     elif not facts.held:  # a held queue is not all clear: nothing starts until the player lifts it
@@ -1016,7 +1022,8 @@ def transcript_lines(deck: Deck, lane: Lane, action: Action) -> list[Text]:
     if action.kind is ActionKind.MESSAGE:
         return [Text.assemble(("› you  ", f"bold {theme.ACCENT}"), (text, theme.ACCENT))]
     if action.kind is ActionKind.PLAYER:
-        lines = [Text.assemble(("› you  ", f"bold {theme.ACCENT}"), (text, f"italic {theme.ACCENT}"))]
+        who = "› autopilot  " if action.by is Actor.AUTOPILOT else "› you  "  # an intervention by rule is not yours
+        lines = [Text.assemble((who, f"bold {theme.ACCENT}"), (text, f"italic {theme.ACCENT}"))]
         lines += [Text.assemble(("       ", ""), (untrusted(line, one_line=True), theme.MUTED)) for line in output.splitlines()]
         return lines
     if action.kind is ActionKind.ALERT:

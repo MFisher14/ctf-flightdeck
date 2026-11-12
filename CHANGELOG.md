@@ -13,6 +13,33 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A leaderboard of the events flightdeck was used in, `docs/LEADERBOARD.md`, with an issue form
   to add yours, and an issue form for flight cards.
 
+### Autopilot
+
+- `flightdeck play --autopilot` (and `practice`), or `[autopilot] engage = true`: flightdeck
+  runs the event by rule while you are away, never looser than the event's rules and your
+  config. It escalates a stalled lane, kills a looping one, redirects a lane that ignores the
+  hint, declines a lane's own budget request and sends unsolved challenges round again on the
+  next model up. It approves nothing and submits nothing itself. Before lanes start, `play`
+  says what it will and will not do under this run's policies (#13).
+- Autopilot needs a run budget (`--budget-dollars`, `--budget-tokens`, or `budget_dollars` and
+  `budget_tokens` under `[autopilot]`) and the Docker runtime; without them `play` does not
+  start and says which is missing. At the budget it holds the queue, pauses the lanes and
+  disengages (#13).
+- Under autopilot a flag that would spend a challenge's last counted try waits for you, with
+  `submit_limited = "auto"` too, and a request a model declined is never sent on to another
+  model: Anthropic's server-side refusal fallback is off while autopilot has the run (#13).
+- Autopilot disengages, holding the queue and saying why, when the model API fails for every
+  lane, when CTFd keeps failing, does not judge a flag or answers with a web page for a person
+  (a login page, a CAPTCHA), and at the event's end. `/autopilot off` takes the controls back,
+  `/autopilot on` engages it again, and the header says `AUTOPILOT` while it is engaged (#13).
+- Event profiles: `[event] start` and `end` (ISO 8601 times with a zone). Autopilot waits for
+  the start before it pulls anything and stops the run at the end (#13).
+- The post-flight report has an Autopilot section (its interventions by rule, each disengage
+  and why), and the report, the scorecard and the flight card count only your own
+  interventions; the card says `autopilot: engaged, N interventions by rule` (#13).
+- `flightdeck mock --scenario autopilot` shows autopilot on fake data: rules firing, then a
+  disengage at the run budget (#13).
+
 ### Headless runs and notifications
 
 - `flightdeck play --headless` (and `practice --headless`) plays a board with no console, by

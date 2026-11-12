@@ -522,6 +522,74 @@ work a challenge a teammate solved. `--handle NAME` sets your name in the team f
 your login name), and `flightdeck team status DIR` shows what the folder holds and which files
 flightdeck ignores there.
 
+## Autopilot
+
+Autopilot runs an event end to end while you are away. It is rules in code, not a model, and it is
+never looser than the event's rules: it changes no policy, so each stage goes as far on its own as
+your event profile and config already allow.
+
+```
+flightdeck play BOARD --event event.toml --autopilot --budget-dollars 20
+```
+
+**To engage it** give `--autopilot` (on `play` or `practice`), or set `engage = true` under
+`[autopilot]` in your config. It needs two things, and `play` does not start without them, saying
+which is missing:
+
+- **A run budget**, for the whole run: `--budget-dollars`, `--budget-tokens`, or `budget_dollars`
+  and `budget_tokens` under `[autopilot]`. Give one or both. With dollars alone, a model with no
+  price stops autopilot at its first turn, so give tokens too if your ladder has one.
+- **The Docker runtime.** There a lane reaches its challenge's own instance and nothing else; on
+  the host runtime flightdeck cannot hold a lane to that.
+
+Before lanes start, `play` prints what autopilot will and will not do in this run, for example
+"submit is confirm under this event's rules, so every flag waits for you".
+
+**The schedule.** If the event profile says `start` and `end` ([BOARDS.md](BOARDS.md)), autopilot
+waits for the start before it pulls anything (Ctrl-C stops the wait) and stops the run at the end,
+as quitting does. Under the pull policy `auto`, new waves are pulled on the usual timer.
+
+**What it does by rule:**
+
+| When | Autopilot |
+|---|---|
+| A lane stalls | escalates it one rung; at the top rung, kills it and parks the challenge |
+| A lane loops | kills it and parks the challenge for the next round |
+| A lane ignores the hint, or goes the wrong way on a web challenge | redirects it to the alert's suggestion, once per lane |
+| A lane's effort is out of proportion to the challenge | kills it and parks the challenge for you |
+| A lane asks for more budget (its own cap) | declines: the lane stops, and the challenge goes round again |
+| The queue is dry and no lane runs | queues each unsolved challenge a lane gave up on, on the next model up, lowest points first, once per rung |
+
+Under `submit = "auto"` a flag a lane claims is submitted, as without autopilot. A lane that is
+paused or taken over, or that waits for your answer, is left alone.
+
+**What it never does:**
+
+- approve anything for you: a flag that waits (every flag under `confirm`, a scraped one, one the
+  flag check holds), a live-box request, more budget;
+- guess a flag, or submit anything itself;
+- spend a challenge's last counted try, `submit_limited = "auto"` or not: that flag waits for you,
+  and the run goes on;
+- send a request a model declined on to another model or provider: Anthropic's server-side refusal
+  fallback is off while autopilot has the run, and a challenge a model declined stays parked;
+- start a lane, or go on spending, past the run budget.
+
+**When it disengages** it holds the queue, stops its rules and says why, in the console and in the
+run log: the run budget reached (the lanes are paused too), spend with no price under a budget in
+dollars alone, the model API failing for every lane, the platform failing or not judging a flag,
+a web page where CTFd's API should answer (a login page, a CAPTCHA: flightdeck never tries to pass
+one), or the event's end. Its guardrails stay until you are back.
+
+**To take over,** do anything: after a disengage your first key or command turns autopilot off,
+and `/unhold` lifts the hold on the queue. While it is engaged you can step in at any time without
+switching it off, and `/autopilot off` hands you the controls. `/autopilot on` engages it again
+(refused, with the reason, without a budget, off Docker, while the queue is held, or once the
+budget is spent). The header says `AUTOPILOT` while it is engaged.
+
+After the run, the post-flight report has an Autopilot section (what it did by rule, each
+disengage and why), and neither it nor the flight card counts autopilot's interventions as yours.
+`flightdeck mock --scenario autopilot` shows it on fake data.
+
 ## Coding-agent lanes
 
 `--agent claude` (or `codex`) runs lanes as that coding-agent CLI, on any board or event, behind

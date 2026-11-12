@@ -51,6 +51,17 @@ The team channel (team.py): mirror() writes our claims, solves and live-box hold
 team folder as the deck makes them, and the team watcher applies the teammates' marks. A
 challenge the team folder shows as solved, or claimed by a teammate, is not queued.
 
+Autopilot (autopilot.py, D20): every run has one, attached to the deck after the Watch and
+off until it is engaged: by `play --autopilot` or `[autopilot] engage = true` when the board
+is released, or by `/autopilot on` in the console. Engaging it at the start needs a run
+budget and the Docker runtime, checked here before anything starts, and the notes say what it
+will and will not do under this run's policies, none of which it changes. With an event
+profile's `start` still to come, prepare_run waits for it after every check and before the
+first pull; at its `end` the run stops as quitting does (Run._until_end). The run tells
+autopilot when the platform needs a human: a CTFd poll that keeps failing, a flag CTFd did
+not judge, or a web page where CTFd's API should answer (platform/ctfd.py: HumanCheck).
+While autopilot guards the run the model client sends no server-side refusal fallback.
+
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
 state folder names (so it is found wherever --run-dir put it). Before a run starts, what
@@ -70,8 +81,10 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,13 +94,14 @@ from .agent.egress import CLI_API
 from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
+from .autopilot import NEEDS_BUDGET, NEEDS_DOCKER, Autopilot, Budget, start_notes
 from .clock import RunClock
 from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at, load_config, webhook_url
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
 from .leftovers import RECORD, ProcessRecord, labels, sweep
-from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, Solves, Verdict, check_site, load_ids, pull
+from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
     USES_PLATFORM,
@@ -117,6 +131,8 @@ YOU = "you"  # this user (CTFd's users mode, or the user's own solve in teams mo
 YOUR_TEAM = "your team"  # a teammate, in CTFd's teams mode
 YOU_OR_YOUR_TEAM = "you or your team"  # the account, when CTFd did not say whose solve it is
 INSTANCE_POLICIES = ("auto", "confirm", "off")
+PLATFORM_FAILURES = 3  # the same CTFd poll failing this many times in a row is the platform failing: autopilot disengages
+START_WAIT_STEP = 30.0  # seconds: how long the wait for an event's start sleeps before it looks at the time again
 
 
 class RunError(Exception):
@@ -145,6 +161,12 @@ class RunOptions:
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
     agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
     agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
+    autopilot: bool | None = None  # engage autopilot when the board is released; None: the config's [autopilot] engage
+    budget_dollars: float | None = None  # the run budget autopilot needs, in dollars; None: the config's
+    budget_tokens: int | None = None  # and in tokens; None: the config's
+    say: Callable[[str], None] | None = None  # says a line to the player before the console is up (the wait for the start)
+    now: Callable[[], datetime] | None = None  # the time of day, with its zone (the event's start and end); None: the system's
+    sleep: Callable[[float], None] | None = None  # how the wait for the event's start passes time; None: time.sleep
 
 
 @dataclass(eq=False)
@@ -165,6 +187,7 @@ class CTFdLink:
     answered: set[str] = field(default_factory=set)  # CTFd answered a flag for it "already solved": solved, whatever a lane waits for
     reported: set[str] = field(default_factory=set)  # pull problems told to the player
     problems: dict[str, str] = field(default_factory=dict)  # what failed (a poll, or using its answer) -> the failure shown last
+    failing: dict[str, int] = field(default_factory=dict)  # a poll -> how many times in a row it has failed
     tries: dict[str, int] = field(default_factory=dict)  # board id -> the tries left at its flag, as CTFd's details last said (a pull's)
 
     def solved_board_ids(self) -> list[str]:
@@ -219,6 +242,9 @@ class Run:
     lights: object = None  # light.Lights: the light engines its jobs share (closed after the watch)
     status: StatusFile | None = None  # status.json in the run folder, for whatever is not the console
     notifier: Notifier | None = None  # the notification webhook, when [notify] names one
+    autopilot: Autopilot | None = None  # the run's autopilot (autopilot.py): off until engaged
+    engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
+    stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -281,6 +307,12 @@ class Run:
             state = self._watcher.poll()  # its marks wait until the board is on the deck
         if self._submits is not None:  # before any lane starts: it sends their flags to CTFd
             self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
+        if self.engage and self.autopilot is not None:  # before any lane starts: its guardrails hold from the first turn
+            outcome = self.autopilot.engage()
+            if not outcome.ok:  # prepare_run checked the budget and the runtime: something changed since
+                self.deck.warn(outcome.message, data={"autopilot": "not engaged"})
+        if self.autopilot is not None and self.profile is not None and self.profile.end is not None:
+            self._tasks.append(asyncio.create_task(self._until_end(self.profile.end), name="flightdeck event end"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if state is not None:
             self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
@@ -369,9 +401,27 @@ class Run:
     def app(self, refresh_seconds: float | None = 0.5):
         from .console.app import FlightdeckApp
 
-        return FlightdeckApp(
+        app = FlightdeckApp(
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir)
         )
+        self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
+        return app
+
+    async def _until_end(self, end: datetime) -> None:
+        """Wait for the event's end (event.end), then, unless the player has the controls
+        (Autopilot.ended), stop the run as quitting does: through `stopper` (the console
+        quits without asking), or with nobody flying it, by shutting the run down here."""
+        now = self.options.now or _now
+        while (left := (end - now()).total_seconds()) > 0:
+            await asyncio.sleep(min(left, START_WAIT_STEP))
+        assert self.autopilot is not None
+        if not self.autopilot.ended(end.isoformat()):
+            return
+        why = f"the event ended ({end.isoformat()}): "
+        if self.stopper is not None:
+            self.stopper(why)
+        else:
+            asyncio.ensure_future(self.shutdown())  # not awaited: the shutdown cancels this task among the others
 
     # ------------------------------------------------------------------ the event's background work
 
@@ -438,8 +488,10 @@ class Run:
                 self._ctfd_problem(
                     "waves", f"could not pull new challenges from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
                 )
+                self._platform_failed("waves", "pulling new challenges", exc)
                 continue
             link.problems.pop("waves", None)
+            link.failing.pop("waves", None)
             try:
                 self._wave(result, asked)
             except Exception as exc:  # a bug: say so, and keep pulling
@@ -497,8 +549,10 @@ class Run:
                 self._ctfd_problem(
                     "solves", f"could not read the solves from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
                 )
+                self._platform_failed("solves", "reading the solves", exc)
                 continue
             link.problems.pop("solves", None)
+            link.failing.pop("solves", None)
             link.read(solves)
             try:
                 self._apply_solves()
@@ -506,6 +560,27 @@ class Run:
                 self._ctfd_problem("apply", f"could not apply the solves from CTFd: {type(exc).__name__}: {exc}")
             else:
                 link.problems.pop("apply", None)
+
+    def _platform_failed(self, kind: str, what: str, exc: BaseException) -> None:
+        """A CTFd poll failed: count it, and tell autopilot when the platform needs a human
+        (Autopilot.platform: it disengages). At once for a web page where CTFd's API should
+        answer (HumanCheck: a login page, a CAPTCHA); after PLATFORM_FAILURES failures in a row
+        of the same poll for anything else (one failure passes: the next poll tries again)."""
+        link = self.ctfd
+        assert link is not None
+        link.failing[kind] = count = link.failing.get(kind, 0) + 1
+        if self.autopilot is None:
+            return
+        if isinstance(exc, HumanCheck):
+            self.autopilot.platform(_reason(exc))
+        elif count == PLATFORM_FAILURES:
+            self.autopilot.platform(f"{what} from CTFd has failed {count} times in a row: {_reason(exc)}")
+
+    def _flag_unjudged(self, verdict: Verdict) -> None:
+        """CTFd did not judge a flag (paused, rate-limited, no answer, a page for a person):
+        the flag goes to the player to submit by hand, so autopilot disengages."""
+        if self.autopilot is not None:
+            self.autopilot.platform(f"CTFd did not judge a flag: {verdict.error}")
 
     def _ctfd_problem(self, kind: str, text: str) -> None:
         """A failed CTFd poll, as a console warning: once while the same failure lasts."""
@@ -547,6 +622,7 @@ def prepare_run(options: RunOptions) -> Run:
         raise RunError(f"runtime must be docker or host, not {runtime!r}")
     plan = _plan(options, config, runtime)
     options = plan.options
+    engage, budget = _autopilot_asked(options, config, runtime)
     board = None if plan.ctfd else _load_board(options)
     ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
@@ -610,6 +686,8 @@ def prepare_run(options: RunOptions) -> Run:
         token = _ctfd_token(profile)
     if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
         _check_apis(config, key, spare_key, plan.notes)
+    if engage and profile is not None:  # every check is done: wait for the event's start before anything is pulled
+        _wait_for_start(options, profile)
     if plan.ctfd:  # the last check, then the first thing done: the pull
         assert token is not None
         first = _pull_first(options, plan, token)
@@ -752,15 +830,90 @@ def prepare_run(options: RunOptions) -> Run:
     driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
+    switch, has_fallback = _refusal_switch(client, ladder)
+    autopilot = Autopilot(deck, budget, refusals=switch)
+    autopilot.attach()  # after the watch: it sees the alerts the watch raised
+    if engage:
+        plan.notes += start_notes(
+            plan.policies, submit=deck_config.submit, spends_tries=deck_config.spends_tries, instance=instance, budget=budget,
+            waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
+            start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
+        )
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
-        processes=processes, lights=lights, status=status, notifier=notifier,
+        processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
     )
     if submits is not None:
         submits.solved = run._apply_solves
+        submits.unjudged = run._flag_unjudged
     return run
+
+
+def _autopilot_asked(options: RunOptions, config: Config, runtime: str) -> tuple[bool, Budget]:
+    """Whether this run engages autopilot at its start (--autopilot, else [autopilot] engage),
+    and its run budget (the options', else the config's). Asked for without a budget, or off
+    the Docker runtime, the run does not start: RunError, in one line, with the reason."""
+    engage = config.autopilot.engage if options.autopilot is None else options.autopilot
+    dollars = options.budget_dollars if options.budget_dollars is not None else config.autopilot.budget_dollars
+    tokens = options.budget_tokens if options.budget_tokens is not None else config.autopilot.budget_tokens
+    try:
+        budget = Budget(dollars=dollars, tokens=tokens)
+    except ValueError as exc:
+        raise RunError(str(exc)) from None
+    if engage and not budget.set:
+        raise RunError(NEEDS_BUDGET)
+    if engage and runtime != "docker":
+        raise RunError(f"{NEEDS_DOCKER}: drop --host, or play without --autopilot")
+    return engage, budget
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _wait_for_start(options: RunOptions, profile: EventProfile) -> None:
+    """Under autopilot, wait until the event's start (event.start) before anything is pulled
+    or released, saying so first. Ctrl-C stops the wait (KeyboardInterrupt: nothing has
+    started). An event whose end has passed is refused: there is nothing to run."""
+    now = options.now or _now
+    if profile.end is not None and now() >= profile.end:
+        raise RunError(f"the event ended at {profile.end.isoformat()} (event.end in the event profile): autopilot has "
+                       "nothing to run. Play without --autopilot, or correct the profile")
+    start = profile.start
+    if start is None or (left := (start - now()).total_seconds()) <= 0:
+        return
+    if options.say is not None:
+        from . import fmt
+
+        options.say(f"autopilot: the event starts at {start.isoformat()} (event.start), in {fmt.duration(left)}: waiting "
+                    "until then before anything is pulled or started. Ctrl-C stops the wait")
+    sleep = options.sleep or time.sleep
+    while (left := (start - now()).total_seconds()) > 0:
+        sleep(min(left, START_WAIT_STEP))
+
+
+def _refusal_switch(client: ChatClient | None, ladder: Sequence[str]) -> tuple[Callable[[bool], None] | None, bool]:
+    """What switches the model client's rerouting of a refusal off and on, for autopilot (no
+    refused request goes on to another model while it guards the run), and whether there is
+    any to switch off for this ladder. The one thing that reroutes a refusal is Anthropic's
+    server-side refusal fallback (agent/anthropic_client.py: `server_fallback`, read at every
+    request); the [fallback] API never takes a call a model declined (agent/fallback.py).
+    None for a coding-agent CLI's lanes, which have no client here."""
+    from .agent.refusal import SERVER_FALLBACK_MODELS
+
+    if client is None:
+        return None, False
+    parts = [part for part in (client, getattr(client, "primary", None), getattr(client, "fallback", None))
+             if part is not None and hasattr(part, "server_fallback")]
+    before = [(part, part.server_fallback) for part in parts]
+
+    def switch(allowed: bool) -> None:
+        for part, was in before:
+            part.server_fallback = was and allowed
+
+    return switch, any(was for _, was in before) and any(model in SERVER_FALLBACK_MODELS for model in ladder)
 
 
 def _flag_format_note(effective: str, profile: EventProfile | None, board: Board, folder: Path | None) -> str:
@@ -1059,6 +1212,7 @@ class _Submits:
         self.link = link
         self.deck: Deck | None = None  # set once the deck exists
         self.solved: Callable[[], None] | None = None  # the run's: close what CTFd lists as solved
+        self.unjudged: Callable[[Verdict], None] | None = None  # the run's: CTFd did not judge a flag (autopilot disengages)
         self.queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (lane, challenge, flag) to send, in order
         self.sending: tuple[str, str, str] | None = None  # the one sent now, until its answer is applied
         self.errors: list[str] = []  # bookkeeping that failed (a flightdeck bug), shown when the run ends
@@ -1113,6 +1267,8 @@ class _Submits:
                 data={"source": "ctfd"},
             )
         deck.platform_verdict(lane_id, flag, verdict.ok, detail, tries_left=tries)
+        if verdict.ok is None and verdict.error and not locked and self.unjudged is not None:
+            self.unjudged(verdict)  # after the deck has the flag back with the player
 
     def unsent(self) -> list[str]:
         """After the worker has stopped: the flags on their way to CTFd when the run ended,
@@ -1518,7 +1674,7 @@ def _setup(
         "board": board,
         "token_cap": config.lanes.token_cap,
         "dollar_cap": config.lanes.dollar_cap,
-    }
+    }  # autopilot is not here: the flight card reads it from the run log, which says whether it was engaged
 
 
 def lane_reach(urls: Sequence[str], instance: str, api: Sequence[str] = ()) -> tuple[tuple[str, ...], tuple[str, ...]]:

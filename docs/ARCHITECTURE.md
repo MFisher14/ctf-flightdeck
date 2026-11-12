@@ -431,6 +431,30 @@ an exception in the console that nothing handled (`play` then exits 1). `Run.shu
 the console's quit starts it, and a later call only waits for it. Then `play` closes the run and
 prints its exit lines.
 
+### Autopilot
+
+Where: `autopilot.py` (`Autopilot`, `Budget`, `start_notes`); the deck's part in `core/deck.py`
+(`apply(by=)`, `_keeps_last_try`); the run's in `run.py`; D20 and P19 to P28.
+
+Autopilot sits beside the Watch, after it in the pipeline: `prepare_run` attaches it to the deck
+once the Watch is attached, so it sees the alerts the Watch raised. It is code, never a model. It
+subscribes to the deck's events, but an event only marks that there is something to look at:
+`step()` does the looking on the event loop's next turn (the mock, which has no loop, calls it
+after each tick), never from inside the deck's dispatch of a lane's report. A step checks the
+guardrails (the run budget), then applies the rules to each lane (P23), then starts the next
+round (P22). Every action goes through `Deck.apply(..., by=Actor.AUTOPILOT)`, which logs it as
+autopilot's and refuses what a rule may not do (an approval, an answer to a flag).
+
+It changes no policy and submits nothing: the deck sends a claimed flag under submit auto as it
+does without autopilot. Two guardrails live outside the module because every path passes there:
+the last try in the deck (`Deck.autopilot.guarding` is read where a flag goes out), and the
+refusal fallback in the model client (`run._refusal_switch` turns `server_fallback` off while
+autopilot guards). The run tells autopilot what only it knows: the wait for `event.start` and the
+timer for `event.end` (`_wait_for_start`, `Run._until_end`), a CTFd poll that keeps failing, a
+flag CTFd did not judge, and `platform/ctfd.py`'s `HumanCheck`. `disengage(reason)` holds the
+queue and logs the warning (`{"autopilot": "disengaged", "reason": ...}`) that the console shows,
+a notifier listens for and the post-flight report lists.
+
 Board format: a folder in which each subfolder with a `challenge.json` is a challenge, with an
 optional `board.json` (the event's name and flag format) and an optional `answers.sha256.json`
 (each flag's sha256, outside the challenge folders). [BOARDS.md](BOARDS.md) has every key.
@@ -844,3 +868,5 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
   the instance until the player says yes, but the CLI lanes do not ask yet, so an event whose
   instance policy is not `auto` still refuses them.
 - **Timeline replay in `play`.** `Release` exists (Practice mode, under After a run); `play` does not use it.
+- **An API outage with coding-agent lanes holding the queue**, which is what would disengage
+  autopilot there ([Autopilot](#autopilot)).

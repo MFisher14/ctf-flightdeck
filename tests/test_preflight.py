@@ -1314,3 +1314,48 @@ def test_preflight_mounts_as_one_command_with_options_after_the_profile(tmp_path
     usage = runner.invoke(root, ["preflight", "--help"])
     assert "Usage: root preflight [OPTIONS] [EVENT.toml]" in " ".join(usage.stdout.split())
     assert "COMMAND" not in usage.stdout
+
+
+# ---------------------------------------------------------------------- the schedule (autopilot reads it)
+
+
+def test_start_and_end_are_read_as_instants_with_their_zone(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    event = {**EVENT_CTFD, "start": '"2026-11-14T09:00:00+01:00"', "end": "2026-11-15T08:00:00Z"}  # a string, and TOML's own
+    loaded, _ = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
+    assert loaded.start == datetime(2026, 11, 14, 9, 0, tzinfo=timezone(timedelta(hours=1)))
+    assert loaded.start == datetime(2026, 11, 14, 8, 0, tzinfo=timezone.utc)  # one instant, whatever the zone
+    assert loaded.end == datetime(2026, 11, 15, 8, 0, tzinfo=timezone.utc)
+
+
+def test_a_profile_without_a_schedule_has_none(tmp_path):
+    loaded, _ = load_profile(write(tmp_path, toml(EVENT_CTFD, RULES_OPEN)))
+    assert loaded.start is None and loaded.end is None
+
+
+@pytest.mark.parametrize(("key", "value", "problem"), [
+    ("start", '"2026-11-14T09:00:00"', "event.start must say its zone"),
+    ("end", "2026-11-14T09:00:00", "event.end must say its zone"),  # TOML's local date-time
+    ("start", '"tomorrow at nine"', "event.start must be an ISO 8601 time with its zone"),
+    ("end", "9", "event.end must be an ISO 8601 time with its zone"),
+    ("start", "2026-11-14", "event.start must be an ISO 8601 time with its zone"),  # TOML's date: no time, no zone
+])
+def test_a_time_without_a_zone_or_that_is_no_time_is_refused_naming_the_key(tmp_path, key, value, problem):
+    path = write(tmp_path, toml({**EVENT_CTFD, key: value}, RULES_OPEN))
+    with pytest.raises(ProfileError) as caught:
+        load_profile(path)
+    assert str(caught.value).startswith(f"{path}: {problem}")
+
+
+def test_an_end_that_is_not_after_the_start_is_refused(tmp_path):
+    event = {**EVENT_CTFD, "start": '"2026-11-14T09:00:00Z"', "end": '"2026-11-14T09:00:00Z"'}
+    with pytest.raises(ProfileError, match=r"event\.end must be after event\.start"):
+        load_profile(write(tmp_path, toml(event, RULES_OPEN)))
+
+
+def test_describe_shows_the_schedule(tmp_path):
+    event = {**EVENT_CTFD, "start": '"2026-11-14T09:00:00Z"'}
+    loaded, stages = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
+    lines = describe(loaded, stages, environ=TOKEN_SET)
+    assert "schedule  starts 2026-11-14T09:00:00+00:00 (autopilot waits for the start and stops at the end)" in lines

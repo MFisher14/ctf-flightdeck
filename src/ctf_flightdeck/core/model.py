@@ -172,6 +172,7 @@ class Actor(StrEnum):
     LANE = "lane"
     PLAYER = "player"
     DECK = "flightdeck"
+    AUTOPILOT = "autopilot"  # an intervention autopilot made by rule (autopilot.py): never counted as the player's
 
 
 class ActionKind(StrEnum):
@@ -287,6 +288,7 @@ class Lane:
     hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
     paused_before_takeover: bool = False  # hand back leaves it paused
     gave_up_later: str = ""  # its driver gave up while a flag waited: the lane ends once no flag waits
+    declined: bool = False  # its model declined (a refusal): autopilot never sends its challenge on to another model
 
     @property
     def id(self) -> str:

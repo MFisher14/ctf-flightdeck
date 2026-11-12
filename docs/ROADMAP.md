@@ -46,31 +46,45 @@ console in a few minutes, without reading the architecture:
 - A lane image that works out of the box, built only by a command the player runs.
 - A quickstart at the top of the README, tested on a clean machine.
 
-## Next: M5, Autopilot
+## Built, not released yet: M5, Autopilot
 
 Engage autopilot and flightdeck runs the event end to end while you are away; take the controls
-back at any time (D20). A sketch, decided in detail when M5 starts:
+back at any time (D20; the details are P19 to P28 in [DECISIONS.md](DECISIONS.md), and the guide's
+[Autopilot](GUIDE.md#autopilot) says how to use it). What was sketched, and is built:
 
-- **Every stage as automatic as the event's rules allow.** Pull, L1, agents, submit and live
-  instances at `auto` where the profile permits, never looser. Flags a lane claims are submitted;
-  everything else waits.
+- **Every stage as automatic as the event's rules allow, never looser.** Autopilot changes no
+  policy: pull, L1, agents, submit and live instances go as far as the profile and your config set
+  them. Under submit auto, flags a lane claims are submitted; everything else waits.
 - **Scheduled.** Start at the event's start time, pull new waves on a timer, stop at the end. When
   the queue runs dry, unsolved challenges go round again on the next model up, within the budget.
-- **Interventions by rule.** A stalled lane escalates one rung, a lane that gave up is forked onto
-  another model, a looping lane is killed, a lane that ignores the hint is redirected to it. Code
-  decides (D15); a light model may confirm.
-- **Guardrails.** A run budget (dollars and tokens) is required to engage; at the budget no new lane
-  starts. No guessed flags, no last try spent, no refused request rerouted, nothing reached but a
+- **Interventions by rule.** A stalled lane escalates one rung, a lane that gave up has its
+  challenge queued again on the next model up, a looping lane is killed, a lane that ignores the
+  hint is redirected to it, and a lane's own budget request is declined. Code decides (D15); the
+  light hint judge has its say in the Watch, as before.
+- **Guardrails.** A run budget (dollars, tokens or both) is required to engage; at the budget no new
+  lane starts and the lanes are paused. Docker only. No guessed flags, no last try spent, no refused request rerouted, nothing reached but a
   challenge's own instance.
 - **Disengage.** Budget reached, the platform locking out or failing, the model API failing for every
-  lane, a challenge down to its last try, a human check (a CAPTCHA): autopilot holds the queue, raises
-  an alert and logs why, for the post-flight report.
+  lane, a human check (a CAPTCHA), the event's end: autopilot holds the queue, says why in the
+  console and logs it for the post-flight report. A challenge down to its last try does not
+  disengage: that flag waits for you and the run goes on.
 - **Headless, and a way to reach you.** Built ahead of the rest of M5: `play --headless` runs
   without the console by the same rules (an approval waits, nothing is approved) and stops on
   SIGTERM as quitting does; every run writes `status.json`; an opt-in webhook is told when a flag
   is accepted, a lane needs you, or the queue is held or autopilot disengages, and never gets a
   flag ([the guide](GUIDE.md#headless-runs-and-notifications)). Still open: a phone push, and
   approving from the phone (Later: phone control).
+
+Left of M5:
+
+- **An outage with coding-agent lanes.** flightdeck's own lanes hold the queue when the model API
+  fails for every lane, and autopilot disengages on that hold; the `claude` and `codex` lanes do
+  not hold the queue yet.
+- **A refusal inside a coding-agent CLI.** flightdeck reroutes no refused request, and switches
+  Anthropic's server-side refusal fallback off for its own lanes; what a CLI does with a refusal
+  on its own API is not flightdeck's to see.
+- **A lane that waits for a live-box answer** keeps its slot until you are back.
+- **A real event.** Autopilot is tested against the fake CTFd and the fake model, not yet flown.
 
 ## Still open from M0 to M4
 

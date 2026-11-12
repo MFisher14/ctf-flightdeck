@@ -74,6 +74,15 @@ Fork a lane: a sibling on the same challenge, with another approach or model.
 `t` takes over a lane's shell (in a real run, a shell in its workspace; exit it to hand the lane
 back). The mock shows a placeholder.
 
+## Autopilot
+
+`flightdeck mock --scenario autopilot --screenshot DIR` saves two moments of its own, after
+`01-open.svg`: `02-autopilot-rule.svg` (the `AUTOPILOT` chip in the header, and a lane autopilot
+just killed by rule: its row says "by autopilot; parked") and `03-autopilot-disengaged.svg` (the
+run budget reached: the chip is gone, the header says `queue held: autopilot disengaged: the run
+budget is reached`, and the lanes are paused). No picture of them here yet: make your own with
+that command.
+
 ## Team play
 
 ![Team mode: a teammate solved a challenge, so the lane working it stops](screenshots/team-solve.png)

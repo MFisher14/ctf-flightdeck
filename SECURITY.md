@@ -31,6 +31,12 @@ problem: report it privately, never in a public issue.
   model's flag check (`flagcheck` in `[light] jobs`) holds it; and a flag found wrong is never
   submitted again.
 
+- **Autopilot acting beyond its frame** (D20): doing anything looser than the event profile and
+  your config allow, approving or submitting anything on your behalf (a flag, a live-box request,
+  more budget), sending a flag that would spend a challenge's last counted try, sending a request
+  a model declined on to another model or provider, starting a lane or spending past the run
+  budget once it is reached, or engaging without a run budget or off the Docker runtime.
+
 ## Not a vulnerability
 
 - **`--host` lanes.** They are unsafe by design, and documented as such: a lane runs as you, on

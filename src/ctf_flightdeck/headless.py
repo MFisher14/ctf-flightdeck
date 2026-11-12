@@ -58,6 +58,7 @@ class Headless:
         self.poll_seconds = poll_seconds
         self.more_to_come = more_to_come
         self.stopped_by: signal.Signals | None = None
+        self.ended = ""  # why the run stopped itself (the event's end under autopilot), when it did
         self._stop: asyncio.Event | None = None
 
     async def fly(self) -> None:
@@ -68,6 +69,7 @@ class Headless:
             if signal.getsignal(sig) is signal.SIG_IGN:
                 continue
             loop.add_signal_handler(sig, self._on_signal, sig)  # removed when the loop closes
+        self.run.stopper = self.end  # the event's end under autopilot stops the run here, as a signal would
         self.run.release()
         self.say(self.start_line())
         quiet = 0  # polls in a row at which nothing was left to do
@@ -83,8 +85,18 @@ class Headless:
             if quiet >= 2:
                 self.say("nothing is left to do (no lane is open, nothing is queued): closing the run")
                 return
-        assert self.stopped_by is not None
+        if self.stopped_by is None:  # the run stopped itself
+            self.say(f"{self.ended}stopping the lanes and closing their workspaces...")
+            return
         self.say(f"{self.stopped_by.name}: stopping the lanes and closing their workspaces...")
+
+    def end(self, why: str = "") -> None:
+        """Stop the run because it is over, not because of a signal (Run.stopper: the event's
+        end under autopilot). `why` starts the line said while the lanes stop. The run then
+        exits with status 0, as one that ended on its own."""
+        self.ended = why
+        if self._stop is not None:
+            self._stop.set()
 
     def stop(self, sig: int = signal.SIGTERM) -> None:
         """Stop the run as that signal would (on the run's loop)."""

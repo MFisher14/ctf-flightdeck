@@ -734,3 +734,38 @@ def test_a_path_for_a_user_that_does_not_exist_is_a_config_error(tmp_path, monke
     with pytest.raises(ConfigError, match=r"\$FLIGHTDECK_CONFIG starts with ~ for a user that does not exist"):
         load_config()
 
+
+
+# ---------------------------------------------------------------------- [autopilot]
+
+
+def test_the_autopilot_table_is_read_and_is_off_with_no_budget_by_default(tmp_path):
+    from ctf_flightdeck.config import AutopilotConfig
+
+    plain = load_config(write(tmp_path, filled(example_config())))
+    assert plain.autopilot == AutopilotConfig(engage=False, budget_dollars=None, budget_tokens=None)
+    text = filled(example_config()) + "\n[autopilot]\nengage = true\nbudget_dollars = 12\nbudget_tokens = 3000000\n"
+    text = text.replace("\n[autopilot]\n#", "\n#", 1)  # the example's own, commented table gives way to this one
+    assert load_config(write(tmp_path, text)).autopilot == AutopilotConfig(engage=True, budget_dollars=12.0, budget_tokens=3000000)
+
+
+@pytest.mark.parametrize(("body", "problem"), [
+    ("engage = true", "autopilot.engage is true, and autopilot needs a run budget: set budget_dollars or budget_tokens beside it"),
+    ("budget_dollars = 0", "autopilot.budget_dollars must be a number above 0: the whole run's budget in dollars (got 0)"),
+    ("budget_tokens = 1.5", "autopilot.budget_tokens must be a whole number above 0: the whole run's budget in tokens (got 1.5)"),
+    ('engage = "yes"', "autopilot.engage must be true or false (got a string)"),
+    ("budget = 5", "autopilot.budget"),
+])
+def test_a_bad_autopilot_table_is_refused_naming_the_key(tmp_path, body, problem):
+    text = filled(example_config()).replace("\n[autopilot]\n#", "\n#", 1) + f"\n[autopilot]\n{body}\n"
+    assert problem in error(write(tmp_path, text))
+
+
+def test_the_example_shows_the_autopilot_table():
+    text = example_config()
+    assert "\n[autopilot]\n" in text
+    for key in ("engage", "budget_dollars", "budget_tokens"):
+        assert re.search(rf"^# {key} = ", text, flags=re.M), key
+    said = " ".join(line.lstrip("# ") for line in text.splitlines())
+    assert "never spends a challenge's last try, and reroutes no request a model declined" in said
+    assert "It needs the Docker runtime and a run budget" in said

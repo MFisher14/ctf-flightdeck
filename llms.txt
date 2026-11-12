@@ -6,6 +6,8 @@ Install: `pipx install ctf-flightdeck` or `uv tool install ctf-flightdeck`. Try 
 
 Commands that are safe to run unattended: `flightdeck --help`, `flightdeck doctor`, `flightdeck config --example`, `flightdeck models`, `flightdeck mock --screenshot DIR`. Commands that spend money on a model API: `flightdeck practice`, `flightdeck play`. `flightdeck play --event` talks to a live CTF platform and must follow that event's rules.
 
+`flightdeck play --autopilot` runs an event by rule inside a run budget; `--headless` runs without the console and writes `status.json` in the run folder.
+
 flightdeck has no telemetry, no account and no server of its own. It contacts only the model API and the CTF platform the player configures.
 
 ## Use it

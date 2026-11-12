@@ -137,6 +137,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 |  | `/diff [file]` | Show the files the lane changed |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
+|  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help: every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks |
@@ -214,6 +215,18 @@ If the console itself fails (an error in it that nothing handles), the run is st
 way before `play` exits: every lane stops, every workspace closes and your live-box holds leave the
 team folder. `play` prints the same lines on the way out, says that the console failed, and exits
 with status 1.
+
+## Autopilot
+
+While autopilot is engaged the header has an `AUTOPILOT` chip (`AP` in the compact layout) after
+the lanes and before the need-you count. It never drops: who has the controls is not a detail.
+An intervention autopilot makes by rule reads `› autopilot` in the lane's transcript, where yours
+reads `› you`, and its texts say autopilot ("by autopilot; parked").
+
+When autopilot disengages the chip goes, the status line shows the warning with its reason, and
+the header says `queue held: autopilot disengaged: <reason>`. Its guardrails hold until you touch
+the controls: your first intervention, `/unhold` or `/autopilot off` turns it off. `/unhold` lifts
+the hold as always, and autopilot stays off until `/autopilot on`.
 
 ## Narrow terminals
 
@@ -302,3 +315,6 @@ The mock ships fake data that exercises every alert and at least these scenarios
 4. **Web wrong way**: a web lane brute-forcing directories while the source is in the handout.
 5. **Team**: a teammate solves a challenge a lane is working on; the lane stops by itself.
 6. **Flag found**: approve submit; the board updates.
+7. **Autopilot**: engaged from the start with a run budget; it kills the looping lane, declines a
+   lane's budget request, escalates the stalled lane, then reaches its budget and disengages: the
+   queue is held and the lanes are paused.

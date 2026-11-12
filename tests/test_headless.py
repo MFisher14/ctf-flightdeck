@@ -228,6 +228,29 @@ def test_a_run_that_more_work_can_reach_does_not_end_on_its_own(tmp_path):
     assert said[-1] == "nothing is left to do (no lane is open, nothing is queued): closing the run"
 
 
+def test_the_runs_own_end_stops_a_headless_run_through_its_stopper_as_one_that_ended_on_its_own(tmp_path):
+    """The event's end under autopilot stops the run through Run.stopper. A headless flight
+    sets it, so the run is stopped where it is flown: by no signal, and with exit status 0."""
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": HIDDEN})]) as server:
+        run = prepare_run(RunOptions(board=hidden_flag_board(tmp_path), config=config(tmp_path, server.base_url), submit="auto"))
+        said: list[str] = []
+        flight = Headless(run, say=said.append, poll_seconds=0.05, more_to_come=lambda: True)  # it would never end on its own
+
+        async def main() -> None:
+            task = asyncio.ensure_future(flight.fly())
+            await asyncio.sleep(0.3)
+            assert not task.done()
+            assert run.stopper == flight.end
+            run.stopper("the event ended (now): ")
+            await asyncio.wait_for(task, 5)
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    assert flight.stopped_by is None and flight.return_code == 0
+    assert said[-1] == "the event ended (now): stopping the lanes and closing their workspaces..."
+
+
 # ---------------------------------------------------------------------- as a process of its own
 
 

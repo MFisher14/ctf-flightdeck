@@ -3771,3 +3771,150 @@ def test_the_compact_chips_and_states_are_short_enough_for_their_columns():
     assert all(theme.chip(tag, theme.INK, theme.ACCENT).cell_len <= widths["!"] for tag in tags)
     assert set(views.COMPACT_STATE) == set(LaneState) and all(len(word) <= widths["state"] for word in views.COMPACT_STATE.values())
     assert len(set(views.COMPACT_ALERT_TAG.values())) == len(AlertKind) and len(set(views.COMPACT_STATE.values())) == len(LaneState)
+
+
+# ---------------------------------------------------------------------- autopilot: the chip and the commands
+
+
+def autopilot_run(*, budget=None, containerized: bool = True):
+    """A deck with two lanes and an autopilot attached, off (as a real run starts without --autopilot)."""
+    from ctf_flightdeck.autopilot import Autopilot, Budget
+
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm", "big"), max_lanes=2, containerized=containerized))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo")], [QueueEntry(n, "glm") for n in ("alpha", "bravo")])
+    pilot = Autopilot(deck, Budget(tokens=100_000) if budget is None else budget)
+    pilot.attach()
+    return deck, pilot
+
+
+def test_autopilot_on_shows_the_chip_a_rule_acts_as_autopilot_and_off_takes_the_controls_back():
+    deck, autopilot = autopilot_run()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        assert "AUTOPILOT" not in region_text(app, "#header")
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot on")
+        assert autopilot.engaged
+        assert "Autopilot engaged (run budget 100k tokens); /autopilot off takes the controls back" in status_line(app)
+        header = region_text(app, "#header")
+        assert "╱ AUTOPILOT ╱" in header and "all clear" in header
+        deck.report("L01", TurnReport(turn=False, alerts=(Alert(AlertKind.LOOP, "the same command three times"),)))
+        await pilot.pause()
+        await pilot.pause()
+        assert deck.lanes["L01"].state is LaneState.KILLED and deck.lanes["L01"].result == "by autopilot; parked"
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot on")
+        assert_warning(app, "Autopilot is already engaged")
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot off")
+        assert not autopilot.guarding and "Autopilot off: you have the controls" in status_line(app)
+        assert "AUTOPILOT" not in region_text(app, "#header")
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot")
+        assert "Autopilot is off; run budget 100k tokens." in status_line(app)
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot maybe")
+        assert_warning(app, "/autopilot takes on or off")
+
+    drive(app, script, size=(200, 40))
+
+
+def test_an_escalation_by_autopilot_reads_as_autopilots_in_the_lanes_transcript_not_as_yours():
+    deck, autopilot = autopilot_run()
+    autopilot.engage()
+    deck.report("L01", TurnReport(turn=False, alerts=(Alert(AlertKind.STALL, "no new step for a while"),)))
+    autopilot.step()
+    deck.apply(iv.Pause("L02"))
+    mine = [line.plain for action in deck.lanes["L01"].actions for line in views.transcript_lines(deck, deck.lanes["L01"], action)]
+    yours = [line.plain for action in deck.lanes["L02"].actions for line in views.transcript_lines(deck, deck.lanes["L02"], action)]
+    assert "› autopilot  escalated glm → big with a summary" in mine and not any(line.startswith("› you") for line in mine)
+    assert "› you  paused by the player" in yours and not any("autopilot" in line for line in yours)
+
+
+@pytest.mark.parametrize(("how", "why"), [
+    ({"budget": "none"}, "autopilot needs a run budget: set budget_dollars or budget_tokens under [autopilot]"),
+    ({"containerized": False}, "autopilot needs the Docker runtime: there a lane reaches its challenge's own instance"),
+])
+def test_autopilot_on_is_refused_with_the_reason_without_a_budget_or_off_docker(how, why):
+    from ctf_flightdeck.autopilot import Budget
+
+    if how.get("budget") == "none":
+        how = {"budget": Budget()}
+    deck, autopilot = autopilot_run(**how)
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot on")
+        assert_warning(app, f"Autopilot not engaged: {why}"[:150])
+        assert not autopilot.guarding and "AUTOPILOT" not in region_text(app, "#header")
+
+    drive(app, script, size=(260, 40))
+
+
+def test_autopilot_on_is_refused_once_the_budget_is_spent_and_a_disengage_shows_why_in_the_header():
+    from ctf_flightdeck.autopilot import Budget
+
+    deck, autopilot = autopilot_run(budget=Budget(tokens=2000))
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot on")
+        deck.report("L01", TurnReport(action="step", tokens=2000))
+        await pilot.pause()
+        await pilot.pause()
+        assert autopilot.state.value == "disengaged" and deck.lanes["L01"].state is LaneState.PAUSED
+        assert_warning(app, "autopilot disengaged: the run budget is reached: 2k of 2k tokens spent.")
+        header = region_text(app, "#header")
+        assert "queue held: autopilot disengaged: the run budget is reached" in header and "╱ AUTOPILOT ╱" not in header
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot")
+        assert "Autopilot is disengaged (the run budget is reached: 2k of 2k tokens spent)" in status_line(app)
+        await press(pilot, "slash")
+        await send(pilot, app, "unhold")  # the player is back: the hold is lifted, and autopilot stays off
+        assert deck.held == "" and autopilot.state.value == "off"
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot on")
+        assert_warning(app, "Autopilot not engaged: the run budget is reached: 2k of 2k tokens spent")
+        assert not autopilot.guarding
+
+    drive(app, script, size=(260, 40))
+
+
+def test_a_deck_with_no_autopilot_says_so():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await press(pilot, "slash")
+        await send(pilot, app, "autopilot on")
+        assert_warning(app, "This run has no autopilot")
+
+    drive(app, script, size=(200, 40))
+
+
+def test_the_autopilot_chip_never_drops_and_is_two_letters_in_the_compact_header():
+    from dataclasses import replace as changed
+
+    busy = room.busy_header(max_lanes=4, containerized=True)  # doctor measures a terminal with the chip up
+    assert busy.autopilot
+    assert ("autopilot", 0, ("AUTOPILOT", theme.INK, theme.GREEN, True)) in views.header_pieces(busy)
+    assert ("autopilot", 0, ("AP", theme.INK, theme.GREEN, True)) in views.header_pieces(busy, compact=True)
+    for width in (40, 64, 80, 120):
+        text, _ = views.fit_header(busy, width, compact=width <= 64)
+        assert ("AP" if width <= 64 else "AUTOPILOT") in text.plain and "need you" in text.plain, (width, text.plain)
+    off = changed(busy, autopilot=False)
+    assert not off.autopilot and all(name != "autopilot" for name, _, _ in views.header_pieces(off))
+
+
+def test_help_lists_the_autopilot_command():
+    deck, _ = autopilot_run()
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert "/autopilot [on|off] engage autopilot (it needs a run budget), or take the controls back" in prompt_text(app)
+
+    drive(app, script, size=(160, 100))

@@ -108,6 +108,7 @@ class Scenario:
     start_at: float = 0.0  # event clock at tick 0, in seconds
     seed: int = 7
     event: str = EVENT
+    autopilot_tokens: int | None = None  # the mock engages autopilot with this run budget in tokens (autopilot.py)
 
     def spec(self, challenge_id: str) -> Spec:
         return next(s for s in self.specs if s.id == challenge_id)
@@ -1036,6 +1037,21 @@ def flag() -> Scenario:
     )
 
 
+def autopilot() -> Scenario:
+    specs = (RATCHET_RUN, QUIET_LEDGER, DEEP_ARCHIVE, *(s for s in WAVE_GENERIC if s.id in ("bent-coin", "jukebox", "origami")))
+    return Scenario(
+        name="autopilot",
+        summary="Autopilot engaged: it kills a looping lane, escalates a stalled one, then disengages at its run budget",
+        specs=specs,
+        timeline=((0, ReleaseAt(_ids(specs), "Board")),),
+        max_lanes=4,
+        start_at=2 * 3600.0,
+        autopilot_tokens=AUTOPILOT_TOKENS,
+    )
+
+
+AUTOPILOT_TOKENS = 650_000  # the autopilot scenario's run budget: reached a few minutes after its rules have fired
+
 SCENARIOS: dict[str, Callable[[], Scenario]] = {
     "default": default,
     "wave": wave,
@@ -1044,6 +1060,7 @@ SCENARIOS: dict[str, Callable[[], Scenario]] = {
     "web": web,
     "team": team,
     "flag": flag,
+    "autopilot": autopilot,
 }
 
 
