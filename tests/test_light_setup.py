@@ -51,7 +51,8 @@ def test_init_writes_claude_or_cactus_as_the_light_model_when_asked(tmp_path, mo
     result, target = init(tmp_path, monkeypatch, "--light", "anthropic")
     assert result.exit_code == 0, result.output
     assert load_config(target).light == LightConfig("anthropic", "claude-haiku-5-5", "https://api.anthropic.com",
-                                                    "ANTHROPIC_API_KEY", price=Price(0.10, 0.50, 0.01))
+                                                    "ANTHROPIC_API_KEY", price=Price(0.10, 0.50, 0.01, 0.125))
+    assert "price = { input = 0.1, output = 0.5, cached_input = 0.01, cache_write = 0.125 }" in target.read_text()
     assert "a refusal leaves the rules' answer" in result.output
     result, target = init(tmp_path, monkeypatch, "--light", "cactus", "--force")
     assert load_config(target).light == LightConfig("cactus")

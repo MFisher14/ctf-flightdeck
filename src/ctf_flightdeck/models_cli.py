@@ -443,7 +443,8 @@ def api_json(api: ApiChoice) -> dict:
         "id": api.id, "name": api.name, "provider": api.provider, "roles": list(api.roles),
         "classifier": api.classifier, "note": api.note, "models_page": api.models_page or None,
         "base_url": api.base_url, "key_env": api.key_env, "ladder": list(api.ladder),
-        "prices": {m: {"input": p.input, "output": p.output, "cached_input": p.cached_input} for m, p in api.prices.items()},
+        "prices": {m: {"input": p.input, "output": p.output, "cached_input": p.cached_input, "cache_write": p.cache_write}
+                   for m, p in api.prices.items()},
         "light_model": api.light_model or None,
     }
 

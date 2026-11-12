@@ -288,11 +288,18 @@ def test_init_for_anthropic_writes_the_claude_ladder_with_anthropics_prices(tmp_
     config = load_config(target)
     assert config.api == ApiConfig("https://api.anthropic.com", "ANTHROPIC_API_KEY", "anthropic")
     assert config.models == CLAUDE_LADDER
-    assert config.prices == {  # dollars per million tokens: input, output, cache reads
-        "claude-haiku-5-5": Price(0.10, 0.50, 0.01),
-        "claude-sonnet-5-5": Price(2.0, 10.0, 0.10),
-        "claude-opus-5-5": Price(4.0, 20.0, 0.20),
+    assert config.prices == {  # dollars per million tokens: input, output, cache reads, 5-minute cache writes
+        "claude-haiku-5-5": Price(0.10, 0.50, 0.01, 0.125),
+        "claude-sonnet-5-5": Price(2.0, 10.0, 0.10, 2.5),
+        "claude-opus-5-5": Price(4.0, 20.0, 0.20, 5.0),
+        # the models Anthropic's refusal fallback answers with for those: an attempt of theirs is priced as them
+        "claude-sonnet-5": Price(2.0, 10.0, 0.20, 2.5),
+        "claude-opus-5": Price(5.0, 25.0, 0.50, 6.25),
+        "claude-opus-4-8": Price(5.0, 25.0, 0.50, 6.25),
     }
+    text = target.read_text()
+    assert '[prices."claude-sonnet-5-5"]\ninput = 2\noutput = 10\ncached_input = 0.1\ncache_write = 2.5\n' in text
+    assert text.index('[prices."claude-opus-5-5"]') < text.index("refusal fallback answers with") < text.index('[prices."claude-sonnet-5"]')
     assert config.fallback is None and config.lanes.dollar_cap == 2.0  # caps in dollars work from the start
     assert "put ANTHROPIC_API_KEY=<your key> in" in result.output and "export ANTHROPIC_API_KEY=<your key>" in result.output
     assert "OpenRouter" not in result.output  # no OpenRouter key known: nothing offered
@@ -350,6 +357,16 @@ def test_away_from_a_terminal_init_mentions_the_fallback_and_writes_it_with_the_
     assert load_config(target).fallback.ladder == OPENROUTER_LADDER
     declined, target = anthropic_init(tmp_path, monkeypatch, "--host", "--no-fallback", "--force", router_key=True)
     assert load_config(target).fallback is None and "--fallback` also writes" not in declined.output
+
+
+def test_init_prices_the_refusal_fallbacks_models_of_the_ladder_it_writes_and_no_others(tmp_path, monkeypatch):
+    result, target = anthropic_init(tmp_path, monkeypatch, "--models", "claude-haiku-5-5,claude-sonnet-5-5", "--host")
+    assert result.exit_code == 0, result.output
+    assert list(load_config(target).prices) == ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-sonnet-5"]
+    result, target = anthropic_init(tmp_path, monkeypatch, "--models", "claude-haiku-5-5", "--host", "--force")
+    assert result.exit_code == 0, result.output
+    assert list(load_config(target).prices) == ["claude-haiku-5-5"]  # Claude Haiku 5.5 has no server-side fallback
+    assert "refusal fallback answers with" not in target.read_text()
 
 
 def test_init_refuses_a_fallback_it_cannot_write(tmp_path, monkeypatch):

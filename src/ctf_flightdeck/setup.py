@@ -40,13 +40,49 @@ RUNTIMES = ("docker", "host")
 ANTHROPIC = ("https://api.anthropic.com", "ANTHROPIC_API_KEY")
 ANTHROPIC_LADDER = ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5")
 ANTHROPIC_PRICES = {
-    # Anthropic's list prices, dollars per million tokens (Anthropic's pricing as of 2026-11-03):
-    # input, output, and cache reads; cache writes are counted as input. Claude Haiku 5.5's are
-    # for prompts of 100K tokens or fewer (the long-context refresh keeps a lane's well under).
-    "claude-haiku-5-5": Price(input=0.10, output=0.50, cached_input=0.01),
-    "claude-sonnet-5-5": Price(input=2.0, output=10.0, cached_input=0.10),
-    "claude-opus-5-5": Price(input=4.0, output=20.0, cached_input=0.20),
+    # Anthropic's list prices, dollars per million tokens: input, output, cache reads
+    # (cached_input) and writes to the 5-minute cache (cache_write), the cache flightdeck's
+    # requests use. From Anthropic's documentation as the claude-api skill (Claude Code 2.1.322)
+    # carries it: shared/model-migration.md unless said, each with the line it relies on.
+    # Anthropic's pricing page is the source of truth.
+    #
+    # "Claude Haiku 5.5 ... $0.10 / $0.50 per MTok input / output when the prompt is 100K tokens
+    # or fewer, and $0.50 / $2.50 when it is longer; cache reads are 0.1x the input rate, 5-minute
+    # cache writes 1.25x". These are the rates for 100K tokens or fewer: the long-context refresh
+    # (agent/driver.py COMPACT_AT) keeps a lane's prompt well under.
+    "claude-haiku-5-5": Price(input=0.10, output=0.50, cached_input=0.01, cache_write=0.125),
+    # "Claude Sonnet 5.5 succeeds Claude Sonnet 5 in the Sonnet line at the same prices - $2 / $10
+    # per MTok input / output, 5-minute cache writes $2.50, 1-hour cache writes $4, and Claude
+    # Sonnet 5's batch rates - except cache reads, at $0.10, half Claude Sonnet 5's rate." (The
+    # skill's copy in Claude Code 2.1.319 gave $0.20 for those cache reads; this one corrects it.)
+    "claude-sonnet-5-5": Price(input=2.0, output=10.0, cached_input=0.10, cache_write=2.5),
+    # Claude Opus 5.5: "$4 / $20 per MTok; 5-minute cache writes $5 and 1-hour cache writes $8;
+    # cache reads $0.20 per MTok (0.05x base input)".
+    "claude-opus-5-5": Price(input=4.0, output=20.0, cached_input=0.20, cache_write=5.0),
+    # The models Anthropic's refusal fallback answers with for those (agent/refusal.py), priced
+    # so that an attempt of theirs is too. Claude Sonnet 5: Claude Sonnet 5.5's prices above ("at
+    # the same prices"), but cache reads at twice $0.10 ("half Claude Sonnet 5's rate").
+    "claude-sonnet-5": Price(input=2.0, output=10.0, cached_input=0.20, cache_write=2.5),
+    # Claude Opus 5 "is a drop-in upgrade at Opus 4.8's pricing - $5 per million input tokens, $25
+    # per million output"; cache reads at 0.1x ("0.05x on Claude Opus 5.5 and Claude Sonnet 5.5,
+    # and 0.1x on every other model") and writes at 1.25x (shared/prompt-caching.md: "Cache writes
+    # cost 1.25× for 5-minute TTL, 2× for 1-hour TTL"). Claude Opus 4.8 the same.
+    "claude-opus-5": Price(input=5.0, output=25.0, cached_input=0.50, cache_write=6.25),
+    "claude-opus-4-8": Price(input=5.0, output=25.0, cached_input=0.50, cache_write=6.25),
 }
+
+
+def anthropic_prices(ladder: Sequence[str]) -> dict[str, Price]:
+    """[prices] as `init --provider anthropic` writes it for `ladder`: each of its models whose
+    price is known here, then each model Anthropic's refusal fallback answers with for one of
+    them (agent/refusal.py), so that its attempts are priced as the model that ran them."""
+    from .agent.refusal import answering
+
+    prices = {m: ANTHROPIC_PRICES[m] for m in ladder if m in ANTHROPIC_PRICES}
+    prices.update({m: ANTHROPIC_PRICES[m] for m in answering(tuple(ladder)) if m in ANTHROPIC_PRICES and m not in prices})
+    return prices
+
+
 OPENROUTER_NAMES = {
     # OpenRouter's names for the same models (as openrouter.ai/anthropic lists them), for the
     # OpenRouter fallback that `init --provider anthropic` offers
@@ -188,7 +224,7 @@ class Answers:
     token_cap: int | None = 400_000
     dollar_cap: float | None = 2.0
     provider: str = "openai"  # [api] provider: openai | anthropic
-    prices: Mapping[str, Price] = field(default_factory=dict)  # [prices], per model in the ladder
+    prices: Mapping[str, Price] = field(default_factory=dict)  # [prices], per model in the ladder (and the refusal fallback's)
     fallback: FallbackAnswers | None = None
     light: LightAnswers | None = None  # [light]; None: the rules alone
     timeout: float | None = None  # [api] timeout, written when set (init: a server on this machine)
@@ -215,7 +251,7 @@ def render(answers: Answers) -> str:
         "[models]\n"
         f"ladder = [{models}]   # weakest first; escalation moves right\n"
         "\n"
-        + _prices(answers.prices)
+        + _prices(answers.prices, answers.models)
         + _fallback(answers.fallback)
         + _light(answers.light)
         + "[lanes]\n"
@@ -249,16 +285,30 @@ def _api_limits(answers: Answers) -> str:
     return out
 
 
-def _prices(prices: Mapping[str, Price]) -> str:
+def _prices(prices: Mapping[str, Price], ladder: Sequence[str] = ()) -> str:
+    """[prices]: the ladder's models first, then the others (the refusal fallback's), said so."""
     if not prices:
         return ""
-    out = "# Dollars per million tokens: input, output, and cached_input for cache reads (a cache write counts as input).\n"
-    for model, price in prices.items():
-        out += f"[prices.{_toml(model)}]\ninput = {price.input:g}\noutput = {price.output:g}\n"
-        if price.cached_input is not None:
-            out += f"cached_input = {price.cached_input:g}\n"
-        out += "\n"
+    out = ("# Dollars per million tokens: input, output, cached_input for the prompt tokens read from the cache,\n"
+           "# and cache_write for those written to it (left out: the input rate).\n")
+    others = False
+    for model, price in sorted(prices.items(), key=lambda item: item[0] not in ladder):
+        if model not in ladder and not others:
+            others = True
+            out += ("# The models Anthropic's refusal fallback answers with for the ladder's: a call they decline runs\n"
+                    "# again on one of them, and that attempt is priced as it.\n")
+        out += f"[prices.{_toml(model)}]\n" + price_lines(price) + "\n"
     return out
+
+
+def price_lines(price: Price) -> str:
+    """A price's rates as the lines of its [prices] table."""
+    return "".join(f"{name} = {value:g}\n" for name, value in price.rates())
+
+
+def price_table(price: Price) -> str:
+    """A price as an inline table: [light] price = { ... }."""
+    return "{ " + ", ".join(f"{name} = {value:g}" for name, value in price.rates()) + " }"
 
 
 def _fallback(spare: FallbackAnswers | None) -> str:
@@ -388,10 +438,7 @@ def _light(light: LightAnswers | None) -> str:
                     f"# {BENCHMARK}.\n")
         out += f"thinking = {'true' if light.thinking else 'false'}\n"
     if light.price is not None:
-        parts = [f"input = {light.price.input:g}", f"output = {light.price.output:g}"]
-        if light.price.cached_input is not None:
-            parts.append(f"cached_input = {light.price.cached_input:g}")
-        out += "price = { " + ", ".join(parts) + " }   # dollars per million tokens\n"
+        out += f"price = {price_table(light.price)}   # dollars per million tokens\n"
     return out + "\n"
 
 
