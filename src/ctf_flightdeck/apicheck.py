@@ -279,7 +279,7 @@ class _Asker:
             raise CheckFailed(
                 f"{', '.join(_one(m) for m in retired)} {'is' if len(retired) == 1 else 'are'} retired on the Anthropic API, "
                 f"so every lane on {'it' if len(retired) == 1 else 'them'} would fail at its first call: change "
-                f"{self._ladder()}{self.config}, then start play again"
+                f"{self._ladder()}{self.config}, then start again"
             )
         return notes
 
@@ -309,7 +309,7 @@ class _Asker:
         if not self.api.key_env:
             return CheckFailed(
                 f"{self.who} at {self.where} wants a key (HTTP {status}{says}): name the variable that holds it in "
-                f"{self.api.table}.key_env{self.config}, then start play again"
+                f"{self.api.table}.key_env{self.config}, then start again"
             )
         from .keys import KeysError, keys_path
 
@@ -319,7 +319,7 @@ class _Asker:
             where = "your keys file"
         return CheckFailed(
             f"{self.who} at {self.where} refused the key in {self.api.key_env} (HTTP {status}{says}): put the right key "
-            f"in {self.api.key_env} ({where}, or export it), then start play again"
+            f"in {self.api.key_env} ({where}, or export it), then start again"
         )
 
     def _not_served(self, models: Sequence[str], listed: Sequence[str]) -> CheckFailed:
@@ -328,18 +328,18 @@ class _Asker:
             f"{self.who} at {self.where} does not serve {not_listed(models, listed)}, so every lane on {it} would fail at "
             f"its first call: change {self._ladder()}{self.config} to ids it serves"
             + (" (or pull the model into your server)" if self.local else "")
-            + ", then start play again"
+            + ", then start again"
         )
 
     def _nothing_answers(self, what: str) -> CheckFailed:
         if self.local:
             return CheckFailed(
                 f"nothing answers at {self.where} ({what}): start your local model server (it must speak the OpenAI API "
-                f"with tool calling), or fix {self.api.table}.base_url{self.config}, then start play again"
+                f"with tool calling), or fix {self.api.table}.base_url{self.config}, then start again"
             )
         return CheckFailed(
             f"no answer from {self.who} at {self.where} ({what}): check your network connection and "
-            f"{self.api.table}.base_url{self.config}, then start play again"
+            f"{self.api.table}.base_url{self.config}, then start again"
         )
 
     def _unchecked(self, status: int, said: str) -> str:

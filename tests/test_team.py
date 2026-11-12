@@ -1302,7 +1302,7 @@ def test_mirror_reports_a_teammates_hold_on_the_box_and_on_the_claim(folder):
     assert bravo.current("boxes", "c0").who == "bravo" and bravo.current("claims", "c1").who == "bravo"
     assert reports == [
         f"team: bravo holds the live box of c0; {lane.id} was allowed on it all the same: ask bravo, or tell {lane.id} to stay off it",
-        "team: bravo holds the claim on c1 in the team folder, so yours is only on this deck; release it, or ask bravo",
+        "team: bravo holds the claim on c1 in the team folder, so yours is only on your flightdeck; release it, or ask bravo",
     ]
 
 
