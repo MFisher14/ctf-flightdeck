@@ -635,14 +635,14 @@ def terminal_check(tmp_path, monkeypatch, size: tuple[int, int], answers: Answer
 
 
 def test_doctor_says_what_a_100x30_terminal_leaves_out_of_the_console_and_from_which_size_nothing(tmp_path, monkeypatch):
-    """100x30 was called fine, yet on a busy run the header drops dollars, tokens and the clock
-    there, in the order the console drops them (CONSOLE-SPEC "Narrow terminals", D16), and key lines lose
+    """100x30 was called fine, yet on a busy run (autopilot's chip up) the header drops dollars,
+    tokens, the clock and the event's name there, in the order the console drops them (CONSOLE-SPEC "Narrow terminals", D16), and key lines lose
     keys. doctor says what, and the size from which nothing is left out (4 lanes in docker)."""
     assert terminal_check(tmp_path, monkeypatch, (100, 30)) == [
-        "warn terminal: 100x30: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
+        "warn terminal: 100x30: on a busy run the console leaves out dollars, tokens, the event clock and the event's name in the header; "
         "tab focus, s sort, t take over, e escalate, f fork, x dismiss and r redirect on the fleet view's key line "
         "(? lists every key); pgup pgdn scroll on the focus view's key line",
-        "     fix: from 173x18 it leaves none of this out, with an event name of up to 66 characters (a column more for "
+        "     fix: from 173x18 it leaves none of this out, with an event name of up to 54 characters (a column more for "
         "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
     ]
     assert terminal_check(tmp_path, monkeypatch, (172, 18))[0] == (
@@ -661,11 +661,11 @@ def test_doctor_says_what_a_100x30_terminal_leaves_out_of_the_console_and_from_w
 def test_doctor_measures_the_terminal_with_your_lanes_and_runtime(tmp_path, monkeypatch):
     six_on_host = Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host", max_lanes=6)
     assert terminal_check(tmp_path, monkeypatch, (90, 19), six_on_host) == [
-        "warn terminal: 90x19: on a busy run the console leaves out dollars, tokens and the event clock in the header; "
+        "warn terminal: 90x19: on a busy run the console leaves out dollars, tokens, the event clock and the event's name in the header; "
         "the board (it shows from 100 columns); 1 of the lane list's 7 rows (6 lanes and the finished row): it has room "
         "for 6 and scrolls to the rest; tab focus, s sort, t take over, e escalate, f fork, x dismiss, r redirect and h hint "
         "on the fleet view's key line (? lists every key); pgup pgdn scroll on the focus view's key line",
-        "     fix: from 173x20 it leaves none of this out, with an event name of up to 68 characters (a column more for "
+        "     fix: from 173x20 it leaves none of this out, with an event name of up to 56 characters (a column more for "
         "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
     ]  # host is two cells narrower than docker in the header: room for two more characters of the event's name
     one = Answers("http://127.0.0.1:9/v1", "", ("local/model",), "host", max_lanes=1)
@@ -699,7 +699,7 @@ def test_doctor_says_a_phones_width_gets_the_compact_layout_and_what_that_leaves
         "of that view (the full layout starts at 65 columns); tab focus, s sort, t take over, e escalate, f fork, "
         "x dismiss, r redirect, h hint, p pause, A approve all, k kill and o open on the fleet view's key line (? lists "
         "every key); enter send, tab files and pgup pgdn scroll on the focus view's key line",
-        "     fix: from 173x18 it leaves none of this out, with an event name of up to 66 characters (a column more for "
+        "     fix: from 173x18 it leaves none of this out, with an event name of up to 54 characters (a column more for "
         "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
     ]
     assert "the compact layout" not in terminal_check(tmp_path, monkeypatch, (65, 40))[0]
