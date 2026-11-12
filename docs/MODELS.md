@@ -128,6 +128,18 @@ and `[light] thinking` change them; `flightdeck config --example` shows each, an
 
 `flightdeck models` shows what your machine has (memory, GPU, which runtimes are installed and
 running, the models they serve) and which of these models fit, with the lines for your config.
+
+What it detects, and what it counts: Apple silicon and NVIDIA GPUs (`nvidia-smi`) are what its
+advice is sized for. On Linux it also finds AMD and Intel GPUs (from `/sys/class/drm`, and
+`rocm-smi` when that is installed; an AMD GPU's memory is read, an Intel GPU's is not), and
+names them. Nothing on this page was measured on an AMD or Intel GPU, so for a machine whose
+only GPU is one of those it says so plainly: it found the GPU, it has no results for it yet, and
+its advice treats the machine as CPU-only. A runtime that uses the GPU may do better than that
+advice. To see what would fit the GPU's memory, describe the machine with `--gpu-memory`: that
+sizes it as an NVIDIA GPU of that memory, an estimate and not a result. On Windows (outside WSL)
+and on a Mac, AMD and Intel GPUs are not looked for. Results from such a machine are wanted: the
+[model results form](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=hardware.yml).
+
 For another machine, describe it: `flightdeck models --memory 16 --apple` for a 16 GB Apple
 Silicon Mac, `--memory 32 --gpu-memory 12` for a PC with a 12 GB NVIDIA GPU, `--memory 32` alone
 for one with no GPU. The advice is the same as that machine would get; what only it can tell
