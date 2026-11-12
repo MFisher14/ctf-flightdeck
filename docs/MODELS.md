@@ -154,8 +154,9 @@ it did no worse than a run with no model, and prints the `jobs` line to match: t
 flagcheck right in a run at least as often as with no model; route and recon right at least as
 often as wrong, since a wrong answer goes into the lane's opening brief and no model puts nothing
 there. Hint is eval-local's only (a run uses the rules, which no model beat). Qwen3.5 0.8B gave
-every challenge back as it was shown instead of a brief, and held all 16 real flags it was asked
-about; the larger models held fewer.
+every challenge back as it was shown instead of a brief, and of the 16 real flags a run would have
+asked it about (those the planted-flag hold lets through) it held all 16; the larger models held 1
+to 8.
 
 On the CPU alone (Ollama with no GPU, 4 or 8 threads, under the same load), Qwen3.5 0.8B and 2B
 scored within three cases of their GPU runs on each job, at about 1 to 2 seconds a job; 4 and 8
