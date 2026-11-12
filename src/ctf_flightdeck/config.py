@@ -440,8 +440,9 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # (Ollama: http://127.0.0.1:11434/v1, an MLX server: http://127.0.0.1:8080/v1, key_env = ""), so
 # no provider's safety classifier declines security work. Measure one before you switch it on:
 #   flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> --compare rules
-# Models to measure, for example (examples, not endorsements: eval-local decides): Qwen3.5 9B,
-# Gemma 4 12B, gpt-oss-20b, Ministral 3 14B, Phi-4-mini. "anthropic" (a Claude model, e.g.
+# Models to measure, for example (examples, not endorsements: eval-local decides): Qwen3.5 9B or
+# 4B, Gemma 4 12B or E4B, gpt-oss-20b, Ministral 3 14B; `flightdeck models` says which jobs each
+# measured one did no worse at than no model. "anthropic" (a Claude model, e.g.
 # claude-haiku-5-5) and "cactus" (Cactus Needle, the [cactus] extra) are there too. The light
 # model never holds up a lane or an alert: when it refuses, fails, times out or answers outside
 # the options, the rules' answer stands and the run says so once.

@@ -57,7 +57,8 @@ OPENROUTER_NAMES = {
 
 
 LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # `init --light`
-LIGHT_EXAMPLES = "Qwen3.5 9B, Gemma 4 12B, gpt-oss-20b, Ministral 3 14B or Phi-4-mini"  # to measure, not endorsements
+# To measure, not endorsements; not Phi-4-mini, which scored below the rules (docs/MODELS.md)
+LIGHT_EXAMPLES = "Qwen3.5 9B or 4B, Gemma 4 12B or E4B, gpt-oss-20b or Ministral 3 14B"
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
 # What init suggests for a server on this machine: the default at its prompt, named in its
