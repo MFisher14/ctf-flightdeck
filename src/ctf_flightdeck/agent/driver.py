@@ -13,7 +13,12 @@ stronger model, with the deck's summary; so does the refresh of a context grown 
 
 A flag the model submits that the challenge's own text holds (its description, or a handout
 file as it came: often a decoy) is not claimed: under submit auto too it waits for the
-player, and the model hears why, as agent/external.py's lanes do.
+player, and the model hears why, as agent/external.py's lanes do. With the light model's
+flagcheck (agent/flaggate.py), a flag the model submits that would go out without the player
+(submit auto, not planted, tries not counted) is checked first, in the background: it reaches
+the deck once the light model has answered, claimed as before unless it called the flag a
+stand-in, which then waits for the player. The lane goes on meanwhile; one that gives up
+meanwhile ends once the check is in.
 
 A TCP service the description names (`nc host port`) that the board does not list as the
 challenge's instance is said to the player at the lane's start (no model: the instance rule).
@@ -50,6 +55,7 @@ from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import prompts
 from .client import ChatClient, ModelError, Reply
+from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
 from .l1stage import FLAG_STATUSES, L1Stage, result_line
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
@@ -165,6 +171,7 @@ class _Run:
     idle_turns: int = 0  # replies in a row with no tool call (and no new flag in their text) since the player last spoke
     said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
     planted: frozenset[str] = frozenset()  # flag-format matches in the challenge's own text: never claimed when submitted
+    outputs: Outputs = field(default_factory=Outputs)  # its newest tool outputs: where a flag it submits was found
 
 
 @dataclass
@@ -253,6 +260,7 @@ class AgentDriver:
         compact_at: int | None = COMPACT_AT,
         l1: L1Stage | None = None,
         instance: str = "auto",
+        flaggate: FlagGate | None = None,
     ) -> None:
         self.client = client
         self.workspaces = workspaces
@@ -266,6 +274,8 @@ class AgentDriver:
         if instance not in INSTANCE_POLICIES:
             raise ValueError(f"instance must be one of {', '.join(INSTANCE_POLICIES)}, got {instance!r}")
         self.instance = instance  # may lanes reach a challenge's live instance: auto, confirm (ask first), off
+        # the light model's flagcheck (run.py sets the run's before any lane starts); None: no flag is checked
+        self.flaggate = flaggate
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.answered: set[str] = set()  # the models that have answered a lane in this run
@@ -364,6 +374,8 @@ class AgentDriver:
             self._note(lane, f"The player declined: {prompts.one(pending.detail, 200)}.")
 
     def stop(self, lane: Lane) -> None:
+        if self.flaggate is not None:
+            self.flaggate.stop(self.deck, lane.id)  # a flag still under check was never submitted: said so
         run = self.runs.get(lane.id)
         if run is None:
             return
@@ -645,6 +657,9 @@ class AgentDriver:
         files = tuple(changes[:MAX_FILES_PER_TURN])
         if len(changes) > MAX_FILES_PER_TURN:
             notes.append(f"That turn changed {len(changes)} files; the console lists the first {MAX_FILES_PER_TURN}.")
+        for result in results:  # what the lane saw: where a flag it submits later was found (agent/flaggate.py)
+            if not (result.flag or result.plan):
+                run.outputs.add(result.action, result.content)
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
         # the challenge hands these out: often decoys, so the player decides; not one known not to be
@@ -680,6 +695,8 @@ class AgentDriver:
         if skipped:
             why = "taken over" if same else "escalated"
             action = (f"{action}  " if results else "") + f"({skipped} tool call{'s' if skipped > 1 else ''} not run: {why})"
+        checked, again = self._checked_first(run, flags)
+        raised = [flag for flag in flags if flag not in checked and flag not in again]  # the deck has these now
         usage = reply.usage
         self._report(
             run,
@@ -691,19 +708,26 @@ class AgentDriver:
                 dollars=self._dollars(model, reply),
                 plan=plans[-1] if plans else None,
                 files=files,
-                flag=flags[0] if flags else None,
-                claimed=not flags or flags[0] not in run.planted,
+                flag=raised[0] if raised else None,
+                claimed=not raised or raised[0] not in run.planted,
                 hints_taken=hints_taken if same else 0,
                 model=model,
             ),
         )
-        for flag in flags[1:]:  # more candidates in one reply: each is its own approval
+        for flag in raised[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in run.planted))
         for flag in dict.fromkeys(flag for flag in flags if flag in planted):
             self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a handout "
                                         "file), so it waits for you, though the lane submitted it")
+        for flag in again:
+            self.deck.note(run.lane_id, f"candidate {flag} again; not raised: the light model is still checking it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
-            self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
+            if self.flaggate is None or not self.flaggate.under_check(run.lane_id, flag):  # else the check has it
+                self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
+        for flag in checked:  # each reaches the deck once the light model has answered; the lane goes on
+            assert self.flaggate is not None
+            self.flaggate.start(self.deck, run.lane_id, run.challenge, flag, run.outputs.where(flag, SUBMITTED_ONLY),
+                                lambda rep, run=run: self._report(run, rep))
         if idle:
             run.idle_turns = 0
             last = prompts.one(reply.content, 200) if reply.content.strip() else "(nothing)"
@@ -720,6 +744,22 @@ class AgentDriver:
         while not self._over(run):
             run.wake.clear()
             await run.wake.wait()
+
+    def _checked_first(self, run: _Run, flags: Sequence[str]) -> tuple[list[str], list[str]]:
+        """Of a turn's submitted flags, each once: those the light model checks before they go
+        to the deck (agent/flaggate.py: not the challenge's own text, and going out without the
+        player now), and those it is checking already (submitted again: raised once)."""
+        gate = self.flaggate
+        checked: list[str] = []
+        again: list[str] = []
+        if gate is None:
+            return checked, again
+        for flag in dict.fromkeys(flags):
+            if gate.under_check(run.lane_id, flag):
+                again.append(flag)
+            elif flag not in run.planted and gate.covers(self.deck, run.lane_id, flag):
+                checked.append(flag)
+        return checked, again
 
     def _flags_said(self, run: _Run, text: str) -> list[str]:
         """Matches of the flag format in what the model wrote, new to this lane, at most
@@ -785,8 +825,13 @@ class AgentDriver:
 
     def _report(self, run: _Run, report: TurnReport) -> None:
         lane = self._lane(run)
-        if lane is not None and not lane.finished and not run.stopped:
-            self.deck.report(run.lane_id, report)
+        if lane is None or lane.finished or run.stopped:
+            return
+        if self.flaggate is not None:  # giving up while a flag is under check: it ends once the check is in
+            report = self.flaggate.defer_gave_up(run.lane_id, report)
+            if report is None:
+                return
+        self.deck.report(run.lane_id, report)
 
     def _note(self, lane: Lane, text: str) -> None:
         run = self.runs.get(lane.id)
@@ -827,7 +872,10 @@ class AgentDriver:
     # ------------------------------------------------------------------ shutdown
 
     async def shutdown(self) -> None:
-        """Stop every lane and close every workspace (the console calls this before it exits)."""
+        """Stop every lane and close every workspace (the console calls this before it exits).
+        The flag checks stop first (the run closes the light model after this)."""
+        if self.flaggate is not None:
+            self.errors += await self.flaggate.aclose()
         tasks = []
         for run in self.runs.values():
             run.stopped = True
