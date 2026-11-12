@@ -33,10 +33,10 @@ app = typer.Typer(
 )
 
 PackArg = Annotated[
-    Path, typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A folder of engines, each described by a *.manifest.toml.")
+    Path, typer.Argument(metavar="PACK", exists=True, file_okay=False, dir_okay=True, help="A folder of engines, each described by a *.manifest.toml.")
 ]
 ChallengeArg = Annotated[
-    Path, typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A challenge folder of a folder board (it has a challenge.json).")
+    Path, typer.Argument(metavar="CHALLENGE_DIR", exists=True, file_okay=False, dir_okay=True, help="A challenge folder of a folder board (it has a challenge.json).")
 ]
 
 
@@ -98,7 +98,7 @@ def run_command(
     ] = None,
     keep: Annotated[
         bool,
-        typer.Option("--keep", help="Keep each engine's copy of the challenge after the run (default: each is removed once its result is read)."),
+        typer.Option("--keep", metavar="", help="Keep each engine's copy of the challenge after the run (default: each is removed once its result is read)."),
     ] = False,
 ) -> None:
     """Run every engine the challenge reaches, each in its own copy of the challenge, and
@@ -156,7 +156,7 @@ def run_command(
 
 @app.command("import")
 def import_command(
-    folder: Annotated[Path, typer.Argument(exists=True, file_okay=False, dir_okay=True, help="A folder of your scripts.")],
+    folder: Annotated[Path, typer.Argument(metavar="FOLDER", exists=True, file_okay=False, dir_okay=True, help="A folder of your scripts.")],
 ) -> None:
     """Wrap a folder of plain scripts as engines: write a manifest for each script that has
     none, into FOLDER/.flightdeck/generated/, and show the route each got. The scripts are

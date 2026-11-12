@@ -32,7 +32,7 @@ app = typer.Typer(add_completion=False, help="The gap report: the challenges no 
 def gaps_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
+        typer.Argument(metavar="RUN_DIR", exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
     ],
     pack: Annotated[
         Path | None,

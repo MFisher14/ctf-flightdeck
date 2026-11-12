@@ -13,7 +13,7 @@ app = typer.Typer(
 )
 
 FolderArg = Annotated[
-    Path, typer.Argument(help="The shared folder: on a network drive, a Syncthing folder or a shared mount.")
+    Path, typer.Argument(metavar="FOLDER", help="The shared folder: on a network drive, a Syncthing folder or a shared mount.")
 ]
 
 

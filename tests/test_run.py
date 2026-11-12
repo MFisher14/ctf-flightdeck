@@ -1095,6 +1095,33 @@ def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude
             prepare_run(RunOptions(board=board(tmp_path), config=cfg, agent="claude"))
 
 
+@pytest.mark.parametrize("urls", [(), ("http://127.0.0.1:8080",)])
+def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path, fake_claude, monkeypatch, urls):
+    """Its CLI needs its own API, so its container has a network whether or not its challenge
+    has an instance: where flightdeck's own lane on the same board gets "none". Docker itself
+    is not asked here: only the two checks that need it (is it running, has the image the CLI)
+    are stood in for, and no container is made."""
+    import ctf_flightdeck.run as run_module
+
+    monkeypatch.setattr(run_module, "_check_docker", lambda image: None)
+    monkeypatch.setattr(run_module, "_check_image_has", lambda image, program: None)
+
+    folder = board(tmp_path, urls=urls)
+
+    def network(**options) -> str:
+        with FakeModelServer() as server:
+            cfg = config(tmp_path, server.base_url, runtime="docker")
+            run = prepare_run(RunOptions(board=folder, config=cfg, **options))
+            run.close()
+        workspace = run.driver.workspaces(type("L", (), {"id": "L01"})(), run.board.challenges[0].challenge)
+        assert isinstance(workspace, DockerWorkspace)
+        args = workspace.run_args()
+        return args[args.index("--network") + 1]
+
+    assert network(agent="claude") == "bridge"
+    assert network() == ("bridge" if urls else "none")  # flightdeck's own lane: only for a live instance
+
+
 def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_and_transcripts(tmp_path, monkeypatch):
     """The keys file's values, the [api] and [fallback] keys and the agent's own credential:
     a host lane can read them (here: a file in the handout holds them all, as the keys file

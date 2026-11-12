@@ -638,6 +638,21 @@ def test_the_example_shows_every_key(tmp_path):
     assert "# [fallback]" in text
 
 
+def test_the_example_says_what_auto_submit_fast_mode_l1_flags_and_agent_credentials_do_today():
+    text = " ".join(line.lstrip("# ") for line in example_config().splitlines())  # comments as running text
+    # auto submits only what a lane claims; everything else still waits
+    assert '"auto": a flag a lane claims goes at once; the rest wait for you' in text
+    assert '"auto": submitted at once' not in text
+    # an L1 engine's flag follows the submit policy; a match in a text engine's output never goes alone
+    assert ("a flag an engine returns as its result waits for your approval, or goes at once under submit = \"auto\"; a match "
+            "in what a text engine printed always waits.") in text
+    # fast mode's rate limit: standard speed until the lane's session ends, which an escalation does
+    assert "on a 429 the lane goes on at standard speed for the rest of its session (until an escalation) and says so." in text
+    # coding-agent CLIs: a key or a token, by name
+    assert ("They use the CLI's own key or token (claude: ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN; codex: CODEX_API_KEY, "
+            "or a saved login on the host), never the [api] above.") in text
+
+
 def test_the_example_fallback_block_loads_once_uncommented(tmp_path):
     text, n = re.subn(r"^# (\[fallback\]|provider = .*|base_url = .*|key_env = .*|ladder = .*)$", r"\1",
                       filled(example_config()), flags=re.M)

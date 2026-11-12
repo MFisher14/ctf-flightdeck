@@ -43,6 +43,7 @@ from ctf_flightdeck.preflight import (
     lane_network,
     load_profile,
     looser,
+    no_agents,
     strictest,
 )
 
@@ -134,10 +135,16 @@ def warnings(problems: list[Problem]) -> list[str]:
     return [p.message for p in problems if not p.refuse]
 
 
-def passing(chosen: Policies) -> list[Problem]:
-    """What check() says of policies that break no rule, with the runtime unknown: nothing (the
-    host's own warnings are tested on their own)."""
-    return []
+def no_lanes(event: EventProfile, chosen: Policies) -> list[Problem]:
+    """check()'s one refusal for an agents policy of manual or off: play starts no run without lanes."""
+    return [Problem(True, no_agents(event, chosen))]
+
+
+def passing(event: EventProfile, chosen: Policies) -> list[Problem]:
+    """What check() says of policies that break no rule, with the runtime unknown: nothing where
+    play starts lanes (the host's own warnings are tested on their own), and the refusal that
+    play does not start where the agents policy is manual or off."""
+    return no_lanes(event, chosen) if chosen.agents in (MANUAL, OFF) else []
 
 
 def model_config(tmp_path: Path, *, key_env: str = "TEST_MODEL_KEY", extra: str = "") -> Config:
@@ -307,12 +314,13 @@ LOOSER = [
 def test_a_policy_looser_than_the_rules_allow_is_refused_naming_the_rule(tmp_path, rules, stage, policy, rule):
     event = manual(tmp_path, **rules)  # a folder board: no platform checks in the way
     chosen = defaults(event)
-    problems = check(event, Policies(**{**dict(chosen.items()), stage: policy}), max_lanes=4, environ={})
-    assert len(refusals(problems)) == 1, problems
+    asked = Policies(**{**dict(chosen.items()), stage: policy})
+    problems = check(event, asked, max_lanes=4, environ={})
     message = refusals(problems)[0]
+    assert problems[1:] == passing(event, asked), problems  # the one refusal more: no lanes, where the agents policy starts none
     assert f'the {stage} policy "{policy}" is looser than the rules allow' in message
     assert rule in message
-    assert check(event, chosen, max_lanes=4, environ={}) == passing(chosen)  # the derived policies pass
+    assert check(event, chosen, max_lanes=4, environ={}) == passing(event, chosen)  # the derived policies pass
 
 
 @pytest.mark.parametrize("rules", [{}, {"ai_allowed": False}, {"platform_automation": False}, {"live_targets": "confirm"}, {"live_targets": "off"}])
@@ -322,7 +330,7 @@ def test_any_policy_as_strict_as_the_rules_allow_or_stricter_passes(tmp_path, ru
     limit = getattr(allowed(event), stage)
     for policy in ORDER[ORDER.index(limit):]:
         chosen = Policies(**{**dict(defaults(event).items()), stage: policy})
-        assert check(event, chosen, max_lanes=4, environ={}) == passing(chosen), (stage, policy)
+        assert check(event, chosen, max_lanes=4, environ={}) == passing(event, chosen), (stage, policy)
 
 
 @pytest.mark.parametrize("missing, key", [("url", "event.url"), ("token_env", "event.token_env")])
@@ -375,7 +383,8 @@ def test_a_ctfd_profile_that_may_not_pull_has_no_board_and_is_refused(pull):
     assert check(profile(), policies(pull=CONFIRM), max_lanes=4, environ=TOKEN_SET) == []
 
 
-LANES_START = [AUTO, CONFIRM, MANUAL]  # agents policies under which lanes run: on their own, on a yes, when queued
+LANES_START = [AUTO, CONFIRM]  # agents policies under which play starts lanes (confirm: starting play is the yes)
+NO_LANES = [MANUAL, OFF]  # agents policies under which play does not start
 
 
 @pytest.mark.parametrize("agents", LANES_START)
@@ -389,7 +398,8 @@ def test_more_lanes_than_the_rules_allow_is_refused(agents):
     assert check(bounded, policies(agents=agents), max_lanes=8, environ=TOKEN_SET) == []
     assert check(bounded, policies(agents=agents), max_lanes=None, environ=TOKEN_SET) == []  # not known yet: not checked
     assert check(profile(), policies(agents=agents), max_lanes=40, environ=TOKEN_SET) == []  # the rules set no bound
-    assert check(bounded, policies(agents=OFF), max_lanes=9, environ=TOKEN_SET) == []  # no lanes at all
+    for none in NO_LANES:  # no lanes at all: only the refusal that play does not start
+        assert check(bounded, policies(agents=none), max_lanes=9, environ=TOKEN_SET) == no_lanes(bounded, policies(agents=none))
 
 
 OTHER_KEYS = [
@@ -461,7 +471,9 @@ def test_rules_that_forbid_live_targets_refuse_lanes_on_the_host(agents):
     assert 'rules.live_targets = "off"' in refusals(problems)[0] and "docker runtime" in refusals(problems)[0]
     assert check(closed, chosen, max_lanes=4, environ=TOKEN_SET, runtime="docker") == []
     assert check(closed, chosen, max_lanes=4, environ=TOKEN_SET, runtime=None) == []
-    assert check(closed, policies(agents=OFF, instance=OFF), max_lanes=4, environ=TOKEN_SET, runtime="host") == []
+    for none in NO_LANES:
+        idle = policies(agents=none, instance=OFF)
+        assert check(closed, idle, max_lanes=4, environ=TOKEN_SET, runtime="host") == no_lanes(closed, idle)
 
 
 @pytest.mark.parametrize("instance", [MANUAL, OFF])
@@ -481,7 +493,8 @@ def test_instance_confirm_warns_only_where_a_lanes_shell_can_reach_the_instance_
         event = profile(live_targets=rules)
         problems = check(event, policies(agents=agents, instance=CONFIRM), max_lanes=4, environ=TOKEN_SET, runtime=runtime)
         assert problems == ([Problem(False, CONFIRM_ON_HOST)] if runtime == "host" else []), rules
-        assert check(event, policies(agents=OFF, instance=CONFIRM), max_lanes=4, environ=TOKEN_SET, runtime=runtime) == []  # no lanes
+        idle = policies(agents=OFF, instance=CONFIRM)  # no lanes
+        assert check(event, idle, max_lanes=4, environ=TOKEN_SET, runtime=runtime) == no_lanes(event, idle)
     for instance in (AUTO, MANUAL, OFF):
         assert check(profile(), policies(agents=agents, instance=instance), max_lanes=4, environ=TOKEN_SET, runtime="docker") == []
 
@@ -567,7 +580,9 @@ def test_agents_without_a_usable_model_config_warn_with_the_reason(tmp_path, age
     problems = check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=caught.value)
     assert warnings(problems) == [f'the agents policy is "{agents}", but no model config could be loaded: {caught.value}']
     assert str(missing) in warnings(problems)[0]
-    assert check(profile(), policies(agents=OFF), max_lanes=4, environ=TOKEN_SET, model_config=caught.value) == []
+    for none in NO_LANES:
+        idle = policies(agents=none)
+        assert check(profile(), idle, max_lanes=4, environ=TOKEN_SET, model_config=caught.value) == no_lanes(profile(), idle)
     assert check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=None) == []
 
 
@@ -598,7 +613,9 @@ def test_agents_whose_api_key_variable_is_unset_warn_naming_it(tmp_path, agents)
     env = {**TOKEN_SET, "TEST_MODEL_KEY": FAKE_KEY}
     assert check(profile(), policies(agents=agents), max_lanes=4, environ=env, model_config=config) == []
     assert check(profile(), policies(agents=agents), max_lanes=4, environ=TOKEN_SET, model_config=model_config(tmp_path, key_env="")) == []
-    assert check(profile(), policies(agents=OFF), max_lanes=4, environ=TOKEN_SET, model_config=config) == []  # no lanes, no key needed
+    for none in NO_LANES:  # no lanes, no key needed
+        idle = policies(agents=none)
+        assert check(profile(), idle, max_lanes=4, environ=TOKEN_SET, model_config=config) == no_lanes(profile(), idle)
 
 
 @pytest.mark.parametrize(
@@ -985,13 +1002,54 @@ def test_describe_shows_every_stage_with_its_meaning_and_what_the_rules_would_al
     assert "l1        off      no L1 solvers (the rules allow auto)" in lines
     assert "submit    confirm  each flag is submitted after you approve it (the rules allow auto)" in lines
     assert "instance  confirm  each lane asks you before it reaches its challenge's live instance" in lines
-    assert lines[-1] == "network   a docker lane has no network until you allow it its instance, then an open one (bridge: any host)"
+    assert lines[-1] == "network   a docker lane has no network until you allow it its instance, then an open one (bridge: any host); a coding-agent lane (--agent) always has it"
     assert [line.split()[0] for line in lines[4:9]] == list(STAGES)
     loose = describe(event, policies(instance=AUTO), environ=TOKEN_SET)
     assert "instance  auto     lanes may reach their challenge's live instance (looser than the rules allow: at most confirm)" in loose
-    assert loose[-1] == "network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
-    assert describe(event, policies(instance=OFF), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "off")'
-    assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "manual")'
+    assert loose[-1] == "network   a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none; a coding-agent lane (--agent) always has it"
+    assert describe(event, policies(instance=OFF), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "off"); a coding-agent lane (--agent) always has it'
+    assert describe(event, policies(instance=MANUAL), environ=TOKEN_SET)[-1] == 'network   docker lanes get no network (instance "manual"); a coding-agent lane (--agent) always has it'
+
+
+def test_describe_says_what_play_does_under_each_policy_not_what_the_policy_name_suggests():
+    """play asks nothing per lane or per solver: starting it is the yes, agents manual or off
+    starts no run, and a confirmed pull is one pull."""
+    def line(stage: str, **chosen) -> str:
+        (found,) = [text for text in describe(profile(), policies(**chosen), environ=TOKEN_SET) if text.startswith(f"{stage:<10}")]
+        return found
+
+    rules = " (the rules allow auto)"
+    assert line("l1", l1=CONFIRM) == f"l1        confirm  your no-model solvers run first on each challenge (starting play is your yes){rules}"
+    assert line("l1", l1=MANUAL) == (
+        f"l1        manual   your solvers do not run in lanes; `flightdeck l1 route` lists those that match a challenge{rules}")
+    assert line("agents", agents=CONFIRM) == (
+        f"agents    confirm  lanes start on their own, up to the lane limit (starting play is your yes){rules}")
+    assert line("agents", agents=MANUAL) == f"agents    manual   `flightdeck play` does not start: it plays with agent lanes{rules}"
+    assert line("agents", agents=OFF) == f"agents    off      no model-driven lanes: `flightdeck play` does not start{rules}"
+    assert line("pull", pull=CONFIRM) == f"pull      confirm  flightdeck pulls the board once, after you say yes (no new waves){rules}"
+    assert line("pull") == "pull      auto     flightdeck gets the board itself"
+
+
+@pytest.mark.parametrize("pull", [AUTO, CONFIRM, MANUAL, OFF])
+def test_the_pull_line_of_a_folder_board_says_there_is_nothing_to_fetch_whatever_the_policy(tmp_path, pull):
+    (line,) = [text for text in describe(manual(tmp_path), policies(pull=pull), environ={}) if text.startswith("pull ")]
+    note = "" if pull is AUTO else " (the rules allow auto)"
+    assert line == f"pull      {pull.value:<9}a folder board: nothing to fetch{note}"
+
+
+@pytest.mark.parametrize("agents", [MANUAL, OFF])
+def test_an_agents_policy_that_starts_no_lanes_is_refused_because_play_does_not_start(tmp_path, agents):
+    for event in (profile(), manual(tmp_path)):
+        problems = check(event, policies(agents=agents), max_lanes=4, environ=TOKEN_SET)
+        assert problems == [Problem(True, (
+            f'the event profile sets agents = "{agents}": `flightdeck play` plays with agent lanes, so it does not start. '
+            "Play by hand; `flightdeck l1 run` runs your no-model solvers"))]
+    no_ai = profile(ai_allowed=False)  # the rules leave no choice: the refusal names the rule, not the policy
+    assert refusals(check(no_ai, defaults(no_ai), max_lanes=4, environ=TOKEN_SET)) == [
+        "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off: `flightdeck play` plays "
+        "with agent lanes, so it does not start. Play by hand; `flightdeck l1 run` runs your no-model solvers"]
+    for agents_on in (AUTO, CONFIRM):
+        assert check(profile(), policies(agents=agents_on), max_lanes=4, environ=TOKEN_SET) == []
 
 
 NO_PACK_SAID = (
@@ -1008,8 +1066,9 @@ def test_describe_says_nothing_runs_at_the_l1_stage_when_the_config_names_no_pac
     with_pack = load_config(tmp_path / "with.toml")
     note = "" if l1 is AUTO else " (the rules allow auto)"
     assert f"l1        {l1.value:<9}{NO_PACK_SAID}{note}" in describe(profile(), policies(l1=l1), environ=TOKEN_SET, config=without)
-    meaning = {AUTO: "your no-model solvers run on each challenge", CONFIRM: "your no-model solvers run after you say yes",
-               MANUAL: "flightdeck lists the solvers that match; you run them"}[l1]
+    meaning = {AUTO: "your no-model solvers run on each challenge",
+               CONFIRM: "your no-model solvers run first on each challenge (starting play is your yes)",
+               MANUAL: "your solvers do not run in lanes; `flightdeck l1 route` lists those that match a challenge"}[l1]
     for known in (with_pack, ConfigError("no config file"), None):  # a pack, or no config to tell: as before
         assert f"l1        {l1.value:<9}{meaning}{note}" in describe(profile(), policies(l1=l1), environ=TOKEN_SET, config=known)
     off = describe(profile(), policies(l1=OFF), environ=TOKEN_SET, config=without)
@@ -1137,9 +1196,36 @@ def test_preflight_warns_when_agents_are_on_and_no_config_can_be_loaded(tmp_path
     assert f'warn: the agents policy is "auto", but no model config could be loaded: {tmp_path / "no-config-here.toml"}: no config file' in result.stdout
     assert "lanes     how many at a time is not known (no config, no --max-lanes)" in result.stdout
     no_ai = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "ai_allowed": "false"}), "no-ai.toml")
-    result = invoke(str(no_ai))
-    assert result.exit_code == 0 and "warn:" not in result.stdout
+    result = invoke(str(no_ai))  # no lanes: no model config is needed, and play would not start
+    assert result.exit_code == 2 and "warn:" not in result.stdout
     assert "lanes     none (agents off)" in result.stdout
+    assert ("refuse: the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off: `flightdeck play` "
+            "plays with agent lanes, so it does not start.") in result.stdout
+    assert result.stdout.splitlines()[-1] == "preflight: refused (1 refusal): a run with this profile must not start"
+
+
+def test_preflight_refuses_a_profile_whose_agents_are_manual_as_play_does(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN, {"agents": '"manual"'}))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 2
+    assert "agents    manual   `flightdeck play` does not start: it plays with agent lanes (the rules allow auto)" in result.stdout
+    assert "lanes     none (agents manual)" in result.stdout
+    assert 'refuse: the event profile sets agents = "manual": `flightdeck play` plays with agent lanes' in result.stdout
+
+
+def test_preflight_reads_whether_the_token_is_set_from_the_keys_file_too(tmp_path, env, monkeypatch):
+    monkeypatch.delenv(TOKEN_ENV)
+    path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
+    absent = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert f"token     ${TOKEN_ENV} (NOT set), sent only to https://ctf.example.org" in absent.stdout
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"{TOKEN_ENV}={FAKE_TOKEN}\n", encoding="utf-8")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 0, result.output
+    assert f"token     ${TOKEN_ENV} (set), sent only to https://ctf.example.org" in result.stdout
+    assert "is not set or is empty" not in result.stdout and FAKE_TOKEN not in result.output
 
 
 def test_preflight_never_prints_the_token_or_the_api_key(tmp_path, env):

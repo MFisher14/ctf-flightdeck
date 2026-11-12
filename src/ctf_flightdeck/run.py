@@ -97,6 +97,7 @@ from .preflight import (
     deck_submit,
     load_profile,
     looser,
+    no_agents,
     strictest,
 )
 from .runrecord import write_run_info
@@ -831,7 +832,7 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
     except ProfileError as exc:
         raise RunError(str(exc)) from None
     if policies.agents in (Policy.MANUAL, Policy.OFF):
-        raise RunError(_no_agents(profile, policies))
+        raise RunError(no_agents(profile, policies))
     notes: list[str] = []
     lanes = options.max_lanes
     if lanes is None:
@@ -892,17 +893,6 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
         instance=strictest(options.instance, for_lanes).value,
     )
     return _Plan(effective, profile, policies, submit.platform, notes)
-
-
-def _no_agents(profile: EventProfile, policies: Policies) -> str:
-    if not profile.ai_allowed:
-        why = "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off"
-    else:
-        why = f'the event profile sets agents = "{policies.agents}"'
-    return (
-        f"{why}: `flightdeck play` plays with agent lanes, so it does not start. Play by hand; `flightdeck l1 run` "
-        "runs your no-model solvers"
-    )
 
 
 def _event_submit(options: RunOptions, policies: Policies):

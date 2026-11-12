@@ -146,12 +146,12 @@ def models_command(
         typer.Argument(metavar="ID", show_default=False,
                        help="A model from the list: how to get it, and the config lines that use it."),
     ] = None,
-    as_json: Annotated[bool, typer.Option("--json", help="Print the same as JSON, for scripts.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", metavar="", help="Print the same as JSON, for scripts.")] = False,
     memory: Annotated[float | None, typer.Option(
         "--memory", metavar="GB", show_default=False,
         help="Advise for another machine instead of this one: its memory (RAM) in GB, as its spec gives it.")] = None,
     apple: Annotated[bool, typer.Option(
-        "--apple", help="With --memory: the machine is an Apple Silicon Mac, whose memory is unified (the GPU shares "
+        "--apple", metavar="", help="With --memory: the machine is an Apple Silicon Mac, whose memory is unified (the GPU shares "
                         "it).")] = False,
     gpu_memory: Annotated[float | None, typer.Option(
         "--gpu-memory", metavar="GB", show_default=False,

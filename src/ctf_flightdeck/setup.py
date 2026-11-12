@@ -93,23 +93,24 @@ OPENROUTER_NAMES = {
 
 
 LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # `init --light`
-# To measure, not endorsements; not Phi-4-mini, which scored below the rules (docs/MODELS.md)
-LIGHT_EXAMPLES = "Qwen3.5 9B or 4B, Gemma 4 12B or E4B, gpt-oss-20b or Ministral 3 14B"
+# The light models the benchmark measured at or above the rules; the catalog (`flightdeck models`)
+# gives each one's results. Not Phi-4-mini, which scored below the rules, nor any model nothing measured.
+LIGHT_MEASURED = "measured (`flightdeck models` gives each result): Qwen3.5 9B or Gemma 4 12B with thinking off"
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
 # What init suggests for a server on this machine: the default at its prompt, named in its
 # message away from a terminal, never written without the player choosing it. From a benchmark
-# of four open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11), not a guarantee.
-BENCHMARK = "in a benchmark on one machine"
+# of open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11: docs/MODELS.md), not a guarantee.
+BENCHMARK = "in flightdeck's benchmark (docs/MODELS.md)"
 SUGGESTED_LADDERS = {
     "local": ("gpt-oss:20b", f"the local model that solved the most practice challenges as served (2 of 4), {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
             f"it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 tokens, {BENCHMARK}"),
 }
 SUGGESTED_LIGHT = {  # `init --light ollama|mlx`, with thinking off
-    "ollama": ("qwen3.5:9b", f"with thinking off it scored 42 of 44 in eval-local against the rules' 38, {BENCHMARK}"),
+    "ollama": ("qwen3.5:9b", f"with thinking off it scored 42 of the 44 hint and judge cases in eval-local against the rules' 38, {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
-            f"with thinking off it scored 41 of 44 in eval-local against the rules' 38, {BENCHMARK}"),
+            f"with thinking off it scored 41 of the 44 hint and judge cases in eval-local against the rules' 38, {BENCHMARK}"),
 }
 MLX_MAX_TOKENS = 8192  # the --max-tokens init suggests for mlx_lm.server (its own default is 512)
 
@@ -156,7 +157,7 @@ def light_answers(choice: str, model: str | None) -> LightAnswers | None:
             suggested, why = SUGGESTED_LIGHT[choice]
             raise ValueError(
                 f"--light {choice} needs --light-model, the name your server gives the model (suggested: --light-model "
-                f"{suggested}: {why}; examples to measure: {LIGHT_EXAMPLES}); measure it first: flightdeck eval-local "
+                f"{suggested}: {why}; {LIGHT_MEASURED}); measure any other first: flightdeck eval-local "
                 f"--engine openai --base-url {url} --model <model>"
             )
         return LightAnswers("openai", model, url, "", thinking=False)
@@ -378,7 +379,7 @@ def provider_answer(text: str) -> str:
     name = text.strip().lower()
     name = PROVIDER_ALIASES.get(name, name)
     if name not in PROVIDER_CHOICES:
-        raise AnswerError("choose one of openrouter, anthropic, openai, local (Ollama), mlx or custom")
+        raise AnswerError("choose one of openrouter, anthropic, openai, ollama (or local), mlx or custom")
     return name
 
 
@@ -395,6 +396,10 @@ def models_answer(text: str) -> tuple[str, ...]:
         if model in ladder[: n - 1]:
             raise AnswerError(f"model id {n} repeats model id {ladder.index(model) + 1}; give each model once")
     return ladder
+
+
+# What init asks where the runtime is chosen: what host means is said there, not only when play starts.
+RUNTIME_QUESTION = "Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys)"
 
 
 def runtime_answer(text: str) -> str:
@@ -439,9 +444,10 @@ def _light(light: LightAnswers | None) -> str:
     head = "[light]\n"
     if light is None:
         return (
-            head + "# The light model for small jobs (the hint judge); \"rules\" uses none. Recommended: an open-weight\n"
-            "# model on this machine (Ollama: http://127.0.0.1:11434/v1, an MLX server: http://127.0.0.1:8080/v1),\n"
-            "# measured first with `flightdeck eval-local`. `flightdeck config --example` shows every key.\n"
+            head + "# The light model for a run's small jobs (the hint judge by default); \"rules\" uses none. Recommended:\n"
+            "# an open-weight model on this machine (Ollama: http://127.0.0.1:11434/v1, an MLX server:\n"
+            "# http://127.0.0.1:8080/v1): `flightdeck models` and docs/MODELS.md say which were measured, and\n"
+            "# `flightdeck eval-local` measures any other. `flightdeck config --example` shows every key.\n"
             'engine = "rules"\n\n'
         )
     if light.engine == "decider":
@@ -464,7 +470,8 @@ def _light(light: LightAnswers | None) -> str:
         if not light.thinking:
             out += ("# Thinking off: each request asks the model to answer without reasoning first. As served, a model\n"
                     "# that reasons first spent eval-local's few hundred tokens a job reasoning and answered nothing;\n"
-                    "# with thinking off, Qwen3.5 9B and Gemma 4 12B beat the rules (41 or 42 of 44 against 38)\n"
+                    "# with thinking off, Qwen3.5 9B and Gemma 4 12B beat the rules (41 or 42 of the 44 hint and judge cases\n"
+                    "# against 38)\n"
                     f"# {BENCHMARK}.\n")
         out += f"thinking = {'true' if light.thinking else 'false'}\n"
     if light.price is not None:
@@ -674,10 +681,27 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
             return [Check("agent", False, str(exc), "fix the keys file")]
         found = find_agent(kind, ladder[0], environ=merged)
     except AgentError as exc:
-        return [Check("agent", False, str(exc), f"install {kind}, then log in or set its key variable")]
+        return [Check("agent", False, str(exc), _agent_fix(kind, str(exc)))]
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
     checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
     return checks
+
+
+AGENT_CREDENTIALS = {  # how each CLI gets its credential, as find_agent reads it
+    "claude": "set ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token` makes one), in the keys file or "
+              "the environment",
+    "codex": "set CODEX_API_KEY in the keys file or the environment, or run `codex login` (host runtime only)",
+}
+
+
+def _agent_fix(kind: str, problem: str) -> str:
+    """What to do about find_agent's `problem`: install the CLI only when it is the CLI that is
+    missing, fix the ladder when its model name is refused, else how that CLI gets its credential."""
+    if "not found on PATH" in problem:
+        return f"install {kind}, or put the folder that has it on PATH"
+    if "is not a model name" in problem:
+        return f"give {kind} a model name its CLI takes: [agents] {kind} in your config"
+    return AGENT_CREDENTIALS.get(kind, f"give {kind} its credential")
 
 
 def _agent_image_check(kind: str, config) -> Check:
@@ -997,24 +1021,39 @@ def _docker_checks(config) -> list[Check]:
     from .agent.workspace import docker_unavailable
     from .lane import IMAGE
 
+    from .run import host_warning
+
     where = f"in {config.source}" if config is not None and config.source is not None else "in your config"
     reason = docker_unavailable()
     if config is not None and config.lanes.runtime == "host":
+        risk = Check("host runtime", False, host_warning(), essential=False)  # what host means, wherever it is the runtime
         if reason:
             return [Check("docker", False, f"{reason}; your config runs lanes on this machine, so only `play --docker` "
-                                           "needs Docker", essential=False)]
-        return [Check("docker", True, "running (your config runs lanes on this machine; `play --docker` would use it)")]
+                                           "needs Docker", essential=False), risk]
+        return [Check("docker", True, "running (your config runs lanes on this machine; `play --docker` would use it)"), risk]
     if reason:
-        return [Check("docker", False, reason, f'install or start Docker, or run lanes on this machine: set runtime = "host" '
+        return [Check("docker", False, reason, "install or start Docker, or run lanes on this machine (lanes then run as you "
+                                               'and can read your files and keys): set runtime = "host" '
                                                f"under [lanes] {where}, or pass --host to play or practice")]
     out = [Check("docker", True, "running")]
     if config is not None:
         image = config.lanes.image
-        docker = shutil.which("docker") or "docker"
-        found = subprocess.run([docker, "image", "inspect", image], capture_output=True).returncode == 0
+        found = image_present(image)
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
         out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
     return out
+
+
+def image_present(image: str) -> bool:
+    """Whether Docker on this machine has `image` (false when it has not, or when there is no
+    Docker to ask). Nothing is pulled."""
+    docker = shutil.which("docker")
+    if docker is None:
+        return False
+    try:
+        return subprocess.run([docker, "image", "inspect", image], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def report(checks: Sequence[Check], *, agent: str | None = None) -> tuple[str, int]:

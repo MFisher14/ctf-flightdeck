@@ -455,7 +455,7 @@ class TeamWatcher:
                 continue  # a teammate's claim on it is a clash the deck has warned about
             won = self._do(messages, f"write our claim on {ch.id}", channel.claim, ch.id)
             if won is False:
-                messages.append(f"team: {_holder(channel, 'claims', ch.id)} claimed {ch.id} in the team folder; ours is only on this deck")
+                messages.append(f"team: {_holder(channel, 'claims', ch.id)} claimed {ch.id} in the team folder; ours is only on your flightdeck")
         self._follow_boxes(state, messages, now - renew_after)
 
     def _record_solves(self, state: TeamState, messages: list[str]) -> set[str]:
@@ -565,7 +565,7 @@ def mirror(channel: TeamChannel, deck: Deck, *, report: Callable[[str], None] | 
     def claim(cid: str) -> None:
         if attempt(f"claim {cid} in the team folder", channel.claim, cid) is False:
             who = _holder(channel, "claims", cid)
-            report(f"team: {who} holds the claim on {cid} in the team folder, so yours is only on this deck; release it, or ask {who}")
+            report(f"team: {who} holds the claim on {cid} in the team folder, so yours is only on your flightdeck; release it, or ask {who}")
 
     def hold(lane_id: str) -> None:
         lane = deck.lanes.get(lane_id)

@@ -32,8 +32,8 @@ def score_command(
         Path | None,
         typer.Option(
             "--board",
-            help="The board the run played (default: the one the run recorded; for an older run, the practice set "
-            "that ships with flightdeck).",
+            help="The board the run played (default: the board recorded in the run's run.json; a run folder without "
+            "one: the practice set).",
         ),
     ] = None,
     answers: Annotated[

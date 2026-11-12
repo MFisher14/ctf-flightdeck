@@ -38,11 +38,11 @@ class _Refused(Exception):
 
 @app.command("writeups")
 def writeups(
-    run_dir: Annotated[Path, typer.Argument(help="A run folder (the one holding events.jsonl), or its events.jsonl.")],
+    run_dir: Annotated[Path, typer.Argument(metavar="RUN_DIR", help="A run folder (the one holding events.jsonl), or its events.jsonl.")],
     redact: Annotated[
         bool,
         typer.Option(
-            "--redact",
+            "--redact", metavar="",
             help="Write `<flag>` in place of the flag wherever the run's text holds it: whole, cut short, "
             "folded, or the part inside its braces.",
         ),
@@ -61,7 +61,7 @@ def writeups(
     config: Annotated[
         Path | None, typer.Option("--config", dir_okay=False, help="Config file for --polish (default: $FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml).")
     ] = None,
-    force: Annotated[bool, typer.Option("--force", help="Replace drafts that already exist.")] = False,
+    force: Annotated[bool, typer.Option("--force", metavar="", help="Replace drafts that already exist.")] = False,
 ) -> None:
     """Draft a writeup for every challenge the run solved, in RUN_DIR/writeups/."""
     from . import writeup

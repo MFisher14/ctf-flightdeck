@@ -17,9 +17,25 @@ SCENARIO_LIST = "Scenarios:\n\n" + "\n".join(
 )
 
 PLAY, SETUP, EVENT, AFTER, SOLVERS = "Play", "Set up", "Before and during an event", "After a run", "Solvers (L1)"
+PANELS = (SETUP, PLAY, EVENT, AFTER, SOLVERS)  # the order `flightdeck --help` shows them in
+
+
+class _ByPanel(typer.core.TyperGroup):
+    """The root command: its commands listed panel by panel in PANELS' order (Typer would list
+    them as they were registered, every command before every group), and within a panel as
+    they were registered."""
+
+    def list_commands(self, ctx) -> list[str]:
+        def panel(name: str) -> int:
+            title = getattr(self.commands[name], "rich_help_panel", None)
+            return PANELS.index(title) if title in PANELS else len(PANELS)
+
+        return sorted(self.commands, key=panel)  # a stable sort: registration order within a panel
+
 
 app = typer.Typer(
     name="flightdeck",
+    cls=_ByPanel,
     add_completion=False,
     rich_markup_mode="markdown",
     help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
@@ -38,7 +54,7 @@ def _version(ctx: typer.Context, value: bool) -> None:
 def root(
     ctx: typer.Context,
     version: Annotated[
-        bool, typer.Option("--version", callback=_version, is_eager=True, help="Show the version and exit.")
+        bool, typer.Option("--version", callback=_version, is_eager=True, metavar="", help="Show the version and exit.")
     ] = False,
 ) -> None:
     """A terminal harness for playing CTFs with AI agents, where you run the loop."""
@@ -60,7 +76,7 @@ def _next_steps() -> str:
         steps = [
             ("flightdeck init", "a few questions; writes your config"),
             ("flightdeck doctor", "checks your setup and says how to fix what is missing"),
-            ("flightdeck practice", "plays 14 small practice challenges that ship with flightdeck"),
+            ("flightdeck practice", "plays 14 small practice challenges (spends tokens on your model API)"),
         ]
         text = head + "No config yet. Start here:\n"
     else:
@@ -95,10 +111,10 @@ def mock(
         int | None, typer.Option("--max-lanes", min=1, help="Concurrent lanes (default: the scenario's, 16 for most).")
     ] = None,
     team: Annotated[
-        bool | None, typer.Option("--team/--solo", help="Team or solo mode (default: the scenario's; default is team).")
+        bool | None, typer.Option("--team/--solo", metavar="", help="Team or solo mode (default: the scenario's; default is team).")
     ] = None,
     host: Annotated[
-        bool | None, typer.Option("--host/--docker", help="Show lanes running on the host instead of in Docker.")
+        bool | None, typer.Option("--host/--docker", metavar="", help="Show lanes running on the host instead of in Docker.")
     ] = None,
     screenshot: Annotated[
         Path | None,
@@ -111,7 +127,7 @@ def mock(
         float, typer.Option("--speed", min=0.25, max=20.0, help="Mock clock ticks per second (live console).")
     ] = 1.0,
 ) -> None:
-    """Open the console on fake, scripted data (M0 mock). No models, no network."""
+    """Open the console on fake, scripted data: no models, no network, nothing spent."""
     containerized = None if host is None else not host
     if screenshot is not None:
         from .mock.screenshots import capture
@@ -146,7 +162,7 @@ class Agent(StrEnum):
     codex = "codex"
 
 
-AGENT_HELP = "Lanes are this coding-agent CLI (its own login or key and models: [agents] in your config) instead of flightdeck's own loop."
+AGENT_HELP = "Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config) instead of flightdeck's own loop."
 AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
 
 
@@ -155,7 +171,7 @@ def play(
     board: Annotated[
         Path | None,
         typer.Argument(
-            file_okay=False, dir_okay=True, show_default=False,
+            metavar="BOARD", file_okay=False, dir_okay=True, show_default=False,
             help="A folder of challenge folders (each with a challenge.json); for a CTFd event, the folder its board is pulled into.",
         ),
     ] = None,
@@ -175,10 +191,10 @@ def play(
     ] = None,
     max_lanes: Annotated[int | None, typer.Option("--max-lanes", min=1, help="Concurrent lanes (default: the config's).")] = None,
     host: Annotated[
-        bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker (default: the config's runtime).")
+        bool | None, typer.Option("--host/--docker", metavar="", help="Run lanes on this machine, or in Docker (default: the config's runtime).")
     ] = None,
     team: Annotated[
-        bool | None, typer.Option("--team/--solo", help="Team or solo mode (default: the event profile's, else solo).")
+        bool | None, typer.Option("--team/--solo", metavar="", help="Team or solo mode (default: the event profile's, else solo).")
     ] = None,
     team_dir: Annotated[
         Path | None,
@@ -191,7 +207,8 @@ def play(
         str | None, typer.Option("--handle", metavar="NAME", help="Your name in the team folder (default: your login name).")
     ] = None,
     submit: Annotated[
-        Submit | None, typer.Option("--submit", help="confirm: you approve each flag; auto: submit at once (default: the config's).")
+        Submit | None, typer.Option("--submit", help="confirm: you approve each flag; auto: a flag a lane claims goes at once; the rest wait for you "
+                                                   "(default: the config's).")
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The model lanes start on (default: the weakest in the ladder).")] = None,
     run_dir: Annotated[Path | None, typer.Option("--run-dir", file_okay=False, help="Where run folders go (default: the config's).")] = None,
@@ -202,8 +219,8 @@ def play(
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
-    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens
-    on the API in your config."""
+    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
+    on the API in your config, or with --agent on that CLI's own key or subscription."""
     from .run import RunError, RunOptions, host_warning, prepare_run
 
     options = RunOptions(
@@ -335,7 +352,7 @@ def practice(
     ] = None,
     max_lanes: Annotated[int | None, typer.Option("--max-lanes", min=1, help="Concurrent lanes (default: the config's).")] = None,
     host: Annotated[
-        bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker (default: the config's runtime).")
+        bool | None, typer.Option("--host/--docker", metavar="", help="Run lanes on this machine, or in Docker (default: the config's runtime).")
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The model lanes start on (default: the weakest in the ladder).")] = None,
     run_dir: Annotated[Path | None, typer.Option("--run-dir", file_okay=False, help="Where run folders go (default: the config's).")] = None,
@@ -366,7 +383,7 @@ app.add_typer(image_app, name="image", rich_help_panel=SETUP)
 
 @image_app.command("build")
 def image_build(
-    tag: Annotated[str, typer.Option("--tag", help="Image name and tag.")] = "",
+    tag: Annotated[str, typer.Option("--tag", show_default=False, help="Image name and tag (default: ctf-flightdeck-lane:1, the [lanes] image init writes; another tag needs [lanes] image set to it).")] = "",
 ) -> None:
     """Build the lane image with Docker (pulls the Debian base image and packages)."""
     import subprocess
@@ -397,19 +414,19 @@ def image_dockerfile() -> None:
 
 @app.command(rich_help_panel=SETUP)
 def init(
-    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, anthropic, openai, local (Ollama), mlx (an MLX server) or custom.")] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="openrouter, anthropic, openai, ollama (or local), mlx (an MLX server) or custom.")] = None,
     base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
     key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
     models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
-    host: Annotated[bool | None, typer.Option("--host/--docker", help="Run lanes on this machine, or in Docker.")] = None,
+    host: Annotated[bool | None, typer.Option("--host/--docker", metavar="", help="Run lanes on this machine, or in Docker.")] = None,
     runtime: Annotated[str | None, typer.Option("--runtime", metavar="docker|host", help="The same as --docker or --host.")] = None,
     max_lanes: Annotated[int, typer.Option("--max-lanes", min=1, help="Lanes at a time.")] = 4,
     fallback: Annotated[bool | None, typer.Option(
-        "--fallback/--no-fallback",
+        "--fallback/--no-fallback", metavar="",
         help="With --provider anthropic: OpenRouter (OPENROUTER_API_KEY) for a lane whose calls to Anthropic keep failing. "
              "At a terminal you are asked when that key is set.")] = None,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
-    force: Annotated[bool, typer.Option("--force", help="Replace an existing config.")] = False,
+    force: Annotated[bool, typer.Option("--force", metavar="", help="Replace an existing config.")] = False,
     light: Annotated[str, typer.Option("--light", help="The light model for small jobs: rules (none, the default); ollama or "
                                        "mlx (an open-weight model on this machine: recommended, with --light-model); anthropic; cactus; "
                                        "decider (a Strands Decider server on this machine, port 8000).")] = "rules",
@@ -433,14 +450,17 @@ def init(
     from .setup import (
         ANTHROPIC,
         ANTHROPIC_LADDER,
+        BENCHMARK,
         LOCAL_PROVIDERS,
         PROVIDERS,
+        RUNTIME_QUESTION,
         SUGGESTED_LADDERS,
         AnswerError,
         Answers,
         anthropic_fallback,
         anthropic_prices,
         base_url_answer,
+        image_present,
         key_env_answer,
         light_model_answer,
         mlx_server_command,
@@ -449,6 +469,8 @@ def init(
         runtime_answer,
         write_config,
     )
+
+    from .lane import IMAGE as LANE_IMAGE
 
     interactive = _at_terminal()
 
@@ -494,7 +516,7 @@ def init(
     if not interactive:
         missing = []
         if provider is None:
-            missing.append("--provider (openrouter, anthropic, openai, local, mlx or custom)")
+            missing.append("--provider (openrouter, anthropic, openai, ollama (or local), mlx or custom)")
         if provider == "custom" and base_url is None:
             missing.append("--base-url URL")
         if provider == "custom" and key_env is None:
@@ -512,7 +534,7 @@ def init(
                 + (" and " if len(missing) > 1 else "") + missing[-1] + " (see `flightdeck init --help`)"
             )
     if provider is None:
-        provider = ask("Provider: openrouter, anthropic, openai, local (Ollama), mlx or custom", provider_answer, "openrouter")
+        provider = ask("Provider: openrouter, anthropic, openai, ollama (or local), mlx or custom", provider_answer, "openrouter")
     dialect = "anthropic" if provider == "anthropic" else "openai"
     if base_url is not None:
         base_url = given(base_url, "--base-url", lambda text: base_url_answer(text, anthropic=dialect == "anthropic"))
@@ -564,7 +586,7 @@ def init(
     if host is None:
         docker_reason = docker_unavailable()
         default = "docker" if docker_reason is None else "host"
-        lanes_at = ask("Runtime: docker or host" + ("" if docker_reason is None else f" (docker: {docker_reason})"),
+        lanes_at = ask(RUNTIME_QUESTION + ("" if docker_reason is None else f" (docker: {docker_reason})"),
                        runtime_answer, default)
     else:
         lanes_at = "host" if host else "docker"
@@ -594,20 +616,24 @@ def init(
     except OSError as exc:
         fail(f"cannot write {target}: {exc.strerror or type(exc).__name__}")
     typer.echo(f"wrote {written}")
+    if lanes_at == "host":  # said where the runtime is chosen, not only when play starts
+        from .run import host_warning
+
+        typer.echo(f"warning: {host_warning()}")
     if spare is not None:
         typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
     if here:
         typer.echo(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
                    "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
-                   "12B's replies in a benchmark on one machine); change timeout and max_tokens under [api]")
+                   f"12B's replies {BENCHMARK}); change timeout and max_tokens under [api]")
     from .setup import OLLAMA_CONTEXT_NOTE, is_ollama
 
     if dialect == "openai" and is_ollama(base_url):
         typer.echo(f"context: {OLLAMA_CONTEXT_NOTE}")
     if provider == "mlx":
         typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
-                   "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX in a "
-                   "benchmark on one machine)")
+                   "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX "
+                   f"{BENCHMARK})")
     if light_table is not None and light_choice == "mlx":
         import shlex
         from urllib.parse import urlsplit
@@ -640,7 +666,7 @@ def init(
                        "(flightdeck never stores it)")
     if offer:
         typer.echo(offer)
-    if lanes_at == "docker":
+    if lanes_at == "docker" and not image_present(LANE_IMAGE):  # the image init wrote; a built one needs no step
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo(light_line(light_table))
     typer.echo("then: flightdeck doctor, and flightdeck practice")
@@ -652,11 +678,12 @@ def doctor(
     agent: Annotated[Agent | None, typer.Option("--agent", help="Also check this coding-agent CLI and its credential (play --agent).")] = None,
     clean: Annotated[
         bool,
-        typer.Option("--clean", help="Remove what runs left running when flightdeck itself was killed (play and practice do this when they start)."),
+        typer.Option("--clean", metavar="", help="Remove what runs left running when flightdeck itself was killed (play and practice do this when they start)."),
     ] = False,
 ) -> None:
-    """Check Python, the config, the API key variable, Docker and the lane image, with fixes;
-    and what runs left running when flightdeck itself was killed."""
+    """Check your setup (Python, the config and its keys, a local model server, the light model,
+    Docker and the lane image, your terminal) and say how to fix each problem; and list what a
+    killed flightdeck left running."""
     from .setup import doctor as run_checks
     from .setup import report
 
@@ -668,7 +695,7 @@ def doctor(
 
 @app.command("config", rich_help_panel=SETUP)
 def config_command(
-    example: Annotated[bool, typer.Option("--example", help="Print a commented example config and exit.")] = False,
+    example: Annotated[bool, typer.Option("--example", metavar="", help="Print a commented example config and exit.")] = False,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="The config file to check.")] = None,
 ) -> None:
     """Check your config (or print an example). Never prints the API key."""
@@ -724,7 +751,7 @@ def _mount() -> None:
     app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
-    app.command("gaps", rich_help_panel=SOLVERS)(gaps_cli.gaps_command)
+    app.command("gaps", rich_help_panel=AFTER)(gaps_cli.gaps_command)
     app.add_typer(build_cli.app, name="build", rich_help_panel=SOLVERS,
                   help="Build mode: turn a gap into a new L1 engine, with a test that proves a raw handout reaches it.")
     app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)

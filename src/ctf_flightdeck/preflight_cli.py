@@ -46,13 +46,14 @@ def preflight(
         int | None, typer.Option("--max-lanes", min=1, help="Lanes at once, checked against the rules (default: the config's).")
     ] = None,
     host: Annotated[
-        bool | None, typer.Option("--host/--docker", help="Check for lanes on this machine, or in Docker (default: the config's runtime).")
+        bool | None, typer.Option("--host/--docker", metavar="", help="Check for lanes on this machine, or in Docker (default: the config's runtime).")
     ] = None,
-    example: Annotated[bool, typer.Option("--example", help="Print a commented example event profile and exit.")] = False,
+    example: Annotated[bool, typer.Option("--example", metavar="", help="Print a commented example event profile and exit.")] = False,
 ) -> None:
     """Check an event profile against the event's rules and show the policy a run would use at
     each stage (pull, l1, agents, submit, instance: auto, confirm, manual or off). Exits 2 if
-    anything refuses. Never prints a token or a key, only whether its variable is set."""
+    anything refuses: then `flightdeck play --event` would not start (it plays with agent lanes,
+    so agents manual or off refuses too). Never prints a token or a key, only whether its variable is set."""
     from .config import Config
     from .preflight import Policy, ProfileError, check, describe, example_profile, load_profile
     from .text import untrusted
@@ -81,10 +82,10 @@ def preflight(
     problems = check(profile, policies, max_lanes=lanes, model_config=loaded, runtime=runtime, environ=environ)
 
     typer.echo(f"profile   {untrusted(str(profile.source), one_line=True)}")
-    for line in describe(profile, policies, config=loaded):
+    for line in describe(profile, policies, environ=environ, config=loaded):
         typer.echo(line)
-    if policies.agents is Policy.OFF:
-        typer.echo("lanes     none (agents off)")
+    if policies.agents in (Policy.MANUAL, Policy.OFF):  # check() refuses these: play starts no run without lanes
+        typer.echo(f"lanes     none (agents {policies.agents})")
     else:
         parts = [f"{lanes} at a time" if lanes is not None else "how many at a time is not known (no config, no --max-lanes)"]
         if runtime is not None:

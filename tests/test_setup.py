@@ -48,13 +48,62 @@ def test_init_never_overwrites_a_config_unless_forced_and_never_writes_a_bad_one
     assert load_config(path).models == ANSWERS.models
 
 
-def test_init_with_every_answer_as_an_option_says_what_to_do_next(tmp_path):
+def docker_that(tmp_path, monkeypatch, *, has_image: bool) -> None:
+    """A stand-in `docker`, the only one on PATH, that answers `docker image inspect` alone:
+    found or not found. Never the real docker, and it runs nothing."""
+    folder = tmp_path / f"docker-{'with' if has_image else 'without'}-image"
+    folder.mkdir()
+    exe = folder / "docker"
+    exe.write_text(f'#!/bin/sh\n[ "$1 $2" = "image inspect" ] && exit {0 if has_image else 1}\nexit 64\n')
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(folder))
+
+
+def test_init_with_every_answer_as_an_option_says_what_to_do_next(tmp_path, monkeypatch):
+    docker_that(tmp_path, monkeypatch, has_image=False)
     target = tmp_path / "cfg" / "config.toml"
     result = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--models", "a/one, b/two", "--docker", "--path", str(target)])
     assert result.exit_code == 0, result.output
     assert load_config(target).models == ("a/one", "b/two")
     assert "export OPENROUTER_API_KEY=<your key>" in result.output
-    assert "flightdeck image build" in result.output and "flightdeck doctor" in result.output
+    assert "next: flightdeck image build" in result.output and "flightdeck doctor" in result.output
+    assert "warning:" not in result.output  # docker lanes: nothing to warn of
+
+
+def test_init_names_the_image_build_only_when_the_lane_image_is_not_on_this_machine(tmp_path, monkeypatch):
+    args = ["init", "--provider", "openrouter", "--models", "a/b", "--docker", "--force", "--path", str(tmp_path / "config.toml")]
+    docker_that(tmp_path, monkeypatch, has_image=True)
+    built = CliRunner().invoke(cli.app, args)
+    assert built.exit_code == 0 and "image build" not in built.output
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))  # no docker at all: the image is still to build
+    none = CliRunner().invoke(cli.app, args)
+    assert none.exit_code == 0 and "next: flightdeck image build   (builds the lane image once)" in none.output
+    host = CliRunner().invoke(cli.app, [*args[:5], "--host", *args[6:]])  # lanes on this machine use no image
+    assert host.exit_code == 0 and "image build" not in host.output
+
+
+HOST_RISK = (
+    "Lanes run on this machine (runtime host): their shell has your user account, so a lane can read your files and the "
+    "environment of your processes, including flightdeck's, which holds your API key. Use the docker runtime, a disposable "
+    "VM, or a separate low-limit key."
+)
+
+
+def test_init_says_what_the_host_runtime_means_where_it_is_chosen(tmp_path, monkeypatch):
+    """Not only when play starts: in the question, and once the config is written with it."""
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker here: host is the default answer
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    target = tmp_path / "config.toml"
+    asked = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input="openrouter\na/b\n\n")
+    assert asked.exit_code == 0, asked.output
+    assert load_config(target).lanes.runtime == "host"
+    assert ("Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys) "
+            "(docker: docker not found on PATH) [host]:") in asked.output
+    assert f"warning: {HOST_RISK}" in asked.output
+    assert asked.output.index(f"wrote {target}") < asked.output.index("warning: ")
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    given = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--models", "a/b", "--host", "--force", "--path", str(target)])
+    assert given.exit_code == 0 and f"warning: {HOST_RISK}" in given.output
 
 
 def test_init_asks_at_a_terminal(tmp_path, monkeypatch):
@@ -78,7 +127,7 @@ def test_init_away_from_a_terminal_names_every_missing_option_at_once(tmp_path, 
     )
     nothing = CliRunner().invoke(cli.app, ["init", "--path", str(tmp_path / "c.toml")])
     assert nothing.exit_code == 2
-    assert "give --provider (openrouter, anthropic, openai, local, mlx or custom), --models ID,ID (weakest first) and " \
+    assert "give --provider (openrouter, anthropic, openai, ollama (or local), mlx or custom), --models ID,ID (weakest first) and " \
            "--host or --docker" in nothing.output
     custom = CliRunner().invoke(cli.app, ["init", "--provider", "custom", "--models", "m", "--runtime", "host",
                                           "--path", str(tmp_path / "c.toml")])
@@ -98,7 +147,8 @@ def test_init_at_a_terminal_asks_again_after_an_answer_it_cannot_use(tmp_path, m
     assert "Error: give at least one model id, weakest first, comma-separated" in result.output
     assert "Error: model id 2 repeats model id 1; give each model once" in result.output
     assert "Error: give docker (a container per lane) or host (lanes on this machine)" in result.output
-    assert result.output.count("Runtime: docker or host") == 2
+    assert result.output.count("Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys)") == 2
+    assert "Provider: openrouter, anthropic, openai, ollama (or local), mlx or custom [openrouter]:" in result.output
 
 
 def test_init_at_a_terminal_asks_again_for_a_custom_api_and_never_shows_a_key_typed_as_its_variable(tmp_path, monkeypatch):
@@ -135,7 +185,7 @@ def test_init_says_a_config_exists_before_asking_anything(tmp_path, monkeypatch)
          "flightdeck: --key-env: give the name of an environment variable, like OPENROUTER_API_KEY"),
         (["--provider", "openrouter", "--models", " , ", "--host"], "flightdeck: --models: give at least one model id"),
         (["--provider", "olama", "--models", "a/b", "--host"],
-         "flightdeck: --provider: choose one of openrouter, anthropic, openai, local (Ollama), mlx or custom"),
+         "flightdeck: --provider: choose one of openrouter, anthropic, openai, ollama (or local), mlx or custom"),
         (["--provider", "openrouter", "--models", "a/b", "--runtime", "dock"],
          "flightdeck: --runtime: give docker (a container per lane) or host"),
         (["--provider", "openrouter", "--models", "a/b", "--runtime", "host", "--docker"],
@@ -512,10 +562,15 @@ def test_doctor_on_a_host_config_does_not_ask_for_docker_or_its_image_and_names_
     assert not docker.ok and not docker.essential and docker.fix == ""
     assert docker.detail.endswith("your config runs lanes on this machine, so only `play --docker` needs Docker")
     assert "lane image" not in checks
+    risk = checks["host runtime"]  # what host means, said by doctor too: a warning, never a failure
+    assert (risk.ok, risk.essential, risk.detail, risk.fix) == (False, False, HOST_RISK, "")
+    assert f"warn host runtime: {HOST_RISK}" in report(list(checks.values()))[0] and report(list(checks.values()))[1] == 0
     docker_cfg = write_config(ANSWERS, tmp_path / "docker.toml")
-    fix = {c.name: c for c in doctor(docker_cfg, environ={"OPENROUTER_API_KEY": "x"})}["docker"].fix
-    assert fix == (f'install or start Docker, or run lanes on this machine: set runtime = "host" under [lanes] in '
-                   f"{docker_cfg}, or pass --host to play or practice")
+    docker_checks = {c.name: c for c in doctor(docker_cfg, environ={"OPENROUTER_API_KEY": "x"})}
+    assert "host runtime" not in docker_checks
+    assert docker_checks["docker"].fix == (
+        "install or start Docker, or run lanes on this machine (lanes then run as you and can read your files and keys): "
+        f'set runtime = "host" under [lanes] in {docker_cfg}, or pass --host to play or practice')
 
 
 def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):
@@ -527,6 +582,7 @@ def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):
     cfg = write_config(Answers("https://openrouter.ai/api/v1", "", ("a/b",), "host"), tmp_path / "c.toml")
     missing = {c.name: c for c in doctor(cfg, environ={}, agent="claude")}["agent"]
     assert not missing.ok and missing.essential
+    assert missing.fix == "install claude, or put the folder that has it on PATH"  # the CLI itself is what is missing
     exe = bin_dir / "claude"
     exe.write_text("#!/bin/sh\nexit 0\n")
     exe.chmod(0o755)
@@ -536,6 +592,25 @@ def test_doctor_checks_a_coding_agent_cli_when_asked(tmp_path, monkeypatch):
     assert found.ok and str(exe) in found.detail
     assert any(c.name == "agent note" and not c.essential for c in checks)  # its key is visible to its commands
     assert secret not in report(checks)[0]
+
+
+@pytest.mark.parametrize("kind, fix", [
+    ("claude", "set ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token` makes one), in the keys file or the "
+               "environment"),
+    ("codex", "set CODEX_API_KEY in the keys file or the environment, or run `codex login` (host runtime only)"),
+])
+def test_doctor_says_how_an_installed_coding_agent_cli_gets_its_credential_not_to_install_it(tmp_path, kind, fix):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / kind
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    path = tmp_path / "c.toml"
+    path.write_text(f'[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "host"\n[agents]\n{kind} = ["some-model"]\n')
+    environ = {"PATH": str(bin_dir), "HOME": str(tmp_path / "home")}  # the CLI is there; no key, no saved login
+    check = {c.name: c for c in doctor(path, environ=environ, agent=kind)}["agent"]
+    assert not check.ok and check.essential and "not found on PATH" not in check.detail
+    assert check.fix == fix and "install" not in check.fix
 
 
 # ---------------------------------------------------------------------- the terminal: what its size leaves out

@@ -159,11 +159,11 @@ def eval_local(
                                  help="Only these jobs' cases: hint, judge, summary, route, recon, flagcheck.")
     ] = None,
     from_config: Annotated[
-        bool, typer.Option("--from-config", help="Score each job with the engine your config gives it ([light.<job>], "
+        bool, typer.Option("--from-config", metavar="", help="Score each job with the engine your config gives it ([light.<job>], "
                                                  "else [light]), beside the rules.")
     ] = False,
     show_misses: Annotated[
-        bool, typer.Option("--show-misses", help="Also list every job each column got wrong, with what it said.")
+        bool, typer.Option("--show-misses", metavar="", help="Also list every job each column got wrong, with what it said.")
     ] = False,
 ) -> None:
     """Score light models and the rules side by side on the light jobs: hints, hint judging, lane

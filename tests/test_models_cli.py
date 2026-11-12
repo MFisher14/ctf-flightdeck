@@ -234,10 +234,10 @@ def test_a_build_that_serves_no_role_gets_no_commands_or_config_lines(monkeypatc
 
 
 PHI_NOT_FOR_LIGHT = {  # Phi-4-mini's light-role results, below the rules' 38/44
-    "Ollama": "eval-local 22/44 as served, below the rules' 38/44, flightdeck's default with no model; 15 of 58 replies "
-              "held no usable answer",
-    "MLX": "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model; 19 of 58 "
-           "replies held no usable answer",
+    "Ollama": "eval-local 22/44 as served, below the rules' 38/44, flightdeck's default with no model, on the 44 hint "
+              "and judge cases; 15 of 58 replies held no usable answer",
+    "MLX": "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model, on the 44 "
+           "hint and judge cases; 19 of 58 replies held no usable answer",
 }
 
 
@@ -577,7 +577,7 @@ def test_one_model_gives_the_commands_and_the_exact_config_lines(monkeypatch, tm
         "Measured: on Ollama, for lanes: solved 1 of 4 practice challenges as served; tool calls 4/5, the fifth a well-formed "
         f"call to set_plan, which the test did not offer; on Ollama, for the light role: {ollama_light}; on MLX, for lanes: "
         "solved 2 of 4 practice challenges with thinking off and --max-tokens 8192 (0 of 4 served as it comes); tool calls "
-        "5/5; on MLX, for the light role: for the judge, the one job of a run the earlier cases measured: eval-local 41/44 "
+        "5/5; on MLX, for the light role: for the judge, the one job of a run the 44 hint and judge cases measured: eval-local 41/44 "
         "with thinking off, against the rules' 38/44 (hint 28/30, judge 13/14) (docs/MODELS.md).")
     assert out.splitlines()[2].startswith("Every measured number is approximate")
     ollama, mlx = section(out, "On Ollama:"), out[out.index("On MLX:"):]
@@ -586,6 +586,10 @@ def test_one_model_gives_the_commands_and_the_exact_config_lines(monkeypatch, tm
     assert "uv tool install mlx-lm" in mlx  # mlx_lm is not installed on this fake Mac
     assert "    " + QWEN_MLX_SERVER + "\n" in mlx
     assert "lanes: in your config, these replace its [api], [models] and [prices] tables" in out
+    # the [api] lines give a local model the time init gives it: the default 180 s per try is too short for one
+    assert ('    [api]\n    base_url = "http://127.0.0.1:11434/v1"\n    key_env = ""   # a server on this machine needs no key\n'
+            "    timeout = 600   # seconds per try: a model on this machine can take minutes for one reply (init writes the "
+            "same)\n") in out
     assert ('    [light]\n    engine = "openai"\n    model = "mlx-community/Qwen3.5-9B-MLX-4bit"\n'
             '    base_url = "http://127.0.0.1:8080/v1"\n    key_env = ""') in mlx
     assert ("measure it first: flightdeck eval-local --engine openai --base-url http://127.0.0.1:8080/v1 "

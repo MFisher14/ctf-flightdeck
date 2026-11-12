@@ -38,7 +38,7 @@ def test_a_ladder_model_the_server_does_not_list_stops_the_run_with_the_closest_
     assert str(caught.value) == (
         f"the model API at {server.base_url} does not serve qwen2.5-coder-7b (closest it lists: qwen2.5-coder:7b), so "
         f"every lane on it would fail at its first call: change models.ladder in {SOURCE} to ids it serves (or pull the "
-        "model into your server), then start play again"
+        "model into your server), then start again"
     )  # llama3 is llama3:latest
 
 
@@ -70,7 +70,7 @@ def test_nothing_answering_on_this_machine_stops_the_run_and_says_to_start_the_s
     said = str(caught.value)
     assert said.startswith("nothing answers at http://127.0.0.1:9/v1 (ConnectError")
     assert said.endswith(f"start your local model server (it must speak the OpenAI API with tool calling), or fix "
-                         f"api.base_url in {SOURCE}, then start play again")
+                         f"api.base_url in {SOURCE}, then start again")
 
 
 @pytest.mark.parametrize(
@@ -160,7 +160,7 @@ def test_an_anthropic_alias_resolves_and_a_retired_model_stops_the_run():
                      "newer model before then"]
     assert str(caught.value) == (
         "claude-old-1 is retired on the Anthropic API, so every lane on it would fail at its first call: change "
-        f"models.ladder in {SOURCE}, then start play again"
+        f"models.ladder in {SOURCE}, then start again"
     )
 
 
