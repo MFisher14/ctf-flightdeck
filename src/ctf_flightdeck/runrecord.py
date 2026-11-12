@@ -64,6 +64,14 @@ class EventLine:
 
 
 @dataclass(frozen=True)
+class CallLine:
+    """One tool call of a step's turn: its one line and the transcript's longer excerpt of its output."""
+
+    text: str
+    output: str
+
+
+@dataclass(frozen=True)
 class ActionLine:
     at: float
     turn: int
@@ -72,6 +80,7 @@ class ActionLine:
     text: str
     output: str
     alert: str | None
+    calls: tuple[CallLine, ...] = ()  # a step of flightdeck's own loop: every tool call of its turn; none in an older transcript
 
 
 @dataclass(frozen=True)
@@ -386,6 +395,15 @@ def _facts(value: object) -> dict[str, Released]:
     return out
 
 
+def _calls(value: object) -> tuple[CallLine, ...]:
+    """A step's "calls" (every tool call of its turn); none for a transcript written before
+    the field, and an entry of the wrong type is left out."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(CallLine(text=_text(item.get("text")), output=_text(item.get("output")))
+                 for item in value if isinstance(item, Mapping))
+
+
 def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] | None = None) -> LaneRecord:
     head = rows[0]
 
@@ -397,6 +415,7 @@ def _lane(rows: list[Mapping[str, object]], name: str = "", problems: list[str] 
             at=_number(r.get("at")), turn=_count(r.get("turn")), kind=_text(r.get("kind")), by=_text(r.get("by")),
             text=_text(r.get("text")), output=_text(r.get("output")),
             alert=r.get("alert") if isinstance(r.get("alert"), str) else None,
+            calls=_calls(r.get("calls")),
         )
         for r in rows[1:]
         if "kind" in r

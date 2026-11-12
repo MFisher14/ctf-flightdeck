@@ -8,8 +8,15 @@ spend comes in after its end), and for every lane still open when the run closes
 are JSON objects (pure ASCII), first a header for the lane, then one per action, then one
 per changed file.
 
-What the lane wrote (its plan and result, each action's text and output, each file's diff)
-is written with the value of anything shaped like a credential taken out (credentials.py):
+A step of flightdeck's own loop is one turn: its `text` and `output` are what the console
+showed (the turn's first real tool call, "(+N more)" for the rest, at most 3 lines and 300
+characters of output), and its `calls` are every tool call the turn ran, in order, each with
+its one line and a longer excerpt of its output (agent/tools.py: up to 40 lines and 4000
+characters). A line without `calls` is any other entry, a coding-agent CLI's step (one per
+tool call already), or a transcript written before the field.
+
+What the lane wrote (its plan and result, each action's text and output, each call's, each
+file's diff) is written with the value of anything shaped like a credential taken out (credentials.py):
 a host lane can read the player's keys file or another process's environment, and a run
 folder is read, shared and drafted into writeups. The flags the run knows for the
 challenge (proposed, waiting, submitted, or reported by L1) stay as they are.
@@ -65,10 +72,14 @@ class TranscriptLog:
             "plan": clean(lane.plan),
             "dollars_later": lane.dollars_later,  # a CLI's turn was under way: its cost had not come yet, so dollars is not all of it
         }]
-        lines += [{
-            "at": a.at, "turn": a.turn, "kind": a.kind.value, "by": a.by.value, "text": clean(a.text), "output": clean(a.output),
-            "alert": a.alert.value if a.alert else None,
-        } for a in lane.actions]
+        for a in lane.actions:
+            line = {
+                "at": a.at, "turn": a.turn, "kind": a.kind.value, "by": a.by.value, "text": clean(a.text), "output": clean(a.output),
+                "alert": a.alert.value if a.alert else None,
+            }
+            if a.calls:  # every tool call of the turn; the fields above stay the console's one step
+                line["calls"] = [{"text": clean(call.text), "output": clean(call.output)} for call in a.calls]
+            lines.append(line)
         lines += [
             {"file": f.path, "status": f.status, "turn": f.turn, "at": f.at, "diff": clean(f.diff), "by": f.by}
             for f in lane.files.values()

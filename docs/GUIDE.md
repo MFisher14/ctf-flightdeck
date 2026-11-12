@@ -83,9 +83,12 @@ is always on that network, for its CLI's API.
 **`--host`** (or `runtime = "host"`) runs lane commands as you, on this machine. A lane can read
 your files, your keys file and flightdeck's own environment, and send what it reads to its model's
 API, which nothing can take back. flightdeck says so before every host run. A lane's commands get
-an environment built from an allowlist, with no keys in it, and the run log, the console,
-transcripts, reports and writeup drafts show a key's name but not its value. That is cleanup, not
-a fence: use Docker, a disposable VM, or a separate key with a low limit.
+an environment built from an allowlist, with no keys in it. The value of each key flightdeck holds
+(every entry of your keys file, the `[api]` and `[fallback]` keys, the CTFd token) is replaced by
+its name, like `[OPENROUTER_API_KEY]`, in what a lane's tool calls return, before its model sees
+it; so the run log, the console, transcripts, reports and writeup drafts show a key's name but not
+its value. That is cleanup, not a fence (a lane that can read a key can also use it, or print it
+encoded): use Docker, a disposable VM, or a separate key with a low limit.
 
 A coding-agent CLI holds its own credential, and the commands it runs can read it, in Docker too:
 give it a key you can revoke, with a low spending limit. Practise in Docker: on the host, a lane
@@ -362,11 +365,16 @@ In place of RUN_DIR, the word `latest` means your newest run (the newest by star
 `flightdeck gaps` lists ends with the `flightdeck build gap` command for it, ready to paste.
 
 When a run ends, `play` prints its run folder with the report, writeups and gaps commands for it
-(and score, when the board has answers), ready to paste. `writeups --polish MODEL` has MODEL tidy
+(and score, when the board has answers), ready to paste. A lane's transcript
+(`RUN_DIR/lanes/L01.jsonl`) keeps more than the console showed: every tool call of each turn, with
+up to 40 lines of its output, where the console's step is the turn's first call and 3 lines. A
+writeup draft shows each step that mattered with all of its turn's tool calls, 20 lines of output
+each. `writeups --polish MODEL` has MODEL tidy
 the prose through the API in your config: it spends tokens, and never sees the run's flags,
 commands or outputs.
 
-Transcripts, the run log, reports and writeup drafts replace the value of anything shaped like a
+A key flightdeck holds shows as its name in brackets wherever a lane met its value. Beyond those,
+transcripts, the run log, reports and writeup drafts replace the value of anything shaped like a
 credential with `[redacted]`, with or without `--redact`: an upper-case `NAME=value` naming a
 key, token, secret, password, cookie or auth; Authorization, Proxy-Authorization and Cookie
 headers; well-known key prefixes (the full rule is in the

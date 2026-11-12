@@ -32,8 +32,10 @@ problem: report it privately, never in a public issue.
 
 - **`--host` lanes.** They are unsafe by design, and documented as such: a lane runs as you, on
   your machine, so it can read your files, your keys file and flightdeck's own environment, and
-  send what it reads to its model's API. flightdeck says so before every host run, and there the
-  cleanup of logs and transcripts is cleanup, not a fence. Use Docker, a disposable VM or a
+  send what it reads to its model's API. flightdeck says so before every host run. It replaces
+  the value of each key it holds with the key's name in what a lane's tool calls return, but a
+  lane can still use a key it can read, or print it encoded: there that, like the cleanup of logs
+  and transcripts, is cleanup, not a fence. Use Docker, a disposable VM or a
   separate low-limit key (the guide's [Docker or host](docs/GUIDE.md#docker-or-host) says what each
   runtime exposes). A report that a `--host` lane can read or send something of yours is not a
   vulnerability report.

@@ -36,6 +36,19 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - Codex lanes: a take-over that lands during a file edit or a tool step opens its shell only
   once that step is on the lane, so your first edit is never credited to the agent (#21).
 
+- A lane's transcript keeps every tool call of a turn, each with up to 40 lines of its output,
+  where it kept the first call and 3 lines; a writeup draft shows them all, 20 lines of output
+  each, and finds the flag in any of them. The console's steps and the alerts that count them
+  are as before (#15).
+
+### Safety
+
+- A lane of flightdeck's own loop no longer sends its model the keys flightdeck holds: every
+  value in your keys file, the `[api]` and `[fallback]` keys and the CTFd token become `[NAME]`
+  in what a lane's tool calls return, before the model, the console, the transcript or the run
+  log has them, as coding-agent lanes already did. On `--host` this is still cleanup, not a
+  fence, and a keys file that cannot be read now stops such a run before it starts (#8).
+
 ### Models
 
 - `[api] effort` sets the Anthropic effort of each ladder model
