@@ -1075,7 +1075,7 @@ def every_kind_of_solve(tmp_path: Path) -> tuple[Path, Path]:
     lanes = {lane.challenge_id: lane.id for lane in deck.lanes.values()}
     deck.platform_solved("delta", "you", before_run=True)
     clock.t = 30.0
-    deck.report(lanes["alpha"], TurnReport(action="solve", flag=FLAGS["alpha"]))
+    deck.report(lanes["alpha"], TurnReport(action="solve", tokens=1000, dollars=0.30, flag=FLAGS["alpha"]))
     deck.apply(iv.Approve(lanes["alpha"]))
     clock.t = 60.0
     deck.record_l1("bravo", "reader", "candidate", flags=[FLAGS["bravo"]], seconds=0.1, lane_id=lanes["bravo"])
@@ -1098,11 +1098,14 @@ def test_the_report_and_the_scorecard_count_a_runs_solves_by_the_same_rule_and_s
     assert result.solved == ("delta", "alpha", "bravo", "charlie", "echo")  # in the order of the log
     assert [result.per_challenge[cid].credit.by for cid in result.solved] == ["player", "lane", "l1", "teammate", "team"]
     assert (result.points, result.possible, result.lane_solves) == (1050, 1050, 1)
+    assert result.cost_per_solve == pytest.approx(0.30)  # what the lanes spent, over the one solve a lane's flag made
     card = scorecard(result).splitlines()
     assert card[:2] == ["Sample Archive: solved 5 of 5 · 1,050 of 1,050 points", f"Solves: 5 ({EVERY_KIND})"]
+    assert "Spent 1k tokens · $0.30 · $0.30 per lane solve" in card
     record = load_run(path.parent)
     glance = postflight.report(record).splitlines()
     assert f"- Solves: 5 ({EVERY_KIND})" in glance and "- Points: 1050 of 1050" in glance
+    assert "- Cost per solve: $0.30 per lane solve ($0.30 over 1 lane solve)" in glance
     assert "- Challenges: 5 on the board, 5 solved, 0 not solved" in glance
     assert f"5 challenges, 5 solved ({EVERY_KIND}), 1050 of 1050 points" in postflight.summary(record)
     assert {cid: solve.by for cid, solve in postflight.solves(record).items()} == {

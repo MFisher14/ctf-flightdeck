@@ -63,6 +63,7 @@ from ctf_flightdeck.core.model import (
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.runrecord import load_run
 from fake_light import Lingers
+from light_kit import LightModel, lights, user_text
 from fake_model import FakeModelServer, text_reply
 
 FAKE = Path(__file__).with_name("fake_agent_cli.py")
@@ -183,7 +184,7 @@ class Lab:
                  prices: dict[str, Price] | None = None, token_cap: int | None = None, takeover_wait: float = 10.0,
                  flag_format: str = FLAG, secrets: dict[str, str] | None = None, dollar_cap: float | None = None,
                  deck_class: type[Deck] = Deck, urls: dict[str, tuple[str, ...]] | None = None,
-                 instance: str = "auto") -> None:
+                 instance: str = "auto", lights: L.Lights | None = None) -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -203,6 +204,7 @@ class Lab:
             takeover_wait=takeover_wait,
             urls=urls,
             instance=instance,
+            lights=lights,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=2, submit=submit)
         self.deck = deck_class(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
@@ -1427,6 +1429,26 @@ def test_a_cli_agents_opening_brief_offers_the_instance_only_when_the_policy_let
             await lab.finish()
 
     run(main())
+
+
+@pytest.mark.parametrize("instance, told", [("auto", True), ("off", False)])
+def test_under_instance_off_a_cli_lanes_first_look_hears_of_no_instance(tmp_path, instance, told):
+    """The first look goes into a coding-agent lane's opening brief as into a model lane's:
+    under off it must not point the lane at the instance the event's rules keep it off."""
+    script = {"turns": [{"calls": [{"text": "Looking around."}]}]}
+    with LightModel({"recon": "Files: a note."}) as light:
+        async def main():
+            lab = Lab(tmp_path, script, urls={"note": ("tcp://127.0.0.1:31337",)}, instance=instance,
+                      lights=lights(light.engine(), ("recon",)))
+            try:
+                lab.release()
+                await until(lambda: light.requests("recon"), "the first look")
+                asked = [user_text(record) for record in light.requests("recon")]
+                assert asked and all(("tcp://127.0.0.1:31337" in text) is told for text in asked)
+            finally:
+                await lab.finish()
+
+        run(main())
 
 
 # ====================================================================== claude: flags
