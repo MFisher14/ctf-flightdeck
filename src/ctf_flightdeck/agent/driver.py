@@ -4,7 +4,9 @@ One asyncio task per lane, on the console's event loop, so every Deck call happe
 deck's thread (the LaneDriver contract in core/driver.py). A turn is one model call: the
 reply's tool calls run in the lane's workspace, their results go back into the lane's
 context, and the turn is reported to the deck (tokens, cost, the step, changed files, a
-candidate flag). The deck applies the rules (approvals, caps, the flag format); the loop
+candidate flag). The step is one for the console and the detectors (_step: the turn's first
+real call, with "(+N more)" for the rest); with it goes every tool call the turn ran, each
+with a longer excerpt of its output, which the lane's transcript keeps (TurnReport.calls). The deck applies the rules (approvals, caps, the flag format); the loop
 calls the model, and runs a tool call, only while the lane is RUNNING, and waits otherwise.
 
 Each lane starts with a fresh context: the fixed system prompt, then the challenge brief (and,
@@ -70,7 +72,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ..core.driver import TakeoverRefused, TurnReport, spend_only
-from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
+from ..core.model import Call, Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..core.summary import lane_summary
 from ..l1.runner import scan
 from ..light import Lights
@@ -816,6 +818,7 @@ class AgentDriver:
             TurnReport(
                 action=action,
                 output=output,
+                calls=tuple(Call(result.action, result.excerpt) for result in results),  # all of them, for the transcript
                 tokens=usage.total,
                 cached_tokens=usage.cached_tokens,
                 dollars=self._dollars(model, reply),

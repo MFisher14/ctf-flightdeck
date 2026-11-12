@@ -594,7 +594,7 @@ class Deck:
         self._spend(lane, rep)
         lane.last_active_at = now
         if rep.action:
-            lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE, ActionKind.STEP))
+            lane.actions.append(Action(now, lane.turns, rep.action, rep.output, Actor.LANE, ActionKind.STEP, calls=rep.calls))
         if rep.plan is not None:
             lane.plan = rep.plan
         for item in rep.artifacts:

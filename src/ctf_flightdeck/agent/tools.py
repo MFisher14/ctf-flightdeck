@@ -38,6 +38,10 @@ MIN_CHARS = 200  # the smallest max_chars that still leaves room for a cut marke
 FOOTER_CHARS = 160  # room read_file keeps for its "[lines a-b of n; ...]" footer
 CONSOLE_CHARS = 300  # ToolResult.output
 ACTION_CHARS = 400  # ToolResult.action
+EXCERPT_LINES = 40  # ToolResult.excerpt: lines of a call's output kept for the lane's transcript
+EXCERPT_LINE_CHARS = 500  # of each of them
+EXCERPT_CHARS = 4000  # and in all
+EXCERPT_WINDOW = 32 * 1024  # characters of an output looked at for them: its start, or the end of a failure
 PLAN_CHARS = 500
 READ_LINES = 400
 COMMAND_BYTES = 100_000  # the longest shell command: it is one argument (bash -c), and Linux takes at most 128 KiB in one
@@ -125,6 +129,7 @@ class ToolResult:
     content: str  # for the model: truncated, naming the overflow file
     action: str  # one line for the console: "$ ls", "read notes.txt", "GET http://...", ...
     output: str  # short output for the console, at most 300 characters
+    excerpt: str = ""  # a longer cut of the output for the lane's transcript (EXCERPT_LINES, EXCERPT_CHARS); call() fills it
     flag: str | None = None  # submit_flag: the candidate, stripped
     plan: str | None = None  # set_plan: the new plan, stripped
     error: bool = False  # the call itself failed: bad arguments, a refused path or origin...
@@ -199,7 +204,10 @@ class Toolbox:
         path outside the workspace...): they come back as ToolResult(error=True,
         content="error: ..."). A broken workspace (WorkspaceError) does raise: no model can fix it.
         """
-        return self._scrubbed(await self._call(name, arguments, turn, index))
+        result = await self._call(name, arguments, turn, index)
+        if not result.excerpt:  # a submission's or a plan's is what the console has (how it was found; nothing)
+            result = replace(result, excerpt=result.output if result.flag or result.plan else _excerpt(result.content))
+        return self._scrubbed(result)
 
     async def _call(self, name: str, arguments: str, turn: int, index: int) -> ToolResult:
         tool = self._tools.get(name)
@@ -216,7 +224,8 @@ class Toolbox:
         """`result` with the run's secrets out of everything but its flag: what a tool did not
         scrub where it arrived (a header, an error's text)."""
         return replace(result, content=self.scrub(result.content), action=self.scrub(result.action),
-                       output=self.scrub(result.output), plan=None if result.plan is None else self.scrub(result.plan))
+                       output=self.scrub(result.output), excerpt=self.scrub(result.excerpt),
+                       plan=None if result.plan is None else self.scrub(result.plan))
 
     def _line(self, action: str) -> str:
         """An action as the console's one line, the run's secrets out of it before it is cut."""
@@ -277,6 +286,7 @@ class Toolbox:
             content=f"{status}\n{body}",
             action=self._line(action),
             output=_brief(text, status if failed else "", tail=failed),
+            excerpt=_excerpt(text, status if failed else "", tail=failed),
         )
 
     def _fit(self, text: str, raw: bytes, room: int, turn: int, index: int) -> str:
@@ -749,3 +759,28 @@ def _brief(text: str, status: str, *, tail: bool) -> str:
     picked = lines[-3:] if tail else lines[:3]
     excerpt = "\n".join(picked) if picked else "(no output)"
     return _clip(f"{status} · {excerpt}" if status else excerpt, CONSOLE_CHARS)
+
+
+def _excerpt(text: str, status: str = "", *, tail: bool = False) -> str:
+    """A call's output for the lane's transcript: more than the console's _brief, still cut. Up
+    to EXCERPT_LINES lines, each cut to EXCERPT_LINE_CHARS, EXCERPT_CHARS in all: the first
+    lines of a success; of a failure its status on a line of its own, then its last lines
+    (where errors are). Lines keep their indentation. A line in brackets says that lines were
+    left out, and how many when the whole output was looked at (EXCERPT_WINDOW)."""
+    whole = len(text) <= EXCERPT_WINDOW
+    window = text if whole else (text[-EXCERPT_WINDOW:] if tail else text[:EXCERPT_WINDOW])
+    lines = [_clip(line.rstrip(), EXCERPT_LINE_CHARS) for line in window.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    kept = lines[-EXCERPT_LINES:] if tail else lines[:EXCERPT_LINES]
+    while len(kept) > 1 and sum(len(line) + 1 for line in kept) > EXCERPT_CHARS:
+        kept = kept[1:] if tail else kept[:-1]
+    cut = len(lines) - len(kept)
+    note = []
+    if cut or not whole:
+        count = f"{cut} more line{'s' if cut != 1 else ''}" if whole else "more lines"
+        note = [f"[... {count} not kept ...]"]
+    body = kept or ["(no output)"]
+    return "\n".join([*([status] if status else []), *(note + body if tail else body + note)])

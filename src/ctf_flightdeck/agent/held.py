@@ -59,6 +59,7 @@ class Secrets:
             rep,
             action=self(rep.action),
             output=self(rep.output),
+            calls=tuple(replace(call, text=self(call.text), output=self(call.output)) for call in rep.calls),
             plan=None if rep.plan is None else self(rep.plan),
             gave_up=None if rep.gave_up is None else self(rep.gave_up),
             files=tuple(replace(change, path=self(change.path), diff=self(change.diff)) for change in rep.files),

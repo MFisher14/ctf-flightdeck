@@ -7,7 +7,7 @@ import json
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Challenge, DeckConfig, FileChange
+from ctf_flightdeck.core.model import Call, Challenge, DeckConfig, EventKind, FileChange
 from ctf_flightdeck.mock.world import ManualClock
 from ctf_flightdeck.transcript import TranscriptLog
 from deadline import within
@@ -150,3 +150,34 @@ def test_files_of_blank_header_values_never_hold_up_the_approval_that_ends_the_l
         lines = read(tmp_path / "lanes" / f"{lane.id}.jsonl")
         assert {x["file"]: x["diff"] for x in lines if "file" in x} == diffs  # no value in them to take out
         assert lines[1]["output"] == blanks["cookie.txt"]
+
+
+def test_a_step_keeps_every_tool_call_of_its_turn_in_the_transcript_and_stays_one_step_everywhere_else(tmp_path):
+    """TurnReport.calls: on the step's Action for the transcript, each call with its longer
+    output and credentials taken out as from any text of the lane. The step itself (what the
+    console, the detectors and events.jsonl have) is one, with the text and output it had."""
+    from ctf_flightdeck.core.driver import spend_only
+
+    deck = deck_with_two_lanes()
+    log = TranscriptLog(tmp_path / "lanes")
+    log.attach(deck)
+    a = deck.lanes_on("a")[0]
+    calls = (Call("$ ls", "note\nkeys.env"), Call("$ cat keys.env", f"OPENROUTER_API_KEY={OPENROUTER}\nthe flag is t{{a}}"))
+    deck.report(a.id, TurnReport(action="$ ls  (+1 more)", output="note\nkeys.env", calls=calls, tokens=50))
+    deck.report(a.id, TurnReport(action="submit t{a}", flag="t{a}", tokens=20))
+    assert [(x.text, x.output) for x in a.actions if x.kind.value == "step"] == [("$ ls  (+1 more)", "note\nkeys.env"), ("submit t{a}", "")]
+    assert a.actions[0].calls == calls and a.turns == 2
+    turns = [e for e in deck.events if e.kind is EventKind.TURN]
+    assert [e.data["action"] for e in turns] == ["$ ls  (+1 more)", "submit t{a}"] and "calls" not in turns[0].data
+    deck.apply(iv.Approve(a.id))
+    text = (tmp_path / "lanes" / f"{a.id}.jsonl").read_text(encoding="ascii")
+    assert OPENROUTER not in text
+    first, second = [x for x in read(tmp_path / "lanes" / f"{a.id}.jsonl") if x.get("kind") == "step"]
+    assert (first["text"], first["output"]) == ("$ ls  (+1 more)", "note\nkeys.env")
+    assert first["calls"] == [
+        {"text": "$ ls", "output": "note\nkeys.env"},
+        {"text": "$ cat keys.env", "output": "OPENROUTER_API_KEY=[redacted]\nthe flag is t{a}"},
+    ]
+    assert "calls" not in second  # none reported: the line is as it was before the field
+    # a late report that carries calls is a step, not spend: dropped once the lane has ended
+    assert not spend_only(TurnReport(turn=False, tokens=5, calls=calls)) and spend_only(TurnReport(turn=False, tokens=5))

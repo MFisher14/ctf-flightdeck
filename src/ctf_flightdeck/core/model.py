@@ -184,6 +184,15 @@ class ActionKind(StrEnum):
 
 
 @dataclass(frozen=True)
+class Call:
+    """One tool call of a turn, as the lane's transcript keeps it: its one line, and a longer
+    excerpt of its output than a step's `output` (agent/tools.py: ToolResult.excerpt)."""
+
+    text: str
+    output: str = ""
+
+
+@dataclass(frozen=True)
 class Action:
     """One entry in a lane's log. The log is the lane's transcript, in order."""
 
@@ -194,6 +203,9 @@ class Action:
     by: Actor = Actor.LANE
     kind: ActionKind = ActionKind.STEP
     alert: AlertKind | None = None
+    # a step of flightdeck's own loop: every tool call of its turn, for the transcript and what reads it (a writeup
+    # draft). The console, the detectors and the lane's summary read `text` and `output`: one step per turn, as before.
+    calls: tuple[Call, ...] = ()
 
 
 @dataclass(frozen=True)

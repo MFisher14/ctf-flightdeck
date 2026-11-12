@@ -244,3 +244,28 @@ def test_a_run_json_that_cannot_be_used_says_why(tmp_path, content, problem):
         target.write_text(content)
     with pytest.raises(RunFolderError, match=re.escape(problem)):
         read_run_info(tmp_path)
+
+
+def test_a_step_reads_back_every_tool_call_of_its_turn_and_an_older_transcript_has_none(tmp_path):
+    from dataclasses import replace as _replace
+
+    from ctf_flightdeck.runrecord import CallLine
+
+    make_run(tmp_path)  # its steps carry no calls: the lines a transcript had before the field
+    older = load_run(tmp_path).lanes["L01"]
+    assert [a.calls for a in older.actions] == [()] * len(older.actions)
+    path = tmp_path / "lanes" / "L01.jsonl"
+    assert "calls" not in path.read_text()
+    step = load_run(tmp_path).lanes["L01"].actions[0]
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1]["calls"] = [{"text": "$ ls", "output": "note"}, {"text": "$ cat note", "output": "t{a}\nmore"}, "not a call",
+                        {"text": 7}]
+    rows[3]["calls"] = "not a list"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    record = load_run(tmp_path)
+    assert record.problems == ()
+    first = record.lanes["L01"].actions[0]
+    assert first.calls == (CallLine("$ ls", "note"), CallLine("$ cat note", "t{a}\nmore"), CallLine("7", ""))
+    assert _replace(first, calls=()) == step  # nothing else of the step changed
+    assert record.lanes["L01"].actions[2].calls == ()
+    assert hash(first) != hash(step)  # still usable as a key (writeup.py keeps what each step ran)

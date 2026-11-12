@@ -99,7 +99,8 @@ def test_the_tools_are_six_short_openai_function_schemas():
 
 def test_shell_gives_the_exit_code_and_output_and_a_short_line_for_the_console(box):
     failed = call(box, "shell", {"command": "echo hello; echo oops >&2; exit 2"})
-    assert failed == ToolResult("exit 2\nhello\noops\n", "$ echo hello; echo oops >&2; exit 2", "exit 2 · hello\noops")
+    assert failed == ToolResult("exit 2\nhello\noops\n", "$ echo hello; echo oops >&2; exit 2", "exit 2 · hello\noops",
+                                excerpt="exit 2\nhello\noops")
     fine = call(box, "shell", {"command": "printf 'a\\nb\\nc\\nd\\n'"})
     assert (fine.content, fine.output) == ("exit 0\na\nb\nc\nd\n", "a\nb\nc")
     assert call(box, "shell", {"command": "true"}).output == "(no output)"
@@ -289,7 +290,8 @@ def test_read_file_maps_work_paths_and_container_symlinks_to_the_workspace(tmp_p
 def test_read_file_says_a_binary_file_is_binary(box, lane):
     (lane.root / "blob.bin").write_bytes(b"PK\x03\x04" + b"\x00" * 60)
     result = call(box, "read_file", {"path": "blob.bin"})
-    assert result == ToolResult("binary file, 64 bytes; use shell (file, xxd, strings)", "read blob.bin", "binary file, 64 bytes")
+    assert result == ToolResult("binary file, 64 bytes; use shell (file, xxd, strings)", "read blob.bin", "binary file, 64 bytes",
+                                excerpt="binary file, 64 bytes; use shell (file, xxd, strings)")
 
 
 def test_read_file_names_what_is_wrong_with_a_path(box, lane):
@@ -406,7 +408,8 @@ def test_a_huge_integer_in_any_numeric_argument_is_clamped_or_refused_never_rais
 
 def test_submit_flag_hands_the_stripped_flag_to_the_player(box):
     result = call(box, "submit_flag", {"flag": "  practice{abc}\n", "how": "xor with the known prefix"})
-    assert result == ToolResult(SUBMITTED, "submit practice{abc}", "xor with the known prefix", flag="practice{abc}")
+    assert result == ToolResult(SUBMITTED, "submit practice{abc}", "xor with the known prefix", flag="practice{abc}",
+                                excerpt="xor with the known prefix")
     assert SUBMITTED == "Sent to the player for approval. Carry on until you hear it was correct."
 
 
@@ -780,3 +783,56 @@ def test_a_toolbox_takes_the_runs_secrets_out_of_errors_actions_and_plans_but_ne
     flag = call(box, "submit_flag", {"flag": secret, "how": f"it printed {secret}"})
     assert flag.flag == secret  # what would be submitted, as the lane gave it
     assert (flag.action, flag.output) == ("submit [HELD]", "it printed [HELD]")
+
+
+# ---------------------------------------------------------------- the transcript's excerpt
+
+
+def test_a_result_carries_a_longer_excerpt_of_its_output_for_the_transcript_and_the_console_line_stays(lane):
+    """Beside the console's 3 lines and 300 characters: up to 40 lines of a success from its
+    start, with a line saying how many were left out; indentation stays."""
+    (lane.root / "long.txt").write_text("".join(f"  row {i}\n" for i in range(1, 61)))
+    result = call(Toolbox(lane), "shell", {"command": "cat long.txt"})
+    assert result.output == "row 1\nrow 2\nrow 3"  # the console's, as before
+    lines = result.excerpt.split("\n")
+    assert lines[:40] == [f"  row {i}" for i in range(1, 41)] and lines[40:] == ["[... 20 more lines not kept ...]"]
+    short = call(Toolbox(lane), "shell", {"command": "printf 'a\\n\\n  b\\n'"})
+    assert short.excerpt == "a\n\n  b"
+    assert call(Toolbox(lane), "shell", {"command": "true"}).excerpt == "(no output)"
+
+
+def test_a_failed_commands_excerpt_is_its_status_and_its_last_lines(lane):
+    result = call(Toolbox(lane), "shell", {"command": "seq 1 60; echo 'boom: no such thing' >&2; exit 3"})
+    assert result.output == "exit 3 · 59\n60\nboom: no such thing"  # the console's, as before
+    lines = result.excerpt.split("\n")
+    assert lines[:2] == ["exit 3", "[... 21 more lines not kept ...]"]
+    assert lines[2:] == [str(i) for i in range(22, 61)] + ["boom: no such thing"] and len(lines[2:]) == 40
+    assert call(Toolbox(lane), "shell", {"command": "exit 2"}).excerpt == "exit 2\n(no output)"
+
+
+def test_an_excerpt_is_cut_to_4000_characters_in_whole_lines_and_a_long_line_is_cut_short(lane):
+    (lane.root / "wide.txt").write_text("".join("w" * 450 + f" {i}\n" for i in range(1, 31)) + "z" * 900 + "\n")
+    result = call(Toolbox(lane), "shell", {"command": "cat wide.txt"})
+    lines = result.excerpt.split("\n")
+    assert lines[:-1] == ["w" * 450 + f" {i}" for i in range(1, 9)] and lines[-1] == "[... 23 more lines not kept ...]"
+    assert len(result.excerpt) <= tools.EXCERPT_CHARS + len(lines[-1])
+    last = call(Toolbox(lane), "shell", {"command": "tail -n 1 wide.txt"})
+    assert last.excerpt == "z" * 499 + "…"
+
+
+def test_an_output_too_long_to_count_says_that_more_was_left_out(lane):
+    result = call(Toolbox(lane), "shell", {"command": "seq 1 20000"})
+    lines = result.excerpt.split("\n")
+    assert lines[:40] == [str(i) for i in range(1, 41)] and lines[40:] == ["[... more lines not kept ...]"]
+
+
+def test_every_tool_gives_an_excerpt_and_a_plan_has_none(lane):
+    box = Toolbox(lane)
+    read = call(box, "read_file", {"path": "notes.txt"})
+    assert read.output == "lines 1-400 of 1000"
+    assert read.excerpt.split("\n")[:40] == [f"line {i}" for i in range(1, 41)]
+    missing = call(box, "read_file", {"path": "absent.txt"})
+    assert missing.error and missing.excerpt == missing.content
+    submit = call(box, "submit_flag", {"flag": "t{x}", "how": "the last line of ./solve"})
+    assert submit.excerpt == "the last line of ./solve"
+    assert call(box, "set_plan", {"plan": "look around"}).excerpt == ""
