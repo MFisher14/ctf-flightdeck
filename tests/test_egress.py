@@ -695,6 +695,9 @@ def test_a_real_lane_reaches_its_instance_and_not_a_second_server_on_this_machin
         proxy = json.loads(docker("inspect", f"{lane_name}-egress-1").stdout)[0]
         assert proxy["Config"]["Labels"]["flightdeck.run"] == "fence-test" and proxy["Config"]["Image"] == LANE_IMAGE
         assert sorted(proxy["NetworkSettings"]["Networks"]) == sorted(["bridge", f"{lane_name}-net"])
+        # the proxy is on both networks and routes no packet between them: only its script's connections cross
+        assert docker("exec", f"{lane_name}-egress-1", "cat", "/proc/sys/net/ipv4/ip_forward").stdout.strip() == "0"
+        assert proxy["HostConfig"]["CapDrop"] == ["ALL"] and proxy["HostConfig"]["ReadonlyRootfs"] is True
 
         code, said = fetch(box, name, allowed.port)
         assert code == 0 and "THE-INSTANCE" in said  # the instance, by the name the brief gives the lane
