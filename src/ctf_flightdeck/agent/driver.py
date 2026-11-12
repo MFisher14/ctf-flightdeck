@@ -15,6 +15,10 @@ A flag the model submits that the challenge's own text holds (its description, o
 file as it came: often a decoy) is not claimed: under submit auto too it waits for the
 player, and the model hears why, as agent/external.py's lanes do.
 
+A TCP service the description names (`nc host port`) that the board does not list as the
+challenge's instance is said to the player at the lane's start (no model: the instance rule).
+Nothing is opened or added for it.
+
 A lane gives up after MAX_IDLE_TURNS replies in a row without a tool call, and then calls the
 model no more, also while the deck keeps it open for a flag that still waits (for the player,
 or for the platform's answer). A model call that
@@ -50,6 +54,7 @@ from .l1stage import FLAG_STATUSES, L1Stage, result_line
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
     PRIVATE,
+    DockerWorkspace,
     ShellSpec,
     Snapshot,
     Workspace,
@@ -90,6 +95,37 @@ def web_origins(urls: Sequence[str]) -> tuple[str, ...]:
     """The http(s) origins among a challenge's instances: the http tool's. A TCP service
     (tcp://host:port, what `nc host port` reaches) is the shell's."""
     return tuple(url for url in urls if url.startswith(("http://", "https://")))
+
+
+def unlisted_services(description: str, urls: Sequence[str]) -> tuple[str, ...]:
+    """The TCP services (tcp://host:port) a challenge's description names, as connection info
+    does (`nc host port`, `HOST:PORT`: platform/ctfd.services_in), that are not among the
+    instances the board lists for it: the instance rule, no model."""
+    from ..platform.ctfd import services_in
+
+    listed = set(urls)
+    return tuple(service for service in services_in(description) if service not in listed)
+
+
+def instance_note(services: Sequence[str], workspace: Workspace) -> str:
+    """The player's note on services the description names and the board does not list
+    (unlisted_services): what the lane can reach, and how the player would add one."""
+    named = ", ".join(_with_nc(service) for service in services)
+    it, they = ("it", "it is") if len(services) == 1 else ("them", "they are")
+    if isinstance(workspace, DockerWorkspace) and workspace.network == "none":
+        reach = f"this lane's container has no network, so it cannot reach {it}"
+    else:
+        reach = f"flightdeck does not give {it} to this lane as its instance"
+    return (f"the description names {named}, which the board does not list as this challenge's instance: {reach}. "
+            f"If {they} the challenge's instance, add {it} to \"urls\" in its challenge.json; flightdeck opens nothing "
+            "and adds no instance on its own")
+
+
+def _with_nc(service: str) -> str:
+    """tcp://host:port as the brief names a TCP instance: with the command that reaches it."""
+    host, _, port = service.removeprefix("tcp://").rpartition(":")
+    host = host.removeprefix("[").removesuffix("]")
+    return f"{service} (nc {host} {port})" if host and port.isdigit() else service
 
 
 def _set_event() -> asyncio.Event:
@@ -350,6 +386,7 @@ class AgentDriver:
 
     async def _loop(self, run: _Run) -> None:
         try:
+            self._instance_note(run)
             await self._work(run)
         except asyncio.CancelledError:
             raise
@@ -761,6 +798,17 @@ class AgentDriver:
         run = self.runs.get(lane.id)
         if run is not None:
             run.wake.set()
+
+    def _instance_note(self, run: _Run) -> None:
+        """The instance rule, at the lane's start: a TCP service the description names that the
+        board does not list for the challenge is said to the player (instance_note), unless the
+        event keeps lanes off every instance (instance off). Nothing changes for the lane: its
+        network, its http tool and the challenge's instances stay as the board has them."""
+        if self.instance == "off":
+            return
+        services = unlisted_services(run.challenge.description, self.urls.get(run.challenge.id, ()))
+        if services:
+            self.deck.note(run.lane_id, instance_note(services, run.workspace))
 
     async def _close(self, run: _Run) -> None:
         """Close the lane's workspace once. The close runs shielded: cancelling the lane's
