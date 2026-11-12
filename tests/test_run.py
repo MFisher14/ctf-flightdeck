@@ -1163,6 +1163,76 @@ def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_c
     assert "Test Event: solved 0 of 1" in result.stdout and result.stdout.index("Spent 110") < result.stdout.index("run log: ")
 
 
+def spend_line(stdout: str) -> str:
+    """The one line play prints for what the run spent when it has no scorecard: just before the run log line."""
+    lines = stdout.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("run log: "))
+    assert [line for line in lines if line.startswith("Spent ")] == [lines[at - 1]], stdout  # one, and there
+    return lines[at - 1]
+
+
+def test_play_on_a_board_without_answers_says_what_the_run_spent_counted_after_quitting_stopped_the_lanes(
+        tmp_path, monkeypatch, scripted_claude):
+    """No answers, so no scorecard (as on a CTFd event): play prints one line with the run's
+    tokens and dollars instead, before the run log line. It reads them after the run's
+    shutdown: the $0.50 is the cost of the turn quitting cut, which claude takes 1.5 s to
+    report once it is stopped. `flightdeck report` on the run folder gives the same figures."""
+    (turn,) = CUT_BY_QUITTING["turns"]
+    scripted_claude({"turns": [{**turn, "linger": 1.5}]})
+
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.turns for lane in app.deck.lanes.values()), "claude's step")
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+        await until(pilot, lambda: not app.is_running, "the console to quit once its lanes have stopped")
+
+    headless(monkeypatch, player)
+    root = board(tmp_path)
+    (root / "answers.sha256.json").unlink()
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url)),
+                                              "--agent", "claude", "--host"])
+    assert result.exit_code == 0, result.output
+    assert spend_line(result.stdout) == "Spent 110 tokens · $0.50"
+    assert "Test Event: solved" not in result.stdout  # no scorecard
+    folder, _ = next_steps(result.stdout)
+    report = CliRunner().invoke(cli.app, ["report", str(folder)])
+    assert report.exit_code == 0, report.output
+    (spend,) = [line for line in report.stdout.splitlines() if line.startswith("Spend: ")]
+    assert spend.startswith("Spend: 110 tokens (") and spend.endswith(", $0.50"), spend
+
+
+def test_plays_spend_line_says_at_least_when_some_spend_had_no_price(tmp_path, monkeypatch):
+    """A lane on a model with no price in the config (fake/big), on an API that reports no
+    cost: its tokens are counted, its dollars are not known. The line says so."""
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.tokens and lane.dollars is None for lane in app.deck.lanes.values()), "a reply with no price")
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+
+    headless(monkeypatch, player)
+    root = board(tmp_path)
+    (root / "answers.sha256.json").unlink()
+    with FakeModelServer([tool_call_reply("shell", {"command": "cat note.txt"})] * 3) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url)),
+                                              "--model", "fake/big"])
+    assert result.exit_code == 0, result.output
+    said = re.fullmatch(r"Spent (\d+) tokens · at least \$0\.00 \(some of it has no known cost\)", spend_line(result.stdout))
+    assert said is not None and int(said.group(1)) > 0, result.stdout
+
+
+def test_play_prints_no_spend_line_beside_a_scorecard(tmp_path, monkeypatch):
+    headless(monkeypatch, solve_then_quit)
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url)),
+                                              "--submit", "auto"])
+    assert result.exit_code == 0, result.output
+    spent = [line for line in result.stdout.splitlines() if line.startswith("Spent ")]
+    assert len(spent) == 1 and "Test Event: solved 1 of 1" in result.stdout  # the scorecard's own, once
+
+
 @pytest.mark.parametrize("instance", ["confirm", "off"])
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude, instance):
     # so no coding-agent lane ever opens on a brief under "off": the run does not start

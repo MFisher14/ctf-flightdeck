@@ -233,7 +233,9 @@ are left. To let auto submit spend those tries without you, the last one include
 team. flightdeck says so when a run starts.
 
 Every run writes a run folder with an append-only `events.jsonl` and each lane's transcript; a
-board with answers (like the practice set) ends with a scorecard. If flightdeck itself is killed
+board with answers (like the practice set) ends with a scorecard, and any other run with one line
+that says what it spent: its tokens and dollars ("at least" when some spend had no price). If
+flightdeck itself is killed
 (kill -9, a power loss), what its lanes started can keep running: the next `play` or `practice`
 removes it and says what it removed, `flightdeck doctor` lists it and `flightdeck doctor --clean`
 removes it.

@@ -157,7 +157,8 @@ intervention is refused.
 
 During a run, closing the terminal (or an SSH drop) and a SIGTERM stop the run the way quitting
 does, without asking: every lane stops and every workspace closes, and `play` exits with 128 plus
-the signal's number. On the way out `play` prints the scorecard (when the board has answers), the
+the signal's number. On the way out `play` prints the scorecard (when the board has answers; otherwise
+one line with the tokens and dollars the run spent, "at least" when some spend had no price), the
 run folder and the commands that read it, and names any flag still waiting for your approval
 (never submitted) and any flag still on its way to the platform (not known to have been
 submitted).

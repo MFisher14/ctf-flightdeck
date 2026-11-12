@@ -284,6 +284,8 @@ def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
         card = run.scorecard()
         if card:
             typer.echo(card, nl=False)
+        else:  # no answers to score against (a real event): the scorecard's spend line alone
+            typer.echo(_spent(run.deck))
         held = _held_at_the_end(run.deck)
         if held:
             typer.echo(f"flightdeck: {held}", err=True)
@@ -295,6 +297,21 @@ def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
             typer.echo(f"flightdeck: not submitted, still waiting for your approval when the run ended: {'; '.join(waiting)}", err=True)
         for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
+
+
+def _spent(deck) -> str:
+    """What the run spent, in one line, for a run with no scorecard to say it: the deck's own
+    totals (Deck.totals: every lane's turns and its spend outside a turn, a light model's
+    among it), which the console's header showed and each lane's transcript records, so the
+    post-flight report gives the same figures. Read it after Run.shutdown(), which counts
+    what the lanes report as they stop. The dollars are "at least" when some spend had no
+    price or a turn's cost never came."""
+    from . import fmt
+
+    tokens, dollars, unpriced = deck.totals()
+    if unpriced:
+        return f"Spent {fmt.tokens(tokens)} tokens · at least ${fmt.dollars(dollars)} (some of it has no known cost)"
+    return f"Spent {fmt.tokens(tokens)} tokens · ${fmt.dollars(dollars)}"
 
 
 def _held_at_the_end(deck) -> str:
