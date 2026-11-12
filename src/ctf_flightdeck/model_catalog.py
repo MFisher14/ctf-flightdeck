@@ -34,12 +34,30 @@ A build with no size, or a machine whose memory (or GPU) is unknown, is "cannot 
 guess. MLX runs on Apple Silicon only.
 
 Each build (a model on one runtime) carries what was found serving it: the arguments its MLX
-server was measured with (server_args, printed in the command that serves it), the roles it
-should not serve and why (not_for: it is never offered for them; a build that measured badly for
-a role, such as a light-role score below the rules', is not for it), and its measured results
-(measured, from docs/MODELS.md). A model's results and settings differ by runtime: thinking can
-be turned off at an MLX server, and not by anything flightdeck sends to Ollama. A model is
-offered for the roles at least one of its builds serves (LocalModel.offered_for).
+server was measured with (server_args, printed in the command that serves it), the [light]
+thinking its light results were measured with when it is not flightdeck's default (thinking),
+the roles it should not serve and why (not_for: it is never offered for them; a build that
+measured badly for a role is not for it), and its measured results (measured, from
+docs/MODELS.md). A model's results and settings differ by runtime. A model is offered for the
+roles at least one of its builds serves (LocalModel.offered_for).
+
+The light role is several jobs: those a run gives the light model ([light] jobs: the judge,
+route, recon and flagcheck), and hint and summary, which only eval-local asks. A build with
+per-job results (jobs: eval-local's figures, each job as a run uses it, on the case set the
+catalog's [eval] table describes) is offered for each run job it measured no worse at than
+flightdeck's default for that job (offered_jobs()), and for the light role when it is offered
+for one; its light line is written from those figures (jobs_line()). The default is what a run
+does with no light model: the judge's alert stands as the rules raised it, flagcheck is the
+planted-flag hold alone, route's instance is always the rule's and its category the board's
+where the board names one, so a model is asked only for the category where the board names none
+and for the specialist family, and nothing writes a brief (recon). Where a run with no model has
+no answer (that category, the family, the brief), a right answer is better than none and a
+wrong one worse, since it goes into the lane's opening brief (agent/facts.first_look): such a
+job is worse when its wrong answers outnumber its right ones, as eval-local's in-a-run rows
+count a true alert taken down or a real flag held against the model. hint is never a run's (a
+run uses the rules), so it decides nothing here. A build measured only on the earlier 58-case
+set (hint and judge, 44 scored) keeps that set's verdict, below the rules' 38 is not for the
+light role, and is offered for the judge alone, the one run job that set measured.
 """
 
 from __future__ import annotations
@@ -54,7 +72,7 @@ from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 
-from .config import MLX_URL, OLLAMA_URL
+from .config import MLX_URL, OLLAMA_URL, RUN_JOBS
 from .hardware import GIB, MLX, OLLAMA, RUNTIME_NAMES, Machine, gib
 from .pricing import Price
 
@@ -73,9 +91,22 @@ SIZE_CATALOG, SIZE_SERVER = "catalog", "server"  # where a build's size came fro
 FITS, TOO_BIG, CANNOT_TELL, NOT_HERE = "fits", "too big", "cannot tell", "not on this machine"
 LOCAL, API, RULES = "local", "api", "rules"  # what a role's advice leads with
 
+JUDGE, ROUTE, RECON, FLAGCHECK = RUN_JOBS  # the jobs a run gives the light model ([light] jobs)
+# A [local.<runtime>.jobs] table's keys, and [eval]'s: hint (eval-local only), the judge, route's two
+# questions a run asks a model (its category where the board names none, and the family), recon and
+# flagcheck.
+JOB_KEYS = ("hint", "judge", "category", "family", "recon", "flagcheck")
+COUNTED = ("category", "family", "recon")  # answers a run has none of without a model: right and wrong
+EARLIER_SET = (JUDGE,)  # the run jobs the earlier 58-case set measured (a light result with no jobs table)
+
 _LOCAL_KEYS = ("id", "name", "family", "parameters", "license", "roles", *BUILDS)
 _LOCAL_REQUIRED = ("id", "name", "family", "parameters", "license", "roles")
-_BUILD_KEYS = ("model", "quantization", "size_bytes", "server_args", "not_for", "measured")
+_BUILD_KEYS = ("model", "quantization", "size_bytes", "server_args", "thinking", "not_for", "measured", "jobs")
+# [eval]: each job's case count, flightdeck's default on them (right answers with no light model:
+# the rules for hint, a run without one for the judge, route's category and flagcheck) and, for
+# route's category, how many a run asks a model; the family and recon have no default
+_EVAL_SHAPE = {"hint": ("cases", "default"), "judge": ("cases", "default"), "category": ("cases", "default", "asked"),
+               "family": ("cases",), "recon": ("cases",), "flagcheck": ("cases", "default")}
 SET_BY_COMMAND = ("--model", "--host", "--port")  # mlx_lm.server arguments serve_command() sets itself
 _API_KEYS = ("id", "name", "provider", "roles", "classifier", "note", "models_page")
 _API_REQUIRED = ("id", "name", "provider", "roles", "classifier", "note")
@@ -91,6 +122,40 @@ _NO_LINES: Mapping[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
+class Scored:
+    """One job of the case set ([eval]): its cases, and flightdeck's default on them."""
+
+    cases: int
+    default: int | None = None  # right with no light model (the rules for hint, a run without one); None: no answer
+    asked: int | None = None  # route's category only: the cases a run asks a model (the board names no category it knows)
+
+
+EvalSet = Mapping[str, Scored]  # JOB_KEYS -> Scored: the case set behind every jobs table
+
+
+@dataclass(frozen=True)
+class Counts:
+    """Answers where a run asks the model and has none without it: right ones, and wrong ones
+    (which go into the lane's opening brief); the rest of the cases got no answer."""
+
+    right: int
+    wrong: int
+
+
+@dataclass(frozen=True)
+class JobResults:
+    """A build's light jobs as a run uses them (a [local.<runtime>.jobs] table), on [eval]'s cases."""
+
+    hint: int  # right (eval-local only: a run uses the rules)
+    judge: int  # right in a run: asked only where the rules see no action cue, it can only take an alert down
+    category: Counts  # route's category, of the cases where the board names none
+    family: Counts  # route's specialist family
+    recon: Counts  # recon's briefs
+    flagcheck: int  # right in a run: on top of the planted-flag hold, it can only hold a flag
+    cases: EvalSet = MappingProxyType({})  # the case set it was scored on ([eval])
+
+
+@dataclass(frozen=True)
 class Build:
     """A local model as one runtime serves it."""
 
@@ -101,6 +166,9 @@ class Build:
     server_args: tuple[str, ...] = ()  # MLX: what mlx_lm.server was measured with, after serve_command()'s own
     not_for: Mapping[str, str] = _NO_LINES  # role -> why this build should not serve it (one line)
     measured: Mapping[str, str] = _NO_LINES  # role -> a one-line result from docs/MODELS.md
+    thinking: bool | None = None  # [light] thinking its light results were measured with; None: flightdeck's default
+    jobs: JobResults | None = None  # the light role's jobs as a run uses them; None: not measured job by job
+    light_jobs: tuple[str, ...] = ()  # the run jobs it is offered for: offered_jobs(), or the judge (EARLIER_SET)
 
 
 @dataclass(frozen=True)
@@ -149,6 +217,7 @@ class ApiChoice:
 class Catalog:
     local: tuple[LocalModel, ...]
     api: tuple[ApiChoice, ...]
+    eval: EvalSet = MappingProxyType({})  # [eval]: the case set behind the builds' jobs tables; empty: none
 
     def get(self, ident: str) -> LocalModel | ApiChoice | None:
         return next((e for e in (*self.local, *self.api) if e.id == ident), None)
@@ -179,16 +248,17 @@ def parse_catalog(text: str, where: str = CATALOG_FILE) -> Catalog:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise CatalogError(f"the model catalog {where} is not valid TOML: {exc}") from None
-    extra = [key for key in data if key not in ("local", "api")]
+    extra = [key for key in data if key not in ("local", "api", "eval")]
     if extra:
-        raise CatalogError(f"{where}: unknown top-level key {', '.join(extra)} (known: local, api)")
+        raise CatalogError(f"{where}: unknown top-level key {', '.join(extra)} (known: local, api, eval)")
     local_entries, api_entries = data.get("local", []), data.get("api", [])
     for table, entries in (("local", local_entries), ("api", api_entries)):
         if not isinstance(entries, list):
             raise CatalogError(f"{where}: {table} must be a list of [[{table}]] tables")
     if not local_entries:
         raise CatalogError(f"{where} has no [[local]] entries")
-    local = tuple(_local(entry, f"{where}: [[local]] entry {n}") for n, entry in enumerate(local_entries, 1))
+    cases = _eval(data["eval"], f"{where}: [eval]") if "eval" in data else MappingProxyType({})
+    local = tuple(_local(entry, f"{where}: [[local]] entry {n}", cases) for n, entry in enumerate(local_entries, 1))
     api = tuple(_api(entry, f"{where}: [[api]] entry {n}") for n, entry in enumerate(api_entries, 1))
     seen: dict[str, str] = {}
     for kind, entries in (("local", local), ("api", api)):
@@ -197,7 +267,38 @@ def parse_catalog(text: str, where: str = CATALOG_FILE) -> Catalog:
             if entry.id in seen:
                 raise CatalogError(f"{where}: id {entry.id!r} is used twice: by {seen[entry.id]} and {here}")
             seen[entry.id] = here
-    return Catalog(local, api)
+    return Catalog(local, api, cases)
+
+
+def _count(value: object) -> bool:
+    """A count of cases or answers: a whole number, 0 or more (never a boolean)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _eval(table: object, where: str) -> EvalSet:
+    """[eval]: for each of JOB_KEYS, its cases and the default _EVAL_SHAPE gives it, each in range."""
+    if not isinstance(table, dict):
+        raise CatalogError(f"{where} must be a table: one entry per job, {', '.join(JOB_KEYS)}")
+    unknown = [key for key in table if key not in JOB_KEYS]
+    missing = [key for key in JOB_KEYS if key not in table]
+    if unknown or missing:
+        raise CatalogError(f"{where}: " + "; ".join(part for part in (
+            f"unknown job {', '.join(unknown)}" if unknown else "", f"missing {', '.join(missing)}" if missing else "")
+            if part) + f" (it has one entry per job: {', '.join(JOB_KEYS)})")
+    out = {}
+    for key in JOB_KEYS:
+        entry, shape = table[key], _EVAL_SHAPE[key]
+        if not isinstance(entry, dict) or sorted(entry) != sorted(shape) or not all(_count(v) for v in entry.values()):
+            raise CatalogError(f"{where}: {key} must be {{ {', '.join(f'{k} = N' for k in shape)} }}, each a whole number "
+                               "of cases, 0 or more")
+        cases = entry["cases"]
+        if cases == 0:
+            raise CatalogError(f"{where}: {key}.cases must be above 0")
+        over = [k for k in shape[1:] if entry[k] > cases]
+        if over:
+            raise CatalogError(f"{where}: {key}.{over[0]} is {entry[over[0]]}, more than its {cases} cases")
+        out[key] = Scored(cases, entry.get("default"), entry.get("asked"))
+    return MappingProxyType(out)
 
 
 def _named(entry: object, where: str, known: tuple[str, ...], required: tuple[str, ...]) -> tuple[dict, str]:
@@ -232,13 +333,13 @@ def _roles(entry: dict, name: str) -> tuple[str, ...]:
     return tuple(roles)
 
 
-def _local(entry: object, where: str) -> LocalModel:
+def _local(entry: object, where: str, cases: EvalSet) -> LocalModel:
     entry, name = _named(entry, where, _LOCAL_KEYS, _LOCAL_REQUIRED)
     roles = _roles(entry, name)
     parameters = _text(entry, "parameters", name)
     if not _PARAMETERS.fullmatch(parameters):
         raise CatalogError(f"{name}: parameters must be a count like 9.0B or 750M")
-    builds = tuple(_build(entry[runtime], runtime, name, roles) for runtime in BUILDS if runtime in entry)
+    builds = tuple(_build(entry[runtime], runtime, name, roles, cases) for runtime in BUILDS if runtime in entry)
     if not builds:
         raise CatalogError(f"{name}: names no runtime: add [local.ollama] or [local.mlx]")
     return LocalModel(
@@ -275,7 +376,7 @@ def _server_args(table: dict, runtime: str, where: str) -> tuple[str, ...]:
     return tuple(args)
 
 
-def _build(table: object, runtime: str, name: str, roles: tuple[str, ...]) -> Build:
+def _build(table: object, runtime: str, name: str, roles: tuple[str, ...], cases: EvalSet) -> Build:
     where = f"{name}: [local.{runtime}]"
     if not isinstance(table, dict):
         raise CatalogError(f"{where} must be a table")
@@ -294,13 +395,142 @@ def _build(table: object, runtime: str, name: str, roles: tuple[str, ...]) -> Bu
     if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size <= 0):
         raise CatalogError(f"{where}: size_bytes must be a positive whole number of bytes, or left out when it was not recorded")
     server_args = _server_args(table, runtime, where)
-    not_for = _lines(table, "not_for", where, roles, "why this build should not serve the role")
-    measured = _lines(table, "measured", where, roles, "a result from docs/MODELS.md")
+    not_for = dict(_lines(table, "not_for", where, roles, "why this build should not serve the role"))
+    measured = dict(_lines(table, "measured", where, roles, "a result from docs/MODELS.md"))
     both = [role for role in measured if role in not_for]
     if both:
         raise CatalogError(f"{where}: measured.{both[0]} and not_for.{both[0]}: a build that is not for a role is never "
                            "shown for it, with or without a result")
-    return Build(runtime, model, quantization, size, server_args, not_for, measured)
+    thinking = table.get("thinking")
+    if "thinking" in table:
+        if not isinstance(thinking, bool):
+            raise CatalogError(f"{where}: thinking must be true or false: the [light] thinking its light results were "
+                               "measured with")
+        if LIGHT not in roles:
+            raise CatalogError(f"{where}: thinking is the light role's setting, and the model's roles leave it out")
+    jobs, light_jobs = None, ()
+    if "jobs" in table:
+        if LIGHT not in roles:
+            raise CatalogError(f"{where}: jobs are the light role's, and the model's roles leave it out")
+        if LIGHT in measured or LIGHT in not_for:
+            which = "measured" if LIGHT in measured else "not_for"
+            raise CatalogError(f"{where}: {which}.light and jobs: a build measured job by job gets its light line from "
+                               "its jobs (jobs_line()), so it has no line of its own")
+        if not cases:
+            raise CatalogError(f"{where}: jobs needs the catalog's [eval] table: the cases they were scored on, and "
+                               "flightdeck's default on them")
+        jobs = _jobs(table["jobs"], f"{where}: jobs", cases)
+        light_jobs = offered_jobs(jobs)
+        line = jobs_line(jobs, light_jobs, thinking)
+        (measured if light_jobs else not_for)[LIGHT] = line
+    elif LIGHT in measured:
+        light_jobs = EARLIER_SET
+    if thinking is not None and LIGHT in not_for:
+        raise CatalogError(f"{where}: thinking is set for the light role, which this build is not for")
+    return Build(runtime, model, quantization, size, server_args, MappingProxyType(not_for), MappingProxyType(measured),
+                 thinking, jobs, light_jobs)
+
+
+def _jobs(table: object, where: str, cases: EvalSet) -> JobResults:
+    """A [local.<runtime>.jobs] table: for each of JOB_KEYS, the right answers (hint, the judge and
+    flagcheck in a run) or { right = N, wrong = N } (COUNTED), within [eval]'s cases."""
+    if not isinstance(table, dict):
+        raise CatalogError(f"{where} must be a table: one entry per job, {', '.join(JOB_KEYS)}")
+    unknown = [key for key in table if key not in JOB_KEYS]
+    missing = [key for key in JOB_KEYS if key not in table]
+    if unknown or missing:
+        raise CatalogError(f"{where}: " + "; ".join(part for part in (
+            f"unknown job {', '.join(unknown)}" if unknown else "", f"missing {', '.join(missing)}" if missing else "")
+            if part) + f" (it has one entry per job: {', '.join(JOB_KEYS)})")
+    values: dict[str, int | Counts] = {}
+    for key in JOB_KEYS:
+        value, scored = table[key], cases[key]
+        room = scored.asked if scored.asked is not None else scored.cases
+        if key in COUNTED:
+            if not isinstance(value, dict) or sorted(value) != ["right", "wrong"] or not all(_count(v) for v in value.values()):
+                raise CatalogError(f"{where}: {key} must be {{ right = N, wrong = N }}: answers right and wrong where a run "
+                                   "asks it")
+            if value["right"] + value["wrong"] > room:
+                raise CatalogError(f"{where}: {key} has {value['right'] + value['wrong']} answers, more than the {room} "
+                                   "cases a run asks it")
+            values[key] = Counts(value["right"], value["wrong"])
+        else:
+            if not _count(value) or value > room:
+                raise CatalogError(f"{where}: {key} must be a whole number of right answers, 0 to its {room} cases")
+            values[key] = value
+    return JobResults(**values, cases=cases)  # type: ignore[arg-type]
+
+
+def offered_jobs(jobs: JobResults) -> tuple[str, ...]:
+    """The run jobs a build is offered for: each it measured no worse at than flightdeck's
+    default for that job (the module doc). The judge and flagcheck: right in a run at least as
+    often as a run with no light model. Route (a model is asked only its category where the board
+    names none, and the family) and recon: right at least as often as wrong, since a run with no
+    model has no answer there and a wrong one goes into the lane's opening brief."""
+    cases = jobs.cases
+    better = {
+        JUDGE: jobs.judge >= cases["judge"].default,
+        ROUTE: jobs.category.right + jobs.family.right >= jobs.category.wrong + jobs.family.wrong,
+        RECON: jobs.recon.right >= jobs.recon.wrong,
+        FLAGCHECK: jobs.flagcheck >= cases["flagcheck"].default,
+    }
+    return tuple(job for job in RUN_JOBS if better[job])
+
+
+JOB_NAMES = {JUDGE: "the judge", ROUTE: "route", RECON: "recon", FLAGCHECK: "flagcheck"}
+
+
+def _and(words: list[str], joint: str = "and") -> str:
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} {joint} {words[-1]}"
+
+
+def jobs_line(jobs: JobResults, offered: tuple[str, ...], thinking: bool | None = None) -> str:
+    """A build's light line, written from its jobs table: the run jobs it is for and not for,
+    then each job's figures beside flightdeck's default (one line)."""
+    left = [job for job in RUN_JOBS if job not in offered]
+    if not offered:
+        head = f"worse than no model at {_and([JOB_NAMES[j] for j in left])}"
+    else:
+        head = f"for {_and([JOB_NAMES[j] for j in offered])}"
+        if left:
+            head += f"; not {_and([JOB_NAMES[j] for j in left], 'or')}, where it did worse than no model"
+    cases = jobs.cases
+    judge, category, family, recon = cases["judge"], cases["category"], cases["family"], cases["recon"]
+    flagcheck, hint = cases["flagcheck"], cases["hint"]
+    route_right, route_wrong = jobs.category.right + jobs.family.right, jobs.category.wrong + jobs.family.wrong
+    setting = "no thinking switch sent" if thinking else "thinking off"
+    return (
+        f"{head} (eval-local, {setting}): the judge {jobs.judge}/{judge.cases} in a run against {judge.default}/"
+        f"{judge.cases} with no model; route {route_right} right and {route_wrong} wrong where a run asks it (its "
+        f"category guesses {jobs.category.right} and {jobs.category.wrong} of {category.asked}, its family "
+        f"{jobs.family.right} and {jobs.family.wrong} of {family.cases}); recon {jobs.recon.right} briefs right and "
+        f"{jobs.recon.wrong} wrong of {recon.cases}; flagcheck {jobs.flagcheck}/{flagcheck.cases} in a run against "
+        f"{flagcheck.default}/{flagcheck.cases} with the planted-flag hold alone; hint {jobs.hint}/{hint.cases} against "
+        f"the rules' {hint.default}/{hint.cases}, which a run uses"
+    )
+
+
+def jobs_data(jobs: JobResults, offered: tuple[str, ...]) -> dict:
+    """A build's jobs table as `flightdeck models --json` gives it: each job's figures beside
+    flightdeck's default, and whether it is offered for each run job."""
+    cases = jobs.cases
+
+    def counted(key: str, of: int) -> dict:
+        found = getattr(jobs, key)
+        return {"right": found.right, "wrong": found.wrong, "of": of}
+
+    return {
+        JUDGE: {"right_in_a_run": jobs.judge, "cases": cases["judge"].cases, "no_model": cases["judge"].default,
+                "offered": JUDGE in offered},
+        ROUTE: {"category": {**counted("category", cases["category"].asked), "right_in_a_run":
+                             cases["category"].default + jobs.category.right, "cases": cases["category"].cases,
+                             "no_model": cases["category"].default},
+                "family": counted("family", cases["family"].cases), "offered": ROUTE in offered},
+        RECON: {**counted("recon", cases["recon"].cases), "offered": RECON in offered},
+        FLAGCHECK: {"right_in_a_run": jobs.flagcheck, "cases": cases["flagcheck"].cases,
+                    "no_model": cases["flagcheck"].default, "offered": FLAGCHECK in offered},
+        "hint": {"right": jobs.hint, "cases": cases["hint"].cases, "rules": cases["hint"].default},
+    }
 
 
 def _api(entry: object, where: str) -> ApiChoice:
@@ -546,9 +776,12 @@ def get_commands(build: Build, machine: Machine | None = None) -> list[str]:
 
 
 def measure_command(build: Build, role: str) -> str:
-    """How to try `build` in `role` before relying on it."""
+    """How to try `build` in `role` before relying on it: for the light role, eval-local with the
+    [light] thinking its results were measured with."""
     if role == LIGHT:
-        return f"flightdeck eval-local --engine openai --base-url {SERVER_URLS[build.runtime]} --model {shlex.quote(build.model)}"
+        thinking = " --thinking on" if build.thinking else ""
+        return (f"flightdeck eval-local --engine openai --base-url {SERVER_URLS[build.runtime]} --model "
+                f"{shlex.quote(build.model)}{thinking}")
     return "flightdeck practice   # the practice set, on the ladder above"
 
 
@@ -559,8 +792,16 @@ def _toml(text: str) -> str:
 NO_KEY = '   # a server on this machine needs no key'
 
 
+THINKING_ON = ("   # as its results were measured: no thinking switch sent (flightdeck's default here, thinking off, "
+               "was not measured)")
+JOBS_MEASURED = "   # the jobs it did no worse at than flightdeck's default (`flightdeck models` gives each job's score)"
+JOBS_EARLIER = "   # the one job a run gives it that was measured; route, recon and flagcheck were not"
+
+
 def local_lines(build: Build, role: str) -> str:
-    """The config lines that use `build` in `role`: [api] and [models] for lanes, [light] for the light role."""
+    """The config lines that use `build` in `role`: [api] and [models] for lanes, [light] for the
+    light role, with the [light] thinking its results were measured with when that is not the
+    default, and the jobs it is offered for (light_jobs)."""
     url = SERVER_URLS[build.runtime]
     if role == LANES:
         return (
@@ -573,13 +814,18 @@ def local_lines(build: Build, role: str) -> str:
             "\n"
             "# and under [lanes]: dollar_cap = false   (a model on this machine reports no cost)\n"
         )
-    return (
+    out = (
         "[light]\n"
         'engine = "openai"\n'
         f"model = {_toml(build.model)}\n"
         f"base_url = {_toml(url)}\n"
         f'key_env = ""{NO_KEY}\n'
     )
+    if build.thinking is not None:
+        out += f"thinking = {'true' if build.thinking else 'false'}{THINKING_ON if build.thinking else ''}\n"
+    if build.light_jobs:
+        out += f"jobs = [{', '.join(_toml(job) for job in build.light_jobs)}]{JOBS_MEASURED if build.jobs else JOBS_EARLIER}\n"
+    return out
 
 
 PLACEHOLDER_LADDER = ("VENDOR/SMALL-MODEL", "VENDOR/BIG-MODEL")
@@ -628,7 +874,8 @@ def api_lines(api: ApiChoice, role: str) -> str:
 
 
 def init_command(choice: LocalModel | ApiChoice, role: str, build: Build | None = None) -> str:
-    """The `flightdeck init` that writes a whole new config with this choice ("" when none does)."""
+    """The `flightdeck init` that writes a whole new config with this choice ("" when none does:
+    init writes a light model on this machine with thinking off, so not one measured with it on)."""
     if isinstance(choice, ApiChoice):
         if choice.provider == "anthropic":
             return "flightdeck init --provider anthropic" if role == LANES else "flightdeck init --light anthropic"
@@ -637,4 +884,6 @@ def init_command(choice: LocalModel | ApiChoice, role: str, build: Build | None 
     model = shlex.quote(build.model)
     if role == LANES:
         return f"flightdeck init --provider {'local' if build.runtime == OLLAMA else 'mlx'} --models {model}"
+    if build.thinking:
+        return ""
     return f"flightdeck init --light {build.runtime} --light-model {model}"

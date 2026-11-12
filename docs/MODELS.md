@@ -34,7 +34,10 @@ than API lanes, and give them time: a local server can take minutes for one repl
 
 **Light role:** Qwen3.5 9B or Gemma 4 12B **with thinking off**, on Ollama or MLX: 41 to 42 of 44
 cases, against the rules' 38, at 1 to 2 seconds a job. A model that thinks first scored close to
-zero: its reasoning used up the short answer before it gave one.
+zero: its reasoning used up the short answer before it gave one. flightdeck asks a light model on
+your machine for thinking off with each request. On a smaller machine, Qwen3.5 4B or Gemma 4 E4B
+did no worse than no model at any of the run's light jobs, and Qwen3.5 2B and 0.8B at some
+([below](#smaller-models-job-by-job)).
 
 **On a Mac, Ollama or MLX?** MLX decoded 1.3 to 1.8 times faster and held less memory. Ollama worked
 with no flags: it ships each model's chat template, tool-call parser and sampling settings. We
@@ -100,6 +103,53 @@ What decided these results:
 
 Quantization differed: 4-bit affine on MLX, Q4_K_M on Ollama, MXFP4 for gpt-oss on both.
 
+gpt-oss 20B's 38/44 was with no thinking switch sent. flightdeck now asks a light model on your
+machine for thinking off, which was not measured for it, so `flightdeck models` gives its
+`[light]` lines with `thinking = true`, as it was measured.
+
+### Smaller models, job by job
+
+Five smaller models on Ollama, and Qwen3.5 9B on Ollama again, measured later the same day on the
+same Mac, under the same heavy load (one run each: approximate). Ollama 0.34.2 ran the llama.cpp
+(GGUF) builds below; Ollama 0.40 and later on Apple silicon runs many models on MLX, from builds
+of other sizes, which were not measured.
+
+| Model | Ollama tag | Download | Memory after load | Output tokens/s | Tool calls | Practice solved, as served |
+|---|---|---:|---:|---:|---:|---|
+| Qwen3.5 0.8B | `qwen3.5:0.8b` (Q8_0) | 1.3 GB | 2.3 GB | about 210 | 5/5 | 0/4 |
+| Qwen3.5 2B | `qwen3.5:2b` (Q8_0) | 2.7 GB | 3.5 GB | about 120 | 5/5 | 0/4 |
+| Qwen3.5 4B | `qwen3.5:4b` (Q4_K_M) | 3.3 GB | 4.8 GB | about 64 | 5/5 | **2/4** |
+| Gemma 4 E2B | `gemma4:e2b` (Q4_K_M) | 4.6 GB | 5.2 GB | about 98 | 5/5 | 0/4 (10 wrong flags) |
+| Gemma 4 E4B | `gemma4:e4b` (Q4_K_M) | 6.6 GB | 7.4 GB | about 66 | 5/5 | 1/4 |
+
+Memory after load is with the 32,768-token context Ollama gave each model on that Mac.
+
+The light role's jobs, each scored by `flightdeck eval-local` the way a run uses it, with thinking
+off, beside what a run gets with no light model. **Route** counts the answers a run asks a model
+for (a challenge's category where the board names none, 9 of the 40 cases, and the specialist
+family, all 40), and **recon** the briefs; a run with no model has no answer there.
+
+| Model | Judge in a run (no model: 8/14) | Route: right, wrong | Recon: right, wrong (of 30) | Flagcheck in a run (no model: 30/40) | Hint (the rules: 30/30) | Offered for |
+|---|---:|---:|---:|---:|---:|---|
+| Qwen3.5 0.8B | 11/14 | 10, 13 | 2, 27 | 20/40 | 17/30 | the judge |
+| Qwen3.5 2B | 12/14 | 31, 16 | 7, 23 | 27/40 | 21/30 | the judge, route |
+| Qwen3.5 4B | 10/14 | 41, 8 | 15, 15 | 32/40 | 24/30 | all four |
+| Gemma 4 E2B | 12/14 | 35, 12 | 15, 15 | 28/40 | 24/30 | the judge, route, recon |
+| Gemma 4 E4B | 11/14 | 43, 6 | 23, 7 | 30/40 | 28/30 | all four |
+| Qwen3.5 9B | 13/14 | 42, 7 | 20, 10 | 35/40 | 27/30 | all four |
+
+`flightdeck models` offers a model for each job a run gives the light model (`[light] jobs`) where
+it did no worse than a run with no model, and prints the `jobs` line to match: the judge and
+flagcheck right in a run at least as often as with no model; route and recon right at least as
+often as wrong, since a wrong answer goes into the lane's opening brief and no model puts nothing
+there. Hint is eval-local's only (a run uses the rules, which no model beat). Qwen3.5 0.8B gave
+every challenge back as it was shown instead of a brief, and held all 16 real flags it was asked
+about; the larger models held fewer.
+
+On the CPU alone (Ollama with no GPU, 4 or 8 threads, under the same load), Qwen3.5 0.8B and 2B
+scored within three cases of their GPU runs on each job, at about 1 to 2 seconds a job; 8 threads
+were no faster than 4.
+
 ### Strands Decider: a decision model for the light role
 
 [Strands Decider](https://github.com/strands-labs/strands-decider) (Apache-2.0, open weights) is
@@ -140,8 +190,8 @@ cases (14 to 40 a job), one run each, the same rough conditions as above:
 - **Not for these jobs:** Phi-4-mini (half its answers broke the format, and it followed an
   instruction planted in a lane's steps) and Cactus Needle (it often called no tool at all).
 
-Today a run uses the light model for the hint judge only. Per-job engines and the route, recon and
-flagcheck jobs come in 0.2.0.
+A run gives the light model the jobs `[light] jobs` lists (the hint judge alone unless it lists
+more), each on `[light]`'s engine or a `[light.<job>]` table of its own.
 
 ## Measure your own
 

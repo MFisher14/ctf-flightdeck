@@ -36,6 +36,7 @@ from .model_catalog import (
     Advice,
     ApiChoice,
     Budget,
+    Build,
     Catalog,
     CatalogError,
     LocalModel,
@@ -46,6 +47,7 @@ from .model_catalog import (
     budget,
     get_commands,
     init_command,
+    jobs_data,
     judge,
     load_catalog,
     local_lines,
@@ -58,9 +60,12 @@ SHOWN_MODELS = 8  # model names a runtime line shows before "and N more"
 ROLE_TITLES = {
     LANES: "Lanes: the tool loop, on [api] and the [models] ladder (weakest first; escalation climbs it). "
            "A lane needs reliable tool calls.",
-    LIGHT: "Light role: [light], small classification jobs (today the hint judge). The default is the rules, "
-           "no model; measure a model with `flightdeck eval-local` before you switch it on.",
+    LIGHT: "Light role: [light], the small jobs a run gives a light model ([light] jobs: the hint judge, route, "
+           "recon, flagcheck). The default is the rules, no model; a model is offered for the jobs it did no worse "
+           "at than that. Measure one with `flightdeck eval-local` before you switch it on.",
 }
+APPROXIMATE = ("Every measured number is approximate: one run each, on one Mac (Apple M4 Max, 36 GB) under heavy "
+               "load, 2026-11-11.")
 ROLE_NAMES = {LANES: "a lane", LIGHT: "the light role"}  # "not measured for a lane yet"
 ROLE_HEADS = {LANES: "lanes", LIGHT: "the light role"}  # "For lanes and the light role."
 MEMORY_RULE = (
@@ -72,7 +77,7 @@ MEMORY_RULE = (
 TABLES = {  # where a role's config lines go
     LANES: "in your config, these replace its [api], [models] and [prices] tables (keep a [fallback] table only with one "
            "model per ladder entry):",
-    LIGHT: "in your config, these replace its [light] table:",
+    LIGHT: "in your config, these replace its [light] table and any [light.<job>] tables:",
 }
 RECOMMENDS = "This only recommends: it never changes your config."
 AGENTS = ("Coding-agent lanes (`flightdeck play --agent claude` or `codex`) bring their own models: [agents] in your "
@@ -123,7 +128,7 @@ def models_command(
 
 def overview_text(catalog: Catalog, machine: Machine) -> str:
     plan = budget(machine)
-    lines = ["This machine", *machine_lines(machine), "", f"{_budget_line(plan)}.", MEMORY_RULE]
+    lines = ["This machine", *machine_lines(machine), "", f"{_budget_line(plan)}.", MEMORY_RULE, APPROXIMATE]
     for role in ROLES:
         lines += ["", *role_lines(advise(catalog, machine, role, plan))]
     example = next((o.model.id for role in ROLES for o in advise(catalog, machine, role, plan).fits), catalog.local[0].id)
@@ -307,6 +312,8 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
     use = f"For {offered}." if offered else "Not offered for any role."
     lines = [f"{model.name} ({model.id}): {model.family}, {model.parameters} parameters, {model.license}. {use}"]
     lines.append(f"Measured: {_measured(model)}")
+    if any(b.measured or b.not_for for b in model.builds):
+        lines.append(APPROXIMATE)
     for build in model.builds:
         found = sizing(build, machine)
         facts = [_safe(build.model)]
@@ -334,9 +341,24 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
             lines += _indented(local_lines(build, role))
             check = "try it" if role == LANES else "measure it first"
             lines.append(f"    {check}: {measure_command(build, role)}")
-            lines.append(f"    or a new config: {init_command(model, role, build)}")
+            lines.append(f"    {_init_line(model, role, build)}")
     lines += ["", RECOMMENDS]
     return "\n".join(lines) + "\n"
+
+
+INIT_JUDGE_ONLY = "   # it writes the judge alone: add the jobs line above"
+NO_INIT = ("no `flightdeck init` writes it as measured: init asks a model on this machine for thinking off, so use "
+           "the lines above")
+
+
+def _init_line(model: LocalModel, role: str, build: Build) -> str:
+    """The `flightdeck init` that writes a new config with this build in `role`, and what it leaves
+    out: init writes the light model for the judge alone, with thinking off."""
+    command = init_command(model, role, build)
+    if not command:
+        return NO_INIT
+    more = role == LIGHT and build.light_jobs not in ((), ("judge",))
+    return f"or a new config: {command}{INIT_JUDGE_ONLY if more else ''}"
 
 
 def _measured(model: LocalModel) -> str:
@@ -422,13 +444,23 @@ def advice_json(advice: Advice) -> dict:
 def option_json(option: Option) -> dict:
     build = option.build
     basis = None if option.verdict != FITS else "measured" if option.measured else "size only"  # why it is offered
-    return {
+    data = {
         "id": option.model.id, "name": option.model.name, "runtime": build.runtime, "model": build.model,
         "quantization": build.quantization, "size_bytes": build.size, "weights_bytes": option.size,
         "sized_by": option.sized_by or None, "server_args": list(build.server_args), "verdict": option.verdict,
         "need_bytes": option.need, "estimate": True, "why": option.why, "present": option.present,
         "measured": option.measured or None, "basis": basis,
     }
+    if option.role == LIGHT:
+        data.update(light_json(build))
+    return data
+
+
+def light_json(build: Build) -> dict:
+    """What a build's light role is, for scripts: the run jobs it is offered for, the [light]
+    thinking it was measured with (None: flightdeck's default), and its jobs table's figures."""
+    return {"light_jobs": list(build.light_jobs), "thinking": build.thinking,
+            "jobs": jobs_data(build.jobs, build.light_jobs) if build.jobs is not None else None}
 
 
 def not_for_json(item: NotFor) -> dict:
@@ -467,7 +499,7 @@ def entry_json(choice: LocalModel | ApiChoice, machine: Machine | None) -> dict:
             role: {
                 "verdict": option.verdict, "need_bytes": option.need, "estimate": True, "why": option.why,
                 "measured": option.measured or None, "config": local_lines(build, role), "replaces": TABLES[role],
-                "check": measure_command(build, role), "init": init_command(choice, role, build),
+                "check": measure_command(build, role), "init": init_command(choice, role, build) or None,
             }
             for role, option in options.items()
         }
@@ -476,6 +508,7 @@ def entry_json(choice: LocalModel | ApiChoice, machine: Machine | None) -> dict:
             "weights_bytes": found.size, "sized_by": found.sized_by or None, "present": found.present,
             "server_args": list(build.server_args), "measured": dict(build.measured), "not_for": dict(build.not_for),
             "get": get_commands(build, machine) if roles else [], "roles": roles,
+            **(light_json(build) if LIGHT in choice.roles else {}),
         })
     return {
         "id": choice.id, "name": choice.name, "family": choice.family, "parameters": choice.parameters,
