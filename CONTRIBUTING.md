@@ -55,6 +55,9 @@ These come from [AGENTS.md](AGENTS.md), and they hold for people and agents alik
 - **Something small** (a bug fix with a test that shows the bug, a doc fix): open a pull request.
 - **Anything big** (a new platform, a change to how lanes run or what they may reach, a new
   dependency, a new console key): open an issue first, so we agree on it before you build it.
+- A change a player will notice adds a line under `## Unreleased` at the top of
+  [CHANGELOG.md](CHANGELOG.md) (add that heading if the last release took it), and updates the
+  README or the docs page that describes it.
 - [docs/DECISIONS.md](docs/DECISIONS.md) holds the decisions already made, with their dates. To
   change one, say which and why in the issue, rather than working around it.
 - A security problem goes to the
@@ -63,6 +66,18 @@ These come from [AGENTS.md](AGENTS.md), and they hold for people and agents alik
 
 Work on a branch, in small commits. The pull request template asks what changed and why, and
 how it was tested.
+
+### Adding a practice challenge
+
+The practice set is the board that `flightdeck practice` plays
+([its README](src/ctf_flightdeck/practice/README.md)). To add a challenge to it:
+
+1. Add a directory to `src/ctf_flightdeck/practice/` with `challenge.json` and the handout files,
+   all listed in `files` ([docs/BOARDS.md](docs/BOARDS.md) has the format).
+2. Put the SHA-256 of the flag in `answers.sha256.json`, never the flag itself.
+3. Add a reference solver to `tests/test_practice.py` that recovers the flag from the handout with
+   the standard library, without running handout code.
+4. Keep it synthetic and small: no compiled binaries, no executable files, under 1 MB per handout.
 
 ## Agents
 

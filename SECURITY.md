@@ -24,7 +24,9 @@ problem: report it privately, never in a public issue.
   `submit = "confirm"`, and nothing reaches the platform while an event's submit stage is
   `manual` or `off`. Under auto submit a flag still waits when the platform counts the challenge's
   tries, when the challenge's own description or handout holds it or flightdeck could not search all
-  of it for that flag, or when it is only a match in what an L1 engine printed; and a flag found wrong is never submitted again.
+  of it for that flag, when it is only a match in what an L1 engine printed, or when the light
+  model's flag check (`flagcheck` in `[light] jobs`) holds it; and a flag found wrong is never
+  submitted again.
 
 ## Not a vulnerability
 
@@ -32,8 +34,9 @@ problem: report it privately, never in a public issue.
   your machine, so it can read your files, your keys file and flightdeck's own environment, and
   send what it reads to its model's API. flightdeck says so before every host run, and there the
   cleanup of logs and transcripts is cleanup, not a fence. Use Docker, a disposable VM or a
-  separate low-limit key. A report that a `--host` lane can read or send something of yours is
-  not a vulnerability report.
+  separate low-limit key (the README's [Docker or host](README.md#docker-or-host) says what each
+  runtime exposes). A report that a `--host` lane can read or send something of yours is not a
+  vulnerability report.
 - **A coding-agent CLI's own credential.** The commands `--agent claude` or `--agent codex` runs
   can read that CLI's credential, in Docker too. Give it a key you can revoke, with a low
   spending limit.
@@ -44,8 +47,9 @@ problem: report it privately, never in a public issue.
 - **What auto submit does.** Under auto submit, a flag a lane claims goes to the platform at once,
   as you asked.
 - **What the cleanup leaves on purpose.** Transcripts and writeup drafts lose what looks like a
-  credential, as the README lists under "After a run"; anything else stays, lower-case names
-  included (a `password` is everyday CTF content). Read a draft before you share it.
+  credential, as [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) lists under Credentials; anything
+  else stays, lower-case names included (a `password` is everyday CTF content). Read a draft
+  before you share it.
 - **A bug in a challenge or a CTF platform.** Tell the event's organisers.
 
 ## How to report
@@ -57,7 +61,7 @@ Only you and the repository's maintainers see it.
 Say what you did, what happened and what should have happened, with `flightdeck --version`, your
 OS, where lanes ran (Docker or `--host`) and the model API or coding-agent CLI. The best proof is
 a synthetic challenge that shows it: a folder with a `challenge.json` and a handout file is enough
-(the format is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+(the format is in [docs/BOARDS.md](docs/BOARDS.md)).
 
 Never send a real key, a CTFd token, a cookie, real event data or another team's flags, even in a
 private report: make up a stand-in.

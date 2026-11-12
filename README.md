@@ -9,48 +9,124 @@ way: a hint, a redirect, a fork, a kill, or taking over its shell yourself.
 ![The fleet view: a board of eight challenges on the left; on the right, six agent lanes sorted by what needs you, with chips for a found flag, a lane that ignores the hint, a web lane heading the wrong way and a live box a teammate holds; under the list, the found flag with 1 to submit it and 0 not to](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/fleet.png)
 
 *The fleet view, from `flightdeck mock`: scripted lanes on invented challenges. More in the
-[screenshot gallery](docs/SCREENSHOTS.md).*
+[screenshot gallery](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SCREENSHOTS.md).*
 
 Bring what you have: an API key (Anthropic, OpenRouter, OpenAI or a local model server), a
 coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
 
 > **Status: v0.2.0 (alpha).** The console, agent lanes, your L1 solvers, CTFd events, team mode,
 > alerts, practice scoring, post-flight reports and a light model per small job are built.
-> Next: Autopilot. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> Next: Autopilot, which runs an event end to end while you are away. See the
+> [roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md) and the
+> [changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md).
+
+## Try it with no setup
+
+```sh
+uvx ctf-flightdeck mock              # nothing installed, nothing spent: the console on scripted data
+```
+
+Once flightdeck is installed, the same console is `flightdeck mock`:
+
+```sh
+flightdeck mock                      # the default scenario: every alert, then a 43-challenge wave
+flightdeck mock --scenario wave      # also: sstv, overthinking, web, team, flag
+flightdeck mock --screenshot DIR     # headless: SVGs of the key moments
+```
+
+The mock uses no model and no network. Every challenge, teammate and flag in it is invented.
+`space` freezes its clock and `.` steps it; the other keys are the real console's
+([The console](https://github.com/MFisher14/ctf-flightdeck#the-console)).
 
 ## Quickstart
 
 Needs Python 3.12+ on macOS or Linux (Windows through WSL), and Docker for the safest setup.
 
 ```sh
-pipx install ctf-flightdeck     # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
-flightdeck init                 # a few questions; writes your config and says what to do next
-flightdeck practice             # 14 small practice challenges that ship with flightdeck
+pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
+flightdeck init               # a few questions (provider, models, Docker or host); writes your config
+# put your key in ~/.config/ctf-flightdeck/keys.env (chmod 600): init names the variable
+flightdeck image build        # once, for Docker lanes: pulls Debian and common tools (about 700 MB)
+flightdeck doctor             # checks your setup and says how to fix each problem
+flightdeck practice           # 14 small practice challenges: spends tokens on your model API
 ```
 
-`flightdeck` on its own says what to do next on your machine, and `flightdeck doctor` checks
-everything (Python, the config, the key variables, a local model server and its models, the
-light model, Docker, the lane image, your terminal's size) and says how to fix each problem.
-Before the console opens, `play` and `practice` ask the model API whether it takes your key and
-serves every model in your ladder, and stop with what to fix if not. No setup at all:
-`flightdeck mock` opens the console on scripted data and spends nothing, and
-`uvx ctf-flightdeck mock` does it without installing anything.
+`practice` and `play` spend money on your model API. Each lane waits for your approval at 400,000
+tokens or $2 (`token_cap` and `dollar_cap` under `[lanes]` in your config, with an alert at 80%),
+four lanes run at a time by default, and nothing caps a whole run. With
+`init --provider anthropic` every lane starts on Claude Haiku 5.5 ($0.10 / $0.50 per million input
+/ output tokens). It moves up to Sonnet or Opus 5.5, at 20 to 40 times that, only when you
+escalate it. A model on your own machine costs nothing (`init` writes no dollar cap for Ollama or
+an MLX server), and `flightdeck mock` spends nothing.
 
-## Keys and model APIs
+`flightdeck` on its own says what to do next on your machine. `flightdeck doctor` checks Python,
+the config, the key variables, a local model server and its models, the light model, Docker, the
+lane image and your terminal's size. Before the console opens, `play` and `practice` ask the model
+API whether it takes your key and serves every model in your ladder, and stop with what to fix if
+not. `ctfdeck` and `ctf-flightdeck` are other names for the `flightdeck` command.
 
-Your config names the environment variable that holds each key, never the key. flightdeck reads
-the variable from your environment, else from `~/.config/ctf-flightdeck/keys.env` (or the file
-`$FLIGHTDECK_KEYS` names), which must be readable by you only:
+## Docker or host
+
+`init` asks where lanes run. A **lane** is one agent working one challenge, with a shell of its
+own, and the question is where that shell is.
+
+**Docker** is the default (`runtime = "docker"` under `[lanes]`). Each lane runs in its own
+container of the lane image, with only that lane's copy of the challenge in it, and your L1
+solvers run in containers too. `flightdeck image build` builds the image once, and
+`flightdeck image dockerfile` prints what it builds. A lane of flightdeck's own loop gets no
+network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
+`nc host port` (`tcp://host:port` in the challenge's `urls`). Under an event whose instance policy
+is `confirm`, the lane asks you first. It then gets Docker's bridge network, which reaches any
+host, not only the instance: there is no per-host allowlist yet. A coding-agent lane (`--agent`)
+is always on that network, for its CLI's API.
+
+**`--host`** (or `runtime = "host"`) runs lane commands as you, on this machine. A lane can read
+your files, your keys file and flightdeck's own environment, and send what it reads to its model's
+API, which nothing can take back. flightdeck says so before every host run. A lane's commands get
+an environment built from an allowlist, with no keys in it, and the run log, the console,
+transcripts, reports and writeup drafts show a key's name but not its value. That is cleanup, not
+a fence: use Docker, a disposable VM, or a separate key with a low limit.
+
+A coding-agent CLI holds its own credential, and the commands it runs can read it, in Docker too:
+give it a key you can revoke, with a low spending limit. Practise in Docker: on the host, a lane
+can read the practice set's reference solutions in a clone of this repository.
+
+## Words used here
+
+- **Board**: a folder of challenge folders, each with a `challenge.json` and its handout files
+  ([Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md)). With CTFd,
+  flightdeck pulls one into a folder.
+- **Lane**: one agent working one challenge: a model conversation with its own shell, in a
+  container (or on this machine with `--host`). `max_lanes` run at once (4 by default); the rest
+  queue.
+- **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
+  **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
+- **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
+  yours; exit it to hand the lane back.
+- **Caps**: per lane, `token_cap` and `dollar_cap` under `[lanes]`. An alert comes at 80%, and at
+  100% the lane waits for you.
+- **L1**: your own no-model solvers, which run before a lane's first model call. They come as a
+  **pack** of **engines**, each with a **manifest** saying which challenges it fits
+  ([Solvers](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SOLVERS.md)).
+- **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
+  default.
+- **Lane image**: the Docker image lanes run in, `ctf-flightdeck-lane:1`.
+  `flightdeck image build` builds it once.
+- **Event profile** (`event.toml`): what an event's rules allow, and a **policy** for each stage:
+  `auto`, `confirm`, `manual` or `off`.
+- **Run folder**: where a run's event log, transcripts and reports go
+  (`~/.local/share/ctf-flightdeck/runs/`).
+
+## Models and keys
+
+Your config names the environment variable that holds each key, never the key; flightdeck reads
+it from your environment, else from the keys file, `~/.config/ctf-flightdeck/keys.env`, which
+must be readable by you only:
 
 ```sh
 mkdir -p ~/.config/ctf-flightdeck && touch ~/.config/ctf-flightdeck/keys.env && chmod 600 ~/.config/ctf-flightdeck/keys.env
-# then add lines like:  ANTHROPIC_API_KEY=...   OPENROUTER_API_KEY=...
+# then add one line per key, such as ANTHROPIC_API_KEY=... (and OPENROUTER_API_KEY=... on a line of its own)
 ```
-
-A lane's commands get an environment built from an allowlist, so flightdeck hands them none of
-these values (but see `--host` below). A coding-agent CLI (`--agent`) gets its own credential and
-no other, and the commands it runs can read that one, in Docker too: give it a key you can
-revoke, with a low spending limit.
 
 With an Anthropic key, `flightdeck init --provider anthropic` writes Claude Haiku, Sonnet and
 Opus 5.5 with their list prices, so the dollar caps work from the start. If `OPENROUTER_API_KEY`
@@ -58,10 +134,9 @@ is set too, it offers OpenRouter as the fallback for a lane whose calls to Anthr
 failing. OpenRouter, OpenAI, Ollama, an MLX server or any OpenAI-compatible API work as well.
 For Ollama or an MLX server, `init` suggests a model, and for any server on your machine it lets
 a lane wait up to 10 minutes for a reply of up to 8192 tokens, since a local model can take
-minutes to answer. The fallback, what happens when a model declines, fast mode, time and reply
-limits, and prices: [`docs/MODEL-APIS.md`](docs/MODEL-APIS.md).
-
-## Models
+minutes to answer. More on [keys](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md#keys),
+and the fallback, what happens when a model declines, fast mode, time and reply limits, and
+prices: [Model APIs](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md).
 
 Which models fit your machine? `flightdeck models` looks at it (chip, memory, NVIDIA GPUs, and
 the model servers running on it; it contacts nothing but 127.0.0.1) and lists, for lanes and for
@@ -70,23 +145,39 @@ they run well, then model APIs. `flightdeck models qwen3.5-9b` prints how to get
 config lines that use it. For another machine, describe it: `flightdeck models --memory 16
 --apple` (a 16 GB Apple Silicon Mac) or `--memory 32 --gpu-memory 12` (a PC with a 12 GB NVIDIA
 GPU). It recommends; it never changes your config. How the models did:
-[`docs/MODELS.md`](docs/MODELS.md).
+[Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md).
 
-## Play a board
+### The light model
+
+A few small jobs can use a small model, set in `[light]`. By default there is none, and
+flightdeck's own rules do these jobs. The first job is the hint judge: when a lane seems to ignore
+what its description hints at, the alert shows at once, and the light model checks the lane's
+steps; if it says the lane is using the technique after all, the alert comes down. `[light] jobs`
+can add three more: `route` (a challenge's category where the board names none, and the kind of
+specialist it suits), `recon` (a first look at the handout for the lane's opening brief) and
+`flagcheck` (a check of a flag before it goes out without you under auto submit; it can only hold
+a flag for you, never submit one).
+
+**Recommended: an open-weight model on your own machine**, served by Ollama or an MLX server. No
+provider's safety classifier stands between it and security work, and it costs nothing. Measure
+one before you switch it on:
 
 ```sh
-flightdeck play ~/ctf/some-board --max-lanes 4
+flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model>   # scores it beside the rules, job by job
+flightdeck init --light ollama --light-model <model>   # a new config; for yours, edit [light] (`flightdeck models ID` prints the lines)
 ```
 
-A board is a folder of challenge folders, each with a `challenge.json` and its handout files
-(format in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). Lanes start cheapest-first; the rest
-queue. Every lane is a model conversation, capped per lane by `token_cap` and `dollar_cap` (an
-alert at 80%, your approval at 100%).
+`init --light ollama` (or `mlx`) writes `engine = "openai"` with that server's address: both
+serve the OpenAI-compatible API. A Claude model or a Strands Decider server can be the light model
+too, and one job can have an engine of its own; `flightdeck config --example` shows every setting.
+`eval-local` says first how many calls it will make to a paid API.
 
-A flag a lane finds waits for you: `a` or `1` submits it, `d` or `0` declines. Under auto submit
-(`submit = "auto"`, or `play --submit auto`) a flag the model submits goes at once, unless it is
-written in the challenge's own description or handout files (often a decoy): that one still
-waits for you. A flag found wrong is never asked about again.
+The light model never holds anything up. When it refuses, fails, times out or answers outside the
+options, the rules' answer stands, and the run says so once. A refused request is never sent on to
+another model or provider: you see the refusal and decide. Which models to try, and how each did
+at each job: [Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md).
+
+## The console
 
 The console raises an alert when a lane spends big on a low-value challenge, ignores what the
 description hints at, heads the wrong way on web, loops or stalls. Lanes that need you sort
@@ -107,28 +198,84 @@ commands; `esc` goes back).
 `t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
 lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
 its HOME is a new folder only you can read, outside the workspace, so nothing the lane wrote runs
-before you type. `e` escalates a lane to a stronger model with a summary of what it did, `f`
-forks it, `?` shows every key.
+before you type. `e` escalates a lane to the next model in your ladder with a summary of what it
+did, and `f` forks it.
 
 When a model API failure would hit every lane (a refused key, an unknown model, no credits), the
 queue is held and the header says why. Once you have fixed it, `/unhold` starts the queued lanes
 (a key or model id changed in your config needs a new run).
 
-Docker lanes get no network unless their challenge has a live instance (a web origin, or a TCP
-service like `nc host port`: `tcp://host:port` in a challenge's `urls`). `--host` runs lane
-commands as you, on this machine: a lane can read your files, your keys file and flightdeck's
-own environment, and send what it reads to its model's API, which nothing can take back. The
-run log, the console, transcripts, reports and writeup drafts show a key's name but not its
-value (see [After a run](#after-a-run)), but that is cleanup, not a fence: use Docker, a
-disposable VM, or a separate low-limit key.
+`q` asks first while lanes are open, and a run cannot be resumed.
 
-Every run writes an append-only `events.jsonl` and each lane's transcript; a board with answers
-(like the practice set) ends with a scorecard. `q` asks first while lanes are open, and a run
-cannot be resumed. If flightdeck itself is killed (kill -9, a power loss), what its lanes started
-can keep running: the next `play` or `practice` removes it and says what it removed,
-`flightdeck doctor` lists it and `flightdeck doctor --clean` removes it.
+The fleet's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
+`e` escalate, `t` take over, `a` approve, `d` decline, `1`-`9`/`0` quick answers, `c` claim
+(team), `/` commands, `s` sort, `?` help (every key and command), `q` quit; **Enter** opens the
+lane full screen. The whole design is in the
+[console spec](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/CONSOLE-SPEC.md).
 
-## Play an event
+## Play a board
+
+```sh
+flightdeck play ~/ctf/some-board --max-lanes 4
+```
+
+A board is a folder of challenge folders, each with its handout files and a `challenge.json`
+like this one from the practice set:
+
+```json
+{"name": "Crab Walk", "category": "crypto", "points": 50, "solves": 312,
+ "description": "…", "files": ["postcard.txt"], "id": "crab-walk"}
+```
+
+The whole format, with answers files and live instances, is in
+[Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md).
+
+Lanes start on the lowest-point challenges first (most solves first among equals); the rest
+queue. Every lane is a model conversation, capped per lane by `[lanes] token_cap` and
+`dollar_cap` (400,000 tokens and $2 by default; an alert at 80%, your approval at 100%).
+
+A flag a lane finds waits for you: `a` or `1` submits it, `d` or `0` declines. On a folder board
+flightdeck checks a flag against the board's `answers.sha256.json` when it has one. Without one
+it cannot check: submit the flag on the platform yourself, then press `a` if it was accepted or
+`d` if not. With `--event`, `a` sends it to CTFd (when the event's submit stage is `manual` or
+`off`, you submit it and answer `a` or `d`).
+
+Under auto submit (`submit = "auto"`, or `play --submit auto`) a flag the model submits goes at
+once, unless it is written in the challenge's own description or handout files (often a decoy):
+that one still waits for you. A flag found wrong is never asked about again.
+
+Every run writes a run folder with an append-only `events.jsonl` and each lane's transcript; a
+board with answers (like the practice set) ends with a scorecard. If flightdeck itself is killed
+(kill -9, a power loss), what its lanes started can keep running: the next `play` or `practice`
+removes it and says what it removed, `flightdeck doctor` lists it and `flightdeck doctor --clean`
+removes it.
+
+## Your solvers first (L1)
+
+Point flightdeck at a folder of your no-model solvers and each of flightdeck's own lanes runs the
+ones that fit its challenge before its first model call, so a solve can cost no tokens at all.
+
+```sh
+flightdeck l1 import ~/ctf/solvers        # manifests for a folder of plain scripts (the scripts are never changed)
+flightdeck l1 list ~/ctf/solvers          # every engine in the pack, with its routes
+flightdeck l1 route ~/ctf/solvers ~/ctf/some-board/crab-walk   # which engines a challenge reaches, and why (or why not)
+flightdeck l1 run ~/ctf/solvers ~/ctf/some-board/crab-walk     # run them now: on this machine, as you, with no container
+flightdeck play ~/ctf/some-board --pack ~/ctf/solvers          # or set [l1] pack in your config
+```
+
+`l1 import` takes a `.py` file with an `if __name__ == "__main__":` block, or any executable
+script with a `#!` line, and routes it by its folder's name (`crypto/`, `forensics/`) and the
+words of its file name. To write a manifest yourself, or an engine that reports its evidence:
+[Solvers](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SOLVERS.md).
+
+A flag an engine returns as its result waits for your approval, or under auto submit goes to the
+platform at once; a flag that is only a match in what an engine printed (a plain script that
+`l1 import` took in, say) always waits for you. When lanes run in Docker, so do your solvers: each
+in a container of the lane image, your pack mounted read-only, with no network unless the
+live-instance policy is `auto` and the challenge has an instance. With `--host` they run on this
+machine, as you.
+
+## Events and teams
 
 Write down what the event's rules allow, check it, and play by it:
 
@@ -139,41 +286,50 @@ export CTFD_TOKEN=...                             # the variable event.toml name
 flightdeck play ~/ctf/event-board --event event.toml
 ```
 
-With a CTFd event, flightdeck pulls the board into that folder, adds new waves as they appear,
-submits the flags you approve through CTFd and follows your team's solves. A slow CTFd never
-holds up the console: lanes carry on while their flags are on their way (the fleet shows
-`sending`). A challenge whose tries CTFd counts always waits for you, under `auto` too, and each
-approval says how many tries are left. Each stage (pull, L1, agents, submit, live instance) runs
-as the profile's policy says: `auto`, `confirm` (you say yes first), `manual` or `off`, never
-looser than the rules. Under `confirm` for live instances, a lane asks before it may reach its
-challenge's instance and has no network until you allow it.
+flightdeck talks to CTFd. For any other platform, make a folder board (`platform = "manual"` in
+`event.toml`) and submit flags by hand.
+
+With a CTFd event, flightdeck pulls the board into that folder (and, with `pull = "auto"`, adds
+new waves as they appear), submits the flags you approve through CTFd and follows your team's
+solves. A slow CTFd never holds up the console: lanes carry on while their flags are on their way
+(the fleet shows `sending`). A challenge whose tries CTFd counts always waits for you, under
+`auto` too, and each approval says how many tries are left. `flightdeck ctfd pull URL FOLDER`
+pulls a CTFd board without playing it; it exits with status 1 when some challenges could not be
+pulled.
+
+Each stage (pull, L1, agents, submit, live instance) has a policy in the event profile: `auto`,
+`confirm` (you say yes first; for agents and L1, starting play is that yes), `manual` or `off`,
+never looser than the rules. With agents `manual` or `off`, `play` does not start. Under `confirm`
+for live instances, a lane asks before it may reach its challenge's instance and has no network
+until you allow it. The profile, key by key:
+[Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md#the-event-profile-eventtoml).
 
 Team mode shares claims, live-box holds and solves through a folder your teammates sync (a network
-drive, Syncthing): `flightdeck team init DIR` once, then `--team-dir DIR`. Your lanes never work a
-challenge a teammate solved.
+drive, Syncthing): `flightdeck team init DIR` once, then `play --team-dir DIR`. Your lanes never
+work a challenge a teammate solved. `--handle NAME` sets your name in the team folder (by default,
+your login name), and `flightdeck team status DIR` shows what the folder holds and which files
+flightdeck ignores there.
 
-`--agent claude` (or `codex`) runs lanes as that coding-agent CLI, with its own login and models
-(`[agents]` in your config), behind the same controls. Check it first with
-`flightdeck doctor --agent claude`. A CLI says what a turn cost only when the turn ends, so its
-lane's cost ends in `…` until then; codex reports no cost at all, so give its models a
-`[prices."<model>"]` table for their lanes to show dollars.
+## Coding-agent lanes
 
-## Your solvers first (L1)
+`--agent claude` (or `codex`) runs lanes as that coding-agent CLI, on any board or event, behind
+the same controls. Each uses its own models (`[agents]` in your config: claude defaults to
+`sonnet`, then `opus`; codex needs a ladder) and its own credential, never your `[api]` key.
 
-Point flightdeck at a folder of your no-model solvers and each of flightdeck's own lanes runs the
-ones that fit its challenge before its first model call (coding-agent lanes do not use the pack
-yet), so a solve can cost no tokens at all. A flag an engine returns as its result waits for your
-approval, or under auto submit goes to the platform at once; a flag that is only a match in what
-an engine printed (a plain script that `l1 import` took in, say) always waits for you. When lanes
-run in Docker, so do your solvers: each in a container of the lane image, your pack mounted
-read-only, with no network unless the live-instance policy is `auto` and the challenge has an
-instance. With `--host` they run on this machine, as you.
+- **claude** takes `ANTHROPIC_API_KEY` (the Anthropic API, billed per token) or
+  `CLAUDE_CODE_OAUTH_TOKEN` (your Claude subscription; `claude setup-token` makes one).
+- **codex** takes `CODEX_API_KEY` or, on the host only, a saved `codex login`.
 
-```sh
-flightdeck l1 import ~/ctf/solvers        # manifests for a folder of plain scripts (the scripts are never changed)
-flightdeck l1 route ~/ctf/solvers ~/ctf/some-board/crab-walk   # which engines a challenge reaches, and why (or why not)
-flightdeck play ~/ctf/some-board --pack ~/ctf/solvers          # or set [l1] pack in your config
-```
+Put the credential in your keys file or your environment; `--agent-auth` picks one when both are
+set. In Docker the lane image needs the CLI, and the image `flightdeck image build` makes has
+neither: build an image `FROM ctf-flightdeck-lane:1` that installs it and set `[lanes] image` to
+it, or play with `--host`. `flightdeck doctor --agent claude` checks the CLI, its credential and
+the lane image.
+
+A coding-agent lane is always on Docker's bridge network, for its CLI's API, so an event whose
+instance policy is not `auto` refuses agent lanes. They do not run your L1 pack. A CLI says what a
+turn cost only when the turn ends, so its lane's cost ends in `…` until then; codex reports no
+cost at all, so give its models a `[prices."<model>"]` table for their lanes to show dollars.
 
 ## After a run
 
@@ -183,100 +339,64 @@ flightdeck writeups RUN_DIR    # a writeup draft per solved challenge (--redact 
 flightdeck score RUN_DIR       # the run scored against the board's answers
 flightdeck gaps RUN_DIR        # the challenges your L1 solvers did not solve, and why
 flightdeck build gap CHALLENGE_DIR --pack ~/ctf/solvers   # a new engine stub with a test that must pass
+flightdeck build check ~/ctf/solvers                       # run the pack's tests: which engines pass
 ```
 
 When a run ends, `play` prints its run folder with the report, writeups and gaps commands for it
-(and score, when the board has answers), ready to paste. Writeup drafts and lane transcripts
-take out what looks like a key or token, with or without `--redact`: the value of an upper-case
-`NAME=value` or `NAME: value` whose name holds KEY, TOKEN, SECRET, PASSWORD, PASSWD, COOKIE or
-AUTH, of an Authorization or Cookie header, and of a key with a well-known prefix (`sk-ant-`,
-`ghp_` and the like) becomes `[redacted]`. Anything else stays, lower-case names included (a
-`password` is everyday CTF content), so read a draft before you share it.
+(and score, when the board has answers), ready to paste. `writeups --polish MODEL` has MODEL tidy
+the prose through the API in your config: it spends tokens, and never sees the run's flags,
+commands or outputs.
 
-## Light model
+Transcripts, the run log, reports and writeup drafts replace the value of anything shaped like a
+credential with `[redacted]`, with or without `--redact`: an upper-case `NAME=value` naming a
+key, token, secret, password, cookie or auth; Authorization, Proxy-Authorization and Cookie
+headers; well-known key prefixes (the full rule is in the
+[architecture](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md)).
+Anything else stays, lower-case names included (a `password` is everyday CTF content), so read a
+draft before you share it.
 
-A few small jobs can use a small model. The first is the hint judge: when a lane seems to ignore
-what its description hints at, the alert shows at once, and the light model checks the lane's
-steps; if it says the lane is using the technique after all, the alert comes down. `[light] jobs`
-can add three more: `route` (a challenge's category where the board names none, and the kind of
-specialist it suits), `recon` (a first look at the handout for the lane's opening brief) and
-`flagcheck` (a check of a flag before it goes out without you under auto submit; it can only
-hold a flag for you, never submit one). A job can have an engine of its own in a `[light.<job>]`
-table; `flightdeck config --example` shows how. By default there is no light model, only the
-rules. Five choices, in `[light]`:
+## Configuration and files
 
-- `rules`: no model (the default).
-- `openai`: any OpenAI-compatible server. **Recommended: an open-weight model on your own
-  machine**, served by Ollama (`http://127.0.0.1:11434/v1`) or an MLX server
-  (`http://127.0.0.1:8080/v1`), with `key_env = ""`. No provider's safety classifier stands
-  between it and security work, and it costs nothing. flightdeck asks a model on your machine to
-  answer without thinking first (`thinking = false`, the default there): one that reasons first
-  spends a small job's few hundred tokens thinking and answers nothing.
-- `anthropic`: a Claude model (`claude-haiku-5-5`, say).
-- `cactus`: Cactus Needle, on this machine (the `[cactus]` extra).
-- `decider`: Strands Decider, a decision model, served on your own machine. It writes no text: it
-  picks one of the options and says how confident it is. An answer below `threshold` (0.9 by
-  default; its README says answers at 0.9 or more are right about 95% of the time on short tasks
-  it has never seen) is unsure, and the rules' answer stands. No key, and nothing to pay.
-  `flightdeck init --light decider` writes it and says how to start its server:
-  `pip install strands-decider`, then
-  `strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --port 8000` (on Apple
-  silicon add `--device mlx`, with its `mlx` extra: `pip install "strands-decider[mlx]>=0.3"`).
+`flightdeck init` writes `~/.config/ctf-flightdeck/config.toml` (or the file `$FLIGHTDECK_CONFIG`
+names). `flightdeck config` checks it, and `flightdeck config --example` prints every key with
+its default. Keys come from your environment, else from `~/.config/ctf-flightdeck/keys.env` (or
+the file `$FLIGHTDECK_KEYS` names). Each run writes a folder under
+`~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
+own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests
+into `FOLDER/.flightdeck/generated/`.
 
-Measure one before you switch it on: which models to try, and how they did, is in
-[`docs/MODELS.md`](docs/MODELS.md). `eval-local` decides:
-
-```sh
-flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model <model> \
-    --compare anthropic:claude-haiku-5-5 --compare cactus
-flightdeck eval-local --engine decider --base-url http://127.0.0.1:8000   # or a column: --compare decider@URL
-flightdeck init --light ollama --light-model <model>     # or edit [light]; at a terminal, init suggests a model
-```
-
-eval-local runs each engine and the rules over the bundled cases (naming the hinted technique,
-judging a lane, summarising one) and prints them side by side: accuracy, refusals and failures,
-time and cost per job. A paid API is announced first with its number of calls: one per case,
-never a retry. `--thinking on|off` says whether a model on an OpenAI-compatible server may think
-first; by default it is off on your machine and on elsewhere, unless your `[light] thinking`
-says otherwise for that server. The decider's unsure answers get a row of their own and count
-neither right nor wrong, so its accuracy says how often an answer it was sure of is right; its
-summary cases show as n/a, since a decision model writes no text.
-
-The light model never holds anything up. When it refuses, fails, times out, answers outside the
-options or (the decider) is unsure, the rules' answer stands, and the run says so once. A refused
-request is never sent on to another model or provider: you see the refusal and decide.
-
-## Try the mock
-
-```sh
-flightdeck mock                      # the default scenario: every alert, then a 43-challenge wave
-flightdeck mock --scenario wave      # also: sstv, overthinking, web, team, flag
-flightdeck mock --screenshot DIR     # headless: SVGs of the key moments
-```
-
-The fleet's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
-`e` escalate, `t` take over, `a` approve, `d` decline, `1`-`9`/`0` quick answers, `c` claim
-(team), `/` commands, `s` sort, `?` help, `q` quit; **Enter** opens the lane full screen. In the
-mock, `space` freezes the clock and `.` steps it. All challenges, teammates and flags there are
-invented.
+To remove flightdeck: `pipx uninstall ctf-flightdeck` (or `uv tool uninstall ctf-flightdeck`),
+`docker image rm ctf-flightdeck-lane:1`, and delete those folders.
 
 ## Optional extras
 
-- `ctf-flightdeck[cactus]`: Cactus Needle, a small on-device model, one of the light model's
-  choices (`flightdeck eval-local --engine cactus` measures it against the rules first). Its
-  telemetry is turned off. Nothing uses it unless you ask.
 - `ctf-flightdeck[build]`: pytest, for `flightdeck build check`.
+- `ctf-flightdeck[cactus]`: Cactus Needle, a small on-device model that can be the light model
+  (`engine = "cactus"`). flightdeck's own measurement found it unfit for the light jobs
+  ([Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md)), so measure it
+  with `flightdeck eval-local --engine cactus` before you use it. Its telemetry is turned off, and
+  nothing uses it unless you ask.
 
 ## Docs
 
-[Vision](docs/VISION.md) · [Decisions](docs/DECISIONS.md) · [Roadmap](docs/ROADMAP.md) ·
-[Console spec](docs/CONSOLE-SPEC.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Model APIs](docs/MODEL-APIS.md) · [Models](docs/MODELS.md) ·
-[Screenshots](docs/SCREENSHOTS.md) · [Changelog](CHANGELOG.md) ·
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+**Using flightdeck:**
+[Model APIs](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md) ·
+[Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md) ·
+[Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md) ·
+[Solvers](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SOLVERS.md) ·
+[Practice set](https://github.com/MFisher14/ctf-flightdeck/blob/main/src/ctf_flightdeck/practice/README.md) ·
+[Screenshots](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SCREENSHOTS.md) ·
+[Changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) ·
+[Security](https://github.com/MFisher14/ctf-flightdeck/blob/main/SECURITY.md)
 
-Development: `uv run pytest`. `ctfdeck` is an alias for `flightdeck`.
+**How it is built:**
+[Vision](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/VISION.md) ·
+[Architecture](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md) ·
+[Console spec](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/CONSOLE-SPEC.md) ·
+[Decisions](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/DECISIONS.md) ·
+[Roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md) ·
+[Contributing](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/MFisher14/ctf-flightdeck/blob/main/LICENSE).

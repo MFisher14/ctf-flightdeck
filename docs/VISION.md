@@ -36,7 +36,9 @@ settings before anything runs.
 - **post-flight**: timeline, what went well, where stepping in would have helped, which L1 solvers were
   missing, writeup drafts.
 - **build**: turn post-flight gaps into new L1 solvers, with tests that prove a raw handout reaches them.
-- **practice**: replay an archived board offline to learn agent control and to test a solver pack.
+- **practice**: play the bundled set (`flightdeck practice`) or an archived board with its answers,
+  scored (`flightdeck score`), to learn agent control and to test a solver pack; replaying a board's
+  release timeline comes later.
 
 ## Who it is for
 
@@ -46,6 +48,10 @@ OpenRouter account, a subscription CLI, a folder of Python scripts) and it shoul
 
 ## What it is not
 
-- Not a solver pack. It ships the solver contract and a few examples; players bring their own L1.
-- Not a bot that plays without a human. Autonomy is a dial the player controls.
+- Not a solver pack. It ships the solver contract ([SOLVERS.md](SOLVERS.md)), an importer that wraps
+  plain scripts (`flightdeck l1 import`) and build mode's engine stubs (`flightdeck build gap`);
+  players bring their own L1.
+- Not a bot that replaces the player. Autonomy is a dial the player controls; at its far end,
+  Autopilot (planned: [ROADMAP.md](ROADMAP.md)) runs an event while you are away, never looser than
+  the event's rules, and hands the controls back when something needs a human.
 - Not a way around event rules.

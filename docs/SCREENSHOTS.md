@@ -1,8 +1,9 @@
 # Screenshots
 
 The console, from `flightdeck mock` (scripted data: every challenge, teammate and flag is invented).
-Make your own with `flightdeck mock --screenshot DIR`, which writes SVGs of these moments for each
-scenario (`--scenario default`, `wave`, `sstv`, `overthinking`, `web`, `team`, `flag`).
+Make your own with `flightdeck mock --screenshot DIR`, which writes SVGs of these moments (the PNGs
+here were made from them) for each scenario (`--scenario default`, `wave`, `sstv`, `overthinking`,
+`web`, `team`, `flag`).
 
 ## The fleet
 
@@ -13,7 +14,7 @@ needs you: a flag to approve, a live box to allow, a budget, an alert.
 
 ![A second wave of challenges arrives during the run](screenshots/wave.png)
 
-A new wave lands mid-run: lanes start up to the limit, the rest queue cheapest first.
+A new wave lands mid-run: lanes start up to the limit, the rest queue, lowest points first.
 
 ## Alerts
 
@@ -54,7 +55,7 @@ What the lane changed, as diffs.
 
 ## Flags
 
-![A flag found by a lane, waiting for the player's approval](screenshots/flag-waiting.png)
+![A flag found by a lane, waiting for your approval](screenshots/flag-waiting.png)
 
 A flag a lane found waits for you: `a` or `1` submits it, `d` or `0` declines.
 
