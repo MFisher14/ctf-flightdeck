@@ -357,7 +357,7 @@ Transcripts, the run log, reports and writeup drafts replace the value of anythi
 credential with `[redacted]`, with or without `--redact`: an upper-case `NAME=value` naming a
 key, token, secret, password, cookie or auth; Authorization, Proxy-Authorization and Cookie
 headers; well-known key prefixes (the full rule is in the
-[architecture](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md)).
+[architecture](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md#credentials)).
 Anything else stays, lower-case names included (a `password` is everyday CTF content), so read a
 draft before you share it.
 

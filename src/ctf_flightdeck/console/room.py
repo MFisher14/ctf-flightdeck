@@ -2,7 +2,7 @@
 
 Measured with the console's own code on a busy run's header (busy_header), so doctor says
 what the console would leave out, not a rule of thumb: the board under BOARD_MIN_WIDTH
-columns, the header's pieces in the order they drop (views.fit_header: CONSOLE-SPEC "Header",
+columns, the header's pieces in the order they drop (views.fit_header: CONSOLE-SPEC "Narrow terminals",
 D16), the fleet view's keys in the order its key line leaves them out (help lists every key),
 the keys at the end of the focus view's key line, and the lane rows the lane list has no room
 for (it scrolls to them). Board rows and a lane's transcript scroll at any size: not counted.

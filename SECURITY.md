@@ -47,7 +47,7 @@ problem: report it privately, never in a public issue.
 - **What auto submit does.** Under auto submit, a flag a lane claims goes to the platform at once,
   as you asked.
 - **What the cleanup leaves on purpose.** Transcripts and writeup drafts lose what looks like a
-  credential, as [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) lists under Credentials; anything
+  credential, as [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#credentials) lists under Credentials; anything
   else stays, lower-case names included (a `password` is everyday CTF content). Read a draft
   before you share it.
 - **A bug in a challenge or a CTF platform.** Tell the event's organisers.

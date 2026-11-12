@@ -955,7 +955,7 @@ def _team_channel(options: RunOptions, plan: _Plan) -> TeamChannel | None:
     if options.team_dir is None:
         if options.team:
             plan.notes.append(
-                "team mode with no team folder: your claims stay on this deck"
+                "team mode with no team folder: your claims stay on your flightdeck"
                 + (", and CTFd's solves still stop lanes" if plan.ctfd else "")
                 + ". --team-dir FOLDER shares claims and solves with your teammates"
             )

@@ -1,5 +1,6 @@
 # Local-only research and context. Never commit.
 private-notes/
+CLAUDE.local.md
 
 # Credentials and per-event state
 .ctf/

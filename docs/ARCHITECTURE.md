@@ -549,8 +549,8 @@ Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).
 
 `flightdeck init` (`setup.py`) writes `timeout = 600` and `max_tokens = 8192` for a server on this
-machine, suggests a ladder for Ollama and MLX and a light model for `--light ollama|mlx` (from a
-benchmark on one machine; never written unless the player takes it), and writes `thinking = false`
+machine, suggests a ladder for Ollama and MLX and a light model for `--light ollama|mlx` (from
+flightdeck's benchmark, docs/MODELS.md; never written unless the player takes it), and writes `thinking = false`
 for a light model on this machine; `flightdeck doctor` names what lane calls to a server on this
 machine send and wait (`lane calls`).
 

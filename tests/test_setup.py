@@ -635,7 +635,7 @@ def terminal_check(tmp_path, monkeypatch, size: tuple[int, int], answers: Answer
 
 def test_doctor_says_what_a_100x30_terminal_leaves_out_of_the_console_and_from_which_size_nothing(tmp_path, monkeypatch):
     """100x30 was called fine, yet on a busy run the header drops dollars, tokens and the clock
-    there, in the order the console drops them (CONSOLE-SPEC "Header", D16), and key lines lose
+    there, in the order the console drops them (CONSOLE-SPEC "Narrow terminals", D16), and key lines lose
     keys. doctor says what, and the size from which nothing is left out (4 lanes in docker)."""
     assert terminal_check(tmp_path, monkeypatch, (100, 30)) == [
         "warn terminal: 100x30: on a busy run the console leaves out dollars, tokens and the event clock in the header; "

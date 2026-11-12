@@ -4,7 +4,7 @@ flightdeck's model roles:
 
 - lanes: the tool loop, on [api] and the [models] ladder (weakest first; escalation climbs it).
   A lane needs reliable tool calls.
-- light: the light role's small classification jobs ([light]; today the hint judge). The rules
+- light: the light role's small classification jobs ([light]: the jobs in its `jobs`). The rules
   by default; a model is measured with `flightdeck eval-local` before it is switched on.
 
 Coding-agent lanes (`play --agent claude|codex`) bring their own models ([agents]): not here.

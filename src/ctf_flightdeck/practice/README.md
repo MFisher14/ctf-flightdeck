@@ -82,9 +82,5 @@ played. The installed package does not include it.
 
 ## Adding a challenge
 
-1. Add a directory to `src/ctf_flightdeck/practice/` with `challenge.json` and the handout files,
-   all listed in `files`.
-2. Put the SHA-256 of the flag in `answers.sha256.json`, never the flag itself.
-3. Add a reference solver to `tests/test_practice.py` that recovers the flag from the handout with
-   the standard library, without running handout code.
-4. Keep it synthetic and small: no compiled binaries, no executable files, under 1 MB per handout.
+The steps are in the repository's
+[CONTRIBUTING.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md#adding-a-practice-challenge).

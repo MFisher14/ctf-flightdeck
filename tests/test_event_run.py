@@ -618,7 +618,7 @@ def test_a_solve_on_ctfd_stops_our_lane_on_it_in_team_mode(tmp_path, token):
     ]
     assert platform_solves(run) == [("warmup", YOUR_TEAM, False)]
     assert run.deck.lanes["L02"].challenge_id == "baby-rsa"  # the slot went to the next challenge
-    assert any(n.startswith("team mode with no team folder: your claims stay on this deck, and CTFd's solves") for n in run.notes())
+    assert any(n.startswith("team mode with no team folder: your claims stay on your flightdeck, and CTFd's solves") for n in run.notes())
 
 
 def test_a_flag_the_player_is_submitting_by_hand_is_not_taken_for_a_teammates_solve(tmp_path, token):

@@ -33,8 +33,8 @@ Ollama: 1 of 4). Qwen3.5 9B on MLX also solved 2 of 4, with thinking off and a l
 and so did the smaller Qwen3.5 4B on Ollama as served (both below). Expect local lanes to solve
 less than API lanes, and give them time: a local server can take minutes for one reply.
 
-**Light model:** Qwen3.5 9B or Gemma 4 12B **with thinking off**, on Ollama or MLX: 41 to 42 of 44
-cases, against the rules' 38, at 1 to 2 seconds a job. Served as they come, Qwen3.5 scored close
+**Light model:** Qwen3.5 9B or Gemma 4 12B **with thinking off**, on Ollama or MLX: 41 to 42 of the 44
+hint and judge cases, against the rules' 38, at 1 to 2 seconds a job. Served as they come, Qwen3.5 scored close
 to zero and Gemma 4 17 to 24 of 44: their reasoning used up the short answer before they gave
 one. flightdeck asks a light model on your machine for thinking off with each request. On a
 smaller machine, Qwen3.5 4B or Gemma 4 E4B did no worse than no model at any of the run's light

@@ -607,7 +607,7 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
 def _terminal_check(columns: int, lines: int, config) -> Check:
     """What a terminal this size leaves out of the console on a busy run with your lanes and
     runtime, and from which size none of it (console/room.py measures it with the console's
-    own code: the header's pieces drop in the order CONSOLE-SPEC "Header" and D16 set)."""
+    own code: the header's pieces drop in the order CONSOLE-SPEC "Narrow terminals" and D16 set)."""
     from .config import LaneConfig
     from .console.room import room
 
