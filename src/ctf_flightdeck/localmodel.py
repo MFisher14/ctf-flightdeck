@@ -719,8 +719,7 @@ async def evaluate_engine(engine: Light, cases: Sequence[Case], *, stop_after: i
     errors = 0
     for item in items:
         if not _applies(engine, item):
-            results.append(_not_applicable(item, f"{engine.label} does not do {item.case.kind} cases",
-                                           rules, lexicon, run=not is_rules))
+            results.append(_not_applicable(item, f"{engine.label} does not do {item.case.kind} cases", rules_column=is_rules))
             continue
         answer = await _job(engine, item, lexicon)
         tokens += answer.tokens
@@ -738,13 +737,13 @@ async def evaluate_engine(engine: Light, cases: Sequence[Case], *, stop_after: i
     return EvalReport(engine.label, tuple(results), tokens, dollars, engine.engine)
 
 
-def _not_applicable(item: _Item, why: str, rules: RulesLight, lexicon: _Lexicon | None, *, run: bool) -> CaseResult:
-    """A job the engine does not do. For the rules column (`run` False), a run with no light
-    model still reads flagcheck (the planted-flag hold alone)."""
+def _not_applicable(item: _Item, why: str, *, rules_column: bool) -> CaseResult:
+    """A job the engine does not do. For the rules column, a run with no light model still
+    reads flagcheck (the planted-flag hold alone)."""
     case = item.case
     question = item.question.key if case.kind == ROUTE and item.question else ""
     fields: dict = {}
-    if not run and case.kind == FLAGCHECK:
+    if rules_column and case.kind == FLAGCHECK:
         fields = _in_run(item, Answer(None, failure=ERROR), None, rules=True)
     return CaseResult(case.kind, item.expected, "", False, applicable=False, detail=why, question=question,
                       case=item.number, ident=case.ident, **fields)
@@ -772,7 +771,7 @@ def rules_baseline(cases: Sequence[Case]) -> EvalReport:
             why = "rules do not summarise" if case.kind == SUMMARY else f"the rules do not do {item.case.kind} cases"
             if case.kind == ROUTE:
                 why = "the rules name no family"
-            results.append(_not_applicable(item, why, rules, lexicon, run=False))
+            results.append(_not_applicable(item, why, rules_column=True))
             continue
         results.append(_score(item, answer, _rules_answer(item, rules, lexicon), rules=True))
     return EvalReport(rules.label, tuple(results), 0, 0.0, rules.engine)

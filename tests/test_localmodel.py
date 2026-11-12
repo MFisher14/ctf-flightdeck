@@ -1090,7 +1090,7 @@ def test_the_decider_threshold_table_comes_from_one_run(tmp_path):
                                          "--cases", str(write_new_cases(tmp_path, cases))])
         assert len(server.asked()) == 4  # one run: each job asked once, whatever the thresholds read
     assert result.exit_code == 0, result.output
-    assert (f"- flagcheck (4 jobs): best guess 2 of 4; at 0.5 2 of 3; at 0.7 1 of 2; at 0.9 1 of 1") in result.output
+    assert "- flagcheck (4 jobs): best guess 2 of 4; at 0.5 2 of 3; at 0.7 1 of 2; at 0.9 1 of 1" in result.output
     assert lines_of(result.output, "unsure") == ["-", "3/4 75%"]  # at the column's own 0.9
 
 
