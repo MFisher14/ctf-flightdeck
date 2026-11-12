@@ -631,15 +631,18 @@ def _light_checks(config, environ: Mapping[str, str]) -> list[Check]:
             continue  # [light] left as the rules, with every job on a table of its own
         suffix = "" if "light" in spec.tables else " [" + ", ".join(spec.tables) + "]"
         named = [job if job in RUN_JOBS else f"{job} (in eval-local)" for job in spec.jobs]
-        if not named:
+        if named:
+            used = "for " + (named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1])
+        elif config.light_jobs:
             used = "used by no job (each job in [light] jobs has a table of its own)"
         else:
-            used = "for " + (named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1])
+            used = "used by no job ([light] jobs lists none)"
         for check in _light_spec_checks(config, spec.config, environ, suffix=suffix):
             if check.name.startswith("light model"):
                 check = replace(check, detail=f"{used}: {check.detail}")
             checks.append(check)
-    return checks
+    return checks or [replace(check, detail=f"no job uses a light model ([light] jobs lists none): {check.detail}")
+                      for check in _light_spec_checks(config, config.light, environ)]
 
 
 def _light_spec_checks(config, light, environ: Mapping[str, str], *, suffix: str = "") -> list[Check]:

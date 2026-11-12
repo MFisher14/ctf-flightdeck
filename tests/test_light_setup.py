@@ -153,6 +153,14 @@ def test_doctor_names_eval_only_tables_and_a_light_model_no_job_uses(tmp_path):
     assert "fake-light-key-0451" not in text
 
 
+def test_doctor_with_an_empty_jobs_list_says_no_job_uses_a_light_model(tmp_path):
+    model = doctor_with(tmp_path, '[light]\nengine = "openai"\nmodel = "qwen"\nbase_url = "http://127.0.0.1:9/v1"\n'
+                                  'key_env = ""\njobs = []\n')
+    assert model["light model"].detail.startswith("used by no job ([light] jobs lists none): openai qwen")
+    rules = doctor_with(tmp_path, '[light]\njobs = []\n')
+    assert rules["light model"].detail.startswith("no job uses a light model ([light] jobs lists none): none, the rules alone")
+
+
 def test_doctor_with_only_job_tables_skips_a_light_table_left_as_the_rules(tmp_path):
     found = doctor_with(tmp_path, '[light]\njobs = ["flagcheck"]\n' + CLAUDE_FOR.format(job="flagcheck"))
     assert "light model" not in found
