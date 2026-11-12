@@ -818,6 +818,7 @@ def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
                 look = True
     if look:
         mine, boxes, problem = "", [], ""
+        nets: list[tuple[str, str, dict[str, str]]] = []
         try:
             mine = state_id()
         except OSError as exc:  # no state folder: whose containers are this setup's cannot be told
@@ -825,11 +826,10 @@ def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
                        f"{_show(str(exc.strerror or exc))}")
         else:
             boxes, problem = _containers()
-            nets: list[tuple[str, str, dict[str, str]]] = []
             if not problem:
                 nets, problem = _networks()
             if problem:
-                boxes = []  # one look that failed: nothing of Docker's is touched, and the next sweep looks again
+                boxes, nets = [], []  # one look that failed: nothing of Docker's is touched, and the next sweep looks again
                 problem = (f"the containers of runs that did not shut down could not be looked for ({problem}); once Docker "
                            "runs, `flightdeck doctor --clean` removes them")
         if problem:
@@ -837,7 +837,7 @@ def sweep(runs: Path | None, *, docker: bool | None, clean: bool) -> Swept:
             for entry in found.values():
                 if entry.record is not None and _says_docker(entry.record):
                     entry.keep = True
-        for kind, things in (("container", boxes), ("network", nets if not problem else [])):
+        for kind, things in (("container", boxes), ("network", nets)):
             for thing_id, name, thing_labels in things:
                 owner = _owner(thing_labels.get(LABEL_HOST), thing_labels.get(LABEL_UID), thing_labels.get(LABEL_PID),
                                thing_labels.get(LABEL_STARTED))
