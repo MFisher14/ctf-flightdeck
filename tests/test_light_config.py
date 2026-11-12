@@ -307,6 +307,22 @@ def test_each_job_reads_its_own_key_env(tmp_path, monkeypatch):
     assert 'or take "flagcheck" out of [light] jobs' in message and FAKE_KEY not in message
 
 
+def test_a_run_jobs_unset_key_advises_removing_the_table_and_that_advice_loads(tmp_path, monkeypatch):
+    # A run job's [light.<job>] table needs its own key; "take it out of [light] jobs" alone then
+    # leaves the table on for a job that is off, which is itself an error, so the advice must also
+    # name the table to remove. Following it must load.
+    monkeypatch.delenv("FLIGHTDECK_TEST_JUDGE_KEY", raising=False)
+    on = OLLAMA + 'jobs = ["judge"]\n' + CLAUDE_TABLE.format(job="judge", env="FLIGHTDECK_TEST_JUDGE_KEY")
+    config = load_config(write(tmp_path, LADDER + on))
+    with pytest.raises(ConfigError) as caught:
+        light_key(config, "judge")
+    message = str(caught.value)
+    assert 'or take "judge" out of [light] jobs and remove [light.judge]' in message
+    # Follow it literally: jobs without judge and no [light.judge] table. It loads (no new error).
+    off = OLLAMA + "jobs = []\n"
+    assert load_config(write(tmp_path, LADDER + off)).light_jobs == ()
+
+
 def test_a_job_table_key_env_holding_a_key_is_never_shown(tmp_path):
     text = OLLAMA + 'jobs = ["judge", "recon"]\n' + claude_for("recon", env=f"sk-{SENTINEL}")
     message = error(write(tmp_path, LADDER + text))

@@ -290,7 +290,9 @@ def light_key(config: Config, job: str | None = None) -> str | None:
     if light.engine not in MODEL_ENGINES:
         return None
     if job is not None and job in config.light_tables:
-        otherwise = f"or remove [light.{job}]" if job in EVAL_JOBS else f'or take "{job}" out of [light] jobs'
+        # Removing the table is the always-valid escape: a run job taken out of [light] jobs while
+        # its [light.<job>] table stays is itself an error (_check_jobs), so name the table too.
+        otherwise = f"or remove [light.{job}]" if job in EVAL_JOBS else f'or take "{job}" out of [light] jobs and remove [light.{job}]'
         return _read_key(config, f"light.{job}", light.key_env, otherwise)
     return _read_key(config, "light", light.key_env, 'or set [light] engine = "rules"')
 
