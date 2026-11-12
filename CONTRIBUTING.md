@@ -159,8 +159,8 @@ figure in [docs/MODELS.md](docs/MODELS.md) for an API model was paid for per tok
 model means running the sets again. Sponsorship pays for those runs, and the results are
 published for everyone.
 
-A sponsor page is not set up yet. Until it is, a flight card from a model you already pay for
-does the same job.
+**[Sponsor flightdeck on GitHub](https://github.com/sponsors/MFisher14).** Any amount helps, once or
+monthly. A flight card from a model you already pay for helps just as much.
 
 ## Agents
 

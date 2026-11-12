@@ -8,6 +8,7 @@ One terminal console: every challenge, every agent, every flag. You step in with
 <a href="https://pypi.org/project/ctf-flightdeck/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/ctf-flightdeck"></a>
 <a href="https://github.com/MFisher14/ctf-flightdeck/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/MFisher14/ctf-flightdeck/actions/workflows/tests.yml/badge.svg"></a>
 <a href="https://github.com/MFisher14/ctf-flightdeck/blob/main/LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
+<a href="https://github.com/sponsors/MFisher14"><img alt="Sponsor" src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa"></a>
 <a href="https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md"><img alt="Pull requests welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen"></a>
 </p>
 
@@ -128,8 +129,8 @@ Three ways, and the first needs no code:
    [CONTRIBUTING.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md)
    gets you set up in five commands.
 3. **Sponsor.** flightdeck is free and MIT-licensed. Measuring models costs real API money, and
-   sponsorship pays for it: see
-   [Sponsoring](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md#sponsoring).
+   sponsorship pays for it:
+   **[sponsor on GitHub](https://github.com/sponsors/MFisher14)**.
 
 A star helps other players find it.
 

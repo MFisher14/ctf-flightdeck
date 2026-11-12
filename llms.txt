@@ -23,6 +23,7 @@ flightdeck has no telemetry, no account and no server of its own. It contacts on
 - [AGENTS.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/AGENTS.md): the rules for any agent working on the code; read first
 - [CONTRIBUTING.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md): setup, tests, how to propose a change, sharing a flight card
 - [Leaderboard](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/LEADERBOARD.md): events it has been used in, and how to add one
+- [Sponsor](https://github.com/sponsors/MFisher14): pays for the model measurements
 
 ## How it is built
 
