@@ -657,6 +657,44 @@ def test_under_auto_a_submitted_flag_no_part_of_a_big_handout_holds_still_goes_o
     run(main())
 
 
+def test_under_auto_a_lane_killed_while_the_flag_it_submitted_is_looked_for_ends_at_once_and_the_search_stops(
+        tmp_path, monkeypatch):
+    started = threading.Event()
+    ended: list[owntext.Found] = []
+    real_late = owntext._late
+
+    def late(*args):  # each chunk of the search held up: a handout as slow to search as a huge one's
+        started.set()
+        found = real_late(*args)
+        if found is None:
+            time.sleep(0.05)
+        else:
+            ended.append(found)
+        return found
+
+    monkeypatch.setattr(owntext, "_late", late)
+    monkeypatch.setattr(owntext, "CHUNK", 1)  # 100,000 chunks of the handout below, each held up: far past the 30 s waited
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{real}"})])
+    tried: list[str] = []
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, submit="auto", verify=recording(tried),
+                      handouts={"note": handout_of(tmp_path, {"big.bin": b"\x00" * 100_000})})
+            lab.release()
+            lane = lab.lane()
+            try:
+                await until(started.is_set, "the flag being looked for", timeout=30)
+                assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+                await until(lambda: lab.driver.runs[lane.id].closed, "the lane closed, the search not waited for", timeout=30)
+                await until(lambda: ended, "the search to end", timeout=30)
+                assert ended == [owntext.Found(problem="the search was stopped")] and tried == []  # by the kill, not its time
+            finally:
+                await lab.finish()
+
+    run(main())
+
+
 def test_the_search_at_a_lanes_start_is_bounded_and_the_search_for_one_flag_covers_what_it_misses(tmp_path, monkeypatch):
     from ctf_flightdeck.agent import driver as agent_driver
     from ctf_flightdeck.agent import workspace as agent_workspace

@@ -34,6 +34,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ..text import untrusted
 from .workspace import open_dir
@@ -82,18 +83,38 @@ def forms(flag: str) -> tuple[bytes, ...]:
     return tuple(dict.fromkeys(form for form in found if form))
 
 
-async def look_for(description: str, handout: Path | None, flag: str, *, seconds: float | None = None) -> Found:
-    """search() in a thread, for at most `seconds` (SEARCH_SECONDS). A cancelled caller (the
-    lane ended) stops the thread at its next chunk."""
-    stop = threading.Event()
+class Stop(Protocol):
+    """What tells a search under way to end at its next chunk: a threading.Event, or _Either."""
+
+    def is_set(self) -> bool: ...
+
+
+class _Either:
+    """Set once any of its events is."""
+
+    def __init__(self, *events: threading.Event) -> None:
+        self.events = events
+
+    def is_set(self) -> bool:
+        return any(event.is_set() for event in self.events)
+
+
+async def look_for(description: str, handout: Path | None, flag: str, *, seconds: float | None = None,
+                   halt: threading.Event | None = None) -> Found:
+    """search() in a thread, for at most `seconds` (SEARCH_SECONDS). It ends at its next
+    chunk once `halt` is set (the lane has ended) or its caller is cancelled, and neither
+    waits for it. `halt` is the caller's, only read here: a cancelled search sets an event
+    of its own, so the lane's later searches still run."""
+    own = threading.Event()
     limit = SEARCH_SECONDS if seconds is None else seconds
+    stop: Stop = own if halt is None else _Either(own, halt)
     try:
         return await asyncio.to_thread(search, description, handout, flag, seconds=limit, stop=stop)
     finally:
-        stop.set()
+        own.set()  # a cancelled caller: the thread ends at its next chunk (after a finished search, nothing)
 
 
-def search(description: str, handout: Path | None, flag: str, *, seconds: float, stop: threading.Event | None = None) -> Found:
+def search(description: str, handout: Path | None, flag: str, *, seconds: float, stop: Stop | None = None) -> Found:
     """Where the challenge's own text holds `flag`: its description, else the first file of
     the handout folder (in name order, depth first) that holds one of its forms(). Blocking."""
     if flag in description:
@@ -106,7 +127,7 @@ def search(description: str, handout: Path | None, flag: str, *, seconds: float,
     return _folder(Path(handout), needles, time.monotonic() + seconds, seconds, stop)
 
 
-def _folder(root: Path, needles: tuple[bytes, ...], deadline: float, seconds: float, stop: threading.Event | None) -> Found:
+def _folder(root: Path, needles: tuple[bytes, ...], deadline: float, seconds: float, stop: Stop | None) -> Found:
     """Every folder is opened afresh from the handout folder, a part at a time, never through
     a symlink (workspace.open_dir), so at most two descriptors are open however deep it goes."""
     keep = max(len(needle) for needle in needles) - 1  # a flag cut by a chunk's end is found in the next
@@ -153,7 +174,7 @@ def _folder(root: Path, needles: tuple[bytes, ...], deadline: float, seconds: fl
 
 
 def _file(dir_fd: int, name: str, path: tuple[str, ...], needles: tuple[bytes, ...], keep: int, deadline: float,
-          seconds: float, stop: threading.Event | None) -> Found:
+          seconds: float, stop: Stop | None) -> Found:
     try:
         fd = os.open(name, _FILE, dir_fd=dir_fd)
     except OSError as exc:
@@ -181,7 +202,7 @@ def _file(dir_fd: int, name: str, path: tuple[str, ...], needles: tuple[bytes, .
         os.close(fd)
 
 
-def _late(deadline: float, seconds: float, stop: threading.Event | None) -> Found | None:
+def _late(deadline: float, seconds: float, stop: Stop | None) -> Found | None:
     if stop is not None and stop.is_set():
         return Found(problem="the search was stopped")
     if time.monotonic() > deadline:

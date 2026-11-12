@@ -113,6 +113,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import threading
 import time
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
@@ -1039,6 +1040,7 @@ class _Run:
         self.held: dict[str, None] = {}  # submit auto: unclaimed candidates, in order, until the agent's turn ends
         self.planted: set[str] = set()  # flag-format matches in the challenge's own text: its description, the handout
         self.own: dict[str, owntext.Found] = {}  # submit auto: each claimed flag, looked for in all of that text (vet)
+        self.halt = threading.Event()  # set when the lane stops: a search vet started ends at its next chunk
         self.outputs = Outputs()  # its newest tool outputs: where a flag it claims was found (agent/flaggate.py)
         self.wake = asyncio.Event()
         self.idle = asyncio.Event()  # set while nothing of the agent's can run: no CLI, or it is frozen
@@ -1278,6 +1280,7 @@ class _Run:
 
     def stop(self) -> None:
         self.stopped = True
+        self.halt.set()  # a search of the handout under way (vet) ends: nothing more of this lane goes out
         self.cancel_timer()
         self.wake.set()
         if self.proc is not None:
@@ -1732,7 +1735,7 @@ class _Run:
                 continue
             searched += 1
             handout = getattr(self.workspace, "handout", None)
-            self.own[flag] = await owntext.look_for(self.challenge.description, handout, flag)
+            self.own[flag] = await owntext.look_for(self.challenge.description, handout, flag, halt=self.halt)
 
     def own_text(self, flag: str) -> str:
         """Why the agent's claim of `flag` waits for the player, as the challenge's own text

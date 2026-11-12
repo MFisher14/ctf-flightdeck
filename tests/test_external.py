@@ -2093,6 +2093,49 @@ def test_under_auto_a_claim_never_looked_for_in_the_handout_never_goes_out_alone
     run(main())
 
 
+def slow_search(monkeypatch) -> tuple[threading.Event, list[owntext.Found]]:
+    """Each chunk of a claim's search held up (a handout as slow to search as a huge one's):
+    (set once a search is under way, how each search ended)."""
+    started = threading.Event()
+    ended: list[owntext.Found] = []
+    real_late = owntext._late
+
+    def late(*args):
+        started.set()
+        found = real_late(*args)
+        if found is None:
+            time.sleep(0.05)
+        else:
+            ended.append(found)
+        return found
+
+    monkeypatch.setattr(owntext, "_late", late)
+    monkeypatch.setattr(owntext, "CHUNK", 1)  # 100,000 chunks of the handout below, each held up: far past the 30 s waited
+    return started, ended
+
+
+def test_a_cli_lane_killed_while_its_claim_is_looked_for_ends_without_waiting_for_the_search(tmp_path, monkeypatch):
+    started, ended = slow_search(monkeypatch)
+    script = {"turns": [{"calls": [{"text": "FLAG: t{real}"}, {"think": 30.0, "text": "waiting"}]}]}
+
+    async def main():
+        tried: list[str] = []
+        lab = Lab(tmp_path, script, submit="auto", verify=lambda cid, flag: tried.append(flag) or True,
+                  handouts={"note": handout_of(tmp_path, {"big.bin": b"\x00" * 100_000})})
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(started.is_set, "the claim being looked for", timeout=30)
+            assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            await until(lambda: lab.run(lane).closed, "the lane closed, the search not waited for", timeout=30)
+            assert ended == [owntext.Found(problem="the search was stopped")]  # by the lane's end, not by its time
+            assert tried == [] and lab.run(lane).own["t{real}"].held  # a stopped search never lets the claim out
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_auto_no_more_claims_are_looked_for_at_once_than_are_raised_at_once(tmp_path):
     most = external.MAX_NEW_FLAGS
     claims = "\n".join(f"FLAG: t{{c{i:02d}}}" for i in range(most + 2))

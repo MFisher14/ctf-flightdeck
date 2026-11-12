@@ -156,6 +156,47 @@ def test_a_stopped_search_ends_at_its_next_chunk(tmp_path, monkeypatch):
     assert done == [Found(problem="the search was stopped")]
 
 
+def test_a_lanes_halt_ends_its_search_under_way_and_a_cancelled_search_never_sets_that_halt(tmp_path, monkeypatch):
+    """The lane's halt (set when it stops) ends a search under way at its next chunk; a search
+    whose caller is cancelled stops by an event of its own, so the halt stays unset and the
+    lane's next search runs to its end."""
+    folder = board(tmp_path, {"big.bin": b"\x00" * (4 * 1024 * 1024)})
+    small = tmp_path / "small"
+    small.mkdir()
+    (small / "flag.txt").write_text(FLAG)
+    monkeypatch.setattr(owntext, "CHUNK", 1)  # a read of millions of steps: many seconds
+    ended: list[Found] = []
+    real_late = owntext._late
+
+    def late(*args):
+        found = real_late(*args)
+        if found is not None:
+            ended.append(found)
+        return found
+
+    monkeypatch.setattr(owntext, "_late", late)
+
+    async def main():
+        halt = threading.Event()
+        task = asyncio.ensure_future(look_for("", folder, FLAG, halt=halt))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        for _ in range(500):  # the thread ends at its next chunk
+            if ended:
+                break
+            await asyncio.sleep(0.01)
+        assert ended == [Found(problem="the search was stopped")] and not halt.is_set()
+        assert await look_for("", small, FLAG, halt=halt) == Found(where="flag.txt")  # the lane's next search runs
+        task = asyncio.ensure_future(look_for("", folder, FLAG, halt=halt))
+        await asyncio.sleep(0.05)
+        halt.set()  # the lane stopped
+        assert await asyncio.wait_for(task, 5) == Found(problem="the search was stopped")
+
+    asyncio.run(main())
+
+
 def test_the_search_runs_off_the_event_loop_and_a_cancelled_caller_stops_it(tmp_path, monkeypatch):
     folder = board(tmp_path, {"a.bin": b"\x00"})
     started, release = threading.Event(), threading.Event()
