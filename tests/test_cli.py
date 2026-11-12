@@ -143,7 +143,11 @@ def opened(monkeypatch) -> list[Opened]:
             )
         )
 
-    monkeypatch.setattr(FlightdeckApp, "run", run)
+    async def run_async(self: FlightdeckApp, *args, **kwargs) -> None:
+        run(self)
+
+    monkeypatch.setattr(FlightdeckApp, "run", run)  # `mock` runs the console itself
+    monkeypatch.setattr(FlightdeckApp, "run_async", run_async)  # `play` awaits it on its own loop
     return calls
 
 
