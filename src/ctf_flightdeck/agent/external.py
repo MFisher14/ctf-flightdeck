@@ -1070,7 +1070,8 @@ class _Run:
         self.cost_due = False  # steps were reported (dollars_later) in a turn whose cost the CLI has not reported yet
         self.tasks: set[asyncio.Future[Any]] = set()
         self.carry = ""  # messages an escalated CLI was given but never finished a turn on: they go again
-        # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME); docker: CONTAINER_HOME
+        # host: the CLI's own configuration folder, outside the workspace (AGENT_HOME); empty for a docker lane, whose
+        # folder is CONTAINER_HOME in its container (docker_exec_argv)
         self.homes: dict[str, str] = {}
         self.look: Look | None = None  # the challenge's first look (agent/facts.py), until the CLI's first start takes it
         self.recon = ""  # what of the first look was back then: in every opening brief of the lane
