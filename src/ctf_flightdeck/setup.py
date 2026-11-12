@@ -379,7 +379,7 @@ def provider_answer(text: str) -> str:
     name = text.strip().lower()
     name = PROVIDER_ALIASES.get(name, name)
     if name not in PROVIDER_CHOICES:
-        raise AnswerError("choose one of openrouter, anthropic, openai, local (Ollama), mlx or custom")
+        raise AnswerError("choose one of openrouter, anthropic, openai, ollama (or local), mlx or custom")
     return name
 
 
@@ -396,6 +396,10 @@ def models_answer(text: str) -> tuple[str, ...]:
         if model in ladder[: n - 1]:
             raise AnswerError(f"model id {n} repeats model id {ladder.index(model) + 1}; give each model once")
     return ladder
+
+
+# What init asks where the runtime is chosen: what host means is said there, not only when play starts.
+RUNTIME_QUESTION = "Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys)"
 
 
 def runtime_answer(text: str) -> str:
@@ -677,10 +681,27 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
             return [Check("agent", False, str(exc), "fix the keys file")]
         found = find_agent(kind, ladder[0], environ=merged)
     except AgentError as exc:
-        return [Check("agent", False, str(exc), f"install {kind}, then log in or set its key variable")]
+        return [Check("agent", False, str(exc), _agent_fix(kind, str(exc)))]
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
     checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
     return checks
+
+
+AGENT_CREDENTIALS = {  # how each CLI gets its credential, as find_agent reads it
+    "claude": "set ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token` makes one), in the keys file or "
+              "the environment",
+    "codex": "set CODEX_API_KEY in the keys file or the environment, or run `codex login` (host runtime only)",
+}
+
+
+def _agent_fix(kind: str, problem: str) -> str:
+    """What to do about find_agent's `problem`: install the CLI only when it is the CLI that is
+    missing, fix the ladder when its model name is refused, else how that CLI gets its credential."""
+    if "not found on PATH" in problem:
+        return f"install {kind}, or put the folder that has it on PATH"
+    if "is not a model name" in problem:
+        return f"give {kind} a model name its CLI takes: [agents] {kind} in your config"
+    return AGENT_CREDENTIALS.get(kind, f"give {kind} its credential")
 
 
 def _agent_image_check(kind: str, config) -> Check:
@@ -1000,24 +1021,39 @@ def _docker_checks(config) -> list[Check]:
     from .agent.workspace import docker_unavailable
     from .lane import IMAGE
 
+    from .run import host_warning
+
     where = f"in {config.source}" if config is not None and config.source is not None else "in your config"
     reason = docker_unavailable()
     if config is not None and config.lanes.runtime == "host":
+        risk = Check("host runtime", False, host_warning(), essential=False)  # what host means, wherever it is the runtime
         if reason:
             return [Check("docker", False, f"{reason}; your config runs lanes on this machine, so only `play --docker` "
-                                           "needs Docker", essential=False)]
-        return [Check("docker", True, "running (your config runs lanes on this machine; `play --docker` would use it)")]
+                                           "needs Docker", essential=False), risk]
+        return [Check("docker", True, "running (your config runs lanes on this machine; `play --docker` would use it)"), risk]
     if reason:
-        return [Check("docker", False, reason, f'install or start Docker, or run lanes on this machine: set runtime = "host" '
+        return [Check("docker", False, reason, "install or start Docker, or run lanes on this machine (lanes then run as you "
+                                               'and can read your files and keys): set runtime = "host" '
                                                f"under [lanes] {where}, or pass --host to play or practice")]
     out = [Check("docker", True, "running")]
     if config is not None:
         image = config.lanes.image
-        docker = shutil.which("docker") or "docker"
-        found = subprocess.run([docker, "image", "inspect", image], capture_output=True).returncode == 0
+        found = image_present(image)
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
         out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
     return out
+
+
+def image_present(image: str) -> bool:
+    """Whether Docker on this machine has `image` (false when it has not, or when there is no
+    Docker to ask). Nothing is pulled."""
+    docker = shutil.which("docker")
+    if docker is None:
+        return False
+    try:
+        return subprocess.run([docker, "image", "inspect", image], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def report(checks: Sequence[Check], *, agent: str | None = None) -> tuple[str, int]:

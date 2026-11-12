@@ -46,9 +46,9 @@ def preflight(
         int | None, typer.Option("--max-lanes", min=1, help="Lanes at once, checked against the rules (default: the config's).")
     ] = None,
     host: Annotated[
-        bool | None, typer.Option("--host/--docker", help="Check for lanes on this machine, or in Docker (default: the config's runtime).")
+        bool | None, typer.Option("--host/--docker", metavar="", help="Check for lanes on this machine, or in Docker (default: the config's runtime).")
     ] = None,
-    example: Annotated[bool, typer.Option("--example", help="Print a commented example event profile and exit.")] = False,
+    example: Annotated[bool, typer.Option("--example", metavar="", help="Print a commented example event profile and exit.")] = False,
 ) -> None:
     """Check an event profile against the event's rules and show the policy a run would use at
     each stage (pull, l1, agents, submit, instance: auto, confirm, manual or off). Exits 2 if

@@ -328,7 +328,61 @@ def test_play_help_shows_the_event_and_team_options():
     assert "--event EVENT.toml The event profile: play by the event's rules and policies (flightdeck preflight checks it)." in out
     assert "--team-dir FOLDER Team mode through the folder your teammates share (flightdeck team init makes it)." in out
     assert "--handle NAME Your name in the team folder (default: your login name)." in out
-    assert "--team --solo <bool> Team or solo mode (default: the event profile's, else solo)." in out
+    assert "--team --solo Team or solo mode (default: the event profile's, else solo)." in out
+    assert "Usage: flightdeck play [OPTIONS] [BOARD]" in out
+    assert "--submit <confirm|auto> confirm: you approve each flag; auto: a flag a lane claims goes at once; the rest wait for you" in out
+    assert "Spends tokens: on the API in your config, or with --agent on that CLI's own key or subscription." in out
+    assert "--agent <claude|codex> Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config)" in out
+
+
+def _commands(command, path=("flightdeck",)):
+    yield path, command
+    for name, sub in getattr(command, "commands", {}).items():
+        yield from _commands(sub, (*path, name))
+
+
+def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capitals():
+    """A switch takes no value, so its help shows none (Typer would print <bool>; --help's own
+    stays, which Typer makes itself). An argument's name in the usage line is in capitals, the
+    same for the same thing: RUN_DIR for report, writeups, score and gaps."""
+    import typer
+
+    arguments = {}
+    for path, command in _commands(typer.main.get_command(cli.app)):
+        for param in command.params:
+            if getattr(param, "is_flag", False) and param.name != "help":
+                assert param.metavar == "", (" ".join(path), param.opts)
+            if type(param).__name__.endswith("Argument"):
+                arguments[(" ".join(path[1:]), param.name)] = param.metavar
+    assert arguments == {
+        ("play", "board"): "BOARD",
+        ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR",
+        ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
+        ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
+        ("team init", "folder"): "FOLDER", ("team status", "folder"): "FOLDER", ("l1 import", "folder"): "FOLDER",
+        ("l1 list", "pack"): "PACK", ("l1 route", "pack"): "PACK", ("l1 run", "pack"): "PACK", ("build check", "pack"): "PACK",
+        ("l1 route", "challenge_dir"): "CHALLENGE_DIR", ("l1 run", "challenge_dir"): "CHALLENGE_DIR",
+        ("build gap", "challenge_dir"): "CHALLENGE_DIR",
+    }
+    for command in (["writeups"], ["models"], ["init"], ["l1", "run"]):  # as printed: no <bool> but --help's own
+        shown = CliRunner().invoke(cli.app, [*command, "--help"], terminal_width=200).output
+        assert [line for line in shown.splitlines() if "<bool>" in line and "--help" not in line] == [], command
+
+
+def test_the_help_of_each_command_says_what_it_does_today():
+    def shown(*command: str) -> str:
+        return flat(CliRunner().invoke(cli.app, [*command, "--help"], terminal_width=200).output)
+
+    assert "Open the console on fake, scripted data: no models, no network, nothing spent." in shown("mock")
+    assert "M0" not in shown("mock")
+    assert ("Check your setup (Python, the config and its keys, a local model server, the light model, Docker and the lane "
+            "image, your terminal) and say how to fix each problem; and list what a killed flightdeck left running.") in shown("doctor")
+    assert ("--tag <str> Image name and tag (default: ctf-flightdeck-lane:1, the [lanes] image init writes; another tag needs "
+            "[lanes] image set to it).") in shown("image", "build")
+    assert "--provider <str> openrouter, anthropic, openai, ollama (or local), mlx (an MLX server) or custom." in shown("init")
+    assert "--name ID The new engine's id (default: <category>.<challenge id>)." in shown("build", "gap")  # not "(default: .)"
+    assert ("--board <path> The board the run played (default: the board recorded in the run's run.json; a run folder "
+            "without one: the practice set).") in shown("score")
 
 
 def test_play_asks_before_it_pulls_under_pull_confirm_and_no_starts_nothing(tmp_path, monkeypatch, opened, model_api):
@@ -668,6 +722,26 @@ def test_the_root_help_groups_the_commands():
         assert f" {name} " in out
 
 
+def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
+    out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
+    panels = {}  # panel title -> the commands listed in it, in order
+    title = None
+    for line in out.splitlines():
+        if line.startswith("╭─ "):
+            title = line[3:].split(" ─")[0]
+            panels[title] = []
+        elif title and line.startswith("│ ") and line[2] != " ":
+            panels[title].append(line[2:].split()[0])
+    panels.pop("Options")
+    assert panels == {
+        "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
+        "Play": ["mock", "play", "practice"],
+        "Before and during an event": ["preflight", "ctfd", "team"],
+        "After a run": ["report", "writeups", "score", "gaps"],  # gaps reads a run folder, like the three before it
+        "Solvers (L1)": ["l1", "build"],
+    }
+
+
 # ---------------------------------------------------------------------- the first command a new player types
 
 
@@ -678,6 +752,7 @@ def test_flightdeck_alone_says_what_it_is_and_the_next_step(tmp_path, monkeypatc
     assert "No config yet. Start here:" in result.output
     for step in ("flightdeck init", "flightdeck doctor", "flightdeck practice", "flightdeck mock"):
         assert step in result.output
+    assert "  flightdeck practice  plays 14 small practice challenges (spends tokens on your model API)\n" in result.output
     (tmp_path / "config.toml").write_text('[models]\nladder = ["m"]\n')
     again = invoke()
     assert again.exit_code == 0 and f"Your config: {tmp_path / 'config.toml'}" in again.output

@@ -31,10 +31,10 @@ def ctfd() -> None:
 
 @app.command()
 def pull(
-    url: Annotated[str, typer.Argument(help="The CTFd's address, as in the browser: https://ctf.example.org")],
+    url: Annotated[str, typer.Argument(metavar="URL", help="The CTFd's address, as in the browser: https://ctf.example.org")],
     dest: Annotated[
         Path,
-        typer.Argument(file_okay=False, help="The board folder: new or empty, or one pulled from this CTFd before (a re-pull adds what is new)."),
+        typer.Argument(metavar="DEST", file_okay=False, help="The board folder: new or empty, or one pulled from this CTFd before (a re-pull adds what is new)."),
     ],
     token_env: Annotated[
         str, typer.Option("--token-env", help="The environment variable that holds your CTFd API token (its name, not the token).")

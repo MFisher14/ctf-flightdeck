@@ -34,7 +34,7 @@ app = typer.Typer(
 def gap_command(
     challenge_dir: Annotated[
         Path,
-        typer.Argument(exists=True, file_okay=False, dir_okay=True,
+        typer.Argument(metavar="CHALLENGE_DIR", exists=True, file_okay=False, dir_okay=True,
                        help="The challenge folder of a folder board (it has a challenge.json) that no engine solved."),
     ],
     pack: Annotated[
@@ -44,7 +44,7 @@ def gap_command(
     ],
     name: Annotated[
         str | None,
-        typer.Option("--name", metavar="ID", help="The new engine's id (default: <category>.<challenge id>)."),
+        typer.Option("--name", metavar="ID", help="The new engine's id (default: `<category>.<challenge id>`)."),
     ] = None,
     answers: Annotated[
         Path | None,
@@ -96,7 +96,7 @@ def gap_command(
 def check_command(
     pack: Annotated[
         Path,
-        typer.Argument(exists=True, file_okay=False, dir_okay=True, help="Your L1 pack, with case tests from `flightdeck build gap`."),
+        typer.Argument(metavar="PACK", exists=True, file_okay=False, dir_okay=True, help="Your L1 pack, with case tests from `flightdeck build gap`."),
     ],
     timeout: Annotated[
         float | None,

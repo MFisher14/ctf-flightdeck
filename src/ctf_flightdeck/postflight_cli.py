@@ -26,7 +26,7 @@ app = typer.Typer(add_completion=False, help="Post-flight: what happened in a ru
 def report_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
+        typer.Argument(metavar="RUN_DIR", exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
     ],
     board: Annotated[
         Path | None,
