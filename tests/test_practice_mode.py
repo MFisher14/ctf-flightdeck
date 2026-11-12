@@ -1198,6 +1198,16 @@ def test_a_solve_the_platform_lists_counts_and_shows_on_its_row_as_the_report_wo
     assert "Solves: 2 (lanes 0, L1 0, teammates 0, you 1, your team on the platform 1)" in card.splitlines()
 
 
+def test_a_run_whose_only_solves_came_before_it_says_none_came_during_it(tmp_path):
+    played = Played(tmp_path)
+    played.at(0).deck.platform_solved("alpha", "you", before_run=True)
+    result = score(played.close(), played.board)
+    assert result.solved == ("alpha",) and result.first_solve_at is None
+    lines = scorecard(result).splitlines()
+    assert "Solves: 1 (lanes 0, L1 0, teammates 0, you 1)" in lines
+    assert any(line.startswith("No solve during the run · last event ") for line in lines)
+
+
 def test_an_l1_flag_is_the_l1_engines_solve_on_the_scorecard_as_in_every_report(tmp_path):
     played = Played(tmp_path)
     deck = played.at(0).deck  # alpha L01, bravo L02

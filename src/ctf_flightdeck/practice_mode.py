@@ -980,7 +980,10 @@ def scorecard(score: Score) -> str:
     released = sum(1 for row in rows if row.released_at is not None)
     if released < total:
         lines.append(f"Released {released} of {total}: {total - released} never reached the board in this run")
-    when = f"First solve {fmt.clock(score.first_solve_at)}" if score.first_solve_at is not None else "No solve"
+    if score.first_solve_at is not None:
+        when = f"First solve {fmt.clock(score.first_solve_at)}"
+    else:  # none, or each of them from before the run (the platform listed it then) or with no time
+        when = "No solve during the run" if score.solved else "No solve"
     if score.ended_at is not None:
         when += f" · last event {fmt.clock(score.ended_at)}"
     lines.append(when)
