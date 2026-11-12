@@ -28,7 +28,9 @@ local models (budget()):
 - an NVIDIA GPU: the memory of the largest one (runtimes can also split a model across GPUs,
   or onto the CPU, but flightdeck counts one GPU).
 - neither: half of the memory, and local models run on the CPU, slowly: lanes lead with an
-  API, and the light role with the rules or a small model.
+  API, and the light role with the rules or a small model. An AMD or Intel GPU (hardware.py
+  finds them on Linux) is "neither" too: flightdeck has no measured results for one, so it
+  says it found the GPU and that the advice treats the machine as CPU-only (unmeasured_gpus()).
 
 A build with no size, or a machine whose memory (or GPU) is unknown, is "cannot tell": never a
 guess. MLX runs on Apple Silicon only.
@@ -73,7 +75,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from .config import LOCAL_TIMEOUT, MLX_URL, OLLAMA_URL, RUN_JOBS
-from .hardware import GIB, MLX, OLLAMA, RUNTIME_NAMES, Machine, gib
+from .hardware import GIB, MLX, OLLAMA, RESULTS_FORM, RUNTIME_NAMES, Machine, gib, other_gpus_text
 from .pricing import Price
 
 CATALOG_FILE = "models.toml"
@@ -616,10 +618,42 @@ def budget(machine: Machine) -> Budget:
     if memory is None:
         return Budget(UNKNOWN, None, f"this machine's memory is unknown: {machine.memory.unknown}")
     share = memory * CPU_SHARE[0] // CPU_SHARE[1]
-    looked = "none was described" if machine.described else "it looks for Apple Silicon and NVIDIA GPUs"
-    return Budget(CPU, share, (
-        f"half of the {gib(memory)} of memory, leaving the rest to the system and the Docker lanes. With no GPU flightdeck "
-        f"can use ({looked}), local models run on the CPU and will be slow"))
+    half = f"half of the {gib(memory)} of memory, leaving the rest to the system and the Docker lanes"
+    other = machine.other_gpus.value
+    if other:  # an AMD or Intel GPU: found, not measured, so never advised on as if it were
+        return Budget(CPU, share, (
+            f"{half}. flightdeck found {'a GPU' if len(other) == 1 else 'GPUs'} it has no measured results for "
+            f"({other_gpus_text(other)}), so it counts {'it' if len(other) == 1 else 'them'} for nothing: this advice "
+            "treats the machine as CPU-only, where local models are slow"))
+    if machine.described:
+        looked = "none was described"
+    elif machine.os == "Linux":
+        found = "found none" if other is not None else f"cannot tell whether one is here: {machine.other_gpus.unknown}"
+        looked = f"it counts Apple Silicon and NVIDIA GPUs; AMD and Intel GPUs it only names, and it {found}"
+    else:
+        looked = "it counts Apple Silicon and NVIDIA GPUs, and looks for AMD and Intel GPUs on Linux only"
+    return Budget(CPU, share, f"{half}. With no GPU flightdeck can use ({looked}), local models run on the CPU and will be slow")
+
+
+def unmeasured_gpus(machine: Machine) -> str:
+    """What `flightdeck models` says, plainly, of AMD and Intel GPUs it found ("" when it found
+    none, or when an NVIDIA GPU or Apple Silicon is what the advice counts): that it has no
+    results for them, that its advice treats the machine as CPU-only unless the player describes
+    it, and where results from such a machine go."""
+    other = machine.other_gpus.value
+    if not other or budget(machine).where != CPU:
+        return ""
+    one = len(other) == 1
+    memory = f"{machine.memory.value / GIB:.3g}" if machine.memory.value else "GB"
+    sizes = [g.memory for g in other if g.memory is not None]
+    gpu = f"{max(sizes) / GIB:.3g}" if sizes else "GB"
+    return (
+        f"Found {other_gpus_text(other)}. flightdeck has no results for {'it' if one else 'them'} yet: nothing in "
+        f"{MODELS_DOC} was measured on an AMD or Intel GPU. So the advice below treats this machine as CPU-only, though "
+        f"a runtime that uses the GPU may run a model faster than that. To see what would fit the GPU's memory, describe "
+        f"the machine: flightdeck models --memory {memory} --gpu-memory {gpu} (sized as for an NVIDIA GPU with that much "
+        f"memory: an estimate, not a result from a GPU like {'this one' if one else 'these'}). Results from this machine "
+        f"are wanted: {RESULTS_FORM}")
 
 
 @dataclass(frozen=True)
@@ -748,7 +782,10 @@ def advise(catalog: Catalog, machine: Machine, role: str, plan: Budget | None = 
     if fits and plan.where in (APPLE, NVIDIA):
         lead, why = LOCAL, "No provider's safety classifier stands between it and security work, and it costs nothing."
     else:
-        if plan.where == CPU:
+        if plan.where == CPU and machine.other_gpus.value:
+            why = (f"flightdeck has no results for the GPU {here(machine)}, so it advises as for a machine with none: "
+                   "local models on the CPU, slowly.")
+        elif plan.where == CPU:
             why = f"Local models would run on the CPU {here(machine)}, and slowly."
         elif plan.where == UNKNOWN:
             why = f"flightdeck cannot tell what fits {this(machine)}."

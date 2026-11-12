@@ -128,6 +128,18 @@ and `[light] thinking` change them; `flightdeck config --example` shows each, an
 
 `flightdeck models` shows what your machine has (memory, GPU, which runtimes are installed and
 running, the models they serve) and which of these models fit, with the lines for your config.
+
+What it detects, and what it counts: Apple silicon and NVIDIA GPUs (`nvidia-smi`) are what its
+advice is sized for. On Linux it also finds AMD and Intel GPUs (from `/sys/class/drm`, and
+`rocm-smi` when that is installed; an AMD GPU's memory is read, an Intel GPU's is not), and
+names them. Nothing on this page was measured on an AMD or Intel GPU, so for a machine whose
+only GPU is one of those it says so plainly: it found the GPU, it has no results for it yet, and
+its advice treats the machine as CPU-only. A runtime that uses the GPU may do better than that
+advice. To see what would fit the GPU's memory, describe the machine with `--gpu-memory`: that
+sizes it as an NVIDIA GPU of that memory, an estimate and not a result. On Windows (outside WSL)
+and on a Mac, AMD and Intel GPUs are not looked for. Results from such a machine are wanted: the
+[model results form](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=hardware.yml).
+
 For another machine, describe it: `flightdeck models --memory 16 --apple` for a 16 GB Apple
 Silicon Mac, `--memory 32 --gpu-memory 12` for a PC with a 12 GB NVIDIA GPU, `--memory 32` alone
 for one with no GPU. The advice is the same as that machine would get; what only it can tell
@@ -191,7 +203,8 @@ Memory after load is with the 32,768-token context Ollama gave each model on tha
 The light model's jobs, each scored by `flightdeck eval-local` the way a run uses it, with thinking
 off, beside what a run gets with no light model. **Route** counts the answers a run asks a model
 for (a challenge's category where the board names none, 9 of the 40 cases, and the specialist
-family, all 40), and **recon** the briefs; a run with no model has no answer there.
+family, all 40), and **recon** the briefs; a run with no model has no answer there. Every figure
+in it is from one run on the bundled set.
 
 | Model | Judge in a run (no model: 8/14) | Route: right, wrong | Recon: right, wrong (of 30) | Flagcheck in a run (no model: 30/40) | Hint (the rules: 30/30) | Offered for |
 |---|---:|---:|---:|---:|---:|---|
@@ -240,17 +253,26 @@ it answered almost nothing.
 ## The best engine for each small job
 
 The light model does a set of small jobs, and the best engine differs by job. Measured on synthetic
-cases (14 to 40 a job), one run each, the same rough conditions as above:
+cases (14 to 40 a job), the same rough conditions as above. **Every figure in this table, and in
+the job-by-job table [above](#smaller-models-job-by-job), comes from one run on the bundled set**
+(the last column says so for each row): one run cannot show how much a model's score moves from
+run to run, and one set cannot show how much it owes to that set's wording. The rules' figures are
+the exception: the rules answer the same every time.
 
-| Job | What it decides | Best | Without an API key | No model at all |
-|---|---|---|---|---|
-| hint | which technique a description hints at | the rules (30/30) | the rules | the rules |
-| judge | whether a lane is using the hinted technique | Qwen3.5 9B, thinking off (14/14) | Qwen3.5 9B | the rules (8/14) |
-| route: instance | whether a challenge needs a live instance | a rule: a URL, or `nc host port` (40/40) | the rule | the rule |
-| route: family | which kind of specialist the challenge calls for (audio signals, image steganography, modern cryptography, web requests and six more) | Claude Haiku 5.5 (39/40) | Gemma 4 12B (39/40) | none |
-| recon | a first-pass brief for the lane: file kinds, likely technique, first steps | Claude Haiku 5.5 (26/30) | Gemma 4 12B (25/30) | none |
-| flagcheck | whether a found flag is the real one or a stand-in | Claude Haiku 5.5 (39/40) | none safe alone (see below); Qwen3.5 9B as a hold on top of flightdeck's own rule | flightdeck's own rule |
-| summary | what a lane did, for escalation | no model: flightdeck's own summary | | |
+| Job | What it decides | Best | Without an API key | No model at all | Runs, case set |
+|---|---|---|---|---|---|
+| hint | which technique a description hints at | the rules (30/30) | the rules | the rules | one run, bundled set |
+| judge | whether a lane is using the hinted technique | Qwen3.5 9B, thinking off (14/14) | Qwen3.5 9B | the rules (8/14) | one run, bundled set |
+| route: instance | whether a challenge needs a live instance | a rule: a URL, or `nc host port` (40/40) | the rule | the rule | one run, bundled set |
+| route: family | which kind of specialist the challenge calls for (audio signals, image steganography, modern cryptography, web requests and six more) | Claude Haiku 5.5 (39/40) | Gemma 4 12B (39/40) | none | one run, bundled set |
+| recon | a first-pass brief for the lane: file kinds, likely technique, first steps | Claude Haiku 5.5 (26/30) | Gemma 4 12B (25/30) | none | one run, bundled set |
+| flagcheck | whether a found flag is the real one or a stand-in | Claude Haiku 5.5 (39/40) | none safe alone (see below); Qwen3.5 9B as a hold on top of flightdeck's own rule | flightdeck's own rule | one run, bundled set |
+| summary | what a lane did, for escalation | no model: flightdeck's own summary | | | not measured |
+
+Not yet done, and what would replace "one run, bundled set" here: repeated runs
+(`flightdeck eval-local --repeat 3`, which prints each run's score, the mean and the range) and
+the same engines on a second, independently written case set (`--cases FILE`). flightdeck bundles
+no second set yet. [Measure your own](#measure-your-own) has both options.
 
 - **Claude Haiku 5.5 cost $0.024 for all 248 calls** of this measurement: about $0.0002 to route
   a challenge.
@@ -308,4 +330,22 @@ flightdeck practice --max-lanes 1        # does a model drive the tool loop?
 ```
 
 eval-local scores any light engine against the rules on the bundled cases. A paid API is announced
-first, with its number of calls.
+first, with its number of calls. The scorecard's second line names the case set its figures come
+from and how many runs each engine made.
+
+```sh
+flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b \
+    --repeat 3                           # three runs: each run's score, the mean and the range
+flightdeck eval-local --engine openai --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b \
+    --cases my-cases.jsonl --jobs route,recon,flagcheck
+```
+
+- `--repeat N` runs each engine N times over the same cases. The scorecard then starts with a runs
+  table (for each job: every run's score, the mean, and the lowest and highest run), and the rest
+  is the first run in full. The rules run once: they answer the same every time. A paid engine is
+  announced as its calls x N.
+- `--cases FILE` scores a case file of your own, in the format of
+  `src/ctf_flightdeck/localmodel_cases.jsonl` (one JSON object a line). It is checked before
+  anything is scored or sent: hosts under `.test` only (or this machine), no key material, and a
+  bad case stops the command with the file and the line. Keep such a set synthetic: nothing from a
+  real event. `--cases bundled` is the default set.

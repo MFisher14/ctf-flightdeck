@@ -25,6 +25,17 @@ the light role falls back to):
 - `--compare SPEC`, as often as you like: another column, `rules`, `cactus`,
   `anthropic:MODEL`, `openai:MODEL@BASE_URL` (a server with no key) or `decider@BASE_URL`.
 - `--jobs JOB,...`: only these jobs' cases (hint, judge, summary, route, recon, flagcheck).
+- `--cases FILE|bundled`: the case set. `bundled` (the default) is flightdeck's own set of
+  all six jobs; FILE a JSONL file of the player's, in the same format (a second, independently
+  written set, say: the same model on both shows how much a figure owes to the wording of
+  one set). Every set is
+  checked before anything is scored or sent (localmodel.check_synthetic): hosts under .test
+  only, no key material; a bad case stops the command with the file and the line. The
+  scorecard's second line names the set its figures come from, and how many runs.
+- `--repeat N`: each engine runs N times over the cases, one run after another. The scorecard
+  then leads with a runs table: each run's score in each job, the mean and the range, so the
+  spread between runs shows; the rest is the first run in full. The rules answer the same
+  every run, so they run once. A paid engine's announcement says calls x N.
 - `--show-misses`: after the scorecard, every job each column got wrong, with what it said
   (keyword verdicts on briefs and summaries under-credit: read them).
 - `--thinking on|off`: whether an openai column's model may reason before it answers, as
@@ -74,6 +85,7 @@ app = typer.Typer(no_args_is_help=True, help="Measure a light model against the 
 
 EXAMPLE_URL = "http://127.0.0.1:11434/v1"
 MIN_SECRET = 4  # shorter parts of --base-url are not cut out of server text: that would garble it
+MAX_REPEAT = 50  # --repeat's most runs: more is a mistyped number, and a paid engine's bill
 DEFAULT_TIMEOUT = 30.0  # seconds a job may take, unless --timeout (or, with --from-config, the config) says
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
@@ -144,9 +156,16 @@ def eval_local(
                           "decider@BASE_URL."),
     ] = None,
     cases: Annotated[
-        Path | None,
-        typer.Option("--cases", exists=True, dir_okay=False, help="Case file (default: the set bundled with flightdeck)."),
+        str | None,
+        typer.Option("--cases", metavar="FILE",
+                     help="The case set: a JSONL file of your own in the bundled set's format (synthetic only: hosts "
+                          "under .test, no key material), or `bundled` (the default: the set bundled with flightdeck)."),
     ] = None,
+    repeat: Annotated[
+        int, typer.Option("--repeat", metavar="N",
+                          help="Run each engine N times over the cases and show each run's score, the mean and the "
+                               "range. A paid engine then makes N times the calls, and is announced so.")
+    ] = 1,
     thinking: Annotated[
         str | None,
         typer.Option("--thinking", metavar="on|off",
@@ -170,6 +189,8 @@ def eval_local(
     summaries, routing, first-pass briefs and flag checks, alone and as a run uses each."""
     if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
         _fail("--timeout must be a positive number of seconds")
+    if not 1 <= repeat <= MAX_REPEAT:
+        _fail(f"--repeat must be a number of runs from 1 to {MAX_REPEAT}")
     think = _thinking_option(thinking) if thinking is not None else None
     wanted = _jobs_option(jobs) if jobs is not None else None
     config = None
@@ -191,10 +212,7 @@ def eval_local(
         _fail("--price is not for --engine decider: a decision model server is your own, with no bill per call")
     priced = _price(price) if price is not None else None
 
-    try:
-        loaded = localmodel.load_cases(cases or localmodel.default_cases_path())
-    except (localmodel.CaseError, FileNotFoundError) as exc:
-        _fail(str(exc))
+    loaded, source = _case_set(cases)
     if wanted is not None:
         loaded = [case for case in loaded if case.kind in wanted]
         if not loaded:
@@ -219,17 +237,27 @@ def eval_local(
     thinks = _thinks(columns, think)
     keys = {spec: _config_key(config, spec) if spec.light is not None else _key(spec) for spec in columns}
     main = specs[0] if specs[0].engine != "rules" else None
+    if repeat > 1 and not columns:
+        _fail("--repeat is for a light model: the rules answer the same every run, so they run once")
     for spec in columns:
         sure = threshold if threshold is not None else (spec.light.threshold if spec.light else L.DECIDER_THRESHOLD)
         price_of = priced if spec == main else (spec.light.price if spec.light else None)
-        notice = _spend_notice(spec, loaded, price_of) or _decider_notice(spec, loaded, sure)
+        notice = _spend_notice(spec, loaded, price_of, repeat) or _decider_notice(spec, loaded, sure, repeat)
         if notice:
             typer.echo(f"flightdeck: {notice}", err=True)
 
-    reports = asyncio.run(_run(columns, keys, loaded, priced if main in columns else None, main, timeout, threshold,
-                               thinks))
-    typer.echo(localmodel.format_scorecard([rules, *reports], show_misses=show_misses), nl=False)
-    worst = [message for spec, report in zip(columns, reports) if (message := _unmeasured(report, thinks.get(spec)))]
+    runs = asyncio.run(_run(columns, keys, loaded, priced if main in columns else None, main, timeout, threshold,
+                            thinks, repeat))
+    reports = [column[0] for column in runs]
+    typer.echo(localmodel.format_scorecard([rules, *reports], show_misses=show_misses, source=source,
+                                           runs=[(rules,), *runs]), nl=False)
+    worst = []
+    for spec, column in zip(columns, runs):
+        for number, report in enumerate(column, start=1):
+            message = _unmeasured(report, thinks.get(spec))
+            if message:  # one line an engine: its first run that does not measure it
+                worst.append(message if repeat == 1 else f"run {number} of {repeat}: {message}")
+                break
     for message in worst:
         typer.echo(f"flightdeck: {message}", err=True)
     if worst:
@@ -239,6 +267,37 @@ def eval_local(
 def _fail(message: str) -> NoReturn:
     typer.echo(f"flightdeck: {message}", err=True)
     raise typer.Exit(2) from None
+
+
+def _case_set(named: str | None) -> tuple[list[localmodel.Case], str]:
+    """The cases --cases names and how the scorecard names their set: `bundled` (or no
+    --cases) is flightdeck's own, anything else a file of the player's (a file called
+    `bundled` is ./bundled). Every set is checked before anything is scored or sent: a
+    malformed case, or one that is not synthetic (a host outside .test, key material), stops
+    the command with the file and the line."""
+    from .text import untrusted
+
+    try:
+        if named is None or named in localmodel.CASE_SETS:
+            name = named or localmodel.BUNDLED
+            path = localmodel.bundled_cases_path(name)
+            source = f"{name} (flightdeck's own, {path.name})"
+        else:
+            from .config import ConfigError, expand
+
+            try:
+                path = expand(Path(named))
+            except ConfigError as exc:
+                _fail(f"--cases: {exc}")
+            if not path.is_file():
+                _fail(f"--cases: {'not a file' if path.exists() else 'no such file'}: {untrusted(named, one_line=True)} "
+                      f"(a case file of your own, or one of flightdeck's sets: {', '.join(localmodel.CASE_SETS)})")
+            source = f"{untrusted(path.name, one_line=True)} (your file)"
+        loaded = localmodel.load_cases(path)
+        localmodel.check_synthetic(loaded, path)
+    except (localmodel.LocalModelError, FileNotFoundError) as exc:
+        _fail(str(exc))
+    return loaded, source
 
 
 # ---------------------------------------------------------------------- the engines
@@ -478,7 +537,12 @@ def _and(words: list[str]) -> str:
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
-def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | None) -> str:
+def _calls(calls: int, repeat: int) -> str:
+    """How many calls an engine makes at most: "4 calls", or over --repeat's runs "4 calls x 3 runs = 12 calls"."""
+    return f"{calls} calls" if repeat == 1 else f"{calls} calls x {repeat} runs = {calls * repeat} calls"
+
+
+def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | None, repeat: int = 1) -> str:
     """What a paid engine is about to spend, said before any call; "" for a free one."""
     if not _paid(spec):
         return ""
@@ -500,11 +564,11 @@ def _spend_notice(spec: Spec, cases: list[localmodel.Case], price: L.Price | Non
         how = "priced as the API reports, else unknown (--price sets one)"
     where = "" if spec.engine == "anthropic" else f" at {_shown(spec.base_url)}"
     per = "one per job, three for a route case" if routed else "one per case"
-    return (f"{label}{where} is a paid API: at most {calls} calls, {per} (no retries), each with at most "
+    return (f"{label}{where} is a paid API: at most {_calls(calls, repeat)}, {per} (no retries), each with at most "
             f"{most} output tokens; {how}")
 
 
-def _decider_notice(spec: Spec, cases: list[localmodel.Case], threshold: float) -> str:
+def _decider_notice(spec: Spec, cases: list[localmodel.Case], threshold: float, repeat: int = 1) -> str:
     """What a decider column will do, said before any call; "" for another engine."""
     if spec.engine != "decider":
         return ""
@@ -522,7 +586,7 @@ def _decider_notice(spec: Spec, cases: list[localmodel.Case], threshold: float) 
         many = sum(skipped.values()) != 1
         listed = _and([f"{n} {kind}" for kind, n in skipped.items()])
         na = f"; its {listed} case{'s are' if many else ' is'} n/a: a decision model writes no text"
-    return (f"decider at {_shown(spec.base_url)}: at most {calls} calls to the decision model server, {per} "
+    return (f"decider at {_shown(spec.base_url)}: at most {_calls(calls, repeat)} to the decision model server, {per} "
             f"(no retries){na}; an answer below confidence {threshold:g} counts as unsure{elsewhere}")
 
 
@@ -590,7 +654,8 @@ def _config_engine(spec: Spec, key: str | None, timeout: float | None, threshold
 
 async def _run(columns: list[Spec], keys: dict, cases: list[localmodel.Case], price: L.Price | None, main: Spec | None,
                timeout: float | None, threshold: float | None = None,
-               thinks: dict[Spec, bool] | None = None) -> list[localmodel.EvalReport]:
+               thinks: dict[Spec, bool] | None = None, repeat: int = 1) -> list[tuple[localmodel.EvalReport, ...]]:
+    """Each column's runs (`repeat` of them, one after another on the one engine), in column order."""
     reports = []
     for spec in columns:
         try:
@@ -599,7 +664,7 @@ async def _run(columns: list[Spec], keys: dict, cases: list[localmodel.Case], pr
         except (L.LightError, localmodel.LocalModelError) as exc:
             _fail(str(exc))
         try:
-            reports.append(await localmodel.evaluate_engine(engine, cases))
+            reports.append(await localmodel.evaluate_runs(engine, cases, repeat))
         except localmodel.EngineFailed as exc:
             _fail(_failed(spec, str(exc)))
         except localmodel.LocalModelError as exc:

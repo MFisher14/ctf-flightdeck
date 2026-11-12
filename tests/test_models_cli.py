@@ -398,6 +398,88 @@ def test_on_a_big_cpu_only_box_local_lane_models_follow_the_apis_smallest_first(
     assert lanes.index("Model APIs:") < lanes.index("Fit here, on the CPU (slow):")
 
 
+FORM = "https://github.com/MFisher14/ctf-flightdeck/issues/new?template=hardware.yml"
+
+
+def amd_box(memtotal_kib: int = 64 * 1024 * 1024, vram: int = 16 * GIB, **kwargs) -> FakeHost:
+    """A Linux machine whose /sys shows one AMD GPU (a synthetic PCI id) with `vram` bytes."""
+    base = "/sys/class/drm/card0/device"
+    files = {f"{base}/vendor": "0x1002\n", f"{base}/device": "0x744c\n", f"{base}/mem_info_vram_total": f"{vram}\n"}
+    return linux_box(memtotal_kib, files=files, **kwargs)
+
+
+def test_an_amd_gpu_is_found_and_said_and_the_advice_is_cpu_only_and_says_so(monkeypatch):
+    on(monkeypatch, amd_box())
+    out = models().output
+    assert "  other GPUs  AMD GPU (1002:744c) with 16 GiB; no results for it yet, so not counted below" in out
+    assert "  NVIDIA GPU  none found: nvidia-smi is not on PATH" in out
+    notice = ("Found AMD GPU (1002:744c) with 16 GiB. flightdeck has no results for it yet: nothing in docs/MODELS.md was "
+              "measured on an AMD or Intel GPU. So the advice below treats this machine as CPU-only, though a runtime that "
+              "uses the GPU may run a model faster than that. To see what would fit the GPU's memory, describe the "
+              "machine: flightdeck models --memory 64 --gpu-memory 16 (sized as for an NVIDIA GPU with that much memory: an "
+              f"estimate, not a result from a GPU like this one). Results from this machine are wanted: {FORM}")
+    assert notice in out.splitlines()
+    assert out.index(notice) < out.index("Local models may use about 32 GiB here") < out.index("Lanes:")  # said first
+    assert ("Local models may use about 32 GiB here: half of the 64 GiB of memory, leaving the rest to the system and the "
+            "Docker lanes. flightdeck found a GPU it has no measured results for (AMD GPU (1002:744c) with 16 GiB), so it "
+            "counts it for nothing: this advice treats the machine as CPU-only, where local models are slow.") in out
+    lanes = section(out, "Lanes:")
+    assert ("First: a model API. flightdeck has no results for the GPU here, so it advises as for a machine with none: "
+            "local models on the CPU, slowly.") in lanes
+    assert "  Fit here, counted as on the CPU (slow; the GPU here is not measured):" in lanes.splitlines()
+    assert "Local models would run on the CPU here" not in out and "With no GPU flightdeck can use" not in out
+    assert "No provider's safety classifier" not in out  # never led with as a machine with a measured GPU is
+    assert "Ollama's context" not in out  # what Ollama gives a model on this GPU was not measured: no estimate
+    # the same advice as the box with no GPU at all gets: the GPU's memory counts for nothing
+    data = json.loads(models("--json").output)
+    assert data["local_models"]["where"] == "cpu" and data["local_models"]["memory_bytes"] == 32 * GIB
+    assert data["unmeasured_gpus"] == notice
+    assert data["machine"]["other_gpus"]["value"][0]["memory_bytes"] == 16 * GIB and data["machine"]["nvidia_gpus"]["value"] == []
+    on(monkeypatch, linux_box(64 * 1024 * 1024))
+    bare = json.loads(models("--json").output)
+    assert bare["unmeasured_gpus"] is None
+    for role in ("lanes", "light"):
+        assert [o["id"] for o in data["roles"][role]["fits"]] == [o["id"] for o in bare["roles"][role]["fits"]]
+        assert data["roles"][role]["lead"] == bare["roles"][role]["lead"]
+    # and the command the notice gives is advice for an NVIDIA GPU of that memory, said to be for a machine described
+    described = models("--memory", "64", "--gpu-memory", "16").output
+    assert "Local models may use about 16 GiB there: the memory of the NVIDIA GPU." in described and "Found AMD" not in described
+
+
+def test_a_box_with_no_amd_or_intel_gpu_says_it_looked_and_one_model_says_the_gpu_is_not_counted(monkeypatch):
+    on(monkeypatch, linux_box(16 * 1024 * 1024))
+    out = models().output
+    assert "  other GPUs  none found: no AMD or Intel GPU among /sys/class/drm/card0 to card15" in out
+    assert ("With no GPU flightdeck can use (it counts Apple Silicon and NVIDIA GPUs; AMD and Intel GPUs it only names, "
+            "and it found none), local models run on the CPU and will be slow.") in out
+    assert "Found " not in out and FORM not in out
+    on(monkeypatch, apple_mac())
+    assert "other GPUs" not in models().output  # looked for on Linux only
+    on(monkeypatch, amd_box(vram=24 * GIB))
+    one = models("qwen3.5-9b").output
+    assert "Found AMD GPU (1002:744c) with 24 GiB. flightdeck has no results for it yet" in one
+    assert "So what fits below treats this machine as CPU-only" in one and "--memory 64 --gpu-memory 24" in one and FORM in one
+
+
+def test_an_intel_gpu_whose_memory_is_not_read_is_said_without_a_number(monkeypatch):
+    base = "/sys/class/drm/card0/device"
+    on(monkeypatch, linux_box(32 * 1024 * 1024, files={f"{base}/vendor": "0x8086\n", f"{base}/device": "0x56a0\n"}))
+    out = models().output
+    assert "  other GPUs  Intel GPU (8086:56a0), memory not read; no results for it yet, so not counted below" in out
+    assert "Found Intel GPU (8086:56a0), memory not read. flightdeck has no results for it yet" in out
+    assert "describe the machine: flightdeck models --memory 32 --gpu-memory GB (sized as for an NVIDIA GPU" in out
+
+
+def test_beside_an_nvidia_gpu_an_intel_one_is_named_and_the_nvidia_advice_stands(monkeypatch):
+    base = "/sys/class/drm/card1/device"
+    on(monkeypatch, linux_box(64 * 1024 * 1024, nvidia="NVIDIA GeForce RTX 4090, 24564\n",
+                              files={f"{base}/vendor": "0x8086\n", f"{base}/device": "0xa780\n"}))
+    out = models().output
+    assert "  other GPUs  Intel GPU (8086:a780), memory not read; no results for it yet, so not counted below" in out
+    assert "Local models may use about 24 GiB here: the memory of the NVIDIA GeForce RTX 4090." in out
+    assert "Found Intel" not in out and "CPU-only" not in out and FORM not in out
+
+
 def test_on_wsl_it_is_linux_with_the_virtual_machines_memory(monkeypatch):
     on(monkeypatch, linux_box(32 * 1024 * 1024, osrelease="5.15.153.1-microsoft-standard-WSL2\n",
                               nvidia="NVIDIA GeForce RTX 3060, 12288\n", nvidia_path="/usr/lib/wsl/lib/nvidia-smi"))

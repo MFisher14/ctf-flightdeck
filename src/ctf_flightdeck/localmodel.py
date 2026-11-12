@@ -55,6 +55,12 @@ the planted-flag hold, and a hold is all it can do. The rules column is a run wi
 model. Each engine is compared with the rules and with the best column by McNemar's exact test
 on the same cases.
 
+More than one run. A model does not always answer the same, so an engine can be run several
+times over the same cases (evaluate_runs): the scorecard then leads with each run's score in
+each row, the mean of the runs and their range (spreads), and shows the first run in full. A
+case set is checked before any of it is scored or sent (check_synthetic): hosts under the
+reserved .test domain only, and no key material.
+
 Untrusted text. A case's text goes to a model inside the harness's data fence, folded, and a
 model's answer is read strictly (light.py). Nothing a model answers here changes a setting; it
 is only scored.
@@ -69,7 +75,7 @@ import json
 import math
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from importlib.resources import files
 from pathlib import Path
 
@@ -154,6 +160,7 @@ class Case:
     traps: tuple[str, ...] = ()
     own_text: bool | None = None
     ident: str = ""
+    line: int = field(default=0, compare=False)  # its line in the case file it was loaded from (0: not from a file)
 
 
 @dataclass(frozen=True)
@@ -297,23 +304,36 @@ class EvalReport:
 # --------------------------------------------------------------------------- loading cases
 
 
-def default_cases_path() -> Path:
-    """The synthetic case set bundled with flightdeck."""
-    path = Path(str(files("ctf_flightdeck").joinpath("localmodel_cases.jsonl")))
+BUNDLED = "bundled"
+CASE_SETS = {  # the case sets bundled with flightdeck, by the name `eval-local --cases` takes
+    BUNDLED: "localmodel_cases.jsonl",  # all six jobs
+}
+
+
+def bundled_cases_path(name: str = BUNDLED) -> Path:
+    """A synthetic case set bundled with flightdeck, by its name in CASE_SETS (BUNDLED: the default set)."""
+    if name not in CASE_SETS:
+        raise LocalModelError(f"flightdeck bundles no case set {name!r}; it has {' and '.join(CASE_SETS)}")
+    path = Path(str(files("ctf_flightdeck").joinpath(CASE_SETS[name])))
     if not path.is_file():
         raise FileNotFoundError(f"the local-model case set is missing from this installation (looked in {path})")
     return path
 
 
+def default_cases_path() -> Path:
+    """The synthetic case set bundled with flightdeck."""
+    return bundled_cases_path(BUNDLED)
+
+
 def load_cases(path: Path) -> list[Case]:
     """Read a JSONL case file. One JSON object per line; blank lines and `#` comments are
-    skipped. Every problem raises CaseError naming the line, so a malformed set never runs
-    as a shorter one. (Whether a technique id is a lexicon id is checked when the cases are
-    scored, against the lexicon itself.)"""
+    skipped. Every problem raises CaseError naming the file and the line, so a malformed set
+    never runs as a shorter one. (Whether a technique id is a lexicon id is checked when the
+    cases are scored, against the lexicon itself.)"""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise CaseError(f"cannot read the case file {path}: {exc.strerror or exc}") from None
+    except (OSError, UnicodeDecodeError) as exc:
+        raise CaseError(f"cannot read the case file {path}: {getattr(exc, 'strerror', None) or exc}") from None
     cases: list[Case] = []
     seen: dict[str, int] = {}
     for number, raw in enumerate(text.splitlines(), start=1):
@@ -321,18 +341,72 @@ def load_cases(path: Path) -> list[Case]:
         if not line or line.startswith("#"):
             continue
         try:
-            obj = json.loads(line)
-        except ValueError as exc:
-            raise CaseError(f"line {number}: not valid JSON ({exc})") from None
-        case = _case(obj, number)
-        if case.ident:
-            if case.ident in seen:
-                raise CaseError(f"line {number}: id {case.ident!r} is used on line {seen[case.ident]} too")
-            seen[case.ident] = number
+            try:
+                obj = json.loads(line)
+            except ValueError as exc:
+                raise CaseError(f"line {number}: not valid JSON ({exc})") from None
+            case = replace(_case(obj, number), line=number)
+            if case.ident:
+                if case.ident in seen:
+                    raise CaseError(f"line {number}: id {case.ident!r} is used on line {seen[case.ident]} too")
+                seen[case.ident] = number
+        except CaseError as exc:
+            raise CaseError(f"{path}, {exc}") from None
         cases.append(case)
     if not cases:
         raise CaseError(f"no cases in {path}")
     return cases
+
+
+# What a case may hold, checked before any of it is sent to a model: flightdeck's sets are
+# public and synthetic, and a set a player writes goes to whatever API they score.
+LOCAL_HOSTS = ("127.0.0.1", "0.0.0.0", "localhost")
+RESERVED = ".test"  # RFC 2606: no such host can exist
+REAL_TLDS = ("com", "org", "net", "edu", "gov", "io", "info", "xyz", "online", "site", "cloud", "tech", "ctf")
+_URL_HOST = re.compile(r"[a-z][a-z0-9+.-]*://(?:[^/\s'\"<>@\\]*@)?([^/\s'\"<>:\\?#]+)")
+_NC_HOST = re.compile(r"\b(?:nc|ncat|netcat|telnet)\s+(?:-\S+\s+)*([a-z0-9.-]+)\s+\d+")
+_HOST_HEADER = re.compile(r"\bhost:\s*([a-z0-9.-]+)")
+_NAMED_HOST = re.compile(rf"(?<![\w.@-])((?:[a-z0-9-]+\.)+(?:{'|'.join(REAL_TLDS)}))(?![\w-])")
+KEY_MATERIAL = (
+    (re.compile(r"PRIVATE KEY"), "a private key"),
+    (re.compile(r"MII[A-Za-z0-9+/]{48,}"), "the body of a key or certificate (more than its header)"),
+    (re.compile(r"\bsk-(?:ant-|or-)?[A-Za-z0-9_-]{24,}|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{35}\b"
+                r"|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{50,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bctfd_[a-f0-9]{64}\b"),
+     "something shaped like an API key or token"),
+    (re.compile(r"(?i)\bauthorization:\s*(?:bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{16,}"), "an Authorization header's value"),
+)
+
+
+def synthetic_problem(case: Case) -> str:
+    """Why a case is not one for a synthetic set, or "": a host it names (in a URL, an `nc
+    host port` or a Host header) that is neither under the reserved .test domain nor this
+    machine nor a bare name with no domain ("target"), a name under a real top-level domain,
+    or key material. Never quotes the key material it found."""
+    text = json.dumps([case.input, case.expected], ensure_ascii=False)
+    low = text.lower()
+    hosts = [*_URL_HOST.findall(low), *_NC_HOST.findall(low), *_HOST_HEADER.findall(low)]
+    for host in hosts:
+        if not (host.endswith(RESERVED) or host in LOCAL_HOSTS or "." not in host.strip("[]")):  # "target": no domain
+            return (f"it names the host {shown(host)}: a case's hosts must be under the reserved {RESERVED} domain "
+                    f"(or {', '.join(LOCAL_HOSTS)}), which no real event can use")
+    named = _NAMED_HOST.search(low)
+    if named:
+        return (f"it names {shown(named.group(1))}, which could be a real host: a case's hosts must be under the "
+                f"reserved {RESERVED} domain")
+    for pattern, what in KEY_MATERIAL:
+        if pattern.search(text):
+            return f"it holds {what}: a case set holds no key material (shorten it to a few characters and '...')"
+    return ""
+
+
+def check_synthetic(cases: Sequence[Case], path: Path) -> None:
+    """CaseError naming the file and the line of the first case that is not synthetic
+    (synthetic_problem), so nothing of a set with such a case is sent anywhere."""
+    for number, case in enumerate(cases, start=1):
+        problem = synthetic_problem(case)
+        if problem:
+            where = f"line {case.line}" if case.line else f"case {number}"
+            raise CaseError(f"{path}, {where}: {problem}")
 
 
 def _case(obj: object, number: int) -> Case:
@@ -796,7 +870,111 @@ CASES_WIDTH = 6
 MIN_COLUMN = 16
 
 
-def format_scorecard(reports: Sequence[EvalReport], *, show_misses: bool = False) -> str:
+async def evaluate_runs(engine: Light, cases: Sequence[Case], repeat: int, *,
+                        stop_after: int = STOP_AFTER) -> tuple[EvalReport, ...]:
+    """`repeat` runs of `engine` over the same cases, one after another (evaluate_engine each):
+    a model does not always answer the same, and one run cannot show by how much."""
+    if repeat < 1:
+        raise LocalModelError(f"an engine is run once or more, not {repeat} times")
+    return tuple([await evaluate_engine(engine, cases, stop_after=stop_after) for _ in range(repeat)])
+
+
+ALL_JOBS = "all its jobs"
+
+
+def run_scores(report: EvalReport) -> dict[str, tuple[int, int]]:
+    """One run's score in each row, {row: (right, graded)}: each job as it stands, all the
+    engine's jobs together (ALL_JOBS), then each job as a run uses it."""
+    alone = report.by_kind()
+    out = {row: alone[row] for row in ROWS if row in alone}
+    if out:
+        out[ALL_JOBS] = (sum(right for right, _ in out.values()), sum(graded for _, graded in alone.values()))
+    reading = _run_rows(report)
+    out.update({name: (sum(reading[name]), len(reading[name])) for name in RUN_ORDER if name in reading})
+    return out
+
+
+@dataclass(frozen=True)
+class Spread:
+    """One row of one engine over its runs: each run's (right, graded), in run order."""
+
+    scores: tuple[tuple[int, int], ...]
+
+    @property
+    def rates(self) -> tuple[float, ...]:
+        """Each run's share right, of the runs that graded any job (a decision model unsure
+        of every job in a run has no share that run)."""
+        return tuple(right / graded for right, graded in self.scores if graded)
+
+    @property
+    def mean(self) -> float | None:
+        """The mean of the runs' shares right; None when no run graded a job."""
+        return sum(self.rates) / len(self.rates) if self.rates else None
+
+    @property
+    def low(self) -> tuple[int, int] | None:
+        """The worst run's (right, graded)."""
+        graded = [score for score in self.scores if score[1]]
+        return min(graded, key=lambda score: score[0] / score[1]) if graded else None
+
+    @property
+    def high(self) -> tuple[int, int] | None:
+        """The best run's (right, graded)."""
+        graded = [score for score in self.scores if score[1]]
+        return max(graded, key=lambda score: score[0] / score[1]) if graded else None
+
+
+def spreads(runs: Sequence[EvalReport]) -> dict[str, Spread]:
+    """{row: its Spread} over one engine's runs, for every row the runs scored."""
+    scored = [run_scores(run) for run in runs]
+    rows = [row for row in (*ROWS, ALL_JOBS, *RUN_ORDER) if all(row in scores for scores in scored)]
+    return {row: Spread(tuple(scores[row] for scores in scored)) for row in rows}
+
+
+RUN_CELL = 13  # a run's cell in the runs table: "13/14 93%"
+
+
+def _runs_table(columns: Sequence[Sequence[EvalReport]]) -> list[str]:
+    """Each engine that ran more than once: every run's score in each row, the mean and the
+    range, so the spread between runs is there to see; then what each run could not answer,
+    its time per job and what the runs spent."""
+    count = max(len(runs) for runs in columns)
+    lines = [f"runs: each engine's right answers in each of its {count} runs over the same cases, then the mean of the "
+             "runs and their range (lowest to highest); the rules answer the same every run, so they ran once"]
+    for runs in columns:
+        if len(runs) < 2:
+            continue
+
+        def row(label: str, cells: Sequence[str], mean: str = "", spread: str = "") -> str:
+            return (f"{label:<{RUN_LABEL + 2}}" + "".join(f"{cell:<{RUN_CELL}}" for cell in cells)
+                    + f"{mean:<{RUN_CELL}}{spread}").rstrip()
+
+        lines += ["", f"{runs[0].label}, {len(runs)} runs",
+                  row("", [f"run {n}" for n in range(1, len(runs) + 1)], "mean", "range")]
+        for name, spread in spreads(runs).items():
+            cells = [_cell(right, graded) if graded else "all unsure" for right, graded in spread.scores]
+            if spread.mean is None or spread.low is None or spread.high is None:
+                lines.append(row(name, cells, "all unsure"))
+                continue
+            same = len(set(spread.rates)) == 1 and len(spread.rates) == len(runs)
+            said = "none: the same every run" if same else f"{_cell(*spread.low)} to {_cell(*spread.high)}"
+            lines.append(row(name, cells, f"{100 * spread.mean:.1f}%", said))
+        lines.append(row("not answered", [_rate(run, run.unanswered) for run in runs]))
+        if any(run.engine == DECIDER for run in runs):
+            lines.append(row("unsure", [_rate(run, run.unsure) for run in runs]))
+        lines.append(row("time per job", [_time(run) for run in runs]))
+        tokens = sum(run.tokens for run in runs)
+        if tokens:
+            costs = [run.dollars for run in runs]
+            spent = f", ${sum(costs):.4f}" if all(cost is not None for cost in costs) and sum(costs) else ""  # type: ignore[arg-type]
+            lines.append(f"spent over its {len(runs)} runs: {tokens:,} tokens{spent}.")
+    lines.append("")
+    lines.append("not answered: jobs refused, failed, cut off, empty or not one of the options; each counts as wrong.")
+    return lines
+
+
+def format_scorecard(reports: Sequence[EvalReport], *, show_misses: bool = False, source: str = "",
+                     runs: Sequence[Sequence[EvalReport]] = ()) -> str:
     """The reports side by side, one column each, as plain text for the terminal: accuracy per
     job and overall, a decision model's unsure answers (a row only when a decider is one of the
     columns), refusals, failures, replies with no answer and answers given as an option's line,
@@ -808,13 +986,23 @@ def format_scorecard(reports: Sequence[EvalReport], *, show_misses: bool = False
     the overall row is over the jobs every column does, so no two columns are compared over
     different jobs. A decision model's accuracy leaves out the jobs it was unsure of (its own
     row counts them): it is how often an answer it was sure of is right, and "all unsure" when
-    it was sure of none."""
+    it was sure of none.
+
+    `source`: the case set the figures come from, in words ("bundled (localmodel_cases.jsonl)"):
+    with it, the second line names it and how many runs each engine made. `runs`: every run
+    of each report's engine, in the reports' order, each starting with the report itself (the
+    rules: their one run). When an engine ran more than once, a runs table comes first (each
+    run's score per job, the mean, the range), and everything after it is the first run in full."""
     if not reports:
         raise LocalModelError("no reports to show")
     first = reports[0]
-    for report in reports[1:]:
+    for report in [*reports[1:], *(run for column in runs for run in column)]:
         if [r.row for r in report.results] != [r.row for r in first.results]:
             raise LocalModelError("the reports are not over the same cases")
+    if runs and (len(runs) != len(reports) or any(not column or column[0] is not report
+                                                  for column, report in zip(runs, reports))):
+        raise LocalModelError("the runs are not the reports' own: one list of runs for each report, its first that report")
+    repeated = max((len(column) for column in runs), default=1)
     present = [k for k in ROWS if any(r.row == k for r in first.results)]
     shared = [k for k in present if all(k in report.kinds() for report in reports)]
     width = max(MIN_COLUMN, *(len(report.label) + 2 for report in reports))
@@ -832,7 +1020,16 @@ def format_scorecard(reports: Sequence[EvalReport], *, show_misses: bool = False
     kinds = [k for k in KINDS if any(r.kind == k for r in first.results)]
     listed = ", ".join(f"{k} {cases_of(k)}" for k in kinds)
     routed = " (a route case is three questions)" if ROUTE in kinds else ""
-    lines = [f"eval-local: {cases} cases ({listed}); one job per case{routed}, one try each", ""]
+    lines = [f"eval-local: {cases} cases ({listed}); one job per case{routed}, one try each"]
+    ran = "1 run" if repeated == 1 else f"{repeated} runs of each engine"
+    if source:
+        lines.append(f"case set: {source}; {ran}")
+    elif repeated > 1:
+        lines.append(ran)
+    lines.append("")
+    if repeated > 1:
+        lines += [*_runs_table(runs), "", f"run 1 of {repeated}, in full (the comparisons and any misses listed are "
+                                          "this run's):", ""]
     lines.append(row("", "cases", [report.label for report in reports]))
     for kind in present:
         lines.append(row(kind, counts[kind], [_accuracy(report, [kind]) for report in reports]))

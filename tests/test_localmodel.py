@@ -1240,6 +1240,190 @@ def test_cli_a_paid_engine_says_a_route_case_is_three_calls(tmp_path, monkeypatc
     assert "at most 4 calls, one per job, three for a route case (no retries), each with at most 1024 output tokens" in result.output
 
 
+# --------------------------------------------------------------------------- --repeat: the spread between runs
+
+
+def hint_set() -> list[lm.Case]:
+    return [hint_case("sstv", "a slow scan tv signal"), hint_case("xor", "a repeating single-byte key"),
+            hint_case("morse", "The old radio operator left a note.")]
+
+
+def by_run(*runs: list[str]):
+    """A fake model whose answers differ between runs: runs[n] is what it says, in order, in run n + 1."""
+    said = [answer for run in runs for answer in run]
+    asked = iter(range(len(said)))
+    return lambda record: text_reply(said[next(asked)])
+
+
+def test_cli_repeat_shows_each_runs_score_the_mean_and_the_range(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", *hint_set())
+    answers = by_run(["sstv", "xor", "morse"], ["sstv", "sstv", "morse"], ["sstv", "xor", "none"])
+    with FakeModelServer(responder=answers) as server:
+        result = invoke(server.base_url, cases, "--repeat", "3")
+        assert len(server.chats()) == 9  # three runs of three jobs, and no more
+    assert result.exit_code == 0, result.output
+    out = result.output.splitlines()
+    assert out[:2] == ["eval-local: 3 cases (hint 3); one job per case, one try each",
+                       "case set: cases.jsonl (your file); 3 runs of each engine"]
+    assert out[3].startswith("runs: each engine's right answers in each of its 3 runs over the same cases")
+    assert out[5] == "openai local/m (thinking off), 3 runs"
+    assert lines_of(result.output, "run 1")[:4] == ["run 2", "run 3", "mean", "range"]
+    spread = ["3/3 100%", "2/3 67%", "2/3 67%", "77.8%", "2/3 67% to 3/3 100%"]  # the runs differ, and it shows
+    assert lines_of(result.output, "hint") == spread and lines_of(result.output, "all its jobs") == spread
+    assert lines_of(result.output, "not answered") == ["0/3 0%"] * 3
+    assert "run 1 of 3, in full (the comparisons and any misses listed are this run's):" in out
+    assert table(result.output)["hint"] == ["3", "2/3 67%", "3/3 100%"]  # below it: the first run, and the rules once
+    assert "is a paid API" not in result.output
+
+
+def test_cli_repeat_says_when_every_run_scored_the_same(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", *hint_set())
+    with FakeModelServer(responder=lambda record: text_reply("sstv")) as server:
+        result = invoke(server.base_url, cases, "--repeat", "2")
+    assert result.exit_code == 0, result.output
+    assert lines_of(result.output, "hint") == ["1/3 33%", "1/3 33%", "33.3%", "none: the same every run"]
+
+
+def test_cli_one_run_prints_what_it_printed_before_repeat_and_names_its_case_set(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", *hint_set())
+
+    def printed(*extra: str) -> list[str]:
+        with FakeModelServer(responder=by_run(["sstv", "xor", "none"])) as server:
+            result = invoke(server.base_url, cases, *extra)
+        assert result.exit_code == 0, result.output
+        return [line for line in result.output.splitlines() if not line.startswith("time per job")]  # a clock's reading
+
+    plain = printed()
+    assert printed("--repeat", "1") == plain
+    assert plain[:3] == ["eval-local: 3 cases (hint 3); one job per case, one try each",
+                         "case set: cases.jsonl (your file); 1 run", ""]
+    assert plain[3].split() == ["cases", "rules", "openai", "local/m", "(thinking", "off)"]  # the scorecard, as before
+    assert not any(line.startswith(("runs:", "run 1 of")) or "all its jobs" in line for line in plain)
+
+
+def test_cli_a_paid_engine_is_announced_as_calls_times_runs_and_makes_no_more(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_TEST_ANTHROPIC_KEY", "fake-anthropic-key-0451")
+    cases = write_new_cases(tmp_path, [route_case("Front", "web", ("web", "web-request", "yes")),
+                                       recon_case([["png"]])])
+    one_run = [claude_says("web"), claude_says("web-request"), claude_says("yes"), claude_says("Files: a PNG image.")]
+    with FakeAnthropicServer(one_run * 3) as claude:
+        result = runner.invoke(mount(), ["eval-local", "--engine", "anthropic", "--model", "claude-haiku-5-5",
+                                         "--base-url", claude.base_url, "--key-env", "FLIGHTDECK_TEST_ANTHROPIC_KEY",
+                                         "--cases", str(cases), "--repeat", "3"])
+        assert len(claude.requests) == 12
+    assert result.exit_code == 0, result.output
+    assert ("at most 4 calls x 3 runs = 12 calls, one per job, three for a route case (no retries), each with at most "
+            "1024 output tokens") in result.output
+    assert lines_of(result.output, "route family") == ["1/1 100%"] * 3 + ["100.0%", "none: the same every run"]
+    assert re.search(r"spent over its 3 runs: [\d,]+ tokens", result.output)
+
+
+@pytest.mark.parametrize("count", ["0", "-2", "51"])
+def test_cli_repeat_takes_a_number_of_runs_and_is_not_for_the_rules_alone(tmp_path, count):
+    cases = write_cases(tmp_path / "cases.jsonl", *hint_set())
+    bad = invoke("http://127.0.0.1:9/v1", cases, "--repeat", count)
+    assert bad.exit_code == 2 and "--repeat must be a number of runs from 1 to 50" in bad.output
+    rules = runner.invoke(mount(), ["eval-local", "--engine", "rules", "--cases", str(cases), "--repeat", "3"])
+    assert rules.exit_code == 2 and "--repeat is for a light model: the rules answer the same every run" in rules.output
+
+
+def test_cli_repeat_names_the_run_whose_replies_held_no_answer(tmp_path):
+    cases = write_cases(tmp_path / "cases.jsonl", *hint_set())
+    answers = by_run(["sstv", "xor", "morse"], ["I think", "it could be", "hard to say"])
+    with FakeModelServer(responder=answers) as server:
+        result = invoke(server.base_url, cases, "--repeat", "2")
+    assert result.exit_code == 1, result.output
+    assert lines_of(result.output, "not answered") == ["0/3 0%", "3/3 100%"]
+    assert "flightdeck: run 2 of 2: openai local/m (thinking off): 3 of 3 replies were cut off" in result.output
+
+
+def test_a_spread_is_each_runs_score_their_mean_and_the_lowest_and_highest():
+    spread = lm.Spread(((12, 14), (9, 14), (13, 14)))
+    assert spread.mean == pytest.approx((12 + 9 + 13) / (3 * 14))
+    assert (spread.low, spread.high) == ((9, 14), (13, 14))
+    unsure = lm.Spread(((0, 0), (3, 4)))  # a run with no graded job has no share: it is left out, not counted as 0
+    assert unsure.rates == (0.75,) and unsure.mean == 0.75 and unsure.low == unsure.high == (3, 4)
+    none = lm.Spread(((0, 0), (0, 0)))
+    assert (none.mean, none.low, none.high) == (None, None, None)
+
+
+def test_runs_are_scored_in_a_run_too_and_must_be_the_reports_own():
+    cases = judge_set()
+    with FakeModelServer(responder=lambda record: text_reply("yes")) as server:
+        yes = run_eval(server.base_url, cases)
+    with FakeModelServer(responder=lambda record: text_reply("no")) as server:
+        no = run_eval(server.base_url, cases)
+    rules = lm.rules_baseline(cases)
+    got = lm.spreads([yes, no])
+    assert got["judge"].scores == (lm.run_scores(yes)["judge"], lm.run_scores(no)["judge"])
+    assert got["judge in a run"].scores[0] != got["judge in a run"].scores[1]  # the two runs differ as a run reads them
+    text = lm.format_scorecard([rules, yes], runs=[(rules,), (yes, no)])
+    assert text.splitlines()[1] == "2 runs of each engine" and "judge in a run" in text.split("run 1 of 2")[0]
+    with pytest.raises(lm.LocalModelError, match="the runs are not the reports' own"):
+        lm.format_scorecard([rules, yes], runs=[(rules,), (no, yes)])
+    with pytest.raises(lm.LocalModelError, match="not over the same cases"):
+        lm.format_scorecard([rules, yes], runs=[(rules,), (yes, lm.rules_baseline(cases[:1]))])
+
+
+# --------------------------------------------------------------------------- --cases: a case file of the player's
+
+
+def test_cli_the_scorecard_names_the_bundled_set_and_a_file_by_its_name(tmp_path):
+    result = runner.invoke(mount(), ["eval-local", "--engine", "rules", "--jobs", "hint"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[1] == "case set: bundled (flightdeck's own, localmodel_cases.jsonl); 1 run"
+    named = runner.invoke(mount(), ["eval-local", "--engine", "rules", "--jobs", "hint", "--cases", "bundled"])
+    assert named.output.splitlines()[:2] == result.output.splitlines()[:2]
+    mine = write_cases(tmp_path / "second-set.jsonl", *hint_set())
+    own = runner.invoke(mount(), ["eval-local", "--engine", "rules", "--cases", str(mine)])
+    assert own.exit_code == 0 and own.output.splitlines()[1] == "case set: second-set.jsonl (your file); 1 run"
+
+
+def test_the_bundled_set_passes_the_check_every_case_file_gets():
+    path = lm.default_cases_path()
+    cases = lm.load_cases(path)
+    assert [c.line for c in cases] == sorted({c.line for c in cases}) and cases[0].line >= 1  # each knows its line
+    lm.check_synthetic(cases, path)  # raises on a host outside .test or on key material
+
+
+@pytest.mark.parametrize(("case", "says"), [
+    ({"kind": "hint", "input": {"description": "see https://ctf.example.com/board"}, "expected": "none"},
+     "it names the host ctf.example.com: a case's hosts must be under the reserved .test domain"),
+    ({"kind": "hint", "input": {"description": "connect with nc play.example.org 31337"}, "expected": "none"},
+     "it names the host play.example.org"),
+    ({"kind": "hint", "input": {"description": "mail the organisers at board.example.net for help"}, "expected": "none"},
+     "it names board.example.net, which could be a real host"),
+    ({"kind": "hint", "input": {"description": "-----BEGIN RSA PRIVATE KEY-----"}, "expected": "none"},
+     "it holds a private key: a case set holds no key material"),
+    ({"kind": "hint", "input": {"description": "key: " + "sk-" + "a1B2" * 8}, "expected": "none"},
+     "it holds something shaped like an API key or token"),
+    ({"kind": "hint", "input": {"description": "Authorization: Bearer " + "abcd1234" * 4}, "expected": "none"},
+     "it holds an Authorization header's value"),
+])
+def test_cli_a_case_that_is_not_synthetic_stops_the_command_with_its_file_and_line(tmp_path, case, says):
+    path = tmp_path / "mine.jsonl"
+    good = json.dumps({"kind": "hint", "input": {"description": "see https://board.example.test/ or http://target/"},
+                       "expected": "none"})
+    path.write_text(f"# my cases\n{good}\n\n{json.dumps(case)}\n", encoding="utf-8")
+    with FakeModelServer(responder=lambda record: text_reply("none")) as server:
+        result = invoke(server.base_url, path)
+        assert server.chats() == []  # nothing of such a set is sent anywhere
+    assert result.exit_code == 2 and f"{path}, line 4: {says}" in " ".join(result.output.split())
+    secret = case["input"]["description"].split()[-1]
+    assert len(secret) < 20 or secret not in result.output  # key material is never quoted back
+
+
+def test_cli_a_malformed_case_file_names_the_file_and_the_line_and_a_missing_one_is_named(tmp_path):
+    path = tmp_path / "mine.jsonl"
+    path.write_text('{"kind": "hint", "input": {"description": "x"}, "expected": "none"}\n{"kind": "hint", \n', encoding="utf-8")
+    result = invoke("http://127.0.0.1:9/v1", path)
+    assert result.exit_code == 2 and f"{path}, line 2: not valid JSON" in " ".join(result.output.split())
+    gone = invoke("http://127.0.0.1:9/v1", tmp_path / "no-such.jsonl")
+    assert gone.exit_code == 2 and "--cases: no such file:" in gone.output and "flightdeck's sets: bundled" in gone.output
+    folder = invoke("http://127.0.0.1:9/v1", tmp_path)
+    assert folder.exit_code == 2 and "--cases: not a file:" in folder.output
+
+
 def test_cli_a_decider_says_what_it_asks_and_what_is_n_a(tmp_path):
     from fake_decider import FakeDeciderServer, picks
 
