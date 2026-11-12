@@ -71,7 +71,7 @@ token you can revoke, with a low spending limit. find_agent() says so in its war
 What flightdeck keeps never holds that key: its value (and any other secret given to the
 driver) becomes [NAME] in everything the CLI writes, its events, its stderr and the files
 its lane changes, before anything is cut, shown, logged or put in a transcript, so a lane
-that runs `env` does not put the key in a writeup draft (_Secrets).
+that runs `env` does not put the key in a writeup draft (agent/held.py's Secrets).
 Nothing else of the player's environment is passed: the CLI gets the allowlist
 HostWorkspace gives a lane's commands (no other keys, no platform tokens), its own auth
 variable, and flightdeck's settings that switch off the CLI's telemetry and self-update.
@@ -140,6 +140,7 @@ from ..text import untrusted
 from . import owntext, prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
+from .held import Secrets as _Secrets
 from .facts import FirstLooks, Look
 from .workspace import (
     CONTAINER_ROOT,
@@ -166,7 +167,6 @@ CONTAINER_HOME = {"claude": "/tmp/flightdeck-claude-home", "codex": "/tmp/flight
 """docker: each CLI's own configuration folder (AGENT_HOME) in the lane's container, outside
 /work, where nothing in the workspace (a file the agent writes there, an archive it
 unpacks) can configure the CLI. /tmp: every image has it, writable whatever its user."""
-MIN_SECRET = 8  # a secret shorter than this is not looked for in what the CLI writes: it would hide too much
 CLI_ENV: Mapping[str, Mapping[str, str]] = {
     # flightdeck's own settings for the CLI process (not secrets): no telemetry, no self-update mid-run
     "claude": {"DISABLE_TELEMETRY": "1", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
@@ -791,49 +791,6 @@ class _Lines:
             if len(self.held) > self.cap:
                 self.held.clear()
                 self.dropping = True
-
-
-class _Secrets:
-    """Secret values flightdeck knows (the agent's own credential above all, which the
-    commands it runs can read and print), each replaced by [NAME] in text the CLI wrote.
-    Applied where that text first arrives, before anything cuts it: a key cut in two would
-    keep its first part. Never shows a value, in its repr either."""
-
-    def __init__(self, named: Mapping[str, str]) -> None:
-        pairs: dict[str, str] = {}
-        for name, value in named.items():
-            if not isinstance(value, str) or len(value) < MIN_SECRET:
-                continue
-            for form in (value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]):  # as JSON writes it
-                pairs.setdefault(form, f"[{name}]")
-        self.pairs = sorted(pairs.items(), key=lambda pair: -len(pair[0]))  # a longer one first: it may hold a shorter
-
-    def __call__(self, text: str) -> str:
-        for value, label in self.pairs:
-            if value in text:
-                text = text.replace(value, label)
-        return text
-
-    def __bool__(self) -> bool:
-        return bool(self.pairs)
-
-    def __repr__(self) -> str:
-        return f"_Secrets({len({label for _, label in self.pairs})} names)"
-
-    def scrub(self, rep: TurnReport) -> TurnReport:
-        """`rep` with every secret out of its text (never its flag: that is what would be submitted)."""
-        if not self.pairs:
-            return rep
-        return replace(
-            rep,
-            action=self(rep.action),
-            output=self(rep.output),
-            plan=None if rep.plan is None else self(rep.plan),
-            gave_up=None if rep.gave_up is None else self(rep.gave_up),
-            files=tuple(replace(change, path=self(change.path), diff=self(change.diff)) for change in rep.files),
-            artifacts=tuple(self(item) for item in rep.artifacts),
-            why=self(rep.why),
-        )
 
 
 def _decode(raw: bytes, redact: _Secrets | None = None) -> dict | str | None:
