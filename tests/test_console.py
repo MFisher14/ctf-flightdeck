@@ -1,5 +1,5 @@
 """Pilot tests for the route C console: the fleet screen, the focus screen, and the console
-requirements from the M0 kickoff.
+requirements of M0 (docs/ROADMAP.md, docs/CONSOLE-SPEC.md).
 
 Apps are built with no timers (no tick timer, refresh_seconds=None): each test ticks the
 fake world itself with app.step(), so every run is the same. The one exception is the
@@ -1166,7 +1166,7 @@ def test_an_unknown_command_warns_in_the_status_line():
     drive(app, script)
 
 
-# ---------------------------------------------------------------------- kickoff requirements
+# ---------------------------------------------------------------------- M0 requirements
 
 
 def test_attention_sort_keeps_lanes_that_need_you_on_top_after_every_tick():
