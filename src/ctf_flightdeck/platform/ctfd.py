@@ -23,7 +23,12 @@ CTFd's API (v1), as this module uses it:
   looks at the flag: CTFd 3.8.9 says "ratelimited", "Not accepted. You have 0 tries
   remaining"; an older CTFd said "incorrect", "You have 0 tries remaining" (the last real
   try is "incorrect" with 200, "... You have 0 tries remaining."). This module calls either
-  403 "locked_out", with no tries left, since the flag was not checked and may be right. A
+  "locked_out", with no tries left, since the flag was not checked and may be right (a
+  "ratelimited" one that says no tries remain whatever its HTTP status: the timeout
+  behaviour's words say when the tries come back instead). CTFd 3.8.9 also says it once the
+  account has made as many tries at the challenge as its limit within about a minute (that
+  count takes partial and refused answers too), which passes; nothing in the answer tells
+  the two apart, so this module takes the words as they come. A
   ratelimited answer that says no such thing is a rate limit (submitting too fast, another
   submission of the account's being processed, or CTFd's timeout behaviour: "Not accepted.
   Try again in N seconds", 429), which passes. The tries left are read from every answer
@@ -878,9 +883,10 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
         message = data.get("message")
         said = site.short(message) if isinstance(message, str) else ""
         left = _tries_left(message)
-        if answer.status == 403 and (status == "incorrect" or (status == "ratelimited" and left == 0)):
+        if (status == "incorrect" and answer.status == 403) or (status == "ratelimited" and left == 0):
             # the account has no tries left, said before CTFd looks at the flag: CTFd 3.8.9's
-            # "ratelimited" ("Not accepted. You have 0 tries remaining"), an older CTFd's "incorrect"
+            # "ratelimited" ("Not accepted. You have 0 tries remaining", with 403; taken so
+            # whatever the HTTP status), an older CTFd's "incorrect" with 403
             return Attempt("locked_out", said, 0)
         if status in ATTEMPT_STATUSES:
             return Attempt(status, said, left)

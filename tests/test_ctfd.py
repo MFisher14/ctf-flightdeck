@@ -527,6 +527,7 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them(lockout, said):
     # out of tries, whichever status CTFd says it with: the flag was not checked
     (403, {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"}, ("locked_out", 0)),
     (403, {"status": "incorrect", "message": "You have 0 tries remaining"}, ("locked_out", 0)),
+    (429, {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"}, ("locked_out", 0)),
     # a rate limit that passes: too fast, another submission being processed, CTFd's timeout behaviour
     (429, {"status": "ratelimited", "message": "You're submitting flags too fast. Try again in 41 seconds."}, ("ratelimited", None)),
     (403, {"status": "ratelimited", "message": "Another submission is already being processed. Try again shortly."},
@@ -538,8 +539,8 @@ def test_attempt_statuses_come_back_as_ctfd_gives_them(lockout, said):
     (200, {"status": "partial", "message": "Half of it. You have 1 try remaining."}, ("partial", 1)),
     (200, {"status": "incorrect", "message": "Incorrect. You have 0 tries remaining. Try again in 300 seconds"},
      ("incorrect", None)),
-], ids=["3.8.9 out of tries", "older out of tries", "too fast", "being processed", "timeout behaviour",
-        "the last try", "tries left", "partial with tries", "timeout's last try"])
+], ids=["3.8.9 out of tries", "older out of tries", "out of tries, another HTTP status", "too fast", "being processed",
+        "timeout behaviour", "the last try", "tries left", "partial with tries", "timeout's last try"])
 def test_an_answer_that_says_no_tries_remain_is_locked_out_and_the_tries_left_are_read_from_any_answer(http, data, expected):
     with FakeCTFd(sample()) as fake:
         fake.script("POST", "/api/v1/challenges/attempt", Reply(http, {"success": True, "data": data}))
