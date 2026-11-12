@@ -13,6 +13,20 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A leaderboard of the events flightdeck was used in, `docs/LEADERBOARD.md`, with an issue form
   to add yours, and an issue form for flight cards.
 
+### Headless runs and notifications
+
+- `flightdeck play --headless` (and `practice --headless`) plays a board with no console, by
+  the same rules: an approval waits and nothing is approved, since nobody is watching. It stops
+  on SIGTERM, Ctrl-C or a hang-up as quitting does (exit status 128 plus the signal), ends on
+  its own once nothing is left to do, and names each flag left waiting as it exits (#24).
+- Every run, with the console too, keeps `status.json` in its run folder: the lanes, what
+  needs you, the queue, spend and solves, replaced whole at each write, so a script, tmux or a
+  phone over SSH never reads half a file. The guide lists its fields (#24).
+- An opt-in notification webhook: `[notify] webhook_env` names the variable that holds its URL
+  (never the URL itself: it is a secret, kept out of logs, errors and the run folder), and
+  flightdeck POSTs a small JSON message when a flag is accepted, a lane needs you, or no more
+  lanes start. A flag's value is never sent; the guide lists every field (#24).
+
 ### Solvers (L1)
 
 - Categories: the long names boards use (Reverse Engineering, Binary Exploitation, Web
