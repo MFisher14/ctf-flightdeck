@@ -2,8 +2,29 @@
 
 from __future__ import annotations
 
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, MAX_BRIEF_FILES, brief, system_prompt
+import pytest
+
+from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, MAX_BRIEF_FILES, OFF_LIMITS, brief, system_prompt
 from ctf_flightdeck.core.model import Challenge
+
+PORT = Challenge("port", "Port of Call", "pwn", 250, description="The harbour master's service.\n\nConnection info: nc 127.0.0.1 31337")
+
+
+@pytest.mark.parametrize("instance", ["auto", "confirm"])
+def test_a_lane_that_may_reach_its_instance_gets_it_named_in_the_brief(instance):
+    text = brief(PORT, ["session.log"], ["tcp://127.0.0.1:31337"], instance=instance)
+    assert "Live instance: tcp://127.0.0.1:31337 (nc 127.0.0.1 31337)" in text and OFF_LIMITS not in text
+
+
+def test_under_instance_off_the_brief_offers_no_instance_and_says_the_events_rules_keep_the_lane_off_it():
+    text = brief(PORT, ["session.log"], ["tcp://127.0.0.1:31337"], instance="off")
+    fence, after = text.split(FENCE_CLOSE)
+    assert "Live instance: not yours to reach (the event's rules; see below)" in fence.splitlines()
+    assert "tcp://127.0.0.1:31337" not in text  # flightdeck offers none; the description says what it says, as data
+    assert after.strip() == OFF_LIMITS  # flightdeck's own words, outside the challenge's fence
+    assert "The event's rules keep you off this challenge's live instance: do not try to reach it" in OFF_LIMITS
+    nothing = brief(PORT, ["session.log"], [], instance="off")  # no instance: nothing to keep the lane off
+    assert "Live instance: none" in nothing and OFF_LIMITS not in nothing
 
 
 def test_the_brief_names_the_handout_and_fences_the_description():

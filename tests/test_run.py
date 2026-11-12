@@ -1001,11 +1001,14 @@ def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_c
     assert "Test Event: solved 0 of 1" in result.stdout and result.stdout.index("Spent 110") < result.stdout.index("run log: ")
 
 
-def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude):
+@pytest.mark.parametrize("instance", ["confirm", "off"])
+def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude, instance):
+    # so no coding-agent lane ever opens on a brief under "off": the run does not start
     with FakeModelServer() as server:
-        with pytest.raises(RunError, match='the instance policy is "confirm", but a claude lane reaches whatever its CLI can reach'):
+        with pytest.raises(RunError, match=f'the instance policy is "{instance}", but a claude lane reaches whatever its CLI '
+                                           "can reach"):
             prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url),
-                                   agent="claude", runtime="host", instance="confirm"))
+                                   agent="claude", runtime="host", instance=instance))
 
 
 def test_codex_lanes_need_their_ladder_in_the_config(tmp_path):

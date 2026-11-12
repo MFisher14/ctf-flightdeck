@@ -29,7 +29,7 @@ from ctf_flightdeck.clock import RunClock
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.agent.driver import NOT_RUN
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, NUDGE
+from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, NUDGE, OFF_LIMITS
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, EventKind, LaneState, PendingKind
 from ctf_flightdeck.pricing import Price
 
@@ -1941,6 +1941,8 @@ def test_under_off_a_lane_is_never_asked_and_its_http_tool_stays_off(tmp_path):
             (result,) = tool_messages(server.requests[1])
             assert "http is off: the event's rules keep lanes off the live instance" in result["content"]
             assert lane.pending is None or lane.pending.kind is not PendingKind.LIVE_BOX
+            first = server.requests[0]["json"]["messages"][1]["content"]  # the opening brief offers no instance
+            assert OFF_LIMITS in first and origin not in first
             await lab.finish()
 
     run(main())
