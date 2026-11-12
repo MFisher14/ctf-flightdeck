@@ -962,6 +962,17 @@ def test_a_judge_that_always_says_yes_takes_down_every_alert_and_the_wrong_ones_
     assert lines_of(text, "judge") == ["5", "2/5 40%", "3/5 60%"]  # stand-alone: every "yes" is right on 3 of 5
 
 
+def test_a_judge_that_always_says_no_never_raises_an_alert_the_rules_did_not():
+    cases = judge_set()
+    with FakeModelServer(responder=lambda record: text_reply("no")) as server:
+        report = run_eval(server.base_url, cases)
+    rules = lm.rules_baseline(cases)
+    # Where the rules see the technique there is no alert, and a run never asks the judge: its "no" changes nothing.
+    assert [r.in_run for r in report.results] == [r.in_run for r in rules.results] == [True, False, False, False, True]
+    assert not any(r.taken_down for r in report.results)
+    assert [r.correct for r in report.results] == [False, True, False, False, True]  # stand-alone, its "no" is scored
+
+
 def test_a_judge_that_fails_leaves_the_alert_up_in_a_run():
     cases = judge_set()[2:]
     with FakeModelServer([error_reply(500, "down"), text_reply("I'm sorry, I can't."), text_reply("yes")]) as server:
