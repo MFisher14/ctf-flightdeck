@@ -25,10 +25,11 @@ Rules the deck enforces:
   flightdeck never spends one of those tries on its own; each approval says how many are
   left, and a platform's answer that first says so is a warning under "auto";
 - once the platform says no tries are left at a challenge's flag (its answer to a flag, or
-  its count at a pull: platform_tries), the challenge is out of tries for the run: blocked,
-  out of the queue, its lanes stopped, and a warning says so. A flag the platform did not
-  check for want of tries is never taken for wrong, nor put to the player to submit by
-  hand: the platform checks no more flags for it, by hand either;
+  its count at a pull: platform_tries), the challenge is out of tries: blocked, out of the
+  queue, its lanes stopped, and a warning says so, until a newer count says tries are left
+  again (then it is parked for the player to queue). A flag the platform did not check for
+  want of tries is never taken for wrong, nor put to the player to submit by hand: the
+  platform checks no more flags for it, by hand either;
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
 - a lane that gave up while a flag of it waits is open only for that flag's answer: it takes
@@ -174,7 +175,8 @@ class Deck:
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
-        self._spent: set[str] = set()  # challenges out of tries: closed for the run (_out_of_tries)
+        self._spent: set[str] = set()  # challenges out of tries: closed until tries come back (_out_of_tries)
+        self._answered: dict[str, float] = {}  # challenge id -> when the platform last answered one of its flags
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
         self.closing = False  # the run is closing (close()): its lanes stop without ending
         self.listener_errors: list[str] = []  # listeners that raised (shown when the run ends)
@@ -370,10 +372,12 @@ class Deck:
         then the player submits it by hand and says how it went, as for a board that cannot
         check flags, but out of tries. `detail`: the platform's words, or why there is no
         verdict (untrusted). `tries_left`: the tries left on the challenge, when the platform
-        said; from then on its flags wait for the player, also under auto.
+        said; from then on its flags wait for the player, also under auto. On a challenge out
+        of tries a count above 0 is not taken (the answer can be older than the count that
+        closed it): a count asked after the answer opens it again (platform_tries).
 
         No tries left (tries_left 0, or 0 known before and no verdict now): the challenge is out
-        of tries for the run (_out_of_tries). A flag the platform did not check then is not
+        of tries (_out_of_tries). A flag the platform did not check then is not
         known to be wrong: it is not remembered as wrong, no lane hears it was, and nobody is
         asked to submit it by hand, since the platform checks no more flags for the challenge;
         a wrong one (the last try) is recorded wrong first.
@@ -395,8 +399,9 @@ class Deck:
         sent = line.pop(0)
         if not line:
             del self._lines[ch.id]
-        if tries_left is not None:
-            self._tries(ch, tries_left)
+        self._answered[ch.id] = self.now  # a count of its tries asked before now may be older than this answer
+        if tries_left is not None and not (tries_left and ch.id in self._spent):
+            self._tries(ch, tries_left)  # out of tries, only a count asked after this answer opens it (platform_tries)
         extra: dict[str, object] = {"detail": detail} if detail else {}
         if tries_left is not None:
             extra["tries_left"] = tries_left
@@ -432,22 +437,32 @@ class Deck:
             self._out_of_tries(ch, flag=flag if unchecked else None, detail=detail if unchecked else "")
         self._next_to_platform(ch, ok)
 
-    def platform_tries(self, challenge_id: str, left: int, *, before_run: bool = False) -> None:
+    def platform_tries(
+        self, challenge_id: str, left: int, *, before_run: bool = False, asked: float | None = None
+    ) -> None:
         """The platform says how many tries are left at a challenge's flag (CTFd's details at a
         pull: the tries it allows, less those this account, or its team, used). From then on
         every approval of one of its flags says the count, as after a flag's answer; at 0 the
-        challenge is out of tries for the run (_out_of_tries). A count above the one the deck
-        has is not taken: it can be older than the platform's answer to a flag that came since
-        (a try spent stays spent under CTFd's lockout, its default). `before_run`: the platform
-        said so before the run started. A challenge solved, or out of tries already, is left
-        as it is."""
+        challenge is out of tries (_out_of_tries). `asked`: when the count was asked, on the
+        deck's clock. A count above the one the deck has is taken only when it was asked
+        after the platform's last answer to a flag of the challenge (a count asked before it
+        can be older than a try that answer spent), and never without `asked`; taken, it
+        opens a challenge out of tries again (_tries_back): the platform gives tries back
+        (CTFd's timeout behaviour, or its admin). `before_run`: the platform said so before
+        the run started. A solved challenge is left as it is."""
         self._on_thread("platform_tries")
         ch = self.challenges[challenge_id]
-        if ch.closed or ch.id in self._spent or (ch.tries_left is not None and left >= ch.tries_left):
+        if ch.closed or left == ch.tries_left:
             return
+        if ch.tries_left is not None and left > ch.tries_left:
+            answered = self._answered.get(ch.id)
+            if asked is None or (answered is not None and answered >= asked):
+                return
         self._tries(ch, left)
         if ch.tries_left == 0:
             self._out_of_tries(ch, before_run=before_run)
+        elif ch.id in self._spent:
+            self._tries_back(ch)
 
     def note(self, lane_id: str, text: str) -> None:
         """A flightdeck note on a lane's transcript (from a component outside the deck); none
@@ -1467,12 +1482,13 @@ class Deck:
 
     def _out_of_tries(self, ch: Challenge, *, flag: str | None = None, detail: str = "", before_run: bool = False) -> None:
         """No tries are left at `ch`'s flag, so the platform checks no more flags for it: it is
-        out of tries for the run, blocked with a note that says so. It leaves the queue, each
+        out of tries, blocked with a note that says so, until the platform says tries are left
+        again (_tries_back). It leaves the queue, each
         lane on it stops, saying why (a flag of it waiting for the player is never submitted,
         and the lane's transcript says so), none of its flags waiting their turn goes out (one
         already sent is answered all the same), and one warning tells the player. `flag`: a
         flag the platform did not check for want of tries, with why (`detail`): the warning
-        says it is not known to be wrong. Once per challenge: a flag left unchecked later is a
+        says it is not known to be wrong. Once while it lasts: a flag left unchecked later is a
         warning of its own. `before_run`: the platform said so before the run started."""
         unchecked = ""
         if flag is not None:
@@ -1501,11 +1517,23 @@ class Deck:
             self._lines[ch.id] = [item for item in line if item.sent]
             if not self._lines[ch.id]:
                 del self._lines[ch.id]
-        text = f"{why}, so flightdeck closed it for this run" + (f" and stopped {', '.join(stopped)}" if stopped else "")
+        text = f"{why}, so flightdeck closed it" + (f" and stopped {', '.join(stopped)}" if stopped else "")
         if before_run:
             text += " (the platform said so before the run started)"
         self._emit(EventKind.WARNING, text + (f". {unchecked}" if unchecked else ""), challenge=ch.id,
                    data={**data, "stopped": stopped, "before_run": before_run})
+
+    def _tries_back(self, ch: Challenge) -> None:
+        """The platform says tries are left at the flag of `ch`, which was out of tries (CTFd's
+        timeout behaviour gives them back after a wait; its admin may raise the limit or clear
+        the tries): it is open again, parked, as after a lane's end, for the player to queue,
+        and a warning says so. Its flags wait for the player, as a counted challenge's do."""
+        self._spent.discard(ch.id)
+        ch.status = ChallengeStatus.PARKED
+        ch.note = f"out of tries no more: the platform says {_tries_text(ch)}"
+        self._emit(EventKind.WARNING, f"{ch.name} is out of tries no more: the platform now says {_tries_text(ch)}, so "
+                                      "flightdeck opened it again; queue it to work it",
+                   challenge=ch.id, data={"out_of_tries": False, "tries_left": ch.tries_left})
 
     def _end_if_gave_up(self, lane: Lane) -> bool:
         """A lane whose driver gave up while a flag waited ends once no flag waits (nothing

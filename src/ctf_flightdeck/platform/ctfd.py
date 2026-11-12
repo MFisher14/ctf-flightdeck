@@ -858,7 +858,7 @@ def _unjudged(attempt: Attempt) -> str:
     if attempt.status == "ratelimited":
         return f"CTFd rate-limited the submission and did not check the flag{said}. Wait, then submit it by hand"
     if attempt.status == "locked_out":
-        # no wait and no hand submit helps: the deck closes the challenge for the run (Deck.platform_verdict)
+        # no wait and no hand submit helps: the deck closes the challenge (Deck.platform_verdict)
         return f"CTFd did not check the flag: this account has no tries left on this challenge{said}"
     return f"CTFd says the flag is only part of the answer{said}; the challenge is not solved yet"
 

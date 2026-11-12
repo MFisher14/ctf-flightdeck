@@ -40,8 +40,9 @@ it is in (Deck.platform_verdict). A challenge whose tries CTFd counts (its max_a
 wrong flag's "N tries remaining") gets no flag without the player, under auto too. The tries
 left are what CTFd last said: in its answer to a flag, or in the challenge's details at each
 pull (the attempts used, by you or a teammate: Pull.tries, Deck.platform_tries), so a new run
-starts with them. With none left the challenge is out of tries for the run: no lane starts on
-it, those on it stop, and no flag of it goes to CTFd or to the player to submit by hand. A
+starts with them. With none left the challenge is out of tries: no lane starts on it, those
+on it stop, and no flag of it goes to CTFd or to the player to submit by hand, until a later
+pull finds tries left again (CTFd's timeout behaviour gives them back after a wait). A
 flag still on its way when the run ends is named on the way out, as not known to have been
 submitted.
 
@@ -269,7 +270,7 @@ class Run:
             self._watcher.apply(state)
         if self.ctfd is not None:
             self._apply_solves(before_run=True)  # what CTFd listed before the run started
-            self._apply_tries(before_run=True)  # and the tries its details said were left: none, and it is out of tries
+            self._apply_tries(self.ctfd.tries, before_run=True)  # and the tries its details said were left (none: out of tries)
             if self.ctfd.waves:
                 self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
             self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
@@ -373,15 +374,15 @@ class Run:
                 continue
             self.deck.platform_solved(cid, link.who(cid), before_run=before_run)
 
-    def _apply_tries(self, *, before_run: bool = False) -> None:
-        """Give the deck the tries CTFd's details said were left at the last pull
-        (Deck.platform_tries): from then on each approval of the challenge's flags says the
-        count, and at 0 it is out of tries for the run. `before_run`: the first pull's."""
-        link = self.ctfd
-        assert link is not None
-        for cid, left in sorted(link.tries.items()):
+    def _apply_tries(self, tries: Mapping[str, int], *, before_run: bool = False, asked: float | None = None) -> None:
+        """Give the deck the tries CTFd's details said were left at a pull (Pull.tries;
+        Deck.platform_tries): from then on each approval of the challenge's flags says the
+        count, at 0 it is out of tries, and a count above the deck's opens it again when it
+        was `asked` (the deck's clock as the pull began) after CTFd's last answer to a flag of
+        it. `before_run`: the first pull's."""
+        for cid, left in sorted(tries.items()):
             if cid in self.deck.challenges:
-                self.deck.platform_tries(cid, left, before_run=before_run)
+                self.deck.platform_tries(cid, left, before_run=before_run, asked=asked)
 
     def _confirming(self, cid: str) -> bool:
         """Whether a lane on it waits for the player to say if a flag they submitted by hand
@@ -400,6 +401,7 @@ class Run:
         every = self.options.wave_seconds
         while True:
             await asyncio.sleep(every)
+            asked = self.deck.now  # the counts of tries this pull reads are no older than this
             try:
                 result = await pull(link.client, link.folder, event=link.event, flag_format=link.flag_format)
             except Exception as exc:  # CTFdError, BoardError, OSError, or a bug: say so, and try again later
@@ -409,15 +411,16 @@ class Run:
                 continue
             link.problems.pop("waves", None)
             try:
-                self._wave(result)
+                self._wave(result, asked)
             except Exception as exc:  # a bug: say so, and keep pulling
                 self._ctfd_problem("release", f"could not release the new challenges from CTFd: {type(exc).__name__}: {exc}")
             else:
                 link.problems.pop("release", None)
 
-    def _wave(self, result: Pull) -> None:
+    def _wave(self, result: Pull, asked: float | None = None) -> None:
         """What a pull of the waves brought: the new challenges, released, and the tries CTFd's
-        details say are left now (a teammate may have spent some), new challenges or not."""
+        details say are left now (a teammate may have spent some, or CTFd given some back), new
+        challenges or not. `asked`: the deck's clock as the pull began."""
         link = self.ctfd
         assert link is not None
         link.ids.update(result.ids)
@@ -438,7 +441,7 @@ class Run:
             link.wave += 1
             self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), f"Wave {link.wave}")
             self._apply_solves()
-        self._apply_tries()
+        self._apply_tries(result.tries, asked=asked)
 
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""
@@ -962,7 +965,7 @@ class _Submits:
     the deck the answer (Deck.platform_verdict), with the tries CTFd says are left. When CTFd
     did not judge the flag (paused, rate-limited, no answer, part of the answer) its reason
     is a warning on the deck, which then asks the player to submit it by hand. Out of tries
-    ("locked_out") is no such warning: the deck closes the challenge for the run and says so,
+    ("locked_out") is no such warning: the deck closes the challenge and says so,
     with CTFd's words, and asks nobody to submit the flag by hand (CTFd checks none).
     "already solved" (by the account, so by the team) is news, not a problem: the run takes
     CTFd's word for it, as for a solve its poll finds, without waiting for the player's
@@ -1153,8 +1156,9 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
 
 def _tries_notes(result: Pull) -> list[str]:
     """What the player should know of the tries CTFd counts, as the first pull read them: how
-    many are left at each such flag, which challenges are out of tries (no lane works them in
-    this run), and which counts could not be read (their flags wait for you all the same)."""
+    many are left at each such flag, which challenges are out of tries (no lane works them
+    while CTFd says so), and which counts could not be read (their flags wait for you all the
+    same)."""
     notes: list[str] = []
     names = {b.challenge.id: b.challenge for b in result.board.challenges}
     for cid, left in sorted(result.tries.items()):
@@ -1164,7 +1168,7 @@ def _tries_notes(result: Pull) -> list[str]:
         name, most = _show(ch.name), ch.max_attempts
         if left == 0:
             notes.append(f"{name}: CTFd says no tries are left at its flag ({most} allowed), so it is out of tries: no lane "
-                         "works it in this run and flightdeck sends no flag for it")
+                         "works it and flightdeck sends no flag for it while CTFd says so")
         else:
             notes.append(f"{name}: CTFd allows {most} tries at its flag and {left} {'is' if left == 1 else 'are'} left; "
                          "each of its flags waits for you")

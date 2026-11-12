@@ -217,8 +217,8 @@ def test_out_of_tries_on_ctfd_the_challenge_closes_for_the_run_and_its_unchecked
     assert not [e for e in log(run) if e["kind"] == "pending" and e["data"]["kind"] == "confirm"]  # no hand submit asked
     (warning,) = [e for e in log(run) if e["kind"] == "warning"]  # one, and no advice to wait
     assert warning["text"] == (
-        "Warmup is out of tries: the platform checks no more flags for it, so flightdeck closed it for this run and "
-        "stopped L01. test{hello} is not known to be wrong: CTFd did not check the flag: this account has no tries "
+        "Warmup is out of tries: the platform checks no more flags for it, so flightdeck closed it and stopped L01. "
+        "test{hello} is not known to be wrong: CTFd did not check the flag: this account has no tries "
         f"left on this challenge (CTFd says: {said})"
     )
     assert warning["data"] == {"out_of_tries": True, "tries_left": 0, "flag": "test{hello}", "checked": False,
@@ -245,11 +245,11 @@ def test_a_new_run_knows_the_tries_already_used_on_ctfd(tmp_path, token):
     assert (rsa.status, rsa.tries_left, rsa.note) == (ChallengeStatus.BLOCKED, 0, "out of tries: the platform checks no more flags for it")
     assert run.deck.challenges["warmup"].tries_left == 1 and fake.to(ATTEMPT) == []
     assert "Warmup: CTFd allows 2 tries at its flag and 1 is left; each of its flags waits for you" in notes
-    assert ("Baby RSA: CTFd says no tries are left at its flag (2 allowed), so it is out of tries: no lane works it in "
-            "this run and flightdeck sends no flag for it") in notes
+    assert ("Baby RSA: CTFd says no tries are left at its flag (2 allowed), so it is out of tries: no lane works it "
+            "and flightdeck sends no flag for it while CTFd says so") in notes
     (warning,) = [e for e in log(run) if e["kind"] == "warning"]
     assert warning["challenge"] == "baby-rsa" and warning["text"] == (
-        "Baby RSA is out of tries: the platform checks no more flags for it, so flightdeck closed it for this run "
+        "Baby RSA is out of tries: the platform checks no more flags for it, so flightdeck closed it "
         "(the platform said so before the run started)"
     )
     assert (warning["data"]["before_run"], warning["data"]["stopped"]) == (True, [])
@@ -299,6 +299,33 @@ def test_a_new_run_works_a_challenge_whose_ctfd_count_of_tries_takes_partial_ans
         play(run, body)
     assert submits(run) == [("test{both}", True, "platform")] and fake.solved == {1}
     assert not [note for note in notes if "Two Parts" in note] and not [e for e in log(run) if e["kind"] == "warning"]
+
+
+def test_under_ctfds_timeout_behaviour_a_wave_that_finds_tries_left_again_opens_the_challenge(tmp_path, token):
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=2)
+    window = {"id": 1, "name": "Warmup", "value": 50, "category": "Misc", "description": "", "max_attempts": 2,
+              "attempts": 2, "logic": "any", "solved_by_me": False, "files": [], "type": "standard", "solves": 0}
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=Model({})) as server:
+        # the first pull comes inside CTFd's timeout: both tries used; the waves come after it (the fake's own count)
+        fake.script("GET", "/api/v1/challenges/1", Reply(200, {"success": True, "data": window}))
+        run = auto_run(tmp_path, fake, server, wave_seconds=0.05)
+
+        async def body(run):
+            ch = run.deck.challenges["warmup"]
+            assert (ch.status, ch.tries_left, run.deck.lanes) == (ChallengeStatus.BLOCKED, 0, {})
+            await wait_for(lambda: ch.status is ChallengeStatus.PARKED, "a wave that finds the tries back")
+            assert (ch.tries_left, ch.note) == (2, "out of tries no more: the platform says 2 tries left of 2")
+            assert run.deck.apply(iv.Queue("warmup")).ok
+            assert [lane.challenge_id for lane in run.deck.active_lanes()] == ["warmup"]
+
+        play(run, body)
+    closed, opened = [e for e in log(run) if e["kind"] == "warning"]
+    assert closed["data"]["out_of_tries"] is True and closed["data"]["before_run"] is True
+    assert opened["challenge"] == "warmup" and opened["text"] == (
+        "Warmup is out of tries no more: the platform now says 2 tries left of 2, so flightdeck opened it again; "
+        "queue it to work it"
+    )
+    assert opened["data"] == {"out_of_tries": False, "tries_left": 2}
 
 
 def test_a_pull_carries_the_tries_ctfd_allows_onto_the_board(tmp_path):
