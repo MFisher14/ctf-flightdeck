@@ -1,6 +1,9 @@
 # Tests and the secret scan on every push and pull request. No secrets are needed: the tests use
-# local fakes only (a fake model server, a fake CTFd, fake agent CLIs), and the docker tests
-# report as not run when their image is absent (they never pull one).
+# local fakes only (a fake model server, a fake CTFd, fake agent CLIs). No test pulls or builds
+# an image: a Docker test whose image is absent reports as not run. So the Linux job pulls the
+# test image in a step of its own and sets FLIGHTDECK_REQUIRE_DOCKER=1, which makes a Docker
+# test that cannot run fail (CONTRIBUTING.md): the job passes only when they ran. The macOS
+# runner has no Docker, and there they report as not run, with the reason in pytest's summary.
 name: tests
 
 on:
@@ -24,4 +27,29 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --locked
       - run: python3 -I .githooks/secret_scan.py --all
-      - run: uv run pytest -q
+      - name: Pull the image the Docker tests use (the tests never pull)
+        if: runner.os == 'Linux'
+        run: docker pull debian:bookworm-slim
+      - name: pytest (on Linux a Docker test that cannot run fails)
+        env:
+          FLIGHTDECK_REQUIRE_DOCKER: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: uv run pytest -q
+
+  # A Python L1 engine in the image flightdeck ships, and a real lane behind its fenced network
+  # (it reaches its instance and not a second server): the image is built here (the Debian base
+  # and its packages, a few minutes), then its test must run (FLIGHTDECK_REQUIRE_LANE_IMAGE=1
+  # fails it where the image is absent) and -v names it in the log.
+  lane-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Build the lane image
+        run: uv run flightdeck image build
+      - name: A Python L1 engine in the lane image, and a lane's fenced network
+        env:
+          FLIGHTDECK_REQUIRE_LANE_IMAGE: "1"
+        run: uv run pytest -v tests/test_l1_lane_image.py tests/test_egress.py

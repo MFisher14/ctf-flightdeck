@@ -4,7 +4,9 @@ One asyncio task per lane, on the console's event loop, so every Deck call happe
 deck's thread (the LaneDriver contract in core/driver.py). A turn is one model call: the
 reply's tool calls run in the lane's workspace, their results go back into the lane's
 context, and the turn is reported to the deck (tokens, cost, the step, changed files, a
-candidate flag). The deck applies the rules (approvals, caps, the flag format); the loop
+candidate flag). The step is one for the console and the detectors (_step: the turn's first
+real call, with "(+N more)" for the rest); with it goes every tool call the turn ran, each
+with a longer excerpt of its output, which the lane's transcript keeps (TurnReport.calls). The deck applies the rules (approvals, caps, the flag format); the loop
 calls the model, and runs a tool call, only while the lane is RUNNING, and waits otherwise.
 
 Each lane starts with a fresh context: the fixed system prompt, then the challenge brief (and,
@@ -40,6 +42,15 @@ or for the platform's answer). A model call that
 fails in a way every lane would (no answer, a refused key, an unknown model) holds the deck's
 queue before the lane ends, so the next challenges are not started only to fail the same way.
 
+The secrets the run holds (`secrets`: run.py's _held_secrets, name -> value) never reach the
+model or the deck by value: each is replaced by [NAME] (agent/held.py) in what a tool call
+gave, where it arrives and before anything cuts it (the lane's Toolbox), in every report to
+the deck (its step, its plan, its files' diffs; never its flag), in the driver's notes on the
+lane, and in what else the driver writes into the lane's context (what the L1 engines found,
+the first look, the player's and flightdeck's messages, a summary). A host lane can read the
+keys file; this keeps the values out of the model's API and out of every record, as
+agent/external.py does for its lanes. It is cleanup, not a fence.
+
 Escalation and take-over are turn boundaries. Each bumps the lane's generation, and a reply
 asked for in an older generation runs no further tool call. After an escalation none of
 it goes into the new context (it belongs to the old one). After a take-over the calls it
@@ -61,17 +72,18 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ..core.driver import TakeoverRefused, TurnReport, spend_only
-from ..core.model import Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
+from ..core.model import Call, Challenge, EscalationSummary, Lane, LaneState, Pending, PendingKind
 from ..core.summary import lane_summary
 from ..l1.runner import scan
 from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import owntext, prompts
-from .client import ChatClient, ModelError, Reply, Usage
+from .client import RETRY_STATUSES, ChatClient, ModelError, Reply, Usage
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
+from .held import Secrets
 from .facts import FirstLooks, Look
-from .l1stage import FLAG_STATUSES, L1Stage, result_line
+from .l1stage import L1Stage, StageLane, run_stage
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
     PRIVATE,
@@ -112,6 +124,16 @@ EVERY_LANE = {  # HTTP statuses of a model API that every lane would get alike, 
     404: "check the model id in the [models] ladder, and base_url",
     405: "check base_url",
 }
+# A model API failure that may pass (_may_pass) ends its own lane only. That many lanes ending on one in a row, each
+# within that long of the one before and with no reply from the API in between, is an outage: the queue is held.
+OUTAGE_LANES = 2
+OUTAGE_SECONDS = 300.0
+
+
+def _may_pass(status: int | None) -> bool:
+    """Whether a model API's failure is one that may pass on its own: a status the client
+    tries again (a timeout, a rate limit, a 5xx) or any other 5xx (Anthropic's 529 overloaded)."""
+    return status is not None and (status in RETRY_STATUSES or status >= 500)
 
 
 def web_origins(urls: Sequence[str]) -> tuple[str, ...]:
@@ -299,8 +321,12 @@ class AgentDriver:
         instance: str = "auto",
         flaggate: FlagGate | None = None,
         lights: Lights | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> None:
+        """`secrets`: name -> value of what must never reach a lane's model or the deck (run.py's
+        _held_secrets), each shown as [NAME] wherever a lane's tool calls give it."""
         self.client = client
+        self.redact = Secrets(secrets)
         self.workspaces = workspaces
         self.run_id = run_id
         self.files = dict(files or {})  # challenge id -> handout file names, for the brief
@@ -317,6 +343,7 @@ class AgentDriver:
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.answered: set[str] = set()  # the models that have answered a lane in this run
+        self.outage: list[tuple[str, float]] = []  # lanes that ended in a row on a failure that may pass, and when (_outage)
         self.deck = None
         self.lights = lights  # the run's light engines (light.Lights): route and recon at a lane's start; None: none
         self.looks = FirstLooks(self.errors)
@@ -334,14 +361,14 @@ class AgentDriver:
         workspace = self.workspaces(lane, challenge)
         urls = self.urls.get(challenge.id, ())
         if urls and self.instance == "confirm":
-            toolbox = Toolbox(workspace, http_off="the player has not allowed the live instance yet")
+            toolbox = Toolbox(workspace, scrub=self.redact, http_off="the player has not allowed the live instance yet")
         elif urls and self.instance == "off":
-            toolbox = Toolbox(workspace, http_off="the event's rules keep lanes off the live instance")
+            toolbox = Toolbox(workspace, scrub=self.redact, http_off="the event's rules keep lanes off the live instance")
         elif urls and not web_origins(urls):  # a TCP service (`nc host port`): the shell reaches it, not http
-            toolbox = Toolbox(workspace, http_off=f"this challenge's instance is not a web server ({', '.join(urls)}): "
+            toolbox = Toolbox(workspace, scrub=self.redact, http_off=f"this challenge's instance is not a web server ({', '.join(urls)}): "
                                                   "reach it from the shell, for example with nc")
         else:
-            toolbox = Toolbox(workspace, http_allow=web_origins(urls))
+            toolbox = Toolbox(workspace, scrub=self.redact, http_allow=web_origins(urls))
         run = _Run(
             lane_id=lane.id,
             challenge=challenge,
@@ -383,7 +410,7 @@ class AgentDriver:
         run.idle_turns = 0  # the stronger model gets its own chances
         run.session = self._session(lane.id, run.escalations)
         text = lane_summary(self.deck, lane, before=summary)
-        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.escalation(text)}]
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.escalation(text))}]
         run.wake.set()  # flightdeck's notes stay queued: the stronger model reads them with its first call
 
     def approved(self, lane: Lane, pending: Pending) -> None:
@@ -484,7 +511,7 @@ class AgentDriver:
             hints = list(lane.hints)
             notes, run.notes = run.notes, []
             if hints or notes:  # the player spoke (or flightdeck on their behalf): a reply to it starts the count again
-                run.messages.append({"role": "user", "content": prompts.player_message(hints, notes)})
+                run.messages.append({"role": "user", "content": self.redact(prompts.player_message(hints, notes))})
                 run.idle_turns = 0
             generation, model, messages = run.generation, run.model, run.messages
             try:
@@ -507,9 +534,9 @@ class AgentDriver:
                 self._failed(run, exc, model, len(hints))
                 return
             run.uncounted = (model, reply.usage)  # until its turn (or its drop) reports what it cost
-            self.answered.add(model)
+            self._answered(model)
             if reply.notice:
-                self.deck.note(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
+                self._say(run.lane_id, f"{run.lane_id} {reply.notice}")  # e.g. it moved to the fallback API
             if not await self._until_running(run, generation) and self._over(run):
                 return  # killed or finished while the model was thinking
             if run.generation != generation:
@@ -574,55 +601,34 @@ class AgentDriver:
         online only when the lane may reach the challenge's instance at once (instance auto): it
         runs before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
-        online = bool(self.urls.get(run.challenge.id)) and self.instance == "auto"
-        try:
-            runs = await self.l1.run(run.lane_id, run.challenge, online=online)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
-            self.errors.append(f"{run.lane_id}: L1 did not run: {type(exc).__name__}: {exc}")
-            self.deck.note(run.lane_id, f"L1 did not run: {type(exc).__name__}: {exc}")
-            return
-        if self._over(run):
-            return
-        if not runs:
-            self.deck.note(run.lane_id, "L1: no engine in the pack routes to this challenge")
-            return
-        for engine in runs:
-            res = engine.result
-            self.deck.record_l1(run.challenge.id, engine.manifest.id, res.status, flags=res.flags,
-                                seconds=engine.seconds, notes=res.notes, lane_id=run.lane_id)
-        # an engine's own result is claimed: under auto each is looked for in the challenge's own text first
-        await self._vet(run, [flag for engine in runs if engine.result.status in FLAG_STATUSES and not engine.scraped
-                              for flag in engine.result.flags])
-        if self._over(run):
-            return
-        for engine in runs:
-            if engine.result.status in FLAG_STATUSES:
-                for flag in engine.result.flags:
-                    # a match in what a text engine printed may be the challenge's decoy, and so may a flag the
-                    # challenge's own text holds, or may (a stand-in flag.txt an engine read out as its result): either waits
-                    why = "" if engine.scraped else self._own_text(run, flag)
-                    # as _turn: not said of a flag known not to be the flag (the deck says why it is not asked)
-                    said = bool(why) and self.deck.not_flag(run.challenge.id, flag) is None
-                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not why))
-                    if said:
-                        self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though your L1 engine "
-                                                    f"{engine.manifest.id} gave it as its flag")
-        if not self._over(run):
-            run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
+        # the stage itself is l1stage.run_stage, which a coding-agent lane runs too (agent/external.py)
+        text = await run_stage(self.l1, self.deck, StageLane(
+            lane_id=run.lane_id,
+            challenge=run.challenge,
+            online=bool(self.urls.get(run.challenge.id)) and self.instance == "auto",
+            over=lambda: self._over(run),
+            note=lambda said: self._say(run.lane_id, said),
+            error=self.errors.append,
+            vet=lambda flags: self._vet(run, flags),
+            own_text=lambda flag: self._own_text(run, flag),
+            report=lambda rep: self._report(run, rep),
+            redact=self.redact,
+        ))
+        if text is not None:
+            run.l1_message = {"role": "user", "content": text}
             run.messages.append(dict(run.l1_message))
 
     async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:
-        """The player allowed the live instance: connect a docker lane's container to the
-        network (it started with none) and let the http tool reach the instance."""
-        connect = getattr(run.workspace, "connect_network", None)
+        """The player allowed the live instance: give a docker lane's container (it started with
+        no network) a network that reaches the instance and nothing else
+        (DockerWorkspace.open_instance), and let the http tool reach the instance."""
+        connect = getattr(run.workspace, "open_instance", None)
         try:
             if connect is not None:
-                await connect("bridge")
+                await connect()
         except WorkspaceError as exc:
             run.instance = "failed"
-            self.deck.note(run.lane_id, f"could not open the network to the live instance: {exc}")
+            self._say(run.lane_id, f"could not open the network to the live instance: {exc}")
             run.notes.append(f"flightdeck could not open the network to the live instance ({exc}): work from the handout.")
             return
         if web_origins(urls):
@@ -659,10 +665,26 @@ class AgentDriver:
         A failure every lane would get alike (a refused key, an unknown model, an API that does
         not answer: _every_lane) first holds the deck's queue, saying why and what to check,
         so the next challenges stay queued instead of each starting a lane that fails the same
-        way. The lanes already running end as this one does when they hit it."""
+        way. The lanes already running end as this one does when they hit it.
+
+        A failure that may pass (a rate limit, a 5xx, an overload) ends only its own lane, until
+        lanes keep ending on it with no reply from the API in between (_outage): then the
+        queue is held too, and the challenges those lanes park go back on it when the player
+        lifts the hold."""
         check = self._every_lane(error, model)
         if check:
-            self.deck.hold_queue(f"{run.lane_id}'s call to {model} failed in a way every lane would ({check}): {error}")
+            # a failure that may pass, before the model ever answered: its challenge is queued again with the outage's
+            ended = [run.lane_id] if not error.declined and _may_pass(error.status) else []
+            self.deck.hold_queue(f"{run.lane_id}'s call to {model} failed in a way every lane would ({check}): {error}", ended=ended)
+        else:
+            ended = self._outage(run, error)
+            if ended:
+                self.deck.hold_queue(
+                    f"the model API keeps failing: {len(ended)} lanes in a row ended on it ({', '.join(ended)}) with no reply "
+                    f"in between. Lift the hold once it answers again: the challenges they parked are queued again. "
+                    f"{run.lane_id}'s call to {model}: {error}",
+                    ended=ended,
+                )
         usage = error.usage
         self._apart(run, model, usage)  # before the lane ends: then nothing more is reported
         tokens = usage.total if usage else 0
@@ -674,6 +696,7 @@ class AgentDriver:
             action, gave_up = f"model call to {model} failed", f"model API error: {error}"
         self._report(run, TurnReport(turn=False, action=action, output=str(error), tokens=tokens, cached_tokens=cached,
                                      dollars=dollars, hints_taken=hints_taken, gave_up=gave_up,
+                                     declined=error.declined,
                                      model=(usage.model or None) if usage else None))
 
     def _every_lane(self, error: ModelError, model: str) -> str:
@@ -694,6 +717,32 @@ class AgentDriver:
         if model not in self.answered:
             return f"no lane has had an answer from {model} yet: check the model id and base_url"
         return ""
+
+    def _outage(self, run: _Run, error: ModelError) -> list[str]:
+        """Count a failure that ended this lane for good and may pass (_may_pass: a rate limit,
+        a 5xx, Anthropic's 529), and return the lanes of the outage it belongs to once it
+        looks like one, else []. An outage is OUTAGE_LANES lanes or more ending that way in
+        a row: no reply from the model API in between (_answered clears the count), and each
+        within OUTAGE_SECONDS of the one before. Only failures that reach _failed count: not a
+        superseded call's (_overtaken), nor one a [fallback] API took over. Lanes share one
+        model API (the driver's client), so the count is the run's.
+
+        While the hold it led to stands, each further lane ending this way is of the same
+        outage. Once the player has lifted that hold, the count starts again."""
+        if error.declined or not _may_pass(error.status):
+            return []
+        now = self.deck.now
+        lifted = len(self.outage) >= OUTAGE_LANES and not self.deck.held  # we held the queue, and the player lifted it
+        if lifted or (self.outage and now - self.outage[-1][1] > OUTAGE_SECONDS):
+            self.outage.clear()
+        self.outage.append((run.lane_id, now))
+        return [lane_id for lane_id, _ in self.outage] if len(self.outage) >= OUTAGE_LANES else []
+
+    def _answered(self, model: str) -> None:
+        """The model API answered a lane's call: `model` is known to answer in this run, and
+        whatever failures came before were not an outage that still lasts."""
+        self.answered.add(model)
+        self.outage.clear()
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
                    usage: Usage | None = None, model: str = "", *, declined: bool = False) -> None:
@@ -802,6 +851,7 @@ class AgentDriver:
             TurnReport(
                 action=action,
                 output=output,
+                calls=tuple(Call(result.action, result.excerpt) for result in results),  # all of them, for the transcript
                 tokens=usage.total,
                 cached_tokens=usage.cached_tokens,
                 dollars=self._dollars(model, reply),
@@ -816,9 +866,9 @@ class AgentDriver:
         for flag in raised[1:]:  # more candidates in one reply: each is its own approval
             self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in own))
         for flag, why in told.items():
-            self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though the lane submitted it")
+            self._say(run.lane_id, f"{flag} {why}, so it waits for you, though the lane submitted it")
         for flag in again:
-            self.deck.note(run.lane_id, f"candidate {flag} again; not raised: the light model is still checking it")
+            self._say(run.lane_id, f"candidate {flag} again; not raised: the light model is still checking it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
             if self.flaggate is None or not self.flaggate.under_check(run.lane_id, flag):  # else the check has it
                 self._report(run, TurnReport(turn=False, flag=flag, claimed=False))
@@ -881,8 +931,8 @@ class AgentDriver:
         if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
             return
         summary = lane_summary(self.deck, lane)
-        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": prompts.refresh(summary, prompt_tokens)}]
-        self.deck.note(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
+        run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.refresh(summary, prompt_tokens))}]
+        self._say(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
 
     # ------------------------------------------------------------------ helpers
 
@@ -895,7 +945,7 @@ class AgentDriver:
         look, run.look = run.look, None
         if look is None:
             return
-        run.recon = self.looks.opening(look, self.deck, run.lane_id, self._flag_re())
+        run.recon = self.redact(self.looks.opening(look, self.deck, run.lane_id, self._flag_re()))
         if run.recon and len(run.messages) > 1:
             lane = self._lane(run)
             run.messages[1] = self._fresh(run, lane.approach if lane is not None else "")[1]
@@ -913,7 +963,7 @@ class AgentDriver:
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
                                          approach, flag_format=self.deck.config.flag_format, recon=run.recon,
-                                         instance=self.instance),
+                                         instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None)),
             },
         ]
         if run.l1_message is not None:
@@ -981,6 +1031,7 @@ class AgentDriver:
         lane = self._lane(run)
         if lane is None:
             return
+        report = self.redact.scrub(report)  # the one way to the deck: no secret the run holds goes by value (never the flag)
         if lane.finished or run.stopped:
             if spend_only(report):  # what was spent counts after the lane's end too (Deck.report): _count_cut
                 self.deck.report(run.lane_id, report)
@@ -990,6 +1041,11 @@ class AgentDriver:
             if report is None:
                 return
         self.deck.report(run.lane_id, report)
+
+    def _say(self, lane_id: str, text: str) -> None:
+        """A note of the driver's on a lane, the run's secrets out of it (it may quote what a
+        lane's engine or its model's API wrote)."""
+        self.deck.note(lane_id, self.redact(text))
 
     def _note(self, lane: Lane, text: str) -> None:
         run = self.runs.get(lane.id)
@@ -1011,7 +1067,7 @@ class AgentDriver:
             return
         services = unlisted_services(run.challenge.description, self.urls.get(run.challenge.id, ()))
         if services:
-            self.deck.note(run.lane_id, instance_note(services, run.workspace))
+            self._say(run.lane_id, instance_note(services, run.workspace))
 
     async def _close(self, run: _Run) -> None:
         """Close the lane's workspace once. The close runs shielded: cancelling the lane's

@@ -21,14 +21,15 @@ import typer
 from markdown_it import MarkdownIt
 from typer.testing import CliRunner
 
-from ctf_flightdeck import gaps_cli
+from ctf_flightdeck import build_cli, gaps_cli
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import ME, Challenge, DeckConfig
 from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.gaps import (
-    NO_L1, NO_ROUTE, GapError, L1Solve, Routed, gap_report, gaps, gaps_json, gaps_markdown, summary,
+    NO_L1, NO_PASTE, NO_ROUTE, GapError, L1Solve, Routed, build_command, gap_report, gaps, gaps_json, gaps_markdown,
+    pasteable, summary,
 )
 from ctf_flightdeck.l1.manifest import ManifestError
 from ctf_flightdeck.mock.world import ManualClock
@@ -569,7 +570,7 @@ def section(text: str, start: str) -> list[str]:
 
 
 def test_the_markdown_has_a_glance_a_section_per_gap_and_the_l1_solves(played, tmp_path):
-    _, board, record = played
+    board_dir, board, record = played
     rep = gap_report(record, pack=write_pack(tmp_path / "pack", tmp_path / "marker"), board=board)
     text = gaps_markdown(rep)
     assert headings(text, "h1") == ["Gaps: Test CTF"]
@@ -595,11 +596,12 @@ def test_the_markdown_has_a_glance_a_section_per_gap_and_the_l1_solves(played, t
         "- Why L1 did not solve it: routed: zsteg blocked (missing tools: zsteg (not on PATH); nothing ran); "
         "strings unsure (timed out after 60s)",
         "- Routed now: pcap.carve (priority 70: file 'dump.pcap' (ext:.pcap))",
+        f"- Build an engine for it: `flightdeck build gap {board_dir.resolve() / 'delta'} --pack {tmp_path / 'pack'}`",
     ]
-    assert section(text, "### Golf")[-1] == (
+    assert section(text, "### Golf")[-2] == (
         "- Routed now: pcap.carve (priority 70: file 'traffic.pcap' (ext:.pcap)); decode.b64 (priority 60: keyword 'base64')"
     )
-    assert section(text, "### Echo")[-1] == "- Routed now: no engine in the pack"
+    assert section(text, "### Echo")[-2] == "- Routed now: no engine in the pack"
     assert section(text, "## Solved by L1") == ["- Bravo: sqli", "- India: rsa"]
     assert "## Problems reading the run" not in text
 
@@ -663,7 +665,7 @@ def test_a_plain_list_of_gaps_renders_on_its_own(played):
 
 
 def test_the_json_holds_every_gap_for_build_mode(played, tmp_path):
-    _, board, record = played
+    board_dir, board, record = played
     pack = write_pack(tmp_path / "pack", tmp_path / "marker")
     data = json.loads(gaps_json(gap_report(record, pack=pack, board=board)))
     assert {k: data[k] for k in ("schema", "run", "event", "challenges", "l1_results", "pack", "engines", "notes")} == {
@@ -675,6 +677,8 @@ def test_the_json_holds_every_gap_for_build_mode(played, tmp_path):
         "l1": [{"engine": "zsteg", "status": "blocked"}, {"engine": "strings", "status": "unsure"}],
         "reason": "routed: zsteg blocked (missing tools: zsteg (not on PATH); nothing ran); strings unsure (timed out after 60s)",
         "routed": [{"engine": "pcap.carve", "priority": 70, "why": "file 'dump.pcap' (ext:.pcap)"}],
+        "folder": str(board_dir.resolve() / "delta"),
+        "build": f"flightdeck build gap {board_dir.resolve() / 'delta'} --pack {pack}",
     }
     assert [g["challenge"] for g in data["gaps"]] == ["alpha", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
     assert data["solved_by_l1"] == [
@@ -689,6 +693,7 @@ def test_the_json_says_null_for_what_is_unknown_and_never_holds_a_flag(played):
     data = json.loads(text)
     hotel = next(g for g in data["gaps"] if g["challenge"] == "hotel")
     assert hotel["points"] is None and hotel["routed"] is None and data["pack"] is None and data["event"] is None
+    assert hotel["folder"] is None and hotel["build"] is None  # no board, so no folder; no pack, so no command
     assert not re.search(r"t\{", text) and not re.search(r"t\{", gaps_markdown(gap_report(record)))
 
 
@@ -791,6 +796,123 @@ def test_the_summary_is_a_few_plain_lines(played, tmp_path):
     )
     rep = gap_report(record, pack=write_pack(tmp_path / "pack", tmp_path / "marker"), board=board)
     assert summary(rep).splitlines()[1] == "Routed now: 4 of 7 gaps on the board reach an engine in the pack"
+
+
+# ---------------------------------------------------------------------- the build command for each gap
+
+GAP_IDS = ["alpha", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+ODD = "it's a $(touch pwned) *b* `t` <img src=x> [l](javascript:x) & ; #"  # one folder name: shell and Markdown syntax
+
+
+def build_app() -> typer.Typer:
+    """The main CLI's shape for build mode: `flightdeck build gap ...`."""
+    root = typer.Typer()
+    root.add_typer(build_cli.app, name="build")
+    return root
+
+
+def code_spans(text: str) -> list[str]:
+    return [t.content for t in walk(text) if t.type == "code_inline"]
+
+
+def test_with_the_board_and_a_pack_each_gap_carries_its_build_command_in_the_markdown_and_the_summary(played, tmp_path):
+    board_dir, board, record = played
+    pack = write_pack(tmp_path / "pack", tmp_path / "marker")
+    rep = gap_report(record, pack=pack, board=board)
+    commands = [f"flightdeck build gap {board_dir.resolve() / cid} --pack {pack}" for cid in GAP_IDS]
+    assert [gap.build for gap in rep.gaps] == commands
+    assert [gap.folder for gap in rep.gaps] == [str(board_dir.resolve() / cid) for cid in GAP_IDS]
+    text = gaps_markdown(rep)
+    for name, command in zip(("Alpha", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel"), commands, strict=True):
+        assert section(text, f"### {name}")[-1] == f"- Build an engine for it: `{command}`"  # each gap ends with its own
+    assert code_spans(text) == commands  # and a reader of the rendered page sees each exactly
+    assert summary(rep).splitlines()[2:] == [
+        "Build an engine for a gap (7 gaps on the board, one line each):", *(f"  {command}" for command in commands),
+    ]
+    assert [g["build"] for g in json.loads(gaps_json(rep))["gaps"]] == commands
+
+
+def test_the_build_command_is_the_one_build_mode_takes(played, tmp_path):
+    _, board, record = played
+    pack = tmp_path / "new pack"  # build mode makes the pack; routing needs one that is there
+    pack.mkdir()
+    rep = gap_report(record, pack=pack, board=board)
+    words = shlex.split(next(gap.build for gap in rep.gaps if gap.challenge == "golf"))
+    assert words[0] == "flightdeck"
+    result = runner.invoke(build_app(), words[1:])
+    assert result.exit_code == 0, result.output
+    assert (pack / "misc" / "misc_golf.manifest.toml").is_file() and (pack / "tests" / "cases" / "misc_golf").is_dir()
+
+
+def test_without_a_pack_or_without_the_board_no_gap_has_a_build_command(played):
+    _, board, record = played
+    for rep in (gap_report(record), gap_report(record, board=board)):
+        assert [gap.build for gap in rep.gaps] == [None] * 7
+        assert "build gap" not in gaps_markdown(rep) and "build gap" not in summary(rep)
+    assert [gap.folder for gap in gap_report(record).gaps] == [None] * 7  # the folder is the board's
+
+
+def test_a_gap_that_is_not_on_the_board_has_no_folder_so_no_build_command(played, tmp_path):
+    _, _, record = played
+    partial = write_board(tmp_path / "partial", skip=("hotel", "echo"))
+    pack = write_pack(tmp_path / "pack", tmp_path / "marker")
+    rep = gap_report(record, pack=pack, board=load_board(partial))
+    by_id = {gap.challenge: gap for gap in rep.gaps}
+    assert (by_id["hotel"].folder, by_id["hotel"].build, by_id["echo"].folder, by_id["echo"].build) == (None,) * 4
+    assert by_id["alpha"].build == f"flightdeck build gap {partial.resolve() / 'alpha'} --pack {pack}"
+    text = gaps_markdown(rep)
+    assert section(text, "### Echo")[-1] == "- Routed now: not routed (see the problems below)"
+    assert not any("Build an engine" in line for line in section(text, "### Hotel"))
+    assert len(code_spans(text)) == 5
+    lines = summary(rep).splitlines()
+    assert "Build an engine for a gap (5 gaps on the board, one line each):" in lines
+    assert not any(line.endswith(("/hotel", "/echo")) or "/hotel " in line or "/echo " in line for line in lines)
+    hotel = next(g for g in json.loads(gaps_json(rep))["gaps"] if g["challenge"] == "hotel")
+    assert hotel["folder"] is None and hotel["build"] is None
+
+
+def test_paths_with_shell_and_markdown_syntax_are_quoted_and_shown_as_literal_text(tmp_path):
+    (tmp_path / ODD).mkdir()
+    board_dir, board, record = play(tmp_path / ODD)
+    pack = write_pack(tmp_path / ODD / "my pack", tmp_path / "marker")
+    rep = gap_report(record, pack=pack, board=board)
+    for gap in rep.gaps:  # to a shell, each path is one word, whatever is in it
+        assert shlex.split(gap.build) == ["flightdeck", "build", "gap", str(board_dir.resolve() / gap.challenge), "--pack", str(pack)]
+        assert pasteable(gap.build)
+    text = gaps_markdown(rep)
+    kinds = {token.type for token in walk(text)}
+    assert not kinds & FORBIDDEN, kinds & FORBIDDEN  # no HTML, link or emphasis from a path
+    assert code_spans(text) == [gap.build for gap in rep.gaps]  # the page shows each command exactly
+    assert summary(rep).splitlines()[3:] == [f"  {gap.build}" for gap in rep.gaps]
+
+
+def test_a_relative_pack_is_made_absolute_so_the_line_works_from_any_folder(played, tmp_path, monkeypatch):
+    _, board, record = played
+    write_pack(tmp_path / "pack", tmp_path / "marker")
+    monkeypatch.chdir(tmp_path)
+    rep = gap_report(record, pack=Path("pack"), board=board)
+    assert shlex.split(rep.gaps[0].build)[-2:] == ["--pack", str(Path.cwd() / "pack")]
+    assert build_command("some/challenge", "pack") == f"flightdeck build gap {Path.cwd() / 'some/challenge'} --pack {Path.cwd() / 'pack'}"
+
+
+@pytest.mark.parametrize("odd", ["two\nlines", "esc\x1b[31m", "rtl\u202e", "tab\there"])
+def test_a_path_that_cannot_be_shown_as_it_is_gives_no_line_to_paste_and_says_so(tmp_path, odd):
+    (tmp_path / odd).mkdir()
+    board_dir, board, record = play(tmp_path / odd)
+    pack = write_pack(tmp_path / "pack", tmp_path / "marker")
+    rep = gap_report(record, pack=pack, board=board)
+    assert not any(pasteable(gap.build) for gap in rep.gaps)
+    text = gaps_markdown(rep)
+    assert not re.search("[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", text)  # nothing raw from the path
+    assert code_spans(text) == ["flightdeck build gap CHALLENGE_DIR --pack PACK"] * 7  # never a changed path as a command
+    last = section(text, "### Echo")[-1]
+    assert last.startswith("- Build an engine for it: `flightdeck build gap CHALLENGE_DIR --pack PACK`, with its folder ")
+    assert last.endswith(f"echo ({NO_PASTE})")
+    out = summary(rep)
+    assert out.splitlines()[2:] == [f"7 gaps have {NO_PASTE}: see gaps.md"]
+    assert "build gap" not in out and not re.search("[\x00-\x09\x0b-\x1f\x7f-\x9f\u202e]", out)
+    data = json.loads(gaps_json(rep))  # build mode's file has the command exactly
+    assert shlex.split(data["gaps"][0]["build"])[3] == str(board_dir.resolve() / "alpha") == data["gaps"][0]["folder"]
 
 
 def mounted() -> typer.Typer:

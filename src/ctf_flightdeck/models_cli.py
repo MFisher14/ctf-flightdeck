@@ -64,6 +64,7 @@ from .model_catalog import (
     local_lines,
     measure_command,
     sizing,
+    unmeasured_gpus,
 )
 from .text import untrusted
 
@@ -262,7 +263,9 @@ def overview_text(catalog: Catalog, machine: Machine) -> str:
     plan = budget(machine)
     head = ["The machine described", *described_lines(machine), "", DESCRIBED] if machine.described else [
         "This machine", *machine_lines(machine)]
-    lines = [*head, "", f"{_budget_line(plan, machine)}.", MEMORY_RULE, APPROXIMATE]
+    unmeasured = unmeasured_gpus(machine)
+    lines = [*head, "", *([unmeasured, ""] if unmeasured else []), f"{_budget_line(plan, machine)}.", MEMORY_RULE,
+             APPROXIMATE]
     config_state = this_config() if not machine.described else (None, "")
     for role in ROLES:
         advice = advise(catalog, machine, role, plan)
@@ -341,6 +344,13 @@ def machine_lines(machine: Machine) -> list[str]:
     else:
         gpus = f"none found: {machine.gpu_note}"
     rows = [("system", system), ("memory", memory), ("NVIDIA GPU", gpus)]
+    if machine.other_gpus.value:
+        rows.append(("other GPUs", f"{hardware.other_gpus_text(machine.other_gpus.value)}; no results for "
+                                   f"{'it' if len(machine.other_gpus.value) == 1 else 'them'} yet, so not counted below"))
+    elif machine.other_gpus.value is None:
+        rows.append(("other GPUs", f"unknown: {machine.other_gpus.unknown}"))
+    elif machine.os == "Linux":  # looked for there only
+        rows.append(("other GPUs", f"none found: {machine.other_gpu_note}"))
     rows += [(runtime.label, runtime_line(runtime)) for runtime in machine.runtimes]
     width = max(len(name) for name, _ in rows)
     return [f"  {name:<{width}}  {text}" for name, text in rows]
@@ -392,7 +402,10 @@ def role_lines(advice: Advice, machine: Machine | None = None) -> list[str]:
     where = "there" if there else "here"
     lines = [ROLE_TITLES[role], f"  First: {_lead(advice, there)}"]
     fits = [f"    {_option_line(o)}" for o in advice.fits]
-    fit_here = f"  Fit {where}, on the CPU (slow):" if advice.where == CPU else f"  Fit {where}:"
+    if advice.where == CPU and machine is not None and machine.other_gpus.value:
+        fit_here = f"  Fit {where}, counted as on the CPU (slow; the GPU {where} is not measured):"
+    else:
+        fit_here = f"  Fit {where}, on the CPU (slow):" if advice.where == CPU else f"  Fit {where}:"
     api = [f"    {_api_line(a, role)}" for a in advice.api]
     if advice.lead == API:
         lines += ["  Model APIs:", *api]
@@ -488,6 +501,8 @@ def entry_text(choice: LocalModel | ApiChoice, machine: Machine | None) -> str:
     if machine.described:
         lines.append(f"For the machine described ({_said(machine)}), not this one: whether a build is pulled or served "
                      "there is left out.")
+    if unmeasured_gpus(machine):
+        lines.append(unmeasured_gpus(machine).replace("the advice below", "what fits below"))
     for build in model.builds:
         found = sizing(build, machine)
         facts = [_safe(build.model)]
@@ -603,6 +618,7 @@ def overview_json(catalog: Catalog, machine: Machine) -> dict:
         "described": machine.described,  # true: the machine --memory describes, not this one
         "machine": machine.as_json(),
         "local_models": {"where": plan.where, "memory_bytes": plan.bytes, "why": plan.why},
+        "unmeasured_gpus": unmeasured_gpus(machine) or None,  # AMD or Intel GPUs found: said, and not counted
         "memory_rule": {"text": MEMORY_RULE, "estimate": True,
                         "context_allowance_bytes": dict(CONTEXT_ALLOWANCE)},
         "roles": roles,

@@ -1,5 +1,7 @@
 """`flightdeck writeups RUN_DIR`: a Markdown draft for every challenge a run solved.
 
+RUN_DIR is a run folder, its events.jsonl, or `latest` for the newest run in the config's [run]
+dir, named on stderr (runrecord.resolve_run).
 The drafts go to RUN_DIR/writeups/<challenge id>.md (see writeup.py for what is in one). A
 draft that exists already is kept, since the player may have edited it, unless --force is
 given. Nothing is written through a symlink: a lane on the host runtime can write into the
@@ -38,7 +40,7 @@ class _Refused(Exception):
 
 @app.command("writeups")
 def writeups(
-    run_dir: Annotated[Path, typer.Argument(metavar="RUN_DIR", help="A run folder (the one holding events.jsonl), or its events.jsonl.")],
+    run_dir: Annotated[Path, typer.Argument(metavar="RUN_DIR", help="A run folder (the one holding events.jsonl), its events.jsonl, or `latest`: the newest run in your config's [run] dir.")],
     redact: Annotated[
         bool,
         typer.Option(
@@ -59,17 +61,17 @@ def writeups(
         ),
     ] = None,
     config: Annotated[
-        Path | None, typer.Option("--config", dir_okay=False, help="Config file for --polish (default: $FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml).")
+        Path | None, typer.Option("--config", dir_okay=False, help="Config file for --polish and for `latest` (default: $FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml).")
     ] = None,
     force: Annotated[bool, typer.Option("--force", metavar="", help="Replace drafts that already exist.")] = False,
 ) -> None:
     """Draft a writeup for every challenge the run solved, in RUN_DIR/writeups/."""
     from . import writeup
     from .config import ConfigError, expand
-    from .runrecord import RunFolderError, load_run, run_folder
+    from .runrecord import RunFolderError, load_run, resolve_run
 
     try:
-        run_dir = run_folder(expand(run_dir))
+        run_dir = resolve_run(expand(run_dir), say=lambda line: typer.echo(f"flightdeck: {line}", err=True), config=config)
         record = load_run(run_dir)
     except (RunFolderError, ConfigError) as exc:
         _fail(str(exc))

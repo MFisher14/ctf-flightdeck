@@ -1,6 +1,7 @@
 """`flightdeck report RUN_DIR [--board PATH]`: the post-flight report for a run folder.
 
-RUN_DIR is the run folder or its events.jsonl (the path a run prints when it ends). The run
+RUN_DIR is the run folder or its events.jsonl (the path a run prints when it ends), or `latest`
+for the newest run in the config's [run] dir, named on stderr (runrecord.resolve_run). The run
 log names the event and every challenge it released (a format 2 log), so --board only fills
 in what an older log lacks.
 
@@ -26,7 +27,8 @@ app = typer.Typer(add_completion=False, help="Post-flight: what happened in a ru
 def report_command(
     run_dir: Annotated[
         Path,
-        typer.Argument(metavar="RUN_DIR", exists=True, file_okay=True, dir_okay=True, help="A run folder (it holds events.jsonl), or its events.jsonl."),
+        typer.Argument(metavar="RUN_DIR", help="A run folder (it holds events.jsonl), its events.jsonl, or `latest`: "
+                       "the newest run in your config's [run] dir."),
     ],
     board: Annotated[
         Path | None,
@@ -35,16 +37,21 @@ def report_command(
             help="The board folder the run played: the event's name, and names and points the run log lacks.",
         ),
     ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", dir_okay=False, help="Config file whose [run] dir `latest` looks in (default: "
+                     "$FLIGHTDECK_CONFIG or ~/.config/ctf-flightdeck/config.toml)."),
+    ] = None,
 ) -> None:
     """Write the post-flight report to RUN_DIR/report.md and print a short summary."""
     from .config import ConfigError, expand
     from .platform.manual import BoardError, load_board
     from .postflight import report, summary
-    from .runrecord import RunFolderError, load_run, run_folder
+    from .runrecord import RunFolderError, load_run, resolve_run
     from .text import untrusted
 
     try:
-        run_dir = run_folder(expand(run_dir))
+        run_dir = resolve_run(expand(run_dir), say=lambda line: typer.echo(f"flightdeck: {line}", err=True), config=config)
         record = load_run(run_dir)
     except (RunFolderError, ConfigError) as exc:
         _fail(str(exc))

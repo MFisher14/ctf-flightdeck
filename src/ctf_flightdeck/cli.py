@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -163,6 +164,14 @@ class Agent(StrEnum):
 
 
 AGENT_HELP = "Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config) instead of flightdeck's own loop."
+HEADLESS_HELP = (
+    "No console: the run writes status.json in its run folder, approvals wait (nothing is approved), and SIGTERM or "
+    "Ctrl-C stops it as quitting does."
+)
+AUTOPILOT_HELP = ("Engage autopilot: the run goes on by rule while you are away, never looser than the event's rules; "
+                  "needs a run budget and Docker (default: the config's [autopilot] engage).")
+BUDGET_DOLLARS_HELP = "The whole run's budget in dollars, for autopilot (default: the config's [autopilot] budget_dollars)."
+BUDGET_TOKENS_HELP = "The whole run's budget in tokens, for autopilot (default: the config's [autopilot] budget_tokens)."
 AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
 
 
@@ -217,6 +226,10 @@ def play(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
+    headless: Annotated[bool, typer.Option("--headless", metavar="", help=HEADLESS_HELP)] = False,
+    autopilot: Annotated[bool | None, typer.Option("--autopilot/--no-autopilot", metavar="", help=AUTOPILOT_HELP)] = None,
+    budget_dollars: Annotated[float | None, typer.Option("--budget-dollars", min=0.0, metavar="DOLLARS", help=BUDGET_DOLLARS_HELP)] = None,
+    budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
@@ -237,27 +250,66 @@ def play(
         event=event,  # load_profile expands ~ itself, and says so when it cannot
         team_dir=_path(team_dir) if team_dir else None,
         handle=handle,
-        confirm=_ask if _at_terminal() else None,
+        confirm=_ask if _at_terminal() and not headless else None,  # a headless run has nobody to ask
         agent=agent.value if agent else None,
         agent_auth=agent_auth,
+        autopilot=autopilot, budget_dollars=budget_dollars, budget_tokens=budget_tokens,
+        say=lambda line: typer.echo(f"flightdeck: {line}", err=True),
     )
     try:
         run = prepare_run(options)
     except RunError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
+    except KeyboardInterrupt:  # Ctrl-C in autopilot's wait for the event's start (the one wait before a run)
+        typer.echo("flightdeck: stopped before the run started: nothing was pulled and no lane started", err=True)
+        raise typer.Exit(130) from None
     if run.runtime == "host":
         typer.echo(f"flightdeck: {host_warning()}", err=True)
     for note in run.notes():
         typer.echo(f"flightdeck: {note}", err=True)
-    console = run.app()
+    if headless:  # no console: the board is released, then the run waits for a signal or its own end (headless.py)
+        from .headless import Headless
+
+        console = Headless(run, say=lambda line: typer.echo(f"flightdeck: {line}", err=True))
+        between = console.fly
+    else:
+        console = run.app()
+        between = console.run_async  # the console releases the board itself once it is up (on_start)
+    _fly(run, between)
+    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
+        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(128 + console.stopped_by)
+    if console.return_code:  # the console failed (Textual has printed why): not a run that ended as asked
+        typer.echo("flightdeck: the console failed: the run's lanes were stopped as when you quit", err=True)
+        raise typer.Exit(1)
+
+
+def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
+    """One run from its release to its exit lines, whatever plays it. `between` is awaited on
+    an event loop of this function's own and is what runs from the board's release to the
+    run's shutdown: the console (which releases the board itself once it is up), or anything
+    that calls run.release() and waits. However it ends (it returns, it raises, it is
+    cancelled), the run is shut down on that same loop, where its lanes and background tasks
+    live (Run.shutdown: once, also when `between` already did it), then closed, and the exit
+    lines are printed. What `between` raised is raised again after them."""
+    import asyncio
+
+    async def flight() -> None:
+        try:
+            await between()
+        finally:
+            await run.shutdown()
+
     try:
-        console.run()
+        asyncio.run(flight())
     finally:
         run.close()
         card = run.scorecard()
         if card:
             typer.echo(card, nl=False)
+        else:  # no answers to score against (a real event): the scorecard's spend line alone
+            typer.echo(_spent(run.deck))
         held = _held_at_the_end(run.deck)
         if held:
             typer.echo(f"flightdeck: {held}", err=True)
@@ -269,9 +321,21 @@ def play(
             typer.echo(f"flightdeck: not submitted, still waiting for your approval when the run ended: {'; '.join(waiting)}", err=True)
         for problem in run.errors:
             typer.echo(f"flightdeck: {problem}", err=True)
-    if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
-        typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
-        raise typer.Exit(128 + console.stopped_by)
+
+
+def _spent(deck) -> str:
+    """What the run spent, in one line, for a run with no scorecard to say it: the deck's own
+    totals (Deck.totals: every lane's turns and its spend outside a turn, a light model's
+    among it), which the console's header showed and each lane's transcript records, so the
+    post-flight report gives the same figures. Read it after Run.shutdown(), which counts
+    what the lanes report as they stop. The dollars are "at least" when some spend had no
+    price or a turn's cost never came."""
+    from . import fmt
+
+    tokens, dollars, unpriced = deck.totals()
+    if unpriced:
+        return f"Spent {fmt.tokens(tokens)} tokens · at least ${fmt.dollars(dollars)} (some of it has no known cost)"
+    return f"Spent {fmt.tokens(tokens)} tokens · ${fmt.dollars(dollars)}"
 
 
 def _held_at_the_end(deck) -> str:
@@ -287,9 +351,9 @@ def _held_at_the_end(deck) -> str:
 
 
 def _after_the_run(run_dir: Path) -> list[str]:
-    """The run folder and the commands that read it, ready to paste: report, writeups and gaps
-    for every run; score only when it can score this one, that is when the run recorded a
-    board (run.json) that is still there with answers to check flags against."""
+    """The run folder and the commands that read it, ready to paste: report, writeups, gaps and
+    share for every run; score only when it can score this one, that is when the run recorded
+    a board (run.json) that is still there with answers to check flags against."""
     import shlex
 
     from .text import untrusted
@@ -300,6 +364,7 @@ def _after_the_run(run_dir: Path) -> list[str]:
         (f"flightdeck report {folder}", "the post-flight report: solves, interventions, spend"),
         (f"flightdeck writeups {folder}", "a writeup draft for each solve"),
         (f"flightdeck gaps {folder}", "what no L1 engine solved, and why"),
+        (f"flightdeck share {folder}", "the flight card, to post: your setup and how it went, no flags"),
     ]
     if _scorable(run_dir):
         steps.append((f"flightdeck score {folder}", "the scorecard, against the board's answers"))
@@ -361,6 +426,10 @@ def practice(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
+    headless: Annotated[bool, typer.Option("--headless", metavar="", help=HEADLESS_HELP)] = False,
+    autopilot: Annotated[bool | None, typer.Option("--autopilot/--no-autopilot", metavar="", help=AUTOPILOT_HELP)] = None,
+    budget_dollars: Annotated[float | None, typer.Option("--budget-dollars", min=0.0, metavar="DOLLARS", help=BUDGET_DOLLARS_HELP)] = None,
+    budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends tokens like `play`."""
@@ -374,6 +443,8 @@ def practice(
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
         team=False, submit=None, model=model, run_dir=run_dir, pack=pack, agent=agent, agent_auth=agent_auth,
+        headless=headless,
+        autopilot=autopilot, budget_dollars=budget_dollars, budget_tokens=budget_tokens,
     )
 
 
@@ -738,7 +809,9 @@ def config_command(
 
 
 def _mount() -> None:
-    from . import build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, team_cli, writeup_cli
+    from . import (
+        build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, share_cli, team_cli, writeup_cli,
+    )
     from . import models_cli
     from .l1 import cli as l1_cli
     from .platform import ctfd_cli
@@ -752,6 +825,7 @@ def _mount() -> None:
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
     app.command("gaps", rich_help_panel=AFTER)(gaps_cli.gaps_command)
+    app.command("share", rich_help_panel=AFTER)(share_cli.share_command)
     app.add_typer(build_cli.app, name="build", rich_help_panel=SOLVERS,
                   help="Build mode: turn a gap into a new L1 engine, with a test that proves a raw handout reaches it.")
     app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)

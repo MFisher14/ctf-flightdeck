@@ -1,4 +1,4 @@
-"""Modal screens: fork, kill and quit prompts, the take-over placeholder, a challenge card and
+"""Modal screens: fork, kill, approve-all and quit prompts, the take-over placeholder, a challenge card and
 help."""
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from ..core.model import AlertKind, Challenge, ChallengeStatus
 from ..text import untrusted
 from . import theme
 from .commands import COMMANDS
+from .views import HELD, LATER, sending_chip
 
 MODAL_CSS = """
 {name} {{ align: center middle; background: $background 60%; }}
@@ -150,6 +151,41 @@ class QuitPrompt(ModalScreen[bool]):
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
         self.action_choose(event.button.id == "quit")
+
+    def action_choose(self, yes: bool) -> None:
+        self.dismiss(yes)
+
+
+class ApprovePrompt(ModalScreen[bool]):
+    """Approve several waiting flags at once: y approves the flags listed; n, esc, or enter on
+    Cancel change nothing. Nothing is sent before the answer."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="ApprovePrompt") + "ApprovePrompt #approve-list { height: auto; max-height: 1fr; }"
+    BINDINGS = [
+        Binding("y", "choose(True)", "approve"),
+        Binding("n", "choose(False)", "cancel"),
+        Binding("escape", "choose(False)", "cancel"),
+    ]
+
+    def __init__(self, summary: Text) -> None:
+        super().__init__()
+        self.approve_summary = summary
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Approve these flags?", "bold"))
+            with VerticalScroll(id="approve-list"):
+                yield Static(self.approve_summary)
+            with Horizontal():
+                yield Button("Cancel (esc)", id="cancel")
+                yield Button("Approve (y)", id="approve", variant="success")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    @on(Button.Pressed)
+    def _pressed(self, event: Button.Pressed) -> None:
+        self.action_choose(event.button.id == "approve")
 
     def action_choose(self, yes: bool) -> None:
         self.dismiss(yes)
@@ -295,6 +331,13 @@ KEY_HELP = (
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
     ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
 )
+# Approving several flags and dismissing an alert (kept apart from KEY_HELP's rows).
+BATCH_KEY_HELP = (
+    ("A", "Approve all: every flag that waits for a plain yes, after a prompt that lists them (y approves). Left out, "
+          "with the reason: a challenge whose tries the platform counts, a hand submit, more budget, the live box"),
+    ("x", "Dismiss the lane's most urgent alert about its course (effort, off-hint, wrong way, loop, stall): you judge "
+          "it wrong. The lane is not touched; the alert stays quiet as an answered one does"),
+)
 MOCK_KEYS = (
     ("space", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
@@ -313,8 +356,18 @@ ALERT_HELP = (
     (AlertKind.BUDGET, "The lane is near or at its token or dollar cap"),
     (AlertKind.FLAG, "A candidate flag matches the flag format"),
 )
+SENDING_HELP = "A flag of the lane is on its way to the platform: nothing to answer, its answer comes back on its own"
+HELD_HELP = (  # the header and the status line while the queue is held
+    "In the header where \"all clear\" would be, followed by why: a model API failure every lane would hit "
+    "holds the queue, and nothing starts until you lift the hold with /unhold"
+)
+COST_HELP = (  # the marks after dollars: a lane's cost column and the header's total
+    ("$0.42+", "Some spend had no price: what is known, as \"at least\""),
+    (f"$0.42{LATER}", f"A coding-agent CLI's turn is under way: it reports the turn's cost when the turn ends "
+                      f"(on the board, {LATER} is a queued challenge)"),
+)
 BOARD_HELP = (
-    ("·", "new"), ("…", "queued"), ("▶", "running"), ("✓", "solved (green: us, cyan: teammate)"),
+    ("·", "new"), ("…", "queued (after dollars: a cost still to come)"), ("▶", "running"), ("✓", "solved (green: us, cyan: teammate)"),
     ("✗", "blocked"), ("‖", "parked"), ("*", "after a lane id: claimed by you"),
     ("L1·name", "solved with the flag your L1 engine of that name found"),
 )
@@ -339,7 +392,7 @@ class HelpScreen(ModalScreen[None]):
         keys = Table.grid(padding=(0, 2))
         keys.add_column(style="bold", no_wrap=True)
         keys.add_column()
-        for key, text in KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
+        for key, text in KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
             keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
         commands = Table.grid(padding=(0, 2))
         commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
@@ -352,6 +405,13 @@ class HelpScreen(ModalScreen[None]):
         for kind, text in ALERT_HELP:
             alerts.add_row(theme.chip(kind.tag, *theme.alert_colors(kind)), Text(f"{kind.label}: {text}"))
         alerts.add_row(theme.chip("submit", *theme.PENDING_COLORS), Text("Waiting for your approval (press a, or /approve)"))
+        alerts.add_row(sending_chip(), Text(SENDING_HELP))
+        marks = Table.grid(padding=(0, 2))
+        marks.add_column(no_wrap=True)
+        marks.add_column()
+        marks.add_row(theme.chip(HELD, theme.INK, theme.YELLOW), Text(HELD_HELP))
+        for mark, meaning in COST_HELP:
+            marks.add_row(Text(mark, "bold"), Text(meaning))
         board = Text()
         for mark, meaning in BOARD_HELP:
             board.append(f"{mark} ", "bold")
@@ -360,6 +420,7 @@ class HelpScreen(ModalScreen[None]):
             Text("Keys (fleet)", "bold underline"), keys, Text(""),
             Text("Commands (the bar at the bottom; plain text is a message to the lane)", "bold underline"), commands, Text(""),
             Text("Alerts (lanes that need you come first, most urgent first)", "bold underline"), alerts, Text(""),
+            Text("Header and cost (the marks after dollars, on a lane and in the header)", "bold underline"), marks, Text(""),
             Text("Board", "bold underline"), board,
         )
         with Vertical():

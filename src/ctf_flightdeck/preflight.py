@@ -43,8 +43,8 @@ whatever is shown is made safe with text.untrusted().
 
 Instance "confirm": a lane whose challenge has a live instance asks the player before its
 first model call. Until the player allows it, its http tool is off and a docker lane has no
-network; once allowed, the container joins the bridge network (open egress: any host, not only
-the instance). On the host runtime only the http tool waits (a lane's shell has this machine's
+network; once allowed, the container joins a fenced network that reaches the instance and
+nothing else (agent/egress.py). On the host runtime only the http tool waits (a lane's shell has this machine's
 network), so check() warns there.
 """
 
@@ -58,6 +58,7 @@ import shlex
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
@@ -118,7 +119,7 @@ OTHER_SERVICE_SUFFIXES = ("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN", "_ACCESS_KE
 them all. A name with CTFD in it is taken for a CTFd token's variable even so (CTFD_API_KEY)."""
 
 _TABLES = ("event", "rules", "policies")
-_EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team")
+_EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team", "start", "end")
 _RULE_KEYS = ("ai_allowed", "platform_automation", "live_targets", "max_lanes")
 _PLATFORM_ONLY = {"url": "ctfd", "token_env": "ctfd", "board": "manual"}
 # token_env: an upper-case name, as config.py asks of api.key_env. A token is letters, digits and
@@ -180,6 +181,8 @@ class EventProfile:
     board: Path | None = None  # manual: the folder board (absolute: ~ expanded, else from the profile's folder)
     flag_format: str | None = None  # a regular expression; None: the board's, else the deck's default
     team: bool = False
+    start: datetime | None = None  # when the event starts, with its zone: autopilot waits for it (autopilot.py)
+    end: datetime | None = None  # when it ends, with its zone: autopilot stops the run then, as quitting does
     # [rules]
     ai_allowed: bool
     platform_automation: bool
@@ -198,6 +201,12 @@ class EventProfile:
             # describe() and check() show token_env, so a profile built in code gets the same
             # check as load_profile's, and the value is never shown here either.
             raise ValueError(f"token_env {_NOT_A_NAME}")
+        for name in ("start", "end"):
+            when = getattr(self, name)
+            if when is not None and (not isinstance(when, datetime) or when.utcoffset() is None):
+                raise ValueError(f"{name} must be a time with its zone (a datetime that knows its UTC offset)")
+        if self.start is not None and self.end is not None and self.end <= self.start:
+            raise ValueError("end must be after start")
         unknown = set(self.explicit) - set(STAGES)
         if unknown:
             raise ValueError(f"explicit names stages that do not exist: {', '.join(sorted(unknown))}")
@@ -239,14 +248,15 @@ def defaults(profile: EventProfile) -> Policies:
 
 
 def lane_network(policies: Policies, urls: Sequence[str]) -> str:
-    """The docker network a lane starts with: "bridge" only when its challenge has a live
+    """The network a docker lane starts with: "fenced" only when its challenge has a live
     instance and lanes may reach it at once (instance auto); "none" otherwise, so the lane
-    cannot reach the instance or anything else. Under confirm the run connects the container
-    to bridge when the player allows it; under manual the player works the instance, not the
-    lane. Bridge is open egress, not only the instance."""
+    cannot reach the instance or anything else. Under confirm the run gives the container
+    the fenced network when the player allows it; under manual the player works the
+    instance, not the lane. A fenced network reaches the instance and nothing else
+    (agent/egress.py); no lane is put on Docker's open bridge network."""
     if policies.instance is not Policy.AUTO or not urls:
         return "none"
-    return "bridge"
+    return "fenced"
 
 
 class DeckSubmit(NamedTuple):
@@ -507,9 +517,9 @@ _MEANING = {
 
 
 FOLDER_BOARD = "a folder board: nothing to fetch"  # the pull line of a manual profile, whatever its policy
-# A coding-agent lane's container is on the bridge network whatever the instance policy: its
-# CLI needs its own API (run.py gives every such lane network="bridge").
-AGENT_NETWORK = "; a coding-agent lane (--agent) always has it"
+# A coding-agent lane's container reaches its CLI's own API whatever the instance policy
+# (run.lane_reach gives every such lane agent.egress.CLI_API), and nothing else but its instance.
+AGENT_NETWORK = "; a coding-agent lane (--agent) reaches its CLI's API in every case"
 
 NO_PACK = (
     "there is no [l1] pack in your config, so nothing runs at this stage: set pack = \"FOLDER\" under [l1] in it "
@@ -548,6 +558,9 @@ def describe(
         lines.append(f"token     ${profile.token_env} ({state}), sent only to {_shown_url(profile)}")
     if profile.board is not None:
         lines.append(f"board     {_show(profile.board)}")
+    if profile.start is not None or profile.end is not None:
+        when = [f"{name} {value.isoformat()}" for name, value in (("starts", profile.start), ("ends", profile.end)) if value is not None]
+        lines.append("schedule  " + " · ".join(when) + " (autopilot waits for the start and stops at the end)")
     if profile.flag_format is not None:
         lines.append(f"flags     {untrusted(profile.flag_format, one_line=True)}")
     else:
@@ -569,9 +582,9 @@ def describe(
             meaning = NO_PACK
         lines.append(f"{stage:<10}{policy.value:<9}{meaning}{note}")
     if policies.instance is Policy.AUTO:
-        network = "a docker lane gets an open network (bridge: any host) if its challenge has a live instance, else none"
+        network = "a docker lane's network reaches its challenge's live instance and nothing else; without one it has none"
     elif policies.instance is Policy.CONFIRM:
-        network = "a docker lane has no network until you allow it its instance, then an open one (bridge: any host)"
+        network = "a docker lane has no network until you allow it its instance, then one that reaches the instance and nothing else"
     else:
         network = f'docker lanes get no network (instance "{policies.instance}")'
     lines.append(f"network   {network}{AGENT_NETWORK}")
@@ -596,6 +609,8 @@ token_env = "CTFD_TOKEN"            # ctfd: the NAME of the variable that holds 
 # board = "board"                   # manual: the folder of challenge folders (relative to this file, or ~/...)
 flag_format = "example\\\\{[^}]+\\\\}"  # a regular expression for the event's flags
 team = false                        # true: claims, teammates' solves and live-box holds (team mode)
+# start = "2026-11-14T09:00:00+00:00"  # when the event starts, with its zone: autopilot waits for it
+# end = "2026-11-15T09:00:00+00:00"    # when it ends: autopilot stops the run then
 
 [rules]
 ai_allowed = true                   # may model-driven lanes work challenges
@@ -642,6 +657,7 @@ def load_profile(path: Path) -> tuple[EventProfile, Policies]:
         board=_board(path, event),
         flag_format=_flag_format(path, event),
         team=_bool(path, event, ("event", "team"), default=False),
+        **_schedule(path, event),
         ai_allowed=_bool(path, rules, ("rules", "ai_allowed"), required="true if the event's rules allow AI (model-driven) help, false if not"),
         platform_automation=_bool(
             path, rules, ("rules", "platform_automation"),
@@ -806,6 +822,37 @@ def _flag_format(path: Path, table: dict) -> str | None:
     if broken is not None:
         raise _error(path, ("event", "flag_format"), broken)
     return pattern
+
+
+TIME_SHAPE = 'an ISO 8601 time with its zone, like "2026-11-14T09:00:00+01:00" or "2026-11-14T08:00:00Z"'
+
+
+def _time(path: Path, table: dict, name: str) -> datetime | None:
+    """event.start or event.end: an ISO 8601 date and time with its zone (a string, or TOML's
+    own date-time), so it means one instant wherever flightdeck runs. None when absent."""
+    key = ("event", name)
+    if name not in table:
+        return None
+    value = table[name]
+    if isinstance(value, datetime):
+        when = value
+    elif isinstance(value, str):
+        try:
+            when = datetime.fromisoformat(value.strip())
+        except ValueError:
+            raise _error(path, key, f"must be {TIME_SHAPE}{_got(value)}") from None
+    else:
+        raise _error(path, key, f"must be {TIME_SHAPE}{_got(value)}")
+    if when.utcoffset() is None:
+        raise _error(path, key, f"must say its zone: {TIME_SHAPE}{_got(value)}")
+    return when
+
+
+def _schedule(path: Path, table: dict) -> dict[str, datetime | None]:
+    start, end = _time(path, table, "start"), _time(path, table, "end")
+    if start is not None and end is not None and end <= start:
+        raise _error(path, ("event", "end"), f"must be after event.start ({start.isoformat()}), but it is {end.isoformat()}")
+    return {"start": start, "end": end}
 
 
 def _max_lanes(path: Path, table: dict) -> int | None:

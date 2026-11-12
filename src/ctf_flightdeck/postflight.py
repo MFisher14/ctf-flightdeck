@@ -14,7 +14,8 @@
   then solved within 10 turns (flag-found and teammate alerts are not stalls; they are in
   the timeline). An approve or decline answers a budget alert only when it answered the
   budget request (or approved more budget with nothing waiting), not a flag's verdict or
-  the live box: the lane's current approval is replayed from its pending events;
+  the live box: the lane's current approval is replayed from its pending events. An alert
+  the player dismissed (the console's x, /dismiss) counts as dismissed, not as answered;
 - the hints, redirects, forks and escalations that helped and those with no effect seen. A
   step helped when the lane it went to solved that challenge within 10 turns or 15 minutes
   of it, with a flag it proposed after the step. The lane it went to: a hint's or redirect's
@@ -113,6 +114,9 @@ JUDGED = ("hint", "redirect", "fork", "escalate")
 NOT_STALLS = frozenset({AlertKind.FLAG.value, AlertKind.TEAMMATE.value})
 COURSE_ANSWERS = frozenset({"hint", "redirect", "fork", "escalate", "kill", "takeover"})
 BUDGET_ANSWERS = frozenset({"approve", "decline", "kill", "escalate"})
+PILOT_STATES = ("engaged", "disengaged", "off")  # a warning's data["autopilot"]: autopilot changed state (autopilot.py)
+PILOT_KEPT = ("last_try", "refusal")  # and: a guardrail kept something for the player
+DISMISS = "dismiss"  # takes an alert down without touching the lane: not an answer to it, and never judged
 VERDICTS = frozenset({"approve", "decline"})
 """Interventions that answer the lane's current approval, whatever it is."""
 BUDGET = PendingKind.BUDGET.value
@@ -274,9 +278,13 @@ class LaneFacts:
             self.models.append(model)
 
 
+AUTOPILOT = "autopilot"  # an intervention's `by` when autopilot made it by rule (core/model.py: Actor.AUTOPILOT)
+
+
 @dataclass
 class Step:
-    """One intervention by the player, with what came of it."""
+    """One intervention, with what came of it: the player's, or one autopilot made by rule
+    (`by`). Flight.steps holds the player's only, Flight.by_rule autopilot's."""
 
     index: int
     at: float | None  # None: the log's time for it is not a time
@@ -287,6 +295,7 @@ class Step:
     ok: bool | None = None  # None: no outcome in the log
     message: str = ""
     answers: str | None = None  # an approve or decline: the kind of approval it answered; None when none waited
+    by: str = "player"  # "autopilot": made by rule, never counted as the player's
 
 
 @dataclass(frozen=True)
@@ -301,9 +310,10 @@ class Stall:
     reason: str
     turn: int  # the lane's turn when it fired
     answer: Step | None  # the first intervention on the lane that answers it
-    unanswered: str  # why there was no answer, when there was none
+    unanswered: str  # why there was no answer, when there was none and it was not dismissed
     solved_turns: int | None  # turns from the alert until this lane solved, if it did
     steps: tuple[str, ...]  # the lane's last steps before the alert
+    dismissed: Step | None = None  # the player's dismiss that took it down, before any answer
 
     @property
     def solved_within(self) -> bool:
@@ -392,7 +402,7 @@ class Flight:
     challenges: dict[str, ChallengeFacts]  # in release order
     lanes: dict[str, LaneFacts]  # in start order
     solves: dict[str, Solve]
-    steps: list[Step]
+    steps: list[Step]  # the player's interventions
     stalls: list[Stall]
     judged: list[Judged]
     models: list[ModelSpend]  # each with its turns and its spend events (data["model"]: the model that spent it)
@@ -405,6 +415,9 @@ class Flight:
     event_from: str = ""  # where the event's name came from: "the board" or "the run log"
     turn_ends: Outside = _NOTHING  # what coding-agent CLIs reported as their turns' own cost when each turn ended (in the model rows)
     outside_older: Outside = _NOTHING  # spend outside a turn only an older log's transcripts count (in no model's row)
+    by_rule: list[Step] = field(default_factory=list)  # autopilot's interventions, by rule: never among `steps`
+    pilot: list[int] = field(default_factory=list)  # the events where autopilot was engaged, disengaged or switched off
+    pilot_kept: list[int] = field(default_factory=list)  # the warnings of what its guardrails kept for the player
 
     # ------------------------------------------------------------------ totals
 
@@ -494,6 +507,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
     lanes: dict[str, LaneFacts] = {}
     steps: list[Step] = []
     open_steps: list[Step] = []
+    pilot: list[int] = []  # autopilot engaged, disengaged or off
     by_challenge: dict[str, list[int]] = {}
     unread: Counter[str] = Counter()
     model_spend: dict[str, _Sum] = {}  # model -> what it spent: its turns, and its spend events (data["model"])
@@ -619,6 +633,9 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
                 facts.outside_unpriced += 1
             else:
                 facts.outside_dollars += dollars
+        elif kind == EventKind.WARNING and data.get("autopilot") in PILOT_STATES and not cid:
+            pilot.append(index)  # autopilot engaged, disengaged or switched off: the Autopilot section has it
+            continue
         elif kind == EventKind.WARNING and not cid:
             named = data.get("solved")  # a warning about several challenges at once (CTFd lists them as solved)
             ids = [c for c in named if isinstance(c, str) and c] if isinstance(named, list) else []
@@ -630,7 +647,8 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             continue
         elif kind == EventKind.INTERVENTION:
             name = _str(data.get("intervention")) or "intervention"
-            step = Step(index, _time(event.at), name, event.lane, cid, data)
+            step = Step(index, _time(event.at), name, event.lane, cid, data,
+                        by=AUTOPILOT if data.get("by") == AUTOPILOT else "player")
             if name in VERDICTS and event.lane:  # logged before its effects: what waits now is what it answers
                 step.answers = current.pop(event.lane, None)
             steps.append(step)
@@ -729,8 +747,11 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
             part.unpriced += 1
             part.turn_ends += 1
     solved = solves(record)
-    stalls = _stalls(events, lanes, steps)
+    stalls = _stalls(events, lanes, steps)  # an alert autopilot answered by rule was answered
+    by_rule = [step for step in steps if step.by == AUTOPILOT]
+    steps = [step for step in steps if step.by != AUTOPILOT]  # from here on: the player's
     judged = _judged(steps, lanes, solved, _proposed(record, asked))
+    kept = [i for i, e in enumerate(events) if e.kind == EventKind.WARNING and e.data.get("autopilot") in PILOT_KEPT]
     models = [
         ModelSpend(model, s.turns, s.tokens, s.cached, s.dollars, s.unpriced, s.costs, s.spends, s.turn_ends)
         for model, s in model_spend.items()
@@ -741,6 +762,7 @@ def analyse(record: RunRecord, *, board: Board | None = None) -> Flight:
         stalls=stalls, judged=judged, models=models, outside=outside,
         l1_runs=len(record.of(L1)), by_challenge=by_challenge, notes=notes, duration=duration,
         warnings=warnings, event_from=event_from if event_name else "", turn_ends=turn_ends.part(), outside_older=older,
+        by_rule=by_rule, pilot=pilot, pilot_kept=kept,
     )
 
 
@@ -765,11 +787,16 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
             continue
         facts = lanes[event.lane]
         kind = event.alert or "?"
-        answer = next((s for s in on_lane.get(event.lane, ()) if s.index > index and _answers(s, kind)), None)
+        answer = next(
+            (s for s in on_lane.get(event.lane, ()) if s.index > index and (_answers(s, kind) or _dismisses(s, kind))), None
+        )
         if answer is not None and facts.end is not None and answer.index > facts.end:
             answer = None
+        dismissed = None
+        if answer is not None and answer.name == DISMISS:
+            answer, dismissed = None, answer
         unanswered = ""
-        if answer is None:
+        if answer is None and dismissed is None:
             if facts.finished:
                 unanswered = f"no answer before the lane ended ({facts.state})"
             else:
@@ -786,7 +813,7 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
                 solved_turns = max(0, facts.turns - turn)
         out.append(Stall(
             index, _time(event.at), event.lane, facts.challenge, kind, _str(event.data.get("reason")) or event.text,
-            turn, answer, unanswered, solved_turns, _steps_before(head, line, event),
+            turn, answer, unanswered, solved_turns, _steps_before(head, line, event), dismissed,
         ))
     return out
 
@@ -831,6 +858,13 @@ def _answers(step: Step, alert: str) -> bool:
     if step.name in VERDICTS:
         return step.answers in (None, BUDGET)
     return step.name in BUDGET_ANSWERS
+
+
+def _dismisses(step: Step, alert: str) -> bool:
+    """Whether a step is the player's dismiss of an alert of this kind: a dismiss takes down
+    one alert, the lane's most urgent about its course, and its outcome names it by its
+    label in brackets (Deck._dismiss)."""
+    return step.name == DISMISS and f"({_alert_label(alert)})" in step.message
 
 
 def _steps_before(head: LaneRecord | None, line: int | None, alert: EventLine) -> tuple[str, ...]:
@@ -1059,6 +1093,7 @@ def report(record: RunRecord, *, board: Board | None = None) -> str:
     out += _warnings_section(flight)
     out += _stall_section(flight)
     out += _intervention_section(flight)
+    out += _autopilot_section(flight)
     out += _spend_section(flight)
     out += _ended_section(flight)
     if flight.notes:
@@ -1109,7 +1144,7 @@ def _timeline(flight: Flight) -> list[str]:
     if not flight.challenges:
         return out + ["No challenges in this run.", ""]
     events = flight.record.events
-    steps = {step.index: step for step in flight.steps}
+    steps = {step.index: step for step in (*flight.steps, *flight.by_rule)}
     began = _release_began(events, flight.by_challenge)
     for cid, info in flight.challenges.items():
         solve = flight.solves.get(cid)
@@ -1272,7 +1307,7 @@ def _step_text(step: Step, flight: Flight) -> str:
     data = step.data
     name = STEP_NAMES.get(step.name, step.name)
     target = md_text(step.lane) if step.lane else md_text(flight.name(step.challenge or "?"))
-    text = f"you: {md_text(name)} {target}"
+    text = f"{'autopilot' if step.by == AUTOPILOT else 'you'}: {md_text(name)} {target}"
     if step.name in ("hint", "redirect"):
         text += f": {md_text(data.get('text'))}"
     elif step.name == "fork":
@@ -1282,6 +1317,8 @@ def _step_text(step: Step, flight: Flight) -> str:
         text += f": {md_text(approach)}" if approach else ""
     elif step.name == "kill":
         text += " (re-queue)" if data.get("requeue") is not False else " (park)"
+    elif step.name == "queue" and _str(data.get("model")):
+        text += f" on {md_text(data.get('model'))}"
     elif step.name == "handback" and _str(data.get("note")):
         text += f": {md_text(data.get('note'))}"
     if step.ok is None:
@@ -1305,10 +1342,12 @@ def _stall_section(flight: Flight) -> list[str]:
     if not stalls:
         return out + ["No lane raised an alert about its course or budget." + aside, ""]
     answered = sum(1 for s in stalls if s.answer is not None)
+    dismissed = sum(1 for s in stalls if s.dismissed is not None)
     then = sum(1 for s in stalls if s.solved_within)
     lanes = len({s.lane for s in stalls})
     out += [
         f"{_plural(len(stalls), 'alert')} on {_plural(lanes, 'lane')}: {answered} answered, "
+        + (f"{dismissed} dismissed, " if dismissed else "") +
         f"{then} followed by that lane solving within {STALL_TURNS} turns.{aside}",
         "",
     ]
@@ -1320,6 +1359,9 @@ def _stall_section(flight: Flight) -> list[str]:
         if stall.answer is not None:
             step = stall.answer
             out.append(f"- Answered: {_later(stall.at, step.at)}, {_step_text(step, flight)}")
+        elif stall.dismissed is not None:
+            step = stall.dismissed
+            out.append(f"- Dismissed, not answered: {_later(stall.at, step.at)}, {_step_text(step, flight)}")
         else:
             out.append(f"- Answered: {stall.unanswered}")
         out.append(f"- Solved within {STALL_TURNS} turns: {_then(stall, flight)}")
@@ -1338,6 +1380,44 @@ def _then(stall: Stall, flight: Flight) -> str:
     if solve is not None and solve.index > stall.index:
         return f"no, {lane} did not solve it ({_who(solve)} did)"
     return f"no, {lane} did not solve it"
+
+
+def _autopilot_section(flight: Flight) -> list[str]:
+    """What autopilot did in the run: when it was engaged, each disengage with its reason,
+    when the player took the controls back, its interventions by rule (never among the
+    player's, above), and what its guardrails kept for the player (a last try, a refusal).
+    Nothing when autopilot was never engaged."""
+    events = flight.record.events
+    if not flight.pilot and not flight.by_rule and not flight.pilot_kept:
+        return []
+    out = ["## Autopilot", ""]
+    disengaged = [i for i in flight.pilot if events[i].data.get("autopilot") == "disengaged"]
+    refused = sum(1 for step in flight.by_rule if step.ok is False)
+    out += [
+        f"Autopilot made {_plural(len(flight.by_rule), 'intervention')} by rule ({refused} refused) and disengaged "
+        f"{_plural(len(disengaged), 'time')}. They are not counted among your interventions above.",
+        "",
+    ]
+    for i in flight.pilot:
+        event, what = events[i], events[i].data.get("autopilot")
+        at = _clock(_time(event.at))
+        if what == "disengaged":
+            out.append(f"- {at} · disengaged: {md_text(event.data.get('reason') or event.text, 400)}")
+        elif what == "engaged":
+            out.append(f"- {at} · {md_text(event.text)}")
+        else:
+            out.append(f"- {at} · off, the controls back with you: {md_text(event.data.get('why') or event.text)}")
+    if flight.pilot:
+        out.append("")
+    if flight.by_rule:
+        out += [f"### Interventions by rule ({len(flight.by_rule)})", ""]
+        out += [f"- {_clock(step.at)} · {_step_text(step, flight)}" for step in flight.by_rule]
+        out.append("")
+    if flight.pilot_kept:
+        out += [f"### Kept for you ({len(flight.pilot_kept)})", ""]
+        out += [f"- {_clock(_time(events[i].at))} · {md_text(events[i].text, 400)}" for i in flight.pilot_kept]
+        out.append("")
+    return out
 
 
 def _intervention_section(flight: Flight) -> list[str]:
@@ -1491,13 +1571,18 @@ def summary(record: RunRecord, *, board: Board | None = None) -> str:
     stalls = flight.stalls
     if stalls:
         answered = sum(1 for s in stalls if s.answer is not None)
+        dismissed = sum(1 for s in stalls if s.dismissed is not None)
         then = sum(1 for s in stalls if s.solved_within)
         lines.append(
-            f"Stalls: {_plural(len(stalls), 'alert')}, {answered} answered, {then} then solved within {STALL_TURNS} turns"
+            f"Stalls: {_plural(len(stalls), 'alert')}, {answered} answered, "
+            + (f"{dismissed} dismissed, " if dismissed else "") + f"{then} then solved within {STALL_TURNS} turns"
         )
     if flight.judged:
         helped = sum(1 for j in flight.judged if j.helped)
         lines.append(f"Interventions: {helped} helped, {len(flight.judged) - helped} no effect seen")
+    if flight.pilot or flight.by_rule:
+        disengaged = sum(1 for i in flight.pilot if flight.record.events[i].data.get("autopilot") == "disengaged")
+        lines.append(f"Autopilot: {_plural(len(flight.by_rule), 'intervention')} by rule, disengaged {_plural(disengaged, 'time')}")
     states = Counter(lane.state if lane.finished else "still open" for lane in flight.lanes.values())
     if states:
         order = ("solved", "gave up", "killed", "stopped", "still open")

@@ -1,0 +1,36 @@
+# ctf-flightdeck
+
+> A terminal harness for playing capture-the-flag (CTF) events with AI agents under a human's control. It pulls the board, runs the player's own no-model solvers, starts an agent lane per challenge, shows every lane on one console with alerts and one-key interventions, and submits approved flags. Python 3.12+, MIT, on PyPI as `ctf-flightdeck`; the command is `flightdeck`.
+
+Install: `pipx install ctf-flightdeck` or `uv tool install ctf-flightdeck`. Try with nothing installed and nothing spent: `uvx ctf-flightdeck mock`.
+
+Commands that are safe to run unattended: `flightdeck --help`, `flightdeck doctor`, `flightdeck config --example`, `flightdeck models`, `flightdeck mock --screenshot DIR`. Commands that spend money on a model API: `flightdeck practice`, `flightdeck play`. `flightdeck play --event` talks to a live CTF platform and must follow that event's rules.
+
+`flightdeck play --autopilot` runs an event by rule inside a run budget; `--headless` runs without the console and writes `status.json` in the run folder.
+
+flightdeck has no telemetry, no account and no server of its own. It contacts only the model API and the CTF platform the player configures.
+
+## Use it
+
+- [README](https://github.com/MFisher14/ctf-flightdeck/blob/main/README.md): what it is, the quickstart, privacy, how to contribute
+- [Player's guide](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md): Docker or host, models and keys, the console, boards, solvers, events and teams, coding-agent lanes, reports
+- [Model APIs](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md): providers, keys, prices, fallbacks, fast mode
+- [Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md): which model for which job and which machine, with measurements
+- [Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md): the board folder, `challenge.json`, the event profile `event.toml`
+- [Solvers](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SOLVERS.md): L1 packs of no-model solvers, manifests, build mode
+- [Security](https://github.com/MFisher14/ctf-flightdeck/blob/main/SECURITY.md): the threat model and how to report a problem
+
+## Contribute
+
+- [AGENTS.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/AGENTS.md): the rules for any agent working on the code; read first
+- [CONTRIBUTING.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md): setup, tests, how to propose a change, sharing a flight card
+- [Leaderboard](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/LEADERBOARD.md): events it has been used in, and how to add one
+- [Sponsor](https://github.com/sponsors/MFisher14): pays for the model measurements
+
+## How it is built
+
+- [Vision](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/VISION.md): what it is for and what it is not
+- [Architecture](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ARCHITECTURE.md): the pipeline, its stages and every component
+- [Console spec](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/CONSOLE-SPEC.md): the layout, alerts and keys
+- [Decisions](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/DECISIONS.md): what is settled, with dates
+- [Roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md) and [Changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md)

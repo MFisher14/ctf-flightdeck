@@ -172,6 +172,7 @@ class Actor(StrEnum):
     LANE = "lane"
     PLAYER = "player"
     DECK = "flightdeck"
+    AUTOPILOT = "autopilot"  # an intervention autopilot made by rule (autopilot.py): never counted as the player's
 
 
 class ActionKind(StrEnum):
@@ -181,6 +182,15 @@ class ActionKind(StrEnum):
     NOTE = "note"  # a note from flightdeck (a submit result, a format check)
     ALERT = "alert"  # an alert fired: text is its label, output its reason
     APPROVAL = "approval"  # the lane asked for approval: text is what
+
+
+@dataclass(frozen=True)
+class Call:
+    """One tool call of a turn, as the lane's transcript keeps it: its one line, and a longer
+    excerpt of its output than a step's `output` (agent/tools.py: ToolResult.excerpt)."""
+
+    text: str
+    output: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +204,9 @@ class Action:
     by: Actor = Actor.LANE
     kind: ActionKind = ActionKind.STEP
     alert: AlertKind | None = None
+    # a step of flightdeck's own loop: every tool call of its turn, for the transcript and what reads it (a writeup
+    # draft). The console, the detectors and the lane's summary read `text` and `output`: one step per turn, as before.
+    calls: tuple[Call, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -275,6 +288,7 @@ class Lane:
     hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
     paused_before_takeover: bool = False  # hand back leaves it paused
     gave_up_later: str = ""  # its driver gave up while a flag waited: the lane ends once no flag waits
+    declined: bool = False  # its model declined (a refusal): autopilot never sends its challenge on to another model
 
     @property
     def id(self) -> str:

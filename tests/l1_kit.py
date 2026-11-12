@@ -11,6 +11,8 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from ctf_flightdeck.core.model import Challenge
 
 FLAG = r"t\{[a-z0-9_]+\}"
@@ -107,11 +109,34 @@ FAKE_DOCKER = r"""#!/bin/bash
 # container asks while it prepares (from this machine's bash), and runs no engine. Each
 # `docker ps` is written to ps.log and lists what ps.txt next to it holds (nothing when there
 # is none), or fails saying what ps.fail holds; each `docker rm` is written to rm.log.
+# A fenced lane's network (agent/egress.py): each `docker network ...` is written to
+# network.log; `network ls` lists what networks.txt holds, or fails saying what networks.fail
+# holds; `network inspect` prints what gateway.txt holds (a network with no gateway without it); `network
+# create` fails saying what create.fail holds. The `docker run` of an egress proxy
+# (--entrypoint python3) is written to proxies.log, not runs.log: its arguments up to the
+# script, then its configuration; `docker logs` says the proxy is ready, or what logs.txt holds.
+here="$(dirname "$0")"
 case "$1" in
   version) echo 99.0.0-fake ;;
   image) echo sha256:fake ;;
   container) echo "Error: No such container" >&2; exit 1 ;;
-  run) printf '%s\n' "$*" >> "$(dirname "$0")/runs.log"; echo fake-container-id ;;
+  network)
+    printf '%s\n' "$*" >> "$here/network.log"
+    case "$2" in
+      ls) if [ -f "$here/networks.fail" ]; then cat "$here/networks.fail" >&2; exit 1; fi
+          cat "$here/networks.txt" 2>/dev/null; exit 0 ;;
+      inspect) cat "$here/gateway.txt" 2>/dev/null || echo '[{"Subnet":"172.30.0.0/16"}]'; exit 0 ;;
+      create) if [ -f "$here/create.fail" ]; then cat "$here/create.fail" >&2; exit 1; fi; echo fake-network-id ;;
+    esac
+    exit 0 ;;
+  logs) if [ -f "$here/logs.txt" ]; then cat "$here/logs.txt"; else echo "flightdeck-egress ready"; fi ;;
+  run)
+    all="$*"
+    case " $all " in
+      *" --entrypoint python3 "*) printf '%s %s\n' "${all%% -I -c *}" "${@: -1}" >> "$here/proxies.log" ;;
+      *) printf '%s\n' "$all" >> "$here/runs.log" ;;
+    esac
+    echo fake-container-id ;;
   ps)
     printf '%s\n' "$*" >> "$(dirname "$0")/ps.log"
     if [ -f "$(dirname "$0")/ps.fail" ]; then cat "$(dirname "$0")/ps.fail" >&2; exit 1; fi
@@ -141,17 +166,35 @@ def install_fake_docker(tmp_path: Path, monkeypatch) -> Path:
     return fake_bin / "runs.log"
 
 
-def docker_skip_reason() -> str | None:
-    """Why the tests with a real container cannot run here, or None when they can."""
+REQUIRE_DOCKER = "FLIGHTDECK_REQUIRE_DOCKER"  # =1: a test that needs Docker and DOCKER_IMAGE fails where it cannot run
+REQUIRE_LANE_IMAGE = "FLIGHTDECK_REQUIRE_LANE_IMAGE"  # =1: the same for the tests that need the lane image
+
+
+def docker_skip_reason(image: str = DOCKER_IMAGE) -> str | None:
+    """Why the tests with a real container of `image` cannot run here, or None when they can."""
     from ctf_flightdeck.agent.workspace import docker_unavailable
 
     reason = docker_unavailable()
     if reason:
         return reason
-    probe = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", DOCKER_IMAGE], capture_output=True, timeout=60)
+    probe = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, timeout=60)
     if probe.returncode != 0:
-        return f"image {DOCKER_IMAGE} is not present locally (these tests never pull it)"
+        return f"image {image} is not present locally (these tests never pull it)"
     return None
+
+
+def docker_not_run(message: str, *, require: str = REQUIRE_DOCKER):
+    """A test that needs Docker cannot run here: it is skipped with `message`, so it reports
+    as not run. Where the environment variable `require` is 1 (CI sets it on the job that has
+    Docker and the image), it fails instead: a job's log then never passes with these tests
+    left out. Any other value of the variable fails too, naming it."""
+    value = os.environ.get(require, "")
+    if value == "1":
+        pytest.fail(f"{require}=1, and a test that needs Docker could not run: {message}", pytrace=False)
+    if value not in ("", "0"):
+        pytest.fail(f"{require} is {value!r}: set it to 1 (these tests must run) or 0 or leave it unset (they may be skipped)",
+                    pytrace=False)
+    pytest.skip(message)
 
 
 def containers(word: str) -> list[str]:

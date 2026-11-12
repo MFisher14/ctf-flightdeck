@@ -51,6 +51,15 @@ class FakeWorld:
         self.clock = ManualClock(scenario.start_at)
         self.driver = ScriptedDriver(scenarios.scripts_for(scenario))
         self.deck = Deck(self.config, self.driver, self.clock, verify=self._verify)
+        self.pilot = None  # the scenario's autopilot (autopilot.Autopilot), engaged before the board is released
+        if scenario.autopilot_tokens is not None:
+            from ..autopilot import Autopilot, Budget
+
+            self.pilot = Autopilot(self.deck, Budget(tokens=scenario.autopilot_tokens))
+            self.pilot.attach()
+            outcome = self.pilot.engage()
+            if not outcome.ok:  # --host: autopilot needs Docker, and the console says so
+                self.deck.warn(outcome.message, data={"autopilot": "not engaged"})
         self.ticks = 0
         self.skipped: list[str] = []  # timeline events that need team mode, in solo mode
         self._drift = random.Random(f"{scenario.seed}:solves")
@@ -64,6 +73,8 @@ class FakeWorld:
             self._drift_solves()
             self._play(self.ticks)
             self.driver.step(self.clock.now())
+            if self.pilot is not None:
+                self.pilot.step()  # no event loop drives the mock's deck: autopilot looks after every tick
 
     def _verify(self, challenge_id: str, flag: str) -> bool:
         return self.flags.get(challenge_id) == flag

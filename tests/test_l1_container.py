@@ -5,8 +5,9 @@ at once.
 
 The tests with a container run only when docker answers and debian:bookworm-slim is already
 on this machine (tests never pull, and use no other image); otherwise they are skipped with
-the reason, so they report as not run. That image has bash but no python3: its engines here
-are bash scripts, and a python engine is blocked, naming python3. No test starts a container
+the reason, so they report as not run (they fail instead where FLIGHTDECK_REQUIRE_DOCKER=1).
+That image has bash but no python3: its engines here are bash scripts, and a python engine
+is blocked, naming python3 (test_l1_lane_image.py runs one in the lane image). No test starts a container
 with a network. Every container a test starts is removed, even when the test fails. The
 tests with a fake docker script start no container and run everywhere.
 """
@@ -21,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from ctf_flightdeck.agent.l1stage import L1Stage
+from ctf_flightdeck.agent.workspace import WorkspaceError
 from ctf_flightdeck.l1.container import MAX_NAME, PACKAGE, EngineContainer, container_name, engine_mounts
 from ctf_flightdeck.l1.manifest import discover
 from ctf_flightdeck.l1.runner import BOOT
@@ -33,6 +35,7 @@ from l1_kit import (
     challenge_dir,
     cli_engine,
     containers,
+    docker_not_run,
     docker_skip_reason,
     install_fake_docker,
     python_engine,
@@ -45,7 +48,7 @@ from l1_kit import (
 def docker_ready():
     reason = docker_skip_reason()
     if reason:
-        pytest.skip(reason)
+        docker_not_run(reason)
 
 
 @pytest.fixture
@@ -223,15 +226,47 @@ def fake_docker(tmp_path, monkeypatch) -> Path:
     return install_fake_docker(tmp_path, monkeypatch)
 
 
-@pytest.mark.parametrize("online, network", [(False, "none"), (True, "bridge")])
-def test_an_engine_container_is_online_only_when_the_stage_is_told_so(tmp_path, pack, handout, fake_docker, online, network):
+@pytest.mark.parametrize("online", [False, True])
+def test_an_engine_container_is_online_only_when_the_stage_is_told_so_and_then_on_a_fenced_network(
+        tmp_path, pack, handout, fake_docker, online):
     cli_engine(pack, "e", "echo t{x}\n", route='keywords = ["demo"]')
-    run(L1Stage(discover(pack), {"demo": handout}, tmp_path / "run", FLAG, image=FAKE_IMAGE, pack=pack)
-        .run("L01", challenge("Demo", description="a demo challenge"), online=online))
+    demo = challenge("Demo", description="a demo challenge")
+    run(L1Stage(discover(pack), {"demo": handout}, tmp_path / "run", FLAG, image=FAKE_IMAGE, pack=pack,
+                urls={demo.id: ("tcp://chal.example.test:1337",)}, labels={"flightdeck.run": "run"})
+        .run("L01", demo, online=online))
     (started,) = fake_docker.read_text().splitlines()
     words = started.split()
-    assert words[words.index("--network") + 1] == network
+    fence = "flightdeck-run-l01-l1net"
+    assert words[words.index("--network") + 1] == (f"{fence}-net" if online else "none") and "bridge" not in words
     assert f"{pack.resolve()}:{pack}:ro" in words
+    log = fake_docker.parent
+    if not online:  # nothing made for an engine with no network
+        assert not (log / "network.log").exists() and not (log / "proxies.log").exists()
+        return
+    calls = (log / "network.log").read_text().splitlines()
+    assert calls[0] == ("network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated "
+                        f"--label flightdeck.run=run {fence}-net")
+    assert f"network connect --alias chal.example.test {fence}-net {fence}-egress-1" in calls
+    assert calls[-1] == f"network rm {fence}-net"  # gone once the engines are
+    (proxy,) = (log / "proxies.log").read_text().splitlines()
+    assert f"--name {fence}-egress-1 --label flightdeck.run=run --network bridge " in proxy and f" {FAKE_IMAGE} " in proxy
+    assert proxy.endswith('{"routes": [{"listen": 1337, "host": "chal.example.test", "port": 1337}]}')
+    removed = (log / "rm.log").read_text().splitlines()
+    assert removed.index(f"rm -f {container_name('run', 'l01', 'e')}") < removed.index(f"rm -f {fence}-egress-1")
+
+
+def test_online_engines_do_not_run_at_all_when_their_fence_cannot_be_made(tmp_path, pack, handout, fake_docker):
+    """Never on an open network instead: the stage fails with docker's reason and starts no engine."""
+    cli_engine(pack, "e", "echo t{x}\n", route='keywords = ["demo"]')
+    demo = challenge("Demo", description="a demo challenge")
+    (fake_docker.parent / "create.fail").write_text("Error response from daemon: all predefined address pools have been fully subnetted\n")
+    stage_ = L1Stage(discover(pack), {"demo": handout}, tmp_path / "run", FLAG, image=FAKE_IMAGE, pack=pack,
+                     urls={demo.id: ("tcp://chal.example.test:1337",)})
+    with pytest.raises(WorkspaceError, match="docker network create flightdeck-run-l01-l1net-net failed: .*address pools"):
+        run(stage_.run("L01", demo, online=True))
+    assert not fake_docker.exists() and not (fake_docker.parent / "proxies.log").exists()
+    with pytest.raises(ValueError, match="no instance to reach"):  # online with nothing to reach is a flightdeck bug, said
+        run(L1Stage(discover(pack), {"demo": handout}, tmp_path / "run2", FLAG, image=FAKE_IMAGE, pack=pack).run("L01", demo, online=True))
 
 
 def test_engines_on_this_machine_have_no_container(tmp_path, pack, handout, fake_docker):

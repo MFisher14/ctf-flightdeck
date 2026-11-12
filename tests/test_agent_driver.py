@@ -8,6 +8,7 @@ the deck to reach a state (bounded, ~10 s at most).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import re
 import shlex
@@ -64,7 +65,7 @@ class Lab:
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
                  max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
                  submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG,
-                 submitter=None) -> None:
+                 submitter=None, secrets: dict[str, str] | None = None) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -79,6 +80,7 @@ class Lab:
             urls=urls,
             instance=instance,
             compact_at=compact_at,
+            secrets=secrets,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"), submitter=submitter)
@@ -966,6 +968,172 @@ def test_a_lanes_own_api_error_ends_that_lane_and_the_queue_goes_on(tmp_path):
             first, second = sorted(lab.deck.lanes.values(), key=lambda lane: lane.id)
             assert first.state is LaneState.GAVE_UP and "prompt is too long" in first.result
             assert lab.deck.held == "" and second.challenge_id == "c1"
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("status, message", [(529, "Overloaded"), (503, "Service Unavailable"), (429, "Rate limit reached")])
+def test_an_api_that_keeps_failing_after_a_first_good_reply_holds_the_queue_and_lifting_it_queues_what_it_parked(
+        tmp_path, status, message):
+    """The model answers once, then the API fails every call in a way that may pass. The first
+    lane it ends is that lane's own; the second in a row, with no reply in between, holds the
+    queue: the other three challenges stay queued instead of each being parked in turn. When
+    the API is back and the player lifts the hold, the two parked challenges are queued again,
+    in front."""
+    down = threading.Event()
+    down.set()
+
+    def responder(record):
+        if calls_to(server) == 1 or not down.is_set():
+            return tool_call_reply("shell", {"command": "ls"})
+        return FakeReply(status, {"error": {"message": message}})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=1)
+            lab.release()
+            await until(lambda: lab.deck.held, "the hold")
+            await asyncio.sleep(0.3)  # nothing more starts
+            first, second = sorted(lab.deck.lanes.values(), key=lambda lane: lane.id)  # two lanes, no third
+            assert (first.challenge_id, first.turns, second.challenge_id, second.turns) == ("c0", 1, "c1", 0)
+            assert first.state is second.state is LaneState.GAVE_UP and f"HTTP {status}" in second.result
+            assert [entry.challenge for entry in lab.deck.queue] == ["c2", "c3", "c4"]  # held, not drained
+            assert lab.deck.held.startswith(f"the model API keeps failing: 2 lanes in a row ended on it ({first.id}, {second.id}) ")
+            assert "Lift the hold once it answers again" in lab.deck.held and f"{second.id}'s call to small: " in lab.deck.held and f"HTTP {status}" in lab.deck.held
+            assert [lab.deck.challenges[c].status for c in ("c0", "c1")] == [ChallengeStatus.PARKED] * 2
+            down.clear()  # the API answers again
+            out = lab.deck.release_hold()
+            assert out.ok and out.message == "Lifted the hold on the queue: 2 parked challenges queued again, 1 lane started, 4 queued"
+            assert [entry.challenge for entry in lab.deck.queue] == ["c1", "c2", "c3", "c4"]
+            third = max(lab.deck.lanes.values(), key=lambda lane: lane.number)
+            assert (third.challenge_id, third.attempt) == ("c0", 2)
+            await until(lambda: third.turns >= 1, "the new lane's step")
+            assert lab.deck.held == ""
+            await lab.finish()
+
+    run(main())
+
+
+def test_an_outage_that_still_lasts_when_the_hold_is_lifted_holds_the_queue_again_after_two_more_lanes(tmp_path):
+    """The player lifts the hold while the API still fails: the count starts again, so the two
+    challenges queued again each get their lane, both end on it, and the queue is held again,
+    naming those two lanes. Lifting that hold queues the same two challenges again."""
+    def responder(record):
+        if calls_to(server) == 1:
+            return tool_call_reply("shell", {"command": "ls"})
+        return FakeReply(529, {"error": {"message": "Overloaded"}})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=1)
+            lab.release()
+            await until(lambda: lab.deck.held, "the hold")
+            assert lab.deck.release_hold().ok
+            await until(lambda: lab.deck.held, "the second hold")
+            assert "2 lanes in a row ended on it (L03, L04)" in lab.deck.held and len(lab.deck.lanes) == 4
+            assert [lab.deck.lanes[x].challenge_id for x in ("L03", "L04")] == ["c0", "c1"]
+            assert [entry.challenge for entry in lab.deck.queue] == ["c2", "c3", "c4"]
+            held = [e for e in lab.deck.events if e.kind is EventKind.WARNING and e.data.get("held") is True]
+            assert len(held) == 2  # said again
+            assert lab.deck.release_hold().message.startswith("Lifted the hold on the queue: 2 parked challenges queued again, ")
+            await lab.finish()
+
+    run(main())
+
+
+def test_failures_that_may_pass_with_a_reply_in_between_do_not_hold_the_queue_until_two_lanes_in_a_row_end_on_one(tmp_path):
+    """L01 and L02 each get a reply and then a 503: two lanes ended on it, but the API answered
+    in between, so the queue goes on. L03's first call fails too: now two in a row (L02,
+    L03), and the queue is held."""
+    gate = threading.Event()
+
+    def responder(record):
+        n = calls_to(server)
+        if n in (1, 3):
+            return tool_call_reply("shell", {"command": "ls"})
+        if n == 5:
+            gate.wait(10)
+        return FakeReply(503, {"error": {"message": "overloaded"}})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=1)
+            lab.release()
+            await until(lambda: calls_to(server) == 5, "the third lane's call")
+            first, second, third = sorted(lab.deck.lanes.values(), key=lambda lane: lane.id)
+            assert first.state is second.state is LaneState.GAVE_UP and "HTTP 503" in first.result and "HTTP 503" in second.result
+            assert lab.deck.held == "" and not third.finished
+            gate.set()
+            await until(lambda: lab.deck.held, "the hold")
+            assert f"2 lanes in a row ended on it ({second.id}, {third.id})" in lab.deck.held
+            assert lab.deck.release_hold().message == "Lifted the hold on the queue: 2 parked challenges queued again, 1 lane started, 3 queued"
+            assert lab.deck.challenges["c0"].status is ChallengeStatus.PARKED  # L01's: not of that outage
+            await lab.finish()
+
+    run(main())
+
+
+def test_failures_that_may_pass_further_apart_than_the_window_are_not_an_outage(tmp_path, monkeypatch):
+    """Two lanes end on a 503 more than OUTAGE_SECONDS apart (0.2 s here): each is its lane's
+    own. A third right after the second is the second of an outage."""
+    from ctf_flightdeck.agent import driver as driver_module
+
+    monkeypatch.setattr(driver_module, "OUTAGE_SECONDS", 0.2)
+    gate, late = threading.Event(), threading.Event()
+
+    def responder(record):
+        n = calls_to(server)
+        if n == 1:
+            return tool_call_reply("shell", {"command": "ls"})
+        if n == 3:
+            gate.wait(10)
+        if n == 4:
+            late.wait(10)
+        return FakeReply(503, {"error": {"message": "overloaded"}})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=1)
+            lab.release()
+            await until(lambda: calls_to(server) == 3, "the second lane's call")
+            await asyncio.sleep(0.4)  # longer than the window, after the first lane ended
+            gate.set()
+            await until(lambda: calls_to(server) == 4, "the third lane's call")  # the second ended, and the queue went on
+            assert lab.deck.held == "" and [lane.finished for lane in lab.deck.lanes.values()] == [True, True, False]
+            late.set()
+            await until(lambda: lab.deck.held, "the hold")
+            assert "2 lanes in a row ended on it (L02, L03)" in lab.deck.held
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_failure_that_may_pass_before_the_model_ever_answered_holds_the_queue_and_its_challenge_is_queued_again(tmp_path):
+    """A 503 before any lane had an answer holds the queue at once (every lane would get it).
+    It may pass, so lifting the hold queues the challenge it parked again; a 400 then (an
+    unknown model, say) does not."""
+    reply = [FakeReply(503, {"error": {"message": "overloaded"}})]
+    server = FakeModelServer(responder=lambda record: reply[0])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, handouts=five_challenges(tmp_path), max_lanes=1)
+            lab.release()
+            await until(lambda: lab.deck.held and all(lane.finished for lane in lab.deck.lanes.values()), "the hold")
+            assert "no lane has had an answer from small yet" in lab.deck.held and len(lab.deck.lanes) == 1
+            reply[0] = FakeReply(400, {"error": {"message": "small is not a valid model ID"}})
+            assert lab.deck.release_hold().message == "Lifted the hold on the queue: 1 parked challenge queued again, 1 lane started, 4 queued"
+            await until(lambda: lab.deck.held and all(lane.finished for lane in lab.deck.lanes.values()), "the next hold")
+            assert lab.deck.release_hold().message == "Lifted the hold on the queue: 1 lane started, 3 queued"
             await lab.finish()
 
     run(main())
@@ -2131,12 +2299,13 @@ def l1_in_fake_docker(tmp_path: Path, handouts: dict[str, Path]):
 
 @pytest.mark.parametrize(
     "instance, has_instance, network",
-    [("auto", True, "bridge"), ("auto", False, "none"), ("confirm", True, "none"), ("off", True, "none")],
+    [("auto", True, "flightdeck-runs-l01-l1net-net"), ("auto", False, "none"), ("confirm", True, "none"), ("off", True, "none")],
 )
 def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_instance_at_once(
         tmp_path, monkeypatch, instance, has_instance, network):
     """Findings 1 and 7: under confirm (before the player is asked), manual and off no engine
-    gets a network; under auto only a challenge with an instance gives one."""
+    gets a network; under auto only a challenge with an instance gives one, and that one
+    is the lane's fenced network (never bridge), which reaches that instance alone."""
     from l1_kit import install_fake_docker
 
     runs_log = install_fake_docker(tmp_path, monkeypatch)
@@ -2146,12 +2315,20 @@ def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_insta
         with server:
             handouts = {"note": handout(tmp_path)}
             urls = {"note": ("http://127.0.0.1:9",)} if has_instance else None
-            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_in_fake_docker(tmp_path, handouts), urls=urls, instance=instance)
+            stage = dataclasses.replace(l1_in_fake_docker(tmp_path, handouts), urls=urls or {})
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage, urls=urls, instance=instance)
             lab.release()
             await until(lambda: any(e.kind is EventKind.L1 for e in lab.deck.events), "the L1 result", timeout=30)
             (started,) = runs_log.read_text().splitlines()
             words = started.split()
-            assert words[words.index("--network") + 1] == network
+            assert words[words.index("--network") + 1] == network and "bridge" not in words
+            proxies = runs_log.with_name("proxies.log")
+            if network == "none":
+                assert not proxies.exists() and not runs_log.with_name("network.log").exists()
+            else:  # one proxy, for the instance's host and port: this machine, through docker's host gateway
+                (proxy,) = proxies.read_text().splitlines()
+                assert proxy.endswith('{"routes": [{"listen": 9, "host": "host.docker.internal", "port": 9}]}')
+                assert "--add-host host.docker.internal:host-gateway" in proxy
             await lab.finish()
 
     run(main())
@@ -2160,11 +2337,11 @@ def test_in_docker_an_l1_engine_is_online_only_when_its_lane_may_reach_the_insta
 def test_under_confirm_in_docker_l1_runs_before_the_question_with_no_network(tmp_path):
     """The findings' case with a real container: the engine reads the instance's URL from its
     copy of challenge.json, before the lane asks the player, and has no network to use it."""
-    from l1_kit import DOCKER_IMAGE, containers, docker_skip_reason, remove_containers
+    from l1_kit import DOCKER_IMAGE, containers, docker_not_run, docker_skip_reason, remove_containers
 
     reason = docker_skip_reason()
     if reason:
-        pytest.skip(reason)
+        docker_not_run(reason)
     from ctf_flightdeck.agent.l1stage import L1Stage
     from ctf_flightdeck.l1.manifest import discover
 
@@ -2264,6 +2441,71 @@ def test_under_off_a_lane_is_never_asked_and_its_http_tool_stays_off(tmp_path):
             assert lane.pending is None or lane.pending.kind is not PendingKind.LIVE_BOX
             first = server.requests[0]["json"]["messages"][1]["content"]  # the opening brief offers no instance
             assert OFF_LIMITS in first and origin not in first
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- the run's secrets
+
+
+LEAKS = """
+    from ctf_flightdeck.l1.result import SolverResult
+
+    def solve(challenge_dir):
+        return SolverResult("none", notes="the environment holds " + (challenge_dir / "held.txt").read_text().strip())
+    """
+
+
+def test_a_secret_the_run_holds_reaches_neither_the_model_nor_the_deck_by_value_whatever_wrote_it(tmp_path):
+    """Beside a tool's result (tests/test_tools.py, tests/test_run.py): what an L1 engine noted,
+    the player's hint, the file a lane wrote and the plan it set go to the model and the deck
+    with [NAME] for the value. A flag is never changed: it is what would be submitted."""
+    secret = "held-value-" + "s" * 20
+    server = FakeModelServer([
+        tool_calls_reply([("shell", {"command": "cat held.txt > copy.txt"}), ("set_plan", {"plan": "use what held.txt holds"})]),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+        tool_call_reply("shell", {"command": "true"}),
+    ])
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files={"held.txt": f"{secret}\n"})}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"leaks": LEAKS}),
+                      secrets={"HELD": secret}, max_lanes=1)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag", timeout=30)
+            assert lab.deck.apply(iv.Hint(lane.id, f"the key is {secret}")).ok
+            assert lab.deck.apply(iv.Decline(lane.id)).ok  # the lane goes on, and reads the hint
+            await until(lambda: len(server.chats()) >= 3, "the next model call")  # the lane may already be on a fourth
+            first, second, third = server.chats()[:3]
+            assert "leaks: none (the environment holds [HELD])" in first["json"]["messages"][2]["content"]
+            assert "the key is [HELD]" in last_user(third)
+            assert lane.plan == "use what held.txt holds"
+            for request in (first, second, third):
+                assert secret not in str(request["json"])
+            l1 = next(e for e in lab.deck.events if e.kind is EventKind.L1)
+            assert l1.data["notes"] == "the environment holds [HELD]"
+            assert "+[HELD]" in lane.files["copy.txt"].diff and secret not in lane.files["copy.txt"].diff
+            assert not any(secret in a.text + a.output for a in lane.actions if a.by.value != "player")
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_flag_that_is_a_value_the_run_holds_is_raised_as_the_lane_gave_it(tmp_path):
+    secret = "held-value-" + "s" * 20
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": secret})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, secrets={"HELD": secret}, flag_format=r"t\{[a-z0-9_]+\}|held-value-s+")
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert lane.pending.flag == secret  # never [HELD]: that is not what the lane found
+            assert lane.actions[0].text == "submit [HELD]"
             await lab.finish()
 
     run(main())

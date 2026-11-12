@@ -50,9 +50,10 @@ A docker lane gets no network when its challenge lists no `urls`, and no challen
 practice lane in docker can read nothing but its own copy and reach nothing at all: it cannot
 download this repository's solutions.
 
-That holds for flightdeck's own lanes. A coding-agent lane (`--agent`) is always on Docker's bridge
-network, for its CLI's API, so it can download this repository, solutions included: practice with
-`--agent` is not honest practice.
+That holds for flightdeck's own lanes. A coding-agent lane (`--agent`) in docker reaches its CLI's
+own API, which it cannot work without, and nothing else, so its shell cannot download this
+repository either. What that API does on its provider's servers is beyond flightdeck's fence: a
+CLI that turns on a hosted web search could still look the solutions up.
 
 The lane's python tool runs `python3` inside the container. Build the lane image once with
 `flightdeck image build` (it adds `python3`, `file`, `xxd`, `unzip`, `strings` and other common

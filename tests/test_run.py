@@ -18,13 +18,15 @@ import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli
+from ctf_flightdeck.agent.egress import CLI_API
 from ctf_flightdeck.agent.workspace import DockerWorkspace, docker_unavailable
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
 from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
 from ctf_flightdeck.pricing import Price
-from ctf_flightdeck.run import RunError, RunOptions, lane_network, prepare_run
+from ctf_flightdeck.run import RunError, RunOptions, lane_reach, prepare_run
 
-from fake_model import FakeModelServer, FakeReply, tool_call_reply
+from fake_model import FakeModelServer, FakeReply, text_reply, tool_call_reply
+from l1_kit import docker_not_run
 
 FLAG = "t{note}"
 LADDER = ("fake/small", "fake/big")  # the test config's
@@ -113,25 +115,22 @@ def test_play_names_a_flag_left_waiting_for_approval_when_the_player_quits(tmp_p
     from ctf_flightdeck.console.app import FlightdeckApp
     from ctf_flightdeck.console.screens import QuitPrompt
 
-    def player(self, *args, **kwargs) -> None:  # the console, headless, with a player who quits
-        async def main() -> None:
-            async with self.run_test(size=(160, 46)) as pilot:
-                for _ in range(500):
-                    if any(lane.pending is not None for lane in self.deck.lanes.values()):
-                        break
-                    await pilot.pause(0.01)
-                await pilot.press("q")
-                await pilot.pause()
-                assert isinstance(self.screen, QuitPrompt)
-                await pilot.press("y")
-                for _ in range(200):
-                    if not self.is_running:
-                        break
-                    await pilot.pause(0.01)
+    async def player(self, *args, **kwargs) -> None:  # the console, headless, with a player who quits
+        async with self.run_test(size=(160, 46)) as pilot:
+            for _ in range(500):
+                if any(lane.pending is not None for lane in self.deck.lanes.values()):
+                    break
+                await pilot.pause(0.01)
+            await pilot.press("q")
+            await pilot.pause()
+            assert isinstance(self.screen, QuitPrompt)
+            await pilot.press("y")
+            for _ in range(200):
+                if not self.is_running:
+                    break
+                await pilot.pause(0.01)
 
-        asyncio.run(main())
-
-    monkeypatch.setattr(FlightdeckApp, "run", player)
+    monkeypatch.setattr(FlightdeckApp, "run_async", player)  # what play awaits on its own loop
     root = board(tmp_path)
     spec = root / "note" / "challenge.json"
     spec.write_text(json.dumps({**json.loads(spec.read_text()), "name": "Note\x1b]0;pwned\x07"}))  # board text is untrusted
@@ -145,21 +144,20 @@ def test_play_names_a_flag_left_waiting_for_approval_when_the_player_quits(tmp_p
 
 def headless(monkeypatch, player) -> None:
     """`play` opens the console headless (160x46) and `player(app, pilot)` plays it; then the
-    console is given time to quit, as `q` with no lane open does."""
+    console is given time to quit, as `q` with no lane open does. It stands in for the
+    console's run_async, which play awaits on its own loop; what the console raises (an
+    unhandled exception in the app, or the player's own) comes out of it."""
     from ctf_flightdeck.console.app import FlightdeckApp
 
-    def run(self, *args, **kwargs) -> None:
-        async def main() -> None:
-            async with self.run_test(size=(160, 46)) as pilot:
-                await player(self, pilot)
-                for _ in range(400):
-                    if not self.is_running:
-                        break
-                    await pilot.pause(0.01)
+    async def run_async(self, *args, **kwargs) -> None:
+        async with self.run_test(size=(160, 46)) as pilot:
+            await player(self, pilot)
+            for _ in range(400):
+                if not self.is_running:
+                    break
+                await pilot.pause(0.01)
 
-        asyncio.run(main())
-
-    monkeypatch.setattr(FlightdeckApp, "run", run)
+    monkeypatch.setattr(FlightdeckApp, "run_async", run_async)
 
 
 async def until(pilot, cond, what: str, seconds: float = 20.0) -> None:
@@ -220,7 +218,7 @@ def test_play_ends_with_the_run_folder_and_the_commands_that_read_it_and_each_wo
     folder, commands = next_steps(result.stdout)
     assert folder.parent == tmp_path / "runs" and (folder / "events.jsonl").is_file()
     assert result.stdout.index("solved 1 of 1") < result.stdout.index("run log: ")  # the scorecard comes first
-    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "score")]
+    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "share", "score")]
     for command in commands:
         ran = CliRunner().invoke(cli.app, shlex.split(command)[1:])
         assert ran.exit_code == 0, (command, ran.output)
@@ -239,7 +237,7 @@ def test_play_offers_score_only_for_a_board_with_answers_and_finds_an_answers_fi
         given = CliRunner().invoke(cli.app, ["play", str(root), "--config", cfg, "--submit", "auto", "--answers", str(answers)])
     assert plain.exit_code == 0 and given.exit_code == 0, plain.output + given.output
     _, commands = next_steps(plain.stdout)
-    assert [command.split()[1] for command in commands] == ["report", "writeups", "gaps"]  # nothing to score against
+    assert [command.split()[1] for command in commands] == ["report", "writeups", "gaps", "share"]  # nothing to score against
     folder, commands = next_steps(given.stdout)
     assert commands[-1] == f"flightdeck score {folder}"
     scored = CliRunner().invoke(cli.app, shlex.split(commands[-1])[1:])
@@ -316,11 +314,146 @@ def test_practice_ends_as_play_does_with_a_held_queue_the_run_folder_and_the_com
     out = result.output
     assert out.index("Practice Range: solved 0 of 14") < out.index(held) < out.index("run log: ")
     folder, commands = next_steps(result.stdout)
-    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "score")]
+    assert commands == [f"flightdeck {name} {folder}" for name in ("report", "writeups", "gaps", "share", "score")]
     for command in commands:
         ran = CliRunner().invoke(cli.app, shlex.split(command)[1:])
         assert ran.exit_code == 0, (command, ran.output)
     assert "Flags checked against answers.sha256.json" in ran.stdout  # score, last: against the set's answers
+
+
+def _alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def test_a_console_that_fails_mid_run_stops_the_run_as_quitting_does_and_play_still_prints_its_exit_lines(tmp_path, monkeypatch):
+    """Team mode, one lane on a challenge with a live instance, its shell command running for
+    minutes; then the console raises (an unhandled exception in the app, not a quit). play
+    shuts the run down all the same: the deck is closed, the lane's command is stopped with
+    its workspace, our live-box hold leaves the team folder, the run log ends, and the exit
+    lines are printed before the console's failure comes out."""
+    from ctf_flightdeck.core import interventions as iv
+    from ctf_flightdeck.team import TeamChannel, init_folder
+
+    shared = init_folder(tmp_path / "team")
+    teammate = TeamChannel(shared, "bravo")
+    seen: dict = {}
+
+    def pid_file() -> Path | None:
+        found = sorted((tmp_path / "runs").glob("*/**/lane-pid.txt"))
+        return found[0] if found and found[0].read_text().strip() else None
+
+    def boom() -> None:
+        raise RuntimeError("the console broke")
+
+    async def player(app, pilot) -> None:
+        seen["deck"] = app.deck
+        await until(pilot, lambda: any(lane.pending is not None for lane in app.deck.lanes.values()), "the live-box question")
+        (lane,) = app.deck.lanes.values()
+        assert app.deck.apply(iv.Approve(lane.id)).ok  # the lane may reach the instance: our hold goes in the team folder
+        await until(pilot, lambda: pid_file() is not None, "the lane's command")
+        seen["pgid"] = int(pid_file().read_text())  # the command's shell leads its own process group
+        await until(pilot, lambda: teammate.current("boxes", "note") is not None, "our live-box hold")
+        assert teammate.current("boxes", "note").who == "alpha" and _alive(seen["pgid"]) and not app.deck.closing
+        app.call_later(boom)  # no quit: the app's message loop gets an exception nobody handles
+        await until(pilot, lambda: not app.is_running, "the console to fail")
+        assert not app.deck.closing and _alive(seen["pgid"])  # the console went down without stopping anything
+
+    headless(monkeypatch, player)
+    quiet = "echo $$ > lane-pid.txt; sleep 240"
+    root = board(tmp_path, urls=("http://127.0.0.1:9",))
+    profile = tmp_path / "event.toml"  # a folder board whose rules make each lane ask before it reaches a live instance
+    profile.write_text(
+        f"[event]\nname = \"Test Event\"\nplatform = \"manual\"\nboard = '{root}'\n"
+        '[rules]\nai_allowed = true\nplatform_automation = true\nlive_targets = "confirm"\n'
+    )
+    try:
+        with FakeModelServer([tool_call_reply("shell", {"command": quiet, "timeout_seconds": 300})]) as server:
+            result = CliRunner().invoke(cli.app, [
+                "play", "--event", str(profile), "--config", str(config(tmp_path, server.base_url)),
+                "--team-dir", str(shared), "--handle", "alpha",
+            ])
+        assert isinstance(result.exception, RuntimeError) and str(result.exception) == "the console broke", result.output
+        assert seen["deck"].closing  # Deck.close: the first thing the run's shutdown does
+        assert not _alive(seen["pgid"]), "the lane's command outlived play"
+        assert teammate.current("boxes", "note") is None  # freed, as when you quit
+        folder, commands = next_steps(result.stdout)  # the exit lines: run log, run folder, next
+        assert commands[0] == f"flightdeck report {folder}" and "Test Event: solved 0 of 1" in result.stdout
+        kinds = [json.loads(line)["kind"] for line in (folder / "events.jsonl").read_text().splitlines()]
+        assert kinds[-1] == "run-end"
+        (lane,) = seen["deck"].lanes.values()
+        assert lane.state is LaneState.RUNNING  # stopped, not ended: as quitting leaves it
+    finally:
+        if "pgid" in seen and _alive(seen["pgid"]):
+            os.killpg(seen["pgid"], signal.SIGKILL)
+
+
+def test_play_exits_1_and_says_the_console_failed_when_textual_ends_on_an_exception_it_does_not_raise(tmp_path, monkeypatch):
+    """Textual's own run_async (headless here) does not raise what broke the app: it prints
+    it and returns. play then shuts the run down, prints its exit lines, says the console
+    failed and exits 1, not 0 as after a quit."""
+    from ctf_flightdeck.console.app import FlightdeckApp
+
+    seen: dict = {}
+    real = FlightdeckApp.run_async
+
+    def boom() -> None:
+        raise RuntimeError("the console broke")
+
+    async def pilot_breaks_it(pilot) -> None:
+        app = pilot.app
+        seen["deck"] = app.deck
+        await until(pilot, lambda: app.deck.lanes, "the first lane")
+        assert not app.deck.closing
+        app.call_later(boom)
+
+    async def run_async(self, *args, **kwargs):
+        return await real(self, headless=True, size=(160, 46), auto_pilot=pilot_breaks_it)
+
+    monkeypatch.setattr(FlightdeckApp, "run_async", run_async)
+    with FakeModelServer([tool_call_reply("shell", {"command": "sleep 240", "timeout_seconds": 300})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url))])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert seen["deck"].closing
+    assert result.stderr.splitlines()[-1] == "flightdeck: the console failed: the run's lanes were stopped as when you quit"
+    folder, _ = next_steps(result.stdout)
+    assert json.loads((folder / "events.jsonl").read_text().splitlines()[-1])["kind"] == "run-end"
+
+
+def test_shutting_a_run_down_twice_stops_it_once(tmp_path):
+    """The console's quit and play's way out both shut the run down: the second only waits for
+    the first, so nothing is stopped, closed or said twice."""
+    with FakeModelServer([tool_call_reply("shell", {"command": "sleep 240", "timeout_seconds": 300})]) as server:
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url)))
+        calls = []
+        stop_lanes = run.driver.shutdown
+
+        async def counted() -> None:
+            calls.append("lanes")
+            await stop_lanes()
+            await asyncio.sleep(0.05)  # the first shutdown is still under way when the second is asked for
+
+        run.driver.shutdown = counted
+
+        async def main() -> None:
+            run.release()
+            await wait_for(lambda: server.chats(), "the lane's model call")
+            first =asyncio.ensure_future(run.shutdown())
+            await wait_for(lambda: calls, "the first shutdown to reach the lanes")
+            assert not first.done()
+            await run.shutdown()  # joins the one under way
+            assert first.done() and first.exception() is None
+            await run.shutdown()  # and one already over
+            assert calls == ["lanes"]
+
+        asyncio.run(main())
+        run.close()
+    assert run.errors == []
 
 
 def test_the_event_log_and_the_lane_workspaces_go_in_a_new_folder_per_run(tmp_path):
@@ -369,9 +502,16 @@ def test_the_api_key_is_read_from_the_variable_the_config_names_and_never_shown(
     assert "NOT-SHOWN" not in repr(run.client)
 
 
-def test_docker_lanes_get_a_network_only_when_their_challenge_has_a_live_instance():
-    assert lane_network(()) == "none"
-    assert lane_network(("http://127.0.0.1:8080",)) == "bridge"
+def test_a_docker_lanes_network_reaches_its_instance_by_the_policy_and_a_clis_api_and_nothing_else():
+    web = ("http://127.0.0.1:8080", "tcp://chal.example.test:1337")
+    assert lane_reach((), "auto") == ((), ())  # no instance: no network at all
+    assert lane_reach(web, "auto") == (web, ())
+    assert lane_reach(web, "confirm") == ((), web)  # once the player allows it
+    assert lane_reach(web, "off") == ((), ())
+    api = CLI_API["claude"]
+    assert api == ("https://api.anthropic.com",) and CLI_API["codex"] == ("https://api.openai.com",)
+    assert lane_reach(web, "auto", api=api) == ((*api, *web), ())  # a coding-agent lane: its CLI's API too
+    assert lane_reach((), "auto", api=api) == (api, ())
 
 
 def _image_present(image: str) -> bool:
@@ -381,23 +521,23 @@ def _image_present(image: str) -> bool:
 
 
 @pytest.mark.parametrize(
-    "urls, instance, network",
+    "urls, instance, fenced, later",
     [
-        ((), "auto", "none"),
-        (("http://127.0.0.1:8080",), "auto", "bridge"),
-        (("http://127.0.0.1:8080",), "confirm", "none"),  # connected when the player allows it
-        (("http://127.0.0.1:8080",), "off", "none"),
-        (("tcp://127.0.0.1:1337",), "auto", "bridge"),  # what `nc host port` reaches is an instance too
-        (("tcp://127.0.0.1:1337",), "confirm", "none"),
-        (("tcp://127.0.0.1:1337",), "off", "none"),
+        ((), "auto", False, False),
+        (("http://127.0.0.1:8080",), "auto", True, False),
+        (("http://127.0.0.1:8080",), "confirm", False, True),  # fenced onto it when the player allows it
+        (("http://127.0.0.1:8080",), "off", False, False),
+        (("tcp://127.0.0.1:1337",), "auto", True, False),  # what `nc host port` reaches is an instance too
+        (("tcp://127.0.0.1:1337",), "confirm", False, True),
+        (("tcp://127.0.0.1:1337",), "off", False, False),
     ],
 )
-def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, network):
+def test_a_docker_run_builds_lanes_with_no_network_or_a_fenced_one_never_bridge(tmp_path, urls, instance, fenced, later):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if not _image_present("debian:bookworm-slim"):
-        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+        docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     with FakeModelServer() as server:
         cfg = config(tmp_path, server.base_url, runtime="docker")
         run = prepare_run(RunOptions(board=board(tmp_path, urls=urls), config=cfg, instance=instance))
@@ -407,13 +547,18 @@ def test_a_docker_run_builds_lanes_with_that_network(tmp_path, urls, instance, n
     workspace = run.driver.workspaces(lane, bc.challenge)
     assert isinstance(workspace, DockerWorkspace)
     args = workspace.run_args()
-    assert args[args.index("--network") + 1] == network
+    name = args[args.index("--name") + 1]
+    assert args[args.index("--network") + 1] == (f"{name}-net" if fenced else "none") and "bridge" not in args
+    assert workspace.reach == (urls if fenced else ()) and workspace.later == (urls if later else ())
+    assert (workspace.egress is not None) == (fenced or later)
+    if workspace.egress is not None:  # the fence's own network and proxies carry the run's labels, as the container does
+        assert workspace.egress.network == f"{name}-net" and workspace.egress.labels == workspace.labels != {}
 
 
 def test_a_docker_run_with_a_missing_image_names_the_command_that_builds_it(tmp_path):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if _image_present(IMAGE):
         pytest.skip(f"not run: {IMAGE} is built on this machine, so it is not missing")
     with pytest.raises(RunError, match="flightdeck image build"):
@@ -690,9 +835,9 @@ def test_l1_engines_run_where_the_lanes_do_and_the_notes_say_where(tmp_path, run
     if runtime == "docker":
         reason = docker_unavailable()
         if reason:
-            pytest.skip(f"not run: {reason}")
+            docker_not_run(f"not run: {reason}")
         if not _image_present("debian:bookworm-slim"):
-            pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+            docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     pack = tmp_path / "pack"
     python_engine(pack, "reader", READER, route='keywords = ["note"]')
     with FakeModelServer() as server:
@@ -891,6 +1036,43 @@ def test_what_claude_reports_after_its_lane_solved_is_in_the_scorecard_play_prin
     assert "Spend: 165 tokens (0% cached), $0.03, $0.03 per lane solve" in summary.splitlines(), summary
 
 
+def test_a_coding_agent_run_with_a_pack_says_l1_runs_first_and_runs_it_before_the_cli_is_started(tmp_path, scripted_claude):
+    """Issue 26: `play --agent` with a pack no longer says the pack is not used. Its notes
+    (what play prints before lanes start) say the engines run first, and they do: the
+    engine's flag waits for the player with no claude started, and approving it solves the
+    challenge without one."""
+    from ctf_flightdeck.agent.external import ExternalDriver
+    from ctf_flightdeck.core import interventions as iv
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", READER, route='keywords = ["note"]')
+    scripted_claude({"turns": [{"calls": [{"text": "FLAG: t{from_claude}"}]}]})  # what claude would say, were it started
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="claude",
+                                     runtime="host", pack=pack))
+        assert isinstance(run.driver, ExternalDriver) and [m.id for m in run.driver.l1.manifests] == ["reader"]
+        notes = run.notes()
+        assert not any("not used" in note for note in notes)
+        assert "L1: 1 engine(s) from your pack run first on each challenge, on this machine, as you" in notes
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the L1 flag's approval")
+            assert lane.pending.flag == FLAG
+            await asyncio.sleep(0.5)  # a claude would have started by now
+            assert not (tmp_path / "agent-record.jsonl").exists()  # none was
+            assert run.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    assert not (tmp_path / "agent-record.jsonl").exists()
+    l1 = [json.loads(line) for line in run.log.path.read_text().splitlines() if '"kind": "l1"' in line]
+    assert [(e["data"]["engine"], e["data"]["status"], e["data"]["flags"]) for e in l1] == [("reader", "solved", [FLAG])]
+
+
 CUT_BY_QUITTING = {"turns": [{"calls": [
     {"tools": [{"bash": "ls"}], "usage": [100, 10, 0, 0], "cost": 0.5},  # claude says what it cost at the turn's end
     {"think": 30.0},  # and the turn goes on: quitting cuts it
@@ -1032,12 +1214,82 @@ def test_play_prints_its_numbers_once_quitting_has_stopped_the_lanes_so_a_cost_c
     assert "Test Event: solved 0 of 1" in result.stdout and result.stdout.index("Spent 110") < result.stdout.index("run log: ")
 
 
+def spend_line(stdout: str) -> str:
+    """The one line play prints for what the run spent when it has no scorecard: just before the run log line."""
+    lines = stdout.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("run log: "))
+    assert [line for line in lines if line.startswith("Spent ")] == [lines[at - 1]], stdout  # one, and there
+    return lines[at - 1]
+
+
+def test_play_on_a_board_without_answers_says_what_the_run_spent_counted_after_quitting_stopped_the_lanes(
+        tmp_path, monkeypatch, scripted_claude):
+    """No answers, so no scorecard (as on a CTFd event): play prints one line with the run's
+    tokens and dollars instead, before the run log line. It reads them after the run's
+    shutdown: the $0.50 is the cost of the turn quitting cut, which claude takes 1.5 s to
+    report once it is stopped. `flightdeck report` on the run folder gives the same figures."""
+    (turn,) = CUT_BY_QUITTING["turns"]
+    scripted_claude({"turns": [{**turn, "linger": 1.5}]})
+
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.turns for lane in app.deck.lanes.values()), "claude's step")
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+        await until(pilot, lambda: not app.is_running, "the console to quit once its lanes have stopped")
+
+    headless(monkeypatch, player)
+    root = board(tmp_path)
+    (root / "answers.sha256.json").unlink()
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url)),
+                                              "--agent", "claude", "--host"])
+    assert result.exit_code == 0, result.output
+    assert spend_line(result.stdout) == "Spent 110 tokens · $0.50"
+    assert "Test Event: solved" not in result.stdout  # no scorecard
+    folder, _ = next_steps(result.stdout)
+    report = CliRunner().invoke(cli.app, ["report", str(folder)])
+    assert report.exit_code == 0, report.output
+    (spend,) = [line for line in report.stdout.splitlines() if line.startswith("Spend: ")]
+    assert spend.startswith("Spend: 110 tokens (") and spend.endswith(", $0.50"), spend
+
+
+def test_plays_spend_line_says_at_least_when_some_spend_had_no_price(tmp_path, monkeypatch):
+    """A lane on a model with no price in the config (fake/big), on an API that reports no
+    cost: its tokens are counted, its dollars are not known. The line says so."""
+    async def player(app, pilot) -> None:
+        await until(pilot, lambda: any(lane.tokens and lane.dollars is None for lane in app.deck.lanes.values()), "a reply with no price")
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("y")
+
+    headless(monkeypatch, player)
+    root = board(tmp_path)
+    (root / "answers.sha256.json").unlink()
+    with FakeModelServer([tool_call_reply("shell", {"command": "cat note.txt"})] * 3) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(root), "--config", str(config(tmp_path, server.base_url)),
+                                              "--model", "fake/big"])
+    assert result.exit_code == 0, result.output
+    said = re.fullmatch(r"Spent (\d+) tokens · at least \$0\.00 \(some of it has no known cost\)", spend_line(result.stdout))
+    assert said is not None and int(said.group(1)) > 0, result.stdout
+
+
+def test_play_prints_no_spend_line_beside_a_scorecard(tmp_path, monkeypatch):
+    headless(monkeypatch, solve_then_quit)
+    with FakeModelServer([tool_call_reply("submit_flag", {"flag": FLAG})]) as server:
+        result = CliRunner().invoke(cli.app, ["play", str(board(tmp_path)), "--config", str(config(tmp_path, server.base_url)),
+                                              "--submit", "auto"])
+    assert result.exit_code == 0, result.output
+    spent = [line for line in result.stdout.splitlines() if line.startswith("Spent ")]
+    assert len(spent) == 1 and "Test Event: solved 1 of 1" in result.stdout  # the scorecard's own, once
+
+
 @pytest.mark.parametrize("instance", ["confirm", "off"])
 def test_a_coding_agent_lane_cannot_be_held_to_an_instance_policy(tmp_path, fake_claude, instance):
     # so no coding-agent lane ever opens on a brief under "off": the run does not start
     with FakeModelServer() as server:
-        with pytest.raises(RunError, match=f'the instance policy is "{instance}", but a claude lane reaches whatever its CLI '
-                                           "can reach"):
+        with pytest.raises(RunError, match=f'the instance policy is "{instance}", but a claude lane does not ask before it '
+                                           "reaches its instance, and on the host it reaches whatever its CLI can reach"):
             prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url),
                                    agent="claude", runtime="host", instance=instance))
 
@@ -1086,9 +1338,9 @@ def test_codex_lanes_get_the_configs_price_for_their_model_and_play_names_the_mo
 def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude):
     reason = docker_unavailable()
     if reason:
-        pytest.skip(f"not run: {reason}")
+        docker_not_run(f"not run: {reason}")
     if not _image_present("debian:bookworm-slim"):
-        pytest.skip("not run: the image debian:bookworm-slim is not on this machine")
+        docker_not_run("not run: the image debian:bookworm-slim is not on this machine")
     with FakeModelServer() as server:
         cfg = config(tmp_path, server.base_url, runtime="docker")
         with pytest.raises(RunError, match="the lane image debian:bookworm-slim has no claude CLI.*--host"):
@@ -1096,11 +1348,13 @@ def test_docker_agent_lanes_need_the_cli_in_the_lane_image(tmp_path, fake_claude
 
 
 @pytest.mark.parametrize("urls", [(), ("http://127.0.0.1:8080",)])
-def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path, fake_claude, monkeypatch, urls):
+def test_a_coding_agent_lane_in_docker_reaches_its_clis_api_and_its_instance_and_is_never_on_bridge(
+        tmp_path, fake_claude, monkeypatch, urls):
     """Its CLI needs its own API, so its container has a network whether or not its challenge
-    has an instance: where flightdeck's own lane on the same board gets "none". Docker itself
-    is not asked here: only the two checks that need it (is it running, has the image the CLI)
-    are stood in for, and no container is made."""
+    has an instance: where flightdeck's own lane on the same board gets "none". That network
+    is the lane's fenced one, which reaches the API and the instance and nothing else. Docker
+    itself is not asked here: only the two checks that need it (is it running, has the image
+    the CLI) are stood in for, and no container is made."""
     import ctf_flightdeck.run as run_module
 
     monkeypatch.setattr(run_module, "_check_docker", lambda image: None)
@@ -1108,7 +1362,7 @@ def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path,
 
     folder = board(tmp_path, urls=urls)
 
-    def network(**options) -> str:
+    def lane(**options) -> tuple[DockerWorkspace, str, str]:
         with FakeModelServer() as server:
             cfg = config(tmp_path, server.base_url, runtime="docker")
             run = prepare_run(RunOptions(board=folder, config=cfg, **options))
@@ -1116,10 +1370,13 @@ def test_a_coding_agent_lane_in_docker_is_always_on_the_bridge_network(tmp_path,
         workspace = run.driver.workspaces(type("L", (), {"id": "L01"})(), run.board.challenges[0].challenge)
         assert isinstance(workspace, DockerWorkspace)
         args = workspace.run_args()
-        return args[args.index("--network") + 1]
+        assert "bridge" not in args
+        return workspace, args[args.index("--network") + 1], args[args.index("--name") + 1]
 
-    assert network(agent="claude") == "bridge"
-    assert network() == ("bridge" if urls else "none")  # flightdeck's own lane: only for a live instance
+    agent, network, name = lane(agent="claude")
+    assert network == f"{name}-net" and agent.reach == (*CLI_API["claude"], *urls) and agent.later == ()
+    own, network, name = lane()  # flightdeck's own lane: only for a live instance
+    assert network == (f"{name}-net" if urls else "none") and own.reach == urls
 
 
 def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_and_transcripts(tmp_path, monkeypatch):
@@ -1179,6 +1436,86 @@ def test_a_coding_agent_run_shows_every_secret_it_holds_by_name_in_its_events_an
         "[ANTHROPIC_API_KEY_IN_KEYS_FILE]",
     ]
     assert not any(secret in note for note in run.notes() for secret in (own, api, spare, file_only, overridden))
+
+
+def test_a_host_lane_that_reads_the_keys_file_leaves_only_the_names_of_its_values_everywhere(tmp_path, monkeypatch):
+    """flightdeck's own lanes (#8): a host lane can read the keys file, and the values the run
+    holds (the keys file's, the [api] key from the environment) are replaced by [NAME] in what
+    its tool calls give before the model or the deck has them: in the model's requests, on the
+    console, in the lane's transcript and in events.jsonl. Two of the values have no shape the
+    pattern layer (credentials.py) knows, so only their values can give them away; they are
+    built here, when the test runs. One sits across the console excerpt's 300th character: a
+    value taken out after the cut would leave its first part."""
+    from test_console import screen_text
+
+    file_only = "value-only-the-keys-file-holds-" + "v" * 16
+    shaped = "sk-ant-fake-" + "k" * 24
+    api = "the-api-key-of-the-environment-" + "a" * 16
+    secrets = (file_only, shaped, api)
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"FLIGHTDECK_TEST_FILE_SECRET={file_only}\nFLIGHTDECK_TEST_SHAPED_KEY={shaped}\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    monkeypatch.setenv("FLIGHTDECK_TEST_API_KEY", api)
+    root = board(tmp_path)
+    (root / "note" / "pad.txt").write_text("x" * 290 + f"\n{file_only}\n{api}\n")
+    read_keys = f"cat {shlex.quote(str(keys))}"
+    server = FakeModelServer([
+        tool_call_reply("shell", {"command": read_keys}),
+        tool_call_reply("shell", {"command": "cat pad.txt"}),
+        tool_call_reply("read_file", {"path": "pad.txt"}),
+        tool_call_reply("shell", {"command": f"cp {shlex.quote(str(keys))} copy.txt"}),
+    ], responder=lambda record: text_reply("I have read it."), models=LADDER)
+
+    async def main():
+        with server:
+            run = prepare_run(RunOptions(board=root, config=config(tmp_path, server.base_url, key_env="FLIGHTDECK_TEST_API_KEY")))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(200, 60)) as pilot:
+                await pilot.pause()
+                (lane,) = run.deck.lanes.values()
+                await until(pilot, lambda: lane.finished, "the lane to give up")
+                app.refresh_view()
+                app.fleet.select_lane(lane.id)
+                await pilot.pause()
+                await pilot.press("enter")  # its transcript: every step with its output
+                await pilot.pause()
+                screen = screen_text(app)
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("q")
+                await until(pilot, lambda: not app.is_running, "the console to quit")
+            run.close()
+            return run, lane, screen
+
+    run, lane, screen = asyncio.run(main())
+    # the model's requests: every body the API was sent (the key itself goes in the Authorization header only)
+    chats = server.chats()
+    assert len(chats) >= 5
+    for chat in chats:
+        sent = json.dumps(chat["json"])
+        for secret in secrets:
+            assert secret not in sent
+    results = [m["content"] for m in chats[-1]["json"]["messages"] if m["role"] == "tool"]
+    listed = "FLIGHTDECK_TEST_FILE_SECRET=[FLIGHTDECK_TEST_FILE_SECRET]\nFLIGHTDECK_TEST_SHAPED_KEY=[FLIGHTDECK_TEST_SHAPED_KEY]"
+    pad = "x" * 290 + "\n[FLIGHTDECK_TEST_FILE_SECRET]\n[FLIGHTDECK_TEST_API_KEY]\n"
+    assert results[:3] == [f"exit 0\n{listed}\n", f"exit 0\n{pad}", pad]
+    # the console: what the deck holds for it (each step, the changed file's diff), and what it drew
+    steps = {a.text: a.output for a in lane.actions}
+    assert steps[f"$ {read_keys}"] == listed
+    cut = steps["$ cat pad.txt"]  # 300 characters: the cut falls inside the name, never inside the value
+    assert len(cut) == 300 and cut.startswith("x" * 290 + "\n[FLIGHT") and file_only[:6] not in cut
+    diff = lane.files["copy.txt"].diff
+    assert "+FLIGHTDECK_TEST_FILE_SECRET=[FLIGHTDECK_TEST_FILE_SECRET]" in diff
+    assert "[FLIGHTDECK_TEST_FILE_SECRET]" in screen
+    # what the run keeps
+    transcript = (run.dir / "lanes" / f"{lane.id}.jsonl").read_text()
+    events = run.log.path.read_text()
+    assert "[FLIGHTDECK_TEST_FILE_SECRET]" in transcript and read_keys in events
+    held = [lane.plan, lane.result, diff, *(a.text + a.output for a in lane.actions)]
+    for text in (*held, screen, transcript, events, "\n".join(run.notes())):
+        for secret in secrets:
+            assert secret not in text
 
 
 def test_the_notes_say_which_flag_format_the_run_checks_and_where_it_came_from(tmp_path):

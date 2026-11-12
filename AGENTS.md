@@ -3,7 +3,7 @@
 ctf-flightdeck is an open-source terminal harness for playing CTFs with AI agents. The player is the
 operator: the harness pulls and triages challenges, runs no-model (L1) solvers, spins up agent lanes,
 and submits. The player watches every lane and steps in when something looks wrong.
-**Status: 0.2.0 is released (PyPI, public on GitHub). Next: M5 Autopilot.**
+**Status: 0.3.0 is released (PyPI, public on GitHub), with M5 Autopilot. Next: the issues in the Later milestone.**
 Keep this file short: every agent re-reads it on every turn.
 
 ## Where things are
@@ -11,10 +11,13 @@ Keep this file short: every agent re-reads it on every turn.
 - `docs/VISION.md`: what we are building and for whom. Read first.
 - `docs/DECISIONS.md`: decisions already made, with dates. Do not re-litigate them; propose the
   change in an issue or a pull request instead.
-- `docs/ROADMAP.md`: what is released, what is next (M5 Autopilot) and what is still open.
+- `docs/ROADMAP.md`: what is released, what is built and what is still open.
 - `docs/CONSOLE-SPEC.md`: the console layout, lanes, alerts and intervention keys.
 - `docs/ARCHITECTURE.md`: the pipeline, its stages and policies, and every component by subsystem.
-- `README.md`: the player's guide, and the PyPI page: absolute links only.
+- `README.md`: the front page, and the PyPI page: short, absolute links only. `llms.txt` maps the
+  docs for agents.
+- `docs/GUIDE.md`: the player's guide; the detail the README leaves out goes here.
+- `docs/LEADERBOARD.md`: events players flew, sent in by the players themselves (D22).
 - `CHANGELOG.md`: a change a player can see adds a line under `## Unreleased` (add the heading if
   the last release took it).
 - `docs/MODEL-APIS.md`, `docs/MODELS.md`: model APIs, keys, prices; which model for which job.
@@ -30,7 +33,8 @@ httpx/asyncio. Tests: `uv run pytest`.
 ## Rules
 
 1. **This repo is public.** Nothing private goes in: no secrets, no real event data, no player
-   names, nothing from a local `private-notes/` folder or from any private repository.
+   names, nothing from a local `private-notes/` folder or from any private repository. The one
+   exception is a leaderboard row a player sent in about themself (D22).
 2. **No secrets.** Keys come from environment variables or a user config outside the repo. Never print,
    log or commit tokens, cookies or Authorization values. The pre-commit guard (`.githooks/`) must pass
    (`git config core.hooksPath .githooks` turns it on: CONTRIBUTING.md); never use `--no-verify`.

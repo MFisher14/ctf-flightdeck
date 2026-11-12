@@ -51,6 +51,17 @@ The team channel (team.py): mirror() writes our claims, solves and live-box hold
 team folder as the deck makes them, and the team watcher applies the teammates' marks. A
 challenge the team folder shows as solved, or claimed by a teammate, is not queued.
 
+Autopilot (autopilot.py, D20): every run has one, attached to the deck after the Watch and
+off until it is engaged: by `play --autopilot` or `[autopilot] engage = true` when the board
+is released, or by `/autopilot on` in the console. Engaging it at the start needs a run
+budget and the Docker runtime, checked here before anything starts, and the notes say what it
+will and will not do under this run's policies, none of which it changes. With an event
+profile's `start` still to come, prepare_run waits for it after every check and before the
+first pull; at its `end` the run stops as quitting does (Run._until_end). The run tells
+autopilot when the platform needs a human: a CTFd poll that keeps failing, a flag CTFd did
+not judge, or a web page where CTFd's API should answer (platform/ctfd.py: HumanCheck).
+While autopilot guards the run the model client sends no server-side refusal fallback.
+
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
 state folder names (so it is found wherever --run-dir put it). Before a run starts, what
@@ -70,23 +81,27 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .agent.client import ChatClient
 from .agent.driver import COMPACT_AT, AgentDriver
+from .agent.egress import CLI_API
 from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
+from .autopilot import NEEDS_BUDGET, NEEDS_DOCKER, Autopilot, Budget, start_notes
 from .clock import RunClock
-from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at, load_config
+from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at, load_config, webhook_url
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
 from .leftovers import RECORD, ProcessRecord, labels, sweep
-from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, Pull, Solves, Verdict, check_site, load_ids, pull
+from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
     USES_PLATFORM,
@@ -101,7 +116,10 @@ from .preflight import (
     no_agents,
     strictest,
 )
-from .runrecord import write_run_info
+from .notify import Notifier, NotifyError
+from .runrecord import write_run_info, write_run_setup
+from .status import NAME as STATUS_NAME
+from .status import StatusFile
 from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
 from .text import untrusted
 from .transcript import TranscriptLog
@@ -113,6 +131,8 @@ YOU = "you"  # this user (CTFd's users mode, or the user's own solve in teams mo
 YOUR_TEAM = "your team"  # a teammate, in CTFd's teams mode
 YOU_OR_YOUR_TEAM = "you or your team"  # the account, when CTFd did not say whose solve it is
 INSTANCE_POLICIES = ("auto", "confirm", "off")
+PLATFORM_FAILURES = 3  # the same CTFd poll failing this many times in a row is the platform failing: autopilot disengages
+START_WAIT_STEP = 30.0  # seconds: how long the wait for an event's start sleeps before it looks at the time again
 
 
 class RunError(Exception):
@@ -141,6 +161,12 @@ class RunOptions:
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
     agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
     agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
+    autopilot: bool | None = None  # engage autopilot when the board is released; None: the config's [autopilot] engage
+    budget_dollars: float | None = None  # the run budget autopilot needs, in dollars; None: the config's
+    budget_tokens: int | None = None  # and in tokens; None: the config's
+    say: Callable[[str], None] | None = None  # says a line to the player before the console is up (the wait for the start)
+    now: Callable[[], datetime] | None = None  # the time of day, with its zone (the event's start and end); None: the system's
+    sleep: Callable[[float], None] | None = None  # how the wait for the event's start passes time; None: time.sleep
 
 
 @dataclass(eq=False)
@@ -161,6 +187,7 @@ class CTFdLink:
     answered: set[str] = field(default_factory=set)  # CTFd answered a flag for it "already solved": solved, whatever a lane waits for
     reported: set[str] = field(default_factory=set)  # pull problems told to the player
     problems: dict[str, str] = field(default_factory=dict)  # what failed (a poll, or using its answer) -> the failure shown last
+    failing: dict[str, int] = field(default_factory=dict)  # a poll -> how many times in a row it has failed
     tries: dict[str, int] = field(default_factory=dict)  # board id -> the tries left at its flag, as CTFd's details last said (a pull's)
 
     def solved_board_ids(self) -> list[str]:
@@ -208,10 +235,16 @@ class Run:
     _watcher: TeamWatcher | None = field(default=None, repr=False)
     _team_stop: asyncio.Event | None = field(default=None, repr=False)
     _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
+    _stopping: asyncio.Future | None = field(default=None, repr=False)  # the one shutdown, once begun
     _errors: list[str] = field(default_factory=list, repr=False)
     _submits: _Submits | None = field(default=None, repr=False)  # the deck's submitter, with the verifier
     processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
     lights: object = None  # light.Lights: the light engines its jobs share (closed after the watch)
+    status: StatusFile | None = None  # status.json in the run folder, for whatever is not the console
+    notifier: Notifier | None = None  # the notification webhook, when [notify] names one
+    autopilot: Autopilot | None = None  # the run's autopilot (autopilot.py): off until engaged
+    engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
+    stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -243,7 +276,8 @@ class Run:
         flags still on their way to CTFd, and the run's process record's."""
         submits = self._submits.errors if self._submits is not None else []
         record = [self.processes.problem] if self.processes is not None and self.processes.problem else []
-        return [*self.driver.errors, *submits, *self._errors, *record]
+        status = [self.status.problem] if self.status is not None and self.status.problem else []
+        return [*self.driver.errors, *submits, *self._errors, *record, *status]
 
     def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
         """The challenges (default: the board's) in triage order: cheap first (fewest points,
@@ -264,11 +298,21 @@ class Run:
         not queued. The team folder is read here first, on this thread, so no lane starts on
         a challenge a teammate holds."""
         state = None
+        if self.status is not None:  # its timer: the file moves on with no event too
+            self._tasks.append(asyncio.create_task(self.status.run(), name="flightdeck status file"))
+        if self.notifier is not None:  # before any lane starts: what was queued so far goes now
+            self.notifier.start()
         if self.team is not None:
             self._watcher = TeamWatcher(self.team, self.deck)
             state = self._watcher.poll()  # its marks wait until the board is on the deck
         if self._submits is not None:  # before any lane starts: it sends their flags to CTFd
             self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
+        if self.engage and self.autopilot is not None:  # before any lane starts: its guardrails hold from the first turn
+            outcome = self.autopilot.engage()
+            if not outcome.ok:  # prepare_run checked the budget and the runtime: something changed since
+                self.deck.warn(outcome.message, data={"autopilot": "not engaged"})
+        if self.autopilot is not None and self.profile is not None and self.profile.end is not None:
+            self._tasks.append(asyncio.create_task(self._until_end(self.profile.end), name="flightdeck event end"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if state is not None:
             self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
@@ -284,6 +328,16 @@ class Run:
             self._tasks.append(asyncio.create_task(watching, name="flightdeck team watcher"))
 
     async def shutdown(self) -> None:
+        """Stop the run, once: the console's quit (on_exit) and whatever ran the console
+        (cli._fly, on every way out) both call this, and the second call only waits for the
+        first to end. Await it on the loop release() ran on: the lanes and the background
+        tasks live there. Whoever awaits it may be cancelled (a console that fails while it
+        quits) without the shutdown stopping half way."""
+        if self._stopping is None:
+            self._stopping = asyncio.ensure_future(self._shutdown())
+        await asyncio.shield(self._stopping)
+
+    async def _shutdown(self) -> None:
         """Close the deck first (Deck.close: each lane's work stops at once, before anything
         here awaits, and without ending the lane; nothing raises an alert, asks the player or
         starts a lane from then on, yet what the lanes report as they stop counts, a
@@ -316,6 +370,8 @@ class Run:
             await self.lights.aclose()  # the light models, each once
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
+        if self.notifier is not None:  # last: what the shutdown itself had to say is sent too
+            await self.notifier.aclose()
 
     def close(self) -> None:
         if self._unmirror is not None:
@@ -324,6 +380,8 @@ class Run:
         if self.verifier is not None:
             self.verifier.close()
         self.transcripts.close()
+        if self.status is not None:  # before the log closes: a write that fails is a warning in it
+            self.status.close()
         self.log.close()
         if self.processes is not None:
             self.processes.finish()
@@ -343,9 +401,27 @@ class Run:
     def app(self, refresh_seconds: float | None = 0.5):
         from .console.app import FlightdeckApp
 
-        return FlightdeckApp(
+        app = FlightdeckApp(
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir)
         )
+        self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
+        return app
+
+    async def _until_end(self, end: datetime) -> None:
+        """Wait for the event's end (event.end), then, unless the player has the controls
+        (Autopilot.ended), stop the run as quitting does: through `stopper` (the console
+        quits without asking), or with nobody flying it, by shutting the run down here."""
+        now = self.options.now or _now
+        while (left := (end - now()).total_seconds()) > 0:
+            await asyncio.sleep(min(left, START_WAIT_STEP))
+        assert self.autopilot is not None
+        if not self.autopilot.ended(end.isoformat()):
+            return
+        why = f"the event ended ({end.isoformat()}): "
+        if self.stopper is not None:
+            self.stopper(why)
+        else:
+            asyncio.ensure_future(self.shutdown())  # not awaited: the shutdown cancels this task among the others
 
     # ------------------------------------------------------------------ the event's background work
 
@@ -412,8 +488,10 @@ class Run:
                 self._ctfd_problem(
                     "waves", f"could not pull new challenges from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
                 )
+                self._platform_failed("waves", "pulling new challenges", exc)
                 continue
             link.problems.pop("waves", None)
+            link.failing.pop("waves", None)
             try:
                 self._wave(result, asked)
             except Exception as exc:  # a bug: say so, and keep pulling
@@ -471,8 +549,10 @@ class Run:
                 self._ctfd_problem(
                     "solves", f"could not read the solves from CTFd: {_reason(exc)}; flightdeck tries again in {every:g} s"
                 )
+                self._platform_failed("solves", "reading the solves", exc)
                 continue
             link.problems.pop("solves", None)
+            link.failing.pop("solves", None)
             link.read(solves)
             try:
                 self._apply_solves()
@@ -480,6 +560,27 @@ class Run:
                 self._ctfd_problem("apply", f"could not apply the solves from CTFd: {type(exc).__name__}: {exc}")
             else:
                 link.problems.pop("apply", None)
+
+    def _platform_failed(self, kind: str, what: str, exc: BaseException) -> None:
+        """A CTFd poll failed: count it, and tell autopilot when the platform needs a human
+        (Autopilot.platform: it disengages). At once for a web page where CTFd's API should
+        answer (HumanCheck: a login page, a CAPTCHA); after PLATFORM_FAILURES failures in a row
+        of the same poll for anything else (one failure passes: the next poll tries again)."""
+        link = self.ctfd
+        assert link is not None
+        link.failing[kind] = count = link.failing.get(kind, 0) + 1
+        if self.autopilot is None:
+            return
+        if isinstance(exc, HumanCheck):
+            self.autopilot.platform(_reason(exc))
+        elif count == PLATFORM_FAILURES:
+            self.autopilot.platform(f"{what} from CTFd has failed {count} times in a row: {_reason(exc)}")
+
+    def _flag_unjudged(self, verdict: Verdict) -> None:
+        """CTFd did not judge a flag (paused, rate-limited, no answer, a page for a person):
+        the flag goes to the player to submit by hand, so autopilot disengages."""
+        if self.autopilot is not None:
+            self.autopilot.platform(f"CTFd did not judge a flag: {verdict.error}")
 
     def _ctfd_problem(self, kind: str, text: str) -> None:
         """A failed CTFd poll, as a console warning: once while the same failure lasts."""
@@ -521,6 +622,7 @@ def prepare_run(options: RunOptions) -> Run:
         raise RunError(f"runtime must be docker or host, not {runtime!r}")
     plan = _plan(options, config, runtime)
     options = plan.options
+    engage, budget = _autopilot_asked(options, config, runtime)
     board = None if plan.ctfd else _load_board(options)
     ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
@@ -530,8 +632,8 @@ def prepare_run(options: RunOptions) -> Run:
             raise RunError(f"model {model!r} is not in the {options.agent} ladder: {', '.join(ladder)}")
         if options.instance != "auto":
             raise RunError(
-                f'the instance policy is "{options.instance}", but a {options.agent} lane reaches whatever its CLI '
-                "can reach (in Docker its container needs a network for the CLI's own API), so flightdeck "
+                f'the instance policy is "{options.instance}", but a {options.agent} lane does not ask before it '
+                "reaches its instance, and on the host it reaches whatever its CLI can reach, so flightdeck "
                 "cannot hold it to that: play this event with flightdeck's own lanes (no --agent)"
             )
         agent = _find_agent(options.agent, model, options.agent_auth)
@@ -564,6 +666,13 @@ def prepare_run(options: RunOptions) -> Run:
             from .agent.fastmode import fast_note
 
             plan.notes.append(fast_note(config.api.fast))
+        if config.api.effort:
+            plan.notes.append("effort: " + ", ".join(f"{name} at {level}" for name, level in config.api.effort)
+                              + " (any other ladder model runs at Anthropic's default for it)")
+    try:
+        webhook = webhook_url(config)  # [notify]: a variable named and not set stops the run here
+    except ConfigError as exc:
+        raise RunError(str(exc)) from None
     if runtime == "docker":
         _check_docker(config.lanes.image)
         if agent is not None:
@@ -577,6 +686,8 @@ def prepare_run(options: RunOptions) -> Run:
         token = _ctfd_token(profile)
     if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
         _check_apis(config, key, spare_key, plan.notes)
+    if engage and profile is not None:  # every check is done: wait for the event's start before anything is pulled
+        _wait_for_start(options, profile)
     if plan.ctfd:  # the last check, then the first thing done: the pull
         assert token is not None
         first = _pull_first(options, plan, token)
@@ -616,8 +727,12 @@ def prepare_run(options: RunOptions) -> Run:
         l1 = L1Stage(
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
-            labels=marks, record=processes,
+            labels=marks, record=processes, urls=urls,
         )
+    write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
+        config, options, deck_config, ladder, agent=options.agent, ctfd=bool(plan.ctfd),
+        engines=len(manifests) if manifests is not None else 0,
+    ))
     try:
         client = build_client(config, key, spare_key) if agent is None else None
     except ValueError as exc:  # a key no HTTP header can carry; never shown
@@ -653,25 +768,26 @@ def prepare_run(options: RunOptions) -> Run:
     def workspace(lane: Lane, challenge: Challenge) -> Workspace:
         root = run_dir / lane.id.lower() / "work"
         if runtime == "docker":
+            reach, later = lane_reach(urls[challenge.id], instance, api=CLI_API[agent.kind] if agent is not None else ())
             return DockerWorkspace(
                 root,
                 handouts[challenge.id],
                 image=config.lanes.image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
-                network="bridge" if agent is not None else (lane_network(urls[challenge.id]) if instance == "auto" else "none"),
+                reach=reach,
+                later=later,
                 labels=marks,
             )
         return HostWorkspace(root, handouts[challenge.id], record=processes)
 
     files = {b.challenge.id: b.challenge.files for b in board.challenges}
+    # each shown as [NAME] wherever a lane's tool call or its CLI writes it (agent/held.py)
+    held = _held_secrets(config, profile, token)
     if agent is not None:
         from .agent.external import ExternalDriver
 
-        if l1 is not None:
-            plan.notes.append(f"your L1 pack is not used: L1 runs before flightdeck's own lanes, not {agent.kind} lanes (for now)")
-        held = _held_secrets(config, profile, token)  # each shown as [NAME] wherever the CLI writes it
         driver = ExternalDriver(agent, workspace, run_id=run_dir.name, files=files, urls=urls, prices=config.prices, secrets=held,
-                                instance=instance)
+                                instance=instance, l1=l1)
     else:
         assert client is not None
         driver = AgentDriver(
@@ -684,11 +800,26 @@ def prepare_run(options: RunOptions) -> Run:
             compact_at=lane_refresh_at(config, COMPACT_AT),  # sooner where [api] or [fallback] states a smaller context
             l1=l1,
             instance=instance,
+            secrets=held,
         )
     deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits)
     if submits is not None:
         submits.deck = deck
     log.attach(deck)
+    status = StatusFile(run_dir / STATUS_NAME, deck, run=run_dir.name, held=held)  # after the log: its warning is logged
+    status.attach()
+    notifier = None
+    if webhook is not None:
+        env = config.notify.webhook_env
+        try:
+            notifier = Notifier(webhook, deck, run=run_dir.name, env=env, on=config.notify.on, held=held)
+        except NotifyError as exc:
+            raise RunError(str(exc)) from None
+        notifier.attach()
+        plan.notes.append(
+            f"notifications ({', '.join(config.notify.on)}) go to the webhook in the variable {env}: what is sent is in "
+            "docs/GUIDE.md (never a flag)"
+        )
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
     # after the logs (a warning raised inside an event is logged after it), before any lane
@@ -699,15 +830,90 @@ def prepare_run(options: RunOptions) -> Run:
     driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
+    switch, has_fallback = _refusal_switch(client, ladder)
+    autopilot = Autopilot(deck, budget, refusals=switch)
+    autopilot.attach()  # after the watch: it sees the alerts the watch raised
+    if engage:
+        plan.notes += start_notes(
+            plan.policies, submit=deck_config.submit, spends_tries=deck_config.spends_tries, instance=instance, budget=budget,
+            waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
+            start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
+        )
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
-        processes=processes, lights=lights,
+        processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
     )
     if submits is not None:
         submits.solved = run._apply_solves
+        submits.unjudged = run._flag_unjudged
     return run
+
+
+def _autopilot_asked(options: RunOptions, config: Config, runtime: str) -> tuple[bool, Budget]:
+    """Whether this run engages autopilot at its start (--autopilot, else [autopilot] engage),
+    and its run budget (the options', else the config's). Asked for without a budget, or off
+    the Docker runtime, the run does not start: RunError, in one line, with the reason."""
+    engage = config.autopilot.engage if options.autopilot is None else options.autopilot
+    dollars = options.budget_dollars if options.budget_dollars is not None else config.autopilot.budget_dollars
+    tokens = options.budget_tokens if options.budget_tokens is not None else config.autopilot.budget_tokens
+    try:
+        budget = Budget(dollars=dollars, tokens=tokens)
+    except ValueError as exc:
+        raise RunError(str(exc)) from None
+    if engage and not budget.set:
+        raise RunError(NEEDS_BUDGET)
+    if engage and runtime != "docker":
+        raise RunError(f"{NEEDS_DOCKER}: drop --host, or play without --autopilot")
+    return engage, budget
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _wait_for_start(options: RunOptions, profile: EventProfile) -> None:
+    """Under autopilot, wait until the event's start (event.start) before anything is pulled
+    or released, saying so first. Ctrl-C stops the wait (KeyboardInterrupt: nothing has
+    started). An event whose end has passed is refused: there is nothing to run."""
+    now = options.now or _now
+    if profile.end is not None and now() >= profile.end:
+        raise RunError(f"the event ended at {profile.end.isoformat()} (event.end in the event profile): autopilot has "
+                       "nothing to run. Play without --autopilot, or correct the profile")
+    start = profile.start
+    if start is None or (left := (start - now()).total_seconds()) <= 0:
+        return
+    if options.say is not None:
+        from . import fmt
+
+        options.say(f"autopilot: the event starts at {start.isoformat()} (event.start), in {fmt.duration(left)}: waiting "
+                    "until then before anything is pulled or started. Ctrl-C stops the wait")
+    sleep = options.sleep or time.sleep
+    while (left := (start - now()).total_seconds()) > 0:
+        sleep(min(left, START_WAIT_STEP))
+
+
+def _refusal_switch(client: ChatClient | None, ladder: Sequence[str]) -> tuple[Callable[[bool], None] | None, bool]:
+    """What switches the model client's rerouting of a refusal off and on, for autopilot (no
+    refused request goes on to another model while it guards the run), and whether there is
+    any to switch off for this ladder. The one thing that reroutes a refusal is Anthropic's
+    server-side refusal fallback (agent/anthropic_client.py: `server_fallback`, read at every
+    request); the [fallback] API never takes a call a model declined (agent/fallback.py).
+    None for a coding-agent CLI's lanes, which have no client here."""
+    from .agent.refusal import SERVER_FALLBACK_MODELS
+
+    if client is None:
+        return None, False
+    parts = [part for part in (client, getattr(client, "primary", None), getattr(client, "fallback", None))
+             if part is not None and hasattr(part, "server_fallback")]
+    before = [(part, part.server_fallback) for part in parts]
+
+    def switch(allowed: bool) -> None:
+        for part, was in before:
+            part.server_fallback = was and allowed
+
+    return switch, any(was for _, was in before) and any(model in SERVER_FALLBACK_MODELS for model in ladder)
 
 
 def _flag_format_note(effective: str, profile: EventProfile | None, board: Board, folder: Path | None) -> str:
@@ -724,11 +930,12 @@ def _flag_format_note(effective: str, profile: EventProfile | None, board: Board
 
 
 def _held_secrets(config: Config, profile: EventProfile | None, token: str | None) -> dict[str, str]:
-    """Every secret this run holds, as name -> value, for a coding-agent lane's redaction
-    (agent/external.py shows each value as [NAME] wherever its CLI writes it, before anything
+    """Every secret this run holds, as name -> value, for a lane's redaction (agent/held.py:
+    flightdeck's own lanes show each value as [NAME] wherever a tool call gives it, before the
+    model or the deck has it; agent/external.py's wherever the CLI writes it, before anything
     is shown, logged or put in a transcript): each value in the keys file, the [api] and
-    [fallback] keys (a coding-agent run uses neither, but a host lane can read them), and the
-    CTFd token. A variable set in the environment wins over the keys file, as it does
+    [fallback] keys (a coding-agent run uses neither, but a host lane can read them), the
+    notification webhook's URL ([notify] webhook_env: it often holds a token), and the CTFd token. A variable set in the environment wins over the keys file, as it does
     everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
     [NAME_IN_KEYS_FILE]. A key that is not set is no secret to hide, and no error here."""
     from .keys import KeysError, load_keys
@@ -741,7 +948,7 @@ def _held_secrets(config: Config, profile: EventProfile | None, token: str | Non
     spare = config.fallback.key_env if config.fallback is not None else ""
     held = {
         name: value
-        for name in dict.fromkeys([*filed, config.api.key_env, spare])
+        for name in dict.fromkeys([*filed, config.api.key_env, spare, config.notify.webhook_env])
         if name and (value := environ.get(name, "").strip() or filed.get(name, ""))
     }
     if profile is not None and profile.token_env and token:
@@ -1005,6 +1212,7 @@ class _Submits:
         self.link = link
         self.deck: Deck | None = None  # set once the deck exists
         self.solved: Callable[[], None] | None = None  # the run's: close what CTFd lists as solved
+        self.unjudged: Callable[[Verdict], None] | None = None  # the run's: CTFd did not judge a flag (autopilot disengages)
         self.queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (lane, challenge, flag) to send, in order
         self.sending: tuple[str, str, str] | None = None  # the one sent now, until its answer is applied
         self.errors: list[str] = []  # bookkeeping that failed (a flightdeck bug), shown when the run ends
@@ -1059,6 +1267,8 @@ class _Submits:
                 data={"source": "ctfd"},
             )
         deck.platform_verdict(lane_id, flag, verdict.ok, detail, tries_left=tries)
+        if verdict.ok is None and verdict.error and not locked and self.unjudged is not None:
+            self.unjudged(verdict)  # after the deck has the flag back with the player
 
     def unsent(self) -> list[str]:
         """After the worker has stopped: the flags on their way to CTFd when the run ended,
@@ -1145,7 +1355,8 @@ def _pull_first(options: RunOptions, plan: _Plan, token: str) -> _FirstPull:
         if options.confirm is None:
             raise RunError(
                 'the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board, and it cannot ask '
-                'here (not at a terminal): start play at a terminal, or set pull = "auto" in the profile\'s [policies]'
+                'here (not at a terminal, or a headless run): start play at a terminal without --headless, or set '
+                'pull = "auto" in the profile\'s [policies]'
             )
         if not options.confirm(f"Pull the board from {url} into {where}?"):
             raise RunError("you said no to the pull, so nothing was pulled and the run did not start")
@@ -1411,10 +1622,74 @@ def _check_docker(image: str) -> None:
         )
 
 
-def lane_network(urls: tuple[str, ...]) -> str:
-    """A docker lane gets a network only when its challenge has a live instance to reach.
-    Without one it gets none, so it cannot fetch solutions or talk to anything else."""
-    return "bridge" if urls else "none"
+KNOWN_APIS = {"api.anthropic.com": "the Anthropic API", "openrouter.ai": "OpenRouter", "api.openai.com": "the OpenAI API"}
+
+
+def api_kind(base_url: str) -> str:
+    """An API named for a flight card: a server on this machine, one of the public APIs, or
+    "another API". Never the address itself, which can name a private host."""
+    from urllib.parse import urlsplit
+
+    from .light import on_this_machine
+
+    if on_this_machine(base_url):
+        return "a server on this machine"
+    try:
+        host = urlsplit(base_url).hostname or ""
+    except ValueError:
+        host = ""
+    return KNOWN_APIS.get(host, "another API")
+
+
+def _setup(
+    config: Config, options: RunOptions, deck_config: DeckConfig, ladder: Sequence[str], *,
+    agent: str | None, ctfd: bool, engines: int,
+) -> dict[str, object]:
+    """How this run is set up, for RUN_DIR/setup.json and the flight card. It names models
+    and settings only: no path, no key or its variable, no address, no event and no
+    challenge."""
+    from .config import light_specs
+    from .practice_set import practice_dir
+
+    board = "ctfd" if ctfd else "folder"
+    if options.board is not None and Path(options.board).resolve() == practice_dir().resolve():
+        board = "practice"
+    lights = [
+        {"engine": spec.config.engine, "model": spec.config.model, "jobs": list(spec.jobs),
+         "api": api_kind(spec.config.base_url) if spec.config.base_url else ""}
+        for spec in light_specs(config) if spec.jobs and spec.config.engine != "rules"
+    ]
+    return {
+        "runtime": "docker" if deck_config.containerized else "host",
+        "max_lanes": deck_config.max_lanes,
+        "submit": deck_config.submit,
+        "lanes": agent or "flightdeck",
+        "api": "" if agent else api_kind(config.api.base_url),
+        "fallback": "" if agent or config.fallback is None else api_kind(config.fallback.base_url),
+        "ladder": list(ladder),
+        "fast": [] if agent else list(config.api.fast),
+        "light": lights,
+        "l1_engines": engines,
+        "team": deck_config.team,
+        "board": board,
+        "token_cap": config.lanes.token_cap,
+        "dollar_cap": config.lanes.dollar_cap,
+    }  # autopilot is not here: the flight card reads it from the run log, which says whether it was engaged
+
+
+def lane_reach(urls: Sequence[str], instance: str, api: Sequence[str] = ()) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(what a docker lane's network reaches from its start, what it reaches once the player
+    allows it its instance), as URLs (P9): its challenge's instance, `urls`, at once under
+    the instance policy "auto", after the player's yes under "confirm", never under "off";
+    and `api`, a coding-agent CLI's own API (agent.egress.CLI_API), from the start. A lane
+    with neither gets no network at all, so it cannot fetch solutions or talk to anything;
+    one with either reaches those hosts and ports and nothing else (agent/egress.py), never
+    Docker's open bridge network."""
+    if instance == "auto":
+        return (*api, *urls), ()
+    if instance == "confirm":
+        return tuple(api), tuple(urls)
+    return tuple(api), ()
 
 
 def host_warning() -> str:

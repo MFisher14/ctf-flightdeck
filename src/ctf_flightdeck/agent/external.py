@@ -23,6 +23,15 @@ in windows (l1.runner.scan), for at most SCAN_SECONDS per output: no flag format
 output can hold the console up. The player's messages and flightdeck's notes go to the
 CLI as user messages. Same LaneDriver protocol as AgentDriver (agent/driver.py).
 
+With an L1 pack (ExternalDriver's `l1`), a lane runs the player's no-model solvers routed
+to its challenge before its CLI is first started: the stage flightdeck's own lanes run
+before their first model call (agent/l1stage.py: run_stage), in Docker when lanes run
+there, each engine in a container of its own, never in the lane's. A flag an engine found
+waits or goes out by the rules above (an engine's own result is claimed; a match in what a
+text engine printed is not, and neither is a flag the challenge's own text holds), and
+while it waits, or once it solved the challenge, no CLI is started. What the engines found
+goes into the CLI's opening brief, fenced as data, and into each later one (an escalation).
+
 Claude Code runs as one process per lane (`--input-format stream-json`: one JSON line per
 user message on stdin). Codex runs one `codex exec` process per turn: the prompt on stdin,
 then stdin closed; later turns resume the thread (`codex exec ... resume <thread id>`).
@@ -71,7 +80,7 @@ token you can revoke, with a low spending limit. find_agent() says so in its war
 What flightdeck keeps never holds that key: its value (and any other secret given to the
 driver) becomes [NAME] in everything the CLI writes, its events, its stderr and the files
 its lane changes, before anything is cut, shown, logged or put in a transcript, so a lane
-that runs `env` does not put the key in a writeup draft (_Secrets).
+that runs `env` does not put the key in a writeup draft (agent/held.py's Secrets).
 Nothing else of the player's environment is passed: the CLI gets the allowlist
 HostWorkspace gives a lane's commands (no other keys, no platform tokens), its own auth
 variable, and flightdeck's settings that switch off the CLI's telemetry and self-update.
@@ -140,7 +149,9 @@ from ..text import untrusted
 from . import owntext, prompts
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
+from .held import Secrets as _Secrets
 from .facts import FirstLooks, Look
+from .l1stage import L1Stage, StageLane, run_stage
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
@@ -166,7 +177,6 @@ CONTAINER_HOME = {"claude": "/tmp/flightdeck-claude-home", "codex": "/tmp/flight
 """docker: each CLI's own configuration folder (AGENT_HOME) in the lane's container, outside
 /work, where nothing in the workspace (a file the agent writes there, an archive it
 unpacks) can configure the CLI. /tmp: every image has it, writable whatever its user."""
-MIN_SECRET = 8  # a secret shorter than this is not looked for in what the CLI writes: it would hide too much
 CLI_ENV: Mapping[str, Mapping[str, str]] = {
     # flightdeck's own settings for the CLI process (not secrets): no telemetry, no self-update mid-run
     "claude": {"DISABLE_TELEMETRY": "1", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
@@ -793,49 +803,6 @@ class _Lines:
                 self.dropping = True
 
 
-class _Secrets:
-    """Secret values flightdeck knows (the agent's own credential above all, which the
-    commands it runs can read and print), each replaced by [NAME] in text the CLI wrote.
-    Applied where that text first arrives, before anything cuts it: a key cut in two would
-    keep its first part. Never shows a value, in its repr either."""
-
-    def __init__(self, named: Mapping[str, str]) -> None:
-        pairs: dict[str, str] = {}
-        for name, value in named.items():
-            if not isinstance(value, str) or len(value) < MIN_SECRET:
-                continue
-            for form in (value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]):  # as JSON writes it
-                pairs.setdefault(form, f"[{name}]")
-        self.pairs = sorted(pairs.items(), key=lambda pair: -len(pair[0]))  # a longer one first: it may hold a shorter
-
-    def __call__(self, text: str) -> str:
-        for value, label in self.pairs:
-            if value in text:
-                text = text.replace(value, label)
-        return text
-
-    def __bool__(self) -> bool:
-        return bool(self.pairs)
-
-    def __repr__(self) -> str:
-        return f"_Secrets({len({label for _, label in self.pairs})} names)"
-
-    def scrub(self, rep: TurnReport) -> TurnReport:
-        """`rep` with every secret out of its text (never its flag: that is what would be submitted)."""
-        if not self.pairs:
-            return rep
-        return replace(
-            rep,
-            action=self(rep.action),
-            output=self(rep.output),
-            plan=None if rep.plan is None else self(rep.plan),
-            gave_up=None if rep.gave_up is None else self(rep.gave_up),
-            files=tuple(replace(change, path=self(change.path), diff=self(change.diff)) for change in rep.files),
-            artifacts=tuple(self(item) for item in rep.artifacts),
-            why=self(rep.why),
-        )
-
-
 def _decode(raw: bytes, redact: _Secrets | None = None) -> dict | str | None:
     """An event; a str saying why the line is not one; None for a blank line. `redact`
     takes secrets out of the line before it is read."""
@@ -1076,6 +1043,7 @@ class _Run:
         self.look: Look | None = None  # the challenge's first look (agent/facts.py), until the CLI's first start takes it
         self.recon = ""  # what of the first look was back then: in every opening brief of the lane
         self.opened = False  # the CLI has had its first opening: nothing more goes into the brief
+        self.l1_text: str | None = None  # what the L1 engines found (prompts.l1_results): after the brief in every opening
         self._delivering = False
 
     # ------------------------------------------------------------------ the deck's view
@@ -1203,7 +1171,10 @@ class _Run:
         """While the step of a command that ended goes on the lane, from before the freeze a
         take-over makes then. The step's look at the workspace runs in a thread, which a loaded
         machine can hold up: the take-over's shell opens only after it, so the files the command
-        changed are the agent's, and what the player changes is never in its step."""
+        changed are the agent's, and what the player changes is never in its step. Every step
+        that looks at the workspace goes on the lane this way (codex's file edits and tool
+        calls too, which nothing in flight announces: a take-over freezes the CLI at once
+        then, and its shell still waits for the look)."""
         self.recording += 1
         try:
             yield
@@ -1376,6 +1347,10 @@ class _Run:
         self.spawns += 1
         if self.spawns == 1:  # the handout as it came, its agent files too (they are held below)
             await self.plant(await asyncio.to_thread(take_snapshot, root))
+            if self.driver.l1 is not None:
+                await self.l1_stage(self.driver.l1)
+                if self.over():  # an engine's flag solved it (or the lane was killed meanwhile): no CLI starts
+                    return
         try:
             moved = await asyncio.to_thread(hold_agent_config, root, self.spawns)
         except OSError as exc:
@@ -1406,6 +1381,36 @@ class _Run:
             _search_all, [self.challenge.description, *texts], self.driver.flag_re, time.monotonic() + SCAN_SECONDS
         )
 
+    async def l1_stage(self, stage: L1Stage) -> None:
+        """Before the CLI is first started, and after plant(): run the player's L1 engines
+        routed to the challenge (agent/l1stage.py: run_stage, the stage of flightdeck's own
+        lanes), outside the lane's workspace. A flag one found is the lane's candidate by the
+        rules for the agent's own (vet, own_text): an engine's own result is claimed, unless
+        the challenge's own text holds it or may (a handout's stand-in flag.txt it read out),
+        and a match in what a text engine printed never is, so each of those waits for the
+        player under auto too. The session starts no CLI while the lane waits for the player,
+        or once it is solved. What the engines found is kept for every opening brief
+        (l1_text), with the driver's secrets out of it, as out of all a lane shows."""
+        driver = self.driver
+
+        def report(rep: TurnReport) -> None:
+            if rep.flag:
+                self.flags.add(rep.flag)  # raised: the agent finding it again does not raise it again
+            self.report(rep)
+
+        self.l1_text = await run_stage(stage, driver.deck, StageLane(
+            lane_id=self.lane_id,
+            challenge=self.challenge,
+            online=bool(driver.urls.get(self.challenge.id)) and driver.instance == "auto",
+            over=self.over,
+            note=self.note,
+            error=lambda said: driver.errors.append(driver.redact(said)),
+            vet=self.vet,
+            own_text=self.own_text,
+            report=report,
+            redact=driver.redact,
+        ))
+
     async def changes(self) -> tuple[FileChange, ...]:
         """Files changed since the last look."""
         root = self.workspace.root
@@ -1417,10 +1422,12 @@ class _Run:
         return tuple(found[:MAX_FILES_PER_STEP])
 
     def opening(self) -> str:
-        """The start of a fresh context: the brief (the flag format in its fence, as data), and
-        the summary after an escalation. The first opening is the CLI's first model call: the
-        brief takes the first look as far as it is back (agent/facts.py), and every later
-        opening repeats it as it was."""
+        """The start of a fresh context: the brief (the flag format in its fence, as data), what
+        the L1 engines found (once they have run: fenced as data, the same text every time, so
+        a stronger model never pays to redo what they did or ruled out), and the summary after
+        an escalation. The first opening is the CLI's first model call: the brief takes the
+        first look as far as it is back (agent/facts.py), and every later opening repeats it as
+        it was."""
         if not self.opened:
             self.opened = True
             look, self.look = self.look, None
@@ -1431,8 +1438,10 @@ class _Run:
         text = prompts.brief(
             self.challenge, self.driver.files.get(cid, self.challenge.files), self.driver.urls.get(cid, ()),
             lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format, recon=self.recon,
-            instance=self.driver.instance,
+            instance=self.driver.instance, shell_hosts=getattr(self.workspace, "shell_hosts", None),
         )
+        if self.l1_text is not None:
+            text += "\n\n" + self.l1_text
         if self.escalation is not None:
             text += "\n\n" + prompts.escalation(self.escalation)
         return text
@@ -2241,7 +2250,8 @@ class _CodexRun(_Run):
                     status = {"add": "added", "delete": "deleted"}.get(_str(change.get("kind")), "modified")
                     listed.append(FileChange(self.relative(_str(change.get("path"))), "", status))
             names = ", ".join(change.path for change in listed) or "files"
-            await self.step(f"edit {names}", "", files=listed)
+            with self.record_step():  # as a command's step: a take-over's shell waits for this look
+                await self.step(f"edit {names}", "", files=listed)
         elif itype == "agent_message" and kind == "item.completed":
             await self.text(_str(item.get("text")), show=True)
         elif itype == "todo_list":
@@ -2250,7 +2260,8 @@ class _CodexRun(_Run):
             self.note(f"codex: {_one_line(_str(item.get('message')), 300) or 'an error with no message'}")
         elif itype in ("mcp_tool_call", "web_search", "collab_tool_call") and kind == "item.completed":
             detail = _str(item.get("query")) or _str(item.get("tool")) or ""
-            await self.step(f"{itype} {detail}".strip(), "")
+            with self.record_step():  # a tool can change files too: what it changed is the agent's
+                await self.step(f"{itype} {detail}".strip(), "")
         elif itype != "reasoning" and kind == "item.completed":
             self.unknown_event(proc, f"item {itype}")
 
@@ -2319,8 +2330,11 @@ class ExternalDriver:
         flaggate: FlagGate | None = None,
         lights: Lights | None = None,
         instance: str = "auto",
+        l1: L1Stage | None = None,
     ) -> None:
-        """`secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
+        """`l1`: the run's L1 stage (agent/l1stage.py): each lane runs the engines routed to
+        its challenge before its CLI is first started (_Run.l1_stage); None: no pack, no L1.
+        `secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
         Like the agent's own credential, which is always one, a value is shown as [name]
         wherever a lane's CLI writes it. `flaggate`: the light model's flagcheck (run.py sets
         the run's before any lane starts); None: no flag is checked. `lights`: the run's light
@@ -2350,6 +2364,7 @@ class ExternalDriver:
         self.lights = lights
         self.looks = FirstLooks(self.errors)
         self.instance = instance
+        self.l1 = l1
 
     # ------------------------------------------------------------------ LaneDriver
 

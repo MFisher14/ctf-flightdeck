@@ -207,6 +207,30 @@ def test_result_and_the_boot_script_parse_as_python_3_8_so_an_engine_can_use_any
     assert imports <= {"__future__", "json", "math", "dataclasses"}  # stdlib only
 
 
+@pytest.mark.parametrize("uid, mode", [(0, 0o644), (501, 0o600)])
+def test_the_boot_script_writes_a_result_the_player_can_read_when_a_containers_root_wrote_it(tmp_path, monkeypatch, uid, mode):
+    """In Docker on Linux the engine is the container's root, and its result file is root's on
+    the player's machine too: written for its owner alone, flightdeck (the player) could not
+    read it. Any other user's result stays its owner's alone. The umask does not change either."""
+    import importlib.util
+    import os
+    import stat
+
+    spec = importlib.util.spec_from_file_location("boot_under_test", Path(result_module.__file__).with_name("_boot.py"))
+    boot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(boot)
+    monkeypatch.setattr(boot.os, "getuid", lambda: uid)
+    folder = os.open(tmp_path, os.O_RDONLY)
+    old = os.umask(0o077)
+    try:
+        boot._write(folder, "result.json", "{}")
+    finally:
+        os.umask(old)
+        os.close(folder)
+    assert stat.S_IMODE((tmp_path / "result.json").stat().st_mode) == mode
+    assert (tmp_path / "result.json").read_text() == "{}\n"
+
+
 def test_json_dumps_of_to_dict_and_to_json_agree():
     assert json.loads(FULL.to_json()) == FULL.to_dict()
     assert FULL.to_json(indent=2).count("\n") > 3  # keyword arguments reach json.dumps

@@ -5,6 +5,10 @@ command bar. A line under the lane list says why the selected lane is flagged an
 to do about it. The command bar acts on the same lane the keys do. Under 100 columns the
 board hides so the lane list keeps its columns. The key line at the bottom always shows
 `? help` and `q quit`; on a narrow terminal the keys needed least are left out of it first.
+
+At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: each lane's
+row has what needs you, the lane, its challenge, state and cost; the why line has six rows,
+with the answers one a row; the key line has the answers, the commands, help and quit.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from textual.widgets import DataTable, Static
 from ..core.attention import SortMode, sort_lanes
 from ..core.model import Lane
 from . import theme, views
-from .commands import CommandError, parse
+from .commands import CommandError, needs_lane, parse
 from .widgets import CommandBar
 
 if TYPE_CHECKING:
@@ -35,20 +39,28 @@ BOARD_MIN_WIDTH = 100  # narrower than this, the board hides and the lanes get t
 KEY_RANK = {
     "question_mark": 0, "q": 0,
     "a": 1, "d": 1, "slash": 1,
-    "o": 2, "k": 2,
-    "p": 3, "h": 3, "r": 3, "c": 3,
+    "o": 2, "k": 2, "A": 2,
+    "p": 3, "h": 3, "r": 3, "x": 3, "c": 3,
     "f": 4, "e": 4, "t": 4,
     "s": 5, "tab": 5,
 }
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
+SCROLLBAR = 2  # cells the lane list's scrollbar takes once it has more rows than room
 # The rows that are not lane rows: the header and the gap under it, the lane list's border and
 # column labels, the why line and the gap over it, the status line, the command bar, the key line.
 FLEET_ROWS = 13
+# The compact layout: no gap under the header or over the why line, and a why line of six rows.
+COMPACT_FLEET_ROWS = FLEET_ROWS - 2 - views.WHY_ROWS + views.COMPACT_WHY_ROWS
+# The compact layout's key line: (binding key or "" for no binding, key as shown, label).
+COMPACT_KEYS = (
+    ("a", "a", "yes"), ("d", "d", "no"), ("", "1-9", "answer"), ("slash", "/", "cmd"),
+    ("question_mark", "?", "help"), ("q", "q", "quit"),
+)
 
 
-def lane_rows(lines: int) -> int:
+def lane_rows(lines: int, *, compact: bool = False) -> int:
     """How many lane rows the lane list shows at once on a terminal `lines` tall (it scrolls to the rest)."""
-    return max(0, lines - FLEET_ROWS)
+    return max(0, lines - (COMPACT_FLEET_ROWS if compact else FLEET_ROWS))
 
 
 class FleetScreen(Screen, inherit_bindings=False):
@@ -63,6 +75,8 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen #why { height: 2; margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
     FleetScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
     FleetScreen #keys { height: 1; margin: 0 1; link-style: none; link-style-hover: underline; }
+    FleetScreen.-compact #main { margin-top: 0; width: 100%; }
+    FleetScreen.-compact #why { height: 6; margin-top: 0; }
     """
     BINDINGS = [
         Binding("o", "open_lane", "open"),
@@ -76,6 +90,8 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("t", "lane('takeover')", "take over"),
         Binding("a", "lane('approve')", "approve"),
         Binding("d", "lane('decline')", "decline"),
+        Binding("A", "approve_all", "approve all"),
+        Binding("x", "lane('dismiss')", "dismiss"),
         Binding("c", "claim", "claim"),
         Binding("slash", "command", "commands", key_display="/"),
         Binding("s", "sort", "sort"),
@@ -96,6 +112,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.selected_lane: str | None = None  # the lane the keys act on
         self.selected_challenge: str | None = None
         self.board_focused = False
+        self.compact = False  # the compact layout (views.compact of the terminal's width)
         self._lane_cursor: str | None = None  # row key under the cursor: a lane or the finished row
         self._lane_columns: list[tuple[str, str, int]] = []
         self._board_columns: list[tuple[str, str, int]] = []
@@ -121,6 +138,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def on_mount(self) -> None:
         self._ready = True
+        self._fit_layout(self.size.width)
         self._show_keys(self.size.width)
         self._fit_board(self.size.width)
         self._set_columns()
@@ -128,9 +146,19 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.query_one("#lanes", DataTable).focus()
 
     def on_resize(self, event: events.Resize) -> None:
+        changed = self._fit_layout(event.size.width)
         self._show_keys(event.size.width)
         self._fit_board(event.size.width)
         self.call_after_refresh(self._set_columns)
+        if changed:  # the header and the why line are drawn another way
+            self.call_after_refresh(self.refresh_view)
+
+    def _fit_layout(self, width: int) -> bool:
+        """Switch to or from the compact layout for a terminal `width` wide. True if it changed."""
+        compact = views.compact(width)
+        changed, self.compact = compact != self.compact, compact
+        self.set_class(compact, "-compact")
+        return changed
 
     def _show_keys(self, width: int) -> None:
         self.query_one("#keys", Static).update(self.key_line(width - KEY_MARGIN))
@@ -158,9 +186,15 @@ class FleetScreen(Screen, inherit_bindings=False):
         board = self.query_one("#board", DataTable)
         lanes = self.query_one("#lanes", DataTable)
         board_cols = views.fit_columns(views.BOARD_COLUMNS, "name", views.BOARD_NAME_MIN, max(20, board.size.width - 1), board.cell_padding)
-        lane_cols = views.fit_columns(
-            views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
-        )
+        if self.compact:
+            lane_cols = views.fit_columns(
+                views.COMPACT_LANE_COLUMNS, "chall", views.COMPACT_CHALL_MIN,
+                max(30, self.query_one("#lanes-pane").size.width - 1 - SCROLLBAR), lanes.cell_padding,
+            )  # the pane's width less the scrollbar's, whether it shows yet or not: the columns do not move when it comes
+        else:
+            lane_cols = views.fit_columns(
+                views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
+            )
         if board_cols != self._board_columns:
             self._board_columns = board_cols
             board.clear(columns=True)
@@ -181,7 +215,7 @@ class FleetScreen(Screen, inherit_bindings=False):
             return  # not composed yet, or the app is shutting down
         with self.app.batch_update():
             header = self.query_one("#header", Static)
-            header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2)))
+            header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2), compact=self.compact))
             self._render_board()
             self._render_lanes()
             self._render_why()
@@ -221,11 +255,11 @@ class FleetScreen(Screen, inherit_bindings=False):
         ]
         active = [lane for lane in lanes if not lane.finished]
         done = [lane for lane in lanes if lane.finished]
-        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane)) for lane in active]
+        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in active]
         if done:
             rows.append((views.FINISHED_ROW, views.finished_cells(done, self.show_finished)))
             if self.show_finished:
-                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane)) for lane in done]
+                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in done]
         return rows
 
     def _render_lanes(self, rebuild: bool = False) -> None:
@@ -265,7 +299,7 @@ class FleetScreen(Screen, inherit_bindings=False):
                 self.selected_lane = self._lane_cursor  # first lanes on screen: select the top one
                 self._render_lanes()
         self.query_one("#lanes-pane").border_title = views.lanes_title(
-            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden
+            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact
         )
 
     def _render_why(self) -> None:
@@ -279,7 +313,12 @@ class FleetScreen(Screen, inherit_bindings=False):
             why.update(views.challenge_why(deck, deck.challenges[self.selected_challenge]))
             return
         lane = deck.lanes.get(self.selected_lane or "")
-        why.update(views.lane_why(deck, lane) if lane else Text(" No lane yet: lanes start when challenges are released.", theme.MUTED))
+        if lane is None:
+            why.update(Text(" No lane yet: lanes start when challenges are released.", theme.MUTED))
+        elif self.compact:
+            why.update(views.compact_why(deck, lane, why.size.width or self.size.width - 2))
+        else:
+            why.update(views.lane_why(deck, lane))
 
     # ------------------------------------------------------------------ selection
 
@@ -408,6 +447,11 @@ class FleetScreen(Screen, inherit_bindings=False):
         else:
             self.fd.lane_verb(lane, verb)
 
+    def action_approve_all(self) -> None:
+        """Every flag that waits for a plain yes, after a prompt that lists them (not the
+        selected lane's alone)."""
+        self.fd.approve_all()
+
     def action_open_lane(self) -> None:
         lane = self.target_lane()
         if lane is not None:
@@ -452,7 +496,7 @@ class FleetScreen(Screen, inherit_bindings=False):
             self.fd.warn(str(exc))
             return
         lane_id = self.selected_lane
-        if parsed.command is None or (parsed.command.lane and parsed.lane is None):
+        if needs_lane(parsed) and parsed.lane is None:
             lane = self.target_lane()  # warns when the board has no single lane or the filter hides it
             if lane is None:
                 return
@@ -497,6 +541,8 @@ class FleetScreen(Screen, inherit_bindings=False):
 
         One Text drawn with the screen, so it is complete on the first frame (Textual's
         Footer fills in after a later refresh, which made screenshots and tests flaky)."""
+        if self.compact:
+            return compact_keys_text()
         shown = [b for b in self.BINDINGS if b.show and self._allowed(b.action)]
         return self._keys_text(fit_keys(shown, width)[0])
 
@@ -525,12 +571,46 @@ def fit_keys(bindings: list[Binding], width: int | None) -> tuple[list[Binding],
     return shown, left
 
 
+def compact_keys_text() -> Text:
+    """The compact layout's key line (COMPACT_KEYS): the answers, the commands, help and quit,
+    each clickable as on the full line; cut at the edge of a terminal too narrow for it."""
+    by_key = {b.key: b for b in FleetScreen.BINDINGS}
+    out = Text(no_wrap=True, overflow="ellipsis")
+    for i, (key, shown, label) in enumerate(COMPACT_KEYS):
+        binding = by_key.get(key)
+        action = "" if binding is None else binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
+        click = {"@click": action} if action else {}
+        out.append("  " if i else "")
+        out.append(shown, Style(color=theme.ACCENT, bold=True, meta=click))
+        out.append(f" {label}", Style(color=theme.MUTED, meta=click))
+    return out
+
+
 def key_room(columns: int, *, team: bool) -> tuple[list[str], int]:
     """The keys the key line leaves out on a terminal `columns` wide ("s sort", in the order
-    they go), and the columns it needs to show every key. Claim is a team-mode key (check_action)."""
+    they go), and the columns it needs to show every key. Claim is a team-mode key (check_action).
+    The compact layout's line (COMPACT_KEYS) leaves out every key it does not have, then any
+    of its own that the terminal's edge cuts."""
     keys = [b for b in FleetScreen.BINDINGS if b.show and (team or b.action != "claim")]
+    needed = FleetScreen._keys_text(keys).cell_len + KEY_MARGIN
+    if views.compact(columns):
+        kept = {key for key, _, _ in COMPACT_KEYS}
+        _, order = fit_keys(keys, 0)  # every key in the order it goes
+        left = [f"{b.key_display or b.key} {b.description}" for b in order + [b for b in keys if b not in order] if b.key not in kept]
+        return left + cut_keys([(shown, label) for _, shown, label in COMPACT_KEYS], columns - KEY_MARGIN), needed
     _, left = fit_keys(keys, columns - KEY_MARGIN)
-    return [f"{b.key_display or b.key} {b.description}" for b in left], FleetScreen._keys_text(keys).cell_len + KEY_MARGIN
+    return [f"{b.key_display or b.key} {b.description}" for b in left], needed
+
+
+def cut_keys(labels: list[tuple[str, str]], width: int) -> list[str]:
+    """The keys of a key line drawn whole and cut at its edge ("key label", two cells apart)
+    that a line `width` cells wide does not show whole: the last ones."""
+    end, cut = 0, []
+    for i, (key, label) in enumerate(labels):
+        end += (2 if i else 0) + len(f"{key} {label}")
+        if end > width:
+            cut.append(f"{key} {label}")
+    return cut
 
 
 def _cursor_key(table: DataTable) -> str | None:

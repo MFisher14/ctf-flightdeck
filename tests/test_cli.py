@@ -42,7 +42,7 @@ runner = CliRunner()
 MOMENTS = (
     "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
     "approve-pending", "approve-submit", "team-stop", "attention-sort", "narrow-120x36",
-    "fork-prompt", "kill-prompt", "take-over", "challenge-card", "help",
+    "compact-56x40", "compact-focus-56x40", "fork-prompt", "kill-prompt", "take-over", "challenge-card", "help",
 )
 COURSE_TAGS = {kind.tag: kind for kind in COURSE_ALERTS}
 ALERT_SHOT = rf"alert-(?:{'|'.join(COURSE_TAGS)})"
@@ -143,7 +143,11 @@ def opened(monkeypatch) -> list[Opened]:
             )
         )
 
-    monkeypatch.setattr(FlightdeckApp, "run", run)
+    async def run_async(self: FlightdeckApp, *args, **kwargs) -> None:
+        run(self)
+
+    monkeypatch.setattr(FlightdeckApp, "run", run)  # `mock` runs the console itself
+    monkeypatch.setattr(FlightdeckApp, "run_async", run_async)  # `play` awaits it on its own loop
     return calls
 
 
@@ -356,7 +360,7 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
                 arguments[(" ".join(path[1:]), param.name)] = param.metavar
     assert arguments == {
         ("play", "board"): "BOARD",
-        ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR",
+        ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR", ("share", "run_dir"): "RUN_DIR",
         ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
         ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
         ("team init", "folder"): "FOLDER", ("team status", "folder"): "FOLDER", ("l1 import", "folder"): "FOLDER",
@@ -409,7 +413,19 @@ def test_play_not_at_a_terminal_cannot_ask_before_a_pull_and_says_what_to_do(tmp
         result = runner.invoke(cli.app, ctfd_event(tmp_path, fake.base_url, pull="confirm", api=model_api))
         assert fake.requests == []
     assert result.exit_code == 2 and opened == []
-    assert 'cannot ask here (not at a terminal): start play at a terminal, or set pull = "auto"' in result.stderr
+    assert 'cannot ask here (not at a terminal, or a headless run): start play at a terminal without --headless, or set pull = "auto"' in result.stderr
+
+
+def test_a_headless_play_has_nobody_to_ask_before_a_pull_even_at_a_terminal_and_says_what_to_do(tmp_path, monkeypatch, opened, model_api):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)  # someone may be there now; nobody is once it flies
+    monkeypatch.setenv(PLAY_TOKEN_VAR, TOKEN)
+    with FakeCTFd(sample()) as fake:
+        result = runner.invoke(cli.app, [*ctfd_event(tmp_path, fake.base_url, pull="confirm", api=model_api), "--headless"], input="y\n")
+        assert fake.requests == []
+    assert result.exit_code == 2 and opened == [] and "Pull the board from" not in result.output
+    assert ('flightdeck: the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board, and it cannot ask '
+            'here (not at a terminal, or a headless run): start play at a terminal without --headless, or set pull = "auto" '
+            "in the profile's [policies]") in result.stderr
 
 
 def test_play_with_a_token_ctfd_refuses_says_why_and_never_shows_it(tmp_path, monkeypatch, opened, model_api):
@@ -609,12 +625,28 @@ def test_narrow_shot_has_no_line_longer_than_120_cells(default_run):
     assert widest(shot(out, "narrow-120x36")) <= 120
 
 
-def test_only_the_narrow_shot_is_narrow(default_run):
+def test_only_the_narrow_and_the_compact_shots_are_narrow(default_run):
     _, out = default_run
     widths = {path.name: columns(path) for path in out.iterdir()}
     narrow = shot(out, "narrow-120x36").name
     assert widths.pop(narrow) == 120
+    for moment in ("compact-56x40", "compact-focus-56x40"):
+        assert widths.pop(shot(out, moment).name) == 56
     assert set(widths.values()) == {screenshots.SIZE[0]}
+
+
+def test_the_compact_shots_show_what_needs_you_the_answers_and_each_lanes_state_and_cost(default_run):
+    _, out = default_run
+    fleet, lane = screen_text(shot(out, "compact-56x40")), screen_text(shot(out, "compact-focus-56x40"))
+    assert widest(shot(out, "compact-56x40")) <= 56 and widest(shot(out, "compact-focus-56x40")) <= 56
+    assert re.search(r"▲ \d+ need you ╱ \$\d+\.\d\d", fleet) and "a yes  d no  1-9 answer  / cmd  ? help  q quit" in fleet
+    rows = re.findall(r"(L\d\d) +(run|wait|pause|take) +(\$\S+|-) +\S", fleet)
+    assert len(rows) >= 10, fleet  # a row for each lane on screen: its state and its cost
+    selected = re.search(r"▌(L\d\d) [▲◆] ", fleet).group(1)  # the why line: why, then each answer on its own row
+    assert re.search(r"\n│ +1  \S.*\n│ +[02]  \S", fleet), fleet
+    assert re.search(rf"─ {selected} (run|wait) \$\S+ · ", lane), lane  # the same lane, opened: its state and cost in the title
+    assert lane.index("needs you now") < lane.index("⏺ ")  # what it needs, above its transcript
+    assert "files changed" not in lane and "esc fleet  1-9 0 answer  / cmd  ctrl+n next" in lane
 
 
 @pytest.mark.parametrize(
@@ -704,6 +736,7 @@ MOUNTED = {
     ("score",): "Score",
     ("eval-local",): "",
     ("gaps",): "L1",
+    ("share",): "flight card",
 }
 
 
@@ -737,7 +770,7 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
         "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
         "Play": ["mock", "play", "practice"],
         "Before and during an event": ["preflight", "ctfd", "team"],
-        "After a run": ["report", "writeups", "score", "gaps"],  # gaps reads a run folder, like the three before it
+        "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
         "Solvers (L1)": ["l1", "build"],
     }
 

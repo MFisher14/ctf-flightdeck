@@ -113,6 +113,123 @@ def test_a_cpu_only_linux_box():
     assert summary(machine) == "Linux on x86_64, 16 GiB of memory, no NVIDIA GPU found"
 
 
+# ---------------------------------------------------------------------- AMD and Intel GPUs, on Linux
+
+
+def drm(card: int, vendor: str, device: str = "", vram: str | None = None) -> dict[str, str]:
+    """/sys/class/drm/card<card>/device as a driver shows it: the PCI ids, and amdgpu's memory file."""
+    base = f"/sys/class/drm/card{card}/device"
+    files = {f"{base}/vendor": f"{vendor}\n"}
+    if device:
+        files[f"{base}/device"] = f"{device}\n"
+    if vram is not None:
+        files[f"{base}/mem_info_vram_total"] = vram
+    return files
+
+
+ROCM = "/opt/rocm/bin/rocm-smi"
+ROCM_ARGS = ("--showmeminfo", "vram", "--csv")
+ROCM_HEAD = "device,VRAM Total Memory (B),VRAM Total Used Memory (B)\n"
+
+
+def test_a_linux_box_with_an_amd_gpu():
+    host = linux_box(32 * 1024 * 1024, files=drm(1, "0x1002", "0x744c", f"{16 * GIB}\n"))
+    machine = probe(host, servers=OFF)
+    (gpu,) = machine.other_gpus.value
+    assert (gpu.vendor, gpu.card, gpu.device, gpu.memory, gpu.memory_unknown) == ("AMD", "card1", "0x744c", 16 * GIB, "")
+    assert gpu.name == "AMD GPU (1002:744c)" and machine.other_gpu_note == ""
+    assert machine.gpus.value == ()  # not an NVIDIA GPU: the advice does not count it
+    assert host.ran == []  # /sys answered: no program is run, and rocm-smi is not on PATH
+    assert summary(machine) == ("Linux on x86_64, 32 GiB of memory, no NVIDIA GPU found, AMD GPU (1002:744c) with 16 GiB "
+                                "(flightdeck has no results for it yet)")
+    assert machine.as_json()["other_gpus"] == {"unknown": None, "note": None, "value": [{
+        "vendor": "AMD", "card": "card1", "pci_device": "0x744c", "name": "AMD GPU (1002:744c)",
+        "memory_bytes": 16 * GIB, "memory_unknown": None}]}
+
+
+def test_a_linux_box_with_an_intel_gpu_names_it_and_reads_no_memory():
+    host = linux_box(16 * 1024 * 1024, files=drm(0, "0x8086", "0x56a0"))
+    machine = probe(host, servers=OFF)
+    (gpu,) = machine.other_gpus.value
+    assert (gpu.vendor, gpu.name, gpu.memory) == ("Intel", "Intel GPU (8086:56a0)", None)
+    assert gpu.memory_unknown == "flightdeck reads no memory size for an Intel GPU"
+    assert "Intel GPU (8086:56a0), memory not read (flightdeck has no results for it yet)" in summary(machine)
+    assert host.ran == []
+
+
+def test_an_nvidia_card_and_a_virtual_display_under_sys_are_not_other_gpus():
+    host = linux_box(64 * 1024 * 1024, nvidia="NVIDIA GeForce RTX 4090, 24564\n",
+                     files={**drm(0, "0x10de", "0x2684"), **drm(1, "0x1234", "0x1111"), **drm(2, "0x8086", "0xa780")})
+    machine = probe(host, servers=OFF)
+    assert [g.name for g in machine.gpus.value] == ["NVIDIA GeForce RTX 4090"]
+    assert [(g.vendor, g.card) for g in machine.other_gpus.value] == [("Intel", "card2")]  # the integrated one beside it
+
+
+def test_a_linux_box_with_no_amd_or_intel_gpu_says_where_it_looked_and_other_systems_are_not_looked_at():
+    machine = probe(linux_box(16 * 1024 * 1024), servers=OFF)
+    assert machine.other_gpus.value == ()
+    assert machine.other_gpu_note == "no AMD or Intel GPU among /sys/class/drm/card0 to card15"
+    mac = probe(apple_mac(files=drm(0, "0x1002", "0x744c", f"{16 * GIB}\n")), servers=OFF)  # even were /sys there
+    assert mac.other_gpus.value == () and mac.other_gpu_note == "AMD and Intel GPUs are looked for on Linux only, not on macOS"
+    assert "AMD" not in summary(mac)
+
+
+@pytest.mark.parametrize("vram", ["", "lots\n", "0\n", "-5\n", f"{2**60}\n", "16 GiB\n"])
+def test_garbage_in_the_amd_memory_file_leaves_that_memory_unknown_never_a_number(vram):
+    machine = probe(linux_box(8 * 1024 * 1024, files=drm(0, "0x1002", "not-an-id", vram)), runtimes=False)
+    (gpu,) = machine.other_gpus.value
+    assert gpu.memory is None and gpu.device == "" and gpu.name == "AMD GPU"
+    assert gpu.memory_unknown == "/sys/class/drm/card0/device/mem_info_vram_total holds no number of bytes"
+    assert "AMD GPU, memory not read" in summary(machine)
+
+
+def test_rocm_smi_is_asked_only_for_an_amd_memory_sys_did_not_give():
+    args = (ROCM, *ROCM_ARGS)
+    answered = linux_box(8 * 1024 * 1024, files=drm(0, "0x1002", "0x73bf", f"{16 * GIB}\n"), programs={"rocm-smi": ROCM},
+                         commands={args: ROCM_HEAD + f"card0,{8 * GIB},1024\n"})
+    assert probe(answered, runtimes=False).other_gpus.value[0].memory == 16 * GIB and answered.ran == []
+    intel = linux_box(8 * 1024 * 1024, files=drm(0, "0x8086", "0x56a0"), programs={"rocm-smi": ROCM})
+    assert probe(intel, runtimes=False).other_gpus.value[0].memory is None and intel.ran == []  # not an AMD card's question
+    asked = linux_box(8 * 1024 * 1024, files=drm(0, "0x1002", "0x73bf"), programs={"rocm-smi": ROCM},
+                      commands={args: ROCM_HEAD + f"card0,{12 * GIB},1024\n"})
+    machine = probe(asked, runtimes=False)
+    assert [(g.card, g.device, g.memory, g.memory_unknown) for g in machine.other_gpus.value] == [("card0", "0x73bf", 12 * GIB, "")]
+    assert asked.ran == [list(args)] and asked.timeouts == [hardware.GPU_TIMEOUT]
+
+
+def test_rocm_smi_names_amd_gpus_a_hidden_sys_does_not_show():
+    host = linux_box(8 * 1024 * 1024, programs={"rocm-smi": ROCM},  # a container: no /sys/class/drm
+                     commands={(ROCM, *ROCM_ARGS): ROCM_HEAD + f"card0, {24 * GIB}, 0\ncard1, {24 * GIB}, 0\n"})
+    machine = probe(host, runtimes=False)
+    assert [(g.vendor, g.card, g.name, g.memory) for g in machine.other_gpus.value] == [
+        ("AMD", "card0", "AMD GPU", 24 * GIB), ("AMD", "card1", "AMD GPU", 24 * GIB)]
+    assert "AMD GPU with 24 GiB and AMD GPU with 24 GiB (flightdeck has no results for them yet)" in summary(machine)
+    none = linux_box(8 * 1024 * 1024, programs={"rocm-smi": ROCM}, commands={(ROCM, *ROCM_ARGS): ROCM_HEAD})
+    listed = probe(none, runtimes=False)
+    assert listed.other_gpus.value == () and listed.other_gpu_note.endswith("card15, and rocm-smi lists none")
+
+
+@pytest.mark.parametrize(("printed", "why"), [
+    (ProbeError("rocm-smi gave no answer within 5 s"), "rocm-smi gave no answer within 5 s"),
+    ("ERROR: No AMD GPUs detected\n", "rocm-smi printed something that is not its table of GPU memory"),
+    (ROCM_HEAD + "card0,N/A,N/A\n", "rocm-smi printed something that is not its table of GPU memory"),
+    (ROCM_HEAD + "card0,0,0\n", "rocm-smi gave no memory size in bytes for a GPU"),
+    (ROCM_HEAD + f"card3,{8 * GIB},0\n", "rocm-smi lists no card0"),
+])
+def test_a_rocm_smi_that_fails_or_prints_garbage_gives_no_memory_and_says_why(printed, why):
+    files = drm(0, "0x1002", "0x73bf")
+    host = linux_box(8 * 1024 * 1024, files=files, programs={"rocm-smi": ROCM}, commands={(ROCM, *ROCM_ARGS): printed})
+    gpu = probe(host, runtimes=False).other_gpus.value[0]
+    assert gpu.card == "card0" and gpu.memory is None  # found, its memory unknown: never a guess
+    assert gpu.memory_unknown == f"/sys/class/drm/card0/device/mem_info_vram_total cannot be read (No such file or directory); {why}"
+    if why.startswith("rocm-smi lists no"):
+        return  # that answer was read: it names another card, which is added
+    bare = linux_box(8 * 1024 * 1024, programs={"rocm-smi": ROCM}, commands={(ROCM, *ROCM_ARGS): printed})
+    unknown = probe(bare, runtimes=False)  # no card under /sys, and rocm-smi cannot be read: unknown, not "none"
+    assert unknown.other_gpus.value is None and unknown.other_gpus.unknown == why
+    assert "AMD GPUs unknown" in summary(unknown)
+
+
 def test_wsl_counts_as_linux():
     host = linux_box(32 * 1024 * 1024, osrelease="5.15.153.1-microsoft-standard-WSL2\n",
                      nvidia="NVIDIA GeForce RTX 3060, 12288\n", nvidia_path="/usr/lib/wsl/lib/nvidia-smi")

@@ -3,7 +3,11 @@
 The facts: the OS and architecture (WSL counts as Linux); on macOS the chip (sysctl
 machdep.cpu.brand_string) and whether it is Apple Silicon; total memory (macOS: sysctl
 hw.memsize; Linux: MemTotal in /proc/meminfo); NVIDIA GPUs and their memory (nvidia-smi, asked
-only when it is on PATH); and the local model runtimes: Ollama (the ollama program, and the
+only when it is on PATH); on Linux, AMD and Intel GPUs (the PCI vendor of each
+/sys/class/drm/cardN; an AMD card's memory from the amdgpu driver's mem_info_vram_total there,
+else from rocm-smi when it is on PATH; an Intel GPU's memory is not read). flightdeck has no
+measured results for AMD or Intel GPUs: they are found and said, and the advice does not count
+them (model_catalog.budget()). And the local model runtimes: Ollama (the ollama program, and the
 models its server has pulled, with the size on disk it gives each), an MLX server
 (mlx_lm.server on PATH or the mlx_lm package importable, and the models a server at
 mlx_lm.server's port lists), llama.cpp's llama-server, and LM Studio's server.
@@ -65,7 +69,15 @@ SERVERS = {  # where each runtime's server lists its models, at its default addr
 }
 SERVING, DOWN, UNKNOWN = "serving", "down", "unknown"  # a server's state
 NVIDIA_QUERY = ("--query-gpu=name,memory.total", "--format=csv,noheader,nounits")  # memory in MiB
+AMD, INTEL = "AMD", "Intel"
+PCI_VENDORS = {"0x1002": AMD, "0x8086": INTEL}  # the PCI vendor ids looked for (NVIDIA's GPUs are nvidia-smi's to list)
+DRM_CARDS = 16  # /sys/class/drm/card0 to card15 are looked at
+DRM_FILE = "/sys/class/drm/card{card}/device/{name}"  # vendor, device, mem_info_vram_total (amdgpu: bytes)
+ROCM_QUERY = ("--showmeminfo", "vram", "--csv")  # device,VRAM Total Memory (B),VRAM Total Used Memory (B)
+RESULTS_FORM = "https://github.com/MFisher14/ctf-flightdeck/issues/new?template=hardware.yml"  # the model results form
 
+_PCI_ID = re.compile(r"0x[0-9a-f]{4}")
+_ROCM_ROW = re.compile(r"card([0-9]{1,2}),([0-9]+),[0-9]+")
 _DIGITS = re.compile(r"[0-9]+")
 _MEMTOTAL = re.compile(r"^MemTotal:[ \t]+([0-9]+)[ \t]+kB[ \t]*$", re.M)
 
@@ -121,6 +133,28 @@ class Gpu:
 
     def as_json(self) -> dict:
         return {"name": self.name, "memory_bytes": self.memory}
+
+
+@dataclass(frozen=True)
+class OtherGpu:
+    """An AMD or Intel GPU found on Linux. flightdeck has no measured results for one: it is
+    said, and the advice does not count it."""
+
+    vendor: str  # AMD or INTEL
+    card: str  # "card0": its name under /sys/class/drm (or as rocm-smi names it)
+    device: str = ""  # its PCI device id, "0x744c"; "" when not read
+    memory: int | None = None  # bytes of its own memory; None: not read (memory_unknown says why)
+    memory_unknown: str = ""
+
+    @property
+    def name(self) -> str:
+        """"AMD GPU (1002:744c)": the vendor, and the PCI ids when the device's was read."""
+        vendor_id = next(pci for pci, vendor in PCI_VENDORS.items() if vendor == self.vendor)
+        return f"{self.vendor} GPU" + (f" ({vendor_id[2:]}:{self.device[2:]})" if self.device else "")
+
+    def as_json(self) -> dict:
+        return {"vendor": self.vendor, "card": self.card, "pci_device": self.device or None, "name": self.name,
+                "memory_bytes": self.memory, "memory_unknown": self.memory_unknown or None}
 
 
 @dataclass(frozen=True)
@@ -195,6 +229,9 @@ class Machine:
     gpu_note: str = ""
     runtimes: tuple[Runtime, ...] = ()  # empty when they were not probed
     described: bool = False  # True: given by the player (described()), not probed: another machine, perhaps
+    # AMD and Intel GPUs (Linux only); () when none was found or looked for, and other_gpu_note says which
+    other_gpus: Fact[tuple[OtherGpu, ...]] = Fact(())
+    other_gpu_note: str = ""
 
     def runtime(self, name: str) -> Runtime | None:
         return next((r for r in self.runtimes if r.name == name), None)
@@ -204,6 +241,7 @@ class Machine:
             "described": self.described, "os": self.os, "arch": self.arch, "wsl": self.wsl.as_json(),
             "chip": self.chip.as_json(), "apple_silicon": self.apple_silicon.as_json(),
             "memory_bytes": self.memory.as_json(), "nvidia_gpus": {**self.gpus.as_json(), "note": self.gpu_note or None},
+            "other_gpus": {**self.other_gpus.as_json(), "note": self.other_gpu_note or None},
             "runtimes": [r.as_json() for r in self.runtimes],
         }
 
@@ -221,6 +259,7 @@ def described(memory: int, *, apple: bool = False, gpu: int = 0) -> Machine:
         os="macOS" if apple else "not described", arch="arm64" if apple else "not described", wsl=Fact(False),
         chip=Fact(None, "not described"), apple_silicon=Fact(apple), memory=Fact(memory),
         gpus=Fact((Gpu(DESCRIBED_GPU, gpu),) if gpu else ()), gpu_note="" if gpu else "none described", described=True,
+        other_gpu_note="none described",
     )
 
 
@@ -240,6 +279,10 @@ def probe(host: Host | None = None, *, runtimes: bool = True, servers: Mapping[s
     wsl = _wsl(host) if os_name == "Linux" else Fact(False)
     chip = _chip(host) if os_name == "macOS" else Fact(None, "the chip is read on macOS only")
     gpus, note = _gpus(host)
+    if os_name == "Linux":
+        other, other_note = _other_gpus(host)
+    else:
+        other, other_note = Fact(()), f"AMD and Intel GPUs are looked for on Linux only, not on {os_name}"
     found = ()
     if runtimes:
         found = (
@@ -253,7 +296,7 @@ def probe(host: Host | None = None, *, runtimes: bool = True, servers: Mapping[s
     return Machine(
         os=os_name, arch=host.arch or "unknown", wsl=wsl, chip=chip,
         apple_silicon=_apple_silicon(os_name, host.arch, chip), memory=_memory(host, os_name),
-        gpus=gpus, gpu_note=note, runtimes=found,
+        gpus=gpus, gpu_note=note, runtimes=found, other_gpus=other, other_gpu_note=other_note,
     )
 
 
@@ -346,6 +389,84 @@ def _gpus(host: Host) -> tuple[Fact[tuple[Gpu, ...]], str]:
     if not gpus:
         return Fact(()), "nvidia-smi lists no GPU"
     return Fact(tuple(gpus)), ""
+
+
+def _other_gpus(host: Host) -> tuple[Fact[tuple[OtherGpu, ...]], str]:
+    """The AMD and Intel GPUs of a Linux machine; (Fact(()), why) when none was found. Read
+    only: each /sys/class/drm/cardN's PCI vendor and device ids and, for an AMD card, the
+    memory its amdgpu driver names there; then rocm-smi, only when it is on PATH and an AMD
+    card's memory is still unknown (or no card was found at all: a container can hide /sys)."""
+    cards: list[OtherGpu] = []
+    for number in range(DRM_CARDS):
+        try:
+            vendor = PCI_VENDORS.get(host.read(DRM_FILE.format(card=number, name="vendor")).strip().lower())
+        except OSError:
+            continue  # no such card
+        if vendor is None:
+            continue  # another vendor's: an NVIDIA GPU (nvidia-smi's to list), a virtual display
+        try:
+            device = host.read(DRM_FILE.format(card=number, name="device")).strip().lower()
+        except OSError:
+            device = ""
+        device = device if _PCI_ID.fullmatch(device) else ""
+        if vendor == INTEL:
+            cards.append(OtherGpu(INTEL, f"card{number}", device,
+                                  memory_unknown="flightdeck reads no memory size for an Intel GPU"))
+            continue
+        path = DRM_FILE.format(card=number, name="mem_info_vram_total")
+        try:
+            text = host.read(path).strip()
+        except OSError as exc:
+            cards.append(OtherGpu(AMD, f"card{number}", device,
+                                  memory_unknown=f"{path} cannot be read ({exc.strerror or type(exc).__name__})"))
+            continue
+        if _DIGITS.fullmatch(text) and 0 < int(text) < MAX_MEMORY:
+            cards.append(OtherGpu(AMD, f"card{number}", device, int(text)))
+        else:
+            cards.append(OtherGpu(AMD, f"card{number}", device, memory_unknown=f"{path} holds no number of bytes"))
+    rocm = host.which("rocm-smi")
+    if rocm is not None and (not cards or any(c.vendor == AMD and c.memory is None for c in cards)):
+        cards, failed = _with_rocm(host, rocm, cards)
+        if not cards and failed:  # /sys showed no card, and rocm-smi, which is here, could not be read
+            return Fact(None, failed), ""
+    if not cards:
+        looked = f"no AMD or Intel GPU among /sys/class/drm/card0 to card{DRM_CARDS - 1}"
+        return Fact(()), looked + ("" if rocm is None else ", and rocm-smi lists none")
+    return Fact(tuple(cards)), ""
+
+
+def _with_rocm(host: Host, rocm: str, cards: list[OtherGpu]) -> tuple[list[OtherGpu], str]:
+    """(`cards` with what rocm-smi says of AMD GPUs' memory, why its answer could not be read
+    or ""): an AMD card whose memory is unknown gets it, and a card /sys did not show is added.
+    An answer that cannot be read changes no number: each AMD card still without memory says why."""
+    from dataclasses import replace
+
+    why, rows = "", {}
+    try:
+        text = host.run([rocm, *ROCM_QUERY], GPU_TIMEOUT)
+    except ProbeError as exc:
+        why = str(exc)
+    else:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        found = [_ROCM_ROW.fullmatch(line.replace(" ", "")) for line in lines[1:]]
+        if not lines or not lines[0].lower().startswith("device,") or not all(found):
+            why = "rocm-smi printed something that is not its table of GPU memory"
+        else:
+            rows = {f"card{int(m.group(1))}": int(m.group(2)) for m in found if m is not None}
+            if not all(0 < size < MAX_MEMORY for size in rows.values()):
+                why, rows = "rocm-smi gave no memory size in bytes for a GPU", {}
+    out = []
+    for card in cards:
+        if card.vendor == AMD and card.memory is None:
+            if card.card in rows:
+                card = replace(card, memory=rows[card.card], memory_unknown="")
+            else:
+                said = why or f"rocm-smi lists no {card.card}"
+                card = replace(card, memory_unknown=f"{card.memory_unknown}; {said}")
+        out.append(card)
+    known = {card.card for card in cards}
+    out += [OtherGpu(AMD, name, memory=size) for name, size in sorted(rows.items()) if name not in known]
+    return out, why
 
 
 Listing = tuple[list[str], dict[str, int]]  # a server's model names, and the sizes it gives (bytes)
@@ -521,7 +642,18 @@ def summary(machine: Machine) -> str:
         parts.append("NVIDIA GPUs unknown")
     elif machine.os != "macOS":
         parts.append("no NVIDIA GPU found")
+    if machine.other_gpus.value:
+        parts.append(f"{other_gpus_text(machine.other_gpus.value)} (flightdeck has no results for "
+                     f"{'it' if len(machine.other_gpus.value) == 1 else 'them'} yet)")
+    elif machine.other_gpus.value is None:
+        parts.append("AMD GPUs unknown")
     return ", ".join(parts)
+
+
+def other_gpus_text(gpus: Sequence[OtherGpu]) -> str:
+    """AMD and Intel GPUs in a few words: "AMD GPU (1002:744c) with 16 GiB and Intel GPU (8086:56a0), memory not read"."""
+    said = [f"{g.name} with {gib(g.memory)}" if g.memory is not None else f"{g.name}, memory not read" for g in gpus]
+    return said[0] if len(said) == 1 else ", ".join(said[:-1]) + " and " + said[-1]
 
 
 def doctor_line(environ: Mapping[str, str] = os.environ, host: Host | None = None, machine: Machine | None = None) -> str:

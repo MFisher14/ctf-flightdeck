@@ -74,6 +74,15 @@ Fork a lane: a sibling on the same challenge, with another approach or model.
 `t` takes over a lane's shell (in a real run, a shell in its workspace; exit it to hand the lane
 back). The mock shows a placeholder.
 
+## Autopilot
+
+`flightdeck mock --scenario autopilot --screenshot DIR` saves two moments of its own, after
+`01-open.svg`: `02-autopilot-rule.svg` (the `AUTOPILOT` chip in the header, and a lane autopilot
+just killed by rule: its row says "by autopilot; parked") and `03-autopilot-disengaged.svg` (the
+run budget reached: the chip is gone, the header says `queue held: autopilot disengaged: the run
+budget is reached`, and the lanes are paused). No picture of them here yet: make your own with
+that command.
+
 ## Team play
 
 ![Team mode: a teammate solved a challenge, so the lane working it stops](screenshots/team-solve.png)
@@ -89,6 +98,13 @@ A challenge's card: what it is, its files and lanes; `c` claims it for you in te
 ![The console on a 120 by 36 terminal](screenshots/narrow.png)
 
 On a 120x36 terminal: less goes in the header, and the key line keeps what you need most.
+
+At 64 columns or fewer (a phone over SSH) the console has a compact layout. `flightdeck mock
+--screenshot DIR` saves it at 56x40, numbered like the rest (14 and 15 in the default scenario):
+`14-compact-56x40.svg` (the fleet: each lane's row has what needs you, its state and its cost;
+the line under the list has the reason and one answer a row) and `15-compact-focus-56x40.svg` (a
+lane: what it needs above its transcript, no files pane). No picture of it here yet: make your
+own with that command.
 
 ![The help screen listing every key and command](screenshots/help.png)
 

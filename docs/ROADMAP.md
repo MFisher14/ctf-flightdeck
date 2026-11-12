@@ -3,6 +3,46 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.3.0, M5 Autopilot (2026-11-12)
+
+Engage autopilot and flightdeck runs the event end to end while you are away; take the controls
+back at any time (D20; the details are P19 to P28 in [DECISIONS.md](DECISIONS.md), and the guide's
+[Autopilot](GUIDE.md#autopilot) says how to use it). What was sketched, and is built:
+
+- **Every stage as automatic as the event's rules allow, never looser.** Autopilot changes no
+  policy: pull, L1, agents, submit and live instances go as far as the profile and your config set
+  them. Under submit auto, flags a lane claims are submitted; everything else waits.
+- **Scheduled.** Start at the event's start time, pull new waves on a timer, stop at the end. When
+  the queue runs dry, unsolved challenges go round again on the next model up, within the budget.
+- **Interventions by rule.** A stalled lane escalates one rung, a lane that gave up has its
+  challenge queued again on the next model up, a looping lane is killed, a lane that ignores the
+  hint is redirected to it, and a lane's own budget request is declined. Code decides (D15); the
+  light hint judge has its say in the Watch, as before.
+- **Guardrails.** A run budget (dollars, tokens or both) is required to engage; at the budget no new
+  lane starts and the lanes are paused. Docker only. No guessed flags, no last try spent, no refused request rerouted, nothing reached but a
+  challenge's own instance.
+- **Disengage.** Budget reached, the platform locking out or failing, the model API failing for every
+  lane, a human check (a CAPTCHA), the event's end: autopilot holds the queue, says why in the
+  console and logs it for the post-flight report. A challenge down to its last try does not
+  disengage: that flag waits for you and the run goes on.
+- **Headless, and a way to reach you.** Built ahead of the rest of M5: `play --headless` runs
+  without the console by the same rules (an approval waits, nothing is approved) and stops on
+  SIGTERM as quitting does; every run writes `status.json`; an opt-in webhook is told when a flag
+  is accepted, a lane needs you, or the queue is held or autopilot disengages, and never gets a
+  flag ([the guide](GUIDE.md#headless-runs-and-notifications)). Still open: a phone push, and
+  approving from the phone (Later: phone control).
+
+Left of M5:
+
+- **An outage with coding-agent lanes.** flightdeck's own lanes hold the queue when the model API
+  fails for every lane, and autopilot disengages on that hold; the `claude` and `codex` lanes do
+  not hold the queue yet.
+- **A refusal inside a coding-agent CLI.** flightdeck reroutes no refused request, and switches
+  Anthropic's server-side refusal fallback off for its own lanes; what a CLI does with a refusal
+  on its own API is not flightdeck's to see.
+- **A lane that waits for a live-box answer** keeps its slot until you are back.
+- **A real event.** Autopilot is tested against the fake CTFd and the fake model, not yet flown.
+
 ## Released: 0.2.0, a model per small job (2026-11-12)
 
 Each job was measured before it was built ([MODELS.md](MODELS.md)). The light model does small
@@ -46,53 +86,39 @@ console in a few minutes, without reading the architecture:
 - A lane image that works out of the box, built only by a command the player runs.
 - A quickstart at the top of the README, tested on a clean machine.
 
-## Next: M5, Autopilot
-
-Engage autopilot and flightdeck runs the event end to end while you are away; take the controls
-back at any time (D20). A sketch, decided in detail when M5 starts:
-
-- **Every stage as automatic as the event's rules allow.** Pull, L1, agents, submit and live
-  instances at `auto` where the profile permits, never looser. Flags a lane claims are submitted;
-  everything else waits.
-- **Scheduled.** Start at the event's start time, pull new waves on a timer, stop at the end. When
-  the queue runs dry, unsolved challenges go round again on the next model up, within the budget.
-- **Interventions by rule.** A stalled lane escalates one rung, a lane that gave up is forked onto
-  another model, a looping lane is killed, a lane that ignores the hint is redirected to it. Code
-  decides (D15); a light model may confirm.
-- **Guardrails.** A run budget (dollars and tokens) is required to engage; at the budget no new lane
-  starts. No guessed flags, no last try spent, no refused request rerouted, nothing reached but a
-  challenge's own instance.
-- **Disengage.** Budget reached, the platform locking out or failing, the model API failing for every
-  lane, a challenge down to its last try, a human check (a CAPTCHA): autopilot holds the queue, raises
-  an alert and logs why, for the post-flight report.
-- **Headless, and a way to reach you.** Run without the console (a status file to start with); an
-  opt-in notification (webhook or phone push) when a flag lands or autopilot disengages.
-
 ## Still open from M0 to M4
 
 Planned in a milestone and not built:
 
 - **ACP agents.** The coding-agent lanes are the `claude` and `codex` CLIs only.
-- **A per-origin egress allowlist.** A Docker lane gets no network, or the open bridge network once
-  its instance is allowed.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
-  built from their docs.
+  built from their docs, and so is a coding-agent lane's fenced network (below): it has not been
+  run with the real CLIs.
 - **Timeline replay in `play`.** Releasing a board wave by wave from its `timeline.json` is built
   and tested, but `play` releases the whole board at the start. Scoring a past run against the
   board's answers works (`flightdeck score`).
 
+Built since (2026-11-12, issue #14): **the per-origin egress allowlist.** A Docker lane that may
+reach its instance reaches only the hosts and ports its challenge's `urls` name, and a
+coding-agent lane its CLI's API, through an internal Docker network and a proxy per host; it is
+never on the bridge network (P9; the guide's [Docker or host](GUIDE.md#docker-or-host)). That is
+the guardrail Autopilot needs: nothing reached but a challenge's own instance.
+
 ## Later (not scheduled)
 
-- **Phone control.** Today: run flightdeck in tmux and attach over SSH (needs a compact layout for
-  50–60 columns). Option: serve the same console in a browser (textual-serve); touches D4 and must be
-  locked down. Best: push a notification when a lane needs you, with approve and decline from the
+- **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
+  layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
+  touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the
   phone; needs its own sign-in and permission design.
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
   in terminals that draw them; plain Unicode stays the default.
-- Batch approve (several waiting flags at once), dismissing an alert without intervening.
-- **Installs beyond PyPI.** A Homebrew tap (`brew install mfisher14/tap/ctf-flightdeck`, the
-  formula bumped by the release workflow), a `.deb` on each GitHub release that brings its own
-  Python (Debian 12 has 3.11), then a signed apt repository for `apt upgrade`. Homebrew's own
+- **Installs beyond PyPI.** Built, and first used by the release after 0.2.0: the release
+  workflow builds a `.deb` for amd64 and arm64 that brings its own Python (Debian 12 has 3.11),
+  installs each in a clean Debian 12 container and attaches them to the GitHub release, and it
+  writes the Homebrew formula (`brew install mfisher14/tap/ctf-flightdeck`) to the tap
+  (`packaging/`, and Releases in [CONTRIBUTING.md](../CONTRIBUTING.md)). The tap repository and
+  its token are the maintainer's to create, and no `brew install` of the formula has been run
+  yet. Left: a signed apt repository, so `apt upgrade` finds a new release. Homebrew's own
   repository and Debian's archives once the project is notable enough for them.
 - **A host sandbox without Docker.** Strands Box (Apache-2.0: OS isolation with deny-by-default
   policies, an egress gateway and credentials injected outside the agent) could make `--host` lanes
@@ -151,7 +177,7 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Team mode: claims, teammate-solved stop, live-box courtesy.
 
 Not done in M2: evaluating ACP, the per-origin egress allowlist and a real capture of the CLI
-streams (all under "Still open" above).
+streams (under "Still open" above; the egress allowlist was built later, issue #14).
 
 ### M3: detectors and practice
 

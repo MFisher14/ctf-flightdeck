@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from .model import Alert, AlertKind, Challenge, EscalationSummary, FileChange, Lane, Pending
+from .model import Alert, AlertKind, Call, Challenge, EscalationSummary, FileChange, Lane, Pending
 
 if TYPE_CHECKING:
     from .deck import Deck
@@ -47,6 +47,7 @@ class TurnReport:
 
     action: str = ""  # the command or step, one line
     output: str = ""  # short output; long output belongs in a file (M1)
+    calls: tuple[Call, ...] = ()  # with `action`: every tool call of the turn, each with a longer excerpt of its output; kept on the step for the lane's transcript, never counted or shown as steps
     tokens: int = 0  # prompt + completion tokens of this turn's model call(s)
     cached_tokens: int = 0  # of the prompt tokens, how many the API served from its cache
     dollars: float | None = 0.0  # None when the price is unknown
@@ -66,19 +67,20 @@ class TurnReport:
     dollars_later: bool = False  # a coding-agent CLI's step: the CLI reports what it cost only when its turn ends (turn_end), so `dollars` is not known yet, rather than $0.00
     turn_end: bool = False  # what a coding-agent CLI reported for a turn that ended (or was cut short, or that it exited in): the turn's own cost, which its steps (dollars_later) did not carry
     unreported: bool = False  # with turn_end and dollars None: the CLI never said what the turn cost (it was stopped in it, or exited), so its cost is not known though no price is missing; a dollar cap then holds on what is known (Lane.unreported)
+    declined: bool = False  # with gave_up: the lane ends because its model declined (a refusal), which is no API error (Lane.declined)
     light: bool = False  # spend of a light model's first look at the lane's challenge (agent/facts.py), which never holds up a lane: with dollars None its cost is not known, but nothing is asked and a dollar cap holds on what is known (Lane.light_unpriced)
 
 
 def spend_only(rep: TurnReport) -> bool:
     """A report of spend and of nothing else: not a turn; tokens, cached tokens or dollars
     (None: spent at an unknown price), or a coding-agent CLI's turn_end; and no action,
-    output, plan, artifacts, files, alerts, clear, approval, flag, hints, giving up or cost
+    output, calls, plan, artifacts, files, alerts, clear, approval, flag, hints, giving up or cost
     still to come (dollars_later). Once a lane has ended, the deck still counts such a report
     (a CLI reports a turn's cost when the turn ends, often after its lane has) and drops
     everything else."""
     spent = rep.tokens or rep.cached_tokens or rep.dollars or rep.dollars is None or rep.turn_end
     return not rep.turn and bool(spent) and not (
-        rep.action or rep.output or rep.plan is not None or rep.artifacts or rep.files or rep.alerts or rep.clear
+        rep.action or rep.output or rep.calls or rep.plan is not None or rep.artifacts or rep.files or rep.alerts or rep.clear
         or rep.pending is not None or rep.flag is not None or rep.gave_up is not None or rep.hints_taken
         or rep.dollars_later
     )

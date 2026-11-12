@@ -48,7 +48,7 @@ the files, write a `challenge.json`, and submit the flags yourself (see
 | Key | Required | What it is |
 |---|---|---|
 | `name` | yes | The challenge's name, as the console shows it. |
-| `category` | yes | The category, as the platform names it. `web`, `crypto` (or `cryptography`), `rev` (`reverse`, `reversing`), `pwn` (`binary`), `forensics`, `misc` and `osint` become the console's short codes `web`, `cry`, `rev`, `pwn`, `for`, `misc` and `osint`; any other name is kept, in lower case. |
+| `category` | yes | The category, as the platform names it. `web` (`web exploitation`, `web security`), `crypto` (`cryptography`), `rev` (`reverse`, `reversing`, `reverse engineering`), `pwn` (`pwnable`, `pwnables`, `binary`, `binary exploitation`, `binexp`, `exploitation`), `forensics` (`forensic`, `digital forensics`), `misc` (`miscellaneous`) and `osint` (`open source intelligence`) become the console's short codes `web`, `cry`, `rev`, `pwn`, `for`, `misc` and `osint`, whatever their case and whether the words are joined by spaces, `-` or `_`; any other name is kept, in lower case. |
 | `points` | yes | A whole number, 0 or more. Lanes start on the lowest-point challenges first. |
 | `solves` | no | How many teams have solved it: a whole number, 0 by default. Among challenges worth the same, the one with more solves starts first. |
 | `description` | no | The challenge's text. A lane reads it as data, and the "ignores the hint" alert reads it for the technique it hints at. |
@@ -62,7 +62,7 @@ So is a `files` entry that does not exist, that leaves the challenge folder (`..
 path), or that is or passes through a symlink.
 
 A challenge with `urls` is a **live** challenge. A Docker lane gets a network only when its
-challenge is live (the README's [Docker or host](../README.md#docker-or-host) says which network,
+challenge is live (the guide's [Docker or host](GUIDE.md#docker-or-host) says which network,
 and when a lane asks you first), and a lane's http tool reaches only the origins listed here.
 
 ## `board.json`
@@ -104,7 +104,8 @@ The file sits in the board folder, beside the challenge folders and never inside
 in a copy of its challenge folder and must not find the answers there. `play --answers FILE` names
 an answers file kept somewhere else. An answer for a challenge the board does not have is an error
 (a stale or mistyped id). A board with answers ends its run with a scorecard, and
-`flightdeck score RUN_DIR` scores the run again later.
+`flightdeck score RUN_DIR` scores the run again later (`flightdeck score latest`: the newest run in
+your config's `[run] dir`).
 
 ### Flags without an answers file
 
@@ -167,6 +168,8 @@ token_env = "CTFD_TOKEN"            # ctfd: the NAME of the variable that holds 
 # board = "board"                   # manual: the folder of challenge folders (relative to this file, or ~/...)
 flag_format = "example\\{[^}]+\\}"  # a regular expression for the event's flags
 team = false                        # true: team mode (claims, teammates' solves, live-box holds)
+# start = "2026-11-14T09:00:00+00:00"  # when the event starts, with its zone: autopilot waits for it
+# end = "2026-11-15T09:00:00+00:00"    # when it ends: autopilot stops the run then
 
 [rules]
 ai_allowed = true                   # may model-driven lanes work challenges
@@ -185,6 +188,13 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 `[event]` says where the board comes from. With `platform = "ctfd"`, flightdeck pulls the board
 from `url` into the folder you give `play`. With `platform = "manual"`, `board` names a folder
 board you made, and you submit the flags on the platform yourself.
+
+`start` and `end` are optional: the event's first and last moment, each an ISO 8601 date and time
+with its zone (`"2026-11-14T09:00:00+01:00"`, or `Z` for UTC; a time with no zone is refused,
+naming the key, and so is an `end` that is not after `start`). Only autopilot reads them
+([GUIDE.md](GUIDE.md#autopilot)): with a `start` still to come it waits until then before it pulls
+or releases anything, and at the `end` it stops the run as quitting does. A run without autopilot
+ignores both.
 
 `[rules]` is what the event allows. `[policies]` is how far flightdeck goes on its own at each of
 five stages, and it can be stricter than the rules, never looser: `preflight` and `play` refuse a
@@ -228,8 +238,8 @@ What the policies mean during a run:
 - **l1** and **agents**: under `confirm`, starting `play` is your yes. With `l1` at `manual` or
   `off`, your solver pack does not run.
 - **submit**: under `confirm`, every flag waits for your `a`. Under `auto`, a flag a lane submits
-  goes at once, with the exceptions the README lists under
-  [Play a board](../README.md#play-a-board).
+  goes at once, with the exceptions the guide lists under
+  [Play a board](GUIDE.md#play-a-board).
 - **instance**: under `confirm`, a lane whose challenge is live asks you before its first model
   call, and until you allow it a Docker lane has no network. Under `manual` or `off`, lanes never
   reach the instance.

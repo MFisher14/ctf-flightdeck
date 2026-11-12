@@ -12,7 +12,8 @@ Anthropic Messages API, through its SDK). The optional [fallback] table names a 
 that a lane moves to when the first keeps failing (agent/fallback.py), with a ladder of the
 same length as [models] ladder: position i is used for a lane on ladder[i]. With the
 Anthropic API, [api] fast lists the ladder models a lane calls in fast mode; only a model
-agent/fastmode.py lists for fast mode is accepted.
+agent/fastmode.py lists for fast mode is accepted. [api] effort, with the Anthropic API too, is
+a table of ladder model -> output_config.effort level for a lane's calls to that model.
 
 [api] and [fallback] also take timeout (seconds one try of a lane's call may take) and
 max_tokens (the most tokens a lane's reply may hold). Unset, max_tokens is LOCAL_MAX_TOKENS
@@ -37,6 +38,10 @@ one API never meets another's server. light_for() gives the spec a job uses, lig
 key. A job whose engine cannot do it (JOB_ENGINES), a table for a run job that jobs leaves out
 (it would look on and be off), and recon or flagcheck with no model for them are errors, each
 naming its key.
+
+The optional [notify] table turns on the notification webhook (notify.py): webhook_env names
+the variable that holds its URL (a secret, read by webhook_url() as a key is; never the URL
+itself), and `on` lists which of NOTIFY_KINDS are sent (all of them when it is left out).
 
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
@@ -67,8 +72,9 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
-_API_KEYS = ("provider", "base_url", "key_env", "fast", "timeout", "max_tokens", "context")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot")
+NOTIFY_KINDS = ("flag", "needs-you", "disengaged")  # what [notify] on may list, and its default: all three
+_API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
 API_PROVIDERS = ("openai", "anthropic")
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"  # the Anthropic SDK's default (it adds /v1/messages itself)
@@ -135,6 +141,7 @@ class ApiConfig:
     key_env: str = "OPENROUTER_API_KEY"  # "" for a local server that needs no key (openai provider only)
     provider: str = "openai"  # openai | anthropic: the API's dialect
     fast: tuple[str, ...] = ()  # ladder models a lane calls in fast mode (anthropic only; agent/fastmode.py)
+    effort: tuple[tuple[str, str], ...] = ()  # (ladder model, output_config.effort level) pairs (anthropic only)
     timeout: float | None = None  # seconds per try of a lane's call; None: the client's own (180, Anthropic 600)
     max_tokens: int | None = None  # a lane's reply cap as set; None: lane_max_tokens() decides
     context: int | None = None  # tokens of context its server gives a lane's model; None: not stated
@@ -185,6 +192,24 @@ class L1Config:
 
 
 @dataclass(frozen=True)
+class NotifyConfig:
+    """[notify]: the opt-in notification webhook (notify.py). The URL is a secret (it often
+    holds a token), so the config names the variable that holds it, as it does for a key."""
+
+    webhook_env: str = ""  # the environment variable (or keys-file entry) holding the webhook URL; "": no notifications
+    on: tuple[str, ...] = NOTIFY_KINDS  # which of NOTIFY_KINDS are sent
+
+
+@dataclass(frozen=True)
+class AutopilotConfig:
+    """[autopilot] (autopilot.py, D20): whether a run engages it, and the run budget it needs."""
+
+    engage: bool = False  # true: every play engages autopilot (as --autopilot does for one run)
+    budget_dollars: float | None = None  # the whole run's budget in dollars; None: none in dollars
+    budget_tokens: int | None = None  # and in tokens; engaging needs at least one of the two
+
+
+@dataclass(frozen=True)
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
@@ -198,6 +223,8 @@ class Config:
     light: LightConfig = LightConfig()  # [light]; rules only when the config has none
     light_jobs: tuple[str, ...] = DEFAULT_JOBS  # [light] jobs: the jobs a run gives the light model
     light_tables: dict[str, LightConfig] = field(default_factory=dict)  # [light.<job>]: a job's own engine
+    notify: NotifyConfig = NotifyConfig()  # [notify]; no webhook when the config has none
+    autopilot: AutopilotConfig = AutopilotConfig()  # [autopilot]; off, with no budget, when the config has none
 
 
 @dataclass(frozen=True)
@@ -255,11 +282,13 @@ def _config(path: Path, doc: dict) -> Config:
         run_dir=_run_dir(path, _table(path, doc, "run")),
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
+        autopilot=_autopilot(path, _table(path, doc, "autopilot")),
         agents=agents,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
         light=light,
         light_jobs=jobs,
         light_tables=tables,
+        notify=_notify(path, _table(path, doc, "notify")),
     )
 
 
@@ -381,6 +410,40 @@ def light_thinking(light: LightConfig) -> bool:
     return not (light.engine == "openai" and on_this_machine(light.base_url))
 
 
+def webhook_url(config: Config) -> str | None:
+    """The notification webhook's URL, read from the variable notify.webhook_env names (the
+    environment, then the keys file); None when the config names none (no notifications).
+
+    The URL is a secret, as a key is: an unset variable, or one that does not hold an
+    http:// or https:// URL, is a ConfigError that names the variable and never shows what it
+    holds. A webhook_env that is not a variable name may be the URL itself, so it is refused
+    without being shown, here too (a Config built in code skips load_config's check)."""
+    name = config.notify.webhook_env
+    where = f"{config.source}: " if config.source is not None else ""
+    if not name:
+        return None
+    if not _is_env_name(name):
+        raise ConfigError(f"{where}notify.webhook_env {_NOT_A_WEBHOOK_NAME}")
+    from .keys import KeysError, environment, keys_path
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise ConfigError(str(exc)) from None
+    if not value:
+        raise ConfigError(
+            f"{where}notify.webhook_env names the variable {name}, which is not set: put {name}=<the webhook's URL> in "
+            f"{keys_path()} (chmod 600), or export it, or remove webhook_env from [notify] to play without notifications."
+        )
+    url = _split_url(value)
+    if url is None or url.scheme not in ("http", "https") or not url.hostname or not _plain(value):
+        raise ConfigError(
+            f"{where}the variable {name} (notify.webhook_env) does not hold an http:// or https:// URL (it is not shown: "
+            "a webhook's URL is a secret)."
+        )
+    return value
+
+
 def _read_key(config: Config, table: str, name: str, otherwise: str) -> str | None:
     where = f"{config.source}: " if config.source is not None else ""
     if not name:
@@ -424,6 +487,11 @@ key_env = "OPENROUTER_API_KEY"
 # standard price). Fast mode has its own rate limit; on a 429 the lane goes on at standard
 # speed for the rest of its session (until an escalation) and says so.
 # fast = ["claude-opus-5-5"]
+# With provider "anthropic" only: the effort (output_config.effort: how much a model thinks, and
+# so spends) of each ladder model named here, one of low, medium, high, xhigh, max. A model with
+# no entry is sent none and runs at Anthropic's default for it (medium for Claude Haiku 5.5 and
+# Opus 5.5, high for Sonnet 5.5). It is not sent to the [fallback] API.
+# effort = { "claude-opus-5-5" = "high" }
 # Seconds one try of a lane's model call may take; a reply not complete by then is given up and
 # tried again (the retries and their waits stay as they are). Default 180, or 600 with provider
 # "anthropic". A model on this machine can need minutes for one reply: `flightdeck init` writes
@@ -547,6 +615,17 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 #     model = "claude-haiku-5-5"
 #     key_env = "ANTHROPIC_API_KEY"
 
+[autopilot]
+# Autopilot runs an event end to end while you are away (`flightdeck play --autopilot`, or
+# engage = true here): every stage as automatic as the event's rules and this config allow,
+# never looser, and its own interventions by rule. It approves nothing and submits nothing
+# itself, never spends a challenge's last try, and reroutes no request a model declined. It
+# needs the Docker runtime and a run budget: at the budget it holds the queue, pauses the lanes
+# and disengages. `/autopilot off` in the console takes the controls back.
+# engage = false                # true: every play engages it
+# budget_dollars = 20.0         # the whole run's budget in dollars
+# budget_tokens = 20000000      # and, or instead, in tokens (needed when a model has no price)
+
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
 # (`flightdeck l1 import` makes the manifests for a folder of scripts). A lane runs the engines
@@ -558,12 +637,29 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # challenge's live instance at once. On the host runtime they run on this machine, as you.
 # pack = "~/ctf/solvers"        # no pack: no L1 stage
 concurrency = 4                 # engines run at once on one challenge
+
+[notify]
+# Opt-in: a webhook flightdeck POSTs a small JSON message to during a run (docs/GUIDE.md, "Headless
+# runs and notifications", lists every field; it never holds a flag). webhook_env names the
+# environment variable (or keys.env entry) that holds the URL: a webhook's URL is a secret, so it
+# never goes in this file. No webhook_env: nothing is sent.
+# webhook_env = "FLIGHTDECK_WEBHOOK"
+# on: what is sent. "flag": a flag was accepted; "needs-you": a lane waits for your approval or
+# raised an alert (at most one a minute for each lane and need); "disengaged": no more lanes start
+# (the queue is held, or autopilot disengaged).
+# on = ["flag", "needs-you", "disengaged"]
 """
 
 _NOT_A_NAME = (
     "must be the name of an environment variable, like OPENROUTER_API_KEY (upper-case letters, "
     f"digits and _, not starting with a digit, at most {_MAX_ENV_NAME} characters), not the key itself; "
     '"" for a local server that needs no key'
+)
+
+_NOT_A_WEBHOOK_NAME = (
+    "must be the name of an environment variable, like FLIGHTDECK_WEBHOOK (upper-case letters, "
+    f"digits and _, not starting with a digit, at most {_MAX_ENV_NAME} characters), not the webhook's URL itself: "
+    "the URL is a secret, so it goes in that variable (or in the keys file), never in the config"
 )
 
 
@@ -619,6 +715,7 @@ def _api(path: Path, table: dict, ladder: tuple[str, ...]) -> ApiConfig:
     provider, base_url, key_env = _endpoint(path, "api", table)
     max_tokens = _max_tokens(path, "api", table)
     return ApiConfig(base_url=base_url, key_env=key_env, provider=provider, fast=_fast(path, table, provider, ladder),
+                     effort=_effort(path, table, provider, ladder),
                      timeout=_try_timeout(path, "api", table), max_tokens=max_tokens,
                      context=_context(path, "api", table, provider, base_url, max_tokens))
 
@@ -704,6 +801,41 @@ def _fast(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tu
         if problem is not None:
             raise ConfigError(f"{path}: {key}: {problem}")
     return tuple(value)
+
+
+def _effort(path: Path, table: dict, provider: str, ladder: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """[api] effort: a table of ladder model -> output_config.effort level. Only with the
+    Anthropic API, only models that take an effort and only a level that model takes
+    (agent/anthropic_client.py EFFORT_LEVELS, from Anthropic's documentation): the API refuses
+    any other, on every call of the lane. A model with no entry is sent none and runs at its
+    own default. An entry is named by its place in the table, and a model id is shown only
+    when it is one Anthropic documents: any other string could be a key pasted into the
+    wrong place."""
+    if "effort" not in table:
+        return ()
+    from .agent.anthropic_client import EFFORT_LEVELS, effort_problem
+
+    value = table["effort"]
+    if not isinstance(value, dict):
+        raise _error(path, ("api", "effort"), "must be a table of a model id from models.ladder and its effort level, "
+                                              f'as in effort = {{ "claude-opus-5-5" = "high" }}{_got(value)}')
+    if value and provider != "anthropic":
+        raise _error(
+            path, ("api", "effort"),
+            'is output_config.effort, a feature of the Anthropic Messages API: it needs [api] provider = "anthropic"',
+        )
+    out: list[tuple[str, str]] = []
+    for i, (model, level) in enumerate(value.items()):
+        key = _key("api", "effort", model) if model in EFFORT_LEVELS else f"api.effort (entry {i + 1})"
+        if model not in ladder:
+            raise ConfigError(f"{path}: {key} is not for a model in models.ladder: effort is set per ladder model")
+        if not isinstance(level, str):
+            raise ConfigError(f"{path}: {key} must be an effort level, a string{_got(level)}")
+        problem = effort_problem(model, level)
+        if problem is not None:
+            raise ConfigError(f"{path}: {key} {problem}")
+        out.append((model, level))
+    return tuple(out)
 
 
 def _light_tables(path: Path, table: dict) -> tuple[LightConfig, tuple[str, ...], dict[str, LightConfig]]:
@@ -1048,6 +1180,40 @@ def _l1(path: Path, table: dict) -> L1Config:
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
     return L1Config(pack=pack, concurrency=concurrency)
+
+
+def _notify(path: Path, table: dict) -> NotifyConfig:
+    _known(path, ("notify",), table, ("webhook_env", "on"))
+    name = table.get("webhook_env", "")
+    if not isinstance(name, str) or (name and not _is_env_name(name)):  # never shown: it may be the URL itself
+        raise _error(path, ("notify", "webhook_env"), _NOT_A_WEBHOOK_NAME)
+    on = table.get("on", list(NOTIFY_KINDS))
+    known = ", ".join(f'"{kind}"' for kind in NOTIFY_KINDS)
+    if not isinstance(on, list) or not on:
+        raise _error(path, ("notify", "on"), f"must be a list of one or more of {known}{_got(on)}")
+    for item in on:
+        if not isinstance(item, str) or item not in NOTIFY_KINDS:
+            raise _error(path, ("notify", "on"), f"lists something that is not one of {known}")
+    if len(set(on)) != len(on):
+        raise _error(path, ("notify", "on"), "lists a kind twice")
+    return NotifyConfig(webhook_env=name, on=tuple(kind for kind in NOTIFY_KINDS if kind in on))
+
+
+def _autopilot(path: Path, table: dict) -> AutopilotConfig:
+    _known(path, ("autopilot",), table, ("engage", "budget_dollars", "budget_tokens"))
+    engage = table.get("engage", False)
+    if not isinstance(engage, bool):
+        raise _error(path, ("autopilot", "engage"), f"must be true or false{_got(engage)}")
+    dollars = table.get("budget_dollars")
+    if dollars is not None and (not _is_number(dollars) or not 0 < dollars < float("inf")):
+        raise _error(path, ("autopilot", "budget_dollars"), f"must be a number above 0: the whole run's budget in dollars{_got(dollars)}")
+    tokens = table.get("budget_tokens")
+    if tokens is not None and (not _is_int(tokens) or tokens < 1):
+        raise _error(path, ("autopilot", "budget_tokens"), f"must be a whole number above 0: the whole run's budget in tokens{_got(tokens)}")
+    if engage and dollars is None and tokens is None:
+        raise _error(path, ("autopilot", "engage"), "is true, and autopilot needs a run budget: set budget_dollars or "
+                                                    "budget_tokens beside it")
+    return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens)
 
 
 def _run_dir(path: Path, table: dict) -> Path:

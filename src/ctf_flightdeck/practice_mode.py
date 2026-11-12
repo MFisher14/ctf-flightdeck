@@ -438,6 +438,7 @@ class _Asked:
     name: str
     lane: str | None
     challenge: str | None
+    by_rule: bool = False  # autopilot made it by rule (data.by "autopilot"): not one of the player's
 
 
 def score(events_jsonl: Path, board: Board) -> Score:
@@ -572,6 +573,7 @@ def score(events_jsonl: Path, board: Board) -> Score:
                     get.data("intervention", _is_text, "the intervention's name"),
                     get.top("lane", _is_text_or_none, "a lane id or null"),
                     get.top("challenge", _is_text_or_none, "a challenge id or null"),
+                    get.data("by", _is_text, "who made it", default="") == "autopilot",
                 )
             )
         elif kind == "outcome":
@@ -580,9 +582,9 @@ def score(events_jsonl: Path, board: Board) -> Score:
             if not asked or asked[-1].name != name:
                 raise ScoreError(f"{where}: line {n}: an outcome of {_quote(name)} with no intervention before it")
             iv = asked.pop()
-            if ok:
+            if ok and not iv.by_rule:
                 done.append(iv)
-    done += asked  # asked for, and the log ends before its outcome: the player did step in
+    done += [iv for iv in asked if not iv.by_rule]  # asked for, and the log ends before its outcome: the player did step in
 
     if unknown:
         names = ", ".join(_quote(cid) for cid in sorted(unknown)[:10]) + (", ..." if len(unknown) > 10 else "")

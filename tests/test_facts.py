@@ -19,7 +19,7 @@ import pytest
 
 from ctf_flightdeck.agent import facts as F
 from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace
-from l1_kit import DOCKER_IMAGE, docker_skip_reason
+from l1_kit import DOCKER_IMAGE, docker_not_run, docker_skip_reason
 
 FLAG = r"t\{[a-z0-9_]+\}"
 NEEDS_FILE = pytest.mark.skipif(shutil.which("file") is None, reason="the `file` command is not on this machine")
@@ -101,7 +101,7 @@ def test_a_workspace_without_file_says_so_and_keeps_names_sizes_and_strings(tmp_
 def test_in_docker_the_facts_run_file_in_the_lanes_container_and_never_the_handout(tmp_path):
     reason = docker_skip_reason()
     if reason:
-        pytest.skip(reason)
+        docker_not_run(reason)
     folder = handout(tmp_path, "boxed", {"file": "#!/bin/sh\necho ran >> ran\n", "data.bin": b"\x00hello there\x00"})
     (folder / "file").chmod(0o755)
     name = f"flightdeck-test-facts-{time.time_ns()}"

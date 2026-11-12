@@ -1,13 +1,16 @@
 [project]
 name = "ctf-flightdeck"
-version = "0.2.0"
+version = "0.3.0"
 description = "A terminal harness for playing CTFs with AI agents, where the player runs the loop."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [{ name = "Maximus Fisher" }]
-keywords = ["ctf", "capture-the-flag", "security", "ai-agents", "llm", "tui", "terminal"]
+keywords = [
+    "ctf", "capture-the-flag", "ctfd", "security", "cybersecurity", "ai-agents", "agent-harness",
+    "llm", "claude", "codex", "ollama", "tui", "textual", "terminal",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

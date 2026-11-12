@@ -117,10 +117,20 @@ def _json(result, function):
     return json.dumps(data)
 
 
+def _mode(uid):
+    """The result file's mode: the owner's alone, unless this is root. Root here is a
+    container's root (D17: engines run in containers when lanes do), and on Linux the file
+    then belongs to root on the player's machine too, where flightdeck runs as the player and
+    must read it: so it is readable there, as the run folder's own files are."""
+    return 0o644 if uid == 0 else 0o600
+
+
 def _write(folder, name, text):
     """Write the result file, new, in the folder opened at the start, never through a symlink."""
-    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder)
+    mode = _mode(os.getuid())
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=folder)
     with os.fdopen(fd, "w", encoding="ascii") as out:
+        os.fchmod(fd, mode)  # whatever the umask is
         out.write(text + "\n")
 
 

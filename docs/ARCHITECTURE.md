@@ -81,7 +81,7 @@ The console never talks to lanes directly. It reads a `Deck` and sends it interv
 | `LaneDriver` | `core/driver.py` | What does a lane's work. The deck calls `start/pause/resume/hint/redirect/escalate/approved/rejected/stop`; the driver answers each step with `Deck.report(lane_id, TurnReport)`. It starts a turn only while the lane is RUNNING. `TurnReport.dollars_later` marks a coding-agent CLI's step, whose cost comes with the CLI's report at the turn's end (`turn_end`; with `unreported` and no dollars when it never came). A `Submitter` hands a flag to a platform over the network and returns at once. |
 | Attention sort | `core/attention.py` | Needs you (most urgent first), informational, running by idle minute, paused; finished last. |
 | Untrusted text | `text.py` | Everything from a challenge, lane, tool or model is drawn through `untrusted()` and never parsed as markup. |
-| Console | `console/` | The two views of D16: `FleetScreen`, `FocusScreen`, the command bar and slash commands. Redraws on its own timer and on deck events, with or without a mock clock. Credits solves with `runrecord.Credit` over the deck's events, reading each once as the deck grows: the rule every report uses (an L1 engine's flag is `L1·<engine>`). `console/room.py` measures a terminal for `flightdeck doctor` with the console's own layout code (`fit_header`, `fleet.fit_keys`, `FLEET_ROWS`, `focus.key_room`). |
+| Console | `console/` | The two views of D16: `FleetScreen`, `FocusScreen`, the command bar and slash commands. Redraws on its own timer and on deck events, with or without a mock clock. Credits solves with `runrecord.Credit` over the deck's events, reading each once as the deck grows: the rule every report uses (an L1 engine's flag is `L1·<engine>`). `console/room.py` measures a terminal for `flightdeck doctor` with the console's own layout code (`fit_header`, `fleet.fit_keys`, `FLEET_ROWS`, `focus.key_room`). At 64 columns or fewer (`views.compact`) both views switch to the compact layout of CONSOLE-SPEC, for a phone over SSH. |
 | Known-wrong flags | `core/deck.py` | A flag the platform rejected, or the player declined, is remembered per challenge: proposed again it raises no approval and is never submitted again, and an escalation's summary lists it. |
 
 ### Deck
@@ -93,10 +93,16 @@ format and submit policy, a per-lane queue of approvals, 80%/100% caps, team-mod
 interventions and logs every change as an `Event` with a structured payload (the M1 JSONL log is the
 event stream). Must be called from one thread.
 
-A failure every lane would hit holds the queue (`hold_queue()`, a warning event with `held` true)
-until the player lifts it (`release_hold()`, the console's `/unhold`: refused when the queue is not
-held, logged as a warning with `held` false before the lanes it lets start; reports list both among
-the run's warnings).
+A failure every lane would hit, or a model API that keeps failing, holds the queue (`hold_queue()`,
+a warning event with `held` true) until the player lifts it (`release_hold()`, the console's
+`/unhold`: refused when the queue is not held, logged as a warning with `held` false before the
+lanes it lets start; reports list both among the run's warnings). `hold_queue()` can name the lanes
+that what it is about ended (`ended`, also in a later call while the queue is held). Lifting the
+hold queues their challenges again, in front of the queue, each on a new attempt with its lane's
+model and caps, and the warning lists them (`requeued`). Only a challenge still as such a lane left
+it is queued again: the lane gave up and was the last on it, and the challenge is parked, workable,
+not queued and not being worked. One the player killed or queued again, or that failed for another
+reason, is left alone.
 
 With a submitter (a platform over the network) a flag goes out without waiting for its answer, one
 at a time per challenge, and `platform_verdict()` applies the answer later, also after the lane
@@ -114,7 +120,10 @@ submit auto, such a challenge's claimed flags go out like any other's, the last 
 `Deck.report` applies a spend-only report (`spend_only`: tokens, cached tokens or dollars, and
 nothing else) to a lane that has ended: it counts for the lane and the run, is logged as a spend
 event with the model that spent it and why, and the lane's transcript is written again; no cap is
-asked about, and anything else in a late report is dropped.
+asked about, and anything else in a late report is dropped. flightdeck's own lanes report this way
+a reply that a kill, a solve or quitting cut short (`_count_cut()` in `agent/driver.py`). A call
+still in flight when quitting (or a kill) cancels it brings back no usage, so its cost is not
+counted: the run's totals can be below what the API bills by that one call per lane.
 
 ## 4. Lanes
 
@@ -123,31 +132,50 @@ asked about, and anything else in a late report is dropped.
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | flightdeck's own loop: one asyncio task per lane, one model call per turn. [More](#agent-driver). |
 | Tools | `agent/tools.py` | `shell`, `read_file`, `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane, on the host or in a container, and the take-over shell. [More](#workspaces). |
+| Lane network | `agent/egress.py`, `agent/egress_proxy.py` | The fence round a Docker lane's network: its challenge's instance, a coding-agent CLI's API, nothing else. [More](#lane-network). |
 | Lane summary | `core/summary.py` | What a lane did, in at most 3000 characters (plan, the newest steps, files, flags and what became of them, alerts, the player's messages). Escalation and the context refresh hand it to the model, fenced as data, after the L1 results. |
 | Own text | `agent/owntext.py` | Before a flag goes out without the player, it is looked for in the challenge's own text. [More](#own-text). |
 | Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx. [More](#model-client). |
 | Anthropic client | `agent/anthropic_client.py` | The Anthropic Messages API through the official SDK, and fast mode. [More](#anthropic-client). |
 | Fallback | `agent/fallback.py` | An optional second API that a lane moves to when the first keeps failing. [More](#fallback). |
 | Coding-agent lanes | `agent/external.py` | `play --agent claude\|codex`: the `LaneDriver` protocol over the CLI's own event stream. [More](#coding-agent-lanes). |
+| Held secrets | `agent/held.py` | The first redaction layer for both kinds of lane: each secret the run holds becomes `[NAME]`, by value, in a lane's text. [More](#credentials). |
 
 ### Agent driver
 
 Where: `agent/driver.py`, `agent/prompts.py`.
 
 One asyncio task per lane on the console's loop (the deck's single thread). A turn is one model
-call; tool results go back into the context; the deck gets a `TurnReport` per turn. A small fixed
+call; tool results go back into the context; the deck gets a `TurnReport` per turn: one step for
+the console and the detectors (the turn's first real tool call, `(+N more)` for the rest, 3 lines
+and 300 characters of its output), and with it every tool call the turn ran, each with a longer
+excerpt of its output, for the lane's [transcript](#transcripts). A small fixed
 prefix (the same text for every lane: nothing from the board), then the challenge brief (challenge
 text, the flag format among it, fenced as data).
 
 Escalation starts a fresh context with the deck's summary. Three replies in a row with no tool call
 end the lane (a flag written in one waits for the player); a model API failure every lane would hit
-(no answer, a refused key, an unknown model) holds the queue, saying why, before the lane ends.
+(no answer, a refused key, an unknown model) holds the queue, saying why, before the lane ends. A
+failure that may pass (a 408 or 429, any 5xx, Anthropic's 529) ends only its own lane once the model
+has answered in the run, until `OUTAGE_LANES` (2) lanes in a row end on one, each within
+`OUTAGE_SECONDS` (300) of the one before and with no reply from the API in between
+(`AgentDriver._outage()`): then the queue is held as well, and the hold names those lanes, so their
+challenges are queued again when it is lifted. Only a failure that ends a lane counts: not a
+superseded call's, nor one a `[fallback]` API took over. A lane the same outage ends while the hold
+stands is added, and once the hold is lifted the count starts again.
 
 A flag the model submits that the challenge's description or handout, as it came, holds is not
 claimed: it waits for the player under auto too, and the model hears why; the lane says what that
 search of the handout left out (past 1 MB of a file, 16 MB in all, 5000 files, or 5 seconds). A lane
 that gives up while a flag of it still waits (for the player, or for the platform's answer) calls
 the model no more.
+
+Every secret the run holds (`_held_secrets`, the map a coding-agent lane gets too) becomes `[NAME]`
+in what a lane's tool calls give, before the model or the deck has it (`agent/held.py`): a tool's
+output where it arrives, before anything cuts it, then every report to the deck (never its flag),
+the driver's notes on the lane, and what else the driver writes into the lane's context (L1
+results, the first look, the player's messages, a summary). A `--host` lane that reads the keys
+file sends its model the names, not the values.
 
 ### Workspaces
 
@@ -160,6 +188,44 @@ the host gets a new owner-only HOME outside the workspace, removed at the hand-b
 workspace (readline reads `~/.inputrc` whatever bash's flags say, and the player's own HOME would
 show a script the lane wrote the player's credentials). A host workspace notes the process groups it
 starts in the run's process record (`leftovers.py`).
+
+### Lane network
+
+Where: `agent/egress.py` (the fence), `agent/egress_proxy.py` (the proxy's script), `run.py`
+(`lane_reach`: what each lane may reach).
+
+A Docker lane's container starts with `--network none` unless it may reach something: its
+challenge's instance (`urls`) under the instance policy `auto`, and for a coding-agent lane its
+CLI's API (`CLI_API` in `agent/egress.py`, the one list of hosts outside a challenge:
+`api.anthropic.com` and `api.openai.com`, port 443). Then it gets a fence of its own
+(`Egress`), never Docker's bridge network:
+
+- **An internal network** (`docker network create --internal`, bridge option
+  `gateway_mode_ipv4=isolated`): no route to the internet, to this machine or to another
+  container's network, and an embedded DNS that answers only for names on it. flightdeck reads
+  the network back and refuses one that got a gateway address (an older Docker), since the lane
+  could reach this machine through it.
+- **A proxy container per allowed host**, started from the lane image (`--pull never`; no image
+  of its own) as `python3 -I -c <script> <config>`: standard library only, no capability but
+  binding a low port, a read-only filesystem, packet forwarding off. It is on the bridge network
+  (the way out) and, once it has looked its host's address up, on the lane's network under the
+  host's own name (a network alias). It listens on exactly the ports `urls` names for that host
+  and carries each connection, byte for byte, to that host and port; nothing the lane sends
+  picks where a connection goes. So a name lookup in the lane finds the proxy, and
+  `nc host port` or an HTTPS request works as the challenge wrote it, TLS end to end.
+- **An address is not a name.** A host given by IP address, or as localhost, is on the lane's
+  network as `instance-<address>` (`instance-10-0-0-5`, `instance-localhost`); the lane's brief
+  says so (`prompts.shell_names`). localhost and loopback addresses mean this machine: their
+  proxy connects to Docker's host gateway.
+
+Under `confirm` the container starts with no network and nothing is made; when the player says
+yes, `DockerWorkspace.open_instance()` builds the fence and moves the container onto it. L1
+engines that run online share one fence per lane (`agent/l1stage.py`), made before the first
+engine starts and removed after the last. Network and proxies carry the run's labels, so
+`leftovers.py` finds and removes what a killed flightdeck left. When Docker cannot build any of
+it (no `python3` in the image, no room for another network, a host name that does not resolve),
+the lane gets a `WorkspaceError` that says which, and no network: nothing falls back to bridge.
+The player's guide lists what the fence does not do ([Docker or host](GUIDE.md#docker-or-host)).
 
 ### Own text
 
@@ -206,6 +272,11 @@ fast rate unless `usage.speed` says standard; a 429 on a fast request is tried a
 standard speed, and that lane session stays at standard speed (switching speed invalidates the
 prompt cache), with a notice on the lane.
 
+Effort: a model in `[api] effort` is called with `output_config.effort` at its level
+(`EFFORT_LEVELS`: the levels each model takes, from Anthropic's API documentation); a model with no
+entry is sent none. It goes to the `[api]` client only: a lane that moves to the `[fallback]` API
+is sent none there, and the notice of the move says so.
+
 The SDK's own retries are off, so the driver's retry gate holds; the key and base URL are passed
 explicitly, never read from the environment by the SDK; no SDK exception is chained onto an error.
 Each try is bounded by `[api] timeout` (else 600 s), and a call that gives no `max_tokens` sends
@@ -228,9 +299,11 @@ Where: `agent/external.py`.
 
 `play --agent claude|codex`: the same LaneDriver protocol over the CLI's own event stream (Claude
 Code's stream-json, Codex's exec --json); messages, pause (SIGSTOP), take-over (the shell opens once
-the step of the command it waited for is recorded; a hand-back's SIGINT reaches the frozen CLI
-before its SIGCONT), escalation (a fresh session on the next model) and the CLI's own cost. Files
-the CLI would read as its configuration are moved out of the workspace first.
+the step of the command it waited for is recorded, and so for a Codex file edit or tool call whose
+step is going on the lane, so your first edit is never credited to the agent; a hand-back's SIGINT
+reaches the frozen CLI before its SIGCONT), escalation (a fresh session on the next model) and the
+CLI's own cost. Files the CLI would read as its configuration are moved out of the workspace first.
+With a pack, the [L1 stage](#l1-stage) runs before the CLI is first started.
 
 The CLI gets the allowlist a lane's commands get, its own credential (from the environment or the
 keys file) and nothing else of the player's; the commands the agent runs can read that credential,
@@ -239,7 +312,8 @@ the codex process), and `find_agent()`'s warnings say so before lanes start.
 
 The flag format is the board's data, in the opening brief's fence, never in claude's appended system
 prompt or in the rules that open codex's first prompt. Every secret the run holds becomes `[NAME]`
-in what the CLI writes, before anything is shown, logged or kept.
+in what the CLI writes, before anything is shown, logged or kept (`agent/held.py`, as for
+flightdeck's own lanes).
 
 A CLI reports a turn's cost when the turn ends: its steps carry `dollars_later`, and its report is a
 spend-only `turn_end` report, which still counts after the lane ended. claude's turn end is two
@@ -265,7 +339,7 @@ next to the workspace.
 | Piece | Where | Job |
 |---|---|---|
 | L1 packs | `l1/` | `SolverResult`, engine manifests, the router, the runner and the importer. [More](#l1-packs). |
-| L1 stage | `agent/l1stage.py` | A lane runs the engines routed to its challenge before its first model call. [More](#l1-stage). |
+| L1 stage | `agent/l1stage.py` | A lane runs the engines routed to its challenge before its first model call, or before its coding-agent CLI is started. [More](#l1-stage). |
 
 ### L1 packs
 
@@ -284,7 +358,9 @@ a pack.
 Where: `agent/l1stage.py`.
 
 With `[l1] pack` (or `--pack`), a lane runs the engines routed to its challenge before its first
-model call. Each result is an `l1` event; a flag an engine returns as its result is claimed
+model call. Both drivers call the one stage (`run_stage`), each giving it its own parts
+(`StageLane`): `AgentDriver` before a lane's first model call, `ExternalDriver` before a lane's
+CLI is first started, after the search of the handout as it came. Each result is an `l1` event; a flag an engine returns as its result is claimed
 (`TurnReport.claimed`), so it waits for the player under `confirm` and goes to the platform at once
 under `auto` (unless the challenge's tries are counted), while a flag found in what a text engine
 printed (`output = "text"`, `EngineRun.scraped`) is never claimed and waits for the player even
@@ -293,9 +369,19 @@ description, or the handout as it came, searched before the engines run; the lan
 the model's context says what they found, fenced as data, and keeps saying so after an escalation or
 a refresh.
 
+A coding-agent lane starts no CLI while a flag an engine found waits for the player, and none at
+all once that flag solved the challenge. What the engines found goes into the CLI's opening brief,
+in a fence of its own after the challenge's, and into the brief of each later start (an
+escalation); the lane's secrets layer takes the secrets flightdeck holds out of an engine's notes
+before they are logged, shown or told to the agent.
+
 Engines run where lanes do (D17): on the host runtime on this machine, as the player; with Docker
 each in a container of the lane image (`l1/container.py`), the pack and the boot script mounted
 read-only, with no network unless the instance policy is auto and the challenge has an instance.
+Then the lane's engines share a fenced network that reaches that instance and nothing else
+([Lane network](#lane-network)).
+An engine works on its own copy of the handout, never in the lane's workspace or container, so a
+coding-agent lane's file changes hold nothing an engine wrote.
 
 ## 6. Platforms and events
 
@@ -304,7 +390,7 @@ read-only, with no network unless the instance policy is auto and the challenge 
 | Folder board | `platform/manual.py` | A folder of challenge folders ([BOARDS.md](BOARDS.md)); `answers.sha256.json` checks flags by hash; without it the player submits by hand and confirms (the deck's `CONFIRM` approval). |
 | CTFd | `platform/ctfd.py` | Pulls a CTFd board into a folder board, submits approved flags, and reads the team's solves and the tries left. [More](#ctfd). |
 | Pre-flight | `preflight.py` | The event profile (`event.toml`): what the rules allow, and a policy per stage (`pull`, `l1`, `agents`, `submit`, `instance`), never looser than the rules. `flightdeck preflight` checks it. |
-| Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins the bridge network. `off`: never. Pre-flight sets it from the event profile. |
+| Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins a fenced network that reaches the instance and nothing else ([Lane network](#lane-network)). `off`: never. Pre-flight sets it from the event profile. |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -337,6 +423,37 @@ waves are released as they appear, flags go to CTFd from one worker task off the
 loop through `Deck.platform_verdict`), the team's solves stop our lanes; the team folder is mirrored
 and watched. Background tasks run on the console's loop and stop at shutdown; a flag still on its
 way then is named on the way out, as not known to have been submitted.
+
+Every run, with or without `--event`, ends through one path. `play` awaits the console on an event
+loop of its own (`_fly()` in `cli.py`, which takes what runs between the board's release and the
+shutdown) and awaits `Run.shutdown()` on that loop however the console ended: a quit, a signal, or
+an exception in the console that nothing handled (`play` then exits 1). `Run.shutdown()` runs once:
+the console's quit starts it, and a later call only waits for it. Then `play` closes the run and
+prints its exit lines.
+
+### Autopilot
+
+Where: `autopilot.py` (`Autopilot`, `Budget`, `start_notes`); the deck's part in `core/deck.py`
+(`apply(by=)`, `_keeps_last_try`); the run's in `run.py`; D20 and P19 to P28.
+
+Autopilot sits beside the Watch, after it in the pipeline: `prepare_run` attaches it to the deck
+once the Watch is attached, so it sees the alerts the Watch raised. It is code, never a model. It
+subscribes to the deck's events, but an event only marks that there is something to look at:
+`step()` does the looking on the event loop's next turn (the mock, which has no loop, calls it
+after each tick), never from inside the deck's dispatch of a lane's report. A step checks the
+guardrails (the run budget), then applies the rules to each lane (P23), then starts the next
+round (P22). Every action goes through `Deck.apply(..., by=Actor.AUTOPILOT)`, which logs it as
+autopilot's and refuses what a rule may not do (an approval, an answer to a flag).
+
+It changes no policy and submits nothing: the deck sends a claimed flag under submit auto as it
+does without autopilot. Two guardrails live outside the module because every path passes there:
+the last try in the deck (`Deck.autopilot.guarding` is read where a flag goes out), and the
+refusal fallback in the model client (`run._refusal_switch` turns `server_fallback` off while
+autopilot guards). The run tells autopilot what only it knows: the wait for `event.start` and the
+timer for `event.end` (`_wait_for_start`, `Run._until_end`), a CTFd poll that keeps failing, a
+flag CTFd did not judge, and `platform/ctfd.py`'s `HumanCheck`. `disengage(reason)` holds the
+queue and logs the warning (`{"autopilot": "disengaged", "reason": ...}`) that the console shows,
+a notifier listens for and the post-flight report lists.
 
 Board format: a folder in which each subfolder with a `challenge.json` is a challenge, with an
 optional `board.json` (the event's name and flag format) and an optional `answers.sha256.json`
@@ -442,7 +559,11 @@ kind. The lane goes on while its flag is checked.
 |---|---|---|
 | Run | `run.py`, `apicheck.py` | Checks the setup before anything starts, wires the deck, driver, event log and console, and releases the board. [More](#run). |
 | Event log | `eventlog.py` | Append-only `events.jsonl` per run, with credential values taken out. [More](#event-log). |
+| Transcripts | `transcript.py` | Each lane's whole log, `lanes/<lane>.jsonl`, written when the lane ends: every step with every tool call of its turn. [More](#transcripts). |
 | Leftovers | `leftovers.py` | The backstop for what outlives a killed flightdeck. [More](#leftovers). |
+| Headless | `headless.py` | `play --headless`: the run with no console, by the same deck rules. [More](#headless). |
+| Status file | `status.py` | `status.json` in every run folder: the run as it stands, written atomically. [More](#status-file). |
+| Notifications | `notify.py` | The opt-in webhook: a small JSON message when a flag is accepted, a lane needs the player or no more lanes start. [More](#notifications). |
 
 ### Run
 
@@ -453,9 +574,9 @@ once whether it takes the key and serves the ladder (a refused key, a model it d
 server up stops the run); removes what runs whose flightdeck was killed left running
 (`leftovers.sweep`), records this run's (labels on its containers, `processes.json` in its folder),
 and notes the flag format it checks and where that came from; wires the deck, driver, event log and
-console; releases the board on the console's loop. A coding-agent run hands the driver every secret
-it holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the CTFd
-token).
+console; releases the board on the console's loop. Every run hands its driver every secret it
+holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the
+notification webhook's URL, the CTFd token), so a keys file that cannot be read stops a run before it starts.
 
 ### Event log
 
@@ -467,6 +588,25 @@ that name challenges, stay. Format 2 adds spend outside a turn as `spend` events
 CLI's step is a turn event with dollars null and `dollars_later` true, and the CLI's report of the
 turn's cost a `spend` event with `turn_end` true (`unreported` true, dollars null, when it never
 came). Reports credit each spend event to its `data.model`.
+
+### Transcripts
+
+Where: `transcript.py`, `runrecord.py`.
+
+`<run>/lanes/<lane id>.jsonl`, written when a lane ends (again when spend comes in after its end),
+and for every lane still open when the run closes: a header for the lane, a line per entry of its
+log (steps, the player's messages, notes, alerts, approvals), a line per changed file with its diff.
+
+A step of flightdeck's own loop is one turn. Its `text` and `output` are the console's step, and
+its `calls` hold every tool call the turn ran, in order: each call's one line, and up to 40 lines
+and 4000 characters of its output (`agent/tools.py`: the first lines of a success; of a failure its
+status, then its last lines; a line in brackets says what was left out). The console, the
+detectors, the lane summary and `events.jsonl` (one line per step) never read `calls`. A
+coding-agent CLI's step is one tool call already and has none; nor has a transcript written before
+the field, which reads back as before (`runrecord.py`).
+
+Every text of a lane is written with credentials taken out ([Credentials](#credentials)): by value
+before it reached the deck, by shape here.
 
 ### Leftovers
 
@@ -490,13 +630,75 @@ clean sweep would remove, and what it leaves alone, with why. Start times and wo
 from /proc on Linux and the kernel (sysctl, proc_pidinfo) on macOS; elsewhere nothing is removed,
 and the sweep says why.
 
+### Headless
+
+Where: `headless.py`, `cli.py`.
+
+`cli._fly(run, between)` flies a run whatever plays it: it awaits `between` on its own loop, then
+shuts the run down and prints the exit lines. The console is one `between`; `Headless(run,
+say=...).fly` is the other. It releases the board (`Run.release`), then waits for SIGTERM, SIGHUP
+or SIGINT (`loop.add_signal_handler`; a signal ignored at the start stays ignored, so nohup works;
+the handlers stay until the loop closes, so a second signal does not cut the shutdown short) or
+for nothing to be left to do, asked once a second and true twice in a row (`nothing_left`): no
+open lane, an empty queue that is not held, no flag on its way to the platform, and nothing that
+can bring more work (CTFd waves, a team folder, or the caller's `more_to_come`, for an autopilot).
+`stopped_by` is the signal, which `play` turns into exit status 128 + its number, as for the
+console. Nothing in it answers the deck: an approval waits as at the console, `RunOptions.confirm`
+is None (a pull policy of `confirm` stops the run before it starts, with the reason), and the exit
+lines name each flag left waiting.
+
+### Status file
+
+Where: `status.py`.
+
+`StatusFile` is a deck listener and a timer. `prepare_run` attaches it right after the event log
+(so every run has one, with the console too), `Run.release` starts its timer on the run's loop and
+`Run.close` writes it a last time with `closed` true. It writes after an event (at once, or once
+half a second has passed since the last write, so a burst is two writes) and every two seconds.
+Each write is the whole document to a new file in the run folder (`O_EXCL`, `O_NOFOLLOW`, mode
+600), flushed and renamed over `status.json` (`write_atomically`): a reader never sees a part of
+one, and a `status.json` that is a symbolic link is replaced, not followed. The document is format
+1 and is listed field by field in the module's docstring and in
+[the guide](GUIDE.md#the-status-file): the lanes with their approvals and alerts, what needs the
+player in the attention sort's order (`Deck.needing`), the queue and its hold, `Deck.totals`, the
+solves. Text from challenges and lanes is written as ASCII JSON strings and cut; every string has
+each held secret as `[NAME]` and lane text has credential values taken out, while the flags that
+wait stay. A write that fails is a deck warning, once while the failure lasts, and one of the
+run's exit lines; it never stops the run.
+
+### Notifications
+
+Where: `notify.py`, `config.py` (`[notify]`, `webhook_url`).
+
+`[notify] webhook_env` names the variable that holds the webhook's URL (D18: the environment, then
+`keys.env`; never the config, and a URL pasted there is refused without being shown).
+`prepare_run` reads it before anything starts, so a variable that is named and not set, or that
+holds no `http://` or `https://` URL, stops the run with the reason; the URL joins the run's held
+secrets (`_held_secrets`), so it shows as `[NAME]` wherever a lane's text would hold it.
+
+`Notifier` is a deck listener (`attach`) and one sending task on the run's loop (`start`, from
+`Run.release`; `aclose`, last in the run's shutdown, gives the queue six seconds to drain). The
+listener turns an event into a message and puts it on a bounded queue (32; one more is dropped,
+said once) without waiting: `submit` with `correct` true from the platform or the answers file is
+`flag`; a `pending`, or an `alert` that wants an answer and is not the flag alert, is `needs-you`
+(one per lane and need a minute); a `warning` whose data holds `"autopilot": "disengaged"` (with
+its `reason`) or `"held": true` is `disengaged`. `[notify] on` chooses among the three. The
+message is format 1, nine fields, listed in the module's docstring and in
+[the guide](GUIDE.md#notifications); it never holds a flag: the text for a flag is written by
+`notify.py`, and any other text has held secrets as `[NAME]`, credential values taken out, what
+matches the run's flag format as `[flag]` and control characters made visible. The task POSTs
+with httpx, five seconds for each message, no redirects, no proxy from the environment, no second
+try; a failure is one deck warning while the same failure lasts, described by the HTTP status or
+the exception's type alone (an exception's words can quote the URL).
+
 ## 9. After a run
 
 | Piece | Where | Job |
 |---|---|---|
 | Post-flight | `postflight.py`, `writeup.py` | `flightdeck report` and `flightdeck writeups`. [More](#post-flight). |
 | Practice mode | `practice_mode.py` | Scores a past run against the board's answers (`flightdeck score`). [More](#practice-mode). |
-| Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run). |
+| Flight card | `share.py`, `share_cli.py` | `flightdeck share RUN_DIR` prints a run's flight card for the player to post (D22): the setup a run recorded in `setup.json` when it started (`run.py`'s `_setup`: models and settings, never a path, key, address, event or challenge), solves by category code, time, spend by model, the player's interventions and the mode. No flag, challenge name or challenge text is in it, and nothing is sent. |
+| Gap report | `gaps.py`, `gaps_cli.py` | `flightdeck gaps RUN_DIR`: the challenges no L1 engine solved, and why, written to `gaps.md` and `gaps.json` in the run folder; `--pack` routes each gap again offline and says which engines would reach it (nothing is run), and gives each gap on the board its `flightdeck build gap CHALLENGE_DIR --pack PACK` command, the paths absolute and shell-quoted: as a code span in `gaps.md`, one per line in the summary, and exactly in `gaps.json` (`folder`, `build`). A path with a newline or a control or invisible character gets no line to paste, and the report says so. |
 | Build mode | `build.py`, `build_cli.py` | `flightdeck build gap CHALLENGE_DIR --pack PACK`: an engine stub, its manifest and a case test on a copy of the challenge; nothing is overwritten. `flightdeck build check PACK` runs the pack's case tests with pytest (the `[build]` extra) and no keys from flightdeck's environment. |
 
 ### Post-flight
@@ -505,10 +707,23 @@ Where: `postflight.py`, `writeup.py`.
 
 `flightdeck report RUN_DIR` (where lanes stalled, which interventions helped, cost per solve; each
 spend in the row of the model that spent it, a CLI's own turn costs apart from spend outside a turn)
-and `flightdeck writeups RUN_DIR` (a draft per solved challenge, from its transcript, with
-credentials taken out of every value it shows: `credentials.py`; both read an older run folder's log
+and `flightdeck writeups RUN_DIR` (a draft per solved challenge, from its transcript: each step
+that mattered with every tool call of its turn, up to 20 lines of each output, and the flag found in
+any of them; with credentials taken out of every value it shows: `credentials.py`; both read an older run folder's log
 and transcripts cleaned the same way; it writes only in `RUN_DIR/writeups/`, so the run's own log
-and transcripts stay as they were written).
+and transcripts stay as they were written). The report's "last steps before the alert" stay the
+console's steps, one line each: they are what the detectors counted when the alert fired.
+
+`report`, `writeups`, `gaps` and `score` read their RUN_DIR one way (`runrecord.resolve_run`): a run
+folder, its `events.jsonl`, or the word `latest` for the newest run under the config's `[run] dir`
+(`$FLIGHTDECK_CONFIG` or `--config` names the config; no API key is read). Newest is by when each
+run started, the `wall` time of the run-start line that opens its `events.jsonl`: never a folder's
+modification time (a report written into a run changes it) and never its name (local time). A
+folder there without an `events.jsonl` is not a run; one whose log does not say when it started is
+left out and named. The command says the folder it took on stderr (`flightdeck: run: ...`). Whatever
+is really named `latest` in the current directory is taken as the path it is. No config, no runs
+folder or no run there fails in one line that names what is missing; a run played with
+`play --run-dir` elsewhere is not looked for.
 
 ### Practice mode
 
@@ -536,14 +751,16 @@ Where: `config.py`.
 
 `~/.config/ctf-flightdeck/config.toml`: the API (`provider` openai or anthropic, base URL, the name
 of the key's environment variable, never the key; with anthropic, `fast`: the ladder models called
-in fast mode; `timeout`: seconds per try of a lane's call; `max_tokens`: a lane's reply cap, which
+in fast mode, and `effort`: a ladder model's effort level; `timeout`: seconds per try of a lane's call; `max_tokens`: a lane's reply cap, which
 `lane_max_tokens()` makes 8192 (`LOCAL_MAX_TOKENS`) for an OpenAI-compatible server on this machine
 when unset, and leaves unset for any other) and an optional `[fallback]` API with its own ladder,
-timeout and max_tokens (no `fast`), the model ladder, prices (for a ladder model, or for a model of
+timeout and max_tokens (no `fast`, no `effort`), the model ladder, prices (for a ladder model, or for a model of
 an `[agents]` ladder under the CLI's own name: codex reports no cost), lane defaults, the run
 folder, and an optional `[light]` light model (engine, model, base URL, key variable, timeout,
 price; the decider's confidence threshold; the openai engine's `thinking`, which `light_thinking()`
-makes false for a server on this machine when unset and true for any other).
+makes false for a server on this machine when unset and true for any other), and an optional
+`[notify]` webhook (the variable that holds its URL, and which kinds are sent:
+[Notifications](#notifications)).
 
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).
@@ -556,10 +773,16 @@ machine send and wait (`lane calls`).
 
 ### Credentials
 
-Where: `credentials.py`, `transcript.py`.
+Where: `agent/held.py`, `credentials.py`, `transcript.py`.
 
-The second redaction layer, after the first (the allowlisted environment, and a coding-agent lane's
-`[NAME]` for every secret the run holds). What flightdeck keeps of a run and what it shows lose the
+The first redaction layer is the allowlisted environment, and `[NAME]` for every secret the run
+holds (`agent/held.py`): the exact value of each keys-file entry, of the `[api]` and `[fallback]`
+keys and of the CTFd token, 8 characters or longer, as written and as JSON escapes it, replaced
+before anything cuts the text. flightdeck's own lanes do it to what a tool call gives, before the
+model or the deck has it; a coding-agent lane to what its CLI writes (the CLI's model has seen it
+by then). It hides the value wherever it stands, in any shape, and nothing the run does not hold.
+
+The second layer is by shape, for what the first cannot know. What flightdeck keeps of a run and what it shows lose the
 value of anything shaped like a credential: the run log (`eventlog.py`), a lane's transcript (when
 it is written), the steps a post-flight report quotes, every value a writeup draft shows, and what
 the console shows of a lane.
@@ -639,6 +862,11 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **An unpack stage.** Lanes and L1 engines get the handout as it came; a lane unpacks an archive
   itself, in its workspace.
 - **ACP agents.** The coding-agent CLIs are `claude` and `codex` only.
-- **A per-origin egress allowlist.** A Docker lane has no network, or the open bridge network once
-  it may reach its instance (a coding-agent lane always has it, for its CLI's API).
+- **A fence for `--host` lanes.** A Docker lane's network reaches only its instance
+  ([Lane network](#lane-network)); a host lane's shell has this machine's network.
+- **A coding-agent lane that asks before it reaches its instance.** Its fence could hold it off
+  the instance until the player says yes, but the CLI lanes do not ask yet, so an event whose
+  instance policy is not `auto` still refuses them.
 - **Timeline replay in `play`.** `Release` exists (Practice mode, under After a run); `play` does not use it.
+- **An API outage with coding-agent lanes holding the queue**, which is what would disengage
+  autopilot there ([Autopilot](#autopilot)).

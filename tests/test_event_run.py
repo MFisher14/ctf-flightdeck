@@ -469,7 +469,7 @@ def test_pull_confirm_asks_first_and_no_pulls_nothing(tmp_path, token):
         options = RunOptions(board=folder, event=event(tmp_path, url=fake.base_url, pull="confirm"), config=config(tmp_path))
         with pytest.raises(RunError, match="you said no to the pull, so nothing was pulled and the run did not start"):
             prepare_run(replace(options, confirm=answer(False)))
-        with pytest.raises(RunError, match="cannot ask here \\(not at a terminal\\): start play at a terminal"):
+        with pytest.raises(RunError, match="cannot ask here \\(not at a terminal, or a headless run\\): start play at a terminal without --headless"):
             prepare_run(options)  # nobody to ask
         assert fake.requests == [] and not folder.exists()
         run = prepare_run(replace(options, confirm=answer(True)))

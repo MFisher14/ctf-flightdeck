@@ -129,8 +129,12 @@ def test_default_scenario_fires_every_alert_kind_within_30_ticks_of_opening():
             assert cid in sources[kind], f"{kind.value} never fired on {cid}; it fired on {sorted(sources[kind])}"
 
 
+# The autopilot scenario holds its queue and warns by design (it disengages at its budget): its own tests are below.
+PLAYER_FLOWN = [name for name in scenarios.SCENARIOS if scenarios.get(name).autopilot_tokens is None]
+
+
 @pytest.mark.parametrize("cap", [None, 2], ids=["own-cap", "cap-2"])
-@pytest.mark.parametrize("name", list(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", PLAYER_FLOWN)
 def test_every_scenario_runs_200_ticks_without_exceeding_its_lane_cap(name, cap):
     w = world(name, max_lanes=cap)
     limit = w.config.max_lanes
@@ -758,3 +762,66 @@ def test_unknown_scenario_fails_naming_every_choice():
     assert "nope" in message
     for name in scenarios.SCENARIOS:
         assert name in message
+
+
+# ---------------------------------------------------------------------- the autopilot scenario
+
+
+def test_the_autopilot_scenario_shows_the_chip_a_rule_firing_and_a_disengage(tmp_path):
+    """`flightdeck mock -s autopilot`: autopilot is engaged from the start, kills the looping
+    lane and escalates the stalled one by rule, declines a lane's budget request, and
+    disengages at its run budget, holding the queue and pausing the lanes."""
+    from ctf_flightdeck.console import views
+    from ctf_flightdeck.core.model import EventKind, LaneState
+    from ctf_flightdeck.mock import scenarios, screenshots
+    from ctf_flightdeck.mock.world import FakeWorld
+
+    world = FakeWorld(scenarios.get("autopilot"))
+    deck, pilot = world.deck, world.pilot
+    assert pilot.engaged and "╱ AUTOPILOT ╱" in views.header(deck, mock="MOCK · autopilot", width=200).plain
+    for _ in range(60):
+        if not pilot.engaged:
+            break
+        world.tick()
+    by_rule = [(e.data["intervention"], e.lane) for e in deck.events
+               if e.kind is EventKind.INTERVENTION and e.data.get("by") == "autopilot"]
+    assert [step for step in by_rule if step[0] != "pause"] == [("kill", "L01"), ("decline", "L03"), ("escalate", "L02")]
+    assert deck.lanes["L01"].result == "by autopilot; parked" and deck.lanes["L02"].model == "sonnet"
+    assert deck.lanes["L03"].result == "autopilot declined more budget"
+    assert pilot.state.value == "disengaged" and pilot.reason.startswith("the run budget is reached: ")
+    assert deck.held == f"autopilot disengaged: {pilot.reason}"
+    assert all(lane.state is LaneState.PAUSED for lane in deck.active_lanes()) and deck.active_lanes()
+    header = views.header(deck, mock="MOCK · autopilot", width=200).plain
+    assert "╱ AUTOPILOT ╱" not in header and "queue held: autopilot disengaged: the run budget is reached" in header
+    assert len(deck.lanes) > 0 and max(len(deck.active_lanes()), 1) <= deck.config.max_lanes
+    tokens = deck.totals()[0]
+    world.tick(5)
+    assert deck.totals()[0] == tokens  # at the budget nothing spends any more
+
+    result = screenshots.capture("autopilot", tmp_path)
+    names = [path.name for path in result.saved]
+    assert names[:3] == ["01-open.svg", "02-autopilot-rule.svg", "03-autopilot-disengaged.svg"]
+    assert not [line for line in result.skipped if line.startswith("autopilot")]
+    rule, off = (tmp_path / names[1]).read_text(encoding="utf-8"), (tmp_path / names[2]).read_text(encoding="utf-8")
+    assert "AUTOPILOT" in rule.replace("&#160;", " ") and "autopilot&#160;disengaged" in off
+
+
+def test_the_autopilot_scenario_on_the_host_runtime_says_why_autopilot_is_not_engaged():
+    from ctf_flightdeck.core.model import EventKind
+    from ctf_flightdeck.mock import scenarios
+    from ctf_flightdeck.mock.world import FakeWorld
+
+    world = FakeWorld(scenarios.get("autopilot"), containerized=False)
+    assert not world.pilot.guarding
+    (said,) = [e for e in world.deck.events if e.kind is EventKind.WARNING and e.data.get("autopilot") == "not engaged"]
+    assert said.text.startswith("Autopilot not engaged: autopilot needs the Docker runtime")
+    world.tick(30)
+    assert not [e for e in world.deck.events if e.data.get("by") == "autopilot"]
+
+
+def test_a_scenario_without_autopilot_has_no_autopilot_moments(tmp_path):
+    from ctf_flightdeck.mock import screenshots
+
+    result = screenshots.capture("flag", tmp_path)
+    assert not [path for path in result.saved if "autopilot" in path.name]
+    assert not [line for line in result.skipped if "autopilot" in line]

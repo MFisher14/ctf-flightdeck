@@ -15,6 +15,18 @@ and so is what `docker exec ... sh -c <signal script> sh SIG PID TREE` signals (
 reads /proc, which macOS has not). `docker rm -f` forgets the container and kills what its
 execs left running.
 
+An L1 engine's container (l1/container.py) is played the same way: its read-only mounts
+(`-v <path>:<path>:ro`: the pack, flightdeck's l1 package) are this machine's folders at
+their own paths, and a command given by a path in one of this machine's system folders
+(what the container's program lookup answered: its PATH is SYSTEM_PATH) is this machine's.
+
+A fenced lane's network (agent/egress.py) is played too, strictly enough to catch a wrong
+order: `docker network create` records a network (networks.json: its members, its aliases,
+whether it is internal, its labels), a container can only start on or be connected to a
+network that exists, the `docker run` of an egress proxy (--entrypoint python3) records the
+proxy with its configuration and runs nothing, `docker logs` says such a proxy is ready, and
+`docker network rm` refuses a network that still has a container on it, as docker does.
+
 How it runs: tests/test_external.py writes bin/docker, a small Python script that sets
 FAKE_DOCKER_STATE (its folder) and execs `python -I fake_docker.py <docker's arguments>`.
 Every call is appended to calls.jsonl there (its arguments: no secret's value is ever one).
@@ -23,6 +35,7 @@ clis.json there names the image's CLIs ({"claude": path, ...}).
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
@@ -57,25 +70,106 @@ def info(name: str) -> dict | None:
         return None
 
 
+def networks() -> dict[str, dict]:
+    """{a network's name: {"members": [containers on it], "aliases": {alias: container}}}."""
+    try:
+        with open(os.path.join(STATE, "networks.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except OSError:
+        return {}
+
+
+def save_networks(nets: dict[str, dict]) -> None:
+    with open(os.path.join(STATE, "networks.json"), "w", encoding="utf-8") as f:
+        json.dump(nets, f)
+
+
+def join(net: str, container: str, alias: str = "") -> None:
+    """Put a container on a network: only one that exists (none, bridge and host always do)."""
+    if net in ("none", "bridge", "host"):
+        return
+    nets = networks()
+    if net not in nets:
+        fail(f"docker: Error response from daemon: network {net} not found", 125)
+    if container not in nets[net]["members"]:
+        nets[net]["members"].append(container)
+    if alias:
+        nets[net]["aliases"][alias] = container
+    save_networks(nets)
+
+
+def network(args: list[str]) -> None:
+    """`docker network create|inspect|connect|disconnect|rm`, as a fenced lane uses them
+    (agent/egress.py): a network must exist to be joined, and be empty to be removed."""
+    what, rest = (args[0], args[1:]) if args else ("", [])
+    nets = networks()
+    if what == "create":
+        name = rest[-1]
+        if name in nets:
+            fail(f"Error response from daemon: network with name {name} already exists")
+        nets[name] = {"members": [], "aliases": {}, "internal": "--internal" in rest,
+                      "labels": [rest[i + 1] for i, arg in enumerate(rest) if arg == "--label"]}
+        save_networks(nets)
+        print(f"fake-net-{name}")
+    elif what == "inspect":
+        if rest[-1] not in nets:
+            fail(f"Error response from daemon: network {rest[-1]} not found")
+        print('[{"Subnet":"172.30.0.0/16"}]')
+    elif what == "connect":
+        net, container = rest[-2], rest[-1]
+        if info(container) is None:
+            fail(f"Error response from daemon: No such container: {container}")
+        join(net, container, rest[rest.index("--alias") + 1] if "--alias" in rest else "")
+    elif what == "disconnect":
+        if info(rest[-1]) is None:
+            fail(f"Error response from daemon: No such container: {rest[-1]}")
+    elif what == "rm":
+        name = rest[-1]
+        if name not in nets:
+            fail(f"Error response from daemon: network {name} not found")
+        if nets[name]["members"]:
+            fail(f"Error response from daemon: error while removing network: network {name} has active endpoints")
+        del nets[name]
+        save_networks(nets)
+        print(name)
+    else:
+        fail(f"fake docker: unexpected call: network {' '.join(args)}", 2)
+
+
 def run(args: list[str]) -> None:
-    name, root, i = "", "", 0
+    name, root, net, i = "", "", "bridge", 0
+    mounts: dict[str, str] = {}
     while i < len(args):
         arg = args[i]
         if arg == "--name":
             name = args[i + 1]
             i += 2
             continue
+        if arg == "--network":
+            net = args[i + 1]
+            i += 2
+            continue
         if arg == "-v":
             source, _, target = args[i + 1].partition(":")
             if target == "/work":
                 root = source
+            elif target.endswith(":ro"):
+                mounts[target[:-len(":ro")]] = source
             i += 2
             continue
         i += 1
-    if not name or not root:
+    proxy = "--entrypoint" in args and args[args.index("--entrypoint") + 1] == "python3"  # a fence's egress proxy
+    if not name or not (root or proxy):
         fail("fake docker: run needs --name and a -v <folder>:/work")
     if info(name) is not None:
         fail(f'docker: Error response from daemon: Conflict. The container name "/{name}" is already in use', 125)
+    join(net, name)
+    if proxy:  # nothing runs: its configuration is kept, and `docker logs` says it is ready
+        os.makedirs(folder(name), exist_ok=True)
+        with open(os.path.join(folder(name), "info.json"), "w", encoding="utf-8") as f:
+            json.dump({"proxy": json.loads(args[-1]), "network": net, "pids": []}, f)
+        print(f"fake-{name}")
+        return
     fs = os.path.join(folder(name), "fs")
     for sub, mode in (("tmp", 0o1777), ("root", 0o700), ("usr/local/bin", 0o755)):
         os.makedirs(os.path.join(fs, sub), exist_ok=True)
@@ -84,7 +178,7 @@ def run(args: list[str]) -> None:
         for cli, path in json.load(f).items():
             os.symlink(path, os.path.join(fs, "usr/local/bin", cli))
     with open(os.path.join(folder(name), "info.json"), "w", encoding="utf-8") as f:
-        json.dump({"root": root, "fs": fs, "pids": []}, f)
+        json.dump({"root": root, "fs": fs, "pids": [], "mounts": mounts}, f)
     print(f"fake-{name}")
 
 
@@ -92,6 +186,9 @@ def here(path: str, box: dict) -> str:
     """A path in the container, on this machine."""
     if path == "/work" or path.startswith("/work/"):
         return box["root"] + path[len("/work"):]
+    for target, source in box.get("mounts", {}).items():  # a read-only mount: this machine's folder
+        if path == target or path.startswith(target + "/"):
+            return source + path[len(target):]
     if path.startswith("/"):
         return box["fs"] + path
     return path
@@ -158,6 +255,8 @@ def execute(args: list[str]) -> None:
     env.setdefault("HOME", "/root")
     env = {key: here(value, box) if value.startswith("/") else value for key, value in env.items() if key != "PATH"} | {"PATH": SYSTEM_PATH}
     argv = [here(arg, box) if arg.startswith("/") else arg for arg in command]
+    if os.path.dirname(command[0]) in SYSTEM_PATH.split(":"):  # the image's system programs are this machine's
+        argv[0] = command[0]
     box["pids"].append(os.getpid())
     with open(os.path.join(folder(name), "info.json"), "w", encoding="utf-8") as f:
         json.dump(box, f)
@@ -179,6 +278,11 @@ def remove(args: list[str]) -> None:
                 except (ProcessLookupError, PermissionError):
                     pass
     os.rename(os.path.join(folder(name), "info.json"), os.path.join(folder(name), "removed.json"))
+    nets = networks()
+    for net in nets.values():  # off every network it was on
+        net["members"] = [member for member in net["members"] if member != name]
+        net["aliases"] = {alias: member for alias, member in net["aliases"].items() if member != name}
+    save_networks(nets)
 
 
 def main() -> None:
@@ -187,7 +291,15 @@ def main() -> None:
     if not args:
         fail("fake docker: no command")
     what, rest = args[0], args[1:]
-    if what == "version":
+    if what in ("network", "run", "rm"):  # one at a time: lanes start side by side, and networks.json is one file
+        lock = open(os.path.join(STATE, "lock"), "w")  # noqa: SIM115 (held until this process ends)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    if what == "logs":
+        box = info(rest[-1])
+        if box is None:
+            fail(f"Error response from daemon: No such container: {rest[-1]}")
+        print("flightdeck-egress ready" if "proxy" in box else "")
+    elif what == "version":
         print("99.0.0-fake")
     elif what == "image" and rest[:1] == ["inspect"]:
         print("sha256:fake")
@@ -203,7 +315,7 @@ def main() -> None:
     elif what == "rm":
         remove(rest)
     elif what == "network":
-        return
+        network(rest)
     else:
         fail(f"fake docker: unexpected call: {' '.join(args)}", 2)
 

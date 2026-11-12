@@ -15,8 +15,11 @@ problem: report it privately, never in a public issue.
 - **A lane out of its fence.** A lane or an L1 engine getting out of its Docker container onto
   your machine, or an engine writing to the pack it has read-only; a lane's http tool reaching
   anything but its challenge's instance; a Docker lane or engine on any network while its
-  challenge has no instance or it has not been allowed to reach it; something a lane wrote
-  running in your take-over shell before you type.
+  challenge has no instance or it has not been allowed to reach it; a Docker lane or engine
+  reaching, from its container, a host or port that is neither in its challenge's `urls` nor
+  (for a coding-agent lane) its CLI's API host, or looking up a name outside its network, or
+  being on Docker's bridge network at all; something a lane wrote running in your take-over
+  shell before you type.
 - **A key or token where it should not be**: in the run log (`events.jsonl`), a transcript, a
   report, a writeup draft, the console, or a lane (its commands' environment, its model's
   context). That is every model API key, the CTFd token and everything in your keys file.
@@ -28,22 +31,33 @@ problem: report it privately, never in a public issue.
   model's flag check (`flagcheck` in `[light] jobs`) holds it; and a flag found wrong is never
   submitted again.
 
+- **Autopilot acting beyond its frame** (D20): doing anything looser than the event profile and
+  your config allow, approving or submitting anything on your behalf (a flag, a live-box request,
+  more budget), sending a flag that would spend a challenge's last counted try, sending a request
+  a model declined on to another model or provider, starting a lane or spending past the run
+  budget once it is reached, or engaging without a run budget or off the Docker runtime.
+
 ## Not a vulnerability
 
 - **`--host` lanes.** They are unsafe by design, and documented as such: a lane runs as you, on
   your machine, so it can read your files, your keys file and flightdeck's own environment, and
-  send what it reads to its model's API. flightdeck says so before every host run, and there the
-  cleanup of logs and transcripts is cleanup, not a fence. Use Docker, a disposable VM or a
-  separate low-limit key (the README's [Docker or host](README.md#docker-or-host) says what each
+  send what it reads to its model's API. flightdeck says so before every host run. It replaces
+  the value of each key it holds with the key's name in what a lane's tool calls return, but a
+  lane can still use a key it can read, or print it encoded: there that, like the cleanup of logs
+  and transcripts, is cleanup, not a fence. Use Docker, a disposable VM or a
+  separate low-limit key (the guide's [Docker or host](docs/GUIDE.md#docker-or-host) says what each
   runtime exposes). A report that a `--host` lane can read or send something of yours is not a
   vulnerability report.
 - **A coding-agent CLI's own credential.** The commands `--agent claude` or `--agent codex` runs
   can read that CLI's credential, in Docker too. Give it a key you can revoke, with a low
   spending limit.
-- **The network a lane was allowed.** Once a Docker lane may reach its challenge's instance, its
-  container is on Docker's bridge network: open egress, not only the instance (there is no
-  per-origin allowlist yet). A coding-agent lane is always on it, for its CLI's API. The http
-  tool still goes only to the instance.
+- **What a lane was allowed to reach.** A Docker lane that may reach its challenge's instance
+  reaches the hosts and ports in the challenge's `urls`, and a coding-agent lane its CLI's API
+  as well. What it does there is its work, and so is what those hosts do with what it sends: an
+  instance that fetches a URL for the lane, a host that serves other sites at the same address
+  and port, a hosted tool a coding-agent CLI's API runs on its own servers. The fence is by host
+  and port (the guide's [Docker or host](docs/GUIDE.md#docker-or-host) lists what it does not
+  do); it does not read what crosses it.
 - **What auto submit does.** Under auto submit, a flag a lane claims goes to the platform at once,
   as you asked.
 - **What the cleanup leaves on purpose.** Transcripts and writeup drafts lose what looks like a

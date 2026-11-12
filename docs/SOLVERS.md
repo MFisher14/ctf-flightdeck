@@ -2,9 +2,9 @@
 
 Most players have a folder of scripts that solve the easy, familiar challenges with no model at
 all: a decoder for layered base64, a script that carves files, an RSA small-exponent attack.
-flightdeck calls these **L1**. Each of flightdeck's lanes runs the ones that fit its challenge
-before its first model call, so a solve can cost no tokens, and when they find nothing the lane's
-model starts with what they reported.
+flightdeck calls these **L1**. Each lane runs the ones that fit its challenge before its first
+model call (a coding-agent lane: before its CLI is started), so a solve can cost no tokens, and
+when they find nothing the lane's model starts with what they reported.
 
 flightdeck ships no solvers. You bring your own, and this page is the contract between them and
 flightdeck.
@@ -43,7 +43,8 @@ Each gets the challenge folder as its last argument, and whatever it prints is s
 (output `text`, below). Its route comes from where it is and what it is called:
 
 - the **category** from its folder's name, when that names one: `crypto/` gives `cry`,
-  `forensics/` gives `for`, and so on for `web`, `rev`, `pwn`, `misc` and `osint`;
+  `forensics/` gives `for`, `reverse-engineering/` gives `rev`, and so on for every name a board
+  can use for `web`, `rev`, `pwn`, `misc` and `osint` ([BOARDS.md](BOARDS.md) lists them);
 - the **keywords** from its file name's words of three letters or more, split on `_`, `-`, `.` and
   spaces, leaving out `solve`, `solver`, `script`, `exploit` and `main`.
 
@@ -209,8 +210,12 @@ model call. Then:
 - With lanes in Docker, each engine runs in a container of its own, made from the lane image, with
   its copy of the challenge at `/work` and your pack mounted read-only. It has no network, unless
   the challenge has a live instance and lanes may reach it without asking (no event profile, or
-  the profile's instance policy is `auto`). The programs an engine needs, `python3` included, must
-  be in the lane image.
+  the profile's instance policy is `auto`). That network reaches the instance's hosts and ports
+  and nothing else, as a lane's does (the guide's [Docker or host](GUIDE.md#docker-or-host)): a
+  host name works as the challenge wrote it, but an instance given by IP address or as
+  `localhost` is reached as `instance-10-0-0-5` (for `10.0.0.5`) or `instance-localhost`, on the
+  same port, so an engine that reads `urls` from `challenge.json` must make that change itself.
+  The programs an engine needs, `python3` included, must be in the lane image.
 - With `--host`, each engine runs on this machine, as you, in a copy of the challenge, with an
   environment that holds no keys.
 
@@ -220,12 +225,17 @@ disk: flightdeck keeps a bounded part of its output.
 **Flags.** A flag that an engine reports as its result (`solved` or `candidate`) waits for your
 approval. Under auto submit it goes to the platform at once, with the same exceptions as a flag a
 lane's model found: for one, a flag that the challenge's own description or handout files hold,
-which is often a decoy, still waits (the README's [Play a board](../README.md#play-a-board) lists
+which is often a decoy, still waits (the guide's [Play a board](GUIDE.md#play-a-board) lists
 them all). A flag that is only a match in what an engine printed (`output = "text"`, so every
 imported script) always waits for you, under auto submit too.
 
-**When L1 does not run.** Coding-agent lanes (`--agent`) do not use the pack. Under an event
-profile, an `l1` policy of `manual` or `off` turns it off.
+**Coding-agent lanes** (`--agent`) run the pack too, before their CLI is started, by the same
+rules: engines run where the lanes do, a flag waits or goes out as above, and no CLI runs while a
+flag waits for you (none at all when it solves the challenge). The CLI's opening brief says what
+the engines found, as data, so the agent does not redo it.
+
+**When L1 does not run.** Under an event profile, an `l1` policy of `manual` or `off` turns it
+off.
 
 Keep challenges out of your pack. A folder inside the pack that holds a challenge's files (it has
 a `challenge.json` or a `board.json`) is never searched for engines, so that a challenge can never
@@ -233,10 +243,15 @@ add a solver to your pack; `l1 route` and `l1 run` refuse a challenge that is in
 
 ## From a gap to a new engine
 
-After a run, `flightdeck gaps RUN_DIR` lists the challenges no engine solved, with the engines that
+After a run, `flightdeck gaps RUN_DIR` (or `flightdeck gaps latest`, for the newest run in your
+config's `[run] dir`) lists the challenges no engine solved, with the engines that
 ran on each and why L1 did not solve it. An engine counts as having solved a challenge only when it
-reported `solved`; a `candidate` does not count, even when its flag was right. Build mode turns a
-gap into an engine:
+reported `solved`; a `candidate` does not count, even when its flag was right. With `--pack` (and
+the board the run played: `--board`, else the one the run recorded) it also routes each gap against
+your pack as it is now, and ends each gap in `gaps.md`, and its printed summary, with the build
+mode command for it, its challenge folder and your pack filled in and quoted for the shell, ready
+to paste. A gap whose challenge is not on the board has no folder, so no command. Build mode turns
+a gap into an engine:
 
 ```sh
 flightdeck build gap ~/ctf/some-board/half-and-half --pack ~/ctf/solvers

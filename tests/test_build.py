@@ -307,16 +307,16 @@ def test_a_folder_that_is_not_a_challenge_is_refused(board, pack):
 
 
 def test_with_nothing_else_to_route_by_the_keywords_come_from_the_name(tmp_path, pack):
-    folder = challenge_dir(tmp_path / "b", "crackme", {"chall": b"\x00\x01"}, category="Reverse Engineering",
+    folder = challenge_dir(tmp_path / "b", "crackme", {"chall": b"\x00\x01"}, category="Smart Contracts",
                            title="Baby Crackme", description="")
     _, manifest, _, _ = scaffold(pack, folder)
     assert load(manifest).routes == (Route(keywords=("crackme", "baby"), priority=60),)
     assert "# distinctive words of its name (its description has none)" in manifest.read_text()
-    case_test(pack, "reverse_engineering_crackme").test_routed()
+    case_test(pack, "smart_contracts_crackme").test_routed()
 
 
 def test_a_challenge_nothing_can_route_is_refused_and_nothing_is_kept(tmp_path, pack):
-    folder = challenge_dir(tmp_path / "b", "x", {"chall": b"\x00"}, category="Reverse Engineering", title="X", description="")
+    folder = challenge_dir(tmp_path / "b", "x", {"chall": b"\x00"}, category="Smart Contracts", title="X", description="")
     with pytest.raises(BuildError, match="nothing about x can make a route"):
         scaffold(pack, folder)
     assert not pack.exists()  # it made the pack, then the case, and took both back
@@ -371,7 +371,11 @@ def test_handout_files_are_copied_as_data_and_never_run_imported_or_read_as_engi
     ("Crypto", ("cry", "cry")),
     ("forensics", ("for", "for")),
     ("hardware", ("hardware", "hardware")),
-    ("Reverse Engineering", (None, "reverse_engineering")),
+    ("Reverse Engineering", ("rev", "rev")),
+    ("Binary Exploitation", ("pwn", "pwn")),
+    ("Web Exploitation", ("web", "web")),
+    ("Miscellaneous", ("misc", "misc")),
+    ("Smart Contracts", (None, "smart_contracts")),
     ("Web / ‮Rev", (None, "web_rev")),
     ("", (None, "uncategorized")),
     ("网络", (None, "uncategorized")),

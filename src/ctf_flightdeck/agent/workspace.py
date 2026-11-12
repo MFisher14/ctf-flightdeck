@@ -49,6 +49,7 @@ from ..text import untrusted
 
 if TYPE_CHECKING:
     from ..leftovers import ProcessRecord
+    from .egress import Egress
 
 PRIVATE = ".flightdeck"
 """flightdeck's own directory in a workspace (home, tmp, logs, tool output). Never copied
@@ -759,6 +760,15 @@ class DockerWorkspace:
     `labels` go on the container (`docker run --label`): a run's containers carry the run
     and the flightdeck that started them (leftovers.labels()), so the next start can find
     and remove them if flightdeck itself is killed and close() never runs.
+
+    The network (P9). `network` is the Docker network the container starts on: "none" unless
+    the caller names one (an L1 engine's container joins its lane's fenced network). A lane
+    that may reach something gets a fence of its own instead (agent/egress.py: an internal
+    network and a proxy per host, with the same labels): `reach` are the URLs it reaches
+    from the start (its challenge's instance under policy auto; a coding-agent CLI's API),
+    `later` those it reaches once open_instance() is called (the instance, when the player
+    allows it under confirm). With neither, the container has no network at all. flightdeck
+    never puts it on Docker's bridge network. close() removes the fence with the container.
     """
 
     def __init__(
@@ -768,7 +778,9 @@ class DockerWorkspace:
         *,
         image: str,
         name: str,
-        network: str = "bridge",
+        network: str = "none",
+        reach: Sequence[str] = (),
+        later: Sequence[str] = (),
         memory: str = "2g",
         cpus: str = "2",
         pids_limit: int = 512,
@@ -789,6 +801,16 @@ class DockerWorkspace:
         self.image = image
         self.name = name
         self.network = network
+        self.reach = tuple(reach)
+        self.later = tuple(later)
+        self.egress: Egress | None = None
+        if self.reach or self.later:
+            from .egress import Egress  # it imports this module
+
+            _require(network == "none", f"a fenced lane starts on a network of its own, not on {network!r}")
+            self.egress = Egress(name, image=image, labels=self.labels)
+            if self.reach:
+                self.network = self.egress.network
         self.memory = memory
         self.cpus = cpus
         self.pids_limit = pids_limit
@@ -813,6 +835,12 @@ class DockerWorkspace:
         if code == 0:
             raise WorkspaceError(self._name_in_use())
         await asyncio.to_thread(copy_handout, self.handout, self.root)
+        if self.egress is not None and self.reach:
+            try:
+                await self.egress.allow(self.reach)
+            except WorkspaceError:
+                await self.close()
+                raise
         # From here the container may exist (the name was free a moment ago, so whatever has
         # it is ours). `docker run` carries on in the docker CLI even if this lane is
         # cancelled, so it runs as a task of its own, which close() waits for before it
@@ -823,6 +851,7 @@ class DockerWorkspace:
         if code != 0:
             if "already in use" in out:
                 self._started = False  # someone else's container: never remove it
+                await self.close()  # this lane's fence, if it has one, goes all the same
                 raise WorkspaceError(self._name_in_use())
             await self.close()
             if "No such image" in out:
@@ -882,27 +911,45 @@ class DockerWorkspace:
                 code, out = -1, ""
             if code != 0 and "already in use" in out:
                 self._started = False  # someone else's container: never remove it
-        if not self._started:
-            return
-        code, out = await _docker("rm", "-f", self.name)
-        if code != 0 and "No such container" not in out:
-            raise WorkspaceError(f"docker rm -f {self.name} failed: {_first_line(out)}")
-        self._started = False
+        try:
+            if self._started:
+                code, out = await _docker("rm", "-f", self.name)
+                if code != 0 and "No such container" not in out:
+                    raise WorkspaceError(f"docker rm -f {self.name} failed: {_first_line(out)}")
+                self._started = False
+        finally:
+            if self.egress is not None:  # after the container: docker removes no network a container is on
+                await self.egress.close()
 
-    async def connect_network(self, network: str = "bridge") -> None:
-        """Attach the running container to `network` (a lane the player allowed onto the live
-        instance: it started with none). WorkspaceError when docker refuses."""
-        _require(bool(_NETWORK.fullmatch(network)), f"network {network!r} is not a valid network name")
+    async def open_instance(self) -> None:
+        """Let the running container reach `later` (a lane the player allowed onto the live
+        instance): the fence is opened for those hosts and, when the container started with no
+        network, it joins the fence's. Nothing to do when there is no `later` (any more).
+        WorkspaceError when docker refuses: the lane then reaches what it did before."""
         if self._closed or not self._ready:
             raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
-        if self.network == "none":  # docker joins no other network while a container is on none
+        if self.egress is None or not self.later:
+            return
+        await self.egress.allow(self.later)
+        if self.network != self.egress.network:
+            # docker joins no other network while a container is on none
             code, out = await _docker("network", "disconnect", "none", self.name)
             if code != 0:
                 raise WorkspaceError(f"docker network disconnect none {self.name} failed: {_first_line(out)}")
-        code, out = await _docker("network", "connect", network, self.name)
-        if code != 0 and "already exists" not in out:
-            raise WorkspaceError(f"docker network connect {network} {self.name} failed: {_first_line(out)}")
-        self.network = network
+            code, out = await _docker("network", "connect", self.egress.network, self.name)
+            if code != 0:
+                raise WorkspaceError(f"docker network connect {self.egress.network} {self.name} failed: {_first_line(out)}")
+            self.network = self.egress.network
+        self.reach, self.later = self.reach + self.later, ()
+
+    @property
+    def shell_hosts(self) -> dict[str, str]:
+        """{an instance's host as the challenge writes it: its name in this container} for the
+        hosts the lane's shell cannot reach as written (an IP address, localhost: see
+        agent/egress.py); the lane's brief says so."""
+        from .egress import shell_hosts
+
+        return shell_hosts(self.reach + self.later)
 
     def interactive_shell(self) -> ShellSpec:
         """The take-over shell: bash in the lane's container, which is the boundary (the lane

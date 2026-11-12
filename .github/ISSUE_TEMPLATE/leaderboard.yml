@@ -1,0 +1,75 @@
+name: Add a flight to the leaderboard
+description: You played an event with flightdeck. Put your team and your GitHub name on the board.
+title: "Leaderboard: "
+labels: ["leaderboard"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For events that have **ended** and whose rules **allowed AI tools**. No flags, no challenge text. Name only yourself and teammates who agreed to be named. The rules are in docs/LEADERBOARD.md.
+  - type: input
+    id: event
+    attributes:
+      label: Event
+      description: Its name and year, and the date it ended.
+    validations:
+      required: true
+  - type: input
+    id: finish
+    attributes:
+      label: Finish
+      description: Your place and how many teams played, such as "12 / 840", with a link to the final scoreboard or the CTFtime page if it is public.
+    validations:
+      required: true
+  - type: input
+    id: team
+    attributes:
+      label: Team
+      description: The team's name as the scoreboard shows it.
+    validations:
+      required: true
+  - type: input
+    id: pilots
+    attributes:
+      label: Pilots
+      description: The GitHub names to credit, such as "@you, @teammate". Only people who agreed.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: How hands-on you were for most of the event. `flightdeck share` says which one a run was.
+      options:
+        - Hands-on (we steered lanes - hints, redirects, forks, escalations, take-overs)
+        - Approve-only (we only approved or declined flags, budgets and instances)
+        - Hands-off (nobody touched a lane and flags went out under auto submit)
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Setup
+      description: The models, Docker or host, lanes at once, any coding-agent CLI, your own solver pack or none.
+    validations:
+      required: true
+  - type: textarea
+    id: card
+    attributes:
+      label: Flight card
+      description: What `flightdeck share RUN_DIR` printed for the event's run or runs, or a link to the flight card issue you already posted.
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: How much of the score came from flightdeck's lanes and how much by hand, what worked, what did not.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirm
+      options:
+        - label: The event has ended and its rules allowed AI tools.
+          required: true
+        - label: Everyone named here agreed to be named.
+          required: true

@@ -1281,3 +1281,45 @@ def test_a_flag_for_a_challenge_already_solved_on_ctfd_is_not_counted_correct():
             assert deck.challenges["baby-rsa"].status is not ChallengeStatus.SOLVED
             assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM
             assert [e for e in events if e.kind is EventKind.SUBMIT] == []  # no flag recorded as the solution
+
+
+# ---------------------------------------------------------------------- a page for a person (autopilot disengages on it)
+
+CHECK_PAGE = "<!DOCTYPE html><html><body><h1>Checking you are human</h1><form>...</form></body></html>"
+
+
+@pytest.mark.parametrize("status", [200, 403, 429])
+def test_a_web_page_where_the_api_should_answer_is_a_human_check(status):
+    from ctf_flightdeck.platform.ctfd import HumanCheck
+
+    with FakeCTFd(sample()) as fake:
+        fake.script("GET", "/api/v1/challenges", *[Reply(status, CHECK_PAGE)] * 6)
+        error = failure(fake, lambda c: c.challenges(), max_retries=0)
+    assert type(error) is HumanCheck and error.status == status and error.endpoint == "GET /api/v1/challenges"
+    assert "a web page for a person, not a CTFd API answer" in str(error) and "a check that wants a human (a CAPTCHA)" in str(error)
+    assert_hides_token(error)
+
+
+@pytest.mark.parametrize("reply", [
+    Reply(403, {"success": False, "message": "banned"}),  # CTFd's own JSON: its words, not a page
+    Reply(401, CHECK_PAGE),  # a refused token
+    Reply(404, CHECK_PAGE),  # a wrong address
+    Reply(502, CHECK_PAGE),  # the site failing: an outage, which may pass
+])
+def test_other_failures_are_not_taken_for_a_human_check(reply):
+    from ctf_flightdeck.platform.ctfd import HumanCheck
+
+    with FakeCTFd(sample()) as fake:
+        fake.script("GET", "/api/v1/challenges", *[reply] * 6)
+        error = failure(fake, lambda c: c.challenges(), max_retries=0)
+    assert type(error) is CTFdError and not isinstance(error, HumanCheck)
+
+
+def test_a_flag_answered_with_a_page_for_a_person_is_a_verdict_that_says_so():
+    with FakeCTFd(sample()) as fake, CTFdVerifier(fake.base_url, TOKEN, {"warmup": 1}) as verify:
+        fake.script("POST", "/api/v1/challenges/attempt", Reply(403, CHECK_PAGE))
+        page = verify.submit("warmup", "test{hello}")
+        plain = verify.submit("warmup", "test{wrong}")  # the fake's own answer again
+    assert page.ok is None and page.human_check is True
+    assert "a web page for a person" in page.error and "the flag was not checked" in page.error
+    assert plain.ok is False and plain.human_check is False

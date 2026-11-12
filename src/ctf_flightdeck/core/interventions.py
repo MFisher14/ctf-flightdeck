@@ -89,6 +89,16 @@ class Decline:
 
 
 @dataclass(frozen=True)
+class Dismiss:
+    """Take down the lane's most urgent alert about its course, without touching the lane: the
+    player judges the alert wrong. Refused for any other alert (a flag, a budget and a teammate
+    alert have their own answers). Logged like every intervention, so the Watch keeps the alert
+    quiet as it does one the player answered."""
+
+    lane: str
+
+
+@dataclass(frozen=True)
 class Claim:
     """Team mode: tell teammates we are on this challenge."""
 
@@ -102,9 +112,12 @@ class Release:
 
 @dataclass(frozen=True)
 class Queue:
-    """Queue a fresh lane for a parked or new challenge."""
+    """Queue a fresh lane for a parked or new challenge. `model`: the model it starts on
+    (autopilot's next round: the next one up the ladder); None: the challenge's last lane's,
+    else the weakest."""
 
     challenge: str
+    model: str | None = None
 
 
 Intervention = (
@@ -119,6 +132,7 @@ Intervention = (
     | HandBack
     | Approve
     | Decline
+    | Dismiss
     | Claim
     | Release
     | Queue

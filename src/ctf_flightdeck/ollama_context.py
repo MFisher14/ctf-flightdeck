@@ -82,6 +82,8 @@ def default_contexts(machine: Machine, environ: Mapping[str, str] | None = None)
         total = sum(gpu.memory for gpu in gpus)
         return Estimate((ollama_default(total),), f"the NVIDIA GPU memory {where} is {gib(total)}"
                                                   + (" in all" if len(gpus) > 1 else ""))
+    if machine.other_gpus.value or machine.other_gpus.value is None:
+        return None  # an AMD or Intel GPU (or perhaps one): what Ollama makes of it was not measured, so no estimate
     return Estimate((ollama_default(0),), f"it finds no GPU {where}")
 
 
