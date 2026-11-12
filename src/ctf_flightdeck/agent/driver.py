@@ -486,8 +486,9 @@ class AgentDriver:
             except ModelError as exc:
                 if run.generation != generation:
                     # a call of the old context (escalated) or from before a take-over: its failure
-                    # does not end the lane, which goes on with the next call
-                    self._overtaken(run, messages, hints, notes)
+                    # does not end the lane, which goes on with the next call; what it cost counts
+                    # (a refusal is paid for: every attempt the refusal fallback made)
+                    self._overtaken(run, messages, hints, notes, exc.usage, model, declined=exc.declined)
                     continue
                 self._failed(run, exc, model, len(hints))
                 return
@@ -500,7 +501,7 @@ class AgentDriver:
                 # escalated or taken over while this model was thinking, or while the lane was
                 # paused with the reply held: the reply was decided before that. Drop it, but
                 # count what it cost.
-                self._overtaken(run, messages, hints, notes, reply, model)
+                self._overtaken(run, messages, hints, notes, reply.usage, model)
                 continue
             if await self._turn(run, reply, len(hints), generation, model, messages):
                 await self._until_over(run)  # it gave up: no more model calls, though a flag of it may still wait
@@ -654,15 +655,17 @@ class AgentDriver:
         return ""
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
-                   reply: Reply | None = None, model: str = "") -> None:
-        """A call that no longer counts. Its cost does. After a take-over the context is the
-        same, and it holds the call's hints and notes; after an escalation the new context
-        has had neither, so they go again."""
+                   usage: Usage | None = None, model: str = "", *, declined: bool = False) -> None:
+        """A call to `model` that no longer counts: its reply, or its refusal (`declined`),
+        came after the lane was escalated or taken over. Its cost does (`usage`: what the
+        call used, every attempt of it). After a take-over the context is the same, and it
+        holds the call's hints and notes; after an escalation the new context has had
+        neither, so they go again."""
         same = run.messages is messages
         if not same:
             run.notes[:0] = notes
-        usage = reply.usage if reply is not None else None
-        why = "a reply dropped: the lane was escalated or taken over while the model answered"
+        dropped = "a refusal" if declined else "a reply"
+        why = f"{dropped} dropped: the lane was escalated or taken over while the model answered"
         self._apart(run, model, usage, why)
         self._report(
             run,
@@ -670,7 +673,7 @@ class AgentDriver:
                 turn=False,
                 tokens=usage.total if usage else 0,
                 cached_tokens=usage.cached_tokens if usage else 0,
-                dollars=self._dollars(model, reply) if reply is not None else 0.0,
+                dollars=self._priced(usage.model or model, usage) if usage is not None else 0.0,
                 hints_taken=len(hints) if same else 0,
                 why=why,
                 model=(usage.model if usage else "") or model or None,

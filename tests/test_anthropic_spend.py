@@ -10,6 +10,7 @@ TTL; usage.iterations, one entry per attempt). No real API is called, and no key
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -35,17 +36,18 @@ SWITCH = {"type": "fallback", "from": {"model": SONNET}, "to": {"model": SPARE},
 
 
 class Lane:
-    """One lane on `model` (SONNET), with the driver on an AnthropicClient against `server`."""
+    """One lane on `model` (SONNET), with the driver on an AnthropicClient against `server`;
+    `ladder` is the deck's model ladder (the lane's model alone by default)."""
 
     def __init__(self, tmp_path: Path, server: FakeAnthropicServer, prices: dict[str, Price], *,
-                 dollar_cap: float | None = None, model: str = SONNET) -> None:
+                 dollar_cap: float | None = None, model: str = SONNET, ladder: tuple[str, ...] = ()) -> None:
         folder = tmp_path / "board" / "note"
         folder.mkdir(parents=True)
         (folder / "note.txt").write_text("the flag is t{note}\n")
         self.client = AnthropicClient(server.base_url, KEY, max_retries=0)
         self.driver = AgentDriver(self.client, lambda lane, ch: HostWorkspace(tmp_path / "runs" / lane.id / "work", folder),
                                   run_id="run1", files={"note": ["note.txt"]}, prices=prices)
-        config = DeckConfig(event="t", flag_format=FLAG, models=(model,), max_lanes=1)
+        config = DeckConfig(event="t", flag_format=FLAG, models=ladder or (model,), max_lanes=1)
         self.deck = Deck(config, self.driver, RunClock(), lambda cid, flag: flag == "t{note}")
         self.deck.release([Challenge("note", "Note", "misc", 50, solves=10, description="About note.")],
                           [QueueEntry("note", model, dollar_cap=dollar_cap)])
@@ -182,6 +184,61 @@ def test_a_call_every_model_declined_ends_the_lane_with_each_attempt_counted_as_
             assert lane.dollars == pytest.approx(per_million((800, 2.0), (900, 2.0)))
             (spent,) = [e for e in lab.events(EventKind.SPEND) if e["model"] == SONNET]
             assert spent["tokens"] == 800
+            await lab.finish()
+
+    run(main)
+
+
+OPUS = "claude-opus-5-5"  # the rung above SONNET on the ladder of the tests below
+OPUS_PRICE = Price(4.0, 20.0, 0.20, 5.0)
+
+
+@pytest.mark.parametrize("overtake", ["escalate", "take over"])
+def test_a_call_every_model_declined_after_the_lane_was_escalated_or_taken_over_counts_each_attempt(tmp_path, overtake):
+    # the call no longer counts (the lane goes on), but Anthropic billed both attempts of it
+    gate = threading.Event()
+    declined = refusal("cyber", model=SPARE, iterations=[attempt(SONNET, input_tokens=800, cache_read=1000),
+                                                         attempt(SPARE, input_tokens=900, cache_read=2000)])
+
+    def responder(record):
+        if len(server.requests) == 1:
+            gate.wait(5)  # the models are still at it when the player steps in
+            return declined
+        return submit(input_tokens=60, output_tokens=40)
+
+    server = FakeAnthropicServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lane(tmp_path, server, {**PRICES, OPUS: OPUS_PRICE}, ladder=(SONNET, OPUS))
+            lane = lab.lane
+            await until(lambda: len(server.requests) >= 1, "the call to Claude Sonnet 5.5")
+            if overtake == "escalate":
+                assert lab.deck.apply(iv.Escalate(lane.id)).ok and lane.model == OPUS
+            else:
+                session = lab.driver.takeover(lane)
+                assert lab.deck.apply(iv.TakeOver(lane.id)).ok
+                await asyncio.wait_for(session.begin(), 10)
+            gate.set()
+            await until(lambda: lane.tokens >= 1800 + 2900, "the declined call's tokens counted")
+            if overtake == "take over":
+                assert lab.deck.apply(iv.HandBack(lane.id, session.finish())).ok
+            await until(lambda: lane.pending is not None or lane.finished, "the next call's candidate")
+            assert lane.state is LaneState.WAITING, lane.result  # the refusal of a call that no longer counts ends nothing
+            assert (lane.tokens, lane.cached_tokens) == (1800 + 2900 + 100, 1000 + 2000)
+            # each attempt in its model's name, at its rates (cache reads: Claude Sonnet 5.5 $0.10, Claude Sonnet 5 $0.20)
+            sonnet, spare = per_million((800, 2.0), (1000, 0.10)), per_million((900, 2.0), (2000, 0.20))
+            spent = {e["model"]: (e["tokens"], e["cached_tokens"], e["dollars"]) for e in lab.events(EventKind.SPEND)}
+            assert spent == {SONNET: (1800, 1000, pytest.approx(sonnet)), SPARE: (2900, 2000, pytest.approx(spare))}
+            dropped = "a refusal dropped: the lane was escalated or taken over while the model answered"
+            assert {e["model"]: e["why"] for e in lab.events(EventKind.SPEND)} == {
+                SONNET: f"{SONNET} declined, so Anthropic's refusal fallback ran the call on {SPARE}; {dropped}",
+                SPARE: dropped}
+            asked = server.requests[1]["json"]["model"]
+            assert asked == (OPUS if overtake == "escalate" else SONNET)
+            last = per_million((60, 4.0), (40, 20.0)) if asked == OPUS else per_million((60, 2.0), (40, 10.0))
+            assert lane.dollars == pytest.approx(sonnet + spare + last)
+            assert lab.deck.totals()[0] == 4800
             await lab.finish()
 
     run(main)
