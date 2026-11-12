@@ -1657,17 +1657,14 @@ def test_score_takes_the_event_log_itself_too(played):
     assert result.exit_code == 0 and result.stdout == scorecard(score(path, played.board))
 
 
-def test_score_on_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(played, monkeypatch):
-    path = played.close()
-
-    def refuse(p):
-        raise config.ConfigError(f"{p}: starts with ~ for a user that does not exist (or there is no home directory)")
-
-    monkeypatch.setattr(config, "expand", refuse)
-    result = invoke("score", str(path.parent))
-    assert result.exit_code == 2, result.output
-    assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr
-    assert "Traceback" not in result.output
+def test_score_on_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(played):
+    run = str(played.close().parent)
+    nobody = "~flightdeck-no-such-user/x"
+    for args in ([nobody], [run, "--board", nobody], [run, "--board", str(played.folder), "--answers", nobody]):
+        result = invoke("score", *args)
+        assert result.exit_code == 2, (args, result.output)
+        assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr, args
+        assert result.stderr.count("\n") == 1 and not isinstance(result.exception, (RuntimeError, config.ConfigError)), args
 
 
 def test_score_checks_flags_against_a_named_answers_file(tmp_path):

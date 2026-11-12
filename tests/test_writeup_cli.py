@@ -281,18 +281,15 @@ def test_polish_without_a_usable_config_stops_before_writing_anything(tmp_path):
     assert not (record.dir / "writeups").exists()
 
 
-def test_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(tmp_path, monkeypatch):
+def test_a_tilde_path_for_a_user_that_does_not_exist_fails_in_one_line(tmp_path):
     record = alpha_run(tmp_path)
-
-    def refuse(path):
-        raise config.ConfigError(f"{path}: starts with ~ for a user that does not exist (or there is no home directory)")
-
-    monkeypatch.setattr(config, "expand", refuse)
-    result = invoke(record.dir)
-    assert result.exit_code == 2, result.output
-    assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr
-    assert "Traceback" not in result.output
-    assert not (record.dir / "writeups").exists()
+    nobody = "~flightdeck-no-such-user/x"
+    for args in ([nobody], [record.dir, "--board", nobody]):
+        result = invoke(*args)
+        assert result.exit_code == 2, (args, result.output)
+        assert result.stderr.startswith("flightdeck: ") and "starts with ~" in result.stderr, args
+        assert result.stderr.count("\n") == 1 and not isinstance(result.exception, (RuntimeError, config.ConfigError)), args
+        assert not (record.dir / "writeups").exists()
 
 
 def test_polish_names_a_missing_key_variable_and_never_shows_a_value(tmp_path, monkeypatch):

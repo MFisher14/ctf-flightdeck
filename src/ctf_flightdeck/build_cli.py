@@ -61,12 +61,9 @@ def gap_command(
     from .platform.manual import ANSWERS_FILE
 
     try:
-        solver, manifest, test, case = scaffold(pack, challenge_dir, engine_id=name, answers=answers)
-    except BuildError as exc:
-        _fail(str(exc))
-    try:
-        root = expand(pack).absolute()
-    except ConfigError as exc:  # scaffold already ran on the literal path; say so before printing it
+        root = expand(pack).absolute()  # before scaffold, which would expand it itself and raise
+        solver, manifest, test, case = scaffold(root, challenge_dir, engine_id=name, answers=answers)
+    except (BuildError, ConfigError) as exc:
         _fail(str(exc))
     try:
         routes = load(manifest).routes

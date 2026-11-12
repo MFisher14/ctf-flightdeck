@@ -56,12 +56,12 @@ def score_command(
         log = _events_file(expand(run_dir))
     except ConfigError as exc:
         _fail(str(exc))
-    if board is not None:
-        folder = expand(board)
-    else:
-        folder, recorded_answers = _recorded_board(log.parent)
-        answers = answers if answers is not None else recorded_answers
     try:
+        if board is not None:
+            folder = expand(board)
+        else:
+            folder, recorded_answers = _recorded_board(log.parent)
+            answers = answers if answers is not None else recorded_answers
         played = load_board(folder, answers=expand(answers) if answers is not None else None)
         result = score(log, played)
     except (BoardError, ConfigError, ScoreError) as exc:
