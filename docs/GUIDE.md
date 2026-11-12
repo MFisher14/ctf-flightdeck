@@ -187,6 +187,12 @@ When a model API failure would hit every lane (a refused key, an unknown model, 
 queue is held and the header says why. Once you have fixed it, `/unhold` starts the queued lanes
 (a key or model id changed in your config needs a new run).
 
+The queue is held too when the model API keeps failing in a way that may pass (a rate limit, a
+5xx, an overload): two lanes in a row end on it within a few minutes, with no reply in between.
+The challenges still queued stay queued instead of each being parked in turn. Once the API answers
+again, `/unhold` puts the challenges that outage parked back in front of the queue and starts lanes
+again. With a `[fallback]` API, a lane moves to it instead of ending.
+
 `q` asks first while lanes are open, and a run cannot be resumed.
 
 The fleet's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,

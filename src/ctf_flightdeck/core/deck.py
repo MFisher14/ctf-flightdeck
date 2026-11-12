@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, replace
 
 from .. import fmt
@@ -179,6 +179,7 @@ class Deck:
         self._spent: set[str] = set()  # challenges out of tries: closed until tries come back (_out_of_tries)
         self._answered: dict[str, float] = {}  # challenge id -> when the platform last answered one of its flags
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
+        self._ended_by_hold: list[str] = []  # lanes that what the hold is about ended: release_hold queues their challenges again
         self.closing = False  # the run is closing (close()): its lanes stop without ending
         self.listener_errors: list[str] = []  # listeners that raised (shown when the run ends)
         self._warning_listener_failure = False
@@ -992,10 +993,19 @@ class Deck:
     def _drop_queued(self, challenge_id: str) -> None:
         self.queue = [entry for entry in self.queue if entry.challenge != challenge_id]
 
-    def hold_queue(self, reason: str) -> None:
+    def hold_queue(self, reason: str, *, ended: Iterable[str] = ()) -> None:
         """Start no more lanes (the queue stays): something wrong for every lane, such as a
-        model API that refuses the key or the model id. Said once, as a warning."""
+        model API that refuses the key or the model id, or one that keeps failing. Said once,
+        as a warning.
+
+        `ended` names the lanes that what the hold is about ended, or is ending (a model API's
+        outage): the challenges they park go back on the queue when the hold is lifted
+        (release_hold). They are remembered whether this call placed the hold or the queue was
+        held already, so a lane the same outage ends later is named by calling this again."""
         self._on_thread("hold_queue")
+        for lane_id in ended:
+            if lane_id not in self._ended_by_hold:
+                self._ended_by_hold.append(lane_id)
         if self.held:
             return
         self.held = reason
@@ -1003,20 +1013,53 @@ class Deck:
 
     def release_hold(self) -> Outcome:
         """Lift the hold: the player has fixed what it named, so queued lanes start again, as
-        many as there are free slots. Logged as a warning event with held false, the pair of the
-        hold's own (held true), before the lanes it lets start. Refused, changing nothing, when
-        the queue is not held."""
+        many as there are free slots. The challenges that what the hold was about parked
+        (hold_queue's `ended` lanes) are queued again first, in front of the queue and in the
+        order their lanes ended: _requeue_parked says which count. Logged as a warning event
+        with held false, the pair of the hold's own (held true), with the challenges queued
+        again if any, before the lanes it lets start. Refused, changing nothing, when the queue
+        is not held."""
         self._on_thread("release_hold")
         if not self.held:
             return Outcome(False, "The queue is not held: queued lanes start as slots free up")
         reason, self.held = self.held, ""
-        self._emit(EventKind.WARNING, "the player lifted the hold on the queue: lanes start again",
-                   data={"held": False, "reason": reason})
+        again = self._requeue_parked()
+        text, data = "the player lifted the hold on the queue: lanes start again", {"held": False, "reason": reason}
+        if again:
+            text += f"; queued again, parked by what it was about: {', '.join(self.challenges[cid].name for cid in again)}"
+            data["requeued"] = again
+        self._emit(EventKind.WARNING, text, data=data)
         before = len(self.lanes)
         self._fill()
         started = len(self.lanes) - before  # a lane whose start failed is gone again
-        return Outcome(True, f"Lifted the hold on the queue: {started} lane{'' if started == 1 else 's'} started, "
+        said = f"{len(again)} parked challenge{'' if len(again) == 1 else 's'} queued again, " if again else ""
+        return Outcome(True, f"Lifted the hold on the queue: {said}{started} lane{'' if started == 1 else 's'} started, "
                              f"{len(self.queue)} queued")
+
+    def _requeue_parked(self) -> list[str]:
+        """Queue again, in front, the challenges parked by the lanes the lifted hold named
+        (hold_queue's `ended`), and return their ids. Only a challenge that is still as such a
+        lane left it: that lane gave up and was the last on the challenge (so not one the
+        player killed, queued again since, or that a later lane parked for another reason),
+        and the challenge is parked, workable and neither queued nor being worked. The new
+        lane starts as `/queue` would start it: on that lane's model, with its caps."""
+        lanes, self._ended_by_hold = self._ended_by_hold, []
+        entries: list[QueueEntry] = []
+        for lane_id in lanes:
+            lane = self.lanes.get(lane_id)
+            if lane is None or lane.state is not LaneState.GAVE_UP:
+                continue
+            ch = self.challenges[lane.challenge_id]
+            last = next(x for x in reversed(self.lanes.values()) if x.challenge_id == ch.id)
+            if last is not lane or ch.status is not ChallengeStatus.PARKED or not self._workable(ch):
+                continue
+            if self.queued(ch.id) or self.lanes_on(ch.id):
+                continue
+            entries.append(QueueEntry(ch.id, lane.model, attempt=lane.attempt + 1, token_cap=lane.token_cap, dollar_cap=lane.dollar_cap))
+            ch.status = ChallengeStatus.QUEUED
+            ch.note = ""
+        self.queue[:0] = entries
+        return [entry.challenge for entry in entries]
 
     def close(self) -> None:
         """The run is closing (the player quit, or a signal stopped it). Every open lane stops
