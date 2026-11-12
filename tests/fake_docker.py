@@ -15,6 +15,11 @@ and so is what `docker exec ... sh -c <signal script> sh SIG PID TREE` signals (
 reads /proc, which macOS has not). `docker rm -f` forgets the container and kills what its
 execs left running.
 
+An L1 engine's container (l1/container.py) is played the same way: its read-only mounts
+(`-v <path>:<path>:ro`: the pack, flightdeck's l1 package) are this machine's folders at
+their own paths, and a command given by a path in one of this machine's system folders
+(what the container's program lookup answered: its PATH is SYSTEM_PATH) is this machine's.
+
 How it runs: tests/test_external.py writes bin/docker, a small Python script that sets
 FAKE_DOCKER_STATE (its folder) and execs `python -I fake_docker.py <docker's arguments>`.
 Every call is appended to calls.jsonl there (its arguments: no secret's value is ever one).
@@ -59,6 +64,7 @@ def info(name: str) -> dict | None:
 
 def run(args: list[str]) -> None:
     name, root, i = "", "", 0
+    mounts: dict[str, str] = {}
     while i < len(args):
         arg = args[i]
         if arg == "--name":
@@ -69,6 +75,8 @@ def run(args: list[str]) -> None:
             source, _, target = args[i + 1].partition(":")
             if target == "/work":
                 root = source
+            elif target.endswith(":ro"):
+                mounts[target[:-len(":ro")]] = source
             i += 2
             continue
         i += 1
@@ -84,7 +92,7 @@ def run(args: list[str]) -> None:
         for cli, path in json.load(f).items():
             os.symlink(path, os.path.join(fs, "usr/local/bin", cli))
     with open(os.path.join(folder(name), "info.json"), "w", encoding="utf-8") as f:
-        json.dump({"root": root, "fs": fs, "pids": []}, f)
+        json.dump({"root": root, "fs": fs, "pids": [], "mounts": mounts}, f)
     print(f"fake-{name}")
 
 
@@ -92,6 +100,9 @@ def here(path: str, box: dict) -> str:
     """A path in the container, on this machine."""
     if path == "/work" or path.startswith("/work/"):
         return box["root"] + path[len("/work"):]
+    for target, source in box.get("mounts", {}).items():  # a read-only mount: this machine's folder
+        if path == target or path.startswith(target + "/"):
+            return source + path[len(target):]
     if path.startswith("/"):
         return box["fs"] + path
     return path
@@ -158,6 +169,8 @@ def execute(args: list[str]) -> None:
     env.setdefault("HOME", "/root")
     env = {key: here(value, box) if value.startswith("/") else value for key, value in env.items() if key != "PATH"} | {"PATH": SYSTEM_PATH}
     argv = [here(arg, box) if arg.startswith("/") else arg for arg in command]
+    if os.path.dirname(command[0]) in SYSTEM_PATH.split(":"):  # the image's system programs are this machine's
+        argv[0] = command[0]
     box["pids"].append(os.getpid())
     with open(os.path.join(folder(name), "info.json"), "w", encoding="utf-8") as f:
         json.dump(box, f)

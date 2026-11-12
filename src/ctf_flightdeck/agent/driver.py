@@ -71,7 +71,7 @@ from . import owntext, prompts
 from .client import ChatClient, ModelError, Reply, Usage
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
 from .facts import FirstLooks, Look
-from .l1stage import FLAG_STATUSES, L1Stage, result_line
+from .l1stage import L1Stage, StageLane, run_stage
 from .tools import TOOLS, Toolbox, ToolResult
 from .workspace import (
     PRIVATE,
@@ -574,43 +574,20 @@ class AgentDriver:
         online only when the lane may reach the challenge's instance at once (instance auto): it
         runs before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
-        online = bool(self.urls.get(run.challenge.id)) and self.instance == "auto"
-        try:
-            runs = await self.l1.run(run.lane_id, run.challenge, online=online)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
-            self.errors.append(f"{run.lane_id}: L1 did not run: {type(exc).__name__}: {exc}")
-            self.deck.note(run.lane_id, f"L1 did not run: {type(exc).__name__}: {exc}")
-            return
-        if self._over(run):
-            return
-        if not runs:
-            self.deck.note(run.lane_id, "L1: no engine in the pack routes to this challenge")
-            return
-        for engine in runs:
-            res = engine.result
-            self.deck.record_l1(run.challenge.id, engine.manifest.id, res.status, flags=res.flags,
-                                seconds=engine.seconds, notes=res.notes, lane_id=run.lane_id)
-        # an engine's own result is claimed: under auto each is looked for in the challenge's own text first
-        await self._vet(run, [flag for engine in runs if engine.result.status in FLAG_STATUSES and not engine.scraped
-                              for flag in engine.result.flags])
-        if self._over(run):
-            return
-        for engine in runs:
-            if engine.result.status in FLAG_STATUSES:
-                for flag in engine.result.flags:
-                    # a match in what a text engine printed may be the challenge's decoy, and so may a flag the
-                    # challenge's own text holds, or may (a stand-in flag.txt an engine read out as its result): either waits
-                    why = "" if engine.scraped else self._own_text(run, flag)
-                    # as _turn: not said of a flag known not to be the flag (the deck says why it is not asked)
-                    said = bool(why) and self.deck.not_flag(run.challenge.id, flag) is None
-                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not why))
-                    if said:
-                        self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though your L1 engine "
-                                                    f"{engine.manifest.id} gave it as its flag")
-        if not self._over(run):
-            run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
+        # the stage itself is l1stage.run_stage, which a coding-agent lane runs too (agent/external.py)
+        text = await run_stage(self.l1, self.deck, StageLane(
+            lane_id=run.lane_id,
+            challenge=run.challenge,
+            online=bool(self.urls.get(run.challenge.id)) and self.instance == "auto",
+            over=lambda: self._over(run),
+            note=lambda said: self.deck.note(run.lane_id, said),
+            error=self.errors.append,
+            vet=lambda flags: self._vet(run, flags),
+            own_text=lambda flag: self._own_text(run, flag),
+            report=lambda rep: self._report(run, rep),
+        ))
+        if text is not None:
+            run.l1_message = {"role": "user", "content": text}
             run.messages.append(dict(run.l1_message))
 
     async def _open_instance(self, run: _Run, urls: Sequence[str]) -> None:

@@ -891,6 +891,43 @@ def test_what_claude_reports_after_its_lane_solved_is_in_the_scorecard_play_prin
     assert "Spend: 165 tokens (0% cached), $0.03, $0.03 per lane solve" in summary.splitlines(), summary
 
 
+def test_a_coding_agent_run_with_a_pack_says_l1_runs_first_and_runs_it_before_the_cli_is_started(tmp_path, scripted_claude):
+    """Issue 26: `play --agent` with a pack no longer says the pack is not used. Its notes
+    (what play prints before lanes start) say the engines run first, and they do: the
+    engine's flag waits for the player with no claude started, and approving it solves the
+    challenge without one."""
+    from ctf_flightdeck.agent.external import ExternalDriver
+    from ctf_flightdeck.core import interventions as iv
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", READER, route='keywords = ["note"]')
+    scripted_claude({"turns": [{"calls": [{"text": "FLAG: t{from_claude}"}]}]})  # what claude would say, were it started
+    with FakeModelServer() as server:  # the config's API, which a claude lane never calls
+        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), agent="claude",
+                                     runtime="host", pack=pack))
+        assert isinstance(run.driver, ExternalDriver) and [m.id for m in run.driver.l1.manifests] == ["reader"]
+        notes = run.notes()
+        assert not any("not used" in note for note in notes)
+        assert "L1: 1 engine(s) from your pack run first on each challenge, on this machine, as you" in notes
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await wait_for(lambda: lane.pending is not None, "the L1 flag's approval")
+            assert lane.pending.flag == FLAG
+            await asyncio.sleep(0.5)  # a claude would have started by now
+            assert not (tmp_path / "agent-record.jsonl").exists()  # none was
+            assert run.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    assert not (tmp_path / "agent-record.jsonl").exists()
+    l1 = [json.loads(line) for line in run.log.path.read_text().splitlines() if '"kind": "l1"' in line]
+    assert [(e["data"]["engine"], e["data"]["status"], e["data"]["flags"]) for e in l1] == [("reader", "solved", [FLAG])]
+
+
 CUT_BY_QUITTING = {"turns": [{"calls": [
     {"tools": [{"bash": "ls"}], "usage": [100, 10, 0, 0], "cost": 0.5},  # claude says what it cost at the turn's end
     {"think": 30.0},  # and the turn goes on: quitting cuts it
