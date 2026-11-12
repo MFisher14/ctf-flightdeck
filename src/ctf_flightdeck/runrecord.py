@@ -18,7 +18,8 @@ import json
 import math
 import os
 import stat
-from collections.abc import Mapping, Sequence
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -348,7 +349,7 @@ class Solve:
     lane: str | None = None  # the lane that submitted the accepted flag (an L1 flag goes through one)
     found: int | None = None  # an L1 solve: the position of the l1 event that reported the flag first
     platform: bool = False  # the platform lists it as solved (it is no flag of this run)
-    before_run: bool = False  # ...and it did when the run started
+    before_run: bool = False  # it was solved when the run started (the platform, or the team folder, said so then)
 
 
 def l1_flags(data: Mapping[str, object]) -> list[str]:
@@ -429,7 +430,20 @@ class Credit:
         else:
             by = TEAM if platform else TEAMMATE
         return Solve(event.challenge, by, who, run_time(event.at), index, platform=platform,
-                     before_run=platform and event.data.get("before_run") is True)
+                     before_run=event.data.get("before_run") is True)
+
+
+SOLVERS = ((LANE, "lanes"), (L1, "L1"), (TEAMMATE, "teammates"), (PLAYER, "you"), (TEAM, "your team on the platform"))
+"""Who a solve went to (Solve.by), as every report counts the solves, in this order."""
+
+
+def solvers(found: Iterable[Solve]) -> str:
+    """The solves by whom they went to, as every report says them: "lanes 3, L1 0, teammates
+    0, you 1, your team on the platform 1", the last only when there are some. The post-flight
+    report and the scorecard both count them so, by the same rule (Credit, solves()), each
+    after the number of solves: "Solves: 5 (lanes 3, ...)"."""
+    by = Counter(solve.by for solve in found)
+    return ", ".join(f"{label} {by[who]}" for who, label in SOLVERS if who != TEAM or by[who])
 
 
 def accepted(event: EventLine) -> bool:

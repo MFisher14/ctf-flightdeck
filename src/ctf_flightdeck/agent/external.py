@@ -1314,8 +1314,9 @@ class _Run:
             return
         self.ready = True
         driver, cid = self.driver, self.challenge.id
+        reach = driver.urls.get(cid, ()) if driver.instance != "off" else ()  # under off, no first look points the lane at one
         self.look = driver.looks.start(driver.lights, driver.deck, self.lane_id, self.challenge, self.workspace,
-                                       driver.files.get(cid, self.challenge.files), driver.urls.get(cid, ()))  # never waited for
+                                       driver.files.get(cid, self.challenge.files), reach)  # never waited for
         self.cap_note()
         root = self.workspace.root
         try:
@@ -1430,6 +1431,7 @@ class _Run:
         text = prompts.brief(
             self.challenge, self.driver.files.get(cid, self.challenge.files), self.driver.urls.get(cid, ()),
             lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format, recon=self.recon,
+            instance=self.driver.instance,
         )
         if self.escalation is not None:
             text += "\n\n" + prompts.escalation(self.escalation)
@@ -2316,12 +2318,18 @@ class ExternalDriver:
         takeover_wait: float = TAKEOVER_WAIT,
         flaggate: FlagGate | None = None,
         lights: Lights | None = None,
+        instance: str = "auto",
     ) -> None:
         """`secrets`: name -> value of other secrets flightdeck holds (the CTFd token, say).
         Like the agent's own credential, which is always one, a value is shown as [name]
         wherever a lane's CLI writes it. `flaggate`: the light model's flagcheck (run.py sets
         the run's before any lane starts); None: no flag is checked. `lights`: the run's light
-        engines (light.Lights), for route and recon at a lane's start (agent/facts.py)."""
+        engines (light.Lights), for route and recon at a lane's start (agent/facts.py).
+        `instance`: the lanes' instance policy, as the opening brief tells it: under "off" it
+        offers no instance and says the event's rules keep the lane off it (prompts.brief),
+        and the first look is not told of one. A run starts coding-agent lanes only under
+        "auto" (run.py: a CLI reaches whatever it can reach), so this holds the brief to the
+        policy should that ever change."""
         if agent.kind not in KINDS:
             raise ValueError(f"unknown agent kind {agent.kind!r}")
         self.agent = agent
@@ -2341,6 +2349,7 @@ class ExternalDriver:
         self.flag_re: re.Pattern[str] = re.compile(r"(?!)")
         self.lights = lights
         self.looks = FirstLooks(self.errors)
+        self.instance = instance
 
     # ------------------------------------------------------------------ LaneDriver
 

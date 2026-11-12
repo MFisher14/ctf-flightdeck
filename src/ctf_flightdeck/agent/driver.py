@@ -463,8 +463,9 @@ class AgentDriver:
             return
         run.ready = True
         cid = run.challenge.id
+        reach = self.urls.get(cid, ()) if self.instance != "off" else ()  # under off, no first look points the lane at one
         run.look = self.looks.start(self.lights, self.deck, run.lane_id, run.challenge, run.workspace,
-                                    self.files.get(cid, run.challenge.files), self.urls.get(cid, ()))  # never waited for
+                                    self.files.get(cid, run.challenge.files), reach)  # never waited for
         await self._plant(run)
         if self.l1 is not None:
             await self._l1_stage(run)
@@ -911,7 +912,8 @@ class AgentDriver:
             {
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
-                                         approach, flag_format=self.deck.config.flag_format, recon=run.recon),
+                                         approach, flag_format=self.deck.config.flag_format, recon=run.recon,
+                                         instance=self.instance),
             },
         ]
         if run.l1_message is not None:

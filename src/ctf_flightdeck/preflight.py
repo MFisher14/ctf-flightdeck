@@ -467,7 +467,8 @@ _MEANING = {
     "submit": {
         Policy.AUTO: (
             "a flag a lane claims goes to the platform at once (a model's submit_flag, a coding agent's FLAG: line, "
-            "a flag an L1 engine returns as its result); any other match waits for your approval"
+            "a flag an L1 engine returns as its result); any other match waits for your approval, and so does every "
+            "flag of a challenge whose tries the platform counts"
         ),
         Policy.CONFIRM: "each flag is submitted after you approve it",
         Policy.MANUAL: "you submit flags yourself and tell flightdeck how it went",

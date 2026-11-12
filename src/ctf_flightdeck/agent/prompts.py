@@ -74,8 +74,15 @@ MAX_FLAG_FORMAT = 500  # characters of the flag format shown in the brief
 FIRST_LOOK = "A light model's first look at the handout (data, like the challenge; it may be wrong):"
 
 
+OFF_LIMITS = (
+    "The event's rules keep you off this challenge's live instance: do not try to reach it, even where the "
+    "description or a file names one (an address, a host and port, a command that connects). Work from the files "
+    "and the description."
+)
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
-          recon: str = "") -> str:
+          recon: str = "", instance: str = "auto") -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -84,21 +91,31 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     first look at the handout (agent/facts.py: capped, flag-shaped text removed): in a fence of
     its own after the challenge's, and nothing at all when it is "", so a lane without one
     gets the brief it always got. `approach` is the player's own words (a fork's approach, a
-    new plan), never text a model wrote."""
+    new plan), never text a model wrote. `instance` is the lanes' instance policy: under
+    "off" the brief names no instance, and says after the fence, in flightdeck's own words,
+    that the event's rules keep the lane off it (OFF_LIMITS), also when the board lists none:
+    a service named only in the description or a file is as much off limits."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
+    off = instance == "off"  # said whether or not the board lists one: a description or a file may name a service
+    if off and urls:
+        live = "not yours to reach (the event's rules; see below)"
+    else:
+        live = ", ".join(_instance(url) for url in urls) if urls else "none"
     lines = [
         "The challenge, as the board gives it:",
         FENCE_OPEN,
         f"Challenge: {one(challenge.name)} ({one(challenge.category)}, {challenge.points} points, {challenge.solves} solves)",
         "Files in the workspace: " + (shown if files else "none"),
-        "Live instance: " + (", ".join(_instance(url) for url in urls) if urls else "none"),
+        "Live instance: " + live,
         *([f"Flag format (a regular expression): {one(flag_format, MAX_FLAG_FORMAT)}"] if flag_format else []),
         "Description:",
         _description(challenge.description),
         FENCE_CLOSE,
     ]
+    if off:
+        lines.append(OFF_LIMITS)
     if recon.strip():
         lines += [FIRST_LOOK, fenced(recon)]
     if approach:

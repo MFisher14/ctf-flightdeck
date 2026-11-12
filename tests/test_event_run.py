@@ -828,8 +828,9 @@ def test_two_runs_on_one_team_folder_see_each_others_claims_and_solves(tmp_path)
     assert bravo.deck.lanes["L01"].state is LaneState.STOPPED
     assert note.status is ChallengeStatus.TEAMMATE and note.solved_by == "alpha"
     assert bravo.deck.lanes["L02"].challenge_id == "card"  # memo is alpha's
-    teammate = [e["text"] for e in log(bravo) if e["kind"] == "teammate"]
-    assert teammate == ["alpha claimed Memo", "alpha solved Note · stopped L01"]
+    teammate = [e for e in log(bravo) if e["kind"] == "teammate"]
+    assert [e["text"] for e in teammate] == ["alpha claimed Memo", "alpha solved Note · stopped L01"]
+    assert "before_run" not in teammate[1]["data"]  # a solve that came during the run
 
 
 def test_a_challenge_a_teammate_claimed_or_solved_gets_no_lane_at_the_start(tmp_path):
@@ -847,6 +848,8 @@ def test_a_challenge_a_teammate_claimed_or_solved_gets_no_lane_at_the_start(tmp_
             assert run.deck.challenges["memo"].status is ChallengeStatus.TEAMMATE
 
         play(run, body)
+    (solve,) = [e for e in log(run) if e["kind"] == "teammate" and e["data"].get("solved")]
+    assert (solve["challenge"], solve["data"]["before_run"]) == ("memo", True)  # in the folder before the run started
 
 
 @pytest.mark.parametrize("folder_gone", [False, True])

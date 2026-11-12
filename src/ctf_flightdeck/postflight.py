@@ -83,8 +83,8 @@ from typing import TYPE_CHECKING
 from . import credentials, fmt
 from .core.model import FINISHED, ME, ActionKind, Actor, AlertKind, EventKind, PendingKind
 from .runrecord import (
-    L1, LANE, PLAYER, TEAM, TEAMMATE, YOUR_TEAM, Credit, EventLine, LaneRecord, RunRecord, Solve, finite, l1_flags, run_time,
-    turn_end,
+    L1, LANE, TEAM, TEAMMATE, YOUR_TEAM, Credit, EventLine, LaneRecord, RunRecord, Solve, finite, l1_flags, run_time,
+    solvers, turn_end,
 )
 from .runrecord import solves as _first_solves
 from .text import untrusted
@@ -1039,11 +1039,9 @@ def _who(solve: Solve) -> str:
 
 
 def _solve_counts(flight: Flight) -> str:
-    """Solves by kind, as the glance and the summary say them; your team's on the platform
-    only when there are some."""
-    team = flight.solved_by(TEAM)
-    return (f"lanes {flight.solved_by(LANE)}, L1 {flight.solved_by(L1)}, teammates {flight.solved_by(TEAMMATE)}, "
-            f"you {flight.solved_by(PLAYER)}" + (f", your team on the platform {team}" if team else ""))
+    """Solves by kind, as the glance and the summary say them, and the scorecard too
+    (runrecord.solvers); your team's on the platform only when there are some."""
+    return solvers(flight.solves.values())
 
 
 def _run_name(record: RunRecord) -> str:

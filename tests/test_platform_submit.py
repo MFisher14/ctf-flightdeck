@@ -672,14 +672,163 @@ def test_a_flag_the_player_approved_comes_back_when_its_turn_would_spend_the_las
     assert deck.apply(iv.Approve(lane.id)).ok and submitter.flags() == ["t{a}", "t{b}"]
 
 
-def test_out_of_tries_the_approval_says_the_platform_checks_no_more_flags():
-    deck, _, _ = platform_deck(submit="confirm")
+OUT = "Chall 0 is out of tries: the platform checks no more flags for it"
+NOT_CHECKED = "CTFd did not check the flag: this account has no tries left on this challenge (CTFd says: Not accepted.)"
+
+
+@pytest.mark.parametrize("submit", ["confirm", "auto"])
+def test_out_of_tries_a_flag_the_platform_did_not_check_closes_the_challenge_for_the_run_and_is_never_wrong(submit):
+    deck, driver, submitter = platform_deck(chall("c0", max_attempts=2), submit=submit)
+    lane = lane_on(deck, "c0")
+    sibling = fork(deck, lane)
+    deck.queue.append(QueueEntry("c0", MODELS[0]))  # one more queued for it
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.report(sibling.id, TurnReport(flag="t{b}"))  # waits for the player as well
+    deck.apply(iv.Approve(lane.id))
+    deck.platform_verdict(lane.id, "t{a}", None, NOT_CHECKED, tries_left=0)
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.tries_left, ch.note) == (ChallengeStatus.BLOCKED, 0, "out of tries: the platform checks no more flags for it")
+    for each in (lane, sibling):  # every lane on it stops, saying why, and nobody is asked to submit anything by hand
+        assert (each.state, each.result, each.pending, each.waiting) == (LaneState.STOPPED, OUT, None, [])
+    assert not deck.queued("c0") and submitter.flags() == ["t{a}"]  # nothing else goes out
+    assert deck.not_flag("c0", "t{a}") is None and driver.named("rejected") == []  # never taken for wrong
+    assert events(deck, EventKind.SUBMIT) == []
+    assert f"not checked by the platform: t{{a}} ({NOT_CHECKED}); it is not known to be wrong" in notes(lane)
+    assert f"not submitted: t{{b}} ({OUT})" in notes(sibling)
+    (warning,) = events(deck, EventKind.WARNING)
+    assert warning.text == (f"{OUT}, so flightdeck closed it and stopped {lane.id}, {sibling.id}. "
+                            f"t{{a}} is not known to be wrong: {NOT_CHECKED}")
+    assert (warning.challenge, warning.data) == ("c0", {"out_of_tries": True, "tries_left": 0, "flag": "t{a}",
+                                                        "checked": False, "stopped": [lane.id, sibling.id], "before_run": False})
+    assert not deck.apply(iv.Queue("c0")).ok and not deck.apply(iv.Fork(lane.id, "", None)).ok  # closed for the run
+
+
+def test_a_wrong_last_try_is_recorded_wrong_then_the_challenge_is_out_of_tries():
+    deck, driver, _ = platform_deck(chall("c0", max_attempts=1), submit="confirm")
     lane = lane_on(deck, "c0")
     deck.report(lane.id, TurnReport(flag="t{a}"))
     deck.apply(iv.Approve(lane.id))
-    deck.platform_verdict(lane.id, "t{a}", None, "CTFd did not check the flag: this account has no tries left", tries_left=0)
+    deck.platform_verdict(lane.id, "t{a}", False, "Incorrect. You have 0 tries remaining.", tries_left=0)
+    (submit,) = events(deck, EventKind.SUBMIT)
+    assert (submit.data["correct"], submit.data["tries_left"]) == (False, 0) and deck.not_flag("c0", "t{a}") == REJECTED
+    assert driver.named("rejected") == [(lane.id, "t{a}")]  # CTFd checked this one: the lane hears it was wrong
+    assert (lane.state, lane.result, deck.challenges["c0"].status) == (LaneState.STOPPED, OUT, ChallengeStatus.BLOCKED)
+    (warning,) = events(deck, EventKind.WARNING)
+    assert warning.text == f"{OUT}, so flightdeck closed it and stopped {lane.id}"
+
+
+def test_a_flag_on_its_way_when_the_challenge_ran_out_of_tries_is_answered_and_said_unchecked_once_more():
+    deck, _, submitter = platform_deck(chall("c0", max_attempts=2), submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.apply(iv.Approve(lane.id))  # on its way
+    deck.platform_tries("c0", 0)  # a pull's count comes first: a teammate spent the last try
+    assert lane.finished and deck.submitting("c0") == ((lane.id, "t{a}"),)  # its answer is still awaited
+    deck.platform_verdict(lane.id, "t{a}", None, NOT_CHECKED, tries_left=0)
+    assert deck.submitting("c0") == () and lane.pending is None and events(deck, EventKind.SUBMIT) == []
+    closed, unchecked = events(deck, EventKind.WARNING)
+    assert closed.text == f"{OUT}, so flightdeck closed it and stopped {lane.id}"
+    assert unchecked.text == f"Chall 0 is out of tries: t{{a}} is not known to be wrong: {NOT_CHECKED}"
+    assert (unchecked.data["flag"], unchecked.data["checked"]) == ("t{a}", False)
+
+
+def test_a_pulls_count_of_tries_lowers_the_deck_s_and_never_raises_it():
+    deck, _, _ = platform_deck(chall("c0", max_attempts=5), submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.platform_tries("c0", 3)
+    assert deck.challenges["c0"].tries_left == 3 and lane.pending.detail == "submit t{a} (3 tries left of 5)"
+    deck.platform_tries("c0", 4)  # older than what the deck knows: a try spent stays spent
+    assert deck.challenges["c0"].tries_left == 3 and lane.pending.detail == "submit t{a} (3 tries left of 5)"
+    deck.platform_tries("c0", 1)
+    assert lane.pending.detail == "submit t{a} (1 try left of 5: the last one)" and not lane.finished
+    assert events(deck, EventKind.WARNING) == []
+
+
+def test_a_count_above_the_decks_is_taken_only_when_asked_after_the_platforms_last_answer():
+    deck, _, _ = platform_deck(chall("c0", max_attempts=3), submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.apply(iv.Approve(lane.id))
+    deck.platform_verdict(lane.id, "t{a}", False, "Incorrect. You have 1 try remaining.", tries_left=1)  # at 1000
     deck.report(lane.id, TurnReport(flag="t{b}"))
-    assert [p.detail for p in lane.waiting] == ["submit t{b} (no tries left: the platform checks no more flags for it)"]
+    deck.platform_tries("c0", 2, asked=999.0)  # asked before that answer: it can be older than the try it spent
+    deck.platform_tries("c0", 2, asked=1000.0)  # or as it came
+    assert deck.challenges["c0"].tries_left == 1 and lane.pending.detail == "submit t{b} (1 try left of 3: the last one)"
+    deck.clock.t = 1300.0
+    deck.platform_tries("c0", 2, asked=1200.0)  # asked after it: CTFd's timeout behaviour gave one back
+    assert deck.challenges["c0"].tries_left == 2 and lane.pending.detail == "submit t{b} (2 tries left of 3)"
+    assert events(deck, EventKind.WARNING) == [] and not lane.finished
+
+
+def test_a_count_of_tries_left_again_opens_a_challenge_out_of_tries_for_the_player_to_queue():
+    deck, driver, submitter = platform_deck(chall("c0", max_attempts=2), submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.apply(iv.Approve(lane.id))
+    deck.platform_verdict(lane.id, "t{a}", None, NOT_CHECKED, tries_left=0)  # out of tries, at 1000
+    ch = deck.challenges["c0"]
+    deck.platform_tries("c0", 2)  # no time it was asked: it is no newer than that answer
+    deck.platform_tries("c0", 2, asked=1000.0)
+    assert (ch.status, ch.tries_left) == (ChallengeStatus.BLOCKED, 0) and not deck.apply(iv.Queue("c0")).ok
+    deck.clock.t = 1400.0
+    deck.platform_tries("c0", 2, asked=1310.0)  # CTFd gives the tries back after its timeout, or its admin raised them
+    assert (ch.status, ch.tries_left, ch.note) == (ChallengeStatus.PARKED, 2, "out of tries no more: the platform says 2 tries left of 2")
+    assert not deck.queued("c0") and deck.lanes_on("c0") == []  # nothing starts on it unless the player says so
+    closed, opened = events(deck, EventKind.WARNING)
+    assert opened.text == ("Chall 0 is out of tries no more: the platform now says 2 tries left of 2, so flightdeck opened it "
+                           "again; queue it to work it")
+    assert (opened.challenge, opened.data) == ("c0", {"out_of_tries": False, "tries_left": 2})
+    assert deck.apply(iv.Queue("c0")).ok
+    fresh = lane_on(deck, "c0")
+    deck.report(fresh.id, TurnReport(flag="t{a}"))  # the flag CTFd never checked is no wrong flag: it waits for the player
+    assert (fresh.pending.kind, fresh.pending.detail) == (PendingKind.SUBMIT, "submit t{a} (2 tries left of 2)")
+    assert submitter.flags() == ["t{a}"] and driver.named("rejected") == []
+    deck.platform_tries("c0", 0, asked=1400.0)  # and out of tries again: closed again, and said again
+    assert ch.status is ChallengeStatus.BLOCKED and fresh.finished and len(events(deck, EventKind.WARNING)) == 3
+
+
+def test_an_answer_that_says_tries_are_left_does_not_open_a_challenge_a_newer_count_closed():
+    deck, driver, _ = platform_deck(chall("c0", max_attempts=2), submit="confirm")
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))
+    deck.apply(iv.Approve(lane.id))  # on its way
+    deck.platform_tries("c0", 0)  # a pull's count: a teammate's wrong flag after t{a} spent the last try
+    deck.clock.t = 1010.0
+    deck.platform_verdict(lane.id, "t{a}", False, "Incorrect. You have 1 try remaining.", tries_left=1)  # the older word
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.tries_left) == (ChallengeStatus.BLOCKED, 0) and deck.not_flag("c0", "t{a}") == REJECTED
+    assert events(deck, EventKind.SUBMIT)[-1].data["tries_left"] == 1  # what CTFd said, recorded as it said it
+    deck.platform_tries("c0", 1, asked=1005.0)  # asked before that answer came
+    assert ch.status is ChallengeStatus.BLOCKED
+    deck.platform_tries("c0", 1, asked=1011.0)  # asked after it: CTFd's word now
+    assert (ch.status, ch.tries_left) == (ChallengeStatus.PARKED, 1)
+
+
+def test_a_count_of_no_tries_before_the_run_closes_the_challenge_and_says_so():
+    deck, _, _ = platform_deck(chall("c0", max_attempts=2), chall("c1"))
+    deck.platform_tries("c0", 0, before_run=True)
+    assert deck.challenges["c0"].status is ChallengeStatus.BLOCKED and lane_on(deck, "c1")
+    (warning,) = events(deck, EventKind.WARNING)
+    assert warning.text.startswith(f"{OUT}, so flightdeck closed it and stopped ")
+    assert warning.text.endswith(" (the platform said so before the run started)") and warning.data["before_run"] is True
+
+
+def test_a_count_of_tries_for_a_solved_challenge_changes_nothing():
+    deck, _, _ = platform_deck(chall("c0", max_attempts=2), team=True)
+    deck.teammate_solved("c0", "bravo")
+    deck.platform_tries("c0", 0)
+    ch = deck.challenges["c0"]
+    assert (ch.status, ch.tries_left) == (ChallengeStatus.TEAMMATE, None) and events(deck, EventKind.WARNING) == []
+
+
+def test_under_auto_a_first_count_of_no_tries_is_one_warning_not_two():
+    deck, _, _ = platform_deck(submit="auto")  # the board does not say c0 is limited
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{a}"))  # goes out at once
+    deck.platform_verdict(lane.id, "t{a}", None, NOT_CHECKED, tries_left=0)
+    (warning,) = events(deck, EventKind.WARNING)  # no "from now on its flags wait for you" before it
+    assert warning.text.startswith(f"{OUT}, so flightdeck closed it")
 
 
 def test_a_flag_known_wrong_by_its_turn_does_not_go_out_and_its_lane_hears_why():

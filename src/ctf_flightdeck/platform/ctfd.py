@@ -19,9 +19,31 @@ CTFd's API (v1), as this module uses it:
   followed when a server does. A challenge locked behind another is listed as type "hidden",
   name "???": it is left out until a later pull finds it unlocked.
 - POST /api/v1/challenges/attempt puts a status in its data whatever the HTTP status: paused
-  comes as 403, ratelimited as 429 or 403. A challenge out of tries comes as "incorrect" with
-  403, sent before CTFd looks at the flag (the last real try is "incorrect" with 200): this
-  module calls that "locked_out", since the flag was not checked and may be right.
+  comes as 403, ratelimited as 429 or 403. A challenge out of tries comes as 403 before CTFd
+  looks at the flag: CTFd 3.8.9 says "ratelimited", "Not accepted. You have 0 tries
+  remaining"; an older CTFd said "incorrect", "You have 0 tries remaining" (the last real
+  try is "incorrect" with 200, "... You have 0 tries remaining."). This module calls either
+  "locked_out", with no tries left, since the flag was not checked and may be right (a
+  "ratelimited" one that says no tries remain whatever its HTTP status: the timeout
+  behaviour's words say when the tries come back instead). CTFd 3.8.9 also says it once the
+  account has made as many tries at the challenge as its limit within about a minute (that
+  count takes partial and refused answers too), which passes: the verifier asks the
+  challenge's details then (one GET), and when they count fewer tries used than the limit
+  (its lockout counts wrong flags only, which they count among the rest) the answer is a
+  rate limit; else it stands as locked_out. A
+  ratelimited answer that says no such thing is a rate limit (submitting too fast, another
+  submission of the account's being processed, or CTFd's timeout behaviour: "Not accepted.
+  Try again in N seconds", 429), which passes. The tries left are read from every answer
+  that says them ("You have N tries remaining"), but for a 0 that a wait gives back ("...
+  Try again in N seconds": CTFd's timeout behaviour).
+- GET /api/v1/challenges/<id> gives a challenge's max_attempts and, in CTFd 3.8, the
+  attempts the account (the team, in teams mode) has used on it: a pull reads them as the
+  tries left (Pull.tries). CTFd counts its correct and partial answers there too, though
+  its limit counts wrong flags only, so the count is the limit's only on a challenge that
+  takes no partial answers (its "logic" is "any"); on one that does ("all", "team") a pull
+  says nothing of the tries left once any is used. Under CTFd's timeout behaviour (an
+  admin's choice CTFd does not show players) the count is of the last few minutes' tries
+  only, so a later pull can find tries left where an earlier one found none.
 - /api/v1/teams/me/solves holds the team's solves. In users mode CTFd answers 404 there (and
   403 to a user not on a team yet); then /api/v1/users/me/solves is asked instead. In teams
   mode /api/v1/users/me/solves says which of the team's solves are this user's own.
@@ -73,7 +95,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -94,8 +116,9 @@ STATE_FILE = "ctfd.json"
 
 ATTEMPT_STATUSES = ("correct", "incorrect", "already_solved", "paused", "ratelimited", "partial", "locked_out")
 """CTFd's answers to a flag. "partial": part of a multi-part answer was right (CTFd 3.8+).
-"locked_out": CTFd's "incorrect" sent with HTTP 403, which means this account has no tries
-left on the challenge: CTFd did not check the flag."""
+"locked_out": CTFd's answer sent with HTTP 403 that says this account has no tries left on
+the challenge ("ratelimited" with "0 tries remaining" from CTFd 3.8.9, "incorrect" from an
+older CTFd): CTFd did not check the flag, and checks no more for it."""
 
 MAX_WAIT = 30.0  # seconds: the longest pause between tries, whatever Retry-After asks for
 CONNECT_TIMEOUT = 10.0  # seconds: a connection that takes longer is not coming
@@ -121,6 +144,7 @@ _URL = re.compile(r"https?://[^\s<>\"'`\\]+", re.IGNORECASE)
 _HOST = re.compile(r"[a-z0-9_.-]+")
 _FILE_TOKEN = re.compile(r"([?&]token=)[^&#\s]*", re.IGNORECASE)
 _TRIES_LEFT = re.compile(r"\bYou have (\d{1,9}) (?:try|tries) remaining\b")  # what CTFd adds to a wrong flag's message
+_TRY_AGAIN = re.compile(r"\bTry again in \d", re.IGNORECASE)  # CTFd's timeout behaviour: the tries come back after a wait
 _SURROGATE = re.compile(r"[\ud800-\udfff]")  # in a str only as a lone half of a pair: valid JSON, unprintable
 _NOT_JSON = object()
 _LATE = object()  # an answer that was not all in by the deadline
@@ -150,9 +174,11 @@ class CTFdError(Exception):
 class Attempt:
     """CTFd's answer to a flag. `status` is one of ATTEMPT_STATUSES; `message` is CTFd's
     own words, made safe to show (one line, control characters visible, cut short).
-    `tries_left` is how many tries the account has left on the challenge when CTFd says:
-    on a wrong flag of a challenge with a limit ("... You have 2 tries remaining."), and 0
-    once there are none ("locked_out"); None when it did not say."""
+    `tries_left` is how many tries the account has left on the challenge when CTFd says, in
+    any answer: on a wrong flag of a challenge with a limit ("... You have 2 tries
+    remaining."), and 0 once there are none ("locked_out"); None when it did not say, or when
+    the 0 it said comes back after a wait (CTFd's timeout behaviour: "Try again in N
+    seconds")."""
 
     status: str  # correct | incorrect | already_solved | paused | ratelimited | partial | locked_out
     message: str
@@ -177,6 +203,11 @@ class Pull:
     added: tuple[str, ...]  # board ids new in this pull (a wave), in CTFd id order
     problems: tuple[str, ...]  # one line per challenge left out this time, and why; safe to print
     hidden: int  # challenges CTFd lists as locked ("???") until a prerequisite is solved
+    # board id -> the tries left at its flag as CTFd's details said in this pull (the tries it
+    # allows less the attempts the account has used), for each challenge CTFd counts them on,
+    # one pulled before included, whose details said the attempts and that is not solved yet
+    tries: Mapping[str, int] = field(default_factory=dict)
+    tries_unread: tuple[str, ...] = ()  # one line per such challenge whose tries used could not be read, and why
 
 
 class PullIncomplete(CTFdError):
@@ -680,18 +711,22 @@ class CTFdVerifier:
 
     True for correct, False for incorrect, None when CTFd did not judge the flag (already
     solved, paused, rate-limited, out of tries, a partial answer) or the outcome is unknown
-    (no answer, an error): the deck then asks the player to submit by hand and confirm. The
+    (no answer, an error): the deck then asks the player to submit by hand and confirm, but
+    out of tries, where no flag can be checked by hand either (Deck.platform_verdict). The
     Verdict's `error` says why for the console; its `attempt` holds CTFd's answer when there
     was one, and its status tells a caller what to do next: "already_solved" means the
     account (the team) solved the challenge already, without that flag being checked, and
-    "locked_out" that no flag for it can be checked any more; its `tries_left` is what CTFd
-    said of the tries left. A call sets `last_error` and `last_attempt` from them; submit()
-    sets nothing, so a run calls it from a worker thread (asyncio.to_thread) and the
-    console's loop never waits for CTFd (run.py's submitter).
+    "locked_out" that no flag for it can be checked any more (unless the challenge's
+    details show that answer was CTFd's limit on tries within a minute: then it is
+    "ratelimited", _lockout); its `tries_left` is what CTFd said of the tries left. A call
+    sets `last_error` and `last_attempt` from them; submit() sets nothing, so a run calls it
+    from a worker thread (asyncio.to_thread) and the console's loop never waits for CTFd
+    (run.py's submitter).
 
-    It never touches asyncio: one request with its own httpx.Client, and never longer than
+    It never touches asyncio: one request with its own httpx.Client (two when CTFd answers
+    that no tries are left: the challenge's details are asked next), and never longer than
     `timeout` seconds in all. httpx's timeouts bound each step of a request only (a server
-    that sends a byte now and then never trips them), so the request runs in a worker
+    that sends a byte now and then never trips them), so each request runs in a worker
     thread the call waits for; one still going when the time is up is left to end on its
     own, and the answer is unknown. It never retries: a retried submit could count twice.
     `ids` maps board ids (slugs) to CTFd ids: Pull.ids, or load_ids(board folder); after a
@@ -746,16 +781,19 @@ class CTFdVerifier:
 
     def submit(self, challenge_id: str, flag: str) -> Verdict:
         """Submit `flag` for the board's challenge `challenge_id`, once: CTFd's verdict, or
-        why there is none. It changes nothing on the verifier, so any thread may call it."""
+        why there is none. It changes nothing on the verifier, so any thread may call it.
+        CTFd's answer that no tries are left is checked against the challenge's details
+        first (_lockout), within the same `timeout`."""
         number = self.ids.get(challenge_id)
         if number is None:
             return Verdict(None, error=(
                 f"{untrusted(str(challenge_id), one_line=True)} was not pulled from CTFd, so flightdeck has no CTFd id to "
                 "submit it to: submit it by hand, then say whether it was accepted"
             ))
+        deadline = time.monotonic() + self.timeout
         endpoint = f"POST {API}/challenges/attempt"
         content = json.dumps({"challenge_id": number, "submission": flag}, ensure_ascii=True).encode("ascii")
-        answer = self._submit(content, endpoint)
+        answer = self._submit(content, endpoint, deadline)
         if isinstance(answer, CTFdError):
             return Verdict(None, error=str(answer))
         if isinstance(answer, _Failure):
@@ -771,51 +809,102 @@ class CTFdVerifier:
             return Verdict(True, attempt)
         if attempt.status == "incorrect":
             return Verdict(False, attempt)
+        if attempt.status == "locked_out":
+            return self._lockout(number, attempt, deadline)
         return Verdict(None, attempt, _unjudged(attempt))
 
-    def _submit(self, content: bytes, endpoint: str) -> _Answer | _Failure | CTFdError:
-        """The submission's one request, in a worker thread the call waits for, at most
-        `timeout` seconds from now: CTFd's answer, the failure that left none, or the error
-        that says none came in time (or one too big to be CTFd's)."""
-        deadline = time.monotonic() + self.timeout
+    def _lockout(self, number: int, attempt: Attempt, deadline: float) -> Verdict:
+        """CTFd's answer that no tries are left ("locked_out") as it stands, unless the
+        challenge's details (one GET, by `deadline`) count fewer tries used than its limit.
+        CTFd's lockout counts wrong flags only, and the details count those among the rest, so
+        the answer was CTFd 3.8.9's limit on tries within a minute (as many tries at the
+        challenge as its limit, partial and refused ones too), which passes: a rate limit,
+        with the tries left the details say. Details that cannot be read in time, or that
+        count as many tries used as the limit, leave CTFd's word as it is (with partial
+        answers among them, that can still be the minute's limit: nothing CTFd says tells)."""
+        detail = self._details(number, deadline)
+        most = detail.get("max_attempts") if detail is not None else None
+        used = detail.get("attempts") if detail is not None else None
+        if (detail is None or detail.get("solved_by_me") is True or not _is_count(most) or not most
+                or not _is_count(used) or used >= most):
+            return Verdict(None, attempt, _unjudged(attempt))
+        left, _ = _tries_left_at(detail, most)
+        said = f" (CTFd says: {attempt.message})" if attempt.message else ""
+        return Verdict(None, Attempt("ratelimited", attempt.message, left), (
+            f"CTFd did not check the flag{said}, but it counts {used} of its {most} tries as used, so that was its "
+            "limit on tries within a minute, which passes: wait a minute, then submit it by hand"
+        ))
+
+    def _submit(self, content: bytes, endpoint: str, deadline: float) -> _Answer | _Failure | CTFdError:
+        """The submission's one request, in a worker thread the call waits for until
+        `deadline` (a time.monotonic() value): CTFd's answer, the failure that left none, or
+        the error that says none came in time (or one too big to be CTFd's)."""
         unknown = "; the flag may have reached CTFd: check the challenge there before submitting it again"
         late = self._site.error(
             f"no complete answer from CTFd at {self._site.root} to {endpoint} within {self.timeout:g} s{unknown}",
             endpoint=endpoint,
         )
-        box: list[_Answer | _Failure | CTFdError | BaseException] = []
 
-        def exchange() -> None:
+        def exchange() -> _Answer | _Failure | CTFdError:
             try:
                 with self._http.stream("POST", self._site.root + API + "/challenges/attempt", content=content) as response:
                     body = _read_sync(response, MAX_ATTEMPT_BYTES, deadline)
                     if isinstance(body, bytes):
-                        box.append(_Answer(endpoint, response.status_code, response.headers, body))
-                    elif body is None:
-                        box.append(
-                            self._site.error(
-                                f"CTFd at {self._site.root} answered {endpoint} with more than {MAX_ATTEMPT_BYTES:,} "
-                                f"bytes, which is not an answer to a flag{unknown}",
-                                endpoint=endpoint,
-                                status=response.status_code,
-                            )
+                        return _Answer(endpoint, response.status_code, response.headers, body)
+                    if body is None:
+                        return self._site.error(
+                            f"CTFd at {self._site.root} answered {endpoint} with more than {MAX_ATTEMPT_BYTES:,} "
+                            f"bytes, which is not an answer to a flag{unknown}",
+                            endpoint=endpoint,
+                            status=response.status_code,
                         )
-                    else:
-                        box.append(late)
+                    return late
             except httpx.HTTPError as exc:
-                box.append(_describe(exc))  # the error itself is dropped: its request holds the token
-            except BaseException as exc:  # a bug: raised again in the caller's thread, never lost
-                box.append(exc)
+                return _describe(exc)  # the error itself is dropped: its request holds the token
 
-        worker = threading.Thread(target=exchange, name="ctfd-submit", daemon=True)
-        worker.start()
-        worker.join(max(0.0, deadline - time.monotonic()))
-        if not box:
-            return late  # the worker ends when the server answers, gives up or hangs up; its result is dropped
-        outcome = box[0]
-        if isinstance(outcome, BaseException) and not isinstance(outcome, CTFdError):
-            raise outcome
-        return outcome
+        outcome = _by(deadline, "ctfd-submit", exchange)
+        return late if outcome is _LATE else outcome
+
+    def _details(self, number: int, deadline: float) -> dict | None:
+        """The challenge's details (GET /api/v1/challenges/<id>, CTFd's own dict, untrusted)
+        by `deadline`; None when they did not come in time, or are not CTFd's details of it."""
+
+        def exchange() -> bytes | None:
+            try:
+                with self._http.stream("GET", f"{self._site.root}{API}/challenges/{number}") as response:
+                    if response.status_code != 200:
+                        return None
+                    body = _read_sync(response, MAX_API_BYTES, deadline)
+                    return body if isinstance(body, bytes) else None
+            except httpx.HTTPError:  # dropped, never chained: its request holds the token
+                return None
+
+        body = _by(deadline, "ctfd-details", exchange)
+        doc = _parse(body) if isinstance(body, bytes) else None
+        data = doc.get("data") if isinstance(doc, dict) and doc.get("success") is True else None
+        return data if isinstance(data, dict) and data.get("id") == number else None
+
+
+def _by(deadline: float, name: str, work: Callable[[], object]) -> object:
+    """`work()` in a worker thread the call waits for until `deadline` (a time.monotonic()
+    value): its result, or _LATE when it is not done by then (the thread ends when the server
+    answers, gives up or hangs up, and its result is dropped). A bug in it is raised here,
+    in the caller's thread, never lost."""
+    box: list[object] = []
+    failed: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            box.append(work())
+        except BaseException as exc:  # a bug
+            failed.append(exc)
+
+    worker = threading.Thread(target=run, name=name, daemon=True)
+    worker.start()
+    worker.join(max(0.0, deadline - time.monotonic()))
+    if failed:
+        raise failed[0]
+    return box[0] if box else _LATE
 
 
 def _unjudged(attempt: Attempt) -> str:
@@ -828,11 +917,23 @@ def _unjudged(attempt: Attempt) -> str:
     if attempt.status == "ratelimited":
         return f"CTFd rate-limited the submission and did not check the flag{said}. Wait, then submit it by hand"
     if attempt.status == "locked_out":
-        return (
-            f"CTFd did not check the flag: this account has no tries left on this challenge{said}, so CTFd checks "
-            "no more flags for it. The flag is not known to be wrong"
-        )
+        # no wait and no hand submit helps: the deck closes the challenge (Deck.platform_verdict)
+        return f"CTFd did not check the flag: this account has no tries left on this challenge{said}"
     return f"CTFd says the flag is only part of the answer{said}; the challenge is not solved yet"
+
+
+def _tries_left(message: object) -> int | None:
+    """The tries left that CTFd's words say ("You have N tries remaining"), read from the whole
+    message before it is cut short (its count comes last); None when they say none, or when
+    the 0 they say comes back after a wait ("... Try again in N seconds": CTFd's timeout
+    behaviour, under which the tries return once the wait is over)."""
+    if not isinstance(message, str):
+        return None
+    counts = _TRIES_LEFT.findall(message)
+    if not counts:
+        return None
+    left = int(counts[-1])
+    return None if left == 0 and _TRY_AGAIN.search(message) else left
 
 
 def _attempt(site: _Site, answer: _Answer) -> Attempt:
@@ -844,15 +945,14 @@ def _attempt(site: _Site, answer: _Answer) -> Attempt:
     if isinstance(status, str):
         message = data.get("message")
         said = site.short(message) if isinstance(message, str) else ""
-        if status == "incorrect" and answer.status == 403:
-            # CTFd's answer when the account has no tries left, sent before it checks the flag
+        left = _tries_left(message)
+        if (status == "incorrect" and answer.status == 403) or (status == "ratelimited" and left == 0):
+            # the account has no tries left, said before CTFd looks at the flag: CTFd 3.8.9's
+            # "ratelimited" ("Not accepted. You have 0 tries remaining", with 403; taken so
+            # whatever the HTTP status), an older CTFd's "incorrect" with 403
             return Attempt("locked_out", said, 0)
-        if status == "incorrect" and isinstance(message, str):
-            # read from CTFd's whole message, before it is cut short: its count comes last
-            counts = _TRIES_LEFT.findall(message)
-            return Attempt(status, said, int(counts[-1]) if counts else None)
         if status in ATTEMPT_STATUSES:
-            return Attempt(status, said)
+            return Attempt(status, said, left)
         if status == "authentication_required":
             raise site.error(
                 f"{where} with authentication_required: it did not take the token, and the flag was not submitted",
@@ -898,7 +998,11 @@ async def pull(
     are kept as they are and only challenges new on CTFd are added (a wave). A challenge that
     cannot be pulled (its details or a file keep failing, a value CTFd got wrong) is left out
     with the reason in Pull.problems, and tried again by the next pull. `progress` gets one
-    line per challenge added, safe to print.
+    line per challenge added, safe to print. Pull.tries has the tries left at the flag of
+    each challenge CTFd counts them on, as its details say now: a challenge pulled before
+    whose challenge.json says CTFd counts them has its details asked again for that (a
+    teammate may have spent some); one whose count cannot be read is a line in
+    Pull.tries_unread, and the pull goes on.
 
     board.json gets `event` (the board's name) and `flag_format`. None keeps what a board
     pulled before has in its board.json; on a new board, None names it after the folder and
@@ -947,6 +1051,9 @@ async def pull(
         problems: list[str] = []
         hidden = 0
         fatal: CTFdError | None = None
+        tries: dict[str, int] = {}  # board id -> the tries left, as the details CTFd gave in this pull say
+        unread: list[str] = []
+        kept: list[tuple[int, str, dict]] = []  # (CTFd id, board id, listing entry) of the challenges pulled before
         stage_root = root / f"{_STAGING}{secrets.token_hex(6)}"
         try:
             for number, item in _numbered(listing, problems):
@@ -958,6 +1065,7 @@ async def pull(
                     there = root / slug
                     if there.is_symlink() or there.exists():
                         if not there.is_symlink() and there.is_dir() and (there / CHALLENGE_FILE).is_file():
+                            kept.append((number, slug, item))
                             continue  # pulled before: kept as it is
                         problems.append(
                             f"{_label(number, item.get('name'))}: {_show(there)} is in the way (not a challenge folder); "
@@ -966,7 +1074,7 @@ async def pull(
                         continue
                 reason = None
                 try:
-                    slug, line = await _pull_one(client, root, stage_root, number, item, slug, taken, ids)
+                    slug, line, spec = await _pull_one(client, root, stage_root, number, item, slug, taken, ids)
                 except CTFdError as exc:
                     if exc.status == 401:
                         fatal = exc  # the token was refused: so it would be for every challenge left
@@ -988,6 +1096,10 @@ async def pull(
                     continue
                 by_ctfd[number] = slug
                 added.append(slug)
+                if spec.tries_left is not None:
+                    tries[slug] = spec.tries_left
+                if spec.tries_problem:
+                    unread.append(f"{_label(number, item.get('name'))}: {spec.tries_problem}")
                 if progress is not None:
                     progress(line)
         finally:
@@ -997,8 +1109,63 @@ async def pull(
         if not any(_is_challenge_folder(entry) for entry in root.iterdir()):
             raise CTFdError(_empty_board(client.base_url, len(listing), hidden, problems))
         board = load_board(root)
+    await _tries_again(client, board, kept, tries, unread)
     mapped = {item.challenge.id: ids[item.challenge.id] for item in board.challenges if item.challenge.id in ids}
-    return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden)
+    counted = {cid: left for cid, left in tries.items() if cid in mapped}
+    return Pull(board=board, ids=mapped, added=tuple(added), problems=tuple(problems), hidden=hidden, tries=counted,
+                tries_unread=tuple(unread))
+
+
+async def _tries_again(
+    client: CTFdClient, board: Board, kept: list[tuple[int, str, dict]], tries: dict[str, int], unread: list[str]
+) -> None:
+    """The tries left now at the flag of each challenge pulled before whose challenge.json says
+    CTFd counts them, from its details asked again (the listing does not say them): a teammate
+    may have spent some since. Into `tries`; a challenge whose details cannot be read now is
+    a line in `unread`, and keeps what the run knows of it."""
+    limits = {item.challenge.id: item.challenge.max_attempts for item in board.challenges}
+    for number, slug, item in kept:
+        if not limits.get(slug):
+            continue
+        try:
+            detail = await client.challenge(number)
+        except CTFdError as exc:
+            unread.append(f"{_label(number, item.get('name'))}: could not read how many of its tries are used: {exc}")
+            continue
+        if detail.get("id") != number:
+            unread.append(f"{_label(number, item.get('name'))}: CTFd answered with the details of another challenge")
+            continue
+        most = detail.get("max_attempts")
+        left, problem = _tries_left_at(detail, most if _is_count(most) else limits[slug])
+        if left is not None:
+            tries[slug] = left
+        if problem:
+            unread.append(f"{_label(number, item.get('name'))}: {problem}")
+
+
+def _tries_left_at(detail: Mapping[str, object], most: int) -> tuple[int | None, str]:
+    """The tries left at a challenge's flag from CTFd's details, which CTFd 3.8 gives as the
+    attempts the account (the team, in teams mode) has used: `most`, the tries it allows,
+    less those, never below 0. None when it allows any number, says nothing of the attempts
+    (an older CTFd), or the account has solved it (no try matters then); None and why when
+    its count is not one.
+
+    CTFd's limit counts wrong flags only, and its details count partial answers too: the
+    count is the limit's own on a challenge whose logic is "any" (or that says none: an
+    older CTFd), and on any other (CTFd 3.8's "all" and "team" take partial answers) it says
+    nothing of the tries left once any try is used (None): 0 there is no lockout. Under
+    CTFd's timeout behaviour both count only the last few minutes' tries, so a later count
+    can be higher (Deck.platform_tries takes one then)."""
+    if not most or detail.get("solved_by_me") is True:
+        return None, ""
+    used = detail.get("attempts")
+    if used is None:
+        return None, ""
+    if not _is_count(used):
+        return None, "CTFd's count of its tries used (attempts) is not a whole number, so how many are left is not known"
+    if used and detail.get("logic", "any") not in (None, "any"):
+        return None, ""
+    return max(0, most - used), ""
 
 
 def _settings(root: Path, known: Mapping[str, int], event: str | None, flag_format: str | None) -> tuple[str, str | None]:
@@ -1145,6 +1312,8 @@ class _Spec:
     urls: tuple[str, ...]
     files: tuple[str, ...]  # the file URLs, as CTFd sent them
     max_attempts: int = 0  # the tries CTFd allows at the flag; 0: any number
+    tries_left: int | None = None  # the tries left now, as the details say (_tries_left_at); None: not counted or not said
+    tries_problem: str = ""  # why the tries left are not known, when CTFd's count of those used is not one
 
 
 async def _pull_one(
@@ -1156,11 +1325,12 @@ async def _pull_one(
     slug: str | None,
     taken: set[str],
     ids: dict[str, int],
-) -> tuple[str, str]:
-    """Pull one challenge into root/<slug>: (slug, a progress line). The folder is built in
-    the staging folder and checked with load_board() first, so it appears complete or not
-    at all. The mapping is written before the folder moves into place: a crash in between
-    leaves a mapped slug with no folder, which the next pull fills in."""
+) -> tuple[str, str, _Spec]:
+    """Pull one challenge into root/<slug>: (slug, a progress line, what its details said).
+    The folder is built in the staging folder and checked with load_board() first, so it
+    appears complete or not at all. The mapping is written before the folder moves into
+    place: a crash in between leaves a mapped slug with no folder, which the next pull fills
+    in."""
     spec = _spec(number, item, await client.challenge(number), client._site.base)
     if slug is None:
         slug = _new_slug(spec.name, number, taken)
@@ -1208,7 +1378,7 @@ async def _pull_one(
         f"added {slug}: {_quote(spec.name)} ({untrusted(spec.category, one_line=True) or 'no category'}, "
         f"{spec.points} points, {count} file{'' if count == 1 else 's'}{cut})"
     )
-    return slug, line
+    return slug, line, spec
 
 
 def _numbered(listing: list[dict], problems: list[str]) -> Iterator[tuple[int, dict]]:
@@ -1290,7 +1460,8 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
             f"Note from flightdeck: CTFd allows {tries} attempt{'' if tries == 1 else 's'} at this challenge's flag, "
             "then checks no more."
         )
-    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries)
+    left, problem = _tries_left_at(detail, tries)
+    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries, left, problem)
 
 
 def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:

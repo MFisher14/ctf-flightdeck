@@ -39,7 +39,7 @@ from ctf_flightdeck.agent.external import (
     find_agent,
     hold_agent_config,
 )
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN
+from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, OFF_LIMITS
 from ctf_flightdeck.agent.workspace import (
     DockerWorkspace,
     HostWorkspace,
@@ -64,6 +64,7 @@ from ctf_flightdeck.core.model import (
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.runrecord import load_run
 from fake_light import Lingers
+from light_kit import LightModel, lights, user_text
 from fake_model import FakeModelServer, text_reply
 from stand_in_kit import OWN_TEXT, PAST, STAND_IN, cut_short, handout_of
 
@@ -221,7 +222,9 @@ class Lab:
                  handouts: dict[str, Path] | None = None, environ: dict[str, str] | None = None,
                  prices: dict[str, Price] | None = None, token_cap: int | None = None, takeover_wait: float = 10.0,
                  flag_format: str = FLAG, secrets: dict[str, str] | None = None, dollar_cap: float | None = None,
-                 deck_class: type[Deck] = Deck, docker: FakeDocker | None = None) -> None:
+                 deck_class: type[Deck] = Deck, docker: FakeDocker | None = None,
+                 urls: dict[str, tuple[str, ...]] | None = None, instance: str = "auto",
+                 lights: L.Lights | None = None) -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -249,6 +252,9 @@ class Lab:
             secrets=secrets,
             stop_grace=0.3,
             takeover_wait=takeover_wait,
+            urls=urls,
+            instance=instance,
+            lights=lights,
         )
         config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=2, submit=submit)
         self.deck = deck_class(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
@@ -1534,6 +1540,53 @@ def test_the_flag_format_reaches_a_cli_agent_only_inside_the_opening_briefs_fenc
             await lab.finish()
 
     run(main())
+
+
+@pytest.mark.parametrize("instance, named", [("auto", True), ("off", False)])
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_a_cli_agents_opening_brief_offers_the_instance_only_when_the_policy_lets_the_lane_reach_it(tmp_path, kind,
+                                                                                                    instance, named):
+    """Under the instance policy off, a coding-agent lane's opening brief says what a model
+    lane's says: no instance, and the event's rules keep the lane off it (a run starts no
+    agent lane under off today: this holds the brief to the policy all the same)."""
+    script = {"turns": [{"calls": [{"text": "Looking around."}]}]} if kind == "claude" else {"turns": [{"items": [{"message": "Looking around."}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind=kind, urls={"note": ("tcp://127.0.0.1:31337",)}, instance=instance)
+        try:
+            lab.release()
+            told = lab.fake.messages if kind == "claude" else lab.fake.prompts
+            await until(lambda: told(), "the CLI's first message")
+            first = told()[0]
+            assert ("Live instance: tcp://127.0.0.1:31337 (nc 127.0.0.1 31337)" in first) is named
+            assert ("tcp://127.0.0.1:31337" in first) is named and (OFF_LIMITS in first) is not named
+            if not named:
+                assert "Live instance: not yours to reach (the event's rules; see below)" in first
+                assert first.rsplit(FENCE_CLOSE, 1)[1].strip() == OFF_LIMITS  # flightdeck's words, after the challenge's fence
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("instance, told", [("auto", True), ("off", False)])
+def test_under_instance_off_a_cli_lanes_first_look_hears_of_no_instance(tmp_path, instance, told):
+    """The first look goes into a coding-agent lane's opening brief as into a model lane's:
+    under off it must not point the lane at the instance the event's rules keep it off."""
+    script = {"turns": [{"calls": [{"text": "Looking around."}]}]}
+    with LightModel({"recon": "Files: a note."}) as light:
+        async def main():
+            lab = Lab(tmp_path, script, urls={"note": ("tcp://127.0.0.1:31337",)}, instance=instance,
+                      lights=lights(light.engine(), ("recon",)))
+            try:
+                lab.release()
+                await until(lambda: light.requests("recon"), "the first look")
+                asked = [user_text(record) for record in light.requests("recon")]
+                assert asked and all(("tcp://127.0.0.1:31337" in text) is told for text in asked)
+            finally:
+                await lab.finish()
+
+        run(main())
 
 
 # ====================================================================== claude: flags

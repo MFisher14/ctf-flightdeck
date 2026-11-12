@@ -12,12 +12,16 @@ fake behaves as CTFd 3.x does:
   meta.pagination when `page_size` is set (CTFd itself does not page it). A challenge locked
   behind another is listed as CTFd lists it: type "hidden", name "???", value 0;
 - GET /api/v1/challenges/<id>: the details, whose "files" are URLs
-  /files/<dir>/<name>?token=<file token>, as CTFd's are;
+  /files/<dir>/<name>?token=<file token>, as CTFd's are, with max_attempts, the attempts
+  the account has used, which CTFd 3.8.9 counts as every correct, wrong or partial answer,
+  and the challenge's logic ("any"; "all" for one that answers some flags "partial");
 - GET /files/<dir>/<name>: the file (the file token or the API token lets it through);
 - POST /api/v1/challenges/attempt: a status in the data whatever the HTTP status: correct,
   incorrect (with the tries left when max_attempts is set), already_solved (for any flag,
-  once solved), partial, paused (403) and, out of tries, incorrect with 403 (both of the
-  last two sent before the flag is looked at);
+  once solved), partial, paused (403) and, out of tries, 403 as CTFd 3.8.9 answers it
+  ("ratelimited", "Not accepted. You have 0 tries remaining", asked before the solve) or,
+  with lockout="incorrect", as an older CTFd did ("incorrect", "You have 0 tries
+  remaining", asked after it); both of the last two sent before the flag is looked at;
 - GET /api/v1/teams/me/solves (404 in users mode, 403 when `no_team`) and
   GET /api/v1/users/me/solves.
 
@@ -56,6 +60,11 @@ TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token ha
 FLAG_FORMAT = r"test\{\w+\}"  # the flags of the invented challenges below
 STOP_WAIT = 5.0  # seconds leaving the context waits for request threads in all
 HOLD_WAIT = 30.0  # seconds a held reply waits for its test at most
+# How a CTFd answers a flag for a challenge whose tries are used up, by FakeCTFd(lockout=...):
+LOCKOUTS = {
+    "ratelimited": {"status": "ratelimited", "message": "Not accepted. You have 0 tries remaining"},  # CTFd 3.8.9
+    "incorrect": {"status": "incorrect", "message": "You have 0 tries remaining"},  # an older CTFd
+}
 
 
 @dataclass
@@ -76,6 +85,12 @@ class FakeChallenge:
     type: str = "standard"  # "hidden": locked behind a prerequisite
     max_attempts: int = 0
     file_urls: list[str] | None = None
+    logic: str | None = None  # CTFd 3.8's flag logic; None: "all" when some flags are partial answers, else "any"
+
+    @property
+    def flag_logic(self) -> str:
+        """The logic its details say: a challenge that answers "partial" takes all its flags."""
+        return self.logic if self.logic is not None else ("all" if self.partial else "any")
 
 
 def sample() -> list[FakeChallenge]:
@@ -197,17 +212,22 @@ class FakeCTFd:
         page_size: int | None = None,
         name: str = "Fake CTF",
         tls: TLS | None = None,
+        lockout: str = "ratelimited",
     ) -> None:
+        if lockout not in LOCKOUTS:
+            raise ValueError(f"lockout must be one of {', '.join(LOCKOUTS)}, not {lockout!r}")
         self.challenges: dict[int, FakeChallenge] = {c.id: c for c in challenges}
         self.token = token
         self.team_mode = team_mode
         self.page_size = page_size
         self.name = name
+        self.lockout = lockout  # how it answers out of tries: as CTFd 3.8.9 ("ratelimited") or an older CTFd ("incorrect")
         self.paused = False
         self.no_team = False  # team mode, but this user has not joined a team yet
         self.solved: set[int] = set()  # solved by this account: the team in team mode
         self.user_solved: set[int] | None = None  # this user's own solves in team mode (None: the same)
-        self.fails: dict[int, int] = {}
+        self.fails: dict[int, int] = {}  # the account's wrong flags per challenge: what its limit counts
+        self.attempts: dict[int, int] = {}  # its correct, wrong and partial answers: what the details say it used
         self.hold_attempts: threading.Event | None = None  # set: answers to flags wait for it (a slow CTFd)
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
@@ -236,6 +256,19 @@ class FakeCTFd:
         with self._lock:
             for challenge in challenges:
                 self.challenges[challenge.id] = challenge
+
+    def teammate_fails(self, challenge_id: int, count: int = 1) -> None:
+        """A teammate's wrong flags, sent to CTFd outside flightdeck: the account's (the
+        team's) tries at the challenge go as CTFd counts them."""
+        with self._lock:
+            self.fails[challenge_id] = self.fails.get(challenge_id, 0) + count
+            self.attempts[challenge_id] = self.attempts.get(challenge_id, 0) + count
+
+    def teammate_partials(self, challenge_id: int, count: int = 1) -> None:
+        """A teammate's partial answers, sent to CTFd outside flightdeck: CTFd's details count
+        them as attempts, and its limit does not."""
+        with self._lock:
+            self.attempts[challenge_id] = self.attempts.get(challenge_id, 0) + count
 
     def script(self, method: str, path: str, *replies: Reply) -> None:
         """The next requests to `method path` (the path without its query) get these replies
@@ -355,9 +388,9 @@ class FakeCTFd:
         data = {
             "id": c.id, "name": c.name, "value": c.value, "description": c.description, "attribution": None,
             "connection_info": c.connection_info, "next_id": None, "category": c.category, "state": "visible",
-            "max_attempts": c.max_attempts, "type": c.type,
+            "max_attempts": c.max_attempts, "logic": c.flag_logic, "type": c.type,
             "type_data": {"id": c.type, "name": c.type, "templates": {}, "scripts": {}},
-            "solves": c.solves, "solved_by_me": c.id in self.solved, "attempts": self.fails.get(c.id, 0),
+            "solves": c.solves, "solved_by_me": c.id in self.solved, "attempts": self.attempts.get(c.id, 0),
             "files": files, "tags": [], "hints": [], "view": "<div class='challenge'></div>",
         }
         return Reply(200, {"success": True, "data": data})
@@ -392,11 +425,15 @@ class FakeCTFd:
         c = self.challenges.get(number) if isinstance(number, int) else None
         if c is None or c.type == "hidden":
             return not_found()
+        fails = self.fails.get(number, 0)
+        locked = bool(c.max_attempts) and fails >= c.max_attempts
+        if locked and self.lockout == "ratelimited":  # CTFd 3.8.9 asks before the solve
+            return Reply(403, {"success": True, "data": dict(LOCKOUTS["ratelimited"])})
         if number in self.solved:  # answered before the flag is looked at, as CTFd does
             return Reply(200, {"success": True, "data": {"status": "already_solved", "message": "You already solved this"}})
-        fails = self.fails.get(number, 0)
-        if c.max_attempts and fails >= c.max_attempts:
-            return Reply(403, {"success": True, "data": {"status": "incorrect", "message": "You have 0 tries remaining"}})
+        if locked:  # an older CTFd asked once it knew the challenge was not solved
+            return Reply(403, {"success": True, "data": dict(LOCKOUTS["incorrect"])})
+        self.attempts[number] = self.attempts.get(number, 0) + 1
         if submission == c.flag:
             self.solved.add(number)
             return Reply(200, {"success": True, "data": {"status": "correct", "message": "Correct"}})

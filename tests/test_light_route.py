@@ -203,6 +203,28 @@ def test_route_asks_no_instance_question_and_opens_nothing(tmp_path):
         asyncio.run(main())
 
 
+@pytest.mark.parametrize("instance, told", [("auto", True), ("off", False)])
+def test_under_instance_off_no_first_look_hears_of_the_instance(tmp_path, instance, told):
+    """The first look goes into the lane's opening brief: under off it must not point the lane
+    at the instance the event's rules keep it off."""
+    lanes = FakeModelServer(responder=looping)
+    with lanes, LightModel({"family": "binary-exploitation", "recon": "Files: a session log."}) as light:
+        async def main():
+            lab = Lab(tmp_path, lanes, {"port": handout(tmp_path, "port", {"session.log": "cargo bytes: 1 2 3\n"})},
+                      lights=lights(light.engine(), ("route", "recon")), urls={"port": ("tcp://127.0.0.1:31337",)},
+                      instance=instance)
+            try:
+                lab.release(challenge("port", "pwn", "The harbour master's service prints the manifest."))
+                await until(lambda: lab.looked("port"), "the first look")
+                asked = {job: user_text(record) for job in ("family", "recon") for record in light.requests(job)}
+                assert sorted(asked) == ["family", "recon"]
+                assert all(("tcp://127.0.0.1:31337" in text) is told for text in asked.values())
+            finally:
+                await lab.finish()
+
+        asyncio.run(main())
+
+
 def test_a_route_reply_outside_the_options_changes_nothing(tmp_path):
     lanes = FakeModelServer(responder=looping)
     with lanes, LightModel({"category": "the web one", "family": "forensics, probably"}) as light:

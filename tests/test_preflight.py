@@ -1016,11 +1016,12 @@ def test_describe_says_nothing_runs_at_the_l1_stage_when_the_config_names_no_pac
     assert "l1        off      no L1 solvers (the rules allow auto)" in off
 
 
-def test_describe_says_under_submit_auto_only_a_flag_a_lane_claims_goes_at_once():
+def test_describe_says_under_submit_auto_only_a_flag_a_lane_claims_goes_at_once_and_counted_tries_always_wait():
     lines = describe(profile(), policies(submit=AUTO), environ=TOKEN_SET)
     assert (
         "submit    auto     a flag a lane claims goes to the platform at once (a model's submit_flag, a coding agent's "
-        "FLAG: line, a flag an L1 engine returns as its result); any other match waits for your approval"
+        "FLAG: line, a flag an L1 engine returns as its result); any other match waits for your approval, and so does "
+        "every flag of a challenge whose tries the platform counts"
     ) in lines
 
 

@@ -355,10 +355,12 @@ class TeamWatcher:
         self.apply(state)
         return state
 
-    def apply(self, state: TeamState) -> None:
+    def apply(self, state: TeamState, *, before_run: bool = False) -> None:
+        """`before_run`: `state` is the folder as the run found it at its start, so the
+        teammates' solves in it came before the run."""
         messages = self._problems(state.problems)
         self.latest = state
-        self._apply_solves(state, messages)
+        self._apply_solves(state, messages, before_run=before_run)
         self._apply_claims(state, messages)
         self._follow_deck(state, messages)
         self._seen.update(self.deck.challenges)
@@ -387,7 +389,7 @@ class TeamWatcher:
 
     # ------------------------------------------------------------------ steps
 
-    def _apply_solves(self, state: TeamState, messages: list[str]) -> None:
+    def _apply_solves(self, state: TeamState, messages: list[str], *, before_run: bool = False) -> None:
         deck, me = self.deck, self.channel.me
         for cid, mark in state.solves.items():
             ch = deck.challenges.get(cid)
@@ -401,7 +403,9 @@ class TeamWatcher:
             elif ch.status is ChallengeStatus.TEAMMATE and ch.solved_by == mark.who:
                 self._solves.add(key)  # applied before this watcher started
                 continue
-            if self._do(messages, f"apply {mark.who}'s solve of {cid}", deck.teammate_solved, cid, mark.who) is not _FAILED:
+            applied = self._do(messages, f"apply {mark.who}'s solve of {cid}", deck.teammate_solved, cid, mark.who,
+                               before_run=before_run)
+            if applied is not _FAILED:
                 self._solves.add(key)
 
     def _apply_claims(self, state: TeamState, messages: list[str]) -> None:
