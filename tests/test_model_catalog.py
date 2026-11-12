@@ -13,7 +13,7 @@ from fake_host import GIB, FakeHost, apple_mac, linux_box
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli, model_catalog, setup
-from ctf_flightdeck.config import DEFAULT_JOBS, load_config, parse_config
+from ctf_flightdeck.config import DEFAULT_JOBS, LOCAL_TIMEOUT, load_config, parse_config
 from ctf_flightdeck.hardware import LM_STUDIO, MLX, OLLAMA, probe
 from ctf_flightdeck.model_catalog import (
     API,
@@ -170,6 +170,23 @@ def test_every_shipped_build_says_what_was_measured_for_each_of_its_roles():
         for role, (_, numbers) in roles.items():
             line = shipped[key][role][1]
             assert all(number in line for number in numbers), (key, role, line)
+
+
+def test_the_light_model_init_suggests_is_offered_for_the_light_role_by_the_catalogs_build_on_that_runtime():
+    """init --light ollama|mlx suggests a model (setup.SUGGESTED_LIGHT): `flightdeck models` must
+    not turn the same build away."""
+    from ctf_flightdeck.setup import SUGGESTED_LIGHT
+
+    catalog = load_catalog()
+    assert set(SUGGESTED_LIGHT) == {"ollama", "mlx"}
+    for choice, (suggested, _why) in SUGGESTED_LIGHT.items():
+        runtime = {"ollama": OLLAMA, "mlx": MLX}[choice]
+        found = [(model, build) for model in catalog.local for build in model.builds
+                 if build.runtime == runtime and build.model == suggested]
+        assert len(found) == 1, (choice, suggested)  # the catalog has that very build
+        model, build = found[0]
+        assert LIGHT in model.serves(build) and LIGHT not in build.not_for, (choice, suggested)
+        assert "judge" in build.light_jobs  # the job init writes it for
 
 
 def test_the_ollama_builds_of_qwen_9b_and_gemma_12b_carry_their_thinking_off_results_for_the_light_role():
@@ -774,6 +791,8 @@ def test_a_local_models_config_lines_replace_the_tables_they_name_and_load(ident
         config = load_config(path)
         assert (config.api.provider, config.api.base_url, config.api.key_env) == ("openai", url, "")
         assert config.models == (build.model,) and config.prices == {} and config.fallback is None
+        assert f"\ntimeout = {LOCAL_TIMEOUT}   # seconds per try" in local_lines(build, LANES)
+        assert config.api.timeout == LOCAL_TIMEOUT == 600  # what init writes for a server on this machine
     else:
         path.write_text(without(INIT_CONFIG, "light") + "\n" + local_lines(build, LIGHT))
         config = load_config(path)

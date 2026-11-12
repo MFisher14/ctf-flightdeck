@@ -461,10 +461,12 @@ def test_the_example_recommends_a_local_open_weight_model_and_loads_as_rules(tmp
     text = example_config()
     assert "[light]" in text and 'engine = "rules"' in text
     for words in ("open-weight", "http://127.0.0.1:11434/v1", "http://127.0.0.1:8080/v1", 'key_env = ""', "eval-local",
-                  "not endorsements", "Qwen3.5 9B", "Gemma 4 12B", "`flightdeck models`", "the rules' answer stands",
+                  "Measured (docs/MODELS.md, `flightdeck models`): Qwen3.5 9B or Gemma 4 12B with thinking off",
+                  "measure any other with eval-local first", "the rules' answer stands",
                   "# fast = "):
         assert words in text, words
-    assert "Phi-4-mini" not in text  # it scored below the rules (docs/MODELS.md): not an example to measure
+    for unmeasured in ("Phi-4-mini", "Ministral"):  # below the rules, and in no measurement: neither is named
+        assert unmeasured not in text
     assert load_config(write(tmp_path, filled(text))).light == LightConfig()
 
 

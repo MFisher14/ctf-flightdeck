@@ -17,7 +17,7 @@ from ctf_flightdeck.setup import Answers, LightAnswers, doctor, report, write_co
 QWEN_MLX = "mlx-community/Qwen3.5-9B-MLX-4bit"
 MLX_COMMAND = f"""mlx_lm.server --model {QWEN_MLX} --max-tokens 8192 --chat-template-args '{{"enable_thinking":false}}'"""
 # Qwen3.5 9B on Ollama solved 1 of 4 as served in the same benchmark: gpt-oss 20B solved the most, not the only ones
-OLLAMA_WHY = "the local model that solved the most practice challenges as served (2 of 4), in a benchmark on one machine"
+OLLAMA_WHY = "the local model that solved the most practice challenges as served (2 of 4), in flightdeck's benchmark (docs/MODELS.md)"
 NOTHING_HERE = "http://127.0.0.1:9/v1"  # on this machine, and nothing listens there
 
 
@@ -44,7 +44,7 @@ def test_at_a_terminal_init_for_ollama_offers_gpt_oss_and_writes_a_longer_timeou
     assert f"Suggested: gpt-oss:20b, {OLLAMA_WHY}. Press Enter to take it, or give your own." in result.output
     assert (config.api.timeout, config.api.max_tokens) == (600.0, 8192)
     written = one_line(target.read_text())
-    assert "Gemma 4 12B on Ollama, at about 22 tokens a second, ran past 180 s in a benchmark on one machine." in written
+    assert "Gemma 4 12B on Ollama, at about 22 tokens a second, ran past 180 s in flightdeck's benchmark (docs/MODELS.md)." in written
     assert "Leave it out for OpenAI's own API: its reasoning models refuse max_tokens." in written
     assert ("lane calls: 600 s per try and replies of up to 8192 tokens, for a server on this machine: a local model can "
             "take minutes for one reply") in result.output
@@ -62,7 +62,7 @@ def test_at_a_terminal_init_for_mlx_offers_qwen_and_the_server_command(tmp_path,
     config = load_config(target)
     assert config.models == (QWEN_MLX,) and config.api.base_url == "http://127.0.0.1:8080/v1"
     assert (f"Suggested: {QWEN_MLX}, it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 "
-            "tokens, in a benchmark on one machine.") in result.output
+            "tokens, in flightdeck's benchmark (docs/MODELS.md).") in result.output
     assert f"next: start the MLX server: {MLX_COMMAND}" in result.output
     assert (config.api.timeout, config.api.max_tokens) == (600.0, 8192)
 
@@ -163,8 +163,8 @@ def test_at_a_terminal_a_light_model_on_ollama_is_offered_with_thinking_off(tmp_
                           "--light", "ollama", terminal=True, answers="\n")
     assert result.exit_code == 0, result.output
     assert load_config(target).light == LightConfig("openai", "qwen3.5:9b", "http://127.0.0.1:11434/v1", "", thinking=False)
-    assert ("Suggested light model: qwen3.5:9b, with thinking off it scored 42 of 44 in eval-local against the rules' "
-            "38, in a benchmark on one machine.") in result.output
+    assert ("Suggested light model: qwen3.5:9b, with thinking off it scored 42 of the 44 hint and judge cases in eval-local against the rules' "
+            "38, in flightdeck's benchmark (docs/MODELS.md).") in result.output
     written = target.read_text()
     assert "\nthinking = false\n" in written
     assert "Thinking off: each request asks the model to answer without reasoning first." in one_line(written)
@@ -225,7 +225,7 @@ def test_away_from_a_terminal_a_local_light_model_must_be_named_and_is_written_w
     result, target = init(monkeypatch, tmp_path, "--provider", "openrouter", "--models", "a/b", "--host", "--light", "ollama")
     assert result.exit_code == 2 and not target.exists()
     assert "--light ollama needs --light-model" in result.output
-    assert "suggested: --light-model qwen3.5:9b: with thinking off it scored 42 of 44" in result.output
+    assert "suggested: --light-model qwen3.5:9b: with thinking off it scored 42 of the 44 hint and judge cases" in result.output
     result, target = init(monkeypatch, tmp_path, "--provider", "openrouter", "--models", "a/b", "--host", "--light", "ollama",
                           "--light-model", "gemma4:12b")
     assert result.exit_code == 0, result.output

@@ -134,7 +134,7 @@ server_args = ["--chat-template-args", '{"enable_thinking":false}', "--max-token
 # MLX server flag; hints 28/30, judge 13/14), 0/44 served as it comes (58 of 58 replies with no
 # answer). Route, recon and flagcheck were not measured on it.
 lanes = "solved 2 of 4 practice challenges with thinking off and --max-tokens 8192 (0 of 4 served as it comes); tool calls 5/5"
-light = "for the judge, the one job of a run the earlier cases measured: eval-local 41/44 with thinking off, against the rules' 38/44 (hint 28/30, judge 13/14)"
+light = "for the judge, the one job of a run the 44 hint and judge cases measured: eval-local 41/44 with thinking off, against the rules' 38/44 (hint 28/30, judge 13/14)"
 
 [[local]]
 id = "gpt-oss-20b"
@@ -158,7 +158,7 @@ thinking = true
 # "Light role", as served: 38/44, the rules' own score (hints 27/30, judge 11/14; 2 of 58 replies
 # with no answer). Route, recon and flagcheck were not measured on it.
 lanes = "solved 2 of 4 practice challenges as served; tool calls 5/5"
-light = "for the judge, the one job of a run the earlier cases measured: eval-local 38/44 with no thinking switch sent, against the rules' 38/44 (hint 27/30, judge 11/14); thinking off, flightdeck's default here, was not measured"
+light = "for the judge, the one job of a run the 44 hint and judge cases measured: eval-local 38/44 with no thinking switch sent, against the rules' 38/44 (hint 27/30, judge 11/14); thinking off, flightdeck's default here, was not measured"
 
 [local.mlx]
 model = "mlx-community/gpt-oss-20b-MXFP4-Q8"
@@ -172,7 +172,7 @@ size_bytes = 12076207568   # results/mlx-gptoss.measure.json: disk.weights_bytes
 # calls; logs/eval-mlx-gptoss.log). 2026-11-11, one machine, under load, one run: "Tool calls":
 # 0/5, so its lanes were not run; "Light role", as served: 0/44 (45 of 58 replies with no answer).
 lanes = "mlx_lm.server passed its tool calls on as text, in gpt-oss's own channel format, so a lane gets none: tool calls 0/5"
-light = "mlx_lm.server passed every reply on in gpt-oss's own channel format, reasoning first, so none answered with one of the options: eval-local 0/44 against the rules' 38/44"
+light = "mlx_lm.server passed every reply on in gpt-oss's own channel format, reasoning first, so none answered with one of the options: eval-local 0/44 against the rules' 38/44, on the 44 hint and judge cases"
 
 [[local]]
 id = "gemma4-12b"
@@ -193,7 +193,7 @@ size_bytes = 8021618941    # results/ollama-gemma.measure.json: disk.size_bytes
 # "none", which the benchmark's wrapper added and flightdeck's light requests to a server on this
 # machine now send, 42/44 (logs/eval-ollama-gemma.reasoning-none.log: hints 29/30, judge 13/14).
 # 2026-11-11, one machine, under load, one run. Route, recon and flagcheck were not measured on it.
-light = "for the judge, the one job of a run the earlier cases measured: eval-local 42/44 with thinking off, against the rules' 38/44 (hint 29/30, judge 13/14)"
+light = "for the judge, the one job of a run the 44 hint and judge cases measured: eval-local 42/44 with thinking off, against the rules' 38/44 (hint 29/30, judge 13/14)"
 
 [local.ollama.not_for]
 # 2026-11-11, one machine, under load, one run: "Lane", as served, in two runs: 0 of 4 each, both
@@ -213,7 +213,7 @@ server_args = ["--chat-template-args", '{"enable_thinking":false}', "--max-token
 # 2026-11-11, one machine, under load, one run: "Light role": 41/44 with thinking off (the MLX
 # server flag; hints 30/30, judge 11/14), 24/44 served as it comes (34 of 58 replies with no
 # answer). Route, recon and flagcheck were not measured on it.
-light = "for the judge, the one job of a run the earlier cases measured: eval-local 41/44 with thinking off, against the rules' 38/44 (hint 30/30, judge 11/14)"
+light = "for the judge, the one job of a run the 44 hint and judge cases measured: eval-local 41/44 with thinking off, against the rules' 38/44 (hint 30/30, judge 11/14)"
 
 [local.mlx.not_for]
 # 2026-11-11, one machine, under load, one run: "Lane": 0 of 4 with thinking off and --max-tokens
@@ -246,7 +246,7 @@ size_bytes = 2491876774    # results/ollama-phi.measure.json: disk.size_bytes
 # the rules' 38 (hints 11/30 against their 30/30, judge 11/14 against their 8/14), 15 of 58 replies
 # with no usable answer (not exactly one of the options).
 lanes = "it wrote its tool calls as text, so a lane gets none: tool calls 0/5"
-light = "eval-local 22/44 as served, below the rules' 38/44, flightdeck's default with no model; 15 of 58 replies held no usable answer"
+light = "eval-local 22/44 as served, below the rules' 38/44, flightdeck's default with no model, on the 44 hint and judge cases; 15 of 58 replies held no usable answer"
 
 [local.mlx]
 model = "mlx-community/Phi-4-mini-instruct-4bit"
@@ -262,7 +262,7 @@ size_bytes = 2158100796    # results/mlx-phi.measure.json: disk.weights_bytes
 # against the rules' 38 (hints 8/30 against their 30/30, judge 10/14 against their 8/14), 19 of 58
 # replies with no usable answer (not exactly one of the options).
 lanes = "mlx_lm.server gives its chat template no tools, so it makes no tool call: tool calls 0/5"
-light = "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model; 19 of 58 replies held no usable answer"
+light = "eval-local 18/44 served as it comes, below the rules' 38/44, flightdeck's default with no model, on the 44 hint and judge cases; 19 of 58 replies held no usable answer"
 
 # The five below: the small-model measurement (2026-11-11, the same machine, under load, one run,
 # approximate), on Ollama 0.34.2 only. Their license: each model card's, which Ollama's license

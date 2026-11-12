@@ -44,8 +44,10 @@ def test_init_needs_the_local_models_name_and_suggests_some_to_measure(tmp_path,
     result, target = init(tmp_path, monkeypatch, "--light", "ollama")
     assert result.exit_code == 2 and not target.exists()
     assert "--light ollama needs --light-model" in result.output
-    assert "examples to measure: Qwen3.5 9B or 4B, Gemma 4 12B or E4B, gpt-oss-20b or Ministral 3 14B" in result.output
-    assert "Phi-4-mini" not in result.output  # it scored below the rules: not an example to measure
+    assert ("measured (`flightdeck models` gives each result): Qwen3.5 9B or Gemma 4 12B with thinking off); measure any "
+            "other first: flightdeck eval-local --engine openai") in " ".join(result.output.split())
+    for unmeasured in ("Phi-4-mini", "Ministral"):  # below the rules, and in no measurement: neither is named
+        assert unmeasured not in result.output
 
 
 def test_init_writes_claude_or_cactus_as_the_light_model_when_asked(tmp_path, monkeypatch):

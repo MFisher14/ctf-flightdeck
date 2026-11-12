@@ -72,7 +72,7 @@ from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 
-from .config import MLX_URL, OLLAMA_URL, RUN_JOBS
+from .config import LOCAL_TIMEOUT, MLX_URL, OLLAMA_URL, RUN_JOBS
 from .hardware import GIB, MLX, OLLAMA, RUNTIME_NAMES, Machine, gib
 from .pricing import Price
 
@@ -805,6 +805,7 @@ def _toml(text: str) -> str:
 
 
 NO_KEY = '   # a server on this machine needs no key'
+LONG_REPLIES = "   # seconds per try: a model on this machine can take minutes for one reply (init writes the same)"
 
 
 THINKING_ON = ("   # as its results were measured: no thinking switch sent (flightdeck's default here, thinking off, "
@@ -823,6 +824,7 @@ def local_lines(build: Build, role: str) -> str:
             "[api]\n"
             f"base_url = {_toml(url)}\n"
             f'key_env = ""{NO_KEY}\n'
+            f"timeout = {LOCAL_TIMEOUT}{LONG_REPLIES}\n"
             "\n"
             "[models]\n"
             f"ladder = [{_toml(build.model)}]   # weakest first: stronger models this server has go after it\n"

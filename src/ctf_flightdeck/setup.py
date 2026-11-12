@@ -93,23 +93,24 @@ OPENROUTER_NAMES = {
 
 
 LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # `init --light`
-# To measure, not endorsements; not Phi-4-mini, which scored below the rules (docs/MODELS.md)
-LIGHT_EXAMPLES = "Qwen3.5 9B or 4B, Gemma 4 12B or E4B, gpt-oss-20b or Ministral 3 14B"
+# The light models the benchmark measured at or above the rules; the catalog (`flightdeck models`)
+# gives each one's results. Not Phi-4-mini, which scored below the rules, nor any model nothing measured.
+LIGHT_MEASURED = "measured (`flightdeck models` gives each result): Qwen3.5 9B or Gemma 4 12B with thinking off"
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
 # What init suggests for a server on this machine: the default at its prompt, named in its
 # message away from a terminal, never written without the player choosing it. From a benchmark
-# of four open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11), not a guarantee.
-BENCHMARK = "in a benchmark on one machine"
+# of open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11: docs/MODELS.md), not a guarantee.
+BENCHMARK = "in flightdeck's benchmark (docs/MODELS.md)"
 SUGGESTED_LADDERS = {
     "local": ("gpt-oss:20b", f"the local model that solved the most practice challenges as served (2 of 4), {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
             f"it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 tokens, {BENCHMARK}"),
 }
 SUGGESTED_LIGHT = {  # `init --light ollama|mlx`, with thinking off
-    "ollama": ("qwen3.5:9b", f"with thinking off it scored 42 of 44 in eval-local against the rules' 38, {BENCHMARK}"),
+    "ollama": ("qwen3.5:9b", f"with thinking off it scored 42 of the 44 hint and judge cases in eval-local against the rules' 38, {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
-            f"with thinking off it scored 41 of 44 in eval-local against the rules' 38, {BENCHMARK}"),
+            f"with thinking off it scored 41 of the 44 hint and judge cases in eval-local against the rules' 38, {BENCHMARK}"),
 }
 MLX_MAX_TOKENS = 8192  # the --max-tokens init suggests for mlx_lm.server (its own default is 512)
 
@@ -156,7 +157,7 @@ def light_answers(choice: str, model: str | None) -> LightAnswers | None:
             suggested, why = SUGGESTED_LIGHT[choice]
             raise ValueError(
                 f"--light {choice} needs --light-model, the name your server gives the model (suggested: --light-model "
-                f"{suggested}: {why}; examples to measure: {LIGHT_EXAMPLES}); measure it first: flightdeck eval-local "
+                f"{suggested}: {why}; {LIGHT_MEASURED}); measure any other first: flightdeck eval-local "
                 f"--engine openai --base-url {url} --model <model>"
             )
         return LightAnswers("openai", model, url, "", thinking=False)
@@ -439,9 +440,10 @@ def _light(light: LightAnswers | None) -> str:
     head = "[light]\n"
     if light is None:
         return (
-            head + "# The light model for small jobs (the hint judge); \"rules\" uses none. Recommended: an open-weight\n"
-            "# model on this machine (Ollama: http://127.0.0.1:11434/v1, an MLX server: http://127.0.0.1:8080/v1),\n"
-            "# measured first with `flightdeck eval-local`. `flightdeck config --example` shows every key.\n"
+            head + "# The light model for a run's small jobs (the hint judge by default); \"rules\" uses none. Recommended:\n"
+            "# an open-weight model on this machine (Ollama: http://127.0.0.1:11434/v1, an MLX server:\n"
+            "# http://127.0.0.1:8080/v1): `flightdeck models` and docs/MODELS.md say which were measured, and\n"
+            "# `flightdeck eval-local` measures any other. `flightdeck config --example` shows every key.\n"
             'engine = "rules"\n\n'
         )
     if light.engine == "decider":
@@ -464,7 +466,8 @@ def _light(light: LightAnswers | None) -> str:
         if not light.thinking:
             out += ("# Thinking off: each request asks the model to answer without reasoning first. As served, a model\n"
                     "# that reasons first spent eval-local's few hundred tokens a job reasoning and answered nothing;\n"
-                    "# with thinking off, Qwen3.5 9B and Gemma 4 12B beat the rules (41 or 42 of 44 against 38)\n"
+                    "# with thinking off, Qwen3.5 9B and Gemma 4 12B beat the rules (41 or 42 of the 44 hint and judge cases\n"
+                    "# against 38)\n"
                     f"# {BENCHMARK}.\n")
         out += f"thinking = {'true' if light.thinking else 'false'}\n"
     if light.price is not None:
