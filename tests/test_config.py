@@ -593,7 +593,7 @@ def test_the_example_shows_every_key(tmp_path):
     for table in ("[api]", "[models]", "[prices.", "[lanes]", "[run]"):
         assert table in text
     for key in ("provider", "base_url", "key_env", "ladder", "input", "output", "cached_input", "max_lanes", "runtime",
-                "image", "token_cap", "dollar_cap", "submit", "dir"):
+                "image", "token_cap", "dollar_cap", "submit", "dir", "context"):
         assert re.search(rf"^(# )?{key} = ", text, flags=re.M), key
     assert "# [fallback]" in text
 
