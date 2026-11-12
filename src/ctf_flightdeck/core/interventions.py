@@ -112,9 +112,12 @@ class Release:
 
 @dataclass(frozen=True)
 class Queue:
-    """Queue a fresh lane for a parked or new challenge."""
+    """Queue a fresh lane for a parked or new challenge. `model`: the model it starts on
+    (autopilot's next round: the next one up the ladder); None: the challenge's last lane's,
+    else the weakest."""
 
     challenge: str
+    model: str | None = None
 
 
 Intervention = (

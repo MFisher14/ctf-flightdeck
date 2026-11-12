@@ -696,6 +696,7 @@ class AgentDriver:
             action, gave_up = f"model call to {model} failed", f"model API error: {error}"
         self._report(run, TurnReport(turn=False, action=action, output=str(error), tokens=tokens, cached_tokens=cached,
                                      dollars=dollars, hints_taken=hints_taken, gave_up=gave_up,
+                                     declined=error.declined,
                                      model=(usage.model or None) if usage else None))
 
     def _every_lane(self, error: ModelError, model: str) -> str:

@@ -37,6 +37,14 @@ Rules the deck enforces:
   no hint, new plan or escalation (no driver gives it another turn);
 - team mode: a challenge a teammate solved or claimed is not worked; a teammate's
   solve stops every lane on it;
+- an intervention is the player's, or autopilot's by rule (apply's `by`): the log, the lane's
+  transcript and every text say which. Autopilot may escalate, fork, kill, redirect, pause,
+  queue and decline a lane's budget request, and nothing else: it never approves anything, and
+  never answers a flag or a live-box request;
+- while autopilot guards the run (Deck.autopilot, autopilot.py: from engaging it until the
+  player takes the controls back), no flag goes to the platform on its own when it would
+  spend the last try the platform counts at a challenge, or may (the count is not known),
+  `submit_limited = "auto"` or not: it waits for the player, and a warning says so (D20);
 - once the run is closing (close(): the player quit), its lanes stop at once without ending
   (each driver is told to stop its lane before close() returns), nothing raises an alert,
   asks the player or starts a lane, and what a lane reports counts its spend only, as after
@@ -100,6 +108,8 @@ from .model import (
 
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
 BUDGET_RAISE = 1.5  # approving more budget multiplies the caps by this
+ACTORS = {Actor.PLAYER: "the player", Actor.AUTOPILOT: "autopilot"}  # who an intervention can be by, as texts say it
+BY_RULE = (Escalate, Fork, Kill, Redirect, Pause, Queue, Decline)  # what autopilot may do (a Decline: a budget request only)
 
 
 @dataclass
@@ -183,6 +193,9 @@ class Deck:
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
         self._ended_by_hold: list[str] = []  # lanes that what the hold is about ended: release_hold queues their challenges again
         self.closing = False  # the run is closing (close()): its lanes stop without ending
+        self.autopilot = None  # the run's autopilot (autopilot.Autopilot sets it), if it has one: its `guarding` is read here
+        self._by = Actor.PLAYER  # who the intervention being applied is by (apply)
+        self._kept: set[tuple[str, str]] = set()  # (challenge id, flag) autopilot's last-try rule made wait: said once
         self.listener_errors: list[str] = []  # listeners that raised (shown when the run ends)
         self._warning_listener_failure = False
         self._flag_re = re.compile(config.flag_format)
@@ -410,6 +423,10 @@ class Deck:
         self._answered[ch.id] = self.now  # a count of its tries asked before now may be older than this answer
         if tries_left is not None and not (tries_left and ch.id in self._spent):
             self._tries(ch, tries_left)  # out of tries, only a count asked after this answer opens it (platform_tries)
+        elif tries_left is None and ok is False and ch.tries_left is not None and ch.tries_left > 1 and self._guarded():
+            # the platform judged it wrong and did not say what is left: under autopilot's guard the deck counts the
+            # try itself, down to 1 and no further (0 is the platform's to say), so the last one is never spent unseen
+            self._tries(ch, ch.tries_left - 1)
         extra: dict[str, object] = {"detail": detail} if detail else {}
         if tries_left is not None:
             extra["tries_left"] = tries_left
@@ -628,6 +645,8 @@ class Deck:
                 return  # submitted automatically and correct
         if rep.pending is not None:
             self._ask(lane, rep.pending)
+        if rep.declined:
+            lane.declined = True
         if rep.gave_up is not None:
             if self._has_submit(lane):
                 lane.gave_up_later = rep.gave_up
@@ -641,22 +660,54 @@ class Deck:
 
     # ------------------------------------------------------------------ interventions
 
-    def apply(self, iv: Intervention) -> Outcome:
-        """Apply a player intervention. Logged before its effects, with its outcome after."""
+    def apply(self, iv: Intervention, *, by: Actor = Actor.PLAYER) -> Outcome:
+        """Apply an intervention: the player's, or with `by` Actor.AUTOPILOT one autopilot
+        makes by rule. Logged before its effects, with its outcome after; autopilot's carry
+        `"by": "autopilot"` in both events (the player's carry no `by`, as before autopilot),
+        and every text says autopilot where the player's says the player. Autopilot is held
+        to BY_RULE here, so no rule of it can approve anything."""
         self._on_thread("apply")
+        if by not in ACTORS:
+            raise ValueError(f"an intervention is by the player or by autopilot, not by {by!r}")
         name = type(iv).__name__.lower()
         lane = getattr(iv, "lane", None)
         challenge = getattr(iv, "challenge", None)
-        self._emit(EventKind.INTERVENTION, f"{name} {lane or challenge}", lane, challenge, data={"intervention": name, **asdict(iv)})
-        outcome = self._apply(iv)
+        who: dict[str, object] = {"by": by.value} if by is Actor.AUTOPILOT else {}
+        details = {key: value for key, value in asdict(iv).items() if not (key == "model" and value is None and isinstance(iv, Queue))}
+        self._emit(EventKind.INTERVENTION, f"{name} {lane or challenge}", lane, challenge, data={"intervention": name, **details, **who})
+        self._by = by
+        try:
+            outcome = self._not_by_rule(iv) or self._apply(iv)
+        finally:
+            self._by = Actor.PLAYER
         self._emit(
             EventKind.OUTCOME,
             f"{name}: {outcome.message}",
             lane,
             challenge,
-            data={"intervention": name, "ok": outcome.ok, "message": outcome.message},
+            data={"intervention": name, "ok": outcome.ok, "message": outcome.message, **who},
         )
         return outcome
+
+    def _not_by_rule(self, iv: Intervention) -> Outcome | None:
+        """Why autopilot may not make this intervention (None: it may, or it is the player's).
+        It never approves, takes over or claims, and it declines only a lane's budget request:
+        a flag and a live-box request wait for the player."""
+        if self._by is not Actor.AUTOPILOT:
+            return None
+        if not isinstance(iv, BY_RULE):
+            return Outcome(False, f"Autopilot does not {type(iv).__name__.lower()}: that is the player's to do")
+        if isinstance(iv, Decline):
+            lane = self.lanes.get(iv.lane)
+            pending = lane.pending if lane is not None else None
+            if pending is not None and pending.kind is not PendingKind.BUDGET:
+                return Outcome(False, f"Autopilot declines only a lane's budget request, and {iv.lane} waits for: {pending.detail}")
+        return None
+
+    @property
+    def _who(self) -> str:
+        """Who the intervention being applied is by, as texts say it: "the player" or "autopilot"."""
+        return ACTORS[self._by]
 
     def _apply(self, iv: Intervention) -> Outcome:
         if self.closing:
@@ -666,7 +717,7 @@ class Deck:
         if isinstance(iv, Release):
             return self._release_claim(iv.challenge)
         if isinstance(iv, Queue):
-            return self._queue(iv.challenge)
+            return self._queue(iv.challenge, iv.model)
         lane = self.lanes.get(iv.lane)
         if lane is None:
             return Outcome(False, f"No lane {iv.lane}")
@@ -721,7 +772,7 @@ class Deck:
             return Outcome(False, f"{lane.id} is already paused")
         lane.state = LaneState.PAUSED
         self.driver.pause(lane)
-        self._note(lane, "paused by the player", Actor.PLAYER)
+        self._note(lane, f"paused by {self._who}", self._by)
         return Outcome(True, f"Paused {lane.id}")
 
     def _resume(self, lane: Lane) -> Outcome:
@@ -751,7 +802,7 @@ class Deck:
         lane.approach = text  # the player's own words: an escalated lane's brief carries them
         self._clear_course(lane)
         self.driver.redirect(lane, text)
-        self._note(lane, f"new plan: {text}", Actor.PLAYER)
+        self._note(lane, f"new plan: {text}", self._by)
         return Outcome(True, f"{lane.id} has a new plan")
 
     def _fork(self, lane: Lane, approach: str, model: str | None) -> Outcome:
@@ -771,11 +822,11 @@ class Deck:
             return Outcome(False, f"Fork of {lane.id} could not start: {error}")
         if started is None:
             if self.held:  # no lane starts until the player lifts the hold, whatever slots are free
-                self._note(lane, f"fork queued first ({model}): the queue is held", Actor.PLAYER)
+                self._note(lane, f"fork queued first ({model}): the queue is held", self._by)
                 return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue, which is held: {self.held}")
-            self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", Actor.PLAYER)
+            self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", self._by)
             return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; all {self.config.max_lanes} lanes are busy")
-        self._note(lane, f"forked to {started.id} ({model})", Actor.PLAYER)
+        self._note(lane, f"forked to {started.id} ({model})", self._by)
         return Outcome(True, f"Forked {lane.id} → {started.id} on {model}")
 
     def _kill(self, lane: Lane, requeue: bool) -> Outcome:
@@ -785,7 +836,7 @@ class Deck:
                 ch.id, lane.model, attempt=lane.attempt + 1, token_cap=lane.token_cap, dollar_cap=lane.dollar_cap
             )
             self.queue.insert(0, entry)
-            self._finish(lane, LaneState.KILLED, "by the player; re-queued fresh", then=ChallengeStatus.QUEUED)
+            self._finish(lane, LaneState.KILLED, f"by {self._who}; re-queued fresh", then=ChallengeStatus.QUEUED)
             started = self._started_for(entry)
             error = self._start_errors.pop(id(entry), None)
             if error is not None:
@@ -796,7 +847,7 @@ class Deck:
         why = "" if not requeue else f" ({ch.name} is {self._why_not(ch)}, so it was parked, not re-queued)"
         dropped = sum(1 for entry in self.queue if entry.challenge == ch.id)
         self._drop_queued(ch.id)  # parking means parking: queued forks go too
-        self._finish(lane, LaneState.KILLED, "by the player; parked" + why, then=ChallengeStatus.PARKED)
+        self._finish(lane, LaneState.KILLED, f"by {self._who}; parked" + why, then=ChallengeStatus.PARKED)
         others = self.lanes_on(ch.id)
         if others:
             ids = ", ".join(other.id for other in others)
@@ -820,7 +871,7 @@ class Deck:
                 lane.turns,
                 f"escalated {old} → {stronger} with a summary",
                 "\n".join(summary_lines(summary)),
-                Actor.PLAYER,
+                self._by,
                 ActionKind.PLAYER,
             )
         )
@@ -889,13 +940,13 @@ class Deck:
         pending = lane.pending
         if pending is None:
             return Outcome(False, f"{lane.id} is not waiting for an approval")
-        self._note(lane, f"declined: {pending.detail}", Actor.PLAYER)
+        self._note(lane, f"declined: {pending.detail}", self._by)
         if pending.kind is PendingKind.CONFIRM:
             assert pending.flag is not None
             self._verdict(lane, pending.flag, False, by="player")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
-            self._finish(lane, LaneState.STOPPED, "the player declined more budget")
+            self._finish(lane, LaneState.STOPPED, f"{self._who} declined more budget")
             return Outcome(True, f"Stopped {lane.id}: no more budget")
         if pending.kind is PendingKind.SUBMIT and pending.flag is not None:
             self._remember_not_flag(lane.challenge_id, pending.flag, DECLINED)
@@ -959,10 +1010,12 @@ class Deck:
         ch.claimed_by = None
         return Outcome(True, f"Released {ch.name}")
 
-    def _queue(self, challenge_id: str) -> Outcome:
+    def _queue(self, challenge_id: str, model: str | None = None) -> Outcome:
         ch = self.challenges.get(challenge_id)
         if ch is None:
             return Outcome(False, f"No challenge {challenge_id}")
+        if model is not None and self.config.models and model not in self.config.models:
+            return Outcome(False, f"{model!r} is not in the model ladder ({', '.join(self.config.models)})")
         if not self._workable(ch):
             return Outcome(False, f"{ch.name} is {self._why_not(ch)}")
         if self.lanes_on(ch.id):
@@ -970,11 +1023,11 @@ class Deck:
         if self.queued(ch.id):
             return Outcome(False, f"{ch.name} is already queued")
         last = next((x for x in reversed(self.lanes.values()) if x.challenge_id == ch.id), None)
-        if last is None and not self.config.models:
+        if model is None and last is None and not self.config.models:
             return Outcome(False, f"No model to start {ch.name} with: it never had a lane and no model ladder is set")
         entry = QueueEntry(
             ch.id,
-            last.model if last else self.config.models[0],
+            model or (last.model if last else self.config.models[0]),
             attempt=last.attempt + 1 if last else 1,
             token_cap=last.token_cap if last else None,
             dollar_cap=last.dollar_cap if last else None,
@@ -986,9 +1039,10 @@ class Deck:
         error = self._start_errors.pop(id(entry), None)
         if error is not None:
             return Outcome(False, f"Could not start a lane on {ch.name}: {error}")
+        on = f" on {entry.model}" if model is not None else ""
         if started is None:
-            return Outcome(True, f"Queued {ch.name} (position {len(self.queue)})")
-        return Outcome(True, f"Started {started.id} on {ch.name}")
+            return Outcome(True, f"Queued {ch.name}{on} (position {len(self.queue)})")
+        return Outcome(True, f"Started {started.id} on {ch.name}{on}")
 
     # ------------------------------------------------------------------ internals
 
@@ -1321,8 +1375,10 @@ class Deck:
             self._submit(lane, flag)  # an answers file checks it, or the player submits it by hand: no try is spent
             return
         if self.config.submit == "auto" and claimed and not self.config.holds(ch):
-            self._send(lane, flag)
-            return
+            if not self._keeps_last_try(ch):
+                self._send(lane, flag)
+                return
+            self._last_try_waits(lane, ch, flag)  # autopilot's guard: it waits for the player, as below
         # under auto, a match scraped from text the lane read (a decoy flag.txt, an example
         # in a comment) waits for the player: a wrong try can cost a CTFd attempt. So does
         # every flag of a challenge whose tries the platform counts: flightdeck never spends
@@ -1500,6 +1556,9 @@ class Deck:
                 back.append((item, "the platform counts the tries at this challenge's flag"))
             elif last and self.config.holds(ch):
                 back.append((item, f"the platform now says {_tries_text(ch)}"))
+            elif self._keeps_last_try(ch):  # autopilot's guard: not on its own, and not on a yes given while more were left
+                self._last_try_waits(self.lanes[item.lane], ch, item.flag)
+                back.append((item, f"autopilot never spends a challenge's last try, and the platform says {_tries_text(ch)}"))
             else:
                 keep.append(item)
         if keep:  # the line is as it stays before any lane hears: a lane's flags still in it keep it open
@@ -1521,6 +1580,32 @@ class Deck:
         if line and not line[0].sent:
             self._hand_over(ch)
 
+    def _keeps_last_try(self, ch: Challenge) -> bool:
+        """Autopilot guards the run, and a flag for `ch` would spend the last try the platform
+        counts at it, or may: the count is 1, or is not known (D20: autopilot never spends a
+        challenge's last try, whatever submit_limited says). False for a challenge whose tries
+        the platform does not count, and whenever autopilot does not guard the run."""
+        pilot = self.autopilot
+        if pilot is None or not pilot.guarding or not ch.limited:
+            return False
+        return ch.tries_left is None or ch.tries_left <= 1
+
+    def _last_try_waits(self, lane: Lane, ch: Challenge, flag: str) -> None:
+        """Say, once per flag, that autopilot's last-try rule keeps `flag` for the player: a
+        note on the lane and a warning for the run (its data: autopilot "last_try"), which the
+        post-flight report lists. The caller makes it wait as an approval, which raises the
+        lane's flag alert; the run goes on."""
+        if (ch.id, flag) in self._kept:
+            return
+        self._kept.add((ch.id, flag))
+        tries = _tries_text(ch)
+        self._note(lane, f"not sent on its own: {flag} ({tries}; autopilot never spends a challenge's last try)")
+        self._emit(
+            EventKind.WARNING,
+            f"autopilot never spends a challenge's last try: {flag} for {ch.name} waits for you on {lane.id} ({tries})",
+            lane.id, ch.id, data={"autopilot": "last_try", "flag": flag, "tries_left": ch.tries_left},
+        )
+
     def _leave_line(self, lane: Lane) -> None:
         """An ended lane's flags still waiting their turn for the platform do not go out (one
         another lane sent too still does); the one already sent is answered all the same."""
@@ -1536,6 +1621,10 @@ class Deck:
                 self._note(lane, f"not submitted: {item.flag} (it was waiting its turn to go to the platform)")
         if not line:
             del self._lines[lane.challenge_id]
+
+    def _guarded(self) -> bool:
+        """Whether autopilot guards the run (its last-try rule holds)."""
+        return self.autopilot is not None and bool(self.autopilot.guarding)
 
     def _tries(self, ch: Challenge, left: int) -> None:
         """The platform said how many tries are left on `ch`: its flags wait for the player from
@@ -1789,7 +1878,7 @@ class Deck:
 
     def _note(self, lane: Lane, text: str, by: Actor = Actor.DECK, kind: ActionKind | None = None) -> None:
         if kind is None:
-            kind = ActionKind.PLAYER if by is Actor.PLAYER else ActionKind.NOTE
+            kind = ActionKind.PLAYER if by in ACTORS else ActionKind.NOTE  # an intervention's own line: the player's, or autopilot's
         lane.actions.append(Action(self.now, lane.turns, text, "", by, kind))
 
     def _emit(
