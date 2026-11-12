@@ -192,6 +192,7 @@ def test_a_call_every_model_declined_ends_the_lane_with_each_attempt_counted_as_
 
 OPUS = "claude-opus-5-5"  # the rung above SONNET on the ladder of the tests below
 OPUS_PRICE = Price(4.0, 20.0, 0.20, 5.0)
+HOLD = 30.0  # seconds the fake server holds a reply at most: the test lets it go once it has acted, however loaded the machine
 
 
 @pytest.mark.parametrize("overtake", ["escalate", "take over"])
@@ -203,7 +204,7 @@ def test_a_call_every_model_declined_after_the_lane_was_escalated_or_taken_over_
 
     def responder(record):
         if len(server.requests) == 1:
-            gate.wait(5)  # the models are still at it when the player steps in
+            gate.wait(HOLD)  # the models are still at it when the player steps in
             return declined
         return submit(input_tokens=60, output_tokens=40)
 
@@ -257,7 +258,7 @@ def test_a_reply_the_lane_stopped_before_its_turn_was_done_still_counts_every_at
     gate = threading.Event()
 
     def responder(record):
-        gate.wait(5)  # held until the test is ready for it (the lane paused, or not)
+        gate.wait(HOLD)  # held until the test is ready for it (the lane paused, or not)
         return reply
 
     server = FakeAnthropicServer(responder=responder)
@@ -306,7 +307,7 @@ def test_a_reply_already_counted_is_not_counted_again_when_the_lane_stops(tmp_pa
         n = len(server.requests)
         if counted == "by its turn":
             return submit(input_tokens=300, output_tokens=40)
-        gates[min(n, 2) - 1].wait(5)
+        gates[min(n, 2) - 1].wait(HOLD)
         return tool_message("shell", {"command": "ls"}, input_tokens=300, output_tokens=40)
 
     server = FakeAnthropicServer(responder=responder)
