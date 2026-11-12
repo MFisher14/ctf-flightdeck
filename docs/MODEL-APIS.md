@@ -132,7 +132,9 @@ for is accepted:
 | Claude Fable 5.2, Claude Mythos 5.2 | $16 / $80 |
 | Claude Opus 5, Claude Opus 4.8 (research previews) | $10 / $50; Opus 5 needs access from Anthropic, and Opus 4.8's fast mode ends on 2026-11-30 |
 
-A fast call is priced at the fast rate. `play` names the fast models and their price before
+A fast call is priced at the fast rate, and the tokens it reads from or writes to the prompt
+cache at that rate times Anthropic's cache multipliers (a read: 0.05 for Opus 5.5, 0.025 for
+Fable 5.2 and Mythos 5.2, 0.1 for the others; a 5-minute write: 1.25). `play` names the fast models and their price before
 lanes start. Fast mode has its own rate limit: on a 429 the lane goes on at standard speed at
 once and says so on its transcript. It stays at standard speed until an escalation starts a new
 session, since every switch of speed starts the prompt cache again.
@@ -140,8 +142,13 @@ session, since every switch of speed starts the prompt cache again.
 ## Prices
 
 A lane's dollars come from the API when it reports a call's cost (OpenRouter does), else from
-your config's `[prices."<model>"]` (`input`, `output`, optional `cached_input`, in dollars per
-million tokens), else they are unknown. A model in an `[agents]` ladder can have a price too,
+your config's `[prices."<model>"]` (`input`, `output`, and optionally `cached_input` and
+`cache_write` for prompt tokens read from and written to the cache, in dollars per million
+tokens; a cache rate left out is the input rate), else they are unknown. With the Anthropic
+API, every attempt of a call counts at the price of the model that ran it, so `[prices]` may
+also price the models the refusal fallback answers with (`claude-sonnet-5`, `claude-opus-5`,
+`claude-opus-4-8`); `init --provider anthropic` writes them, and `play` says before lanes
+start which of them your config does not price. A model in an `[agents]` ladder can have a price too,
 under the CLI's own name for it: codex reports its tokens but no cost, while claude reports its
 own cost, which wins. A dollar-capped lane whose spend has no price asks you once before it
 carries on without its cap, and the console shows its dollars as "at least" (`$0.42+`).

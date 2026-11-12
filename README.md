@@ -14,10 +14,9 @@ way: a hint, a redirect, a fork, a kill, or taking over its shell yourself.
 Bring what you have: an API key (Anthropic, OpenRouter, OpenAI or a local model server), a
 coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
 
-> **Status: v0.1.0, the first public release (alpha).** The console, agent lanes, your L1
-> solvers, CTFd events, team mode, alerts, practice scoring and post-flight reports are built.
-> Next: a model per small job (0.2.0), then Autopilot. See [`docs/ROADMAP.md`](docs/ROADMAP.md)
-> and [`CHANGELOG.md`](CHANGELOG.md).
+> **Status: v0.2.0 (alpha).** The console, agent lanes, your L1 solvers, CTFd events, team mode,
+> alerts, practice scoring, post-flight reports and a light model per small job are built.
+> Next: Autopilot. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Quickstart
 
@@ -196,10 +195,15 @@ AUTH, of an Authorization or Cookie header, and of a key with a well-known prefi
 
 ## Light model
 
-A few small jobs can use a small model. Today that is the hint judge: when a lane seems to ignore
+A few small jobs can use a small model. The first is the hint judge: when a lane seems to ignore
 what its description hints at, the alert shows at once, and the light model checks the lane's
-steps; if it says the lane is using the technique after all, the alert comes down. By default
-there is no light model, only the rules. Five choices, in `[light]`:
+steps; if it says the lane is using the technique after all, the alert comes down. `[light] jobs`
+can add three more: `route` (a challenge's category where the board names none, and the kind of
+specialist it suits), `recon` (a first look at the handout for the lane's opening brief) and
+`flagcheck` (a check of a flag before it goes out without you under auto submit; it can only
+hold a flag for you, never submit one). A job can have an engine of its own in a `[light.<job>]`
+table; `flightdeck config --example` shows how. By default there is no light model, only the
+rules. Five choices, in `[light]`:
 
 - `rules`: no model (the default).
 - `openai`: any OpenAI-compatible server. **Recommended: an open-weight model on your own

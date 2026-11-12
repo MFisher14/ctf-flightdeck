@@ -43,6 +43,48 @@ did no worse than no model at any of the run's light jobs, and Qwen3.5 2B and 0.
 with no flags: it ships each model's chat template, tool-call parser and sampling settings. We
 would use Ollama for lanes and either for the light role.
 
+## By memory
+
+What `flightdeck models --memory GB` advises for a machine of each size (add `--apple` for an
+Apple silicon Mac, `--gpu-memory GB` for an NVIDIA GPU). It sizes a model as its weights plus
+room for its context (6 GiB for a lane, 2 GiB for the light role), an estimate that runs high
+for the small models. A lane's model and a light model at once must both fit. Only the 36 GB Mac
+was measured: every other row is that sizing applied to models measured there.
+
+**Apple silicon Mac** (the GPU shares the memory; local models get about two thirds of it):
+
+| Memory | Lanes | Light role |
+|---:|---|---|
+| 4 GB | a model API | the rules (no model) |
+| 8 GB | a model API | Qwen3.5 4B (all four jobs), or 2B (the judge, route) |
+| 12 GB | a model API | Qwen3.5 9B on MLX, or Qwen3.5 4B |
+| 16 GB | Qwen3.5 4B (2 of 4 practice challenges) | Qwen3.5 9B or Gemma 4 12B |
+| 24 GB | Qwen3.5 9B, or Qwen3.5 4B | Qwen3.5 9B or Gemma 4 12B |
+| 32 GB, 36 GB | `gpt-oss:20b` on Ollama, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B |
+
+**A PC with an NVIDIA GPU** (local models get the GPU's memory):
+
+| GPU memory | Lanes | Light role |
+|---:|---|---|
+| 8 GB | a model API | Qwen3.5 4B, or Gemma 4 E2B (the judge, route, recon) |
+| 12 GB | Qwen3.5 4B | Qwen3.5 9B or Gemma 4 12B |
+| 16 GB | Qwen3.5 9B, or Gemma 4 E4B | Qwen3.5 9B or Gemma 4 12B |
+| 24 GB | `gpt-oss:20b`, or Qwen3.5 9B | Qwen3.5 9B or Gemma 4 12B |
+
+**No GPU** (local models get about half the memory, on the CPU): a model API for lanes up to
+16 GB, then Qwen3.5 4B at 24 GB and Qwen3.5 9B from 32 GB, though no lane was measured on a CPU
+alone, so expect it to be slow. For the light role: the rules at 4 GB, Qwen3.5 0.8B (the judge
+only) at 8 GB, Qwen3.5 4B at 12 and 16 GB, Qwen3.5 9B from 24 GB. The two smallest models did
+their light jobs in 1 to 2 seconds each on the CPU.
+
+On Ollama, check the context before a lane runs on it: below about 23 GiB of GPU memory Ollama
+gives a model 4,096 tokens unless you raise it, and `flightdeck doctor` says what yours gives
+([Model APIs](MODEL-APIS.md)).
+
+**More than 36 GB, or a result that differs from these?** Nothing larger was measured. Run
+`flightdeck eval-local` and `flightdeck practice` on your machine and send what they print with
+the [model results form](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=hardware.yml).
+
 ## Set up a local model
 
 Ollama:
@@ -204,6 +246,42 @@ cases (14 to 40 a job), one run each, the same rough conditions as above:
 
 A run gives the light model the jobs `[light] jobs` lists (the hint judge alone unless it lists
 more), each on `[light]`'s engine or a `[light.<job>]` table of its own.
+
+## Claude models compared
+
+Haiku 5.5, Sonnet 5.5, Opus 5.5 and Fable 5.2, and Opus and Fable in fast mode, each given the
+same prompts on 2026-11-11 and 2026-11-12: one run each, so rough like everything here.
+
+**Light jobs: Haiku 5.5.** Every larger model scored lower, because Anthropic's cyber safeguard
+declined 17% to 24% of these CTF-flavoured requests for them and none for Haiku. The light role
+sends a refused request nowhere else, so a refusal is no answer. Right answers:
+
+| Job (cases) | Haiku 5.5 | Sonnet 5.5 | Opus 5.5 | Fable 5.2 |
+|---|---:|---:|---:|---:|
+| hint (30) | **30** | 27 | 26 | 27 |
+| judge (14) | 11 | 5 | **12** | 11 |
+| route (120 questions on 40 cases) | **118** | 95 | 98 | 91 |
+| recon (30) | **26** | 21 | 22 | 20 |
+| flagcheck (40) | **39** | 17 | 23 | 24 |
+| refused, of 248 requests | **0** | 41 | 52 | 59 |
+| cost of all 248 | **$0.02** | $0.43 | $0.82 | $1.65 |
+
+**Lanes on four easy practice challenges:** every setup solved 4 of 4 with its first flag, and
+none of the 94 lane calls was refused. So here only cost and time differ, and four easy
+challenges cannot show whether a bigger model solves what a smaller one cannot.
+
+| Lanes' model | Cost of the board, at list price | Time for the board |
+|---|---:|---:|
+| Haiku 5.5 | $0.011 | 74 s |
+| Sonnet 5.5 | $0.044 | 33 s |
+| Opus 5.5 | $0.066 | 30 s |
+| Opus 5.5, fast mode | $0.126 | 16 s |
+| Fable 5.2 | $0.170 | 46 s |
+| Fable 5.2, fast mode | $0.375 | 17 s |
+
+**Fast mode** (`[api] fast`) gave the same answers in about half the time at about twice the
+price: worth it when minutes matter, such as an event's last hour. Opus 5.5 in fast mode cost
+less than Fable 5.2 at standard speed and finished the board three times as fast.
 
 ## Measure your own
 

@@ -125,13 +125,15 @@ nothing to a running console in a few minutes, without reading the architecture:
 - A lane image that works out of the box, built or pulled only by a command the player runs.
 - A three-command quickstart at the top of the README, tested on a clean machine.
 
-## 0.2.0: a model per small job
+## 0.2.0: a model per small job (built)
 
 Measured per job before it was built (docs/MODELS.md): a light engine per job in the config,
 a flag check that can only hold an auto-submit (never cause one), routing at lane start (the
 instance by rule, a category guess only where the board names none, the specialist family),
 and a recon brief as a fenced data section of a lane's opening brief. eval-local scores each
-job the way a run uses it.
+job the way a run uses it. With it: model advice for a machine you describe and a guide by
+memory, and the fixes a rehearsal against a real CTFd, a security review and the first pricing
+issue asked for (CHANGELOG.md).
 
 ## M5: Autopilot (after v0.1.0)
 

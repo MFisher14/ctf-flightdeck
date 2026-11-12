@@ -1,0 +1,41 @@
+name: Model results on your machine
+description: How a local model did on your hardware, for the guide by memory in docs/MODELS.md.
+labels: ["models"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        docs/MODELS.md was measured on one Mac with 36 GB. Results from other machines, above all ones with more memory or an NVIDIA GPU, make its guide by memory better.
+
+        Use the bundled practice set and eval-local's bundled cases only: nothing from a real event. Never paste a key or a token.
+  - type: input
+    id: machine
+    attributes:
+      label: The machine
+      description: Memory, CPU, and the GPU with its memory (or "Apple silicon"). The top lines of `flightdeck models` say them.
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: The model, and what serves it
+      description: For example `qwen3.5:9b` on Ollama 0.40, or an MLX build on mlx_lm.server, with any server flags and the context length you set.
+    validations:
+      required: true
+  - type: textarea
+    id: light
+    attributes:
+      label: Light jobs
+      description: The table `flightdeck eval-local --engine openai --base-url URL --model MODEL --compare rules` prints.
+      render: text
+  - type: textarea
+    id: lanes
+    attributes:
+      label: Lanes
+      description: The scorecard `flightdeck score` prints after `flightdeck practice` with the model as your lanes' model (solved, time, tokens).
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Memory the server held, replies that timed out, settings you had to change.

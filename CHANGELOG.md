@@ -2,6 +2,83 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## 0.2.0 (unreleased)
+
+A model per small job, plus fixes from a rehearsal against a real CTFd, a security review and
+the first pricing issue.
+
+### A model per small job
+
+- `[light] jobs` lists the jobs a run gives the light model. The default is `["judge"]`, the
+  hint judge alone, as in 0.1.0. A job can have an engine of its own in a `[light.<job>]` table
+  (a whole engine spec that inherits nothing from `[light]`, so one API's key never goes to
+  another's server): Claude Haiku for the flag check and an open-weight model on your machine
+  for the rest, say.
+- `flagcheck`: under auto submit, the light model looks at a flag before it goes out without
+  you. It can only hold a flag for you, never submit one, and no check outlives the run.
+- `route`: at a lane's start, the challenge's category where the board names none (the board's
+  own category always comes first), and the specialist family it suits.
+- `recon`: a first look at the handout, added to the lane's opening brief as data in a fence of
+  its own, never as instructions.
+- A lane says when a challenge's description names a service (`nc host port`, say) that the
+  board does not list as its instance.
+- `flightdeck eval-local` scores each job the way a run uses it, with cases for route, recon
+  and flagcheck. Which model did best at which job is in `docs/MODELS.md`.
+
+### Models and your machine
+
+- `flightdeck models` knows five more small models (Qwen3.5 0.8B, 2B and 4B, Gemma 4 E2B and
+  E4B) and offers each light model only for the jobs it did no worse at than no model.
+- `flightdeck models --memory GB [--apple | --gpu-memory GB]` gives the advice for a machine
+  you describe instead of this one. `docs/MODELS.md` is now a guide by memory, 4 to 36 GB.
+- `[api] context` (and `[fallback] context`) says how many tokens your model server gives a
+  lane, so the lane's context is refreshed before it outgrows it. Ollama gives 4,096 tokens by
+  default on most machines, too few for a lane: `doctor` and `models` say what context Ollama
+  gives your lanes' model and how to raise it, and `init` for Ollama writes the note.
+- `init` no longer suggests Phi-4-mini as a light model to measure.
+
+### Safety
+
+- Under auto submit, before a flag a lane gives goes out without you, flightdeck looks for it
+  in the challenge's whole description and handout (a coding agent's claim, the model's
+  `submit_flag` and an L1 engine's result alike). A flag found there, or one flightdeck could
+  not search all of the handout for, waits for you. In 0.1.0 that search stopped at size
+  limits, so a stand-in flag deep in a large handout could go out.
+- Coding-agent lanes in Docker keep the CLI's own configuration in the container, outside the
+  workspace: nothing a lane writes or unpacks in its workspace configures the CLI at its next
+  start.
+
+### Events
+
+- CTFd 3.8.9 answers a flag for a challenge with no tries left as a rate limit ("You have 0
+  tries remaining"). flightdeck now reads that as out of tries: the flag is never recorded as
+  wrong, the challenge's lanes stop, and nothing more is sent for it. It checks the
+  challenge's details first, since CTFd says the same for a burst of tries within a minute,
+  which passes.
+- A run knows the tries you or a teammate already used: each pull reads them from CTFd, a
+  challenge with none left starts out of tries, and a later pull that finds tries again (an
+  admin's change, or CTFd's timeout behaviour) opens it for you to queue.
+- Under the instance policy `off`, a lane's opening brief no longer offers the live instance,
+  and says the event's rules keep the lane off it.
+- `flightdeck preflight`'s submit auto line says that every flag of a challenge whose tries
+  the platform counts waits for you.
+- `flightdeck score` counts a run's solves the way `flightdeck report` does, against the board
+  the run played. A solve from before the run (on the platform, or in the team folder) is not
+  a solve during it.
+
+### Prices
+
+- A `[prices."<model>"]` table takes `cache_write`, the rate for prompt tokens written to the
+  cache; `init --provider anthropic` writes it. A cache rate left out is the input rate.
+- On the Anthropic API, every attempt of a call counts on the lane's meter at the price of the
+  model that ran it, including the attempts the refusal fallback ran and calls every model
+  declined. `[prices]` may price the models the fallback answers with, and `play` says before
+  lanes start what your config prices low or not at all.
+- A reply cut short by a kill, a solve or quitting still counts what its call cost.
+- Fast mode: tokens read from or written to the cache are priced with the cache multipliers on
+  the fast rate. 0.1.0 priced them at the full fast input rate, which showed a fast lane at
+  about twice its cost.
+
 ## 0.1.0 (2026-11-11)
 
 The first public release: the console, agent lanes on any model API or a local model server,
