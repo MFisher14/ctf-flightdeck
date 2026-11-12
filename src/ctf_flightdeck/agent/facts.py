@@ -31,9 +31,11 @@ escalation, a refresh) repeats as it was, so the cached prefix stays the same. W
 then is left out of the lane for good (never added mid-lane), said on the lane and once in the
 run; route's answers still reach the challenge's record, the console and the event log when
 they come (Deck.record_route). Every job's spend counts on the lane that started the first look,
-as the hint judge's does. A failure, a refusal, a timeout, an answer outside the options or an
-unsure one leaves the rules' answer (no family, no guess, no brief), said once in the run for
-each kind; nothing is asked again or moved to another model.
+as the hint judge's does; a call with no known cost (no [light] price, a server on another host)
+leaves the lane's total not known but never makes the lane ask: its dollar cap holds on what is
+known, said once on the lane (Deck._spend). A failure, a refusal, a timeout, an answer outside
+the options or an unsure one leaves the rules' answer (no family, no guess, no brief), said once
+in the run for each kind; nothing is asked again or moved to another model.
 
 Everything the facts and the light model's answers hold is untrusted: the light model gets the
 facts inside the harness's fence (light.render), and the brief goes to the lane inside a fence
@@ -451,10 +453,14 @@ class FirstLooks:
     # ------------------------------------------------------------------ what the run is told
 
     def _spent(self, deck: Deck, look: Look, answer: Answer, why: str, engine: Light) -> None:
-        """A job's spend, on the lane it ran for (also once that lane has ended: spend only)."""
+        """A job's spend, on the lane it ran for (also once that lane has ended: spend only),
+        in the name of the light model (its label when it names no model: a decider's). With
+        no known cost it never makes the lane ask: the lane's dollar cap holds on what is known
+        (TurnReport.light)."""
         if answer.spent and look.lane_id in deck.lanes:
             deck.report(look.lane_id, TurnReport(turn=False, tokens=answer.tokens, cached_tokens=answer.cached_tokens,
-                                                 dollars=answer.cost, why=why, model=engine.model or None))
+                                                 dollars=answer.cost, why=why, model=engine.model or engine.label,
+                                                 light=True))
 
     def _failed(self, deck: Deck, look: Look, job: str, key: str, answer: Answer, engine: Light) -> None:
         kind = "for an unsure answer" if answer.failure == UNSURE else "for this kind of failure"
@@ -504,13 +510,13 @@ def first_look_notes(lights: Lights | None) -> list[str]:
                 "handout's strings say; a lane never waits for it: what is not back by its first model call is left "
                 "out of its brief")
         price, free = getattr(engine, "price", None), getattr(engine, "free", False)
+        held = ("a lane's dollar total is then only partly known, and its dollar cap holds on the part that is known "
+                "(route and recon never make a lane ask you)")
         if engine.engine == "anthropic" and price is None:
-            line += ("; no price for it in your config, so its calls are unpriced: a dollar-capped lane asks you once "
-                     "before it carries on without its cap")
+            line += f"; no price for it in your config, so its calls are unpriced: {held}"
         elif engine.engine == "openai" and price is None and not free:
-            line += ("; no price for it in your config, so its calls are unpriced unless the API reports their cost: a "
-                     "dollar-capped lane may ask you once")
+            line += f"; no price for it in your config, so its calls are unpriced unless the API reports their cost: {held}"
         elif engine.engine == "decider" and not free:
-            line += "; its server is not on this machine, so its calls' cost is unknown: a dollar-capped lane may ask you once"
+            line += f"; its server is not on this machine, so its calls' cost is unknown: {held}"
         lines.append(line)
     return lines

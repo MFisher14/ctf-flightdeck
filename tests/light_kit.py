@@ -79,12 +79,14 @@ class LightModel:
     def requests(self, job: str) -> list[dict]:
         return [r for r in self.server.chats() if job_of(r) == job]
 
-    def engine(self, *, timeout: float = 20.0) -> L.ModelLight:
+    def engine(self, *, timeout: float = 20.0, free: bool = True) -> L.ModelLight:
         """The light engine as build() makes it, but with the client's own time limit well past
-        the job's, so a job that runs out of time is the job's TIMEOUT, never an HTTP error."""
+        the job's, so a job that runs out of time is the job's TIMEOUT, never an HTTP error.
+        `free`: as build() makes it for a server on this machine; False, as for a server on
+        another host with no [light] price: a call the API reports no cost for has none known."""
         client = ModelClient(self.server.base_url, None, max_retries=0, timeout=max(4 * timeout, 10.0))
         return L.ModelLight("openai", client, "light/m", timeout=timeout, tokens=L.OPENAI_TOKENS, temperature=0.0,
-                            free=True)
+                            free=free)
 
     def __enter__(self) -> LightModel:
         self.server.__enter__()
@@ -140,8 +142,8 @@ class Lab:
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{real_one}"))
         self.lights = lights
 
-    def release(self, *challenges: Challenge) -> None:
-        self.deck.release(list(challenges), [QueueEntry(ch.id, "small") for ch in challenges])
+    def release(self, *challenges: Challenge, dollar_cap: float | None = None) -> None:
+        self.deck.release(list(challenges), [QueueEntry(ch.id, "small", dollar_cap=dollar_cap) for ch in challenges])
 
     def lane(self, cid: str):
         (lane,) = [x for x in self.deck.lanes.values() if x.challenge_id == cid]

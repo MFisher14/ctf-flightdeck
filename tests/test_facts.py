@@ -159,7 +159,8 @@ def test_the_run_says_what_route_and_recon_do_and_whether_their_calls_are_priced
         route, recon = F.first_look_notes(L.Lights(engines={"route": local, "recon": paid}))
         assert "routes each challenge" in route and "writes a first look" not in route
         assert recon.startswith("light model: anthropic claude-haiku-5-5 writes a first look")
-        assert "unpriced: a dollar-capped lane asks you once before it carries on without its cap" in recon
+        assert ("unpriced: a lane's dollar total is then only partly known, and its dollar cap holds on the part that "
+                "is known (route and recon never make a lane ask you)") in recon
         assert F.first_look_notes(L.Lights(engines={"judge": local})) == [] and F.first_look_notes(None) == []
     finally:
         asyncio.run(local.aclose())

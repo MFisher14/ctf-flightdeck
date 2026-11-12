@@ -22,12 +22,14 @@ import pytest
 from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, FIRST_LOOK
 from ctf_flightdeck.console import views
 from ctf_flightdeck.core import interventions as iv
-from ctf_flightdeck.core.model import PendingKind
+from ctf_flightdeck.core.model import AlertKind, EventKind, PendingKind
 from ctf_flightdeck.eventlog import EventLog
 from ctf_flightdeck.light import DeciderLight
+from fake_anthropic import FakeAnthropicServer
+from fake_anthropic import text_message as claude_says
 from fake_decider import FakeDeciderServer, picks
 from fake_model import FakeModelServer, error_reply, tool_call_reply
-from light_kit import Lab, LightModel, challenge, handout, lights, notes, until, user_text
+from light_kit import STARTS, Lab, LightModel, challenge, handout, lights, notes, until, user_text
 
 HAS_FILE = shutil.which("file") is not None
 NEEDS_FILE = pytest.mark.skipif(not HAS_FILE, reason="the `file` command is not on this machine")
@@ -394,6 +396,74 @@ def test_route_and_recon_spend_counts_on_the_lane(tmp_path):
         asyncio.run(main())
 
 
+@pytest.mark.parametrize("back", ["before the first call", "after the first call"])
+def test_a_light_model_with_no_known_cost_never_stops_a_dollar_capped_lane_and_the_cap_still_holds(tmp_path, back):
+    """A light model whose calls have no known cost (no [light] price, an API that reports none,
+    a server on another host) never makes a dollar-capped lane wait for the player: not before
+    its first model call (the first look back in the window an L1 stage gives it) and not after
+    it. Its spend counts on the lane, whose total is then not known; the cap holds on what is
+    known, so the lane's own model, which is priced, is still capped by it."""
+    turn_cost = {"dollars": 0.0001}
+    lanes = FakeModelServer(responder=lambda record: tool_call_reply("shell", {"command": "ls"}, cost=turn_cost["dollars"]))
+    gate = threading.Event() if back.startswith("after") else None
+    with lanes, LightModel({"category": "osint", "family": "osint-lookup", "recon": "Likely: a lookup."}, gate=gate) as light:
+        async def main():
+            lab = Lab(tmp_path, lanes, {"where": handout(tmp_path, "where", {"photo.jpg": b"\xff\xd8JFIF"})},
+                      lights=lights(light.engine(free=False)))
+            try:
+                lab.release(challenge("where", "", "Where is this?"), dollar_cap=2.0)
+                lane = lab.lane("where")
+                if gate is None:
+                    await opened_after_the_first_look(lab, "where")
+                else:
+                    await until(lambda: lanes.chats(), "the lane's first model call")
+                    gate.set()
+                await until(lambda: lab.looked("where") and len(lab.spends()) == 3, "the light model's three jobs' spend")
+                turns = lane.turns
+                await until(lambda: lane.turns >= turns + 2, "two more turns of the lane")
+                assert [e.data["dollars"] for e in lab.spends()] == [None, None, None]  # no known cost, never $0
+                assert lane.dollars is None and lane.known_dollars == pytest.approx(lane.turns * 0.0001)
+                assert lane.pending is None and lane.alert(AlertKind.BUDGET) is None and lane.dollar_cap == 2.0
+                assert not [e for e in lab.deck.events if e.kind is EventKind.PENDING]
+                (said,) = [n for n in notes(lane) if "no known cost" in n]  # once, though three calls had none
+                assert said.startswith("the light model's ") and "the $2.00 cap holds on the $" in said
+                turn_cost["dollars"] = 1.5  # the lane's own model spends past the cap: it is still enforced
+                await until(lambda: lane.pending is not None, "the lane's budget approval")
+                assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail.startswith("raise the cap by 50%")
+            finally:
+                await lab.finish()
+
+        asyncio.run(main())
+
+
+def test_a_decision_model_that_names_no_model_spends_in_its_own_name_and_a_capped_lane_goes_on(tmp_path):
+    """A decision model on another host (so its cost is unknown) with no model named: its spend
+    is logged as its own, never as the lane's model's, and the dollar-capped lane goes on."""
+    lanes = FakeModelServer(responder=lambda record: tool_call_reply("shell", {"command": "ls"}, cost=0.0001))
+    decider = FakeDeciderServer(responder=picks("audio-signal", 0.95))
+    with lanes, decider:
+        engine = DeciderLight(decider.base_url, timeout=5.0, threshold=0.9)
+        engine.free = False  # as for a server on another host, which no test may reach
+
+        async def main():
+            lab = Lab(tmp_path, lanes, {"hiss": handout(tmp_path, "hiss", {"hiss.wav": "RIFF data"})},
+                      lights=lights(engine, ("route",)))
+            try:
+                lab.release(challenge("hiss", "for", "Hiss."), dollar_cap=2.0)
+                lane = lab.lane("hiss")
+                await until(lambda: lab.looked("hiss") and lab.spends(), "the route's spend")
+                turns = lane.turns
+                await until(lambda: lane.turns >= turns + 2, "two more turns of the lane")
+                (spend,) = lab.spends()
+                assert spend.data["model"] == engine.label == f"decider {engine.where}" and spend.data["dollars"] is None
+                assert lane.pending is None and lane.dollar_cap == 2.0
+                assert lab.deck.challenges["hiss"].family == "audio-signal"
+            finally:
+                await lab.finish()
+
+        asyncio.run(main())
+
+
 # ---------------------------------------------------------------------- the facts
 
 
@@ -527,3 +597,49 @@ def test_a_run_gives_its_lanes_the_first_look_its_light_jobs_name(tmp_path, jobs
         assert not any("routes each challenge" in n for n in notes) and light.asked() == []
         assert (ch.category_guess, ch.family) == ("", "")
     assert lane.turns >= 2
+
+
+def claude_answers(record: dict):
+    """The fake Anthropic API as a light model: each route or recon job its answer, with no cost
+    in its usage (the real API reports none)."""
+    messages = (record.get("json") or {}).get("messages") or []
+    user = "".join(block.get("text", "") for m in messages if m.get("role") == "user" for block in m.get("content") or [])
+    job = next((job for job, start in STARTS.items() if user.startswith(start)), "other")
+    return claude_says({"category": "for", "family": "audio-signal", "recon": "Files: a WAV."}.get(job, "no idea"))
+
+
+def test_a_run_whose_light_model_has_no_price_never_stops_a_dollar_capped_lane(tmp_path, monkeypatch):
+    """The plan's own example: route and recon on claude-haiku-5-5 with no [light] price, and
+    lanes capped at $2 on a priced model. The run says the light model's calls are unpriced and
+    never make a lane ask; the lane never waits for an approval and keeps its cap."""
+    from ctf_flightdeck.run import RunOptions, prepare_run
+
+    monkeypatch.setenv("FLIGHTDECK_TEST_LIGHT_KEY", "unit-test-key")  # not a key: the fake API takes any
+    lanes = FakeModelServer(responder=looping)
+    with lanes, FakeAnthropicServer(responder=claude_answers) as claude:
+        path = run_config(tmp_path, lanes.base_url, claude.base_url, 'jobs = ["route", "recon"]\n')
+        text = path.read_text().replace('engine = "openai"\nmodel = "light/m"', 'engine = "anthropic"\nmodel = "claude-haiku-5-5"')
+        text = text.replace('key_env = ""\ntimeout', 'key_env = "FLIGHTDECK_TEST_LIGHT_KEY"\ntimeout')
+        path.write_text(text.replace("dollar_cap = false", "dollar_cap = 2.0") + '[prices."fake/small"]\ninput = 0.1\noutput = 0.1\n')
+        run = prepare_run(RunOptions(board=run_board(tmp_path), config=path))
+        notes = run.notes()
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            await until(lambda: run.driver.looks.done("hiss") and len(claude.requests) == 3, "the first look")
+            turns = lane.turns
+            await until(lambda: lane.turns >= turns + 2, "two more turns of the lane")
+            assert lane.pending is None and lane.dollar_cap == 2.0
+            assert lane.dollars is None and lane.known_dollars > 0  # the light model's part is not known; the lane's is
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    assert any(n.startswith("light model: anthropic claude-haiku-5-5 routes each challenge") and "its calls are unpriced"
+               in n and "route and recon never make a lane ask you" in n for n in notes)
+    logged = [json.loads(x) for x in run.log.path.read_text().splitlines()]
+    assert not [e for e in logged if e.get("kind") == "pending"]
+    spends = [e["data"] for e in logged if e.get("kind") == "spend"]
+    assert len(spends) == 3 and all(s["dollars"] is None and s["model"] == "claude-haiku-5-5" for s in spends)
+    assert run.deck.challenges["hiss"].family == "audio-signal"
