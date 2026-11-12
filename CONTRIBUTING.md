@@ -1,7 +1,42 @@
 # Contributing
 
-flightdeck is alpha, and help is welcome: a bug report, a fix, a test, a doc that says it better.
+flightdeck is alpha, and help is welcome. There are three ways to help, and the first needs no
+code:
+
+1. [Play and share what you ran](#share-a-flight-card): the most useful of the three.
+2. [Build](#set-up): a bug report, a fix, a test, a feature, a doc that says it better.
+3. [Sponsor](#sponsoring) the model measurements.
+
 [docs/VISION.md](docs/VISION.md) says what flightdeck is for and what it is not: read it first.
+
+## Share a flight card
+
+Nobody knows yet which model is best for which kind of challenge, on which machine, at what
+cost. One player's runs cannot answer that. Many players' runs can.
+
+```sh
+flightdeck practice          # or play any board
+flightdeck share latest      # prints the flight card of your newest run
+```
+
+A flight card says what you ran (flightdeck's version, the models, Docker or host, lanes at
+once, a coding-agent CLI, a solver pack or none) and how it went (solves by category, time,
+tokens, dollars, how often you stepped in, and the mode: hands-on, approve-only or hands-off).
+It holds no flag, no challenge name and no challenge text, and `share` sends nothing anywhere:
+it prints, and you paste it into
+[a flight card issue](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=flight-card.yml).
+
+- The practice set is the best comparison, since everyone plays the same 14 challenges. Try a
+  model nobody has posted yet, a local model on your hardware, or a different number of lanes.
+- A real event counts too, once it has ended and if its rules allowed AI tools.
+- Logs help when you can share them: `flightdeck report RUN_DIR` for a practice run. A report
+  names challenges and quotes lane steps, so for a real event share it only if the event
+  allows writeups.
+- Played a whole event? [Put it on the leaderboard](docs/LEADERBOARD.md), with your GitHub
+  name.
+- A local model on unusual hardware:
+  [the model results form](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=hardware.yml)
+  asks for a little more.
 
 ## Set up
 
@@ -78,6 +113,16 @@ The practice set is the board that `flightdeck practice` plays
 3. Add a reference solver to `tests/test_practice.py` that recovers the flag from the handout with
    the standard library, without running handout code.
 4. Keep it synthetic and small: no compiled binaries, no executable files, under 1 MB per handout.
+
+## Sponsoring
+
+flightdeck is free and MIT-licensed, and stays that way. What costs money is measuring: every
+figure in [docs/MODELS.md](docs/MODELS.md) for an API model was paid for per token, and each new
+model means running the sets again. Sponsorship pays for those runs, and the results are
+published for everyone.
+
+A sponsor page is not set up yet. Until it is, a flight card from a model you already pay for
+does the same job.
 
 ## Agents
 

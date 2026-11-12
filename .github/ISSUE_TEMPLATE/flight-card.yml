@@ -1,0 +1,37 @@
+name: Share a flight card
+description: What you ran and how it went, from `flightdeck share`. The most useful thing you can send.
+title: "Flight card: "
+labels: ["flight card"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Cards from many setups show which models are fastest, cheapest and best for which kind of challenge.
+
+        Run `flightdeck share latest` (or `flightdeck share RUN_DIR`) and paste what it prints. A card holds no flags, no challenge names and no challenge text. The practice set counts, and so does any event that has ended and whose rules allowed AI tools.
+
+        Never paste a key or a token. Read what you paste before you post it: this page is public.
+  - type: textarea
+    id: card
+    attributes:
+      label: The flight card
+      description: Everything `flightdeck share` printed.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Your machine (for models that ran on it)
+      description: Memory, CPU, and the GPU with its memory or "Apple silicon". The top lines of `flightdeck models` say them. Leave empty for API models.
+  - type: textarea
+    id: notes
+    attributes:
+      label: What you noticed
+      description: Where a model was strong or weak, which interventions worked, anything that surprised you.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: The output of `flightdeck report RUN_DIR`, for a practice run or an event that has ended and allows writeups. It names challenges and quotes lane steps, so leave it out when in doubt.
+      render: text

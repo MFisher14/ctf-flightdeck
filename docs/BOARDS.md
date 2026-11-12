@@ -62,7 +62,7 @@ So is a `files` entry that does not exist, that leaves the challenge folder (`..
 path), or that is or passes through a symlink.
 
 A challenge with `urls` is a **live** challenge. A Docker lane gets a network only when its
-challenge is live (the README's [Docker or host](../README.md#docker-or-host) says which network,
+challenge is live (the guide's [Docker or host](GUIDE.md#docker-or-host) says which network,
 and when a lane asks you first), and a lane's http tool reaches only the origins listed here.
 
 ## `board.json`
@@ -228,8 +228,8 @@ What the policies mean during a run:
 - **l1** and **agents**: under `confirm`, starting `play` is your yes. With `l1` at `manual` or
   `off`, your solver pack does not run.
 - **submit**: under `confirm`, every flag waits for your `a`. Under `auto`, a flag a lane submits
-  goes at once, with the exceptions the README lists under
-  [Play a board](../README.md#play-a-board).
+  goes at once, with the exceptions the guide lists under
+  [Play a board](GUIDE.md#play-a-board).
 - **instance**: under `confirm`, a lane whose challenge is live asks you before its first model
   call, and until you allow it a Docker lane has no network. Under `manual` or `off`, lanes never
   reach the instance.

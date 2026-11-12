@@ -220,7 +220,7 @@ disk: flightdeck keeps a bounded part of its output.
 **Flags.** A flag that an engine reports as its result (`solved` or `candidate`) waits for your
 approval. Under auto submit it goes to the platform at once, with the same exceptions as a flag a
 lane's model found: for one, a flag that the challenge's own description or handout files hold,
-which is often a decoy, still waits (the README's [Play a board](../README.md#play-a-board) lists
+which is often a decoy, still waits (the guide's [Play a board](GUIDE.md#play-a-board) lists
 them all). A flag that is only a match in what an engine printed (`output = "text"`, so every
 imported script) always waits for you, under auto submit too.
 

@@ -34,7 +34,7 @@ problem: report it privately, never in a public issue.
   your machine, so it can read your files, your keys file and flightdeck's own environment, and
   send what it reads to its model's API. flightdeck says so before every host run, and there the
   cleanup of logs and transcripts is cleanup, not a fence. Use Docker, a disposable VM or a
-  separate low-limit key (the README's [Docker or host](README.md#docker-or-host) says what each
+  separate low-limit key (the guide's [Docker or host](docs/GUIDE.md#docker-or-host) says what each
   runtime exposes). A report that a `--host` lane can read or send something of yours is not a
   vulnerability report.
 - **A coding-agent CLI's own credential.** The commands `--agent claude` or `--agent codex` runs

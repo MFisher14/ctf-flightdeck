@@ -3,7 +3,7 @@
 What flightdeck's own lanes can call, where their keys come from, and what happens when an API
 fails or a model declines. Coding-agent lanes (`play --agent claude|codex`) use their CLI's own
 credential and models instead (`[agents]` in your config; see
-[Coding-agent lanes](../README.md#coding-agent-lanes) in the README). Which models fit your
+[Coding-agent lanes](GUIDE.md#coding-agent-lanes) in the guide). Which models fit your
 machine: `flightdeck models`, and the measured results in [MODELS.md](MODELS.md).
 
 ## Choosing one
@@ -43,7 +43,7 @@ from its environment first, then from `~/.config/ctf-flightdeck/keys.env` (or th
 `$FLIGHTDECK_KEYS` names), which must be readable by you only (chmod 600). flightdeck never
 prints, logs or stores a key. A lane's commands get an environment built from an allowlist, so
 no key is handed to them; on the host runtime a lane still runs as you and can read your files
-(see [Docker or host](../README.md#docker-or-host) in the README). A coding-agent lane is different: its
+(see [Docker or host](GUIDE.md#docker-or-host) in the guide). A coding-agent lane is different: its
 CLI gets its own credential, and the commands the agent runs can read it, in Docker too, so give
 it a key you can revoke, with a low spending limit. `flightdeck doctor` checks that each
 variable is set, never its value.

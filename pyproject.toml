@@ -7,7 +7,10 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [{ name = "Maximus Fisher" }]
-keywords = ["ctf", "capture-the-flag", "security", "ai-agents", "llm", "tui", "terminal"]
+keywords = [
+    "ctf", "capture-the-flag", "ctfd", "security", "cybersecurity", "ai-agents", "agent-harness",
+    "llm", "claude", "codex", "ollama", "tui", "textual", "terminal",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
