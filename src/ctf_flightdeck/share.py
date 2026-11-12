@@ -219,4 +219,7 @@ def card(record: RunRecord, setup: Mapping[str, object] | None, *, version: str 
     out.append("you approved or declined: " + (", ".join(f"{said[name]} {SAID[name]}" for name in sorted(said)) or "nothing"))
     out.append("you steered: " + (", ".join(f"{steer[name]} {name}" for name in sorted(steer)) or "nothing"))
     out.append(f"mode: {which} ({MODES[which]})")
+    if flight.pilot or flight.by_rule:  # autopilot's own steps: never among the player's above, nor in the mode
+        done = sum(1 for step in flight.by_rule if step.ok is not False)
+        out.append(f"autopilot: engaged, {_plural(done, 'intervention')} by rule")
     return "\n".join(out) + "\n"
