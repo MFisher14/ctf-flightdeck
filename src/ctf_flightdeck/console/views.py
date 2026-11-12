@@ -33,6 +33,7 @@ from .. import fmt
 from ..core.attention import ALERT_URGENCY, SortMode
 from ..core.deck import Deck
 from ..core.model import (
+    COURSE_ALERTS,
     INFORMATIONAL_ALERTS,
     ME,
     Action,
@@ -182,6 +183,105 @@ def quick_answers(lane: Lane) -> list[QuickAnswer]:
     for s in top.suggestions:
         if s.key in KEY_COMMAND and len(out) < 9:
             out.append(QuickAnswer(str(len(out) + 1), s.key, s.text, s.label))
+    return out
+
+
+# ---------------------------------------------------------------------- approving several flags
+
+
+@dataclass(frozen=True)
+class FlagBatch:
+    """What "approve all" would do: the flags it approves, and the approvals it leaves."""
+
+    send: tuple[tuple[str, str], ...]  # (lane id, flag): the submit approval each lane asks about now
+    left: tuple[tuple[str, str, str], ...]  # (lane id, why it is left as it is: in a few words, in full)
+
+
+# Why an approval is left, in a few words (the status line) and in full (the prompt).
+LEFT_TRIES = ("counted tries", "the platform counts the tries at its flag: approve it on its own (a)")
+LEFT_CONFIRM = ("hand submit", "you submit it by hand, then say how it went (a accepted, d rejected)")
+LEFT_BUDGET = ("budget", "more budget is not a flag")
+LEFT_BOX = ("live box", "live-box access is not a flag")
+LEFT_NO_FLAG = ("no flag", "its approval names no flag")
+LEFT_TAKEN = ("taken over", "you have its shell: hand it back first")
+
+
+def flag_batch(deck: Deck) -> FlagBatch:
+    """The lanes that need the player, most urgent first, split into the flags one yes can
+    approve and the approvals that keep their own answer: a flag of a challenge whose tries
+    the platform counts (DeckConfig.holds), a hand submit to confirm, more budget, the live
+    box, and a lane the player has taken over (the deck would refuse it)."""
+    send: list[tuple[str, str]] = []
+    left: list[tuple[str, str, str]] = []
+    for lane in deck.needing():
+        pending = lane.pending
+        if pending is None:
+            continue
+        if pending.kind is PendingKind.CONFIRM:
+            left.append((lane.id, *LEFT_CONFIRM))
+        elif pending.kind is PendingKind.BUDGET:
+            left.append((lane.id, *LEFT_BUDGET))
+        elif pending.kind is PendingKind.LIVE_BOX:
+            left.append((lane.id, *LEFT_BOX))
+        elif pending.flag is None:
+            left.append((lane.id, *LEFT_NO_FLAG))
+        elif lane.state is LaneState.TAKEOVER:
+            left.append((lane.id, *LEFT_TAKEN))
+        elif deck.config.holds(deck.challenges[lane.challenge_id]):
+            left.append((lane.id, *LEFT_TRIES))
+        else:
+            send.append((lane.id, pending.flag))
+    return FlagBatch(tuple(send), tuple(left))
+
+
+def batch_refusal(deck: Deck, lane_id: str, flag: str) -> str | None:
+    """Why a flag the approve-all prompt listed is not approved after all (None: approve it), in a few words:
+    its lane no longer waits with that flag, since it was answered, or dropped as known
+    wrong, while the prompt was open or by an approval earlier in the same batch."""
+    lane = deck.lanes.get(lane_id)
+    if lane is None:
+        return "lane gone"
+    pending = lane.pending
+    if not lane.finished and pending is not None and pending.kind is PendingKind.SUBMIT and pending.flag == flag:
+        return LEFT_TRIES[0] if deck.config.holds(deck.challenges[lane.challenge_id]) else None
+    if deck.not_flag(lane.challenge_id, flag) is not None:
+        return "known wrong, not sent"
+    if lane.finished:
+        return f"lane {lane.state.value}"
+    return "answered meanwhile"
+
+
+def left_text(left: Sequence[tuple[str, str, str]]) -> str:
+    """The approvals left, for the status line (one row): "L02 (why), L05 (why)", each why
+    in a few words."""
+    return ", ".join(f"{lane_id} ({untrusted(short, one_line=True)})" for lane_id, short, _ in left)
+
+
+def approve_summary(deck: Deck, batch: FlagBatch) -> Text:
+    """The approve-all prompt: each flag by lane and challenge, then what is left and why."""
+
+    def name(lane_id: str) -> str:
+        return untrusted(deck.challenges[deck.lanes[lane_id].challenge_id].name, one_line=True)
+
+    count = len(batch.send)
+    out = Text()
+    out.append(f"{count} flag{'' if count == 1 else 's'} to approve", "bold")
+    for lane_id, flag in batch.send:
+        out.append(f"\n  {lane_id} ", "bold")
+        out.append(name(lane_id), "bold")
+        out.append("  ")
+        out.append(untrusted(flag, one_line=True), theme.PURPLE)
+    if batch.left:
+        out.append(f"\nLeft as {'it is' if len(batch.left) == 1 else 'they are'} ({len(batch.left)})", "bold")
+        for lane_id, _, why in batch.left:
+            out.append(f"\n  {lane_id} ", "bold")
+            out.append(name(lane_id), "bold")
+            out.append(f"  {untrusted(why, one_line=True)}", theme.MUTED)
+    out.append(
+        "\n\nEach is approved as the a key approves it, one approval per lane: the flags of one challenge go to the "
+        "platform one at a time, and a flag known wrong is never sent. Nothing is sent before you answer.",
+        theme.MUTED,
+    )
     return out
 
 
@@ -683,6 +783,10 @@ def lane_why(deck: Deck, lane: Lane) -> Text:
         out.append(lane_line(deck, lane, top.reason))
         out.append("\n")
         out.append_text(_answers(lane, top))
+        if top.kind in COURSE_ALERTS:
+            out.append("  ")
+            out.append_text(theme.key_chip("x"))
+            out.append(" dismiss", theme.MUTED)
         out.append("   enter open", theme.MUTED)
         return out
     if lane.pending is not None:
@@ -831,6 +935,9 @@ def now_card(deck: Deck, lane: Lane) -> RenderableType:
             else:
                 line.append(label, theme.MUTED)
             rows.append(line)
+        if alert is top and alert.kind in COURSE_ALERTS:  # what /dismiss would take down
+            rows.append(Text.assemble(("       ", ""), ("/dismiss", f"bold {theme.ACCENT}"),
+                                      ("   not a problem: take the alert down, the lane carries on", theme.MUTED)))
     if lane.pending is not None:
         border = border or theme.PURPLE
         yes, no = PENDING_ANSWERS[lane.pending.kind]

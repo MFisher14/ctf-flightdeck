@@ -26,8 +26,9 @@ COMMANDS = (
     Command("redirect", "<plan>", "replace the lane's plan"),
     Command("fork", "[approach]", "a sibling lane on another model"),
     Command("kill", "[park]", "end the lane: re-queue it fresh, or park it"),
-    Command("approve", "", "approve what the lane waits for"),
+    Command("approve", "[all]", "approve what the lane waits for; all: every flag that waits for a plain yes, after a prompt that lists them"),
     Command("decline", "", "say no: not submitted, or off the box (the lane carries on); no more budget (it stops)"),
+    Command("dismiss", "", "take down the lane's alert about its course: you judge it wrong; it stays quiet as an answered one does"),
     Command("escalate", "", "hand a summary to a stronger model"),
     Command("pause", "", "pause or resume the lane"),
     Command("takeover", "", "a shell in the lane's workspace; exit it to hand the lane back"),
@@ -54,6 +55,7 @@ KEY_COMMAND = {
     "e": "escalate",
     "a": "approve",
     "d": "decline",
+    "x": "dismiss",
     "p": "pause",
     "t": "takeover",
 }
@@ -68,6 +70,17 @@ class Parsed:
     command: Command | None  # None: a plain message to the lane
     lane: str | None  # a lane named in the command, e.g. "L07"
     arg: str  # everything after the command (and lane)
+
+
+ALL = "all"  # /approve all: every waiting flag, not one lane's approval
+
+
+def needs_lane(parsed: Parsed) -> bool:
+    """Whether what was typed acts on a lane: a plain message, or a lane command (but not
+    /approve all, which goes over every lane)."""
+    if parsed.command is None:
+        return True
+    return parsed.command.lane and not (parsed.command.name == "approve" and parsed.arg == ALL)
 
 
 def lane_id(token: str) -> str | None:
@@ -88,9 +101,14 @@ def parse(text: str) -> Parsed:
     first, _, tail = rest.partition(" ")
     named = lane_id(first) if command.lane else None
     arg = tail.strip() if named is not None else rest
-    if arg and not command.args:
+    if command.name == "approve" and arg.lower() == ALL:
+        if named is not None:
+            raise CommandError("/approve all names no lane: it approves every flag that waits for a plain yes")
+        return Parsed(command, None, ALL)
+    if arg and (not command.args or command.name == "approve"):
         # a stray word must not fall back to the selected lane: /approve 2 is not L02
         where = f"; name a lane like /{command.name} L02" if command.lane else ""
+        where += " (or /approve all)" if command.name == "approve" else ""
         raise CommandError(f"/{command.name} takes no argument{where}")
     if arg and command.name == "open":
         raise CommandError("/open takes a lane, like /open L02")

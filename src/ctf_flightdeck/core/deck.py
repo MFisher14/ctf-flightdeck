@@ -54,12 +54,13 @@ from dataclasses import asdict, dataclass, replace
 
 from .. import fmt
 from ..text import untrusted
-from .attention import attention_key
+from .attention import ALERT_URGENCY, attention_key
 from .driver import Clock, LaneDriver, Submitter, TurnReport, Verifier, spend_only
 from .interventions import (
     Approve,
     Claim,
     Decline,
+    Dismiss,
     Escalate,
     Fork,
     HandBack,
@@ -76,6 +77,7 @@ from .interventions import (
 )
 from .model import (
     COURSE_ALERTS,
+    INFORMATIONAL_ALERTS,
     ME,
     Action,
     ActionKind,
@@ -699,6 +701,8 @@ class Deck:
                 return self._approve(lane)
             case Decline():
                 return self._decline(lane)
+            case Dismiss():
+                return self._dismiss(lane)
         raise TypeError(f"unknown intervention {iv!r}")
 
     def _no_more_turns(self, lane: Lane) -> str:
@@ -904,6 +908,29 @@ class Deck:
         if pending.kind is PendingKind.SUBMIT:
             return Outcome(True, f"Not submitted: {pending.flag}; {lane.id} carries on")
         return Outcome(True, f"{lane.id} stays off the live box")
+
+    def _dismiss(self, lane: Lane) -> Outcome:
+        """Take down the lane's most urgent alert that wants an answer, when it is about the
+        lane's course; the lane is not told. Any other alert has its own answer: refused, saying
+        which. (The Watch sees a course alert go during an intervention and keeps it quiet.)"""
+        answerable = [a for a in lane.alerts if a.kind not in INFORMATIONAL_ALERTS]
+        if not answerable:
+            if lane.pending is not None:
+                return Outcome(False, f"{lane.id} waits for your approval, not for an alert: approve (a) or decline (d) it")
+            if lane.alerts:
+                return Outcome(False, f"Nothing to dismiss on {lane.id}: its alert ({lane.alerts[0].kind.label}) needs no answer, "
+                                      "flightdeck already acted")
+            return Outcome(False, f"{lane.id} has no alert to dismiss")
+        top = min(answerable, key=lambda a: ALERT_URGENCY[a.kind])
+        if top.kind is AlertKind.FLAG:
+            return Outcome(False, f"{lane.id}'s flag is not dismissed: approve (a) or decline (d) it")
+        if top.kind is AlertKind.BUDGET:
+            return Outcome(False, f"{lane.id}'s budget alert is not dismissed: approve more (a), escalate (e) or kill (k)")
+        if top.kind not in COURSE_ALERTS:
+            return Outcome(False, f"{lane.id}'s alert ({top.kind.label}) is not one to dismiss")
+        self._clear(lane, top.kind)
+        self._note(lane, f"dismissed the alert: {top.kind.label}", Actor.PLAYER)
+        return Outcome(True, f"Dismissed {lane.id}'s alert ({top.kind.label}); the lane carries on as it was")
 
     def _claim(self, challenge_id: str) -> Outcome:
         if not self.config.team:

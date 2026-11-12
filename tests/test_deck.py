@@ -2448,3 +2448,49 @@ def test_a_lane_that_ended_without_a_solve_can_be_forked_onto_another_model():
     assert not out.ok and out.message.endswith("fork it to try another model (f)")
     out = deck.apply(iv.Fork(lane.id, model="big"))
     assert out.ok and newest(deck).model == "big" and newest(deck).challenge_id == "c0"
+
+
+# ---------------------------------------------------------------------- dismissing an alert
+
+
+def test_dismiss_takes_down_the_most_urgent_course_alert_only_and_the_lane_is_not_told():
+    deck, driver, _ = make_deck(n=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", alerts=(Alert(AlertKind.HINT, "sstv"), Alert(AlertKind.LOOP, "ls again"),
+                                                            Alert(AlertKind.TEAMMATE, "wren has the box"))))
+    calls, plan, since = list(driver.calls), lane.plan, len(deck.events)
+    out = deck.apply(iv.Dismiss(lane.id))
+    assert out.ok and out.message == f"Dismissed {lane.id}'s alert (Loop); the lane carries on as it was"
+    assert [a.kind for a in lane.alerts] == [AlertKind.HINT, AlertKind.TEAMMATE]  # the loop came first: more urgent
+    assert driver.calls == calls and lane.hints == [] and lane.plan == plan and lane.state is LaneState.RUNNING
+    last = lane.actions[-1]
+    assert (last.text, last.by, last.kind) == ("dismissed the alert: Loop", Actor.PLAYER, ActionKind.PLAYER)
+    logged = [(e.kind, e.lane, e.data.get("intervention"), e.data.get("ok")) for e in deck.events[since:]]
+    assert logged == [(EventKind.INTERVENTION, lane.id, "dismiss", None), (EventKind.OUTCOME, lane.id, "dismiss", True)]
+    out = deck.apply(iv.Dismiss(lane.id))
+    assert out.ok and "(Ignores the hint)" in out.message
+    assert [a.kind for a in lane.alerts] == [AlertKind.TEAMMATE]
+
+
+def test_dismiss_is_refused_with_the_reason_for_an_alert_that_has_its_own_answer_and_changes_nothing():
+    deck, driver, _ = make_deck(n=4, max_lanes=4, token_cap=1000)
+    flag, budget, mate, box = (lane_on(deck, f"c{i}") for i in range(4))
+    deck.report(flag.id, TurnReport(flag="t{maybe}", alerts=(Alert(AlertKind.STALL, "idle"),)))
+    deck.report(budget.id, TurnReport(tokens=850, alerts=(Alert(AlertKind.LOOP, "again"),)))
+    deck.report(mate.id, TurnReport(alerts=(Alert(AlertKind.TEAMMATE, "wren has the box"),)))
+    deck.report(box.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "use the live box")))
+    before = {lane.id: (list(lane.alerts), lane.pending, lane.state, len(lane.actions)) for lane in deck.lanes.values()}
+    calls = list(driver.calls)
+    refused = {lane.id: deck.apply(iv.Dismiss(lane.id)) for lane in (flag, budget, mate, box)}
+    assert not any(out.ok for out in refused.values())
+    assert refused[flag.id].message == f"{flag.id}'s flag is not dismissed: approve (a) or decline (d) it"
+    assert refused[budget.id].message == f"{budget.id}'s budget alert is not dismissed: approve more (a), escalate (e) or kill (k)"
+    assert refused[mate.id].message == (
+        f"Nothing to dismiss on {mate.id}: its alert (Teammate solved / box in use) needs no answer, flightdeck already acted"
+    )
+    assert refused[box.id].message == f"{box.id} waits for your approval, not for an alert: approve (a) or decline (d) it"
+    assert {lane.id: (list(lane.alerts), lane.pending, lane.state, len(lane.actions)) for lane in deck.lanes.values()} == before
+    assert driver.calls == calls
+    deck.apply(iv.Decline(box.id))
+    assert deck.apply(iv.Dismiss(box.id)).message == f"{box.id} has no alert to dismiss"
+    assert deck.apply(iv.Dismiss("L99")).message == "No lane L99"

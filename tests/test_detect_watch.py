@@ -130,6 +130,33 @@ def test_watch_stays_quiet_for_quiet_turns_after_the_player_answers():
     assert lane.alert(AlertKind.LOOP) is not None
 
 
+def test_a_dismissed_alert_stays_quiet_as_an_answered_one_does_and_comes_back_after_the_quiet_period():
+    cfg = DetectConfig(quiet_turns=3)
+    deck, _watch, _detach = harness(cfg)
+    lane = deck.lanes["L01"]
+    for _ in range(3):
+        run_step(deck, "$ loop")
+    assert lane.alert(AlertKind.LOOP) is not None
+    assert deck.apply(iv.Dismiss("L01")).ok
+    assert lane.alert(AlertKind.LOOP) is None and lane.hints == []  # taken down; the lane was told nothing
+    quiet = []
+    for _ in range(2):  # turns 4 and 5: the loop still holds, but the player dismissed it
+        run_step(deck, "$ loop")
+        quiet.append(lane.alert(AlertKind.LOOP))
+    assert quiet == [None, None]
+    run_step(deck, "$ loop")  # turn 6: the quiet period is over and it still holds: no permanent mute
+    assert lane.alert(AlertKind.LOOP) is not None
+
+
+def test_a_refused_dismiss_starts_no_quiet_period():
+    deck, _watch, _detach = harness()
+    lane = deck.lanes["L01"]
+    assert not deck.apply(iv.Dismiss("L01")).ok  # nothing to dismiss yet
+    for _ in range(3):
+        run_step(deck, "$ loop")
+    assert lane.alert(AlertKind.LOOP) is not None  # raised on time: the refusal held nothing quiet
+
+
 def test_a_non_answering_intervention_does_not_start_a_quiet_period():
     deck, _watch, _detach = harness()
     lane = deck.lanes["L01"]

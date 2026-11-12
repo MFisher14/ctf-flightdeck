@@ -89,6 +89,16 @@ class Decline:
 
 
 @dataclass(frozen=True)
+class Dismiss:
+    """Take down the lane's most urgent alert about its course, without touching the lane: the
+    player judges the alert wrong. Refused for any other alert (a flag, a budget and a teammate
+    alert have their own answers). Logged like every intervention, so the Watch keeps the alert
+    quiet as it does one the player answered."""
+
+    lane: str
+
+
+@dataclass(frozen=True)
 class Claim:
     """Team mode: tell teammates we are on this challenge."""
 
@@ -119,6 +129,7 @@ Intervention = (
     | HandBack
     | Approve
     | Decline
+    | Dismiss
     | Claim
     | Release
     | Queue

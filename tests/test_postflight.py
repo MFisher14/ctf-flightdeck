@@ -1747,3 +1747,33 @@ def test_report_with_a_board_it_cannot_search_fails_with_the_reason(played):
     assert result.exit_code == 2, result.output
     assert f"flightdeck: --board: {board}: cannot read it (Permission denied)" in result.output
     assert not (record.dir / "report.md").exists()
+
+
+def test_a_dismissed_alert_counts_as_dismissed_not_answered_and_is_not_judged(tmp_path):
+    run = Script(tmp_path, flags={"x": "t{x}"})
+    run.release([Challenge("x", "X", "misc", 10), Challenge("y", "Y", "misc", 20)])
+    x, y = run.lane("x"), run.lane("y")
+    run.turn(x, "ls", alerts=(Alert(AlertKind.HINT, "sstv"), Alert(AlertKind.LOOP, "ls again")))
+    run.turn(y, "ls", alerts=(Alert(AlertKind.STALL, "idle"),))
+    run.at(60)
+    assert run.do(iv.Dismiss(x)).ok  # the loop alert, the more urgent of the two
+    assert run.do(iv.Hint(y, "look at the header")).ok
+    run.at(120)
+    run.turn(x, "solve", flag="t{x}")
+    assert run.do(iv.Approve(x)).ok
+    record = run.close()
+    text = report(record)
+    stalls = sections(text, "### ")
+    assert items(stalls["T+00:00:00 \u00b7 L01 on X: Loop"])[2] == (
+        "Dismissed, not answered: 1m later, you: dismiss L01 \u2192 Dismissed L01's alert (Loop); the lane carries on as it was"
+    )
+    # the dismiss took down the loop alert only: the hint alert on the same lane had no answer
+    assert items(stalls["T+00:00:00 \u00b7 L01 on X: Ignores the hint"])[2] == "Answered: no answer before the lane ended (solved)"
+    assert items(stalls["T+00:00:00 \u00b7 L02 on Y: Stall"])[2].startswith("Answered: 1m later, you: hint L02")
+    stalled = "\n".join(sections(text)["Where lanes stalled"])
+    assert "3 alerts on 2 lanes: 1 answered, 1 dismissed, 2 followed by that lane solving within 10 turns." in stalled
+    steps = sections(text)["Interventions"]
+    judged = "\n".join(steps)
+    assert "### Helped (0)" in judged and "### No effect seen (1)" in judged  # the hint to L02; never the dismiss
+    assert "approve 1, dismiss 1." in steps
+    assert "Stalls: 3 alerts, 1 answered, 1 dismissed, 2 then solved within 10 turns" in summary(record)

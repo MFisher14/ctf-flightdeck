@@ -23,7 +23,7 @@ from textual.widgets import DataTable, Static
 from ..core.attention import SortMode, sort_lanes
 from ..core.model import Lane
 from . import theme, views
-from .commands import CommandError, parse
+from .commands import CommandError, needs_lane, parse
 from .widgets import CommandBar
 
 if TYPE_CHECKING:
@@ -35,8 +35,8 @@ BOARD_MIN_WIDTH = 100  # narrower than this, the board hides and the lanes get t
 KEY_RANK = {
     "question_mark": 0, "q": 0,
     "a": 1, "d": 1, "slash": 1,
-    "o": 2, "k": 2,
-    "p": 3, "h": 3, "r": 3, "c": 3,
+    "o": 2, "k": 2, "A": 2,
+    "p": 3, "h": 3, "r": 3, "x": 3, "c": 3,
     "f": 4, "e": 4, "t": 4,
     "s": 5, "tab": 5,
 }
@@ -76,6 +76,8 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("t", "lane('takeover')", "take over"),
         Binding("a", "lane('approve')", "approve"),
         Binding("d", "lane('decline')", "decline"),
+        Binding("A", "approve_all", "approve all"),
+        Binding("x", "lane('dismiss')", "dismiss"),
         Binding("c", "claim", "claim"),
         Binding("slash", "command", "commands", key_display="/"),
         Binding("s", "sort", "sort"),
@@ -408,6 +410,11 @@ class FleetScreen(Screen, inherit_bindings=False):
         else:
             self.fd.lane_verb(lane, verb)
 
+    def action_approve_all(self) -> None:
+        """Every flag that waits for a plain yes, after a prompt that lists them (not the
+        selected lane's alone)."""
+        self.fd.approve_all()
+
     def action_open_lane(self) -> None:
         lane = self.target_lane()
         if lane is not None:
@@ -452,7 +459,7 @@ class FleetScreen(Screen, inherit_bindings=False):
             self.fd.warn(str(exc))
             return
         lane_id = self.selected_lane
-        if parsed.command is None or (parsed.command.lane and parsed.lane is None):
+        if needs_lane(parsed) and parsed.lane is None:
             lane = self.target_lane()  # warns when the board has no single lane or the filter hides it
             if lane is None:
                 return

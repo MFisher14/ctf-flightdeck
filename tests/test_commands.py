@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ctf_flightdeck.console.commands import COMMANDS, CommandError, complete, lane_id, parse
+from ctf_flightdeck.console.commands import COMMANDS, CommandError, complete, lane_id, needs_lane, parse
 
 
 def test_plain_text_is_a_message():
@@ -77,7 +77,7 @@ def test_a_lane_id_must_be_the_whole_word():
     assert (parsed.lane, parsed.arg) == ("L33", "speak")  # a whole word that is a lane id is one
 
 
-@pytest.mark.parametrize("command", ["approve", "escalate", "pause", "takeover"])
+@pytest.mark.parametrize("command", ["approve", "dismiss", "escalate", "pause", "takeover"])
 def test_a_lane_command_that_takes_no_argument_refuses_a_stray_word(command):
     # '/approve 2' meant for L02 must not approve the selected lane
     with pytest.raises(CommandError, match=rf"/{command} takes no argument; name a lane like /{command} L02"):
@@ -110,3 +110,23 @@ def test_commands_with_arguments_keep_them():
     assert parse("/diff solve.py").arg == "solve.py"
     assert parse("/sort Cost").arg == "Cost"
     assert parse("/fork L02 read the source").arg == "read the source"
+
+
+def test_approve_all_names_no_lane_and_any_other_word_is_still_refused():
+    parsed = parse("/approve ALL")
+    assert (parsed.command.name, parsed.lane, parsed.arg) == ("approve", None, "all")
+    assert not needs_lane(parsed)  # it goes over every lane: no lane is selected for it
+    assert needs_lane(parse("/approve")) and needs_lane(parse("/approve L02")) and needs_lane(parse("a message"))
+    assert not needs_lane(parse("/help"))
+    with pytest.raises(CommandError, match="/approve all names no lane"):
+        parse("/approve L02 all")
+    with pytest.raises(CommandError, match=r"/approve takes no argument; name a lane like /approve L02 \(or /approve all\)"):
+        parse("/approve everything")
+    with pytest.raises(CommandError, match="takes no argument"):
+        parse("/approve all now")
+
+
+def test_the_menu_offers_approve_all_and_dismiss():
+    labels = {c.label: c.help for c in complete("/")}
+    assert "/approve [all]" in labels and "after a prompt" in labels["/approve [all]"]
+    assert "/dismiss" in labels and "stays quiet" in labels["/dismiss"]

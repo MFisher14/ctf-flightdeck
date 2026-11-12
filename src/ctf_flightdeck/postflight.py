@@ -14,7 +14,8 @@
   then solved within 10 turns (flag-found and teammate alerts are not stalls; they are in
   the timeline). An approve or decline answers a budget alert only when it answered the
   budget request (or approved more budget with nothing waiting), not a flag's verdict or
-  the live box: the lane's current approval is replayed from its pending events;
+  the live box: the lane's current approval is replayed from its pending events. An alert
+  the player dismissed (the console's x, /dismiss) counts as dismissed, not as answered;
 - the hints, redirects, forks and escalations that helped and those with no effect seen. A
   step helped when the lane it went to solved that challenge within 10 turns or 15 minutes
   of it, with a flag it proposed after the step. The lane it went to: a hint's or redirect's
@@ -113,6 +114,7 @@ JUDGED = ("hint", "redirect", "fork", "escalate")
 NOT_STALLS = frozenset({AlertKind.FLAG.value, AlertKind.TEAMMATE.value})
 COURSE_ANSWERS = frozenset({"hint", "redirect", "fork", "escalate", "kill", "takeover"})
 BUDGET_ANSWERS = frozenset({"approve", "decline", "kill", "escalate"})
+DISMISS = "dismiss"  # takes an alert down without touching the lane: not an answer to it, and never judged
 VERDICTS = frozenset({"approve", "decline"})
 """Interventions that answer the lane's current approval, whatever it is."""
 BUDGET = PendingKind.BUDGET.value
@@ -301,9 +303,10 @@ class Stall:
     reason: str
     turn: int  # the lane's turn when it fired
     answer: Step | None  # the first intervention on the lane that answers it
-    unanswered: str  # why there was no answer, when there was none
+    unanswered: str  # why there was no answer, when there was none and it was not dismissed
     solved_turns: int | None  # turns from the alert until this lane solved, if it did
     steps: tuple[str, ...]  # the lane's last steps before the alert
+    dismissed: Step | None = None  # the player's dismiss that took it down, before any answer
 
     @property
     def solved_within(self) -> bool:
@@ -765,11 +768,16 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
             continue
         facts = lanes[event.lane]
         kind = event.alert or "?"
-        answer = next((s for s in on_lane.get(event.lane, ()) if s.index > index and _answers(s, kind)), None)
+        answer = next(
+            (s for s in on_lane.get(event.lane, ()) if s.index > index and (_answers(s, kind) or _dismisses(s, kind))), None
+        )
         if answer is not None and facts.end is not None and answer.index > facts.end:
             answer = None
+        dismissed = None
+        if answer is not None and answer.name == DISMISS:
+            answer, dismissed = None, answer
         unanswered = ""
-        if answer is None:
+        if answer is None and dismissed is None:
             if facts.finished:
                 unanswered = f"no answer before the lane ended ({facts.state})"
             else:
@@ -786,7 +794,7 @@ def _stalls(events: Sequence[EventLine], lanes: Mapping[str, LaneFacts], steps: 
                 solved_turns = max(0, facts.turns - turn)
         out.append(Stall(
             index, _time(event.at), event.lane, facts.challenge, kind, _str(event.data.get("reason")) or event.text,
-            turn, answer, unanswered, solved_turns, _steps_before(head, line, event),
+            turn, answer, unanswered, solved_turns, _steps_before(head, line, event), dismissed,
         ))
     return out
 
@@ -831,6 +839,13 @@ def _answers(step: Step, alert: str) -> bool:
     if step.name in VERDICTS:
         return step.answers in (None, BUDGET)
     return step.name in BUDGET_ANSWERS
+
+
+def _dismisses(step: Step, alert: str) -> bool:
+    """Whether a step is the player's dismiss of an alert of this kind: a dismiss takes down
+    one alert, the lane's most urgent about its course, and its outcome names it by its
+    label in brackets (Deck._dismiss)."""
+    return step.name == DISMISS and f"({_alert_label(alert)})" in step.message
 
 
 def _steps_before(head: LaneRecord | None, line: int | None, alert: EventLine) -> tuple[str, ...]:
@@ -1305,10 +1320,12 @@ def _stall_section(flight: Flight) -> list[str]:
     if not stalls:
         return out + ["No lane raised an alert about its course or budget." + aside, ""]
     answered = sum(1 for s in stalls if s.answer is not None)
+    dismissed = sum(1 for s in stalls if s.dismissed is not None)
     then = sum(1 for s in stalls if s.solved_within)
     lanes = len({s.lane for s in stalls})
     out += [
         f"{_plural(len(stalls), 'alert')} on {_plural(lanes, 'lane')}: {answered} answered, "
+        + (f"{dismissed} dismissed, " if dismissed else "") +
         f"{then} followed by that lane solving within {STALL_TURNS} turns.{aside}",
         "",
     ]
@@ -1320,6 +1337,9 @@ def _stall_section(flight: Flight) -> list[str]:
         if stall.answer is not None:
             step = stall.answer
             out.append(f"- Answered: {_later(stall.at, step.at)}, {_step_text(step, flight)}")
+        elif stall.dismissed is not None:
+            step = stall.dismissed
+            out.append(f"- Dismissed, not answered: {_later(stall.at, step.at)}, {_step_text(step, flight)}")
         else:
             out.append(f"- Answered: {stall.unanswered}")
         out.append(f"- Solved within {STALL_TURNS} turns: {_then(stall, flight)}")
@@ -1491,9 +1511,11 @@ def summary(record: RunRecord, *, board: Board | None = None) -> str:
     stalls = flight.stalls
     if stalls:
         answered = sum(1 for s in stalls if s.answer is not None)
+        dismissed = sum(1 for s in stalls if s.dismissed is not None)
         then = sum(1 for s in stalls if s.solved_within)
         lines.append(
-            f"Stalls: {_plural(len(stalls), 'alert')}, {answered} answered, {then} then solved within {STALL_TURNS} turns"
+            f"Stalls: {_plural(len(stalls), 'alert')}, {answered} answered, "
+            + (f"{dismissed} dismissed, " if dismissed else "") + f"{then} then solved within {STALL_TURNS} turns"
         )
     if flight.judged:
         helped = sum(1 for j in flight.judged if j.helped)

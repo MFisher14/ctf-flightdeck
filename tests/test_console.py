@@ -34,7 +34,7 @@ from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.fleet import key_room as fleet_key_room
 from ctf_flightdeck.console.focus import KEY_LABELS as FOCUS_KEYS
 from ctf_flightdeck.console.focus import FocusScreen
-from ctf_flightdeck.console.screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
+from ctf_flightdeck.console.screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
 from ctf_flightdeck.console.widgets import CommandBar
 from ctf_flightdeck.core import interventions as iv
@@ -64,6 +64,7 @@ from deadline import within
 
 SIZE = (160, 46)
 NARROW = (120, 36)
+WIDE = (190, 46)  # every key of the fleet's key line fits, in team mode too
 
 
 # ---------------------------------------------------------------------- driving the app
@@ -1501,14 +1502,17 @@ def check_key_line(app: FlightdeckApp, width: int) -> list[str]:
 
 
 @pytest.mark.parametrize("scenario", ["sstv", "team"])
-@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40), SIZE], ids=["80x24", "100x30", "120x40", "160x46"])
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40), SIZE, WIDE], ids=["80x24", "100x30", "120x40", "160x46", "190x46"])
 def test_the_key_line_always_shows_help_quit_and_the_answers_and_only_whole_keys(scenario, size):
     world, app = make(scenario)
 
     async def script(pilot):
         pairs = check_key_line(app, size[0])
-        if size == SIZE:
+        if size == WIDE:
             assert len(pairs) == len(SHOWN_KEYS) - (0 if world.deck.config.team else 1)  # all of them (claim: team only)
+        if size == SIZE:  # the keys needed least go first: focus and sort
+            assert {"tab focus", "s sort"} == SHOWN_KEYS - set(pairs) - {"c claim", "t take over"}
+            assert {"A approve all", "x dismiss"} <= set(pairs)
 
     drive(app, script, size)
 
@@ -1517,15 +1521,16 @@ def test_the_key_line_fits_again_when_the_terminal_is_resized():
     world, app = make("sstv")
 
     async def script(pilot):
-        everything = check_key_line(app, SIZE[0])
+        everything = check_key_line(app, WIDE[0])
+        assert len(everything) == len(SHOWN_KEYS) - 1  # all but claim (solo)
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
         assert len(check_key_line(app, 80)) < len(everything)
-        await pilot.resize_terminal(*SIZE)
+        await pilot.resize_terminal(*WIDE)
         await pilot.pause()
-        assert check_key_line(app, SIZE[0]) == everything
+        assert check_key_line(app, WIDE[0]) == everything
 
-    drive(app, script)
+    drive(app, script, size=WIDE)
 
 
 def test_header_counts_the_lanes_that_need_you():
@@ -3229,7 +3234,7 @@ def four_lanes_and_one_finished(*, team: bool = False) -> Deck:
     return deck
 
 
-@pytest.mark.parametrize("size", [(60, 12), (99, 17), (100, 30), (108, 18), (125, 18), (146, 18), (147, 17), (147, 18)])
+@pytest.mark.parametrize("size", [(60, 12), (99, 17), (100, 30), (108, 18), (125, 18), (147, 18), (172, 18), (173, 17), (173, 18)])
 def test_what_doctor_says_a_terminal_leaves_out_is_what_the_console_leaves_out(size, monkeypatch):
     """doctor measures a terminal with room.room(); at that size, on the busy run it measures
     with (the header of room.busy_header), the console leaves out exactly that: the header's
@@ -3261,7 +3266,7 @@ def test_what_doctor_says_a_terminal_leaves_out_is_what_the_console_leaves_out(s
     drive(app, script, size=size)
 
 
-@pytest.mark.parametrize("columns", [150, 155, 156])
+@pytest.mark.parametrize("columns", [176, 181, 182])
 def test_doctor_measures_team_modes_key_line_with_claim_as_the_console_draws_it(columns):
     _, solo = fleet_key_room(columns, team=False)
     left, team = fleet_key_room(columns, team=True)
@@ -3291,3 +3296,249 @@ def test_doctors_size_has_room_for_the_dollars_of_a_coding_agent_run_whose_cli_t
         assert left == [], (later, left)
     _, left = views.fit_header(replace(busy, event="E" * (fit.event + 1), later=True), width)
     assert left != []
+
+
+# ---------------------------------------------------------------------- approving several flags at once (#30)
+
+
+def submits(deck: Deck) -> dict[str, str]:
+    """The flag each lane asks the player about now, by lane."""
+    return {lane.id: lane.pending.flag for lane in deck.active_lanes()
+            if lane.pending is not None and lane.pending.kind is PendingKind.SUBMIT}
+
+
+def test_A_lists_the_waiting_flags_and_sends_nothing_until_y_then_approves_each_one():
+    world, app = make("overthinking")
+    deck = world.deck
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: len(submits(deck)) == 3, "three lanes waiting with a flag")
+        waiting = {lane.id: submits(deck)[lane.id] for lane in deck.needing() if lane.id in submits(deck)}  # most urgent first
+        names = {lane_id: deck.challenges[deck.lanes[lane_id].challenge_id].name for lane_id in waiting}
+        before = snapshot(app)
+        await press(pilot, "A")
+        assert isinstance(app.screen, ApprovePrompt)
+        prompt = prompt_text(app)
+        assert "3 flags to approve" in prompt and "Nothing is sent before you answer" in prompt
+        for lane_id, flag in waiting.items():
+            assert f"{lane_id} {names[lane_id]} {flag}" in prompt
+        assert snapshot(app) == before and "approve" not in interventions(app)  # asked first: nothing sent
+        await press(pilot, "enter")  # enter is on Cancel
+        assert app.screen is app.fleet and snapshot(app) == before and "approve" not in interventions(app)
+        await press(pilot, "A", "n")
+        assert app.screen is app.fleet and snapshot(app) == before and "approve" not in interventions(app)
+        await press(pilot, "A", "y")
+        assert app.screen is app.fleet
+        assert interventions(app).count("approve") == 3  # one logged approval per flag
+        assert [deck.lanes[lane_id].state for lane_id in waiting] == [LaneState.SOLVED] * 3
+        for lane_id in waiting:
+            cid = deck.lanes[lane_id].challenge_id
+            assert deck.challenges[cid].status is ChallengeStatus.SOLVED and cell(app, "board", cid, "mark") == "✓"
+        assert status_line(app).strip() == f"● Approved 3 flags: {', '.join(waiting)}"
+        assert submits(deck) == {}
+        await press(pilot, "A")  # nothing left to approve: no prompt, and it says so
+        assert app.screen is app.fleet
+        assert_warning(app, "No flag waits for a plain yes")
+
+    drive(app, script)
+
+
+def test_approve_all_from_the_focus_view_leaves_budget_and_the_live_box_and_says_which():
+    world, app = make("default")
+    deck = world.deck
+
+    def kinds() -> dict[str, PendingKind]:
+        return {lane.id: lane.pending.kind for lane in deck.active_lanes() if lane.pending is not None}
+
+    async def script(pilot):
+        await step_until(
+            pilot, app,
+            lambda: len(submits(deck)) >= 2 and {PendingKind.BUDGET, PendingKind.LIVE_BOX} <= set(kinds().values()),
+            "flags, a budget request and a live-box request waiting together", limit=120,
+        )
+        urgent = [lane.id for lane in deck.needing()]  # the order the prompt and the status line list them in
+        waiting = {lane_id: submits(deck)[lane_id] for lane_id in urgent if lane_id in submits(deck)}
+        other = {lane_id: kinds()[lane_id] for lane_id in urgent if lane_id in kinds() and lane_id not in waiting}
+        untouched = {lane_id: deck.lanes[lane_id].pending for lane_id in other}
+        await open_focus(pilot, app, next(iter(other)))  # a lane that is not one of the flags
+        await send(pilot, app, "/approve all")
+        assert isinstance(app.screen, ApprovePrompt)
+        prompt = prompt_text(app)
+        assert f"{len(waiting)} flags to approve" in prompt and f"Left as they are ({len(other)})" in prompt
+        for lane_id, kind in other.items():
+            name = deck.challenges[deck.lanes[lane_id].challenge_id].name
+            why = "more budget is not a flag" if kind is PendingKind.BUDGET else "live-box access is not a flag"
+            assert f"{lane_id} {name} {why}" in prompt
+        await press(pilot, "y")
+        assert isinstance(app.screen, FocusScreen)
+        assert interventions(app).count("approve") == len(waiting)
+        assert all(deck.lanes[lane_id].state is LaneState.SOLVED for lane_id in waiting)
+        assert {lane_id: deck.lanes[lane_id].pending for lane_id in other} == untouched  # each keeps its own answer
+        words = {PendingKind.BUDGET: "budget", PendingKind.LIVE_BOX: "live box"}
+        said = (f"● Approved {len(waiting)} flags: {', '.join(waiting)}; left {len(other)}: "
+                + ", ".join(f"{lane_id} ({words[kind]})" for lane_id, kind in other.items()))
+        assert status_line(app).strip() == said
+
+    drive(app, script)
+
+
+def flags_deck(submitter=None, verify=None) -> Deck:
+    """Five lanes: L01 on a; L02 on b, whose tries the platform counts; L03 and its fork L05 on c;
+    L04 on d. None has reported yet."""
+    config = DeckConfig(event="ev", models=("glm", "big"), max_lanes=6, flag_format=r"t\{\w+\}")
+    deck = Deck(config, QuietDriver(), ManualClock(1000.0), verify or wrong_flag, submitter=submitter)
+    challenges = [Challenge("a", "Alpha", "misc", 50), Challenge("b", "Bravo", "misc", 50, max_attempts=3),
+                  Challenge("c", "Charlie", "misc", 50), Challenge("d", "Delta", "misc", 50)]
+    deck.release(challenges, [QueueEntry(ch.id, "glm") for ch in challenges])
+    assert deck.apply(iv.Fork("L03", approach="another way", model="big")).ok
+    assert [(lane.id, lane.challenge_id) for lane in deck.lanes.values()] == [
+        ("L01", "a"), ("L02", "b"), ("L03", "c"), ("L04", "d"), ("L05", "c")]
+    return deck
+
+
+def test_approve_all_leaves_a_challenge_with_counted_tries_and_never_sends_a_flag_known_wrong():
+    checked: list[tuple[str, str]] = []
+
+    def verify(challenge_id: str, flag: str) -> bool:
+        checked.append((challenge_id, flag))
+        return flag == "t{alpha}"
+
+    deck = flags_deck(verify=verify)
+    for lane_id, flag in (("L01", "t{alpha}"), ("L02", "t{bravo}"), ("L03", "t{same}"), ("L05", "t{same}")):
+        deck.report(lane_id, TurnReport(flag=flag))
+    deck.report("L04", TurnReport(pending=Pending(PendingKind.CONFIRM, "did the platform accept t{delta}? (you submit it)", flag="t{delta}")))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        await press(pilot, "A")
+        prompt = prompt_text(app)
+        assert "3 flags to approve" in prompt and "Left as they are (2)" in prompt
+        assert "L02 Bravo the platform counts the tries at its flag: approve it on its own (a)" in prompt
+        assert "L04 Delta you submit it by hand, then say how it went (a accepted, d rejected)" in prompt
+        assert "L02 Bravo t{bravo}" not in prompt and checked == []
+        await press(pilot, "y")
+        # the wrong flag went once: its rejection took it off L05, which was listed with it
+        assert checked == [("a", "t{alpha}"), ("c", "t{same}")]
+        assert deck.lanes["L01"].state is LaneState.SOLVED
+        assert deck.lanes["L05"].pending is None and deck.not_flag("c", "t{same}") is not None
+        held = deck.lanes["L02"].pending
+        assert held is not None and (held.kind, held.flag) == (PendingKind.SUBMIT, "t{bravo}")  # it still asks on its own
+        assert deck.lanes["L04"].pending.kind is PendingKind.CONFIRM
+        assert [e.lane for e in deck.events if e.kind is EventKind.INTERVENTION and e.data["intervention"] == "approve"] == ["L01", "L03"]
+        line = status_line(app)
+        assert line.strip() == "● Approved 2 flags: L01, L03; left 3: L02 (counted tries), L04 (hand submit), L05 (known wrong, not sent)"
+        app.fleet.select_lane("L02")
+        await press(pilot, "a")  # on its own lane it is approved as ever
+        assert checked[-1] == ("b", "t{bravo}")
+
+    drive(app, script)
+
+
+def test_approve_all_hands_the_platform_one_flag_of_a_challenge_at_a_time():
+    sent: list[tuple[str, str, str]] = []
+    deck = flags_deck(submitter=lambda lane_id, challenge_id, flag: sent.append((lane_id, challenge_id, flag)))
+    for lane_id, flag in (("L01", "t{alpha}"), ("L03", "t{one}"), ("L05", "t{two}")):
+        deck.report(lane_id, TurnReport(flag=flag))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        await press(pilot, "A", "y")
+        assert interventions(app).count("approve") == 3
+        assert sent == [("L01", "a", "t{alpha}"), ("L03", "c", "t{one}")]  # Charlie's second flag waits its turn
+        assert deck.submitting("c") == (("L03", "t{one}"), ("L05", "t{two}"))
+        assert status_line(app).strip() == "● Approved 3 flags: L01, L03, L05"
+        deck.platform_verdict("L03", "t{one}", False, "Incorrect")
+        assert sent[-1] == ("L05", "c", "t{two}")
+
+    drive(app, script)
+
+
+def test_a_flag_answered_while_the_prompt_is_open_is_not_approved_in_its_place():
+    deck = flags_deck()
+    deck.report("L01", TurnReport(flag="t{first}"))
+    deck.report("L01", TurnReport(flag="t{second}"))  # waits behind the first
+    deck.report("L04", TurnReport(flag="t{delta}"))
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        await press(pilot, "A")
+        prompt = prompt_text(app)
+        assert "L01 Alpha t{first}" in prompt and "t{second}" not in prompt  # only the flag it asks about now
+        assert deck.apply(iv.Decline("L01")).ok  # answered behind the prompt: t{second} comes up
+        assert deck.lanes["L01"].pending.flag == "t{second}"
+        await press(pilot, "y")
+        assert deck.lanes["L01"].pending.flag == "t{second}"  # never listed, so never approved
+        assert deck.lanes["L04"].pending is None
+        assert status_line(app).strip() == "● Approved 1 flag: L04; left 1: L01 (known wrong, not sent)"
+
+    drive(app, script)
+
+
+# ---------------------------------------------------------------------- dismissing an alert (#30)
+
+
+def test_x_dismisses_the_off_hint_alert_and_the_lane_carries_on_untouched():
+    world, app = make("sstv")
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.alert(AlertKind.HINT) is not None, "off-hint alert")
+        app.fleet.select_lane(lane.id)
+        await pilot.pause()
+        assert "offhint" in cell(app, "lanes", lane.id, "!")
+        why = region_text(app, "#why")
+        assert "Ignores the hint" in why and " x  dismiss" in why
+        before, turns = snapshot(app), lane.turns
+        await press(pilot, "x")
+        assert lane.alert(AlertKind.HINT) is None and not lane.needs_you
+        assert snapshot(app) == before  # no message, no new plan, still running
+        assert cell(app, "lanes", lane.id, "!").strip() == "" and "Ignores the hint" not in region_text(app, "#why")
+        assert status_line(app).strip() == f"● Dismissed {lane.id}'s alert (Ignores the hint); the lane carries on as it was"
+        assert interventions(app)[-1] == "dismiss"
+        await step(pilot, app, 2)
+        assert lane.turns > turns and lane.hints == []  # it works on as it was
+        await press(pilot, "x")
+        assert_warning(app, f"{lane.id} has no alert to dismiss")
+
+    drive(app, script)
+
+
+def test_dismiss_in_the_focus_view_is_offered_on_the_card_and_refused_for_a_flag():
+    world, app = make("sstv")
+    deck = world.deck
+    lane = _off_hint(world)
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: lane.alert(AlertKind.HINT) is not None and submits(deck), "an alert and a flag")
+        await open_focus(pilot, app, lane.id)
+        assert "/dismiss   not a problem: take the alert down, the lane carries on" in region_text(app, "#now")
+        await send(pilot, app, "/dismiss")
+        assert lane.alert(AlertKind.HINT) is None
+        assert "Nothing needs you on this lane" in region_text(app, "#now")
+        assert "› you  dismissed the alert: Ignores the hint" in region_text(app, "#transcript")
+        flag_lane = deck.lanes[next(iter(submits(deck)))]
+        pending = flag_lane.pending
+        await open_focus(pilot, app, flag_lane.id)
+        assert "/dismiss" not in region_text(app, "#now")
+        await send(pilot, app, "/dismiss")
+        assert_warning(app, f"{flag_lane.id}'s flag is not dismissed: approve (a) or decline (d) it")
+        assert flag_lane.pending is pending and flag_lane.alert(AlertKind.FLAG) is not None
+
+    drive(app, script)
+
+
+def test_help_lists_approve_all_and_dismiss():
+    world, app = make("sstv")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        text = prompt_text(app)
+        assert "A Approve all: every flag that waits for a plain yes" in text
+        assert "x Dismiss the lane's most urgent alert about its course" in text
+        app.screen.query_one("#help-body").scroll_end(animate=False)
+        await pilot.pause()
+        text = prompt_text(app)
+        assert "/approve [all] approve what the lane waits for; all: every flag that waits for a plain yes" in text
+        assert "/dismiss take down the lane's alert about its course" in text
+
+    drive(app, script)

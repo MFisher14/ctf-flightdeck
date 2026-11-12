@@ -31,10 +31,10 @@ from ..core.driver import TakeoverRefused
 from ..core.model import ME, Event, EventKind, Lane, LaneState
 from ..text import untrusted
 from . import theme, views
-from .commands import CommandError, parse
+from .commands import CommandError, needs_lane, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
-from .screens import ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
+from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from .terminal import STOP_SIGNALS, TerminalDriver
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
@@ -350,8 +350,50 @@ class FlightdeckApp(App[None]):
             self.apply(iv.Approve(lane.id))
         elif verb == "decline":
             self.apply(iv.Decline(lane.id))
+        elif verb == "dismiss":
+            self.apply(iv.Dismiss(lane.id))
         else:
             raise ValueError(f"unknown lane verb {verb!r}")
+
+    def approve_all(self) -> None:
+        """A, /approve all: approve every flag that waits for a plain yes (views.flag_batch),
+        after a prompt that lists them and what is left out. Nothing is sent before the yes."""
+        if isinstance(self.screen, ApprovePrompt):
+            return
+        batch = views.flag_batch(self.deck)
+        if not batch.send:
+            self.warn("No flag waits for a plain yes" + (f"; left: {views.left_text(batch.left)}" if batch.left else ""))
+            return
+
+        def done(yes: bool | None) -> None:
+            if yes:
+                self._approve_listed(batch)
+
+        self.push_screen(ApprovePrompt(views.approve_summary(self.deck, batch)), done)
+
+    def _approve_listed(self, batch: views.FlagBatch) -> None:
+        """Approve the flags the prompt listed, each as `a` would (one intervention per lane,
+        so the deck's rules for sending hold). A lane that no longer waits with the flag listed
+        for it is left: the first rejection takes the same flag off every other lane, and a
+        flag can be answered while the prompt is open."""
+        deck = self.deck
+        approved: list[str] = []
+        left = list(batch.left)
+        for lane_id, flag in batch.send:
+            why = views.batch_refusal(deck, lane_id, flag)
+            if why is None:
+                outcome = deck.apply(iv.Approve(lane_id))
+                why = None if outcome.ok else outcome.message
+            if why is None:
+                approved.append(lane_id)
+            else:
+                left.append((lane_id, why, why))
+        count = len(approved)
+        text = f"Approved {count} flag{'' if count == 1 else 's'}" + (f": {', '.join(approved)}" if approved else "")
+        if left:
+            text += f"; left {len(left)}: {views.left_text(left)}"
+        self.say(text, "information" if approved else "warning")
+        self.refresh_view()
 
     def answer(self, lane: Lane, number: str) -> bool:
         """Apply the lane's quick answer `number` at once. False if it has none."""
@@ -502,14 +544,16 @@ class FlightdeckApp(App[None]):
             return
         name, arg = parsed.command.name, parsed.arg
         lane: Lane | None = None
-        if parsed.command.lane:
+        if parsed.command.lane and needs_lane(parsed):
             lane = self._lane(parsed.lane or lane_id)
             if lane is None:
                 return
         if lane is not None:
             self._lane_command(name, arg, lane)
             return
-        if name == "queue":
+        if name == "approve":  # /approve all: no lane
+            self.approve_all()
+        elif name == "queue":
             cid = self._challenge_arg(arg, lane_id)
             if cid is not None:
                 self.apply(iv.Queue(cid))
@@ -556,6 +600,8 @@ class FlightdeckApp(App[None]):
             self.apply(iv.Approve(lane.id))
         elif name == "decline":
             self.apply(iv.Decline(lane.id))
+        elif name == "dismiss":
+            self.apply(iv.Dismiss(lane.id))
         elif name == "escalate":
             self.apply(iv.Escalate(lane.id))
         elif name == "pause":
