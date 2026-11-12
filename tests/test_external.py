@@ -2073,10 +2073,10 @@ def test_under_auto_a_claim_that_could_not_be_looked_for_in_all_of_the_handout_w
 
 
 def test_under_auto_a_claim_holding_a_lone_surrogate_waits_for_the_player_and_the_lane_goes_on(tmp_path):
-    """A CLI's events are JSON, and an unpaired escape in one (\\udcff: a Node CLI that cuts a
-    string inside an emoji writes one) is a lone surrogate in the claim, which has no UTF-8
-    bytes to look for in the handout: it waits for the player, the lane says why, and its CLI
-    goes on to its next turn."""
+    """A CLI's events are JSON, and an unpaired escape in one (\\udcff: how JSON.stringify
+    writes a lone surrogate of a JavaScript string) is a lone surrogate in the claim, which has
+    no UTF-8 bytes to look for in the handout: it waits for the player, the lane says why, and
+    its CLI goes on to its next turn."""
     lone = "t{\udcff}"
     # its next turn thinks while the test looks: the lane is still at work
     script = {"turns": [{"calls": [{"text": f"Found it.\nFLAG: {lone}"}]}, {"calls": [{"think": 30.0}]}]}
