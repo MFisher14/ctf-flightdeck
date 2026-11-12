@@ -1,0 +1,97 @@
+name: Bug report
+description: flightdeck did something it should not, or did not do something it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a key, a CTFd token, a cookie, real event data or another team's flags: not in the text, not in a screenshot, not in a log.** Describe a real event's challenge in your own words, or show the bug on `flightdeck mock` or `flightdeck practice`.
+
+        A security problem goes in the [private report](https://github.com/MFisher14/ctf-flightdeck/security/advisories/new), never in an issue. [SECURITY.md](https://github.com/MFisher14/ctf-flightdeck/blob/main/SECURITY.md) says what counts.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What flightdeck did, and what the console or the command said (quote it).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: The commands you ran and the keys you pressed, from the start, so someone else can see it happen.
+      placeholder: |
+        1. flightdeck practice --max-lanes 2
+        2. Enter on the first lane, then t to take over its shell
+        3. exit, to hand it back
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: flightdeck --version
+      description: If flightdeck would not install or start, say so here.
+      placeholder: flightdeck 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 26 on Apple silicon, Ubuntu 24.04, Windows 11 through WSL
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - pipx install ctf-flightdeck
+        - uv tool install ctf-flightdeck
+        - uvx ctf-flightdeck (no install)
+        - pip install ctf-flightdeck, in a virtual environment
+        - From a clone (uv sync, or uv tool install .)
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Where lanes ran
+      options:
+        - In Docker
+        - On the host (--host, or runtime = "host" in the config)
+        - No lane ran (the mock, init, doctor, a report)
+    validations:
+      required: true
+  - type: dropdown
+    id: model-api
+    attributes:
+      label: Model API
+      description: Every one in use, for lanes, the fallback or the light model.
+      multiple: true
+      options:
+        - Anthropic
+        - OpenRouter
+        - OpenAI
+        - A local server (Ollama, MLX or another OpenAI-compatible server on this machine)
+        - Another OpenAI-compatible API
+        - A coding-agent CLI (--agent claude)
+        - A coding-agent CLI (--agent codex)
+        - Something else (say which under What happened)
+        - No model was called
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: flightdeck doctor
+      description: "What `flightdeck doctor` prints (`flightdeck doctor --agent claude` or `--agent codex` for coding-agent lanes), or why it would not run. It never prints a key, but its paths can hold your user name: change them if you like."
+      render: text
+    validations:
+      required: true
