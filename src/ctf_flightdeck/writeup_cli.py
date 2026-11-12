@@ -186,8 +186,8 @@ async def _polished(record, ids, model, client_config, board, redact) -> tuple[d
             try:
                 done = await writeup.polish(record, cid, client=client, model=model, board=board, redact=redact)
             except (writeup.PolishError, ModelError) as exc:
-                if isinstance(exc, writeup.PolishError) and exc.usage is not None:
-                    spend(exc.usage)  # refused, but the call was made and paid for
+                if exc.usage is not None:  # refused, or the model declined: the call was made and paid for
+                    spend(exc.usage)
                 drafts[cid] = (writeup.draft(record, cid, board=board, redact=redact), str(exc))
                 continue
             drafts[cid] = (done.markdown, "")
