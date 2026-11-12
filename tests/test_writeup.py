@@ -1412,3 +1412,96 @@ def test_control_characters_in_a_reply_are_folded(tmp_path):
     with FakeModelServer(responder=lambda r: text_reply(frozen_of(r).replace("## Approach", "## Approach\x07"))) as server:
         done = polish(record, "a", server)
     assert "\x07" not in done.markdown and "## Approach^G" in done.markdown
+
+
+# ---------------------------------------------------------------------- every tool call of a turn (#15)
+
+
+def test_a_draft_quotes_twenty_lines_of_a_steps_output_and_the_second_tool_call_of_its_turn(tmp_path):
+    """A real lane of flightdeck's own loop, its model scripted: one turn makes two tool calls,
+    the first printing 30 lines, the second the flag. The console's step is the first call with
+    3 lines of its output and "(+1 more)", as before, and so is the run log's line; the lane's
+    transcript keeps both calls with more of each output, and the draft shows them: 20 lines of
+    the first, and the second, where the flag is."""
+    from fake_model import tool_call_reply, tool_calls_reply
+    from test_agent_driver import Lab, until
+
+    server = FakeModelServer([
+        tool_calls_reply([("shell", {"command": "seq 101 130"}), ("shell", {"command": "cat note.txt"})]),
+        tool_call_reply("submit_flag", {"flag": "t{note}"}),
+    ])
+    folder = tmp_path / "run"
+
+    async def main() -> None:
+        with server:
+            lab = Lab(tmp_path, server)
+            log, transcripts = EventLog(folder / "events.jsonl"), TranscriptLog(folder / "lanes")
+            log.attach(lab.deck)
+            transcripts.attach(lab.deck)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            step = lane.actions[0]  # the console's, and what the detectors count: one step, as before
+            assert (step.text, step.output) == ("$ seq 101 130  (+1 more)", "101\n102\n103")
+            assert [a.text for a in lane.actions if a.kind.value == "step"] == ["$ seq 101 130  (+1 more)", "submit t{note}"]
+            assert lab.deck.apply(iv.Approve(lane.id)).ok
+            await lab.finish()
+            transcripts.close()
+            log.close()
+
+    asyncio.run(main())
+    turns = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines() if '"kind": "turn"' in line]
+    assert [turn["data"]["action"] for turn in turns] == ["$ seq 101 130  (+1 more)", "submit t{note}"]  # one line per step
+    record = load_run(folder)
+    first = record.lanes["L01"].actions[0]
+    assert [call.text for call in first.calls] == ["$ seq 101 130", "$ cat note.txt"]
+    assert first.calls[0].output == "\n".join(str(n) for n in range(101, 131))
+    section = lines_of(writeup.draft(record, "note"), "## Steps that mattered")
+    assert section[1] == "The flag first shows in the output of turn 1."  # in its second call: the step's own output has none
+    key = section.index("### Turn 1 (the flag shows here)")
+    assert section[key + 2: key + 31] == [
+        "Tool call 1 of 2:", "",
+        "```text", "$ seq 101 130", "```", "",
+        "```text", *(str(n) for n in range(101, 121)), "```", "",
+    ]
+    assert section[key + 31: key + 43] == [
+        "Output cut: the first 20 of its 30 lines are shown.", "",
+        "Tool call 2 of 2:", "",
+        "```text", "$ cat note.txt", "```", "",
+        "```text", "the flag is t{note}", "```", "",
+    ]
+    assert "transcript keeps only this one" not in "\n".join(section)
+    hidden = writeup.draft(record, "note", redact=True)
+    assert "t{note}" not in hidden and "the flag is <flag>" in hidden  # a call's output is redacted as a step's is
+
+
+def test_a_failed_commands_long_output_shows_its_status_and_its_last_nineteen_lines(tmp_path):
+    from ctf_flightdeck.core.model import Call
+
+    # as agent/tools.py cuts a failure that printed 45 lines (tests/test_tools.py): its status, a note, its last 40
+    excerpt = "exit 1\n[... 5 more lines not kept ...]\n" + "".join(f"trace {k}\n" for k in range(1, 40)) + "KeyError: t{f}"
+    run = Run(tmp_path / "run", [Challenge("f", "Fails", "misc", 10)], answers={"f": "t{f}"})
+    f = run.lane("f")
+    run.step(f, "$ ./solve", "exit 1 · trace 38\ntrace 39\nKeyError: t{f}", calls=(Call("$ ./solve", excerpt),))
+    run.step(f, "submit t{f}", flag="t{f}")
+    run.apply(iv.Approve(f))
+    section = lines_of(writeup.draft(run.close(), "f"), "## Steps that mattered")
+    start = section.index("```text", section.index("$ ./solve"))
+    end = section.index("```", start + 1)
+    assert section[start + 1: end] == ["exit 1", *(f"trace {k}" for k in range(22, 40)), "KeyError: t{f}"]
+    assert section[end + 2] == "Output cut: its status and the last 19 of its 41 lines are shown."
+
+
+def test_a_file_the_lane_ran_in_a_later_call_of_a_turn_is_the_step_that_mattered(tmp_path):
+    from ctf_flightdeck.core.model import Call
+
+    run = Run(tmp_path / "run", [Challenge("s", "Script", "rev", 100)], answers={"s": "t{s}"})
+    s = run.lane("s")
+    calls = (Call("$ cat > run.sh <<'EOF'", "(no output)"), Call("$ sh run.sh", "done"))
+    run.step(s, "$ cat > run.sh <<'EOF'  (+1 more)", "(no output)", calls=calls,
+             files=(change(tmp_path / "work", "run.sh", "echo done\n"),))
+    run.step(s, "$ ls", "run.sh")
+    run.step(s, "submit t{s}", flag="t{s}")
+    run.apply(iv.Approve(s))
+    section = lines_of(writeup.draft(run.close(), "s"), "## Steps that mattered")
+    assert section[1].startswith("No step's output shows the flag; the last step that ran a file the lane wrote is turn 1, ")

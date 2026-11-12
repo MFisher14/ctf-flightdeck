@@ -25,13 +25,15 @@ prefix{body} with a body of at least CUT_MIN characters, that body, whole or cut
 "…". `redact` writes <flag> in place of every copy; a copy a tool encoded or split over lines
 is not found, and the draft says so.
 
-The steps that mattered: the first step whose output holds a copy of the flag; failing that,
+The steps that mattered: the first step whose output holds a copy of the flag (the output of
+any tool call of its turn, where the transcript keeps them all); failing that,
 the last step that ran a file the lane wrote, or you wrote in a take-over (a shell command
 naming it, not one that only shows or edits it, nor a line inside a heredoc; a newline the
 transcript folded splits commands as a real one does); failing that, the last step before
 the flag was accepted. The draft says which rule picked it, and shows it with the 5 steps
 before it: each command in a fenced block (a multi-line one with its lines back), each output
-in another, cut to 20 lines. A plan the lane stated is not a step: it is in the approach (a
+in another, cut to 20 lines (of a failed command with more, its status and its last 19). A
+step is a turn, and every tool call of it is shown, each with its own output. A plan the lane stated is not a step: it is in the approach (a
 turn that set the plan and also submitted a flag stays a step).
 
 The files, the lane's and yours apart: those with something to show (an added text file under
@@ -40,8 +42,9 @@ file is listed with one line on what it is.
 
 What the transcript cannot tell. A lane's plan change shows up only when it was the first
 thing the lane did in that turn and nothing else acted (a "plan: ..." step); otherwise only
-its last plan, in the transcript's header, is known, and the draft says so. A turn with
-several tool calls keeps one in the transcript, and the draft says how many more it made.
+its last plan, in the transcript's header, is known, and the draft says so. A transcript
+written before flightdeck kept every tool call of a turn (and with it more of each output than
+3 lines) keeps one of them, and the draft says how many more the turn made.
 The transcript keeps the newest change to each file, so a file the lane added and then edited
 shows as modified, with its last diff.
 
@@ -121,6 +124,7 @@ _TICKS = re.compile(r"`+")
 _LANG = re.compile(r"[a-z]*")
 _SURROGATE = re.compile("[\ud800-\udfff]")  # half of a UTF-16 pair: JSON allows one alone; UTF-8 cannot hold it
 _MORE = re.compile(r"  \(\+(\d+) more\)$")  # agent/driver.py: a turn with several tool calls
+_FAILED = re.compile(r"exit -?\d+|timed out after [\d.]+s|killed")  # agent/tools.py: the first line of a failed command's excerpt
 _BODY = re.compile(r"[^{}]*\{(.+)\}", re.DOTALL)
 _CLIP_ENDS = re.compile(CLIP)
 _LINE_ENDS = re.compile(CLIP + "|$", re.MULTILINE)
@@ -483,11 +487,17 @@ def _only_plan(text: str) -> bool:
     return text.startswith(PLAN) and _MORE.search(text) is None
 
 
-def _command(step: ActionLine) -> str | None:
-    """A shell step's command line ("$ ..."), without the "(+N more)" a multi-call turn adds."""
-    if not step.text.startswith("$ "):
-        return None
-    return _without_more(step.text)[0][2:]
+def _commands(step: ActionLine) -> list[str]:
+    """The shell command lines ("$ ...") of a step: of every tool call of its turn where the
+    transcript keeps them, else the step's own, without the "(+N more)" a multi-call turn adds."""
+    if step.calls:
+        return [call.text[2:] for call in step.calls if call.text.startswith("$ ")]
+    return [_without_more(step.text)[0][2:]] if step.text.startswith("$ ") else []
+
+
+def _outputs(step: ActionLine) -> tuple[str, ...]:
+    """Every output the transcript holds for a step: the console's short one, and each tool call's."""
+    return (step.output, *(call.output for call in step.calls))
 
 
 def _simple_commands(command: str) -> list[str]:
@@ -530,10 +540,9 @@ class _Runs:
         return self.seen[step]
 
     def _ran(self, step: ActionLine) -> str | None:
-        command = _command(step)
-        if command is None or not self.names:
+        if not self.names:
             return None
-        for part in _simple_commands(command):
+        for part in (part for command in _commands(step) for part in _simple_commands(command)):
             part = _REDIRECT.sub(" ", part)
             words = [w for w in part.split() if not _ASSIGNMENT.fullmatch(w)]
             if not words or PurePosixPath(words[0]).name in _VIEWERS:
@@ -561,12 +570,17 @@ def _intervention(action: ActionLine) -> tuple[str, str]:
 
 
 def _cut(text: str) -> tuple[str, str]:
-    """The first OUTPUT_LINES lines of text, each cut to LINE_CHARS, and what was cut ("" if nothing)."""
+    """The first OUTPUT_LINES lines of text, each cut to LINE_CHARS, and what was cut ("" if nothing).
+    Of a failed command's excerpt (agent/tools.py: its status on the first line, then its last
+    lines, where the error is): the status and the last OUTPUT_LINES - 1 lines."""
     lines = text.replace("\r\n", "\n").split("\n")
     while lines and not lines[-1].strip():
         lines.pop()
     notes = []
-    if len(lines) > OUTPUT_LINES:
+    if len(lines) > OUTPUT_LINES and _FAILED.fullmatch(lines[0]):
+        notes.append(f"its status and the last {OUTPUT_LINES - 1} of its {len(lines) - 1} lines are shown")
+        lines = [lines[0], *lines[1 - OUTPUT_LINES:]]
+    elif len(lines) > OUTPUT_LINES:
         notes.append(f"the first {OUTPUT_LINES} of its {len(lines)} lines are shown")
         lines = lines[:OUTPUT_LINES]
     if any(len(line) > LINE_CHARS for line in lines):
@@ -791,6 +805,17 @@ class _Writer:
 
     def _step(self, step: ActionLine, mark: str) -> None:
         self.out(f"### Turn {step.turn}" + (f" ({mark})" if mark else ""), "")
+        if step.calls:  # every tool call of the turn, each with the transcript's longer excerpt of its output
+            for number, call in enumerate(step.calls, 1):
+                if len(step.calls) > 1:
+                    self.out(f"Tool call {number} of {len(step.calls)}:", "")
+                self.block(self._clean(call.text).replace(NEWLINE, "\n"), cleaned=True)
+                output, cut = _cut(self._clean(call.output))
+                if output.strip():  # a plan has none; a command that printed nothing says "(no output)"
+                    self.block(output, cleaned=True)
+                if cut:
+                    self.out(f"Output cut: {cut}.", "")
+            return
         text, more = _without_more(step.text)
         if text:  # a multi-line command, one line in the transcript, gets its lines back
             self.block(self._clean(text).replace(NEWLINE, "\n"), cleaned=True)
@@ -810,7 +835,7 @@ class _Writer:
         """The step that mattered, why, and how its heading marks it."""
         if self.copies is not None:
             for i, step in enumerate(steps):
-                kind = self.copies.kind(step.output)
+                kind = next((kind for kind in map(self.copies.kind, _outputs(step)) if kind is not None), None)
                 if kind is not None:
                     return i, _SHOWS[kind].format(turn=step.turn), "the flag shows here"
         runs = self.runs(lane)
