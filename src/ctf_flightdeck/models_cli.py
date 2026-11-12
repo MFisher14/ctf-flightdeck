@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+from dataclasses import dataclass
 from typing import Annotated
 
 import typer
@@ -194,13 +196,76 @@ DESCRIBED = ("The machine described, not this one: the advice below is for it. W
              "model runtimes and the models they have pulled, is left out.")
 
 
+def this_config():
+    """The player's config, to see whether its lanes use Ollama: (config, ""), (None, "") when
+    there is no config file, or (None, why) when it cannot be read. Read only, never written."""
+    from .config import ConfigError, default_config_path, load_config
+
+    try:
+        path = default_config_path()
+        if not path.exists():
+            return None, ""
+        return load_config(path), ""
+    except ConfigError as exc:
+        return None, str(exc)
+
+
+@dataclass(frozen=True)
+class LaneContext:
+    """What `flightdeck models` says of the context Ollama gives lanes: the lines, and the same for --json."""
+
+    lines: tuple[str, ...]
+    data: dict
+
+
+def lane_context(machine: Machine, advice: Advice, config_state: tuple) -> LaneContext | None:
+    """The context Ollama gives a lane: for the lanes of the player's config when they use Ollama
+    on this machine (ollama_context.lane_finding: what Ollama says of a loaded model, else an
+    estimate), else Ollama's default on this machine or the one described, when an Ollama build
+    fits lanes there. None when neither applies."""
+    from .agent.driver import COMPACT_AT
+    from .config import LOCAL_MAX_TOKENS, lane_refresh_at, reply_room
+    from .light import on_this_machine
+    from .ollama_context import default_contexts, default_note, default_port, lane_finding, ollama_root
+
+    environ = {} if machine.described else os.environ
+    estimate = default_contexts(machine, environ)
+    config, unread = config_state if not machine.described else (None, "")
+    api = config.api if config is not None else None
+    if api is not None and api.provider == "openai" and on_this_machine(api.base_url) and default_port(api.base_url):
+        runtime = machine.runtime(OLLAMA)
+        server = runtime.server if runtime is not None else None
+        loaded = server.loaded if server is not None else None
+        finding = lane_finding(_safe(ollama_root(api.base_url).split("://", 1)[-1]), config.models, loaded, estimate,
+                               lane_refresh_at(config, COMPACT_AT), reply_room(api.provider, api.base_url, api.max_tokens),
+                               stated_context=api.context, source=str(config.source or ""))
+        if finding is not None:
+            lines = [f"  Your config's lanes: {finding.detail}."]
+            if not finding.ok:
+                lines.append(f"    fix: {finding.fix}")
+            return LaneContext(tuple(lines), {"config": True, **finding.as_json()})
+    ollama_fits = any(o.build.runtime == OLLAMA for o in advice.fits)
+    if estimate is None or not ollama_fits:
+        return None
+    ok, note = default_note(estimate, COMPACT_AT, LOCAL_MAX_TOKENS, model_catalog.here(machine))
+    lines = [f"  {note}"]
+    if unread:
+        lines.append(f"  Your config is not read here ({_safe(unread)}): `flightdeck doctor` says what is wrong with it.")
+    return LaneContext(tuple(lines), {"config": False, "ok": ok, "tokens": list(estimate.tokens), "detail": note})
+
+
 def overview_text(catalog: Catalog, machine: Machine) -> str:
     plan = budget(machine)
     head = ["The machine described", *described_lines(machine), "", DESCRIBED] if machine.described else [
         "This machine", *machine_lines(machine)]
     lines = [*head, "", f"{_budget_line(plan, machine)}.", MEMORY_RULE, APPROXIMATE]
+    config_state = this_config() if not machine.described else (None, "")
     for role in ROLES:
-        lines += ["", *role_lines(advise(catalog, machine, role, plan), machine)]
+        advice = advise(catalog, machine, role, plan)
+        lines += ["", *role_lines(advice, machine)]
+        if role == LANES:
+            context = lane_context(machine, advice, config_state)
+            lines += list(context.lines) if context is not None else []
     example = next((o.model.id for role in ROLES for o in advise(catalog, machine, role, plan).fits), catalog.local[0].id)
     flags = described_flags(machine)
     lines += [
@@ -294,6 +359,11 @@ def runtime_line(runtime: Runtime) -> str:
             what = {OLLAMA: "its server at {} has pulled", LM_STUDIO: "its server at {} lists"}.get(
                 runtime.name, "a server at {} lists").format(server.address)
             parts.append(f"{what} {_models(server.models)}")
+            if server.loaded:
+                parts.append("it has loaded " + ", ".join(f"{_safe(name)} with {tokens:,} tokens of context"
+                                                          for name, tokens in server.loaded.items()))
+            elif server.loaded_why:
+                parts.append(f"which models it has loaded is unknown ({server.loaded_why})")
         elif server.state == DOWN:
             parts.append(f"nothing is listening at {server.address}")
         else:
@@ -512,13 +582,21 @@ def _safe(text: str) -> str:
 
 def overview_json(catalog: Catalog, machine: Machine) -> dict:
     plan = budget(machine)
+    roles = {}
+    config_state = this_config() if not machine.described else (None, "")
+    for role in ROLES:
+        advice = advise(catalog, machine, role, plan)
+        roles[role] = advice_json(advice)
+        if role == LANES:
+            context = lane_context(machine, advice, config_state)
+            roles[role]["ollama_context"] = context.data if context is not None else None
     return {
         "described": machine.described,  # true: the machine --memory describes, not this one
         "machine": machine.as_json(),
         "local_models": {"where": plan.where, "memory_bytes": plan.bytes, "why": plan.why},
         "memory_rule": {"text": MEMORY_RULE, "estimate": True,
                         "context_allowance_bytes": dict(CONTEXT_ALLOWANCE)},
-        "roles": {role: advice_json(advise(catalog, machine, role, plan)) for role in ROLES},
+        "roles": roles,
         "measured_results": MODELS_DOC,
         "approximate": APPROXIMATE,
         "coding_agents": AGENTS,

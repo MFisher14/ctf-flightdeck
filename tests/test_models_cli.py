@@ -24,14 +24,18 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def no_real_machine(monkeypatch):
+def no_real_machine(monkeypatch, tmp_path_factory):
     """A test that runs the command without saying which machine it is on fails, rather than
-    probing this one (and asking its own Ollama or MLX server)."""
+    probing this one (and asking its own Ollama or MLX server). Nor does it read the player's
+    config, which `flightdeck models` looks at for lanes on Ollama: FLIGHTDECK_CONFIG names a
+    file that is not there, and OLLAMA_CONTEXT_LENGTH is not set."""
 
     def unsaid(environ=os.environ):
         raise AssertionError("this test did not say which machine `flightdeck models` runs on: call on()")
 
     monkeypatch.setattr(hardware, "RealHost", unsaid)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path_factory.mktemp("no-config") / "config.toml"))
+    monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
 
 
 def tags(*models: tuple[str, int]) -> bytes:
@@ -115,7 +119,9 @@ def test_on_an_apple_silicon_mac_local_models_that_fit_come_first(monkeypatch):
     assert "    phi4-mini on MLX: eval-local 18/44 served as it comes, below the rules' 38/44" in light
     assert "Every measured number is approximate: one run each, on one Mac (Apple M4 Max, 36 GB) under heavy load" in out
     assert "docs/MODELS.md" in out and out.rstrip().endswith("This only recommends: it never changes your config.")
-    assert host.fetched == list(SERVERS.values()) and {urlsplit(u).hostname for u in host.fetched} == {"127.0.0.1"}
+    # Ollama, which lists its models, is asked which it has loaded too (/api/ps: the context it gives each)
+    assert host.fetched == [SERVERS[OLLAMA], "http://127.0.0.1:11434/api/ps", *list(SERVERS.values())[1:]]
+    assert {urlsplit(u).hostname for u in host.fetched} == {"127.0.0.1"}
 
 
 def test_on_the_36_gb_mac_the_benchmark_ran_on_each_result_shows_under_its_role_beside_its_build(monkeypatch):

@@ -54,6 +54,13 @@ flightdeck init --provider local --models gpt-oss:20b --light ollama --light-mod
 flightdeck doctor                  # checks that the server answers and serves your models
 ```
 
+Give Ollama room for a lane. Unless told otherwise, it gives a model 4,096 tokens of context on a
+machine with under 23 GiB of GPU memory (or none) and 32,768 from 23 GiB, and drops a lane's
+oldest messages past that without saying so. Set `OLLAMA_CONTEXT_LENGTH=65536` where Ollama runs,
+restart it, and set `context = 65536` under `[api]` so lanes are refreshed before they outgrow it
+([details](MODEL-APIS.md#context-on-a-server-on-your-machine)); `flightdeck doctor` checks it.
+The light role's short prompts fit 4,096.
+
 MLX (Apple silicon). For lanes, start the server with thinking off: Qwen3.5 on MLX solved
 practice challenges only that way.
 

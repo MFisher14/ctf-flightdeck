@@ -18,6 +18,10 @@ understand records the fact as unknown, with the reason (Fact.unknown), never a 
 The probes look at the machine through a Host: its system and architecture names, a program
 finder, a command runner, an HTTP getter, a file reader and an import check. RealHost is this
 machine; tests give a fake one, so they never depend on the machine they run on.
+
+Of an Ollama server that lists its models, the probe also asks which it has loaded now and the
+context it gives each (/api/ps): Ollama says a model's context only while it is loaded
+(ollama_context.py).
 """
 
 from __future__ import annotations
@@ -128,6 +132,11 @@ class Server:
     models: tuple[str, ...] = ()  # what it lists: untrusted text, fold it before showing it
     why: str = ""
     sizes: Mapping[str, int] = field(default_factory=dict)  # model -> bytes on disk, as Ollama's list gives them
+    # Ollama: the models it has loaded now, each with the tokens of context it gives it (/api/ps);
+    # None when not asked (another runtime, a server that lists nothing) or its answer could not be
+    # read (loaded_why says why)
+    loaded: Mapping[str, int] | None = None
+    loaded_why: str = ""
 
     @property
     def address(self) -> str:
@@ -145,7 +154,8 @@ class Server:
 
     def as_json(self) -> dict:
         return {"url": self.url, "state": self.state, "models": list(self.models), "why": self.why or None,
-                "sizes": dict(self.sizes)}
+                "sizes": dict(self.sizes), "loaded": dict(self.loaded) if self.loaded is not None else None,
+                "loaded_why": self.loaded_why or None}
 
 
 @dataclass(frozen=True)
@@ -233,7 +243,8 @@ def probe(host: Host | None = None, *, runtimes: bool = True, servers: Mapping[s
     found = ()
     if runtimes:
         found = (
-            Runtime(OLLAMA, "ollama", host.which("ollama"), server=_server(host, servers[OLLAMA], _ollama_models, http_timeout)),
+            Runtime(OLLAMA, "ollama", host.which("ollama"), server=_loaded(host, _server(host, servers[OLLAMA], _ollama_models,
+                                                                                    http_timeout), http_timeout)),
             Runtime(MLX, "mlx_lm.server", host.which("mlx_lm.server"), importable=host.importable("mlx_lm"),
                     server=_server(host, servers[MLX], _listed, http_timeout)),
             Runtime(LLAMA_CPP, "llama-server", host.which("llama-server")),
@@ -358,6 +369,32 @@ def _server(host: Host, url: str, parse: Callable[[object], Listing | None], tim
         return Server(url, UNKNOWN, why="something answers there, but not with a model list flightdeck can read")
     names, sizes = listing
     return Server(url, SERVING, models=tuple(names), sizes=sizes)
+
+
+def _loaded(host: Host, server: Server, timeout: float) -> Server:
+    """An Ollama server that listed its models, with the models it has loaded and the context it
+    gives each (/api/ps, beside /api/tags: ollama_context.py); any other, as it is."""
+    from dataclasses import replace
+
+    from .ollama_context import PS_PATH, loaded_contexts
+
+    if server.state != SERVING:
+        return server
+    url = server.url.removesuffix("/api/tags") + PS_PATH
+    local_only(url)
+    try:
+        status, body = host.get(url, timeout)
+    except ProbeError as exc:  # Refused too: it answered /api/tags a moment ago
+        return replace(server, loaded_why=f"{PS_PATH}: {exc}")
+    if status != 200:
+        return replace(server, loaded_why=f"{PS_PATH} answered HTTP {status}")
+    try:
+        loaded = loaded_contexts(json.loads(body))
+    except (ValueError, RecursionError):
+        loaded = None
+    if loaded is None:
+        return replace(server, loaded_why=f"{PS_PATH} answered with something that is not Ollama's list of loaded models")
+    return replace(server, loaded=loaded)
 
 
 def _ollama_models(body: object) -> Listing | None:
@@ -487,8 +524,9 @@ def summary(machine: Machine) -> str:
     return ", ".join(parts)
 
 
-def doctor_line(environ: Mapping[str, str] = os.environ, host: Host | None = None) -> str:
-    """doctor's line about this machine (`host`: RealHost(environ) by default): the machine in
-    short. No runtime or server is asked."""
-    machine = probe(host if host is not None else RealHost(environ), runtimes=False)
+def doctor_line(environ: Mapping[str, str] = os.environ, host: Host | None = None, machine: Machine | None = None) -> str:
+    """doctor's line about this machine (`machine` as probed, else probed on `host`, by default
+    RealHost(environ)): the machine in short. No runtime or server is asked."""
+    if machine is None:
+        machine = probe(host if host is not None else RealHost(environ), runtimes=False)
     return f"{summary(machine)}; `flightdeck models` suggests local models that fit"

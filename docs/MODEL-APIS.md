@@ -81,6 +81,12 @@ too, and a lane is refreshed before it outgrows the smaller of the two. A contex
 a lane under 8,192 tokens before its refresh is refused, and so is one for an API on another host
 without `max_tokens` (flightdeck sends none there, so it cannot keep room for a reply).
 
+`flightdeck doctor` (`lane context`, and `fallback context`) and `flightdeck models` say what
+Ollama gives your lanes' model and whether a lane fits: Ollama's own word for a model it has loaded
+(`ollama ps` shows it as CONTEXT), or else an estimate from `OLLAMA_CONTEXT_LENGTH` where
+flightdeck runs or from your machine's GPU memory, and the fix when it is too small. The light
+model's prompts are short and fit Ollama's smallest context, 4,096 tokens.
+
 ## The Anthropic API
 
 `flightdeck init --provider anthropic` writes the ladder `claude-haiku-5-5`, `claude-sonnet-5-5`,

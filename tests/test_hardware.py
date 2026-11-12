@@ -260,7 +260,25 @@ def test_the_runtimes_and_what_their_servers_list(monkeypatch):
     assert (mlx.program, mlx.importable, mlx.installed, mlx.server.state) == (None, True, True, DOWN)
     assert (llama.program, llama.server) == ("/usr/local/bin/llama-server", None)
     assert studio.server.state == DOWN and studio.program_name == ""
-    assert host.fetched == [OFF[OLLAMA], "http://127.0.0.1:10/v1/models", "http://127.0.0.1:11/v1/models"]
+    # Ollama, which listed its models, is asked which it has loaded too (/api/ps); this fake does not answer that
+    assert (ollama.server.loaded, ollama.server.loaded_why) == (None, "/api/ps: nothing is listening there")
+    assert host.fetched == [OFF[OLLAMA], "http://127.0.0.1:9/api/ps", "http://127.0.0.1:10/v1/models",
+                            "http://127.0.0.1:11/v1/models"]
+
+
+@pytest.mark.parametrize(("answer", "loaded", "why"), [
+    ((200, b'{"models": [{"name": "qwen3.5:2b", "context_length": 32768}]}'), {"qwen3.5:2b": 32768}, ""),
+    ((200, b'{"models": []}'), {}, ""),  # nothing loaded
+    ((404, b'{"error": "not found"}'), None, "/api/ps answered HTTP 404"),
+    ((200, b"<html>"), None, "/api/ps answered with something that is not Ollama's list of loaded models"),
+])
+def test_what_an_ollama_that_lists_its_models_has_loaded_and_the_context_it_gives_each(answer, loaded, why):
+    host = apple_mac(programs={"ollama": "/opt/homebrew/bin/ollama"},
+                     http={OFF[OLLAMA]: (200, tags(("qwen3.5:2b", 2683396812))), "http://127.0.0.1:9/api/ps": answer})
+    server = probe(host, servers=OFF).runtime(OLLAMA).server
+    assert (server.loaded, server.loaded_why) == (loaded, why)
+    down = probe(apple_mac(), servers=OFF).runtime(OLLAMA).server  # nothing listens: /api/ps is not asked
+    assert (down.state, down.loaded, down.loaded_why) == (DOWN, None, "")
 
 
 @pytest.mark.parametrize(("answer", "why"), [
@@ -297,6 +315,7 @@ def test_without_runtimes_no_server_is_asked_and_no_runtime_looked_for():
 def test_the_real_getter_reads_each_servers_list_and_asks_only_127_0_0_1():
     routes = {
         "/api/tags": Answer(body=tags(("gpt-oss:20b", 13793441244))),
+        "/api/ps": Answer(body=json.dumps({"models": [{"name": "gpt-oss:20b", "context_length": 32768}]}).encode()),
         "/v1/models": Answer(body=openai_list("mlx-community/Qwen3.5-9B-MLX-4bit")),
         "/studio/v1/models": Answer(body=openai_list("qwen/qwen3.5-9b")),
     }
@@ -306,10 +325,12 @@ def test_the_real_getter_reads_each_servers_list_and_asks_only_127_0_0_1():
         machine = probe(host, servers=servers, http_timeout=PATIENT)
     assert machine.runtime(OLLAMA).server.models == ("gpt-oss:20b",)
     assert machine.runtime(OLLAMA).server.size("gpt-oss:20b") == 13793441244
+    assert machine.runtime(OLLAMA).server.loaded == {"gpt-oss:20b": 32768}  # what it has loaded, with its context
     assert machine.runtime(MLX).server.models == ("mlx-community/Qwen3.5-9B-MLX-4bit",)
+    assert machine.runtime(MLX).server.loaded is None  # asked of Ollama only
     assert machine.runtime(LM_STUDIO).server.models == ("qwen/qwen3.5-9b",)
     assert {urlsplit(url).hostname for url in host.fetched} == {"127.0.0.1"}
-    assert server.hosts == [f"127.0.0.1:{server.port}"] * 3
+    assert server.hosts == [f"127.0.0.1:{server.port}"] * 4
     assert sorted(server.paths) == sorted(routes)
 
 
