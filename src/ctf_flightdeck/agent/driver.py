@@ -20,6 +20,9 @@ A flag the model submits that the challenge's own text holds (its description, o
 file as it came: often a decoy) is not claimed: under submit auto too it waits for the
 player, and the model hears why, as agent/external.py's lanes do. Such a flag that an L1
 engine gives as its result (a stand-in flag.txt it read out) waits too, and the lane says why.
+The search of that text at the lane's start (planted) is bounded, so under auto, before
+such a flag would go out on its own, it is looked for in all of that text (agent/owntext.py),
+and it waits when it is there or when that search could not cover it all.
 With the light model's flagcheck (agent/flaggate.py), a flag the model submits that would go
 out without the player
 (submit auto, not planted, tries not counted) is checked first, in the background: it reaches
@@ -62,7 +65,7 @@ from ..l1.runner import scan
 from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
-from . import prompts
+from . import owntext, prompts
 from .client import ChatClient, ModelError, Reply
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
 from .facts import FirstLooks, Look
@@ -196,6 +199,7 @@ class _Run:
     idle_turns: int = 0  # replies in a row with no tool call (and no new flag in their text) since the player last spoke
     said: set[str] = field(default_factory=set)  # flags the model wrote without calling a tool, already raised
     planted: frozenset[str] = frozenset()  # flag-format matches in the challenge's own text: never claimed when submitted
+    own: dict[str, owntext.Found] = field(default_factory=dict)  # submit auto: each flag it gives, looked for in all of it
     outputs: Outputs = field(default_factory=Outputs)  # its newest tool outputs: where a flag it submits was found
     look: Look | None = None  # the challenge's first look (agent/facts.py), until the lane's first model call takes it
     recon: str = ""  # what of the first look was back then: in the brief of every fresh context of the lane
@@ -513,26 +517,48 @@ class AgentDriver:
         the handout as it came (the workspace before anything ran in it): a decoy flag.txt, an
         example in a readme. A flag the model submits, or an L1 engine gives as its result, that
         is one of them is not claimed, so it waits for the player under auto too, as
-        agent/external.py does for its agents. What the search did not cover (cut short, or
-        parts of a big handout) is said on the lane."""
-        found, done, left = await asyncio.to_thread(
+        agent/external.py does for its agents. This search is bounded (_own_flags), so what it
+        misses is not said: under auto such a flag is looked for in all of that text before it
+        goes out (_vet)."""
+        found = await asyncio.to_thread(
             _own_flags, run.workspace.root, run.challenge.description, self._flag_re(), time.monotonic() + PLANT_SECONDS
         )
         run.planted = frozenset(found)
-        if not done:
-            self.deck.note(run.lane_id, f"the search of the handout for flags stopped after {PLANT_SECONDS:g} s; a flag "
-                                        "the model or an L1 engine gives that is written in the rest of it may be submitted "
-                                        "without you under submit auto")
-        elif left:
-            self.deck.note(run.lane_id, f"the search of the handout for flags left out {'; '.join(left)}; a flag the model "
-                                        "or an L1 engine gives that is written there may be submitted without you under "
-                                        "submit auto")
+
+    async def _vet(self, run: _Run, flags: Sequence[str]) -> None:
+        """Under auto, before a flag the lane gives (the model's submit_flag, an L1 engine's
+        result) goes out without the player: look for it in all of the challenge's own text,
+        its description and every file of the handout as it came (agent/owntext.py). What was
+        found is kept (run.own) for _own_text. Not for a flag that cannot go out anyway (not
+        the whole flag format, known not to be the flag) or already known to be the
+        challenge's (planted)."""
+        if self.deck.config.submit != "auto":
+            return
+        for flag in dict.fromkeys(flags):
+            if flag in run.own or flag in run.planted or not self._flag_re().fullmatch(flag):
+                continue
+            if self.deck.not_flag(run.challenge.id, flag) is not None:
+                continue
+            handout = getattr(run.workspace, "handout", None)
+            run.own[flag] = await owntext.look_for(run.challenge.description, handout, flag)
+
+    def _own_text(self, run: _Run, flag: str) -> str:
+        """Why a flag the lane gives waits for the player, as the challenge's own text holds it
+        or may (planted; _vet's search: owntext.Found.says); "" when nothing says so. Under auto
+        a flag _vet never looked for waits too (a flightdeck bug, never a submit)."""
+        if flag in run.planted:
+            return owntext.OWN_TEXT
+        if (self.deck.config.submit != "auto" or not self._flag_re().fullmatch(flag)
+                or self.deck.not_flag(run.challenge.id, flag) is not None):
+            return ""
+        found = run.own.get(flag)
+        return owntext.UNSEARCHED if found is None else found.says()
 
     async def _l1_stage(self, run: _Run) -> None:
         """Run the engines routed to the challenge (agent/l1stage.py). A flag one found is the
         lane's candidate (claimed, unless the runner found it in what a text engine printed, or
-        the challenge's own text holds it: run.planted, as for the model's submit_flag, and the
-        lane says why); what they all found goes in the lane's context. In Docker an engine is
+        the challenge's own text holds it or may: _own_text, as for the model's submit_flag, and
+        the lane says why); what they all found goes in the lane's context. In Docker an engine is
         online only when the lane may reach the challenge's instance at once (instance auto): it
         runs before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
@@ -554,18 +580,22 @@ class AgentDriver:
             res = engine.result
             self.deck.record_l1(run.challenge.id, engine.manifest.id, res.status, flags=res.flags,
                                 seconds=engine.seconds, notes=res.notes, lane_id=run.lane_id)
+        # an engine's own result is claimed: under auto each is looked for in the challenge's own text first
+        await self._vet(run, [flag for engine in runs if engine.result.status in FLAG_STATUSES and not engine.scraped
+                              for flag in engine.result.flags])
+        if self._over(run):
+            return
         for engine in runs:
             if engine.result.status in FLAG_STATUSES:
                 for flag in engine.result.flags:
                     # a match in what a text engine printed may be the challenge's decoy, and so may a flag the
-                    # challenge's own text holds (a stand-in flag.txt an engine read out as its result): either waits
-                    planted = not engine.scraped and flag in run.planted
+                    # challenge's own text holds, or may (a stand-in flag.txt an engine read out as its result): either waits
+                    why = "" if engine.scraped else self._own_text(run, flag)
                     # as _turn: not said of a flag known not to be the flag (the deck says why it is not asked)
-                    said = planted and self.deck.not_flag(run.challenge.id, flag) is None
-                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not planted))
+                    said = bool(why) and self.deck.not_flag(run.challenge.id, flag) is None
+                    self._report(run, TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not why))
                     if said:
-                        self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a "
-                                                    "handout file), so it waits for you, though your L1 engine "
+                        self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though your L1 engine "
                                                     f"{engine.manifest.id} gave it as its flag")
         if not self._over(run):
             run.l1_message = {"role": "user", "content": prompts.l1_results([result_line(e) for e in runs])}
@@ -699,6 +729,9 @@ class AgentDriver:
             run.idle.set()
         if self._over(run):
             return False
+        await self._vet(run, [r.flag for r in results if r.flag])  # under auto: before a flag it submitted may go out
+        if self._over(run):
+            return False
         same = run.messages is messages  # else escalated during the turn: none of it goes into the new context
         notes: list[str] = []
         files = tuple(changes[:MAX_FILES_PER_TURN])
@@ -709,16 +742,17 @@ class AgentDriver:
                 run.outputs.add(result.action, result.content)
         flags = [r.flag for r in results if r.flag]
         plans = [r.plan for r in results if r.plan]
-        # the challenge hands these out: often decoys, so the player decides; not one known not to be
-        # the flag already (declined, rejected): the deck tells the model that instead
-        planted = {flag for flag in flags if flag in run.planted and self.deck.not_flag(run.challenge.id, flag) is None}
+        # the challenge hands these out (or may: _own_text): often decoys, so the player decides
+        reasons = {flag: self._own_text(run, flag) for flag in dict.fromkeys(flags)}
+        own = {flag: reason for flag, reason in reasons.items() if reason}
+        # said to the model and the player, but not of one known not to be the flag already (declined, rejected): the
+        # deck tells the model that instead
+        told = {flag: why for flag, why in own.items() if self.deck.not_flag(run.challenge.id, flag) is None}
         for flag in flags:
             if not self._flag_re().fullmatch(flag):  # the format is the board's: it stays in the brief's fence, never here
                 notes.append(f"{prompts.one(flag, 200)} does not match the flag format in the challenge brief; it was not submitted.")
-            elif flag in planted:
-                notes.append(f"{prompts.one(flag, 200)} is written in the challenge's own text (its description or a handout "
-                             "file), so it is not submitted on its own: it waits for the player. A flag a challenge hands "
-                             "out is often a decoy; keep going until you hear it was correct.")
+            elif flag in told:
+                notes.append(_waits(flag, told[flag]))
         skipped = len(reply.tool_calls) - len(results)
         said: list[str] = []  # flags the model wrote in a reply with no tool call: candidates it did not submit
         idle = False  # the last of MAX_IDLE_TURNS replies in a row that did nothing: the lane gives up
@@ -756,16 +790,15 @@ class AgentDriver:
                 plan=plans[-1] if plans else None,
                 files=files,
                 flag=raised[0] if raised else None,
-                claimed=not raised or raised[0] not in run.planted,
+                claimed=not raised or raised[0] not in own,
                 hints_taken=hints_taken if same else 0,
                 model=model,
             ),
         )
         for flag in raised[1:]:  # more candidates in one reply: each is its own approval
-            self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in run.planted))
-        for flag in dict.fromkeys(flag for flag in flags if flag in planted):
-            self.deck.note(run.lane_id, f"{flag} is written in the challenge's own text (its description or a handout "
-                                        "file), so it waits for you, though the lane submitted it")
+            self._report(run, TurnReport(turn=False, flag=flag, claimed=flag not in own))
+        for flag, why in told.items():
+            self.deck.note(run.lane_id, f"{flag} {why}, so it waits for you, though the lane submitted it")
         for flag in again:
             self.deck.note(run.lane_id, f"candidate {flag} again; not raised: the light model is still checking it")
         for flag in said:  # never submitted on its own: the model may be quoting a decoy it read
@@ -794,8 +827,9 @@ class AgentDriver:
 
     def _checked_first(self, run: _Run, flags: Sequence[str]) -> tuple[list[str], list[str]]:
         """Of a turn's submitted flags, each once: those the light model checks before they go
-        to the deck (agent/flaggate.py: not the challenge's own text, and going out without the
-        player now), and those it is checking already (submitted again: raised once)."""
+        to the deck (agent/flaggate.py: not the challenge's own text, nor maybe so (_own_text),
+        and going out without the player now), and those it is checking already (submitted
+        again: raised once)."""
         gate = self.flaggate
         checked: list[str] = []
         again: list[str] = []
@@ -804,7 +838,7 @@ class AgentDriver:
         for flag in dict.fromkeys(flags):
             if gate.under_check(run.lane_id, flag):
                 again.append(flag)
-            elif flag not in run.planted and gate.covers(self.deck, run.lane_id, flag):
+            elif not self._own_text(run, flag) and gate.covers(self.deck, run.lane_id, flag):
                 checked.append(flag)
         return checked, again
 
@@ -954,61 +988,47 @@ class AgentDriver:
             await self._close(run)
 
 
-def _own_flags(root: Path, description: str, pattern: re.Pattern[str], deadline: float) -> tuple[set[str], bool, list[str]]:
+def _own_flags(root: Path, description: str, pattern: re.Pattern[str], deadline: float) -> set[str]:
     """The flag-format matches in a challenge's own text: its description, and every file of
     the workspace (the handout, before anything ran in it), a text file as the snapshot keeps
     it and any other read from root, at most PLANT_FILE_BYTES of each and PLANT_BYTES in all,
-    as Latin-1 (a flag in a binary's strings shows). Then False when the search stopped at
-    `deadline`, and what else it left out, said for the player (the rest of a file past
-    PLANT_FILE_BYTES, files past PLANT_BYTES in all, a file it could not read, files past the
-    snapshot's cap). In a thread: it can take a while."""
+    as Latin-1 (a flag in a binary's strings shows), as far as the search got by `deadline`.
+    Bounded, so it may miss one (past those limits, past the snapshot's, a file it could not
+    read): a flag a lane gives is looked for in all of that text before it goes out on its
+    own (AgentDriver._vet). In a thread: it can take a while."""
     found: dict[str, None] = {}
     if not scan(description, pattern, deadline, found):
-        return set(found), False, []
+        return set(found)
     snapshot = take_snapshot(root)
     budget = PLANT_BYTES
-    cut = over = unread = 0
     for path, (size, _, _) in snapshot.files.items():
         text = snapshot.texts.get(path)
         if text is None:
             if budget <= 0:
-                over += 1
                 continue
-            limit = min(PLANT_FILE_BYTES, budget)
             try:
                 fd = open_inside(root, path.split("/"))
                 with os.fdopen(fd, "rb") as file:
-                    data = file.read(min(size, limit))
+                    data = file.read(min(size, PLANT_FILE_BYTES, budget))
             except OSError:  # gone or unreadable
-                unread += 1
                 continue
             budget -= len(data)
-            if len(data) < size:
-                if limit < PLANT_FILE_BYTES:  # the bytes in all ran out in it
-                    over += 1
-                else:
-                    cut += 1
             text = data.decode("latin-1")
         if not scan(text, pattern, deadline, found):
-            return set(found), False, []
-    left = []
-    if cut:
-        left.append(f"the rest of {_files(cut)} past {'its' if cut == 1 else 'their'} first {_size(PLANT_FILE_BYTES)}")
-    if over:
-        left.append(f"{_files(over)} past the first {_size(PLANT_BYTES)} in all")
-    if unread:
-        left.append(f"{_files(unread)} it could not read")
-    if snapshot.truncated:
-        left.append(f"the files past the first {len(snapshot.files)}")
-    return set(found), True, left
+            break
+    return set(found)
 
 
-def _files(n: int) -> str:
-    return f"{n} file" + ("" if n == 1 else "s")
-
-
-def _size(n: int) -> str:
-    return f"{n // (1024 * 1024)} MB" if n % (1024 * 1024) == 0 else f"{n} bytes"
+def _waits(flag: str, why: str) -> str:
+    """What the model hears of a flag it submitted that the challenge's own text holds, or may
+    (_own_text, `why`): that it waits, never the names of the handout's files the search met
+    (they are the challenge's, and the player has them)."""
+    shown = prompts.one(flag, 200)
+    if why == owntext.OWN_TEXT:
+        return (f"{shown} {owntext.OWN_TEXT}, so it is not submitted on its own: it waits for the player. A flag a "
+                "challenge hands out is often a decoy; keep going until you hear it was correct.")
+    return (f"flightdeck could not make sure that {shown} is not written in the challenge's own text, so it is not "
+            "submitted on its own: it waits for the player. Keep going until you hear it was correct.")
 
 
 def _step(results: list[ToolResult], reply: Reply) -> tuple[str, str]:

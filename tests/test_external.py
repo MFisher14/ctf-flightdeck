@@ -65,6 +65,7 @@ from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.runrecord import load_run
 from fake_light import Lingers
 from fake_model import FakeModelServer, text_reply
+from stand_in_kit import OWN_TEXT, PAST, STAND_IN, cut_short, handout_of
 
 FAKE = Path(__file__).with_name("fake_agent_cli.py")
 FLAG = r"t\{[a-z0-9_]+\}"
@@ -1964,49 +1965,28 @@ def test_a_flag_search_that_runs_out_of_time_stops_and_says_so_on_the_lane(tmp_p
 
 # ---------------------------------------------------------------------- a claimed flag the start's handout search missed
 
-STAND_IN = "t{stand_in}"
-OWN_TEXT = "is written in the challenge's own text (its description or a handout file)"
-PAST = {
-    # a stand-in where the search of the handout at the lane's start (planted) does not look:
-    # (the handout's files, its limits as set for the test, the description)
-    "past-the-first-1-MB-of-a-file": ({"firmware.bin": b"\x7fELF" + b"\x00" * (1536 * 1024) + STAND_IN.encode()}, {}, ""),
-    "past-the-bytes-in-all": ({"a.bin": b"\x00" * 8192, "b.bin": b"\x00" + STAND_IN.encode() + b"\x00"},
-                              {"bytes": 4096}, ""),
-    "past-the-seconds": ({"flag.txt": STAND_IN + "\n"}, {"seconds": -1.0}, ""),
-    "past-the-files": ({"a1.txt": "x\n", "a2.txt": "x\n", "a3.txt": "x\n", "z.txt": STAND_IN + "\n"}, {"files": 3}, ""),
-    "past-the-folder-depth": ({"d1/d2/flag.txt": STAND_IN + "\n"}, {"depth": 2}, ""),
+PAST_HERE = {
+    **PAST,
+    # this lane's start also searches only the first FLAG_SCAN characters of the description
     "past-the-characters-of-the-description": ({"note.txt": "x\n"}, {"chars": 64}, "x" * 100 + f" {STAND_IN}"),
-    "as-utf-16-in-a-binary": ({"app.exe": b"MZ\x00\x00" + STAND_IN.encode("utf-16-le") + b"\x00\x00"}, {}, ""),
+}
+LIMITS = {  # the limits of the search at a lane's start (_handout_texts, _search_all, the snapshot)
+    "bytes": (external, "HANDOUT_BYTES"), "seconds": (external, "SCAN_SECONDS"), "chars": (external, "FLAG_SCAN"),
+    "files": (agent_workspace, "SNAPSHOT_FILES"), "depth": (agent_workspace, "SNAPSHOT_DEPTH"),
 }
 
 
-def handout_of(tmp_path: Path, files: dict[str, bytes | str], name: str = "note") -> Path:
-    folder = tmp_path / "board" / name
-    folder.mkdir(parents=True)
-    for file, data in files.items():
-        (folder / file).parent.mkdir(parents=True, exist_ok=True)
-        (folder / file).write_bytes(data.encode() if isinstance(data, str) else data)
-    return folder
-
-
-def cut_short(monkeypatch, limits: dict[str, float]) -> None:
-    """The limits of the search at a lane's start (_handout_texts, _search_all, the snapshot), made small."""
-    targets = {"bytes": (external, "HANDOUT_BYTES"), "seconds": (external, "SCAN_SECONDS"), "chars": (external, "FLAG_SCAN"),
-               "files": (agent_workspace, "SNAPSHOT_FILES"), "depth": (agent_workspace, "SNAPSHOT_DEPTH")}
-    for name, value in limits.items():
-        monkeypatch.setattr(*targets[name], value)
-
-
 async def held_for_the_player(lab: Lab, lane, flag: str, tried: list[str]) -> None:
-    await until(lambda: lane.pending is not None, f"{flag} held for the player")
+    """The flag waits for the player once the agent's turn has ended (a loaded machine can take a while)."""
+    await until(lambda: lane.pending is not None or lane.finished, f"{flag} held for the player", timeout=30)
     assert flags_waiting(lane) == [(PendingKind.SUBMIT, flag)] and tried == []
 
 
-@pytest.mark.parametrize("case", list(PAST))
+@pytest.mark.parametrize("case", list(PAST_HERE))
 def test_under_auto_a_claimed_stand_in_the_start_s_search_missed_is_found_in_the_whole_handout_and_waits(
         tmp_path, monkeypatch, case):
-    files, limits, description = PAST[case]
-    cut_short(monkeypatch, limits)
+    files, limits, description = PAST_HERE[case]
+    cut_short(monkeypatch, limits, LIMITS)
     script = {"turns": [{"calls": [{"text": f"Found it.\nFLAG: {STAND_IN}"}]}]}
 
     async def main():
