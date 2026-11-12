@@ -164,6 +164,10 @@ class Agent(StrEnum):
 
 
 AGENT_HELP = "Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config) instead of flightdeck's own loop."
+HEADLESS_HELP = (
+    "No console: the run writes status.json in its run folder, approvals wait (nothing is approved), and SIGTERM or "
+    "Ctrl-C stops it as quitting does."
+)
 AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
 
 
@@ -218,6 +222,7 @@ def play(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
+    headless: Annotated[bool, typer.Option("--headless", metavar="", help=HEADLESS_HELP)] = False,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
@@ -238,7 +243,7 @@ def play(
         event=event,  # load_profile expands ~ itself, and says so when it cannot
         team_dir=_path(team_dir) if team_dir else None,
         handle=handle,
-        confirm=_ask if _at_terminal() else None,
+        confirm=_ask if _at_terminal() and not headless else None,  # a headless run has nobody to ask
         agent=agent.value if agent else None,
         agent_auth=agent_auth,
     )
@@ -251,8 +256,15 @@ def play(
         typer.echo(f"flightdeck: {host_warning()}", err=True)
     for note in run.notes():
         typer.echo(f"flightdeck: {note}", err=True)
-    console = run.app()
-    _fly(run, console.run_async)  # the console releases the board itself once it is up (on_start)
+    if headless:  # no console: the board is released, then the run waits for a signal or its own end (headless.py)
+        from .headless import Headless
+
+        console = Headless(run, say=lambda line: typer.echo(f"flightdeck: {line}", err=True))
+        between = console.fly
+    else:
+        console = run.app()
+        between = console.run_async  # the console releases the board itself once it is up (on_start)
+    _fly(run, between)
     if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
         typer.echo(f"flightdeck: {console.stopped_by.name}: the run's lanes were stopped as when you quit", err=True)
         raise typer.Exit(128 + console.stopped_by)
@@ -402,6 +414,7 @@ def practice(
     ] = None,
     agent: Annotated[Agent | None, typer.Option("--agent", help=AGENT_HELP)] = None,
     agent_auth: Annotated[str | None, typer.Option("--agent-auth", metavar="HOW", help=AGENT_AUTH_HELP)] = None,
+    headless: Annotated[bool, typer.Option("--headless", metavar="", help=HEADLESS_HELP)] = False,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends tokens like `play`."""
@@ -415,6 +428,7 @@ def practice(
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
         team=False, submit=None, model=model, run_dir=run_dir, pack=pack, agent=agent, agent_auth=agent_auth,
+        headless=headless,
     )
 
 

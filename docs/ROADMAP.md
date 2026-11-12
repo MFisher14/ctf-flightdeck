@@ -65,8 +65,12 @@ back at any time (D20). A sketch, decided in detail when M5 starts:
 - **Disengage.** Budget reached, the platform locking out or failing, the model API failing for every
   lane, a challenge down to its last try, a human check (a CAPTCHA): autopilot holds the queue, raises
   an alert and logs why, for the post-flight report.
-- **Headless, and a way to reach you.** Run without the console (a status file to start with); an
-  opt-in notification (webhook or phone push) when a flag lands or autopilot disengages.
+- **Headless, and a way to reach you.** Built ahead of the rest of M5: `play --headless` runs
+  without the console by the same rules (an approval waits, nothing is approved) and stops on
+  SIGTERM as quitting does; every run writes `status.json`; an opt-in webhook is told when a flag
+  is accepted, a lane needs you, or the queue is held or autopilot disengages, and never gets a
+  flag ([the guide](GUIDE.md#headless-runs-and-notifications)). Still open: a phone push, and
+  approving from the phone (Later: phone control).
 
 ## Still open from M0 to M4
 

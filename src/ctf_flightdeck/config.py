@@ -39,6 +39,10 @@ key. A job whose engine cannot do it (JOB_ENGINES), a table for a run job that j
 (it would look on and be off), and recon or flagcheck with no model for them are errors, each
 naming its key.
 
+The optional [notify] table turns on the notification webhook (notify.py): webhook_env names
+the variable that holds its URL (a secret, read by webhook_url() as a key is; never the URL
+itself), and `on` lists which of NOTIFY_KINDS are sent (all of them when it is left out).
+
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
 fails loudly instead of quietly leaving the default in place. Every error names the file
@@ -68,7 +72,8 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify")
+NOTIFY_KINDS = ("flag", "needs-you", "disengaged")  # what [notify] on may list, and its default: all three
 _API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
 API_PROVIDERS = ("openai", "anthropic")
@@ -187,6 +192,15 @@ class L1Config:
 
 
 @dataclass(frozen=True)
+class NotifyConfig:
+    """[notify]: the opt-in notification webhook (notify.py). The URL is a secret (it often
+    holds a token), so the config names the variable that holds it, as it does for a key."""
+
+    webhook_env: str = ""  # the environment variable (or keys-file entry) holding the webhook URL; "": no notifications
+    on: tuple[str, ...] = NOTIFY_KINDS  # which of NOTIFY_KINDS are sent
+
+
+@dataclass(frozen=True)
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
@@ -200,6 +214,7 @@ class Config:
     light: LightConfig = LightConfig()  # [light]; rules only when the config has none
     light_jobs: tuple[str, ...] = DEFAULT_JOBS  # [light] jobs: the jobs a run gives the light model
     light_tables: dict[str, LightConfig] = field(default_factory=dict)  # [light.<job>]: a job's own engine
+    notify: NotifyConfig = NotifyConfig()  # [notify]; no webhook when the config has none
 
 
 @dataclass(frozen=True)
@@ -262,6 +277,7 @@ def _config(path: Path, doc: dict) -> Config:
         light=light,
         light_jobs=jobs,
         light_tables=tables,
+        notify=_notify(path, _table(path, doc, "notify")),
     )
 
 
@@ -381,6 +397,40 @@ def light_thinking(light: LightConfig) -> bool:
     from .light import on_this_machine
 
     return not (light.engine == "openai" and on_this_machine(light.base_url))
+
+
+def webhook_url(config: Config) -> str | None:
+    """The notification webhook's URL, read from the variable notify.webhook_env names (the
+    environment, then the keys file); None when the config names none (no notifications).
+
+    The URL is a secret, as a key is: an unset variable, or one that does not hold an
+    http:// or https:// URL, is a ConfigError that names the variable and never shows what it
+    holds. A webhook_env that is not a variable name may be the URL itself, so it is refused
+    without being shown, here too (a Config built in code skips load_config's check)."""
+    name = config.notify.webhook_env
+    where = f"{config.source}: " if config.source is not None else ""
+    if not name:
+        return None
+    if not _is_env_name(name):
+        raise ConfigError(f"{where}notify.webhook_env {_NOT_A_WEBHOOK_NAME}")
+    from .keys import KeysError, environment, keys_path
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise ConfigError(str(exc)) from None
+    if not value:
+        raise ConfigError(
+            f"{where}notify.webhook_env names the variable {name}, which is not set: put {name}=<the webhook's URL> in "
+            f"{keys_path()} (chmod 600), or export it, or remove webhook_env from [notify] to play without notifications."
+        )
+    url = _split_url(value)
+    if url is None or url.scheme not in ("http", "https") or not url.hostname or not _plain(value):
+        raise ConfigError(
+            f"{where}the variable {name} (notify.webhook_env) does not hold an http:// or https:// URL (it is not shown: "
+            "a webhook's URL is a secret)."
+        )
+    return value
 
 
 def _read_key(config: Config, table: str, name: str, otherwise: str) -> str | None:
@@ -565,12 +615,29 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # challenge's live instance at once. On the host runtime they run on this machine, as you.
 # pack = "~/ctf/solvers"        # no pack: no L1 stage
 concurrency = 4                 # engines run at once on one challenge
+
+[notify]
+# Opt-in: a webhook flightdeck POSTs a small JSON message to during a run (docs/GUIDE.md, "Headless
+# runs and notifications", lists every field; it never holds a flag). webhook_env names the
+# environment variable (or keys.env entry) that holds the URL: a webhook's URL is a secret, so it
+# never goes in this file. No webhook_env: nothing is sent.
+# webhook_env = "FLIGHTDECK_WEBHOOK"
+# on: what is sent. "flag": a flag was accepted; "needs-you": a lane waits for your approval or
+# raised an alert (at most one a minute for each lane and need); "disengaged": no more lanes start
+# (the queue is held, or autopilot disengaged).
+# on = ["flag", "needs-you", "disengaged"]
 """
 
 _NOT_A_NAME = (
     "must be the name of an environment variable, like OPENROUTER_API_KEY (upper-case letters, "
     f"digits and _, not starting with a digit, at most {_MAX_ENV_NAME} characters), not the key itself; "
     '"" for a local server that needs no key'
+)
+
+_NOT_A_WEBHOOK_NAME = (
+    "must be the name of an environment variable, like FLIGHTDECK_WEBHOOK (upper-case letters, "
+    f"digits and _, not starting with a digit, at most {_MAX_ENV_NAME} characters), not the webhook's URL itself: "
+    "the URL is a secret, so it goes in that variable (or in the keys file), never in the config"
 )
 
 
@@ -1091,6 +1158,23 @@ def _l1(path: Path, table: dict) -> L1Config:
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
     return L1Config(pack=pack, concurrency=concurrency)
+
+
+def _notify(path: Path, table: dict) -> NotifyConfig:
+    _known(path, ("notify",), table, ("webhook_env", "on"))
+    name = table.get("webhook_env", "")
+    if not isinstance(name, str) or (name and not _is_env_name(name)):  # never shown: it may be the URL itself
+        raise _error(path, ("notify", "webhook_env"), _NOT_A_WEBHOOK_NAME)
+    on = table.get("on", list(NOTIFY_KINDS))
+    known = ", ".join(f'"{kind}"' for kind in NOTIFY_KINDS)
+    if not isinstance(on, list) or not on:
+        raise _error(path, ("notify", "on"), f"must be a list of one or more of {known}{_got(on)}")
+    for item in on:
+        if not isinstance(item, str) or item not in NOTIFY_KINDS:
+            raise _error(path, ("notify", "on"), f"lists something that is not one of {known}")
+    if len(set(on)) != len(on):
+        raise _error(path, ("notify", "on"), "lists a kind twice")
+    return NotifyConfig(webhook_env=name, on=tuple(kind for kind in NOTIFY_KINDS if kind in on))
 
 
 def _run_dir(path: Path, table: dict) -> Path:
