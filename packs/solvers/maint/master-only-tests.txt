@@ -36,6 +36,7 @@ tests/test_event_scaffold.py::test_commands_are_discovered_by_python_m_ctf
 tests/test_event_scaffold.py::test_shipped_past_events_have_matching_agent_files
 tests/test_failover.py::test_the_advisory_trigger_follow_up_is_a_build_plan_item_and_every_pointer_names_it
 tests/test_findings.py::test_git_artifact_default_repo_is_this_checkout
+tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[assemble.py]
 tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[BRIEF.md]
 tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[CHECKS.md]
 tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[EXPAND_BRIEF.md]
@@ -43,10 +44,9 @@ tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[HEADER.md]
 tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[REPRO_BRIEF.md]
 tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[REVIEW_BRIEF.md]
 tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[VERIFY_BRIEF.md]
-tests/test_gitignore_writeups.py::test_organizer_files_are_tracked[assemble.py]
+tests/test_gitignore_writeups.py::test_root_staging_tree_stays_ignored[writeups/_public/some-repo/writeups/README.md]
 tests/test_gitignore_writeups.py::test_root_staging_tree_stays_ignored[writeups/2026-csctf/cards/1-alpha.md]
 tests/test_gitignore_writeups.py::test_root_staging_tree_stays_ignored[writeups/2026-csctf/event.json]
-tests/test_gitignore_writeups.py::test_root_staging_tree_stays_ignored[writeups/_public/some-repo/writeups/README.md]
 tests/test_handoff_board.py::test_runbook_and_wrapper_commands_parse[docs/handoff.md]
 tests/test_hypothesis_rules.py::test_both_files_of_every_event_carry_the_same_ledger_block[csctf]
 tests/test_hypothesis_rules.py::test_both_files_of_every_event_carry_the_same_ledger_block[huntress]
@@ -104,6 +104,7 @@ tests/test_primer.py::test_committed_primer_and_index_are_current
 tests/test_requirements_single_source.py::test_check_passes_on_this_tree
 tests/test_requirements_single_source.py::test_setup_installs_exactly_requirements_txt_once
 tests/test_requirements_single_source.py::test_setup_sh_runs_the_check_before_installing
+tests/test_requirements_single_source.py::test_what_setup_installs_pins_exactly_requirements_in
 tests/test_solver_contract.py::test_every_event_agent_file_carries_the_contract
 tests/test_spawn.py::test_every_events_agent_rules_carry_the_spawning_rules[csctf]
 tests/test_spawn.py::test_every_events_agent_rules_carry_the_spawning_rules[huntress]
