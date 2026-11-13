@@ -716,6 +716,7 @@ def prepare_run(options: RunOptions) -> Run:
         max_lanes=options.max_lanes,
         submit=options.submit,
         submit_limited=config.lanes.submit_limited,
+        wrong_stop=config.lanes.wrong_stop,
         models=ladder,
         **({"flag_format": flag_format} if flag_format else {}),
     )

@@ -2543,3 +2543,43 @@ def test_dismiss_is_refused_with_the_reason_for_an_alert_that_has_its_own_answer
     deck.apply(iv.Decline(box.id))
     assert deck.apply(iv.Dismiss(box.id)).message == f"{box.id} has no alert to dismiss"
     assert deck.apply(iv.Dismiss("L99")).message == "No lane L99"
+
+
+def platform_deck(**config):
+    """A deck whose flags go to a platform (a submitter): what it was handed, and the deck."""
+    sent: list[tuple[str, str, str]] = []
+    deck = Deck(DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS, submit="auto", **config), RecordingDriver(), Clock(),
+                lambda cid, flag: None, submitter=lambda lane, challenge, flag: sent.append((lane, challenge, flag)))
+    deck.release([Challenge("c0", "C", "misc", 100), Challenge("c1", "D", "misc", 100)], [QueueEntry("c0", "small"), QueueEntry("c1", "small")])
+    return deck, sent
+
+
+def test_under_auto_submit_the_flags_of_a_challenge_wait_for_the_player_once_three_were_wrong():
+    deck, sent = platform_deck()
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    for n in range(3):
+        deck.report(lane.id, TurnReport(flag=f"t{{guess{n}}}"))
+        deck.platform_verdict(lane.id, f"t{{guess{n}}}", False, "Incorrect")
+    assert [flag for _, _, flag in sent] == ["t{guess0}", "t{guess1}", "t{guess2}"] and deck.wrong_flags("c0") == 3
+    deck.report(lane.id, TurnReport(flag="t{guess3}"))  # the fourth is not sent: it waits
+    assert len(sent) == 3 and lane.pending is not None and (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{guess3}")
+    assert any("3 flags were wrong at C, so t{guess3} waits for you (wrong_stop 3)" in a.text for a in lane.actions)
+    assert deck.apply(iv.Approve(lane.id)).ok and sent[-1] == (lane.id, "c0", "t{guess3}")  # the player's yes sends it
+    deck.report(other.id, TurnReport(flag="t{elsewhere}"))  # another challenge has its own count
+    assert sent[-1] == (other.id, "c1", "t{elsewhere}")
+
+
+def test_a_declined_flag_is_not_a_wrong_one_and_wrong_stop_zero_never_stops():
+    deck, sent = platform_deck(wrong_stop=0)
+    lane = lane_on(deck, "c0")
+    for n in range(5):
+        deck.report(lane.id, TurnReport(flag=f"t{{guess{n}}}"))
+        deck.platform_verdict(lane.id, f"t{{guess{n}}}", False, "Incorrect")
+    assert len(sent) == 5 and lane.pending is None
+    with pytest.raises(ValueError, match="wrong_stop"):
+        DeckConfig(event="t", wrong_stop=-1)
+    confirm = Deck(DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS), RecordingDriver(), Clock(), lambda cid, flag: None)
+    confirm.release([Challenge("c0", "C", "misc", 100)], [QueueEntry("c0", "small")])
+    mine = lane_on(confirm, "c0")
+    confirm.report(mine.id, TurnReport(flag="t{maybe}"))
+    assert confirm.apply(iv.Decline(mine.id)).ok and confirm.wrong_flags("c0") == 0

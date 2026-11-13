@@ -82,7 +82,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
-_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited")
+_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
@@ -183,6 +183,7 @@ class LaneConfig:
     dollar_cap: float | None = 2.0  # None: no cap
     submit: str = "confirm"  # confirm | auto
     submit_limited: str = "confirm"  # confirm | auto: under submit auto, spend a challenge's counted tries without the player
+    wrong_stop: int = 3  # under submit auto: after this many wrong flags at a challenge its next ones wait for the player; 0: never
 
 
 @dataclass(frozen=True)
@@ -556,6 +557,8 @@ submit = "confirm"              # "confirm": you approve each flag; "auto": a fl
 submit_limited = "confirm"      # a challenge whose tries the platform counts (CTFd's max attempts). "confirm": its flags
                                 # wait for you, under submit "auto" too. "auto": under submit "auto" they go without you,
                                 # the last try included: a wrong flag can use up the tries, for your whole team
+wrong_stop = 3                  # under submit "auto": once the platform called this many flags wrong at one challenge,
+                                # its next flags wait for you (a lane that guesses does not spray the platform). 0: never
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
@@ -1151,7 +1154,15 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         dollar_cap=_cap(path, table, "dollar_cap", defaults.dollar_cap, whole=False),
         submit=_choice(path, table, ("lanes", "submit"), defaults.submit, SUBMIT_POLICIES),
         submit_limited=_choice(path, table, ("lanes", "submit_limited"), defaults.submit_limited, SUBMIT_POLICIES),
+        wrong_stop=_wrong_stop(path, table, defaults.wrong_stop),
     )
+
+
+def _wrong_stop(path: Path, table: dict, default: int) -> int:
+    value = table.get("wrong_stop", default)
+    if not _is_int(value) or value < 0:
+        raise _error(path, ("lanes", "wrong_stop"), f"must be a whole number, 0 or more (0: never stop){_got(value)}")
+    return value
 
 
 AGENT_KINDS = ("claude", "codex")

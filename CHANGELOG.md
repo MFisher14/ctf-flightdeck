@@ -24,6 +24,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ### CTFd
 
+- Under submit auto, once the platform has called three flags wrong at one challenge, that
+  challenge's next flags wait for your approval (`[lanes] wrong_stop`, 0 to turn it off), so a
+  lane that guesses cannot spray the platform.
 - A flag CTFd rate-limited without checking it is sent again by itself: flightdeck waits what
   CTFd asks (or 65 seconds) and resends, up to three more times, and says so on the lane.
   Before, the flag went back to you at once and autopilot disengaged. A challenge whose tries

@@ -133,3 +133,57 @@ def test_the_wrapper_says_blocked_when_the_pack_has_no_python(tmp_path):
     done = subprocess.run([str(script), str(tmp_path)], capture_output=True, text=True, env=env)
     answer = json.loads(done.stdout.strip().splitlines()[-1])
     assert done.returncode == 0 and answer["status"] == "blocked" and "setup.sh" in answer["notes"]
+
+
+def test_a_run_with_the_pack_solves_a_layered_challenge_before_any_model_call(tmp_path):
+    """The whole path a player takes: a board, the pack as [l1] pack, a run. The pack's intake
+    finds the flag (zip, then base64 twice), the player approves it, the board's answers file
+    says it is right, and the lane's model was never called."""
+    needs_environment()
+    import asyncio
+    import hashlib
+
+    from ctf_flightdeck.core import interventions as iv
+    from ctf_flightdeck.core.model import LaneState
+    from ctf_flightdeck.run import RunOptions, prepare_run
+
+    from fake_model import FakeModelServer
+
+    flag = "practice{nested_layers_42}"
+    root = tmp_path / "board"
+    folder = root / "layers"
+    folder.mkdir(parents=True)
+    with zipfile.ZipFile(folder / "bundle.zip", "w") as archive:
+        archive.writestr("deep/note.txt", base64.b64encode(base64.b64encode(flag.encode())).decode() + "\n")
+    (folder / "challenge.json").write_text(json.dumps({"name": "Layers", "category": "misc", "points": 50, "description": "Peel it."}))
+    (root / "board.json").write_text(json.dumps({"event": "Test Event", "flag_format": FORMAT}))
+    (root / "answers.sha256.json").write_text(json.dumps({"layers": hashlib.sha256(flag.encode()).hexdigest()}))
+    with FakeModelServer() as server:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            f'[api]\nbase_url = "{server.base_url}"\nkey_env = ""\n[models]\nladder = ["fake/small"]\n'
+            f'[lanes]\nmax_lanes = 1\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n'
+            f'[l1]\npack = "{PACK}"\nlane_tools = true\n')
+        run = prepare_run(RunOptions(board=root, config=config, runtime="host", pack=PACK))
+        assert [m.id for m in run.driver.l1.manifests] == ["solvers.intake"]
+        assert f"{PACK}/flightdeck/solvers" in run.driver.l1.toolkit  # what a lane's brief says of the pack
+
+        async def main():
+            run.release()
+            (lane,) = run.deck.lanes.values()
+            for _ in range(600):
+                if lane.pending is not None:
+                    break
+                await asyncio.sleep(0.1)
+            assert lane.pending is not None and lane.pending.flag == flag
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            for _ in range(100):
+                if lane.state is LaneState.SOLVED:
+                    break
+                await asyncio.sleep(0.1)
+            assert lane.state is LaneState.SOLVED
+            await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+        assert server.chats() == []

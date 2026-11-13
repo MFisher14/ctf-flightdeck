@@ -264,6 +264,11 @@ class Deck:
         the player), or None."""
         return self._not_flags.get(challenge_id, {}).get(flag)
 
+    def wrong_flags(self, challenge_id: str) -> int:
+        """How many flags of that challenge were judged wrong in this run: by the platform, or
+        by the player's word after a hand submit. A flag the player only declined is not one."""
+        return sum(1 for why in self._not_flags.get(challenge_id, {}).values() if why in (REJECTED, SAID_REJECTED))
+
     def submitting(self, challenge_id: str) -> tuple[tuple[str, str], ...]:
         """The flags of that challenge on their way to the platform (with a submitter), whose
         answer is not in yet, as (lane id, flag): the one handed to the submitter first, then
@@ -1381,10 +1386,15 @@ class Deck:
             self._submit(lane, flag)  # an answers file checks it, or the player submits it by hand: no try is spent
             return
         if self.config.submit == "auto" and claimed and not self.config.holds(ch):
-            if not self._keeps_last_try(ch):
+            wrong = self.wrong_flags(ch.id)
+            if self.config.wrong_stop and wrong >= self.config.wrong_stop:
+                # the wrong-answer stop: a lane that keeps guessing is not left to spray the platform
+                self._note(lane, f"{wrong} flags were wrong at {ch.name}, so {flag} waits for you (wrong_stop {self.config.wrong_stop})")
+            elif not self._keeps_last_try(ch):
                 self._send(lane, flag)
                 return
-            self._last_try_waits(lane, ch, flag)  # autopilot's guard: it waits for the player, as below
+            else:
+                self._last_try_waits(lane, ch, flag)  # autopilot's guard: it waits for the player, as below
         # under auto, a match scraped from text the lane read (a decoy flag.txt, an example
         # in a comment) waits for the player: a wrong try can cost a CTFd attempt. So does
         # every flag of a challenge whose tries the platform counts: flightdeck never spends

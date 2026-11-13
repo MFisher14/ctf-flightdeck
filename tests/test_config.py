@@ -237,6 +237,10 @@ def test_false_disables_a_cap_and_an_absent_cap_keeps_its_default(tmp_path):
 
 def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
     assert load_config(write(tmp_path, LADDER)).lanes.submit_limited == "confirm"
+    assert load_config(write(tmp_path, LADDER)).lanes.wrong_stop == 3
+    assert load_config(write(tmp_path, LADDER + "[lanes]\nwrong_stop = 0\n")).lanes.wrong_stop == 0
+    for bad in ("-1", "1.5", '"3"', "true"):
+        assert "lanes.wrong_stop must be a whole number, 0 or more" in error(write(tmp_path, LADDER + f"[lanes]\nwrong_stop = {bad}\n"))
     assert load_config(write(tmp_path, LADDER + '[lanes]\nsubmit_limited = "auto"\n')).lanes.submit_limited == "auto"
     for bad in ("true", '"yes"', '"off"'):
         assert 'lanes.submit_limited must be "auto" or "confirm"' in error(write(tmp_path, LADDER + f"[lanes]\nsubmit_limited = {bad}\n"))

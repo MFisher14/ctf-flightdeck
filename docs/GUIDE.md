@@ -305,6 +305,10 @@ it cannot check: submit the flag on the platform yourself, then press `a` if it 
 Under auto submit (`submit = "auto"`, or `play --submit auto`) a flag the model submits goes at
 once, unless it is written in the challenge's own description or handout files (often a decoy):
 that one still waits for you. A flag found wrong is never asked about again.
+Once the platform has called three flags wrong at one challenge, that challenge's next flags wait
+for you as well (`wrong_stop = 3` under `[lanes]`; 0 turns it off): a lane that is guessing does
+not get to spray the platform. A flag CTFd rate-limited without checking it is sent again by
+flightdeck after the wait CTFd asks for, up to three more times, before it comes back to you.
 
 Some platforms limit the tries at a challenge's flag (CTFd's "max attempts"). Every flag for such
 a challenge waits for your approval, under auto submit too, and the approval says how many tries

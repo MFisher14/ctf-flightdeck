@@ -379,6 +379,7 @@ class DeckConfig:
     flag_format: str = r"\w{1,64}\{[^{}\s]{1,256}\}"  # bounded: searched over megabytes of output
     submit: str = "confirm"  # stage policy for submitting flags
     submit_limited: str = "confirm"  # "auto": under submit auto, a challenge's counted tries are spent without the player
+    wrong_stop: int = 3  # under submit auto: once this many flags were wrong at a challenge, its next ones wait for the player; 0: never
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
 
     def __post_init__(self) -> None:
@@ -390,6 +391,8 @@ class DeckConfig:
             )
         if self.submit_limited not in SUBMIT_POLICIES:
             raise ValueError(f"submit_limited {self.submit_limited!r} is not known; known: {', '.join(SUBMIT_POLICIES)}")
+        if not isinstance(self.wrong_stop, int) or isinstance(self.wrong_stop, bool) or self.wrong_stop < 0:
+            raise ValueError(f"wrong_stop must be a whole number, 0 or more, got {self.wrong_stop!r}")
         check_flag_format(self.flag_format, "the deck's flag_format")  # the backstop: every loader checks it first
 
     @property
