@@ -744,6 +744,9 @@ def prepare_run(options: RunOptions) -> Run:
         plan.notes.append(f'submit_limited = "auto" in your config does nothing in this run: submit is "{deck_config.submit}", so every flag waits for you')
     if deck_config.variant_tries:
         plan.notes.append(variant_tries_note(deck_config))
+    rotating = sum(1 for b in board.challenges if b.challenge.rotates)
+    if rotating and deck_config.submit == "confirm":
+        plan.notes.append(rotating_under_confirm(rotating))
     handouts = {b.challenge.id: b.handout for b in board.challenges}
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
@@ -869,13 +872,15 @@ def prepare_run(options: RunOptions) -> Run:
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
     switch, has_fallback = _refusal_switch(client, ladder)
-    autopilot = Autopilot(deck, budget, refusals=switch)
+    autopilot = Autopilot(deck, budget, refusals=switch, second_after=config.autopilot.second_after,
+                          third_after=config.autopilot.third_after)
     autopilot.attach()  # after the watch: it sees the alerts the watch raised
     if engage:
         plan.notes += start_notes(
             plan.policies, submit=deck_config.submit, spends_tries=deck_config.spends_tries, instance=instance, budget=budget,
             waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
+            second_after=config.autopilot.second_after, third_after=config.autopilot.third_after,
         )
     instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes)
     run = Run(
@@ -915,6 +920,16 @@ def _instances(profile: EventProfile | None, policies: Policies, board: Board, l
         "challenge is solved or nobody works it"
     )
     return InstanceRunner(deck, client, max_running=profile.instances.max_running, urls=[urls, driver.urls])
+
+
+def rotating_under_confirm(count: int) -> str:
+    """The start note of a run whose board has `count` challenges with a rotating flag
+    ("rotates" in challenge.json) under the confirm submit policy."""
+    which = "1 challenge on this board has a flag that rotates" if count == 1 else f"{count} challenges on this board have a flag that rotates"
+    return (f'{which} ("rotates" in its challenge.json), and submit is "confirm": such a flag will usually rotate out '
+            "while it waits for your approval, and is then not sent (its lane fetches a fresh one, which waits again). "
+            "Submit auto avoids it (--submit auto, where the event's rules allow it): the flag goes out the moment the "
+            "lane has it")
 
 
 def _autopilot_asked(options: RunOptions, config: Config, runtime: str) -> tuple[bool, Budget]:
@@ -1290,7 +1305,10 @@ class _Submits:
     the minute CTFd's limits count in. Flags queued behind it wait too: they are the same
     account's, and would be refused the same way. Never for a challenge whose tries are
     counted: CTFd records a refused try against the limit, so those stay the player's (D21).
-    When the last send is refused too, the flag goes back to the player as before."""
+    When the last send is refused too, the flag goes back to the player as before.
+
+    A flag of a challenge whose flag rotates is checked right before each send (rotated_out):
+    one that waited here into a later window is not sent."""
 
     RESENDS = 3  # sends after the first, for one flag
     RESEND_WAIT = 65.0  # seconds, when CTFd names no wait: its limits count the last minute
@@ -1318,6 +1336,9 @@ class _Submits:
             lane_id, challenge_id, flag = item
             sends = 0
             while True:
+                if self.rotated_out(lane_id, challenge_id, flag):
+                    verdict = None  # not sent: the deck has told its lanes, and nothing is answered
+                    break
                 try:
                     verdict = await asyncio.to_thread(self.verifier.submit, challenge_id, flag)
                 except Exception as exc:  # a bug in the verifier: the outcome is not known, and the worker goes on
@@ -1336,13 +1357,32 @@ class _Submits:
                     ))
                 await self.sleep(wait)
             try:
-                self.answer(lane_id, challenge_id, flag, verdict)
+                if verdict is not None:
+                    self.answer(lane_id, challenge_id, flag, verdict)
             except Exception as exc:  # a bug: said now and at the end, and the next flag still goes
                 problem = f"CTFd: could not apply CTFd's answer to {_show(flag)}: {type(exc).__name__}: {exc}"
                 self.errors.append(problem)
                 with contextlib.suppress(Exception):
                     self.deck.warn(problem, challenge=challenge_id, data={"source": "ctfd"})
             self.sending = None
+
+    def rotated_out(self, lane_id: str, challenge_id: str, flag: str) -> bool:
+        """Whether `flag`, about to be sent (the first time, or again after a rate limit's
+        wait), has rotated out meanwhile (Deck.rotated: it stood here behind other flags, or
+        waited out a rate limit, into a later window). Then it is not sent: the deck is told
+        (platform_rotated), which tells its lanes to fetch a fresh one. A failure here is a
+        flightdeck bug: said, and the flag is sent as before."""
+        try:
+            if self.deck is None or not self.deck.rotated(challenge_id, flag):
+                return False
+            self.deck.platform_rotated(lane_id, flag)
+            return True
+        except Exception as exc:
+            problem = f"CTFd: could not check whether {_show(flag)} rotated out: {type(exc).__name__}: {exc}"
+            self.errors.append(problem)
+            with contextlib.suppress(Exception):
+                self.deck.warn(problem, challenge=challenge_id, data={"source": "ctfd"})
+            return False
 
     def resend_after(self, challenge_id: str, verdict: Verdict) -> float | None:
         """How long to wait before sending the flag again, or None when it is not sent again:

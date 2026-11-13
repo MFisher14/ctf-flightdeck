@@ -6,7 +6,10 @@ challenge, and the rest of that directory is its handout. An optional board.json
 the event and its flag format; an optional answers file holds the sha256 of each flag. A
 challenge.json may say how many tries the platform allows at the flag ("max_attempts", as a
 CTFd pull writes it): a flag for such a challenge never goes to the platform without the
-player, under the auto submit policy too (core/deck.py).
+player, under the auto submit policy too (core/deck.py). It may say that the flag rotates
+("rotates": every that many seconds, on clock boundaries; 0 or absent: it does not): the
+lane is told to fetch it right before submitting, and the deck sends none in a later window
+than the one it was found in (core/deck.py).
 
 Everything in a board folder is untrusted data, challenge.json included. It is checked
 field by field and an unknown key is an error, so a typo fails loudly. No path in it may
@@ -47,9 +50,10 @@ ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 ID_RULE = "lower-case letters, digits and _ . - (not first), at most 64 characters"
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
-CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts", "instance", "type")
+CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts", "instance", "type", "rotates")
 ON_DEMAND = "on-demand"  # "instance": the platform starts the challenge's instance when asked (platform/instances.py)
 TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")  # "type": the platform's own name for the challenge's kind
+MAX_ROTATES = 86_400  # seconds: a flag that rotates less often than daily is not one to hurry for
 BOARD_KEYS = ("event", "flag_format")
 
 CATEGORY_CODES = {
@@ -253,6 +257,11 @@ def _challenge(directory: Path) -> BoardChallenge:
         path, data, "max_attempts", _count, "a whole number, 0 or more: the tries the platform allows at the flag (0: any number)",
         default=0,
     )
+    rotates = _field(
+        path, data, "rotates", _rotation,
+        f"a whole number of seconds, 0 to {MAX_ROTATES}: how often the flag rotates, on clock boundaries (0: it does not)",
+        default=0,
+    )
     if "id" in data:
         cid = _field(path, data, "id", _valid_id, f"a challenge id ({ID_RULE})")
     else:
@@ -280,6 +289,7 @@ def _challenge(directory: Path) -> BoardChallenge:
         max_attempts=max_attempts,
         on_demand=instance == ON_DEMAND,
         platform_type=kind,
+        rotates=rotates,
     )
     return BoardChallenge(challenge=challenge, handout=directory, urls=urls)
 
@@ -547,6 +557,10 @@ def _text(value: object) -> bool:
 
 def _count(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _rotation(value: object) -> bool:
+    return _count(value) and value <= MAX_ROTATES
 
 
 def _valid_id(value: object) -> bool:

@@ -32,6 +32,22 @@ platform is left alone: those are the player's):
 - an "ignores the hint" or "wrong direction" alert: the lane is redirected to the alert's own
   suggestion (the detector's words, from flightdeck's tables, never a challenge's), once per
   lane and kind. A light hint judge, if configured, has had its say in the Watch already;
+- a second opinion on a timer (`second_after`, in seconds; 0, the default, is off): when an
+  unsolved challenge has exactly one open lane and nothing queued, and that lane started at
+  least `second_after` seconds ago, or a flag of the challenge was judged wrong (the first
+  rejected flag does not wait for the timer; a rotating challenge's misses inside its miss
+  budget are not counted: Deck.wrong_flags), the lane is forked onto a different model of the
+  ladder: the next rung above the lane's when there is one, else the lowest other one. Once
+  per challenge, whatever comes of the fork. A third lane likewise (`third_after`; 0 is off):
+  when the challenge has exactly two open lanes and the first of them started at least
+  `third_after` seconds ago, the first is forked onto a model neither runs (the next rung
+  above the higher of the two, else the lowest one left), once per challenge. A fork with no
+  free lane slot is first in the queue, as the player's is. No fork while the queue is held,
+  once the run budget is spent, on a challenge that is blocked or a teammate's, or while any
+  open lane of the challenge is one the rules above leave alone. With too few models on the
+  ladder (one for the second, two for the third) the rule does nothing, and a warning says so
+  once, when autopilot is first engaged. On a running event loop a timer wakes autopilot when
+  the next one falls due, so a board with no events is not left waiting;
 - the next round: when the queue is dry and no lane is running, each unsolved challenge a
   lane gave up on (or that a rule above parked) is queued on the next model up the ladder,
   lowest points first, each challenge at most once per rung. Not one whose lane ended on its
@@ -65,7 +81,7 @@ from enum import StrEnum
 
 from . import fmt
 from .core.deck import Deck
-from .core.interventions import Approve, Escalate, Kill, Outcome, Pause, Queue, Redirect
+from .core.interventions import Approve, Escalate, Fork, Kill, Outcome, Pause, Queue, Redirect
 from .core.model import (
     FLAG_PENDING,
     ME,
@@ -130,12 +146,27 @@ class Autopilot:
         budget: Budget | None = None,
         *,
         refusals: Callable[[bool], None] | None = None,
+        second_after: int = 0,
+        third_after: int = 0,
     ) -> None:
         """`refusals`: called with False when autopilot starts to guard the run (the model
         client must reroute no refusal from then on) and with True when the player has the
-        controls back."""
+        controls back. `second_after`, `third_after`: the seconds after which a challenge gets
+        a second and a third opinion (the module doc); 0 turns each off."""
+        for name, value in (("second_after", second_after), ("third_after", third_after)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a whole number of seconds, 0 or more (0: never), not {value!r}")
+        if second_after and third_after and third_after <= second_after:
+            raise ValueError(f"third_after ({third_after}) must be more than second_after ({second_after}): the third "
+                             "lane comes after the second")
         self.deck = deck
         self.budget = budget or Budget()
+        self.second_after = second_after
+        self.third_after = third_after
+        self._second: set[str] = set()  # challenges given their second opinion: once each
+        self._third: set[str] = set()  # and their third
+        self._said_ladder = False  # the ladder is too short for an opinion that is set: said once, at engage
+        self._alarm: asyncio.TimerHandle | None = None  # wakes a step when the next opinion falls due (on an event loop)
         self.state = State.OFF
         self.reason = ""  # why it last disengaged
         self._refusals = refusals
@@ -210,6 +241,7 @@ class Autopilot:
             f"autopilot engaged: run budget {self.budget.text()}",
             data={"autopilot": "engaged", "budget_dollars": self.budget.dollars, "budget_tokens": self.budget.tokens},
         )
+        self._say_ladder()
         self._wake()
         return Outcome(True, f"Autopilot engaged (run budget {self.budget.text()}); /autopilot off takes the controls back")
 
@@ -219,6 +251,7 @@ class Autopilot:
         if self.state is State.OFF:
             return Outcome(False, "Autopilot is not on")
         self.state = State.OFF
+        self._wake_in(None)
         self._guard(False)
         self.deck.warn(f"autopilot off: {why}", data={"autopilot": "off", "why": why})
         held = "; the queue is still held: /unhold lifts it" if self.deck.held else ""
@@ -231,6 +264,7 @@ class Autopilot:
         if self.state is not State.ENGAGED:
             return
         self.state, self.reason = State.DISENGAGED, reason
+        self._wake_in(None)
         if not self.deck.held:
             self._holding = True
             try:
@@ -318,11 +352,15 @@ class Autopilot:
                 if self.state is State.ENGAGED:
                     self._rules()
                 if self.state is State.ENGAGED:
+                    self._opinions()
+                if self.state is State.ENGAGED:
                     self._next_round()
                 if not self._dirty or self.state is State.OFF or self.deck.closing:
                     break
         finally:
             self._stepping = False
+            if self.state is not State.ENGAGED or self.deck.closing:
+                self._wake_in(None)  # no rule acts now: no opinion falls due
 
     def _guardrails(self) -> None:
         held, self._held_by = self._held_by, ""
@@ -387,6 +425,104 @@ class Autopilot:
                         self._apply(Redirect(lane.id, text))
                     break
 
+    def _opinions(self) -> None:
+        """The second and the third opinion (the module doc): fork what is due, and set the
+        alarm for the next one that is not."""
+        deck = self.deck
+        soonest: float | None = None
+        if (self.second_after or self.third_after) and not deck.held and not self._over_budget():
+            now = deck.now
+            for ch in list(deck.challenges.values()):
+                if self.state is not State.ENGAGED or deck.held:
+                    break
+                if ch.closed or ch.status is ChallengeStatus.BLOCKED or ch.claimed_by not in (None, ME) or deck.queued(ch.id):
+                    continue
+                lanes = deck.lanes_on(ch.id)  # in the order they started
+                if not lanes or any(self._hands_off(lane) for lane in lanes):
+                    continue
+                first = lanes[0]
+                ran = now - first.started_at
+                if len(lanes) == 1 and self.second_after and ch.id not in self._second:
+                    if deck.wrong_flags(ch.id):
+                        why = f"a flag of {first.id} was wrong"
+                    elif ran >= self.second_after:
+                        why = f"{first.id} has run {self.second_after} s on {first.model} without a solve"
+                    else:
+                        soonest = min(self.second_after - ran, soonest if soonest is not None else float("inf"))
+                        continue
+                    self._second.add(ch.id)
+                    self._opinion(first, lanes, "second", why)
+                elif len(lanes) == 2 and self.third_after and ch.id not in self._third:
+                    if ran < self.third_after:
+                        soonest = min(self.third_after - ran, soonest if soonest is not None else float("inf"))
+                        continue
+                    self._third.add(ch.id)
+                    self._opinion(first, lanes, "third", f"{first.id} started {self.third_after} s ago, and "
+                                                         f"{' and '.join(lane.id for lane in lanes)} have no solve")
+        self._wake_in(soonest)
+
+    def _hands_off(self, lane: Lane) -> bool:
+        """A lane no rule touches (P23): paused or taken over, waiting for the player's answer,
+        open only for its flag's answer, or with a flag on its way to the platform."""
+        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER) or lane.pending is not None or bool(lane.waiting)
+                or bool(lane.gave_up_later) or bool(self.deck.sending(lane.id)))
+
+    def _opinion(self, parent: Lane, lanes: list[Lane], which: str, why: str) -> None:
+        """Fork `parent` onto a model none of `lanes` runs, saying why on its transcript.
+        Nothing when the ladder has no such model (said at engage: _say_ladder)."""
+        model = self._another_model([lane.model for lane in lanes])
+        if model is None:
+            return
+        self.deck.note(parent.id, f"autopilot: a {which} opinion, on {model}: {why}")
+        self._apply(Fork(parent.id, model=model))
+
+    def _another_model(self, used: list[str]) -> str | None:
+        """A ladder model none of `used` is: the next rung above the highest of them when
+        there is one, else the lowest other one; None when the ladder has no other."""
+        ladder = self.deck.config.models
+        rungs = [ladder.index(model) for model in used if model in ladder]
+        above = [model for model in ladder[max(rungs) + 1:] if model not in used] if rungs else []
+        others = above or [model for model in ladder if model not in used]
+        return others[0] if others else None
+
+    def _say_ladder(self) -> None:
+        """Say, once, that an opinion the config asks for cannot be given: the ladder has too
+        few models for a different one."""
+        if self._said_ladder:
+            return
+        count = len(self.deck.config.models)
+        if self.second_after and count < 2:
+            which, key, need = "second", "second_after", "another model"
+        elif self.third_after and count < 3:
+            which, key, need = "third", "third_after", "a third model"
+        else:
+            return
+        self._said_ladder = True
+        both = " (nor a third)" if which == "second" and self.third_after else ""
+        self.deck.warn(
+            f"autopilot: {key} is set, but the model ladder has {count} model{'' if count == 1 else 's'} and a {which} "
+            f"opinion needs {need}: autopilot gives no {which} opinion{both} in this run",
+            data={"autopilot": "no_opinion", "which": which, "models": count},
+        )
+
+    def _wake_in(self, seconds: float | None) -> None:
+        """Set the alarm: a step in `seconds` (None: no alarm), on the running event loop. With
+        no loop (the mock's clock, a test) whoever drives the deck calls step()."""
+        if self._alarm is not None:
+            self._alarm.cancel()
+            self._alarm = None
+        if seconds is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._alarm = loop.call_later(max(seconds, 0.05), self._rings)
+
+    def _rings(self) -> None:
+        self._alarm = None
+        self.step()
+
     def _next_round(self) -> None:
         deck = self.deck
         if deck.held or deck.queue or any(lane.state is LaneState.RUNNING for lane in deck.lanes.values()):
@@ -447,7 +583,8 @@ class Autopilot:
 
 
 def start_notes(policies, *, submit: str, spends_tries: bool, instance: str, budget: Budget, waves: bool,
-                refusal_fallback: bool, agent: str | None, start=None, end=None) -> list[str]:
+                refusal_fallback: bool, agent: str | None, start=None, end=None, second_after: int = 0,
+                third_after: int = 0) -> list[str]:
     """What autopilot will and will not do in this run, said before lanes start: the run's
     own policies decide, and autopilot loosens none of them. `policies`: the event profile's
     (None without one). `refusal_fallback`: the model client would otherwise send Anthropic's
@@ -479,6 +616,11 @@ def start_notes(policies, *, submit: str, spends_tries: bool, instance: str, bud
                "looping lane and one whose effort is out of proportion, escalates a stalled lane one rung, redirects a lane "
                "that ignores the hint, and sends unsolved challenges round again on the next model up; it answers no flag "
                "and submits nothing itself")
+    if second_after or third_after:
+        second = (f"a second lane on another model of the ladder once a challenge's only lane has run {second_after} s "
+                  "unsolved, or at once when a flag of it is judged wrong") if second_after else ""
+        third = f"a third lane on a third model once the first of two lanes has run {third_after} s" if third_after else ""
+        out.append(f"autopilot: more opinions by rule, each once per challenge: {'; '.join(x for x in (second, third) if x)}")
     if agent is not None:
         out.append(f"autopilot: lanes are {agent}, whose CLI talks to its own API: flightdeck reroutes no refusal, and "
                    "cannot see or change what the CLI does with one")

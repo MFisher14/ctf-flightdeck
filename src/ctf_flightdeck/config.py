@@ -212,6 +212,8 @@ class AutopilotConfig:
     engage: bool = False  # true: every play engages autopilot (as --autopilot does for one run)
     budget_dollars: float | None = None  # the whole run's budget in dollars; None: none in dollars
     budget_tokens: int | None = None  # and in tokens; engaging needs at least one of the two
+    second_after: int = 0  # seconds a challenge's only lane runs before autopilot forks a second opinion on another model; 0: never
+    third_after: int = 0  # seconds its first lane runs before a third lane, on a third model; 0: never
 
 
 @dataclass(frozen=True)
@@ -636,6 +638,11 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # engage = false                # true: every play engages it
 # budget_dollars = 20.0         # the whole run's budget in dollars
 # budget_tokens = 20000000      # and, or instead, in tokens (needed when a model has no price)
+# second_after = 180            # a second opinion: once a challenge's only lane has run this many seconds unsolved
+#                               # (or at once when the platform calls a flag of it wrong), autopilot forks a second
+#                               # lane on another model of the ladder, once per challenge. 0, the default: never
+# third_after = 480             # and a third lane, on a model neither of the two runs, once the first of two lanes
+#                               # has run this long; more than second_after when both are set. 0, the default: never
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -1241,7 +1248,7 @@ def _notify(path: Path, table: dict) -> NotifyConfig:
 
 
 def _autopilot(path: Path, table: dict) -> AutopilotConfig:
-    _known(path, ("autopilot",), table, ("engage", "budget_dollars", "budget_tokens"))
+    _known(path, ("autopilot",), table, ("engage", "budget_dollars", "budget_tokens", "second_after", "third_after"))
     engage = table.get("engage", False)
     if not isinstance(engage, bool):
         raise _error(path, ("autopilot", "engage"), f"must be true or false{_got(engage)}")
@@ -1254,7 +1261,19 @@ def _autopilot(path: Path, table: dict) -> AutopilotConfig:
     if engage and dollars is None and tokens is None:
         raise _error(path, ("autopilot", "engage"), "is true, and autopilot needs a run budget: set budget_dollars or "
                                                     "budget_tokens beside it")
-    return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens)
+    second, third = (_opinion_after(path, table, key) for key in ("second_after", "third_after"))
+    if second and third and third <= second:
+        raise _error(path, ("autopilot", "third_after"), f"must be more than second_after ({second}): the third lane comes "
+                                                         f"after the second{_got(third)}")
+    return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens,
+                           second_after=second, third_after=third)
+
+
+def _opinion_after(path: Path, table: dict, key: str) -> int:
+    value = table.get(key, 0)
+    if not _is_int(value) or value < 0:
+        raise _error(path, ("autopilot", key), f"must be a whole number of seconds, 0 or more (0: never){_got(value)}")
+    return value
 
 
 def _run_dir(path: Path, table: dict) -> Path:

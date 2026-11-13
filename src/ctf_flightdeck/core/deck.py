@@ -31,6 +31,19 @@ Rules the deck enforces:
   again (then it is parked for the player to queue). A flag the platform did not check for
   want of tries is never taken for wrong, nor put to the player to submit by hand: the
   platform checks no more flags for it, by hand either;
+- a challenge whose flag rotates (Challenge.rotates: every that many seconds, on clock
+  boundaries) has windows, counted on this machine's clock (the deck's `wall`, Unix time:
+  window number = time // rotates; a platform whose clock differs from this machine's has
+  its boundaries that much earlier or later, and flightdeck does not know by how much). A
+  flag of it is never sent in a later window than the one a lane claimed it in (it waited
+  for the player's approval, stood in line behind another flag of the challenge, or behind
+  the submitter's other flags: rotated, platform_rotated), nor within ROTATE_MARGIN seconds
+  of its window's end (it would die on the way). Instead of going out it is dropped: each
+  open lane that sent it is told it rotated out and to fetch and submit a fresh one
+  (LaneDriver.rotated), a warning says so, and nothing is recorded as wrong, so the same
+  flag claimed again is a new claim. A flag of it judged wrong is remembered as not the
+  flag like any other, but the first ROTATING_MISSES of them do not count toward the
+  wrong-answer stop (wrong_flags): a miss there is usually a rotation, not a guess;
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
 - a lane that gave up while a flag of it waits is open only for that flag's answer: it takes
@@ -71,6 +84,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, replace
 
@@ -122,6 +136,8 @@ from .model import (
 
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
 BUDGET_RAISE = 1.5  # approving more budget multiplies the caps by this
+ROTATE_MARGIN = 8.0  # seconds: a rotating flag is not sent this close to its window's end (at most half the window)
+ROTATING_MISSES = 6  # wrong flags at a rotating challenge that do not count toward the wrong-answer stop
 ACTORS = {Actor.PLAYER: "the player", Actor.AUTOPILOT: "autopilot"}  # who an intervention can be by, as texts say it
 BY_RULE = (Escalate, Fork, Kill, Redirect, Pause, Queue, Approve)  # what autopilot may do (an Approve: a lane's budget request only)
 
@@ -186,19 +202,25 @@ def _tries_text(ch: Challenge) -> str:
 
 
 def _submit_detail(ch: Challenge, flag: str) -> str:
-    """What a flag's approval says: the flag, and the tries left when they are counted."""
-    tries = _tries_text(ch)
-    return f"submit {flag}" + (f" ({tries})" if tries else "")
+    """What a flag's approval says: the flag, the tries left when they are counted, and that
+    it rotates when it does."""
+    said = [_tries_text(ch)] + ([f"it rotates every {ch.rotates} s: it only goes out in the window it was found in"] if ch.rotates else [])
+    said = [text for text in said if text]
+    return f"submit {flag}" + (f" ({'; '.join(said)})" if said else "")
 
 
 class Deck:
     def __init__(
         self, config: DeckConfig, driver: LaneDriver, clock: Clock, verify: Verifier, *,
-        submitter: Submitter | None = None,
+        submitter: Submitter | None = None, wall: Callable[[], float] = time.time,
     ) -> None:
         """`verify` checks a flag at once (an answers file, or never: the player submits by
         hand). With a `submitter` (a platform over the network) the deck never calls it: a
-        flag goes to the submitter, and its answer comes back through platform_verdict()."""
+        flag goes to the submitter, and its answer comes back through platform_verdict().
+        `wall`: this machine's clock, in Unix seconds, for the windows of rotating flags only
+        (`clock` counts from the run's start, and a window is a time of day)."""
+        self.wall = wall
+        self._claimed: dict[tuple[str, str], float] = {}  # (challenge id, flag) of a rotating challenge -> when a lane last claimed it (wall)
         self.config = config
         self.driver = driver
         self.clock = clock
@@ -315,9 +337,33 @@ class Deck:
             self._fill()
 
     def wrong_flags(self, challenge_id: str) -> int:
-        """How many flags of that challenge were judged wrong in this run: by the platform, or
-        by the player's word after a hand submit. A flag the player only declined is not one."""
-        return sum(1 for why in self._not_flags.get(challenge_id, {}).values() if why in (REJECTED, SAID_REJECTED))
+        """How many flags of that challenge count as wrong answers in this run (the wrong-answer
+        stop reads it): those judged wrong by the platform, or by the player's word after a
+        hand submit. A flag the player only declined is not one. At a challenge whose flag
+        rotates, the first ROTATING_MISSES judged wrong are not counted (a flag that died on
+        the way is no guess); every one after them is."""
+        wrong = sum(1 for why in self._not_flags.get(challenge_id, {}).values() if why in (REJECTED, SAID_REJECTED))
+        ch = self.challenges.get(challenge_id)
+        return max(0, wrong - ROTATING_MISSES) if ch is not None and ch.rotates else wrong
+
+    def rotated(self, challenge_id: str, flag: str) -> str:
+        """Why `flag`, as a lane last claimed it, would be dead if it went to the platform now
+        ("" when it would not, and for a challenge whose flag does not rotate): this is a
+        later window than the one it was claimed in, or its window ends within the margin
+        (ROTATE_MARGIN seconds, at most half a window). Windows are counted on this machine's
+        clock (`wall`)."""
+        ch = self.challenges[challenge_id]
+        every = ch.rotates
+        if not every:
+            return ""
+        now = self.wall()
+        claimed = self._claimed.get((challenge_id, flag), now)
+        if claimed // every != now // every:
+            return f"it was found in an earlier {every}-second window"
+        left = every - now % every
+        if left < min(ROTATE_MARGIN, every / 2):
+            return f"its {every}-second window ends in {left:.0f} s, before the platform would have it"
+        return ""
 
     def variant_of(self, challenge_id: str, flag: str) -> tuple[str, str] | None:
         """When the deck proposed `flag` as a variant at that challenge: the flag it is a
@@ -1020,6 +1066,12 @@ class Deck:
             return Outcome(True, f"{pending.flag} accepted: {ch.name} solved by {lane.id}")
         if pending.kind is PendingKind.SUBMIT:
             assert pending.flag is not None
+            late = self.rotated(ch.id, pending.flag)
+            if late:  # it rotated out while it waited: nothing goes out, by hand either
+                self._resolve(lane)
+                self._rotated_out([lane], ch, pending.flag, late)
+                return Outcome(False, f"Not sent: {pending.flag} rotated out ({late}); {lane.id} was told to fetch a fresh "
+                                      "one and submit that")
             if self.submitter is not None:  # a platform over the network: its answer comes later
                 return self._send(lane, pending.flag, approved=pending)
             verdict = self._submit(lane, pending.flag, approved=True)
@@ -1481,12 +1533,17 @@ class Deck:
             self._tell_not_flag(lane, flag, why)
             return
         self._note(lane, f"candidate flag {flag}")
+        ch = self.challenges[lane.challenge_id]
+        if ch.rotates:
+            self._claimed[(ch.id, flag)] = self.wall()  # claimed (again) now: the window it must go out in
         queued = ([lane.pending] if lane.pending else []) + lane.waiting
         if any(p.flag == flag for p in queued):
             return  # already waiting
         if self._on_its_way(lane, flag):
             return
-        ch = self.challenges[lane.challenge_id]
+        if self.config.submit == "auto" and claimed and (late := self.rotated(ch.id, flag)):
+            self._rotated_out([lane], ch, flag, late)  # too close to its window's end: it would die on the way
+            return
         if self.config.submit == "auto" and claimed and self.submitter is None:
             self._submit(lane, flag)  # an answers file checks it, or the player submits it by hand: no try is spent
             return
@@ -1707,9 +1764,56 @@ class Deck:
             ending += self._back_to_player(item, Pending(PendingKind.SUBMIT, self._detail(ch, item.flag), flag=item.flag), why)[1]
         for lane in ending:
             self._end_if_gave_up(lane)
-        line = self._lines.get(ch.id)
-        if line and not line[0].sent:
-            self._hand_over(ch)
+        while (line := self._lines.get(ch.id)) and not line[0].sent:
+            item = line[0]
+            late = self.rotated(ch.id, item.flag)
+            if not late:
+                self._hand_over(ch)
+                break
+            line.remove(item)  # it rotated out while it stood in line: the one behind it has its turn
+            if not line:
+                del self._lines[ch.id]
+            self._rotated_out([self.lanes[i] for i in item.lanes], ch, item.flag, late)
+
+    def platform_rotated(self, lane_id: str, flag: str) -> None:
+        """The submitter did not send a flag it took for `lane_id` (the one on its way now):
+        the flag rotated out while it waited there (behind other challenges' flags, or for a
+        rate limit to pass: `rotated` said so when asked). As when it rotates out in the
+        deck: its lanes are told to fetch a fresh one, nothing is recorded as wrong, and the
+        challenge's next flag has its turn."""
+        self._on_thread("platform_rotated")
+        lane = self.lanes[lane_id]
+        ch = self.challenges[lane.challenge_id]
+        line = self._lines.get(ch.id, [])
+        if not line or not line[0].sent or line[0].lane != lane_id or line[0].flag != flag:
+            raise ValueError(f"no flag of {lane_id} is on its way to the platform as {flag!r}")
+        late = self.rotated(ch.id, flag)
+        if not late:
+            raise ValueError(f"{flag!r} has not rotated out: it is still to be sent for {lane_id}")
+        sent = line.pop(0)
+        if not line:
+            del self._lines[ch.id]
+        self._rotated_out([self.lanes[i] for i in sent.lanes], ch, flag, late)
+        self._next_to_platform(ch, False)  # judged or not, the platform is answering: the next flag goes as after a verdict
+
+    def _rotated_out(self, lanes: Sequence[Lane], ch: Challenge, flag: str, why: str) -> None:
+        """`flag` of a rotating challenge does not go out (`why`: rotated): each open lane of
+        `lanes` is told to fetch and submit a fresh one, a warning says so, and nothing is
+        remembered as wrong. A lane that had given up and waited only for this flag ends."""
+        self._claimed.pop((ch.id, flag), None)
+        told = [lane for lane in lanes if not lane.finished]
+        for lane in told:
+            self._note(lane, f"not sent: {flag} rotated out ({why}); told to fetch a fresh flag and submit that")
+            self.driver.rotated(lane, flag, ch.rotates)
+        who = f"; {', '.join(lane.id for lane in told)} was told to fetch a fresh one" if told else ""
+        self._emit(
+            EventKind.WARNING,
+            f"not sent: {flag} for {ch.name} rotated out ({why}){who}. Nothing is counted as wrong",
+            lanes[0].id if lanes else None, ch.id,
+            data={"rotated_out": True, "flag": flag, "rotates": ch.rotates, "lanes": [lane.id for lane in lanes]},
+        )
+        for lane in told:
+            self._end_if_gave_up(lane)
 
     def _keeps_last_try(self, ch: Challenge) -> bool:
         """Autopilot guards the run, and a flag for `ch` would spend the last try the platform

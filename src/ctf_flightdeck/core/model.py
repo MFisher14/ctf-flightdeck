@@ -53,6 +53,7 @@ class Challenge:
     on_demand: bool = False  # its live instance is started on the platform when asked (the board, or the event's [instances] types)
     platform_type: str = ""  # the platform's own name for its type (CTFd's "type"), when the board says
     tries_left: int | None = None  # the tries left, as the platform last said; None: it has not said
+    rotates: int = 0  # its flag rotates every this many seconds, on clock boundaries (the board says); 0: it does not
     family: str = ""  # the specialist family a light model routed it to (agent/facts.py); "" when none did
     category_guess: str = ""  # a light model's guess at its category, where the board names none flightdeck knows: never `category`
 
