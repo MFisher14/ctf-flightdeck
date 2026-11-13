@@ -129,10 +129,40 @@ def folder_name(source: str) -> str:
 
 
 def own_pack() -> Path | None:
-    """flightdeck's own solver pack beside this source tree (a git checkout of flightdeck, or
-    an editable install), or None: the PyPI package does not hold it."""
+    """flightdeck's own solver pack beside its source tree, or None: the PyPI package does not
+    hold it. The tree is the one this code runs from (a git checkout, an editable install),
+    or the folder this copy was installed from (`uv tool install .` or `pipx install .` in a
+    clone: the installer records it, PEP 610)."""
     here = Path(__file__).resolve().parents[2] / DEFAULT_SUBDIR
-    return here if (here / PACK_FILE).is_file() else None
+    if (here / PACK_FILE).is_file():
+        return here
+    source = installed_from()
+    if source is not None and (source / DEFAULT_SUBDIR / PACK_FILE).is_file():
+        return source / DEFAULT_SUBDIR
+    return None
+
+
+def installed_from(distribution: str = "ctf-flightdeck") -> Path | None:
+    """The folder on this machine this flightdeck was installed from, when the installer
+    recorded one (direct_url.json with a file:// address of a folder that is still there);
+    None for an install from PyPI, from an archive, or with no record."""
+    import json
+    from importlib import metadata
+    from urllib.parse import unquote, urlsplit
+    from urllib.request import url2pathname
+
+    try:
+        text = metadata.distribution(distribution).read_text("direct_url.json")
+        record = json.loads(text) if text else None
+    except (metadata.PackageNotFoundError, ValueError, OSError):
+        return None
+    if not isinstance(record, dict) or "dir_info" not in record or not isinstance(record.get("url"), str):
+        return None
+    parts = urlsplit(record["url"])
+    if parts.scheme != "file" or parts.netloc not in ("", "localhost"):
+        return None
+    folder = Path(url2pathname(unquote(parts.path)))
+    return folder if folder.is_dir() else None
 
 
 def default_ref() -> str:

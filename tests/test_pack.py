@@ -486,3 +486,44 @@ def test_flightdecks_own_pack_lists_tools_its_engines_name(tmp_path):
     tools = packs.read(own).tools
     assert {"tshark", "binwalk", "exiftool", "7zz"} <= set(tools) and list(tools) == sorted(tools)
     assert not {"docker", "claude", "python3"} & set(tools)  # what flightdeck itself brings or checks is not the pack's to list
+
+
+# ---------------------------------------------------------------------- a copy installed from a clone
+
+
+class _Recorded:
+    def __init__(self, text):
+        self.text = text
+
+    def read_text(self, name):
+        assert name == "direct_url.json"
+        return self.text
+
+
+@pytest.mark.parametrize(("record", "found"), [
+    ('{{"url": "file://{folder}", "dir_info": {{}}}}', True),
+    ('{{"url": "file://{folder}", "dir_info": {{"editable": true}}}}', True),
+    ('{{"url": "file://{folder}/gone", "dir_info": {{}}}}', False),  # the clone was moved or removed
+    ('{{"url": "file://{folder}/x.whl", "archive_info": {{}}}}', False),  # an archive, not a folder
+    ('{{"url": "https://example.org/{folder}", "dir_info": {{}}}}', False),
+    ("not json", False),
+    (None, False),  # an install from PyPI records nothing
+])
+def test_the_folder_a_copy_was_installed_from_is_read_from_the_installers_record(tmp_path, monkeypatch, record, found):
+    from importlib import metadata
+
+    text = None if record is None else record.format(folder=tmp_path.as_posix().lstrip("/") if "https" in record else tmp_path.as_posix())
+    monkeypatch.setattr(metadata, "distribution", lambda name: _Recorded(text))
+    assert packs.installed_from() == (tmp_path if found else None)
+
+
+def test_a_copy_installed_from_a_clone_uses_that_clones_pack(tmp_path, monkeypatch):
+    clone, site = tmp_path / "clone", tmp_path / "site" / "lib" / "ctf_flightdeck"
+    (clone / "packs" / "solvers").mkdir(parents=True)
+    (clone / "packs" / "solvers" / "pack.toml").write_text('name = "p"\n')
+    site.mkdir(parents=True)
+    monkeypatch.setattr(packs, "__file__", str(site / "pack.py"))  # this code runs from site-packages: no pack beside it
+    monkeypatch.setattr(packs, "installed_from", lambda: None)
+    assert packs.own_pack() is None
+    monkeypatch.setattr(packs, "installed_from", lambda: clone)
+    assert packs.own_pack() == clone / "packs" / "solvers"
