@@ -2610,3 +2610,16 @@ def test_a_note_for_every_lane_passes_over_a_lane_in_the_players_hands_and_stops
         assert deck.tell_all(f"note {n}").ok
     refused = deck.tell_all("one too many")
     assert not refused.ok and "12 notes for every lane are standing already" in refused.message and len(deck.standing) == 12
+
+
+def test_under_auto_submit_a_flag_that_solved_another_challenge_waits_for_the_player():
+    deck, sent = platform_deck()
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    deck.report(first.id, TurnReport(flag="t{of_the_first}"))
+    deck.platform_verdict(first.id, "t{of_the_first}", True, "Correct")
+    assert deck.challenges["c0"].closed and len(sent) == 1
+    deck.report(second.id, TurnReport(flag="t{of_the_first}"))  # read out of the sibling's files, say
+    assert len(sent) == 1 and second.pending is not None and second.pending.flag == "t{of_the_first}"
+    assert any("t{of_the_first} is the flag that solved C, so it waits for you here" in a.text for a in second.actions)
+    deck.report(second.id, TurnReport(flag="t{its_own}"))  # any other flag still goes at once
+    assert sent[-1] == (second.id, "c1", "t{its_own}")

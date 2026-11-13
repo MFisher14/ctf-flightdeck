@@ -31,6 +31,20 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   running instance is used and left alone. `docs/BOARDS.md` has the details.
 - `challenge.json` takes `"instance": "on-demand"` and `type`; `ctfd pull` records CTFd's type.
 
+### What lanes share
+
+- A lane that starts on a challenge other lanes worked or still work (a fork, a fresh lane after
+  a kill, the next model up the ladder) reads what each of them tried and how it ended: its
+  plan, the programs it ran, its last steps, what became of its flags, the alerts on it.
+  flightdeck writes that record itself, hands it over as data, and keeps it under 3,000
+  characters. The run folder keeps it as `shared.json`.
+- Series: challenges whose names share a start ("Harbor Lab: Read…", "Harbor Lab:
+  Fingerprint…") are linked. A lane on one is told which siblings are solved and what their
+  lanes found, and can read the files a sibling's ended lane left: the folder on the host
+  runtime, `/series/<challenge id>` (read-only) in Docker. A sibling's flag is never in the
+  brief, and under submit auto a flag that already solved another challenge waits for you when
+  a lane gives it again.
+
 ### The Game Master platform
 
 - flightdeck now plays events on a Game Master (a one-URL platform whose challenges are attempts

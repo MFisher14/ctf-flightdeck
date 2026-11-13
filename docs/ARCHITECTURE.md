@@ -197,6 +197,32 @@ the driver's notes on the lane, and what else the driver writes into the lane's 
 results, the first look, the player's messages, a summary). A `--host` lane that reads the keys
 file sends its model the names, not the values.
 
+### What lanes share
+
+Where: `core/shared.py`, `agent/sharing.py`, `sharedfile.py` (P43).
+
+The deck already holds everything a lane did; `core/shared.py` reads one entry per lane from it (`attempt`): models, approach,
+plan, the programs its shell ran (names read from step text, nothing parsed or run), last steps, findings, changed files, flag
+fates, course and budget alerts, and how it ended (a solve without its flag). No model writes it. At a lane's first model call
+`agent/sharing.opening` makes the text for it: the other lanes on its challenge, open ones first (a fork's parent first), then
+ended ones by turns, 900 characters an entry and 3,000 in all, the rest counted. It goes after the brief in `prompts.fenced`,
+since every line is derived from what a lane did while reading a challenge. `AgentDriver` keeps it as a message `_fresh` repeats
+before the L1 message; `ExternalDriver` adds it in `opening()`; so an escalation or a refresh keeps the same text and the cached
+prefix holds. `sharedfile.SharedFile` writes the whole record to `shared.json` at each lane's end and at close.
+
+### Series
+
+Where: `core/series.py`, `agent/sharing.py`, `DockerWorkspace.mount` (P44).
+
+`core/series.series_key` reads a series from names alone; `continuation_marker` finds "continuation of the same lab"-style
+wording. At a lane's start, before its workspace is prepared, `sharing.attach` picks for each sibling the workspace of the lane
+that solved it, else the one that ended last, never a running one: on the host it is the folder itself, and in Docker a
+read-only bind mount at `/series/<safe id>`. At the first model call `series_block` lists the siblings in the fence (solved
+first; six at most) with that lane's entry, its flags dropped and every known flag and flag-format match replaced, then says in
+flightdeck's own words that the files are challenge data and a sibling's flag is not this challenge's. The deck backs that:
+`Deck._accepted` remembers each flag that solved a challenge, and `_candidate` makes it wait for the player at any other
+challenge under submit auto.
+
 ### Workspaces
 
 Where: `agent/workspace.py`.

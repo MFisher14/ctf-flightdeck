@@ -241,6 +241,7 @@ class Deck:
         self._listeners: list[Callable[[Event], None]] = []
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
+        self._accepted: dict[str, str] = {}  # a flag the platform (or the player) called right -> the challenge it solved
         self.waits: dict[str, str] = {}  # challenge id -> why no lane starts on it yet (wait_for): its instance is not up
         self.standing: list[str] = []  # the player's notes for every lane (tell_all): a lane started later reads them at its start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
@@ -1599,7 +1600,13 @@ class Deck:
             return
         if self.config.submit == "auto" and claimed and not self.config.holds(ch):
             wrong = self.wrong_flags(ch.id)
-            if self.config.wrong_stop and wrong >= self.config.wrong_stop:
+            solved = self._accepted.get(flag)
+            if solved is not None and solved != ch.id:
+                # the flag of another challenge (a series sibling's files hold it, say): it is
+                # almost never this one's too, and a wrong try costs, so the player decides
+                other = self.challenges.get(solved)
+                self._note(lane, f"{flag} is the flag that solved {other.name if other is not None else solved}, so it waits for you here")
+            elif self.config.wrong_stop and wrong >= self.config.wrong_stop:
                 # the wrong-answer stop: a lane that keeps guessing is not left to spray the platform
                 self._note(lane, f"{wrong} flags were wrong at {ch.name}, so {flag} waits for you (wrong_stop {self.config.wrong_stop})")
             elif not self._keeps_last_try(ch):
@@ -1663,6 +1670,7 @@ class Deck:
                 self._variant(ch, flag, [lane, *also], approved=approved)
             self._end_if_gave_up(lane)
             return
+        self._accepted.setdefault(flag, ch.id)
         ch.status = ChallengeStatus.SOLVED
         ch.solved_by = lane.id
         ch.solves += 1
