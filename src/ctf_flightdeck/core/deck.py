@@ -189,6 +189,7 @@ class Deck:
         self._listeners: list[Callable[[Event], None]] = []
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
+        self.waits: dict[str, str] = {}  # challenge id -> why no lane starts on it yet (wait_for): its instance is not up
         self.standing: list[str] = []  # the player's notes for every lane (tell_all): a lane started later reads them at its start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
         self._spent: set[str] = set()  # challenges out of tries: closed until tries come back (_out_of_tries)
@@ -265,6 +266,19 @@ class Deck:
         """Why `flag` is known not to be the flag of that challenge (rejected, or declined by
         the player), or None."""
         return self._not_flags.get(challenge_id, {}).get(flag)
+
+    def wait_for(self, challenge_id: str, why: str) -> None:
+        """No lane starts on that challenge until ready() is called for it: something outside
+        the deck must come first (the platform starting its instance). Its queued lanes keep
+        their places, and the lanes behind them start meanwhile. Lanes already on it go on."""
+        self._on_thread("wait_for")
+        self.waits[challenge_id] = why
+
+    def ready(self, challenge_id: str) -> None:
+        """What a challenge waited for is there: its queued lanes may start, in the free slots."""
+        self._on_thread("ready")
+        if self.waits.pop(challenge_id, None) is not None:
+            self._fill()
 
     def wrong_flags(self, challenge_id: str) -> int:
         """How many flags of that challenge were judged wrong in this run: by the platform, or
@@ -1212,7 +1226,12 @@ class Deck:
         """Start queued lanes while there are free slots (none while the queue is held, or the
         run is closing)."""
         while self.queue and not self.held and not self.closing and len(self.active_lanes()) < self.config.max_lanes:
-            entry = self.queue.pop(0)
+            # a challenge that waits for something outside the deck (its instance on the platform)
+            # is passed over, not waited behind: the next one in the queue starts
+            at = next((i for i, queued in enumerate(self.queue) if queued.challenge not in self.waits), None)
+            if at is None:
+                break
+            entry = self.queue.pop(at)
             ch = self.challenges[entry.challenge]
             if self._workable(ch):
                 self._start(entry, ch)
