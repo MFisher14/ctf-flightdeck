@@ -1047,6 +1047,10 @@ def _docker_checks(config) -> list[Check]:
         found = image_present(image)
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
         out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
+        if config.l1.pack is not None and config.l1.image:
+            there = image_present(config.l1.image)
+            out.append(Check("l1 image", there, f"{config.l1.image} is {'present' if there else 'not on this machine'}",
+                             "run `flightdeck pack image`, or remove [l1] image to run engines in the lane image"))
     return out
 
 

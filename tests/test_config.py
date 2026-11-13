@@ -699,6 +699,8 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
     config = load_config(write(tmp_path, LADDER + '[l1]\npack = "~/solvers"\nconcurrency = 2\n'))
     assert config.l1 == L1Config(pack=Path("~/solvers").expanduser(), concurrency=2)
     assert load_config(write(tmp_path, LADDER)).l1 == L1Config(pack=None, concurrency=4)  # no pack: no L1 stage
+    own = load_config(write(tmp_path, LADDER + '[l1]\npack = "~/solvers"\nimage = "my-pack:1"\n'))
+    assert own.l1.image == "my-pack:1" and config.l1.image is None  # unset: engines run in the lane image
 
 
 @pytest.mark.parametrize(
@@ -707,6 +709,8 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
         ('pack = "solvers"', "l1.pack must be an absolute path or start with ~"),
         ("pack = 3", "l1.pack must be a string"),
         ("concurrency = 0", "l1.concurrency must be a whole number, at least 1"),
+        ('image = "-v /:/host"', "l1.image must be a docker image name"),
+        ('image = ""', "l1.image must not be empty"),
         ('engines = "x"', "l1.engines"),
     ],
 )

@@ -253,8 +253,9 @@ class Run:
         l1 = getattr(self.driver, "l1", None)
         if l1 is not None:
             if getattr(l1, "image", None) is not None:
+                own = getattr(l1, "engine_image", None)
                 where = (
-                    f", each in a container of the lane image {l1.image} with your pack mounted read-only, and no network "
+                    f", each in a container of {f'the pack image {own}' if own else f'the lane image {l1.image}'} with your pack mounted read-only, and no network "
                     "unless lanes may reach the challenge's live instance at once (instance auto)"
                 )
             else:
@@ -678,6 +679,8 @@ def prepare_run(options: RunOptions) -> Run:
         if agent is not None:
             _check_image_has(config.lanes.image, agent.kind)
     manifests = _l1_manifests(options.pack)
+    if runtime == "docker" and manifests is not None and config.l1.image:
+        _check_l1_image(config.l1.image)
     team = _team_channel(options, plan)
     profile = plan.profile
     first = token = None
@@ -727,6 +730,7 @@ def prepare_run(options: RunOptions) -> Run:
         l1 = L1Stage(
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
+            engine_image=config.l1.image if runtime == "docker" else None,
             labels=marks, record=processes, urls=urls,
         )
     write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
@@ -1619,6 +1623,15 @@ def _check_docker(image: str) -> None:
         raise RunError(
             f"the lane image {image} is not on this machine, and flightdeck never fetches images by "
             f"itself: run {how}, or set [lanes] image in your config"
+        )
+
+
+def _check_l1_image(image: str) -> None:
+    docker = shutil.which("docker") or "docker"
+    if subprocess.run([docker, "image", "inspect", image], capture_output=True, text=True).returncode != 0:
+        raise RunError(
+            f"the L1 image {image} ([l1] image) is not on this machine, and flightdeck never fetches images by itself: "
+            "`flightdeck pack image` builds your pack's image, or remove [l1] image to run engines in the lane image"
         )
 
 

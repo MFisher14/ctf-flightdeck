@@ -189,6 +189,7 @@ class LaneConfig:
 class L1Config:
     pack: Path | None = None  # a folder of L1 engines (manifests); None: no L1 stage
     concurrency: int = 4  # engines run at once on one challenge
+    image: str | None = None  # the docker image engines run in when lanes run in Docker; None: the lane image
 
 
 @dataclass(frozen=True)
@@ -635,7 +636,9 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # Each works in a copy of the handout. When lanes run in Docker, so do they: each in a container
 # of the lane image, your pack mounted read-only, with no network unless lanes may reach the
 # challenge's live instance at once. On the host runtime they run on this machine, as you.
+# `flightdeck pack install` fetches flightdeck's own solver pack, sets it up and writes both lines.
 # pack = "~/ctf/solvers"        # no pack: no L1 stage
+# image = "ctf-flightdeck-pack:1"  # Docker lanes: the image engines run in (a pack's own, with what its engines need); unset: the lane image
 concurrency = 4                 # engines run at once on one challenge
 
 [notify]
@@ -1165,13 +1168,18 @@ def _agents(path: Path, table: dict) -> dict[str, tuple[str, ...]]:
 
 
 def _l1(path: Path, table: dict) -> L1Config:
-    _known(path, ("l1",), table, ("pack", "concurrency"))
+    _known(path, ("l1",), table, ("pack", "concurrency", "image"))
     defaults = L1Config()
     concurrency = table.get("concurrency", defaults.concurrency)
     if not _is_int(concurrency) or concurrency < 1:
         raise _error(path, ("l1", "concurrency"), f"must be a whole number, at least 1{_got(concurrency)}")
+    image = None
+    if "image" in table:
+        image = _string(path, table, ("l1", "image"), "")
+        if not image or image.startswith("-") or not _plain(image):
+            raise _error(path, ("l1", "image"), "must be a docker image name: no spaces or control characters, and not starting with -")
     if "pack" not in table:
-        return L1Config(concurrency=concurrency)
+        return L1Config(concurrency=concurrency, image=image)
     raw = _string(path, table, ("l1", "pack"), "")
     try:
         pack = Path(raw).expanduser()
@@ -1179,7 +1187,7 @@ def _l1(path: Path, table: dict) -> L1Config:
         raise _error(path, ("l1", "pack"), "starts with ~ for a home directory that cannot be found") from None
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
-    return L1Config(pack=pack, concurrency=concurrency)
+    return L1Config(pack=pack, concurrency=concurrency, image=image)
 
 
 def _notify(path: Path, table: dict) -> NotifyConfig:

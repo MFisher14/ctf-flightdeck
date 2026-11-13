@@ -274,3 +274,16 @@ def test_engines_on_this_machine_have_no_container(tmp_path, pack, handout, fake
     stage_ = L1Stage(discover(pack), {"demo": handout}, tmp_path / "run", FLAG)  # the host runtime: no image
     (only,) = run(stage_.run("L01", challenge("Demo", description="a demo challenge"), online=False))
     assert only.result.flags == ("t{on_the_host}",) and not fake_docker.exists()
+
+
+def test_engines_run_in_the_packs_own_image_when_one_is_named_and_the_fence_stays_on_the_lane_image(
+        tmp_path, pack, handout, fake_docker):
+    cli_engine(pack, "e", "echo t{x}\n", route='keywords = ["demo"]')
+    demo = challenge("Demo", description="a demo challenge")
+    run(L1Stage(discover(pack), {"demo": handout}, tmp_path / "run", FLAG, image=FAKE_IMAGE, pack=pack,
+                engine_image="pack-image:1", urls={demo.id: ("tcp://chal.example.test:1337",)})
+        .run("L01", demo, online=True))
+    (started,) = fake_docker.read_text().splitlines()
+    assert " pack-image:1 " in started + " " and f" {FAKE_IMAGE} " not in started + " "
+    (proxy,) = (fake_docker.parent / "proxies.log").read_text().splitlines()
+    assert f" {FAKE_IMAGE} " in proxy and "pack-image:1" not in proxy
