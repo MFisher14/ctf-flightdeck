@@ -29,7 +29,11 @@ def own_state_folder(tmp_path_factory, monkeypatch):
     """Each test has a state folder of its own (XDG_STATE_HOME), never the player's: what a
     run notes there, and the containers a sweep may remove (leftovers.py), are the test's
     only. Commands a test starts get it through the environment they inherit."""
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("state")))
+    state = tmp_path_factory.mktemp("state")
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    # the player has seen the welcome screen: a test's console opens on the dashboard (cli._first_console)
+    (state / "ctf-flightdeck").mkdir()
+    (state / "ctf-flightdeck" / "welcomed").write_text("")
 
 
 @pytest.fixture(autouse=True)

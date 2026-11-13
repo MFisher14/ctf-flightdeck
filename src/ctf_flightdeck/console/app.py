@@ -73,6 +73,7 @@ class FlightdeckApp(App[None]):
         adder: Callable[[object], tuple[bool, str]] | None = None,
         paster: Callable[[], object] | None = None,
         attacher: Callable[[str, list], tuple[bool, str]] | None = None,
+        welcome: bool = False,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -85,6 +86,7 @@ class FlightdeckApp(App[None]):
         self._on_exit = on_exit
         self._run_dir = run_dir
         self.paster = paster  # ctrl+v in the /new form: saves the clipboard's image and returns its path (None: no pasting)
+        self.welcome = welcome  # open on the welcome screen (a player's first console, and the live mock)
         self.attacher = attacher  # /attach: copies files into a challenge's folder and restarts its lanes (None: not this board)
         self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
@@ -127,6 +129,16 @@ class FlightdeckApp(App[None]):
             self._on_start()
         if self.adder is not None and not self.deck.challenges:
             self.say("The board is empty. Type /new to add a challenge: its name, then its text, files and screenshots.")
+        if self.welcome:
+            from .screens import WelcomeScreen
+
+            empty = self.adder is not None and not self.deck.challenges
+
+            def done(go: bool | None) -> None:
+                if go and empty:
+                    self.new_challenge()
+
+            self.push_screen(WelcomeScreen(mock=self._ticker is not None, empty=empty, lanes=min(self.deck.config.max_lanes, 99)), done)
 
     async def action_quit(self) -> None:
         """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.

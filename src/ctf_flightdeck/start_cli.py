@@ -200,6 +200,9 @@ def start(
         written = events.write(folder, answers)
     except events.StartError as exc:
         _fail(str(exc))
+    from . import events as known_events
+
+    known_events.remember(folder)
     typer.echo("")
     typer.echo(f"event: {_show(name)}")
     typer.echo(f"  {written}   the event's rules, from your answers (edit it any time)")

@@ -455,12 +455,13 @@ class Run:
         except ScoreError as exc:
             return f"no scorecard: {exc}\n"
 
-    def app(self, refresh_seconds: float | None = 0.5):
+    def app(self, refresh_seconds: float | None = 0.5, *, welcome: bool = False):
         from .console.app import FlightdeckApp
 
         app = FlightdeckApp(
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
             config_path=str(self.config.source) if self.config.source is not None else "",
+            welcome=welcome,
             adder=self.add_challenge if self.watches_folder else None,
             paster=self.paste_image if self.watches_folder else None,
             attacher=self.attach_files if self.watches_folder else None,

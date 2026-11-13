@@ -23,8 +23,13 @@ flightdeck practice           # 14 small practice challenges: spends tokens on y
 A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
 uses it. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
 
-`flightdeck` on its own says what to do next on your machine, and whether your no-model solvers
-(L1) are installed. `flightdeck doctor` checks Python,
+`flightdeck` on its own, at a terminal, opens a menu: resume an event (the ones you set up or
+played, most recent first), start a new one, the practice set, or the mock; it also says
+whether your no-model solvers (L1) are installed. With no config yet it offers to set flightdeck
+up and start an event in one go. In a script or a pipe it asks nothing and prints the commands
+instead. The first console you open, and the mock, start on a welcome screen: what the board,
+the lanes and the command bar are, and the keys you need; Enter goes on (on an empty board, to
+adding your first challenge). `flightdeck doctor` checks Python,
 the config, the key variables, a local model server and its models, the light model, Docker, the
 lane image and your terminal's size. Before the console opens, `play` and `practice` ask the model
 API whether it takes your key and serves every model in your ladder, and stop with what to fix if

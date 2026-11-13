@@ -4,6 +4,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `flightdeck` on its own opens a menu: resume an event you played, start a new one, practice,
+  or the mock. With no config it sets flightdeck up and starts an event in one go.
+- Your first console, and the mock, open on a welcome screen that says what you are looking at
+  and what to press; on an empty board, Enter goes straight to adding a challenge.
+
 - `/config` alone opens a settings dialog: lanes at once and what happens to a flag.
 - In `/new`, `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads the
   text of a challenge's images into its description. The form says what is attached, and takes

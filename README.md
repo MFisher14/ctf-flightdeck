@@ -66,17 +66,22 @@ flightdeck doctor             # checks everything and says how to fix each probl
 flightdeck practice           # 14 small practice challenges, on your model
 ```
 
-Then play an event:
+Then just run it:
 
 ```sh
-flightdeck start
+flightdeck
 ```
 
-`start` asks for the event's name, its site and your access token, makes the event's folder,
-tells you whether the solver pack is installed, and launches. To come back to that event later:
+It opens on a short menu: resume an event you played before, start a new one, the practice
+set, or the mock. Starting one asks for the event's name, its site, your access token and its
+VPN file, makes the event's folder, and launches. Your first console opens on a welcome screen
+that says what you are looking at and the three keys you need.
+
+The same things by name, for a script or a habit:
 
 ```sh
-flightdeck play ~/ctf/example-ctf                                   # the folder start made
+flightdeck start                                                    # set up an event and play it
+flightdeck play ~/ctf/example-ctf                                   # an event you set up before
 flightdeck play ~/ctf/example-ctf --autopilot --budget-dollars 20   # while you sleep
 flightdeck play ~/ctf/some-board                                    # or any folder of challenges
 ```

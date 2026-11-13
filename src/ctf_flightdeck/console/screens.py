@@ -191,6 +191,49 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
         self.dismiss(None)
 
 
+class WelcomeScreen(ModalScreen[bool]):
+    """What a player sees before the dashboard, the first time: what the screen is, and the
+    one thing to do next. Enter does that thing (True); esc just closes it (False)."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="WelcomeScreen") + """
+    WelcomeScreen { background: $background 85%; }
+    WelcomeScreen > Vertical { width: 86; padding: 2 4; }
+    WelcomeScreen .gap { margin-top: 1; }
+    """
+    BINDINGS = [Binding("enter", "go", "go"), Binding("escape", "close", "close"), Binding("q", "close", "close")]
+
+    def __init__(self, *, mock: bool, empty: bool, lanes: int) -> None:
+        super().__init__()
+        self.is_mock, self.empty, self.lanes = mock, empty, lanes
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Welcome to flightdeck", style="bold"))
+            if self.is_mock:
+                first = "This is a demo on fake data: no model, no network, nothing spent. Look around; you cannot break anything."
+            elif self.empty:
+                first = "Your board is empty. Give flightdeck a challenge and an AI agent starts working on it."
+            else:
+                first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
+            yield Static(Text(first), classes="gap")
+            yield Static(Text("What you are about to see:", style="bold"), classes="gap")
+            yield Static(Text("  left    the board: every challenge\n"
+                              "  right   the lanes: one AI agent per challenge, the one that needs you on top\n"
+                              "  bottom  the command bar: type / to see everything you can do"))
+            yield Static(Text("You only need three things:", style="bold"), classes="gap")
+            third = "/new     hand over a challenge: its text, files, a screenshot" if self.empty and not self.is_mock \
+                else "a       approve a flag an agent found (d declines it)"
+            yield Static(Text(f"  enter   open a lane to watch it and talk to it\n  {third}\n  ?       every key, any time"))
+            go = "add your first challenge" if self.empty and not self.is_mock else "open the console"
+            yield Static(_keys(("enter", go), ("esc", "just show me the console")), classes="keys")
+
+    def action_go(self) -> None:
+        self.dismiss(True)
+
+    def action_close(self) -> None:
+        self.dismiss(False)
+
+
 class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
     """/config: this run's settings in one place. Lanes at once and what happens to a flag a
     lane finds; Enter applies both. The answer is (lanes as typed, submit), or None."""

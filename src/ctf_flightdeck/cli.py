@@ -60,7 +60,68 @@ def root(
 ) -> None:
     """A terminal harness for playing CTFs with AI agents, where you run the loop."""
     if ctx.invoked_subcommand is None:
-        typer.echo(_next_steps(), nl=False)
+        if _at_terminal() and _at_terminal_out():
+            _home()
+        else:  # nobody to ask (a script, a pipe): say what to run
+            typer.echo(_next_steps(), nl=False)
+
+
+MAX_RESUME = 6  # events offered on the opening menu, most recently played first
+
+
+def _home() -> None:
+    """`flightdeck` alone, at a terminal: resume an event, start a new one, practice or the
+    mock. With no config yet, starting an event asks init's questions first (start_cli)."""
+    from . import events
+    from .config import ConfigError, default_config_path
+    from .text import untrusted
+
+    typer.echo(f"flightdeck {__version__}: play CTFs with a fleet of AI agents, and stay the pilot.\n")
+    try:
+        have = default_config_path().exists()
+    except ConfigError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
+    found = events.known()[:MAX_RESUME] if have else []
+    choices: list[tuple[str, Callable[[], None]]] = []
+
+    def offer(label: str, action: Callable[[], None]) -> None:
+        choices.append((label, action))
+        typer.echo(f"  {len(choices)}  {label}")
+
+    for event in found:
+        count = f"{event.challenges} challenge{'' if event.challenges == 1 else 's'}"
+        offer(f"Resume {untrusted(event.title, one_line=True)}   ({count} · played {events.ago(event.played)} · {event.folder})",
+              lambda folder=event.folder: play(board=folder))
+    from . import start_cli
+
+    offer("Start a new CTF   (asks for its name, site, token and VPN file, then launches)" if have
+          else "Set up flightdeck and start a CTF   (a few questions: your model API, then the event)", lambda: start_cli.start())
+    if have:
+        offer("Practice   (14 small challenges on your model; spends tokens)", lambda: practice())
+    offer("Mock   (the console on fake data: no setup, nothing spent)", lambda: mock())
+    typer.echo("  q  Quit\n")
+    if have:
+        from .config import load_config
+
+        try:
+            typer.echo(start_cli.pack_line(load_config(default_config_path())) + "\n")
+        except ConfigError as exc:
+            typer.echo(f"flightdeck: {exc}\n", err=True)
+
+    def answer(text: str):
+        text = text.strip().lower()
+        if text in ("q", "quit", "exit"):
+            return None
+        if text.isdigit() and 1 <= int(text) <= len(choices):
+            return choices[int(text) - 1][1]
+        raise typer.BadParameter(f"choose a number from 1 to {len(choices)}, or q")
+
+    chosen = typer.prompt("Choose", default="1", value_proc=answer)
+    if chosen is None:
+        typer.echo("Every command: flightdeck --help")
+        return
+    chosen()
 
 
 def _next_steps() -> str:
@@ -161,7 +222,7 @@ def mock(
     from .mock.world import FakeWorld
 
     world = FakeWorld(scenarios.get(scenario.value), max_lanes=max_lanes, team=team, containerized=containerized)
-    FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}").run()
+    FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True).run()
 
 
 class Submit(StrEnum):
@@ -246,10 +307,14 @@ def play(
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
     on the API in your config, or with --agent on that CLI's own key or subscription."""
     from .run import RunError, RunOptions, host_warning, prepare_run
-    from .start import resolve
+    from .start import is_event_folder, resolve
 
     asked = _path(board) if board else None
     board, event = resolve(asked, event)  # a folder `flightdeck start` made: its event.toml and its board/
+    if asked is not None and is_event_folder(asked):
+        from . import events
+
+        events.remember(asked)  # `flightdeck` alone offers to resume it
     if asked is not None and not _vpn_ready(asked, ask=_at_terminal() and not headless):
         raise typer.Exit(1)
     options = RunOptions(
@@ -292,7 +357,7 @@ def play(
         console = Headless(run, say=lambda line: typer.echo(f"flightdeck: {line}", err=True))
         between = console.fly
     else:
-        console = run.app()
+        console = run.app(welcome=_first_console())
         between = console.run_async  # the console releases the board itself once it is up (on_start)
     _fly(run, between)
     if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
@@ -899,6 +964,29 @@ def _mount() -> None:
 
 
 _mount()
+
+
+def _first_console() -> bool:
+    """Whether this is the player's first real console on this machine (it opens on the
+    welcome screen); noted in the state folder so the next one opens on the dashboard."""
+    from .leftovers import state_folder
+
+    try:
+        note = state_folder() / "welcomed"
+        if note.exists():
+            return False
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("the welcome screen was shown\n")
+    except OSError:
+        return False
+    return True
+
+
+def _at_terminal_out() -> bool:
+    """Whether what flightdeck prints goes to a terminal (not a pipe or a file)."""
+    import sys
+
+    return sys.stdout.isatty()
 
 
 def _at_terminal() -> bool:
