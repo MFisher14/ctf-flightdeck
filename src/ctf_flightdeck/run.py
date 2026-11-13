@@ -60,6 +60,11 @@ profile's `start` still to come, prepare_run waits for it after every check and 
 first pull; at its `end` the run stops as quitting does (Run._until_end). The run tells
 autopilot when the platform needs a human: a CTFd poll that keeps failing, a flag CTFd did
 not judge, or a web page where CTFd's API should answer (platform/ctfd.py: HumanCheck).
+
+A Game Master event (platform "gamemaster") plays the board `flightdeck gm pull` wrote: the
+run pulls nothing and starts no attempt. When its submit policy uses the platform, answers go
+to the Game Master through the deck's submitter and its solved list is read back, at the
+start and every solves_seconds (platform/gamemaster_run.py: GameMasterLink).
 While autopilot guards the run the model client sends no server-side refusal fallback.
 
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
@@ -103,6 +108,10 @@ from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
 from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
+from .platform.gamemaster import GameMasterClient, GameMasterError
+from .platform.gamemaster import check_site as check_gm_site
+from .platform.gamemaster import load_ids as load_gm_ids
+from .platform.gamemaster_run import GameMasterLink, listed_solved
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
 from .preflight import (
     USES_PLATFORM,
@@ -228,6 +237,7 @@ class Run:
     policies: Policies | None = None
     ctfd: CTFdLink | None = None
     verifier: CTFdVerifier | None = None  # what submits a CTFd board's flags, when submit uses the platform
+    gm: GameMasterLink | None = None  # a Game Master board's submitter and solved list, when submit uses the platform
     team: TeamChannel | None = None
     _notes: list[str] = field(default_factory=list, repr=False)
     _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
@@ -309,6 +319,8 @@ class Run:
             state = self._watcher.poll()  # its marks wait until the board is on the deck
         if self._submits is not None:  # before any lane starts: it sends their flags to CTFd
             self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
+        if self.gm is not None:  # the Game Master's submits and its solved list
+            self._tasks += self.gm.tasks()
         if self.engage and self.autopilot is not None:  # before any lane starts: its guardrails hold from the first turn
             outcome = self.autopilot.engage()
             if not outcome.ok:  # prepare_run checked the budget and the runtime: something changed since
@@ -324,6 +336,8 @@ class Run:
             if self.ctfd.waves:
                 self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
             self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
+        if self.gm is not None:
+            self.gm.apply_solved(before_run=True)  # what the Game Master listed as solved before the run started
         if self._watcher is not None:
             self._team_stop = asyncio.Event()
             watching = self._watcher.run(interval=self.options.team_seconds, stop=self._team_stop)
@@ -359,6 +373,8 @@ class Run:
         await self.driver.shutdown()
         if self._submits is not None:  # after the lanes, so a flag one handed over as it stopped is named too
             self._errors += self._submits.unsent()
+        if self.gm is not None:
+            self._errors += self.gm.unsent()
         if self.team is not None:
             try:
                 self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
@@ -372,6 +388,8 @@ class Run:
             await self.lights.aclose()  # the light models, each once
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
+        if self.gm is not None:
+            await self.gm.aclose()
         if self.notifier is not None:  # last: what the shutdown itself had to say is sent too
             await self.notifier.aclose()
 
@@ -433,6 +451,8 @@ class Run:
         held = set(self.ctfd.solved_board_ids()) if self.ctfd is not None else set()
         if self.ctfd is not None:
             held |= {cid for cid, left in self.ctfd.tries.items() if left == 0}
+        if self.gm is not None:
+            held |= self.gm.held()  # solved on the Game Master
         state = self._watcher.latest if self._watcher is not None else None
         if state is not None and self.team is not None:
             held |= set(state.solves)
@@ -611,6 +631,11 @@ class _Plan:
     def ctfd(self) -> bool:
         return self.profile is not None and self.profile.platform == "ctfd"
 
+    @property
+    def gm(self) -> bool:
+        """A Game Master event whose submit policy uses the platform."""
+        return self.profile is not None and self.profile.platform == "gamemaster" and self.platform
+
 
 def prepare_run(options: RunOptions) -> Run:
     """Everything a run needs, checked up front. Raises RunError with the reason."""
@@ -688,6 +713,10 @@ def prepare_run(options: RunOptions) -> Run:
     if plan.ctfd:
         assert profile is not None
         token = _ctfd_token(profile)
+    gm_ids = gm_solved = None
+    if plan.gm:
+        assert profile is not None
+        token, gm_ids = _gm_token(profile, options.board)
     if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
         _check_apis(config, key, spare_key, plan.notes)
     if engage and profile is not None:  # every check is done: wait for the event's start before anything is pulled
@@ -696,6 +725,9 @@ def prepare_run(options: RunOptions) -> Run:
         assert token is not None
         first = _pull_first(options, plan, token)
         board = first.board
+    if gm_ids is not None:  # the Game Master's solved list, read once before the run starts
+        assert profile is not None and token is not None
+        gm_solved = _gm_solved(profile, token)
     assert board is not None
     runs = (options.run_dir or config.run_dir).expanduser()
     plan.notes += sweep(runs, docker=True if runtime == "docker" else None, clean=True).lines  # what killed runs left
@@ -774,10 +806,20 @@ def prepare_run(options: RunOptions) -> Run:
             link.read(first.solves)
         if plan.platform:
             verifier = CTFdVerifier(profile.url, token, first.ids)
+    gm = None
+    if gm_ids is not None:
+        assert profile is not None and profile.url is not None and token is not None and gm_solved is not None
+        gm = GameMasterLink(GameMasterClient(profile.url, token), gm_ids, solved=gm_solved, solves_seconds=options.solves_seconds)
+        plan.notes.append(
+            f"answers go to the Game Master at {_show(profile.url)}; this run pulls nothing and starts no attempt "
+            "(`flightdeck gm pull` does)"
+        )
     if verifier is not None:
         assert link is not None
         submits = _Submits(verifier, link)
         verify = _never_verify  # flags go to CTFd through the submitter, never through verify()
+    elif gm is not None:
+        verify = _never_verify  # answers go to the Game Master through its link, never through verify()
     elif plan.platform and board.answers:
         verify = AnswerVerifier(board.answers)
     else:
@@ -821,9 +863,11 @@ def prepare_run(options: RunOptions) -> Run:
             instance=instance,
             secrets=held,
         )
-    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits)
+    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits or gm)
     if submits is not None:
         submits.deck = deck
+    if gm is not None:
+        gm.deck = deck
     log.attach(deck)
     status = StatusFile(run_dir / STATUS_NAME, deck, run=run_dir.name, held=held)  # after the log: its warning is logged
     status.attach()
@@ -844,7 +888,7 @@ def prepare_run(options: RunOptions) -> Run:
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
-    idle = _flagcheck_idle(deck_config.submit, submits is not None or isinstance(verify, AnswerVerifier))
+    idle = _flagcheck_idle(deck_config.submit, submits is not None or gm is not None or isinstance(verify, AnswerVerifier))
     lights = _lights(config, plan.notes, idle={"flagcheck": idle} if idle else None)
     driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
@@ -860,13 +904,15 @@ def prepare_run(options: RunOptions) -> Run:
         )
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
-        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
+        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, gm=gm, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
     )
     if submits is not None:
         submits.solved = run._apply_solves
         submits.unjudged = run._flag_unjudged
+    if gm is not None:
+        gm.needs_human = autopilot.platform  # an answer the Game Master did not judge, or its list failing: autopilot disengages
     return run
 
 
@@ -1097,9 +1143,16 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
             raise RunError("--answers checks flags against a file, and a CTFd event checks them on CTFd: drop --answers")
     elif board is None:
         board = profile.board  # check() refused a manual profile without one
+        if board is None:  # a Game Master profile may leave it to the command line
+            raise RunError(
+                "a Game Master event needs the board folder `flightdeck gm pull` wrote: `flightdeck play FOLDER --event "
+                "EVENT.toml`, or board = that folder in the profile's [event]"
+            )
     elif profile.board is not None and _same_dir(board, profile.board) is False:
         notes.append(f"board: {_show(board)}, as you asked (the event profile names {_show(profile.board)})")
     submit = _event_submit(options, policies)
+    if profile.platform == "gamemaster" and submit.platform and options.answers is not None:
+        raise RunError("--answers checks flags against a file, and this event checks them on the Game Master: drop --answers")
     if not submit.platform:
         notes.append(
             f'submit is "{policies.submit}" in the event profile: flightdeck never submits a flag. It shows each one; '
@@ -1359,8 +1412,45 @@ class _Submits:
 
 
 def _never_verify(challenge_id: str, flag: str) -> bool | None:
-    """The deck's verify() when flags go to CTFd through its submitter: the deck never calls it."""
-    raise RuntimeError("a CTFd run's flags go to CTFd through the run's submitter, never through verify()")
+    """The deck's verify() when flags go to the platform through its submitter: the deck never calls it."""
+    raise RuntimeError("this run's flags go to the platform through the run's submitter, never through verify()")
+
+
+def _gm_token(profile: EventProfile, board: Path | None) -> tuple[str, dict]:
+    """The Game Master token, from the variable event.token_env names (never shown), and where
+    each board challenge's answer goes, from the gm.json `flightdeck gm pull` wrote into the
+    board folder: RunError unless the board was pulled from the profile's Game Master."""
+    name, url = profile.token_env, profile.url
+    assert name is not None and url is not None and board is not None  # check() refuses a Game Master profile without them
+    from .keys import KeysError, environment
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
+    if not value:
+        raise RunError(
+            f"the Game Master token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
+            "keys file or export it, then start play again"
+        )
+    try:
+        check_gm_site(url, value)
+    except ValueError as exc:  # a URL that is none, or a token no header can carry; the message never shows it
+        raise RunError(f"{exc} ({name}, the variable event.token_env names)") from None
+    try:
+        return value, load_gm_ids(board, url)
+    except GameMasterError as exc:
+        raise RunError(f"{exc}. Pull the board first: `flightdeck gm pull URL FOLDER`, then play that folder") from None
+
+
+def _gm_solved(profile: EventProfile, token: str) -> set[str]:
+    """The ids the Game Master lists as solved, read once before the run starts: RunError when
+    it cannot be read (a refused token, no answer), so a run never starts blind to the platform."""
+    assert profile.url is not None
+    try:
+        return _sync(listed_solved(profile.url, token))
+    except GameMasterError as exc:
+        raise RunError(f"could not read the Game Master's list: {exc}") from None
 
 
 @dataclass(frozen=True)

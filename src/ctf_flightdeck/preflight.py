@@ -4,7 +4,8 @@ The player writes an event profile, event.toml, from the event's rules (print a 
 with `flightdeck preflight --example`):
 
 - [event]: the event's name, its platform ("ctfd": flightdeck uses CTFd's API; "manual": a
-  folder board), where the board comes from, the flag format and team mode;
+  folder board; "gamemaster": a board `flightdeck gm pull` wrote, whose answers go to the Game
+  Master), where the board comes from, the flag format and team mode;
 - [rules]: what the rules allow: AI help (ai_allowed), scripts using the platform's API
   (platform_automation), lanes touching challenge instances (live_targets: allowed, confirm or
   off) and, optionally, how many lanes may run at once (max_lanes);
@@ -29,6 +30,11 @@ makes agents off; rules.platform_automation = false makes pull and submit manual
 rules.live_targets makes instance auto (allowed), confirm (confirm) or off (off); everything
 else may be auto. A stage the profile leaves out gets that loosest policy, except submit, which
 gets confirm (a flag is submitted only after the player approves it) unless auto is asked for.
+
+A "gamemaster" profile names the Game Master's url and token_env. A run with it pulls nothing
+and starts no attempt (`flightdeck gm pull` does both, before the run: its pull line says so,
+whatever the pull policy), so only its submit policy uses the platform: auto or confirm send
+answers to the Game Master and read its solved list.
 
 check() lists the problems: refusals (a run must not start: a policy looser than the rules
 allow, a platform setting missing, more lanes than the rules allow...) and warnings (worth
@@ -80,7 +86,7 @@ STRICTNESS = (Policy.AUTO, Policy.CONFIRM, Policy.MANUAL, Policy.OFF)
 """The policies from loosest (flightdeck does the most on its own) to strictest."""
 
 STAGES = ("pull", "l1", "agents", "submit", "instance")
-PLATFORMS = ("ctfd", "manual")
+PLATFORMS = ("ctfd", "manual", "gamemaster")
 LIVE_TARGETS = ("allowed", "confirm", "off")
 RUNTIMES = ("docker", "host")
 MAX_PROFILE_BYTES = 1_000_000  # an event profile bigger than this is refused
@@ -121,7 +127,7 @@ them all. A name with CTFD in it is taken for a CTFd token's variable even so (C
 _TABLES = ("event", "rules", "policies")
 _EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team", "start", "end")
 _RULE_KEYS = ("ai_allowed", "platform_automation", "live_targets", "max_lanes")
-_PLATFORM_ONLY = {"url": "ctfd", "token_env": "ctfd", "board": "manual"}
+_PLATFORM_ONLY = {"url": ("ctfd", "gamemaster"), "token_env": ("ctfd", "gamemaster"), "board": ("manual", "gamemaster")}
 # token_env: an upper-case name, as config.py asks of api.key_env. A token is letters, digits and
 # _ often enough (CTFd's is ctfd_ and 64 hex digits), but almost never all upper case, so one
 # pasted into token_env is refused before anything could show it.
@@ -175,10 +181,10 @@ class EventProfile:
 
     # [event]
     name: str
-    platform: str  # "ctfd" | "manual"
-    url: str | None = None  # ctfd: the site's address, without a trailing /
-    token_env: str | None = None  # ctfd: the NAME of the variable that holds the API token
-    board: Path | None = None  # manual: the folder board (absolute: ~ expanded, else from the profile's folder)
+    platform: str  # "ctfd" | "manual" | "gamemaster"
+    url: str | None = None  # ctfd, gamemaster: the site's address, without a trailing /
+    token_env: str | None = None  # ctfd, gamemaster: the NAME of the variable that holds the API token
+    board: Path | None = None  # manual, gamemaster: the folder board (absolute: ~ expanded, else from the profile's folder)
     flag_format: str | None = None  # a regular expression; None: the board's, else the deck's default
     team: bool = False
     start: datetime | None = None  # when the event starts, with its zone: autopilot waits for it (autopilot.py)
@@ -318,11 +324,13 @@ def check(
             )
     if profile.platform == "ctfd":
         _check_ctfd(profile, requested, env, model_config, refuse, warn)
+    elif profile.platform == "gamemaster":
+        _check_gamemaster(profile, requested, env, model_config, refuse, warn)
     else:
         _check_manual(profile, refuse)
-    for key, platform in _PLATFORM_ONLY.items():
-        if getattr(profile, key) is not None and profile.platform != platform:
-            warn.append(f'event.{key} is only for platform "{platform}", so this {profile.platform} profile does not use it')
+    for key, platforms in _PLATFORM_ONLY.items():
+        if getattr(profile, key) is not None and profile.platform not in platforms:
+            warn.append(f'event.{key} is only for platform {_or(platforms)}, so this {profile.platform} profile does not use it')
     agents_on = requested.agents in (Policy.AUTO, Policy.CONFIRM)  # the policies under which play starts lanes
     if not agents_on:
         refuse.append(no_agents(profile, requested))
@@ -413,6 +421,47 @@ def _check_ctfd(
         warn.append("event.url is http, not https: the CTFd token would cross the network unencrypted")
 
 
+def _check_gamemaster(
+    profile: EventProfile,
+    requested: Policies,
+    env: Mapping[str, str],
+    model_config: Config | ConfigError | None,
+    refuse: list[str],
+    warn: list[str],
+) -> None:
+    """A Game Master profile: its url and token_env are required (a submit policy that never
+    uses the platform included, so the profile says where its board came from), and the token
+    variable must not be another service's. The board is the folder `flightdeck gm pull` wrote:
+    the run's BOARD argument, or event.board."""
+    if profile.url is None:
+        refuse.append('event.url is required for platform "gamemaster": the Game Master\'s address, the one URL its API answers at')
+    if profile.token_env is None:
+        refuse.append(
+            'event.token_env is required for platform "gamemaster": the name of the environment variable that '
+            "holds your Game Master token (the token itself never goes in the profile)"
+        )
+    name = profile.token_env
+    if name is not None:
+        api_env = isinstance(model_config, Config) and model_config.api.key_env == name
+        fallback_env = (isinstance(model_config, Config) and model_config.fallback is not None
+                        and model_config.fallback.key_env == name)
+        model_key = api_env or fallback_env
+        what = "a variable for another service's key" if model_key else _other_service(name, own="GM")
+        if what is not None:
+            where = (" (api.key_env in your config)" if api_env else " (fallback.key_env in your config)") if model_key else ""
+            refuse.append(
+                f"event.token_env names {name}{where}, {what}, not a Game Master token: flightdeck would send its value "
+                f"to {_shown_url(profile)}. Name the variable that holds your Game Master token, like GM_TOKEN"
+            )
+        elif requested.submit in USES_PLATFORM and not _is_set(env, name):
+            warn.append(f"the Game Master token variable {name} (event.token_env) is not set or is empty: export your token in it")
+    url = _split_url(profile.url) if profile.url else None
+    if url is not None and url.scheme == "http" and not _loopback(url.hostname or ""):
+        warn.append("event.url is http, not https: the Game Master token would cross the network unencrypted")
+    if profile.board is not None:
+        _check_manual(profile, refuse)
+
+
 def _check_manual(profile: EventProfile, refuse: list[str]) -> None:
     board = profile.board
     if board is None:
@@ -453,14 +502,16 @@ def _rule(profile: EventProfile, stage: str) -> str:
     return "no rule limits it"  # l1: allowed() never limits it
 
 
-def _other_service(name: str) -> str | None:
-    """Why a token_env of `name` looks like another service's key variable; None when it does not."""
+def _other_service(name: str, own: str = "CTFD") -> str | None:
+    """Why a token_env of `name` looks like another service's key variable; None when it does
+    not. `own`: what a name of the platform's own token variable holds (CTFD; GM for a Game
+    Master's)."""
     if name in OTHER_SERVICE_KEYS:
         return "a variable for another service's key"
-    if "CTFD" not in name:
+    if own not in name:
         for suffix in OTHER_SERVICE_SUFFIXES:
             if name.endswith(suffix):
-                return f"a name ending in {suffix} like other services' key variables (a name with CTFD in it is fine)"
+                return f"a name ending in {suffix} like other services' key variables (a name with {own} in it is fine)"
     return None
 
 
@@ -517,6 +568,8 @@ _MEANING = {
 
 
 FOLDER_BOARD = "a folder board: nothing to fetch"  # the pull line of a manual profile, whatever its policy
+# the pull line of a Game Master profile, whatever its policy: a run never pulls or starts an attempt
+GM_BOARD = "the board `flightdeck gm pull` wrote: a run pulls nothing and starts no attempt"
 # A coding-agent lane's container reaches its CLI's own API whatever the instance policy
 # (run.lane_reach gives every such lane agent.egress.CLI_API), and nothing else but its instance.
 AGENT_NETWORK = "; a coding-agent lane (--agent) reaches its CLI's API in every case"
@@ -542,6 +595,8 @@ def describe(
     mode = "team" if profile.team else "solo"
     if profile.platform == "ctfd":
         where = f"ctfd at {_shown_url(profile)}"
+    elif profile.platform == "gamemaster":
+        where = f"a Game Master at {_shown_url(profile)}"
     else:
         where = "manual (a folder board)"
     lines = [f"event     {untrusted(profile.name, one_line=True)} · {where} · {mode}"]
@@ -553,7 +608,7 @@ def describe(
     if profile.max_lanes is not None:
         rules.append(f"at most {profile.max_lanes} lanes")
     lines.append("rules     " + " · ".join(rules))
-    if profile.platform == "ctfd" and profile.token_env is not None:
+    if profile.platform in ("ctfd", "gamemaster") and profile.token_env is not None:
         state = "set" if _is_set(env, profile.token_env) else "NOT set"
         lines.append(f"token     ${profile.token_env} ({state}), sent only to {_shown_url(profile)}")
     if profile.board is not None:
@@ -576,6 +631,8 @@ def describe(
         meaning = _MEANING[stage][policy]
         if stage == "pull" and profile.platform == "manual":
             meaning = FOLDER_BOARD
+        if stage == "pull" and profile.platform == "gamemaster":
+            meaning = GM_BOARD
         if stage == "submit" and policy is Policy.AUTO and isinstance(config, Config) and config.lanes.submit_limited == "auto":
             meaning = meaning.removesuffix(COUNTED_WAIT) + COUNTED_GO
         if stage == "l1" and policy is not Policy.OFF and no_pack:
@@ -650,7 +707,8 @@ def load_profile(path: Path) -> tuple[EventProfile, Policies]:
         name=_string(path, event, ("event", "name"), required="the event's name, as the console shows it"),
         platform=_choice(
             path, event, ("event", "platform"), PLATFORMS,
-            required='"ctfd" (flightdeck uses CTFd\'s API) or "manual" (a folder of challenge folders)',
+            required='"ctfd" (flightdeck uses CTFd\'s API), "manual" (a folder of challenge folders) or "gamemaster" '
+                     "(a board `flightdeck gm pull` wrote)",
         ),
         url=_url(path, event),
         token_env=_token_env(path, event),
