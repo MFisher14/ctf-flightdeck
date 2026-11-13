@@ -159,6 +159,9 @@ class ScriptedDriver:
         what = f"{pending.flag} was not submitted" if pending.flag else f"no {pending.kind.value}"
         self.runs[lane.id].inserted.append(Step(do=f"{what}; trying another way"))
 
+    def rotated(self, lane: Lane, flag: str, every: int) -> None:
+        self.runs[lane.id].inserted.append(Step(do=f"{flag} rotated out before it was sent; fetching a fresh one"))
+
     def stop(self, lane: Lane) -> None:
         self.runs.pop(lane.id, None)
 

@@ -316,6 +316,10 @@ are left. To let auto submit spend those tries without you, the last one include
 `submit_limited = "auto"` under `[lanes]`; a wrong flag can then use up the tries for your whole
 team. flightdeck says so when a run starts.
 
+Some challenges hand out a flag that rotates every few minutes. Say so in the challenge's
+`challenge.json` (`"rotates": 300`) and flightdeck sends such a flag only in the window it was
+found in, telling the lane to fetch a fresh one otherwise: [Rotating flags](BOARDS.md#rotating-flags).
+
 Every run writes a run folder with an append-only `events.jsonl`, each lane's transcript and a
 `status.json` that says how the run stands ([the status file](#the-status-file)); a
 board with answers (like the practice set) ends with a scorecard, and any other run with one line

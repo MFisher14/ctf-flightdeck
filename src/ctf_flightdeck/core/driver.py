@@ -124,6 +124,12 @@ class LaneDriver(Protocol):
         the lane carries on. Declined budget stops the lane instead (stop() is called)."""
         ...
 
+    def rotated(self, lane: Lane, flag: str, every: int) -> None:
+        """`flag` was not submitted: the challenge's flag rotates every `every` seconds and
+        this one's window is over, or about to be. Nothing was judged; the lane carries on,
+        and should fetch a fresh flag and submit it at once."""
+        ...
+
     def stop(self, lane: Lane) -> None:
         """The lane has finished (solved, killed, stopped or gave up), or the run is closing
         (Deck.close: the lane stays open on the deck); release it. From then on report at most

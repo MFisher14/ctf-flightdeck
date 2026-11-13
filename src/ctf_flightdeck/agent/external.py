@@ -2437,6 +2437,9 @@ class ExternalDriver:
         else:
             self._tell(lane, f"The player declined: {prompts.one(pending.detail, 200)}.")
 
+    def rotated(self, lane: Lane, flag: str, every: int) -> None:
+        self._tell(lane, prompts.rotated_out(flag, every))
+
     def stop(self, lane: Lane) -> None:
         if self.flaggate is not None:
             self.flaggate.stop(self.deck, lane.id)  # a flag still under check was never submitted: said so

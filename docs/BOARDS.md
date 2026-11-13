@@ -56,6 +56,7 @@ the files, write a `challenge.json`, and submit the flags yourself (see
 | `urls` | no | The challenge's live instance, if it has one: web origins such as `"http://127.0.0.1:8080"`, and TCP services such as `"tcp://127.0.0.1:1337"` (what `nc 127.0.0.1 1337` reaches). An origin is a scheme, a host and an optional port, with no path, query or user name; a TCP service needs its port. |
 | `id` | no | The challenge's id: lower-case letters, digits, `_`, `.` and `-` (a letter or digit first), at most 64 characters. Left out, it is the folder's name, which must then follow the same rule. Two challenges cannot share an id. |
 | `max_attempts` | no | How many tries the platform allows at the flag (0, the default: any number). A flag for a challenge with a limit waits for you, under auto submit too, unless your config says `submit_limited = "auto"` under `[lanes]`. |
+| `rotates` | no | How often the challenge's flag rotates, in whole seconds (0, the default: it does not; at most 86400). See [Rotating flags](#rotating-flags). |
 
 A key that is not in this table is an error, so a typo fails loudly instead of being ignored.
 So is a `files` entry that does not exist, that leaves the challenge folder (`..` or an absolute
@@ -64,6 +65,34 @@ path), or that is or passes through a symlink.
 A challenge with `urls` is a **live** challenge. A Docker lane gets a network only when its
 challenge is live (the guide's [Docker or host](GUIDE.md#docker-or-host) says which network,
 and when a lane asks you first), and a lane's http tool reaches only the origins listed here.
+
+### Rotating flags
+
+Some challenges hand out a flag that changes every N seconds on clock boundaries (with
+`"rotates": 300`: at :00, :05, :10 and so on): a flag fetched at 16:04:58 is dead at 16:05:02.
+Say so in the challenge's `challenge.json`, and flightdeck plays it by that rule:
+
+- the lane is told to fetch the flag immediately before submitting, to script the fetch, and
+  never to reuse an earlier one;
+- a flag is sent only in the window a lane found it in. One that waited into a later window (for
+  your approval, or in line behind another flag) is not sent, and neither is one whose window
+  ends within 8 seconds: the lane is told it rotated out and to fetch and submit a fresh one, a
+  warning says so, and nothing is counted as wrong;
+- a flag the platform does call wrong is remembered and never sent again, but the first 6 at such
+  a challenge do not count toward the wrong-answer stop (`wrong_stop`): a miss there is usually a
+  rotation, not a guess. From the seventh on they count like any other.
+
+Under the submit policy `confirm` a rotating flag will usually rotate out while it waits for your
+approval (a run that starts that way says so); `--submit auto` avoids it.
+
+The windows are counted on this machine's clock. If the platform's clock differs from yours, its
+boundaries fall that much earlier or later than flightdeck thinks: keep your clock synchronised.
+
+A CTFd pull does not know which challenges rotate: add `"rotates"` to the pulled challenge's
+`challenge.json` yourself. A later pull or wave keeps the folder as it is, your key included. A
+run reads the key when it puts the challenge on its board: pull the board first
+(`flightdeck ctfd pull`), add the key, then play. A challenge that a wave brings during a run is
+played without the key in that run.
 
 ## `board.json`
 
