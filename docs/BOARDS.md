@@ -176,6 +176,48 @@ could not start or finish.
 You rarely need it: `flightdeck play FOLDER --event event.toml` pulls the board itself.
 A CTFd board has no answers file, since CTFd checks the flags.
 
+## A board from a Game Master
+
+A Game Master is a platform that is one URL. A challenge there is an attempt: it must be started
+before its files and questions can be read, it takes one or more answers, and an answer is often
+a name, a hash or a number, not a flag.
+
+```sh
+export GM_TOKEN=...                                     # your Game Master token
+flightdeck gm list https://gm.example.org               # every challenge: id, lane, mode, solved or open
+flightdeck gm pull https://gm.example.org ~/ctf/gm-board
+flightdeck gm pull https://gm.example.org ~/ctf/gm-board --start
+```
+
+`gm pull` writes the same folder format, from the attempts that are started:
+
+- **It starts nothing unless you say so.** Without `--start`, every attempt that is not started is
+  left out and named, with the reason. With `--start`, each one that runs no clock is started and
+  pulled.
+- **It never starts a clock.** An attempt whose id ends in `/time_trial` or `/mastery` (or whose
+  listed mode is one of those) starts a clock when it starts. flightdeck never starts one: start
+  it on the Game Master yourself, then pull again, and its deadline is in the challenge's
+  description.
+- **One board challenge per answer.** An attempt with one answer is one challenge. An attempt with
+  several is one challenge per answer id, named `Name (answer id)`, each with a copy of the
+  attempt's files and its own question.
+- **Answers are submitted as `answer{...}`.** flightdeck checks every candidate against the
+  board's flag format before it goes anywhere, so a Game Master board's flag format says what an
+  answer looks like. A new board gets `answer\{(?P<answer>[^{}\r\n]{1,200})\}`: a lane submits
+  `answer{Alice Example}`, and what the group named `answer` matched, `Alice Example`, is what
+  the Game Master is sent. `--flag-format` sets another; a format with no `answer` group sends
+  the whole match (`[0-9a-f]{32}` for an event whose answers are all hashes). Keep it narrow: a
+  format that matches ordinary prose makes every sentence a candidate.
+
+It also writes `gm.json`, flightdeck's own record of which Game Master challenge and answer id
+each folder is; leave it where it is. `--token-env` names another variable for the token, and
+`--event` sets the board's name. Pulling again keeps what is there and adds what is new. It
+exits with status 1 when some challenges could not be pulled, and 2 when the pull could not start
+or finish, or nothing is started.
+
+`flightdeck play ~/ctf/gm-board` plays that board with you submitting each answer by hand. With an
+event profile whose platform is `gamemaster` (below), flightdeck submits them.
+
 ## The event profile: `event.toml`
 
 An event profile says what one event's rules allow. Write it from the rules, check it, and play
@@ -215,6 +257,13 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 # submit = "confirm"
 # instance = "confirm"
 ```
+
+A Game Master event says `platform = "gamemaster"`, with the Game Master's `url` and `token_env`,
+and plays the folder `flightdeck gm pull` wrote: `flightdeck play ~/ctf/gm-board --event
+event.toml`, or `board = "..."` in the profile. A run pulls nothing and starts no attempt, so the
+pull policy does nothing there. Under `submit = "confirm"` or `"auto"` flightdeck sends answers
+to the Game Master and reads its solved list; under `manual` or `off` it contacts the Game Master
+not at all. Set `flag_format` in the profile only to override the board's.
 
 `[event]` says where the board comes from. With `platform = "ctfd"`, flightdeck pulls the board
 from `url` into the folder you give `play`. With `platform = "manual"`, `board` names a folder

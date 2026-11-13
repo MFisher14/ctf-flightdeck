@@ -517,7 +517,7 @@ export CTFD_TOKEN=...                             # the variable event.toml name
 flightdeck play ~/ctf/event-board --event event.toml
 ```
 
-flightdeck talks to CTFd. For any other platform, make a folder board (`platform = "manual"` in
+flightdeck talks to CTFd and to a Game Master. For any other platform, make a folder board (`platform = "manual"` in
 `event.toml`) and submit flags by hand.
 
 With a CTFd event, flightdeck pulls the board into that folder (and, with `pull = "auto"`, adds
@@ -527,6 +527,17 @@ solves. A slow CTFd never holds up the console: lanes carry on while their flags
 `auto` too, and each approval says how many tries are left. `flightdeck ctfd pull URL FOLDER`
 pulls a CTFd board without playing it; it exits with status 1 when some challenges could not be
 pulled.
+
+A Game Master event (`platform = "gamemaster"`) is played from a board you pull first:
+`flightdeck gm pull URL FOLDER` writes the attempts that are started, one challenge per answer,
+and names what it left unstarted; `--start` starts the ones that run no clock, and flightdeck
+never starts a clocked one. A lane submits an answer as `answer{...}`, and what is inside goes to
+the Game Master. Its replies: `CORRECT` and `accepted` (that answer is banked, others of the
+attempt remain) solve the challenge, `incorrect` is a wrong answer, and anything else (the
+attempt not started or expired, a refused request, a rate limit that outlasts three more sends,
+a word flightdeck does not know) is no verdict: the answer comes back to you to submit by hand,
+never recorded as wrong. A challenge the Game Master lists as solved is closed. The run starts
+no attempt and pulls nothing. More in [BOARDS.md](BOARDS.md#a-board-from-a-game-master).
 
 Each stage (pull, L1, agents, submit, live instance) has a policy in the event profile: `auto`,
 `confirm` (you say yes first; for agents and L1, starting play is that yes), `manual` or `off`,
