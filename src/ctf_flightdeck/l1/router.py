@@ -106,6 +106,8 @@ def _check(rule: Route, category: str, text: str, files: HandoutFiles) -> tuple[
     _match it looks at every condition."""
     held: list[str] = []
     failed: list[str] = []
+    if rule.any:
+        return ["any challenge"], []
     if rule.category:
         if category in rule.category:
             held.append(f"category {category}")
@@ -130,6 +132,8 @@ def _check(rule: Route, category: str, text: str, files: HandoutFiles) -> tuple[
 def _match(rule: Route, category: str, text: str, files: HandoutFiles) -> list[str] | None:
     """Why `rule` matches (one phrase per condition), or None if a condition fails."""
     reasons: list[str] = []
+    if rule.any:
+        return ["any challenge"]
     if rule.category:
         if category not in rule.category:
             return None

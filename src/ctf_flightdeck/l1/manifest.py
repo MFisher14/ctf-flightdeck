@@ -72,7 +72,7 @@ MAX_BYTES = 256 * 1024
 MAX_ID = 100
 ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 TOP_KEYS = ("id", "entry", "tags", "needs_tools", "timeout_seconds", "output", "routes")
-ROUTE_KEYS = ("category", "keywords", "files", "priority")
+ROUTE_KEYS = ("category", "keywords", "files", "any", "priority")
 OUTPUTS = ("result", "text")
 FILE_KINDS = ("ext", "magic", "name")
 MAGIC_BYTES = 4096  # how much of a file a magic: pattern can see
@@ -98,6 +98,7 @@ class Route:
     keywords: tuple[str, ...] = ()
     files: tuple[str, ...] = ()  # "ext:.x" | "magic:<text>" | "magic:0x<hex>" | "name:<glob>"
     priority: int = DEFAULT_PRIORITY
+    any: bool = False  # the route matches every challenge (`any = true`), and states no condition
 
 
 @dataclass(frozen=True)
@@ -433,12 +434,17 @@ def _route(path: Path, where: str, table: dict) -> Route:
                 raise ManifestError(path, f"{where}.{key}[{i}]", f"must be a non-empty string, got {_value(item)}")
             items.append(_condition(path, f"{where}.{key}[{i}]", key, item))
         conditions[key] = tuple(items)
-    if not any(conditions.values()):
-        raise ManifestError(path, where, "has no condition (category, keywords or files), so it would never match")
+    every = table.get("any", False)
+    if not isinstance(every, bool):
+        raise ManifestError(path, f"{where}.any", f"must be true or false, got {_value(every)}")
+    if every and any(conditions.values()):
+        raise ManifestError(path, f"{where}.any", "a route for every challenge states no category, keywords or files")
+    if not every and not any(conditions.values()):
+        raise ManifestError(path, where, "has no condition (category, keywords or files), so it would never match (`any = true` matches every challenge)")
     priority = table.get("priority", DEFAULT_PRIORITY)
     if not (_is_int(priority) and 0 <= priority <= 100):
         raise ManifestError(path, f"{where}.priority", f"must be a whole number 0..100, got {_value(priority)}")
-    return Route(conditions["category"], conditions["keywords"], conditions["files"], priority)
+    return Route(conditions["category"], conditions["keywords"], conditions["files"], priority, every)
 
 
 def _condition(path: Path, where: str, key: str, item: str) -> str:
