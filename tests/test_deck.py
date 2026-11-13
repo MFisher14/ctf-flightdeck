@@ -2623,3 +2623,46 @@ def test_under_auto_submit_a_flag_that_solved_another_challenge_waits_for_the_pl
     assert any("t{of_the_first} is the flag that solved C, so it waits for you here" in a.text for a in second.actions)
     deck.report(second.id, TurnReport(flag="t{its_own}"))  # any other flag still goes at once
     assert sent[-1] == (second.id, "c1", "t{its_own}")
+
+
+def test_the_player_raises_the_lane_limit_and_queued_lanes_start_and_lowering_it_stops_none():
+    deck, driver, _ = make_deck(n=5, max_lanes=2)
+    assert len(deck.active_lanes()) == 2 and len(deck.queue) == 3
+    raised = deck.set_max_lanes(4)
+    assert raised.ok and "Lanes at once: 4 for the rest of this run" in raised.message
+    assert len(deck.active_lanes()) == 4 and deck.config.max_lanes == 4
+    lowered = deck.set_max_lanes(1)
+    assert lowered.ok and "4 run now and go on, and no new lane starts until fewer than 1 run" in lowered.message
+    assert len(deck.active_lanes()) == 4 and len(deck.queue) == 1  # nothing stopped, nothing started
+    from ctf_flightdeck.core.model import UNLIMITED_LANES, lanes_text
+
+    assert deck.set_max_lanes(UNLIMITED_LANES).ok and len(deck.active_lanes()) == 5 and lanes_text(deck.config.max_lanes) == "∞"
+    for bad in (0, -1, True, 1.5):
+        assert not deck.set_max_lanes(bad).ok
+    changed = [e.data for e in deck.events if e.data.get("config") == "max_lanes"]
+    assert [(c["was"], c["max_lanes"]) for c in changed] == [(2, 4), (4, 1), (1, UNLIMITED_LANES)]
+
+
+def test_the_lane_limit_and_auto_approve_never_go_past_the_events_rules():
+    config = DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS, max_lanes=2, lanes_ceiling=3, submit_ceiling="confirm")
+    deck = Deck(config, RecordingDriver(), Clock(), RecordingVerifier())
+    refused = deck.set_max_lanes(4)
+    assert not refused.ok and "The event's rules allow at most 3 lanes at once" in refused.message and deck.config.max_lanes == 2
+    assert deck.set_max_lanes(3).ok
+    auto = deck.set_submit("auto")
+    assert not auto.ok and "do not let flightdeck submit flags by itself" in auto.message and deck.config.submit == "confirm"
+
+
+def test_the_player_turns_auto_approve_on_and_off_and_waiting_flags_stay_theirs():
+    deck, sent = platform_deck()  # starts under auto
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    off = deck.set_submit("confirm")
+    assert off.ok and off.message == "Auto approve is off: every flag waits for your approval"
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    assert sent == [] and lane.pending is not None
+    on = deck.set_submit("auto")
+    assert on.ok and "Auto approve is on" in on.message and "the 1 waiting now still wait for you (A approves them all)" in on.message
+    assert sent == [] and lane.pending is not None  # the one that waited still waits
+    deck.report(other.id, TurnReport(flag="t{two}"))
+    assert sent == [(other.id, "c1", "t{two}")]  # a new one goes at once
+    assert deck.set_submit("auto").message == "Submit is auto already" and not deck.set_submit("always").ok

@@ -138,7 +138,10 @@ from .model import (
     LaneState,
     Pending,
     PendingKind,
+    SUBMIT_POLICIES,
     Suggestion,
+    UNLIMITED_LANES,
+    lanes_text,
 )
 
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
@@ -326,6 +329,52 @@ class Deck:
         """Why `flag` is known not to be the flag of that challenge (rejected, or declined by
         the player), or None."""
         return self._not_flags.get(challenge_id, {}).get(flag)
+
+    def set_max_lanes(self, most: int) -> Outcome:
+        """The player changes how many lanes run at once, for the rest of the run (/config
+        lanes): UNLIMITED_LANES for no limit. Never more than the event's rules allow
+        (DeckConfig.lanes_ceiling). Raising it starts queued lanes in the new slots; lowering
+        it stops no lane: the ones that run go on, and no new one starts until fewer run."""
+        self._on_thread("set_max_lanes")
+        if isinstance(most, bool) or not isinstance(most, int) or most < 1:
+            return Outcome(False, "The number of lanes must be a whole number, 1 or more, or 'unlimited'")
+        most = min(most, UNLIMITED_LANES)
+        ceiling = self.config.lanes_ceiling
+        if ceiling is not None and most > ceiling:
+            return Outcome(False, f"The event's rules allow at most {ceiling} lane{'s' if ceiling != 1 else ''} at once (rules.max_lanes)")
+        before = self.config.max_lanes
+        if most == before:
+            return Outcome(True, f"Lanes at once: {lanes_text(most)} already")
+        self.config = replace(self.config, max_lanes=most)
+        self._emit(EventKind.WARNING, f"the player set lanes at once to {lanes_text(most)} (it was {lanes_text(before)})",
+                   data={"config": "max_lanes", "max_lanes": most, "was": before})
+        self._fill()
+        running = len(self.active_lanes())
+        over = f"; {running} run now and go on, and no new lane starts until fewer than {most} run" if running > most else ""
+        return Outcome(True, f"Lanes at once: {lanes_text(most)} for the rest of this run{over}")
+
+    def set_submit(self, policy: str) -> Outcome:
+        """The player switches auto approve on or off for the rest of the run (/config submit):
+        "auto" sends a flag a lane claims at once, with every exception auto submit has
+        (counted tries, the wrong-answer stop, a flag the challenge's own text holds);
+        "confirm" makes every flag wait again. Never looser than the event's rules
+        (DeckConfig.submit_ceiling). Flags already waiting keep waiting: they are the player's."""
+        self._on_thread("set_submit")
+        if policy not in SUBMIT_POLICIES:
+            return Outcome(False, f"Submit is one of: {', '.join(SUBMIT_POLICIES)}")
+        if policy == "auto" and self.config.submit_ceiling != "auto":
+            return Outcome(False, "The event's rules do not let flightdeck submit flags by itself, so every flag waits for you")
+        before = self.config.submit
+        if policy == before:
+            return Outcome(True, f"Submit is {policy} already")
+        self.config = replace(self.config, submit=policy)
+        self._emit(EventKind.WARNING, f"the player set submit to {policy} (it was {before})", data={"config": "submit", "submit": policy, "was": before})
+        if policy == "auto":
+            waiting = sum(1 for lane in self.lanes.values() if not lane.finished
+                          for p in ([lane.pending] if lane.pending else []) + lane.waiting if p.kind is PendingKind.SUBMIT)
+            rest = f"; the {waiting} waiting now still wait for you (A approves them all)" if waiting else ""
+            return Outcome(True, f"Auto approve is on: a flag a lane submits goes at once, for the rest of this run{rest}")
+        return Outcome(True, "Auto approve is off: every flag waits for your approval")
 
     def wait_for(self, challenge_id: str, why: str) -> None:
         """No lane starts on that challenge until ready() is called for it: something outside

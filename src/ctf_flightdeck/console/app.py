@@ -28,7 +28,7 @@ from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
 from ..core.driver import TakeoverRefused
-from ..core.model import ME, Event, EventKind, Lane, LaneState
+from ..core.model import ME, UNLIMITED_LANES, Event, EventKind, Lane, LaneState, lanes_text
 from ..text import untrusted
 from . import theme, views
 from .commands import CommandError, needs_lane, parse
@@ -69,6 +69,7 @@ class FlightdeckApp(App[None]):
         on_start: Callable[[], None] | None = None,
         on_exit: Callable[[], Awaitable[None]] | None = None,
         run_dir: str = "",
+        config_path: str = "",
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -80,6 +81,7 @@ class FlightdeckApp(App[None]):
         self._on_start = on_start
         self._on_exit = on_exit
         self._run_dir = run_dir
+        self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
         self._signals: list[int] = []  # the signals this console catches while it runs
@@ -551,6 +553,40 @@ class FlightdeckApp(App[None]):
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
 
+    def configure(self, arg: str) -> None:
+        """/config: say this run's settings and how to change them; /config file: where the
+        config file is. /config lanes N (or
+        unlimited): how many lanes run at once. /config submit auto|confirm: auto approve on
+        or off. Each change is for the rest of this run; the config file keeps its own."""
+        words = arg.split()
+        deck = self.deck
+        if not words:
+            cfg = deck.config
+            auto = "auto (flags go at once)" if cfg.submit == "auto" else "confirm (flags wait for you)"
+            self.say(f"lanes {lanes_text(cfg.max_lanes)} · submit {auto} · change: /config lanes N|unlimited, /config submit auto|confirm",
+                     "information")
+            return
+        if words == ["file"]:
+            self.say(f"your config file: {self.config_path}" if self.config_path else "this console has no config file (the mock)",
+                     "information")
+            return
+        if len(words) != 2 or words[0].lower() not in ("lanes", "submit"):
+            self.warn("/config takes nothing, 'file', 'lanes N|unlimited', or 'submit auto|confirm'")
+            return
+        key, value = words[0].lower(), words[1].lower()
+        if key == "lanes":
+            if value in ("unlimited", "max", "∞"):
+                outcome = deck.set_max_lanes(UNLIMITED_LANES)
+            elif value.isascii() and value.isdigit():
+                outcome = deck.set_max_lanes(int(value))
+            else:
+                self.warn("/config lanes takes a whole number, 1 or more, or 'unlimited'")
+                return
+        else:
+            outcome = deck.set_submit({"on": "auto", "off": "confirm"}.get(value, value))
+        self.say(outcome.message, "information" if outcome.ok else "warning")
+        self.refresh_view()
+
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""
         outcome = self.deck.release_hold()
@@ -598,6 +634,8 @@ class FlightdeckApp(App[None]):
             outcome = self.deck.tell_all(arg)
             self.say(outcome.message, "information" if outcome.ok else "warning")
             self.refresh_view()
+        elif name == "config":
+            self.configure(arg)
         elif name == "unhold":
             self.unhold()
         elif name == "autopilot":

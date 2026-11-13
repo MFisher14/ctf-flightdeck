@@ -317,6 +317,12 @@ it cannot check: submit the flag on the platform yourself, then press `a` if it 
 `d` if not. With `--event`, `a` sends it to CTFd (when the event's submit stage is `manual` or
 `off`, you submit it and answer `a` or `d`).
 
+To turn auto approve on while a run is going, type `/config submit auto` in the console
+(`/config submit confirm` turns it off, and `/config` alone shows the run's settings). To start
+with it on, pass `--submit auto` or set `submit = "auto"` under `[lanes]` in your config.
+`/config lanes 8` changes how many lanes run at once, and `/config lanes unlimited` lifts the
+limit (`max_lanes = "unlimited"` in the config does the same from the start).
+
 Under auto submit (`submit = "auto"`, or `play --submit auto`) a flag the model submits goes at
 once, unless it is written in the challenge's own description or handout files (often a decoy):
 that one still waits for you. A flag found wrong is never asked about again.

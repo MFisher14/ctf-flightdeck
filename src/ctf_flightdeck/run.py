@@ -127,6 +127,7 @@ from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, 
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
+    allowed,
     Policies,
     Policy,
     ProfileError,
@@ -452,7 +453,8 @@ class Run:
         from .console.app import FlightdeckApp
 
         app = FlightdeckApp(
-            self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir)
+            self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
+            config_path=str(self.config.source) if self.config.source is not None else "",
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -813,6 +815,9 @@ def prepare_run(options: RunOptions) -> Run:
         wrong_stop=config.lanes.wrong_stop,
         variant_tries=config.lanes.variant_tries,
         models=ladder,
+        lanes_ceiling=profile.max_lanes if profile is not None else None,
+        # in the console the player may go as far as the event's rules do, whatever this run started with
+        submit_ceiling="auto" if profile is None or (plan.platform and allowed(profile).submit is Policy.AUTO) else "confirm",
         **({"flag_format": flag_format} if flag_format else {}),
     )
     plan.notes.append(_flag_format_note(deck_config.flag_format, profile, board, options.board))

@@ -374,6 +374,14 @@ class Event:
 SUBMIT_POLICIES = ("auto", "confirm")
 
 
+UNLIMITED_LANES = 100_000  # max_lanes when the player wants no limit ("unlimited"): more than any board has challenges
+
+
+def lanes_text(max_lanes: int) -> str:
+    """A lane limit as the console shows it: the number, or ∞ for no limit."""
+    return "∞" if max_lanes >= UNLIMITED_LANES else str(max_lanes)
+
+
 @dataclass(frozen=True)
 class DeckConfig:
     event: str
@@ -386,6 +394,8 @@ class DeckConfig:
     wrong_stop: int = 3  # under submit auto: once this many flags were wrong at a challenge, its next ones wait for the player; 0: never
     variant_tries: int = 0  # variants of a flag the platform rejected that the deck proposes per challenge in a run (flagvariants); 0: none
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
+    lanes_ceiling: int | None = None  # the most lanes the event's rules allow at once; None: they set no limit
+    submit_ceiling: str = "auto"  # the loosest submit policy the player may switch to in the console (the event's rules)
 
     def __post_init__(self) -> None:
         if self.max_lanes < 1:

@@ -97,6 +97,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ### The console
 
+- `/config` in the console: alone it shows the run's settings; `/config lanes 8` (or
+  `unlimited`) changes how many lanes run at once, and `/config submit auto` turns auto approve
+  on (`confirm` turns it off), each for the rest of the run and never past the event's rules.
+  `/config file` names your config file. `max_lanes = "unlimited"` in the config lifts the
+  lane limit from the start.
 - `/note <text>` tells every lane at once (an organizer's ruling, a replaced handout): running
   lanes read it on their next turn, and lanes started later read it at their start.
 

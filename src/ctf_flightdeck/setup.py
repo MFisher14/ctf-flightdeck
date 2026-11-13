@@ -683,6 +683,9 @@ def _pack_tools_checks(config, environ: Mapping[str, str], *, docker_runs: bool)
                   f"add them to the image ({unrun})", essential=False)]
 
 
+ROOM_LANES = 16  # the terminal check looks at room for at most this many lanes (D8: the lane list scrolls past it)
+
+
 def _terminal_check(columns: int, lines: int, config) -> Check:
     """What a terminal this size leaves out of the console on a busy run with your lanes and
     runtime, and from which size none of it (console/room.py measures it with the console's
@@ -691,7 +694,7 @@ def _terminal_check(columns: int, lines: int, config) -> Check:
     from .console.room import room
 
     lanes = config.lanes if config is not None else LaneConfig()
-    fit = room(columns, lines, max_lanes=lanes.max_lanes, containerized=lanes.runtime == "docker")
+    fit = room(columns, lines, max_lanes=min(lanes.max_lanes, ROOM_LANES), containerized=lanes.runtime == "docker")
     size = f"{columns}x{lines}"
     team = f"; team mode's key line, with c claim, needs {fit.team_columns} columns" if fit.team_columns > fit.columns else ""
     missing = fit.left_out()

@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
-from .core.model import SUBMIT_POLICIES
+from .core.model import SUBMIT_POLICIES, UNLIMITED_LANES
 from .flagvariants import MAX_VARIANTS
 from .pricing import RATES, Price
 from .text import untrusted
@@ -570,7 +570,8 @@ ladder = []
 # cached_input = 0.02
 
 [lanes]
-max_lanes = 4                   # lanes at once; the rest wait in the queue
+max_lanes = 4                   # lanes at once; the rest wait in the queue. "unlimited": no limit (the [governor] still
+                                # holds new lanes back while this machine is over a limit). In the console: /config lanes N
 runtime = "docker"              # "docker": a container per lane; "host": on this machine
 image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image build` makes it (never pulled)
 token_cap = 400000              # per lane; false for no cap
@@ -1180,8 +1181,11 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
     _known(path, ("lanes",), table, _LANE_KEYS)
     defaults = LaneConfig()
     max_lanes = table.get("max_lanes", defaults.max_lanes)
+    if max_lanes == "unlimited":
+        max_lanes = UNLIMITED_LANES
     if not _is_int(max_lanes) or max_lanes < 1:
-        raise _error(path, ("lanes", "max_lanes"), f"must be a whole number, at least 1{_got(max_lanes)}")
+        raise _error(path, ("lanes", "max_lanes"), f'must be a whole number, at least 1, or "unlimited"{_got(max_lanes)}')
+    max_lanes = min(max_lanes, UNLIMITED_LANES)
     image = _string(path, table, ("lanes", "image"), defaults.image)
     if image.startswith("-") or not _plain(image):
         # docker would read "-..." as one of its own options

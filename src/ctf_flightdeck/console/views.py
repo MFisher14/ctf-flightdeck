@@ -48,6 +48,7 @@ from ..core.model import (
     Lane,
     LaneState,
     PendingKind,
+    lanes_text,
 )
 from ..credentials import named_flags, redact
 from ..runrecord import L1 as BY_L1
@@ -350,7 +351,7 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
         out = [
             ("flightdeck", 2, ("flightdeck", theme.WHITE, theme.BLUE, True)),
             ("mode", 1, ("team" if facts.team else "solo", theme.CYAN if facts.team else theme.TEXT, theme.SEGMENT, True)),
-            ("lanes", 0, (f"{facts.lanes}/{facts.max_lanes} · q{facts.queue}", theme.TEXT, theme.SEGMENT, False)),
+            ("lanes", 0, (f"{facts.lanes}/{lanes_text(facts.max_lanes)} · q{facts.queue}", theme.TEXT, theme.SEGMENT, False)),
         ]
     else:
         out = [
@@ -362,7 +363,7 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
         out += [
             ("mode", 0, ("team" if facts.team else "solo", theme.CYAN if facts.team else theme.TEXT, theme.SEGMENT, True)),
             ("runtime", 1, ("docker", theme.TEXT, theme.SEGMENT, False) if facts.containerized else ("host", theme.INK, theme.YELLOW, True)),
-            ("lanes", 0, (f"lanes {facts.lanes}/{facts.max_lanes} · queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)),
+            ("lanes", 0, (f"lanes {facts.lanes}/{lanes_text(facts.max_lanes)} · queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)),
         ]
     if facts.autopilot:  # never dropped: who has the controls is not a detail
         out.append(("autopilot", 0, (AUTOPILOT_SHORT if compact else AUTOPILOT, theme.INK, theme.GREEN, True)))
@@ -805,7 +806,7 @@ def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
 
 def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = False, compact: bool = False) -> Text:
     text = Text("fleet ", "bold")
-    text.append(f"{len(deck.active_lanes())}/{deck.config.max_lanes}")
+    text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
     text.append(f" · sort {sort.value}", theme.MUTED)
     if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
         text.append(" · board hidden: narrow terminal", theme.MUTED)

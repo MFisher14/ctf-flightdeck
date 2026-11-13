@@ -136,6 +136,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 |  | `/diff [file]` | Show the files the lane changed |
+|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: this run's settings. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |

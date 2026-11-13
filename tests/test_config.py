@@ -238,6 +238,10 @@ def test_false_disables_a_cap_and_an_absent_cap_keeps_its_default(tmp_path):
 def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
     assert load_config(write(tmp_path, LADDER)).lanes.submit_limited == "confirm"
     assert load_config(write(tmp_path, LADDER)).lanes.wrong_stop == 3
+    from ctf_flightdeck.core.model import UNLIMITED_LANES
+
+    assert load_config(write(tmp_path, LADDER + '[lanes]\nmax_lanes = "unlimited"\n')).lanes.max_lanes == UNLIMITED_LANES
+    assert 'lanes.max_lanes must be a whole number, at least 1, or "unlimited"' in error(write(tmp_path, LADDER + '[lanes]\nmax_lanes = "lots"\n'))
     assert load_config(write(tmp_path, LADDER + "[lanes]\nwrong_stop = 0\n")).lanes.wrong_stop == 0
     for bad in ("-1", "1.5", '"3"', "true"):
         assert "lanes.wrong_stop must be a whole number, 0 or more" in error(write(tmp_path, LADDER + f"[lanes]\nwrong_stop = {bad}\n"))

@@ -3205,7 +3205,7 @@ def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_fo
         await press(pilot, "escape", "question_mark")
         assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
 
-    drive(app, script, size=(160, 100))
+    drive(app, script, size=(160, 110))  # tall enough for the whole help: it scrolls on a shorter terminal
     log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
     log.attach(deck)
     log.close()
@@ -3932,5 +3932,34 @@ def test_slash_note_tells_every_lane_from_a_lanes_chat_box_and_is_not_that_lanes
         assert "2 lanes read it on their next turn, and every lane started later" in status_line(app)
         await send(pilot, app, "/note")
         assert deck.standing == ["the handouts were replaced: download again"]  # an empty note is refused, and said
+
+    drive(app, script)
+
+
+def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_the_run():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=1))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo", "charlie")], [QueueEntry(n, "glm") for n in ("alpha", "bravo", "charlie")])
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing, config_path="/home/player/.config/ctf-flightdeck/config.toml")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/config")
+        shown = status_line(app)
+        assert "lanes 1 · submit confirm (flags wait for you)" in shown and "/config lanes N|unlimited, /config submit auto|confirm" in shown
+        await send(pilot, app, "/config file")
+        assert "your config file: /home/player/.config/ctf-flightdeck/config.toml" in status_line(app)
+        await send(pilot, app, "/config lanes 2")
+        assert len(deck.active_lanes()) == 2 and "Lanes at once: 2 for the rest of this run" in status_line(app)
+        assert "lanes 2/2" in region_text(app, "#header")
+        await send(pilot, app, "/config lanes unlimited")
+        assert len(deck.active_lanes()) == 3 and "lanes 3/∞" in region_text(app, "#header")
+        await send(pilot, app, "/config submit auto")
+        assert deck.config.submit == "auto" and "Auto approve is on" in status_line(app)
+        await send(pilot, app, "/config submit off")
+        assert deck.config.submit == "confirm"
+        await send(pilot, app, "/config lanes many")
+        assert_warning(app, "/config lanes takes a whole number, 1 or more, or 'unlimited'")
+        await send(pilot, app, "/config colour blue")
+        assert_warning(app, "/config takes nothing, 'file', 'lanes N|unlimited', or 'submit auto|confirm'")
 
     drive(app, script)
