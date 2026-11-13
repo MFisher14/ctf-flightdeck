@@ -218,3 +218,72 @@ def test_close_stops_what_this_run_started_and_says_what_it_could_not():
     left = asyncio.run(runner.close())
     assert len(left) == 1 and "may still run on the platform: no answer from the platform" in left[0]
     assert len(platform.up) == 1 and runner.running == {}
+
+
+# ---------------------------------------------------------------- in a real run, against the fake CTFd
+
+
+def test_a_run_starts_an_instance_before_its_lane_names_it_in_the_brief_and_stops_it_on_the_solve(tmp_path, monkeypatch):
+    from ctf_flightdeck.core.model import LaneState
+    from ctf_flightdeck.run import RunOptions, prepare_run
+
+    from fake_ctfd import FakeChallenge, FakeCTFd
+    from fake_model import FakeModelServer
+    from test_event_run import TOKEN_VAR, Model, config, event, play, submit, wait_for
+    from fake_ctfd import TOKEN
+
+    monkeypatch.setenv(TOKEN_VAR, TOKEN)
+    board = [FakeChallenge(1, "Boxed", category="Web", value=50, flag="test{boxed}", type="container"),
+             FakeChallenge(2, "Second Box", category="Pwn", value=60, flag="test{second}", type="container"),
+             FakeChallenge(3, "Plain", category="Misc", value=10, flag="test{plain}")]
+    model = Model({"Boxed": [submit("test{boxed}")], "Second Box": [submit("test{second}")]})
+    with FakeCTFd(board) as fake, FakeModelServer(responder=model) as server:
+        fake.container_cap = 1  # one at a time: the second waits for the first's slot
+        profile = event(tmp_path, url=fake.base_url, submit="auto")
+        profile.write_text(profile.read_text() + '\n[instances]\nplugin = "docker_per_team"\ntypes = ["container"]\nmax_running = 1\n')
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=profile, config=config(tmp_path, server.base_url, max_lanes=3)))
+        run.instances.every = 0.05
+        assert any(note.startswith("instances: flightdeck starts a challenge's instance on the platform before a lane works it (2 on the board now)")
+                   for note in run.notes())
+
+        async def body(run):
+            await wait_for(lambda: all(lane.state is LaneState.SOLVED for lane in run.deck.lanes.values()
+                                       if lane.challenge_id in ("boxed", "second-box")) and len(run.deck.lanes) == 3
+                           and run.deck.challenges["second-box"].closed, "both boxed challenges solved, one after the other")
+            await wait_for(lambda: fake.containers == {}, "the last instance stopped after its solve")
+
+        play(run, body)
+    briefs = {re_name(r): r["json"]["messages"][1]["content"] for r in server.chats()}
+    assert "\nLive instance: http://instances.example.test:31000\n" in briefs["Boxed"]
+    assert "\nLive instance: tcp://instances.example.test:31001 (nc instances.example.test 31001)\n" in briefs["Second Box"]
+    assert "\nLive instance: none\n" in briefs["Plain"]
+    asked = [(r.path.rsplit("/", 1)[1], r.json["chal_id"]) for r in fake.requests if r.path.startswith("/containers/api/")]
+    assert asked.index(("stop", 1)) < asked.index(("request", 2))  # the slot was freed first
+    assert ("request", 3) not in asked and fake.containers == {}
+
+
+def re_name(record: dict) -> str:
+    import re
+
+    return re.search(r"^Challenge: (.+?) \(", record["json"]["messages"][1]["content"], re.MULTILINE).group(1)
+
+
+def test_a_run_whose_instance_policy_is_not_auto_starts_none_and_says_why(tmp_path, monkeypatch):
+    from ctf_flightdeck.run import RunOptions, prepare_run
+
+    from fake_ctfd import TOKEN, FakeChallenge, FakeCTFd
+    from fake_model import FakeModelServer
+    from test_event_run import TOKEN_VAR, config, event
+
+    monkeypatch.setenv(TOKEN_VAR, TOKEN)
+    with FakeCTFd([FakeChallenge(1, "Boxed", category="Web", type="container")]) as fake, FakeModelServer() as server:
+        profile = event(tmp_path, url=fake.base_url, live="confirm")
+        profile.write_text(profile.read_text() + '\n[instances]\nplugin = "docker_per_team"\ntypes = ["container"]\n')
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=profile, config=config(tmp_path, server.base_url)))
+        try:
+            assert run.instances is None and run.deck is not None
+            (note,) = [n for n in run.notes() if n.startswith("instances:")]
+            assert "1 challenge on this board need an instance" in note and 'the instance policy is "confirm"' in note
+        finally:
+            run.close()
+    assert not any(r.path.startswith("/containers/api/") for r in fake.requests)

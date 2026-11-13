@@ -101,6 +101,8 @@ from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at,
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
+from .instancerun import InstanceRunner, on_demand
+from .platform.instances import InstanceClient
 from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
@@ -112,6 +114,7 @@ from .preflight import (
     ProfileError,
     check,
     deck_submit,
+    instances_off,
     load_profile,
     looser,
     no_agents,
@@ -244,6 +247,7 @@ class Run:
     status: StatusFile | None = None  # status.json in the run folder, for whatever is not the console
     notifier: Notifier | None = None  # the notification webhook, when [notify] names one
     autopilot: Autopilot | None = None  # the run's autopilot (autopilot.py): off until engaged
+    instances: InstanceRunner | None = None  # starts and stops the platform's on-demand instances (instancerun.py); None: it starts none
     engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
     stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
 
@@ -315,6 +319,9 @@ class Run:
                 self.deck.warn(outcome.message, data={"autopilot": "not engaged"})
         if self.autopilot is not None and self.profile is not None and self.profile.end is not None:
             self._tasks.append(asyncio.create_task(self._until_end(self.profile.end), name="flightdeck event end"))
+        if self.instances is not None:  # before any lane starts: an on-demand challenge waits for its instance
+            self.instances.hold([b.challenge for b in self.board.challenges])
+            self._tasks.append(asyncio.create_task(self.instances.work(), name="flightdeck instances"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if state is not None:
             self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
@@ -359,6 +366,9 @@ class Run:
         await self.driver.shutdown()
         if self._submits is not None:  # after the lanes, so a flag one handed over as it stopped is named too
             self._errors += self._submits.unsent()
+        if self.instances is not None:  # after the lanes: nothing works an instance any more
+            self._errors += [f"instances: {line}" for line in await self.instances.close()]
+            self.instances.client.close()
         if self.team is not None:
             try:
                 self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
@@ -510,6 +520,8 @@ class Run:
         link.ids.update(result.ids)
         if self.verifier is not None:
             self.verifier.ids.update(result.ids)
+        if self.instances is not None:
+            self.instances.client.ids.update(result.ids)
         for line in result.problems:
             if line not in link.reported:
                 link.reported.add(line)
@@ -522,6 +534,10 @@ class Run:
         new = [b for b in result.board.challenges if b.challenge.id not in self.deck.challenges]
         if new:
             self._add(new)
+            if self.profile is not None and self.profile.instances is not None:
+                on_demand([b.challenge for b in new], self.profile.instances.types)
+            if self.instances is not None:
+                self.instances.hold([b.challenge for b in new])
             link.wave += 1
             self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), f"Wave {link.wave}")
             self._apply_solves()
@@ -858,16 +874,44 @@ def prepare_run(options: RunOptions) -> Run:
             waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
         )
+    instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
+        instances=instances,
     )
     if submits is not None:
         submits.solved = run._apply_solves
         submits.unjudged = run._flag_unjudged
     return run
+
+
+def _instances(profile: EventProfile | None, policies: Policies, board: Board, link: CTFdLink | None, token: str | None,
+               deck: Deck, urls: dict[str, tuple[str, ...]], driver: object, notes: list[str]) -> InstanceRunner | None:
+    """The run's instance scheduler, when the event's [instances] table and its policies let
+    flightdeck start instances on the platform; else None, with a note saying why when the
+    board has challenges that need one. Marks the board's on-demand challenges either way."""
+    challenges = [b.challenge for b in board.challenges]
+    marked = on_demand(challenges, profile.instances.types if profile is not None and profile.instances is not None else ())
+    why = instances_off(profile, policies) if profile is not None else "there is no event profile"
+    if why or link is None or token is None:
+        if marked:
+            notes.append(
+                f"instances: {len(marked)} challenge{'s' if len(marked) != 1 else ''} on this board need an instance the platform "
+                f"starts when asked, and flightdeck starts none: {why or 'this run has no link to the platform'}. Start one on the "
+                "site yourself; its lane works from the files"
+            )
+        return None
+    assert profile is not None and profile.instances is not None and profile.url is not None
+    client = InstanceClient(profile.url, token, link.ids, profile.instances)
+    notes.append(
+        f"instances: flightdeck starts a challenge's instance on the platform before a lane works it"
+        f" ({len(marked)} on the board now), keeps at most {profile.instances.max_running} running, and stops one when its "
+        "challenge is solved or nobody works it"
+    )
+    return InstanceRunner(deck, client, max_running=profile.instances.max_running, urls=[urls, driver.urls])
 
 
 def _autopilot_asked(options: RunOptions, config: Config, runtime: str) -> tuple[bool, Budget]:

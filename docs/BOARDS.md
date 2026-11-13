@@ -56,6 +56,8 @@ the files, write a `challenge.json`, and submit the flags yourself (see
 | `urls` | no | The challenge's live instance, if it has one: web origins such as `"http://127.0.0.1:8080"`, and TCP services such as `"tcp://127.0.0.1:1337"` (what `nc 127.0.0.1 1337` reaches). An origin is a scheme, a host and an optional port, with no path, query or user name; a TCP service needs its port. |
 | `id` | no | The challenge's id: lower-case letters, digits, `_`, `.` and `-` (a letter or digit first), at most 64 characters. Left out, it is the folder's name, which must then follow the same rule. Two challenges cannot share an id. |
 | `max_attempts` | no | How many tries the platform allows at the flag (0, the default: any number). A flag for a challenge with a limit waits for you, under auto submit too, unless your config says `submit_limited = "auto"` under `[lanes]`. |
+| `instance` | no | `"on-demand"`: the challenge has no fixed address; the platform starts its instance (a container for your team) when asked. No lane starts on it until the instance is up, and then its address is the challenge's `urls` for the run. flightdeck starts it only where an event profile says how ([Instances on demand](#instances-on-demand)). |
+| `type` | no | The platform's own name for the challenge's type (CTFd's `type`, such as `dynamic` or a plugin's `container`): letters, digits, `_`, `.` and `-`. `ctfd pull` writes it when it is not `standard`; an event profile's `[instances] types` reads it. |
 
 A key that is not in this table is an error, so a typo fails loudly instead of being ignored.
 So is a `files` entry that does not exist, that leaves the challenge folder (`..` or an absolute
@@ -246,3 +248,59 @@ What the policies mean during a run:
 
 `rules.max_lanes` caps how many lanes run at once, and `team = true` asks for a team folder
 (`play --team-dir`).
+
+## Instances on demand
+
+Some CTFd challenges have no fixed address: a plugin starts a container for your team when you
+press a button, lets only a few run at once, and stops each after a while. With an `[instances]`
+table in the event profile, flightdeck presses the button:
+
+```toml
+[instances]
+plugin = "docker_per_team"      # the site's container plugin
+types = ["container"]           # CTFd challenge types that have such an instance
+max_running = 3                 # the most kept running at once: the site's cap for a team, or less
+```
+
+- **Which challenges.** A challenge whose `type` (above) is one of `types`, or whose
+  `challenge.json` says `"instance": "on-demand"`. To find the type name, pull the board and look
+  at a container challenge's `challenge.json`.
+- **When.** flightdeck starts an instance before a lane works its challenge, in the queue's own
+  order, and no lane starts on such a challenge before its instance is up; the challenges behind
+  it in the queue start meanwhile. It renews an instance five minutes before its end while lanes
+  work it, and stops it when the challenge is solved, or parked with no lane on it, and when the
+  run ends. A slot freed by a solve goes to the next challenge that waits.
+- **What a lane gets.** The instance's address as its live instance: in its brief, and, in
+  Docker, as the one thing its network reaches. A web challenge's is `http://host:port`, any
+  other `tcp://host:port`, unless the plugin itself gives a URL.
+- **Your team.** An instance that is already running when flightdeck asks (a teammate's, or an
+  earlier run's) is used and never stopped by this run. When the site says its cap is reached,
+  flightdeck says so once and asks again every 30 seconds: teammates' instances take slots it
+  cannot see.
+- **What it needs.** `platform = "ctfd"`, `platform_automation = true`, and the `instance` policy
+  at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. Otherwise
+  flightdeck starts none, and `preflight` and the start of a run say why; start it on the site
+  yourself, and the lane works from the files.
+- **Limits.** If the platform ends an instance and starts it again at another address, lanes
+  hear of it, but a Docker lane's network was fenced to the old address: kill such a lane and
+  queue the challenge again. A flightdeck that is killed leaves its instances to the platform,
+  which stops them at their expiry.
+
+`docker_per_team` is the one plugin seen working (`POST /containers/api/request`, `stop`, `renew`
+and `view_info`, each with `{"chal_id": N}`). `ctfd_docker` is a guess at CTFd-Docker-Plugin's
+routes and was never confirmed. For any other plugin, give the four routes yourself instead of
+`plugin`; look at what the site's "start instance" button sends in your browser's network tab:
+
+```toml
+[instances]
+start = ["POST", "/plugins/example/container?challenge_id={id}"]   # {id} is the challenge's number
+stop = ["DELETE", "/plugins/example/container?challenge_id={id}"]
+renew = ["PATCH", "/plugins/example/container?challenge_id={id}"]
+status = ["GET", "/plugins/example/container?challenge_id={id}"]
+api = true                      # the paths are under /api/v1 (false: under the site's root)
+# body_key = "chal_id"          # the number goes in a JSON body under this key, instead of {id}
+types = ["container"]
+```
+
+flightdeck asks the plugin only about challenges on your board, sends each request once, and
+never calls a route that spends points.

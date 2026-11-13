@@ -22,6 +22,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A route can say `any = true` (every challenge), and an engine is given the event's flag
   format in `FLIGHTDECK_FLAG_FORMAT`.
 
+### Instances on demand
+
+- flightdeck starts a challenge's own container on CTFd when the site has a container plugin:
+  an `[instances]` table in the event profile names the plugin (or its routes), the challenge
+  types that have an instance, and how many may run at once. An instance is started before a
+  lane works its challenge, renewed before it ends, and stopped on the solve; a teammate's
+  running instance is used and left alone. `docs/BOARDS.md` has the details.
+- `challenge.json` takes `"instance": "on-demand"` and `type`; `ctfd pull` records CTFd's type.
+
 ### The console
 
 - `/note <text>` tells every lane at once (an organizer's ruling, a replaced handout): running
