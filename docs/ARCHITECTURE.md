@@ -419,6 +419,7 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | CTFd | `platform/ctfd.py` | Pulls a CTFd board into a folder board, submits approved flags, and reads the team's solves and the tries left. [More](#ctfd). |
 | Pre-flight | `preflight.py` | The event profile (`event.toml`): what the rules allow, and a policy per stage (`pull`, `l1`, `agents`, `submit`, `instance`), never looser than the rules. `flightdeck preflight` checks it. |
 | Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins a fenced network that reaches the instance and nothing else ([Lane network](#lane-network)). `off`: never. Pre-flight sets it from the event profile. |
+| Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
 | Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes or the profile's own routes, scoped to the board's challenges, each request sent once), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped, a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
@@ -445,6 +446,22 @@ closes a challenge with none left and opens it again, parked, when a later pull 
 A rate limit that passes is waited out and the flag sent again by the run's submit worker
 (`run._Submits.work`, P33): up to three more sends, after the wait CTFd names or 65 seconds,
 never at a challenge whose tries are counted. `CTFdClient.attempt` itself still sends once.
+
+### Game Master
+
+Where: `platform/gamemaster.py`, `platform/gamemaster_run.py`, `platform/gamemaster_cli.py` (P42).
+
+A one-URL platform: GETs with an `op` query (list, status, artifact), retried on 429, 5xx or no answer, and POSTs (start an
+attempt, submit answers), each sent once. The token is a Bearer header and appears nowhere else. `GameMasterClient.start` refuses a
+clocked attempt before sending anything. `pull()` writes one board challenge per answer id of each started attempt (files
+downloaded once, sha256-checked, copied to each), a `board.json` whose flag format is the answer format (`answer{...}` by
+default), and `gm.json`, the map from board id to challenge id and answer id; it starts plain attempts only with `start=True`
+(`flightdeck gm pull --start`) and lists what it left unstarted. CORRECT and accepted are right, incorrect is wrong,
+already_solved and the refusals judged nothing, 429 is a rate limit, and any other word is an error naming it. In a run
+(`platform = "gamemaster"`), `GameMasterLink` is the deck's submitter: one worker task sends the answer inside the flag format's
+`answer` group, applies the word through `Deck.platform_verdict`, resends a rate-limited answer as P33 does for CTFd, and tells
+autopilot when an answer was not judged. A second task reads the list every `solves_seconds` and closes what it lists as solved.
+A run starts no attempt and pulls nothing.
 
 ### Event runs
 

@@ -31,6 +31,22 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   running instance is used and left alone. `docs/BOARDS.md` has the details.
 - `challenge.json` takes `"instance": "on-demand"` and `type`; `ctfd pull` records CTFd's type.
 
+### The Game Master platform
+
+- flightdeck now plays events on a Game Master (a one-URL platform whose challenges are attempts
+  you start, answered by name, hash or number rather than a flag). `flightdeck gm list URL`
+  shows its challenges; `flightdeck gm pull URL FOLDER` writes the started attempts as a board,
+  one challenge per answer, and names every attempt it left unstarted. `--start` starts the ones
+  that run no clock; flightdeck never starts a time trial or a mastery attempt.
+- `platform = "gamemaster"` in an event profile: `flightdeck play FOLDER --event event.toml`
+  submits answers to the Game Master under your submit policy and closes what it lists as
+  solved. A lane submits `answer{...}` and what is inside is sent (`--flag-format` and
+  `event.flag_format` set another form). An answer the Game Master did not judge (attempt not
+  started or expired, a refused request, a rate limit that outlasts three more sends, a reply
+  flightdeck does not know) comes back to you and is never counted as wrong.
+- It was built against a fake Game Master only, from the solver pack's adapter: nothing here
+  has met the real service yet.
+
 ### Flags
 
 - `[lanes] variant_tries` (0 to 12, off by default): when the platform calls a flag wrong,
