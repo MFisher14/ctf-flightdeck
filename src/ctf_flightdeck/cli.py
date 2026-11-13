@@ -40,7 +40,7 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="markdown",
     help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
-    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. "
+    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. An event: `flightdeck start`. "
     "No setup at all: `flightdeck mock`.",
 )
 
@@ -73,22 +73,33 @@ def _next_steps() -> str:
         have = path.exists()
     except ConfigError as exc:
         return head + f"{exc}\n"
+    pack = ""
     if not have:
         steps = [
             ("flightdeck init", "a few questions; writes your config"),
             ("flightdeck doctor", "checks your setup and says how to fix what is missing"),
             ("flightdeck practice", "plays 14 small practice challenges (spends tokens on your model API)"),
+            ("flightdeck start", "sets up an event and plays it: asks for its name, site and token, makes its folder"),
         ]
         text = head + "No config yet. Start here:\n"
     else:
         steps = [
+            ("flightdeck start", "play an event: asks for its name, site and token, makes its folder, launches"),
+            ("flightdeck play FOLDER", "play an event you set up before, or any folder of challenges"),
+            ("flightdeck practice", "the practice set (14 small challenges)"),
             ("flightdeck doctor", "checks your setup"),
-            ("flightdeck practice", "the practice set, or: flightdeck play BOARD"),
         ]
         text = head + f"Your config: {path}\n"
+        from .config import load_config
+        from .start_cli import pack_line
+
+        try:
+            pack = "\n" + pack_line(load_config(path)) + "\n"
+        except ConfigError as exc:
+            pack = f"\n{exc}\n"
     width = max(len(command) for command, _ in steps)
     text += "".join(f"  {command:<{width}}  {what}\n" for command, what in steps)
-    return text + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
+    return text + pack + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
 
 
 def _path(path: Path) -> Path:
@@ -235,9 +246,12 @@ def play(
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
     on the API in your config, or with --agent on that CLI's own key or subscription."""
     from .run import RunError, RunOptions, host_warning, prepare_run
+    from .start import resolve
 
+    asked = _path(board) if board else None
+    board, event = resolve(asked, event)  # a folder `flightdeck start` made: its event.toml and its board/
     options = RunOptions(
-        board=_path(board) if board else None,
+        board=board,
         answers=_path(answers) if answers else None,
         config=_path(config) if config else None,
         max_lanes=max_lanes,
@@ -260,6 +274,8 @@ def play(
         run = prepare_run(options)
     except RunError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
+        if asked is not None and event is None and not _has_entries(asked):  # nothing to play there yet
+            typer.echo("flightdeck: to set up an event (its folder, its rules, its board) and play it: `flightdeck start`", err=True)
         raise typer.Exit(2) from None
     except KeyboardInterrupt:  # Ctrl-C in autopilot's wait for the event's start (the one wait before a run)
         typer.echo("flightdeck: stopped before the run started: nothing was pulled and no lane started", err=True)
@@ -283,6 +299,14 @@ def play(
     if console.return_code:  # the console failed (Textual has printed why): not a run that ended as asked
         typer.echo("flightdeck: the console failed: the run's lanes were stopped as when you quit", err=True)
         raise typer.Exit(1)
+
+
+def _has_entries(folder: Path) -> bool:
+    """Whether `folder` is a folder with something in it."""
+    try:
+        return any(folder.iterdir())
+    except OSError:
+        return False
 
 
 def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
@@ -536,7 +560,9 @@ def init(
         light_model_answer,
         mlx_server_command,
         models_answer,
+        PROVIDER_MENU,
         provider_answer,
+        providers_answer,
         runtime_answer,
         write_config,
     )
@@ -605,7 +631,13 @@ def init(
                 + (" and " if len(missing) > 1 else "") + missing[-1] + " (see `flightdeck init --help`)"
             )
     if provider is None:
-        provider = ask("Provider: openrouter, anthropic, openai, ollama (or local), mlx or custom", provider_answer, "openrouter")
+        provider, *others = ask(PROVIDER_MENU, providers_answer, "1")
+        if others and provider == "anthropic" and "openrouter" in others and fallback is None:
+            fallback = True  # asked for together: OpenRouter stands in when Anthropic keeps failing
+            others.remove("openrouter")
+        typer.echo(f"Lanes use {provider}." + (
+            f" One API runs the lanes; for {' and '.join(others)} as a fallback, write [fallback] in the config "
+            "(`flightdeck config --example` shows it)." if others else ""))
     dialect = "anthropic" if provider == "anthropic" else "openai"
     if base_url is not None:
         base_url = given(base_url, "--base-url", lambda text: base_url_answer(text, anthropic=dialect == "anthropic"))
@@ -741,6 +773,8 @@ def init(
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo(light_line(light_table))
     typer.echo("then: flightdeck doctor, and flightdeck practice")
+    typer.echo("for an event: flightdeck start   (asks for the event's name, site and token, makes its folder, launches)")
+    typer.echo("optional: flightdeck pack install   (flightdeck's solver pack: some 800 no-model solvers that run first)")
 
 
 @app.command(rich_help_panel=SETUP)
@@ -810,7 +844,7 @@ def config_command(
 
 def _mount() -> None:
     from . import (
-        build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, team_cli, writeup_cli,
+        build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, start_cli, team_cli, writeup_cli,
     )
     from . import models_cli
     from .l1 import cli as l1_cli
@@ -823,6 +857,7 @@ def _mount() -> None:
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
     app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
+    app.command("start", rich_help_panel=PLAY)(start_cli.start)
     app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)

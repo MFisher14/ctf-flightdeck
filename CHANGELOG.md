@@ -4,6 +4,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `flightdeck start` sets up an event and plays it: it asks for the event's name, site, flag
+  format and CTFd access token, makes the event's folder (`event.toml` and `board/`), keeps the
+  token in your keys file, says whether the solver pack is installed (and offers it), and
+  launches. `flightdeck play FOLDER` then plays that folder with no `--event`.
+- `flightdeck init` asks for the model API from a numbered list, and takes several answers at
+  once ("anthropic, openrouter" writes OpenRouter as the fallback).
+- `flightdeck` on its own and `flightdeck doctor` say whether no-model solvers (L1) are
+  installed; `play` on a missing or empty folder points at `flightdeck start`.
+
 ### The solver pack
 
 - flightdeck now has a solver pack: the no-model solvers its author won events with, in the

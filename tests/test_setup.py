@@ -150,7 +150,8 @@ def test_init_at_a_terminal_asks_again_after_an_answer_it_cannot_use(tmp_path, m
     assert "Error: model id 2 repeats model id 1; give each model once" in result.output
     assert "Error: give docker (a container per lane) or host (lanes on this machine)" in result.output
     assert result.output.count("Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys)") == 2
-    assert "Provider: openrouter, anthropic, openai, ollama (or local), mlx or custom [openrouter]:" in result.output
+    assert "Which model API do the lanes use?" in result.output and "  2  anthropic " in result.output
+    assert "Your choice [1]:" in result.output and "Lanes use local." in result.output
 
 
 def test_init_at_a_terminal_asks_again_for_a_custom_api_and_never_shows_a_key_typed_as_its_variable(tmp_path, monkeypatch):
@@ -499,7 +500,8 @@ def test_doctor_checks_the_l1_pack_when_the_config_names_one(tmp_path):
         assert check.ok is ok and detail in check.detail
     path = tmp_path / "none.toml"
     path.write_text(base)
-    assert not [c for c in doctor(path, environ={}) if c.name == "l1 pack"]  # no pack: nothing to check
+    (check,) = [c for c in doctor(path, environ={}) if c.name == "l1 pack"]  # no pack: said, with how to get one
+    assert check.ok and check.detail.startswith("none") and "flightdeck pack install" in check.detail
 
 
 def test_doctor_never_prints_a_credential_carried_in_the_base_url(tmp_path):

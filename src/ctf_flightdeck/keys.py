@@ -100,3 +100,40 @@ def source(name: str, environ: Mapping[str, str] = os.environ, *, path: Path | N
     if load_keys(path).get(name, "").strip():
         return "keys file"
     return None
+
+
+def save(name: str, value: str, *, path: Path | None = None) -> Path:
+    """Put NAME=value in the keys file, replacing the line that sets NAME when there is one,
+    and keep the file to its owner (0600; made with its folder when missing). The value is
+    written and nothing else: never returned, shown or put in an error. KeysError when the
+    name is not a variable's name, the value cannot be one line of the file, or the file
+    cannot be used as it is (load_keys' refusals)."""
+    path = keys_path() if path is None else path
+    if not _NAME.fullmatch(name):
+        raise KeysError("the key's name must be a variable's name (letters, digits and _)")
+    value = value.strip()
+    if not value or any(ch in value for ch in "\r\n\0") or (value[0] == value[-1] and value[0] in "\"'"):
+        raise KeysError(f"the value for {name} must be one line, not empty and not in quotes")
+    load_keys(path)  # refuses a file others can read or with a bad line, before anything is added to it
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    except OSError as exc:
+        raise KeysError(f"{path}: cannot read it ({exc.strerror})") from None
+    kept = []
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        if not line.startswith("#") and line.partition("=")[0].strip() == name:
+            continue  # the old value of this name
+        kept.append(raw)
+    kept.append(f"{name}={value}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(kept) + "\n")
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise KeysError(f"{path}: cannot write it ({exc.strerror})") from None
+    return path

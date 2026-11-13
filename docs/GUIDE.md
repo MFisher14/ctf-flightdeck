@@ -18,7 +18,13 @@ flightdeck doctor             # checks your setup and says how to fix each probl
 flightdeck practice           # 14 small practice challenges: spends tokens on your model API
 ```
 
-`flightdeck` on its own says what to do next on your machine. `flightdeck doctor` checks Python,
+`init` shows a numbered list of model APIs: answer with a number or a name. Lanes use one API;
+"anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing.
+A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
+uses it. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
+
+`flightdeck` on its own says what to do next on your machine, and whether your no-model solvers
+(L1) are installed. `flightdeck doctor` checks Python,
 the config, the key variables, a local model server and its models, the light model, Docker, the
 lane image and your terminal's size. Before the console opens, `play` and `practice` ask the model
 API whether it takes your key and serves every model in your ladder, and stop with what to fix if
@@ -529,7 +535,40 @@ machine, as you.
 
 ## Events and teams
 
-Write down what the event's rules allow, check it, and play by it:
+One command sets an event up and plays it:
+
+```sh
+flightdeck start
+```
+
+It asks, in order: the event's name; a folder for it (`~/ctf/<name>` unless you say otherwise,
+made for you); whether the rules allow AI tools (flightdeck does not play an event that forbids
+them); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
+and submits flags; **by hand**: any other site); the site's address; what a flag looks like
+(`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
+(on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
+variable of this event's own, never into the event's folder, and is never shown. Then it says
+whether the solver pack is installed (and offers to install it), and launches.
+
+What it leaves:
+
+```
+~/ctf/example-ctf/
+  event.toml   the event's rules, from your answers: edit it any time
+  board/       the challenges: pulled from CTFd as you play, or put there by you
+```
+
+`flightdeck play ~/ctf/example-ctf` plays that event again, with no option to remember: a folder
+with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/example-ctf` does the
+same for a folder already set up. Every question has an option (`flightdeck start --help`), for
+a script.
+
+By hand: for each challenge make a folder under `board/`, put its files there and a
+`challenge.json` beside them ([Play a board](#play-a-board) shows one), then `flightdeck play`
+the event's folder. flightdeck shows each flag; you submit it on the site and press `a` if it
+was accepted or `d` if not.
+
+To write the event file yourself instead, from the event's rules:
 
 ```sh
 flightdeck preflight --example > event.toml      # then edit it from the event's rules

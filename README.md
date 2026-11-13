@@ -66,12 +66,19 @@ flightdeck doctor             # checks everything and says how to fix each probl
 flightdeck practice           # 14 small practice challenges, on your model
 ```
 
-Then play a real board:
+Then play an event:
 
 ```sh
-flightdeck play ~/ctf/some-board                      # a folder of challenges
-flightdeck play ~/ctf/event-board --event event.toml  # a CTFd event, by its rules
-flightdeck play ~/ctf/event-board --event event.toml --autopilot --budget-dollars 20   # while you sleep
+flightdeck start
+```
+
+`start` asks for the event's name, its site and your access token, makes the event's folder,
+tells you whether the solver pack is installed, and launches. To come back to that event later:
+
+```sh
+flightdeck play ~/ctf/example-ctf                                   # the folder start made
+flightdeck play ~/ctf/example-ctf --autopilot --budget-dollars 20   # while you sleep
+flightdeck play ~/ctf/some-board                                    # or any folder of challenges
 ```
 
 `practice` and `play` spend money on your model API unless the model runs on your machine. Each

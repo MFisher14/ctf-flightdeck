@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -383,6 +384,44 @@ def provider_answer(text: str) -> str:
     return name
 
 
+PROVIDER_MENU = (
+    "Which model API do the lanes use?\n"
+    "  1  openrouter   one key for many vendors' models (OPENROUTER_API_KEY)\n"
+    "  2  anthropic    Claude models on Anthropic's API (ANTHROPIC_API_KEY)\n"
+    "  3  openai       OpenAI's API (OPENAI_API_KEY)\n"
+    "  4  ollama       open-weight models on this machine, free\n"
+    "  5  mlx          an MLX server on this Mac, free\n"
+    "  6  custom       any other OpenAI-compatible server\n"
+    "Choose one, by number or name. A coding-agent CLI (Claude Code, Codex) is not chosen here: it needs\n"
+    "no setup, `flightdeck play --agent claude` uses it. Your choice"
+)
+_AGENT_WORDS = ("agent", "codex", "cli", "claudecode", "claude-code")
+_CHOOSE = "choose a number from 1 to 6, or one of openrouter, anthropic, openai, ollama (or local), mlx or custom"
+
+
+def providers_answer(text: str) -> tuple[str, ...]:
+    """What a player typed at init's provider menu: a number or a name, or several of them
+    (commas or spaces). The first is the lanes' API; the rest are returned for init to say
+    what becomes of them. Words for a coding-agent CLI are dropped (the menu says why)."""
+    chosen: list[str] = []
+    for word in re.split(r"[,\s]+", text.strip().lower()):
+        if not word:
+            continue
+        if word.isdigit() and 1 <= int(word) <= len(PROVIDER_CHOICES):
+            word = PROVIDER_CHOICES[int(word) - 1]
+        try:
+            name = provider_answer(word)
+        except AnswerError:
+            if any(part in word for part in _AGENT_WORDS):
+                continue
+            raise AnswerError(_CHOOSE) from None
+        if name not in chosen:
+            chosen.append(name)
+    if not chosen:
+        raise AnswerError(_CHOOSE)
+    return tuple(chosen)
+
+
 def models_answer(text: str) -> tuple[str, ...]:
     """Model ids, weakest first, comma-separated: at least one, each once, none with spaces."""
     from .config import _plain
@@ -586,6 +625,9 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
         checks += _light_checks(config, environ)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
+    elif config is not None:
+        checks.append(Check("l1 pack", True, "none, so each lane starts on its model (optional: `flightdeck pack install` adds "
+                            "flightdeck's solver pack, some 800 no-model solvers that run first)"))
     found = False
     if agent is not None:
         agent_checks = _agent_checks(agent, config, environ)
