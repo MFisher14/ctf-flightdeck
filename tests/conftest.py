@@ -30,3 +30,19 @@ def own_state_folder(tmp_path_factory, monkeypatch):
     run notes there, and the containers a sweep may remove (leftovers.py), are the test's
     only. Commands a test starts get it through the environment they inherit."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("state")))
+
+
+@pytest.fixture(autouse=True)
+def calm_host(monkeypatch):
+    """No test depends on this machine's load, RAM or disk: what a run's host governor and
+    doctor's host line read (governor.probe) is a calm machine, the same everywhere. The tests
+    of the probe itself (test_governor.py) replace this fixture with one that does nothing;
+    a test that wants a busy machine gives its own reading (RunOptions.host_reading, or the
+    Governor's `read`)."""
+    from ctf_flightdeck import governor
+    from ctf_flightdeck.hardware import GIB, Fact
+
+    def calm(path, host=None, **readers):
+        return governor.Reading(load=Fact(0.5), cpus=Fact(8), free_ram=Fact(16 * GIB), free_disk=Fact(200 * GIB), disk_path=str(path))
+
+    monkeypatch.setattr(governor, "probe", calm)

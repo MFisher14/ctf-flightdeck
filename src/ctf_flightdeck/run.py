@@ -62,6 +62,13 @@ autopilot when the platform needs a human: a CTFd poll that keeps failing, a fla
 not judge, or a web page where CTFd's API should answer (platform/ctfd.py: HumanCheck).
 While autopilot guards the run the model client sends no server-side refusal fallback.
 
+The host governor (governor.py, `[governor]` in the config): unless it is turned off, the
+machine's load per CPU, available RAM and free disk at the run folder are read before the
+board is released and again every governor_seconds, off the loop (Run._govern), and the deck
+asks it before it starts a queued lane (Deck.start_gate). While a limit binds no new lane
+starts; nothing running is stopped, and starts resume by themselves. A reading that cannot
+be taken is a note before the run starts and holds nothing.
+
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
 state folder names (so it is found wherever --run-dir put it). Before a run starts, what
@@ -103,6 +110,8 @@ from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
 from .instancerun import InstanceRunner, on_demand
 from .platform.instances import InstanceClient
+from .governor import TICK_SECONDS as GOVERNOR_SECONDS
+from .governor import Governor, Reading
 from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
@@ -162,6 +171,8 @@ class RunOptions:
     wave_seconds: float = WAVE_SECONDS
     solves_seconds: float = SOLVES_SECONDS
     team_seconds: float = POLL_SECONDS  # how often the team folder is read
+    governor_seconds: float = GOVERNOR_SECONDS  # how often the host governor reads this machine again
+    host_reading: Callable[[Path], Reading] | None = None  # how the governor reads the machine; None: governor.probe
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
     agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
     agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
@@ -249,6 +260,7 @@ class Run:
     autopilot: Autopilot | None = None  # the run's autopilot (autopilot.py): off until engaged
     instances: InstanceRunner | None = None  # starts and stops the platform's on-demand instances (instancerun.py); None: it starts none
     engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
+    governor: Governor | None = None  # the host governor (governor.py), unless [governor] turns it off: the deck's start gate
     stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
 
     def notes(self) -> list[str]:
@@ -322,6 +334,8 @@ class Run:
         if self.instances is not None:  # before any lane starts: an on-demand challenge waits for its instance
             self.instances.hold([b.challenge for b in self.board.challenges])
             self._tasks.append(asyncio.create_task(self.instances.work(), name="flightdeck instances"))
+        if self.governor is not None:  # its first reading was taken before the deck had a lane to start
+            self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if state is not None:
             self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
@@ -484,6 +498,32 @@ class Run:
             if any(p.kind is PendingKind.CONFIRM for p in queued):
                 return True
         return False
+
+    async def _govern(self) -> None:
+        """Read this machine again every governor_seconds, off the loop (a reading may run a
+        program), and have the deck ask its start gate again: lanes the governor held back
+        start by themselves once the reading recovers, and the deck says so. A reading that
+        fails outright (never governor.probe's own: an unknown reading is not a failure) is a
+        warning, once while it lasts, and holds no start: the governor has nothing to go by."""
+        governor = self.governor
+        assert governor is not None
+        failing = False
+        while True:
+            await asyncio.sleep(self.options.governor_seconds)
+            try:
+                reading = await asyncio.to_thread(governor.take)
+            except Exception as exc:  # a reader that raised: say so, hold nothing, and try again
+                governor.use(None)
+                if not failing and not self.deck.closing:
+                    self.deck.warn(
+                        f"the host governor could not read this machine ({_why(exc)}): it holds no lane back until it can",
+                        data={"source": "governor"},
+                    )
+                failing = True
+            else:
+                governor.use(reading)
+                failing = False
+            self.deck.recheck_starts()
 
     async def _waves(self) -> None:
         """Pull the board again every wave_seconds and release what is new. A failure is a
@@ -863,6 +903,15 @@ def prepare_run(options: RunOptions) -> Run:
         )
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
+    governor = None
+    if config.governor.enabled:  # before any lane starts (release): the deck asks it before each start after the first
+        governor = Governor(config.governor, run_dir, read=options.host_reading)
+        try:
+            reading = governor.refresh()
+        except Exception as exc:  # options.host_reading raised: governor.probe itself records what it cannot read
+            raise RunError(f"the host governor could not read this machine: {_why(exc)}") from None
+        plan.notes += [f"the host governor cannot read {line}: no lane is held back for it" for line in reading.unknown()]
+        deck.start_gate = governor.limit
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
@@ -889,6 +938,7 @@ def prepare_run(options: RunOptions) -> Run:
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
         instances=instances,
+        governor=governor,
     )
     if submits is not None:
         submits.solved = run._apply_solves
@@ -1082,7 +1132,7 @@ def anthropic_price_notes(config: Config, cap: float | None) -> list[str]:
 
 def _check_options(options: RunOptions) -> None:
     """Options a caller set in code that the run cannot use."""
-    for name in ("wave_seconds", "solves_seconds", "team_seconds"):
+    for name in ("wave_seconds", "solves_seconds", "team_seconds", "governor_seconds"):
         value = getattr(options, name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
             raise RunError(f"{name} must be a positive number of seconds, not {value!r}")
@@ -1602,6 +1652,11 @@ def _reason(exc: BaseException) -> str:
     if isinstance(exc, OSError):
         return f"cannot write the board ({exc.strerror or type(exc).__name__})"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _why(exc: BaseException) -> str:
+    """What an exception says, in one safe line; its type's name when it says nothing."""
+    return untrusted(str(exc) or type(exc).__name__, one_line=True)
 
 
 def _show(value: object) -> str:

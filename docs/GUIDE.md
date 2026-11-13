@@ -710,6 +710,26 @@ into `FOLDER/.flightdeck/generated/`.
 To remove flightdeck: `pipx uninstall ctf-flightdeck` (or `uv tool uninstall ctf-flightdeck`),
 `docker image rm ctf-flightdeck-lane:1`, and delete those folders.
 
+### The host governor
+
+A run that starts lanes faster than your machine can carry them loses all of them. So before a
+queued lane starts, flightdeck looks at three readings, and while one is past its limit no new
+lane starts:
+
+| Reading | Limit in `[governor]` | Default |
+| --- | --- | --- |
+| The 1-minute load average divided by the CPUs | `max_load_per_cpu` | 3.0 |
+| The RAM available without swapping, in MiB | `min_free_ram_mb` | 2048 |
+| The free disk where the run folder is, in MiB | `min_free_disk_mb` | 10240 |
+
+The lanes at work carry on: the governor never stops or pauses one, and the queue keeps its
+order. One warning says when starts begin to be held and which limit it is, with the reading,
+and one says when they start again; that happens by itself (the machine is read every 15
+seconds), with nothing for you to lift, and autopilot stays engaged. With no lane at work, one
+lane always starts. A limit of 0 is off, and `enabled = false` turns the governor off. A reading
+flightdeck cannot take (it reads macOS and Linux) holds nothing back, and the run says so before
+it starts. `flightdeck doctor` shows the readings in its `host` line.
+
 ## Optional extras
 
 - `ctf-flightdeck[build]`: pytest, for `flightdeck build check`.

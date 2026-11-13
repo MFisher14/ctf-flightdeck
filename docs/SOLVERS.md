@@ -308,6 +308,7 @@ name = "my-pack"                     # required: lower-case letters, digits, _ .
 version = "1.0.0"                    # optional
 description = "What it solves."      # optional, one line
 engines = "flightdeck"               # optional: the only folder searched for *.manifest.toml
+tools = ["tshark", "binwalk"]        # optional: the programs the engines call, by name
 
 [setup]                              # optional
 command = "./setup.sh"               # a file of the pack and its arguments, run in the pack's folder
@@ -331,6 +332,12 @@ note = "docs/LANE.md"                # a text file inside the pack; {pack} in it
   after the challenge's own text and outside its fence. Under Docker the lanes run in `[l1]
   image` and see the pack, read-only, at the path it has on this machine. Keep the note short:
   it is in every turn's context.
+- `tools` lists the programs your engines call, as you would type them (no paths). It changes
+  nothing in a run. `flightdeck doctor` names the ones missing where the engines run: on this
+  machine's PATH when lanes run on the host, inside `[l1] image` (else the lane image) when they
+  run in Docker, asked of one throwaway container with no network. `flightdeck pack info` lists
+  them too. Both only warn: an engine whose program is missing says so and does not run, and the
+  rest work. When the image is not on this machine, doctor says that and guesses nothing.
 - An unknown key is an error.
 
 ## From a gap to a new engine

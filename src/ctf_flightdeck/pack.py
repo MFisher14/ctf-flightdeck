@@ -8,6 +8,7 @@ top:
     version = "1.0.0"                    # optional
     description = "..."                  # optional, one line
     engines = "flightdeck"               # optional: the folder searched for *.manifest.toml (default: the whole pack)
+    tools = ["tshark", "binwalk"]        # optional: the programs its engines call, by name: doctor says which are missing
 
     [setup]                              # optional: what makes the pack ready on this machine
     command = "./setup.sh"               # a file of the pack and its arguments, run in the pack's folder
@@ -21,6 +22,14 @@ top:
     note = "flightdeck/LANE.md"          # what a lane's brief says about it; {pack} is the pack's folder
 
 An unknown key is an error. A pack with no pack.toml needs no setup and runs in the lane image.
+
+`tools` is for the player, not for the run: `flightdeck doctor` and `flightdeck pack info` name
+the listed programs that are missing where the engines run (missing_on_host: this machine's
+PATH, its absolute folders only, as an engine's programs are found; missing_in_image: the
+image's PATH, asked of one throwaway container with no network, never pulled). A run looks
+nothing up from this list and never stops for it: an engine whose own program is missing says
+so when it runs (l1/runner.py), and a pack with one engine for everything (P31) finds its tools
+itself. Nothing is installed.
 
 install() does, in order: fetch (a git clone into flightdeck's packs folder, or an update of
 the clone that is there; a local folder is used where it is), read pack.toml, run the setup
@@ -46,6 +55,7 @@ import shlex
 import shutil
 import subprocess
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,7 +68,10 @@ DEFAULT_NAME = "flightdeck-solvers"
 DATA_ENV = "XDG_DATA_HOME"
 MAX_BYTES = 64 * 1024
 NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
-_TOP = ("name", "version", "description", "engines", "setup", "image", "lanes")
+_TOP = ("name", "version", "description", "engines", "tools", "setup", "image", "lanes")
+TOOL = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}")  # a program's name: no path, and nothing an option could be
+MAX_TOOLS = 200
+LOOKUP_TIMEOUT = 120.0  # seconds docker has to start a container of the image and answer
 _LANES = ("note",)
 MAX_NOTE = 3000  # characters of a pack's note in a lane's brief: it is in every turn's context
 _SETUP = ("command",)
@@ -86,6 +99,7 @@ class PackInfo:
     setup: tuple[str, ...] = ()  # the setup command's argv; its first word is a file of the pack, absolute
     image: Image | None = None
     lane_note: Path | None = None  # the file whose text a lane's brief gets under [l1] lane_tools
+    tools: tuple[str, ...] = ()  # the programs its engines call, as pack.toml lists them
 
 
 def packs_folder() -> Path:
@@ -226,6 +240,7 @@ def read(root: Path) -> PackInfo:
             engines_folder(root)
         except ManifestError as exc:
             raise PackError(str(exc)) from None
+    tools = _tools(path, data.get("tools", []))
     setup: tuple[str, ...] = ()
     if "setup" in data:
         table = _table(path, "setup", data["setup"], _SETUP)
@@ -259,7 +274,66 @@ def read(root: Path) -> PackInfo:
         if not isinstance(rel, str) or not rel:
             raise PackError(f"{path}: lanes.note is required: a text file's path inside the pack")
         note = _inside(path, "lanes.note", root, rel, file=True)
-    return PackInfo(root, name, version, description, setup, image, note)
+    return PackInfo(root, name, version, description, setup, image, note, tools)
+
+
+def _tools(path: Path, value: object) -> tuple[str, ...]:
+    """pack.toml's `tools`: a list of distinct program names."""
+    if not isinstance(value, list) or len(value) > MAX_TOOLS:
+        raise PackError(f"{path}: tools must be a list of at most {MAX_TOOLS} program names, such as [\"tshark\", \"binwalk\"]")
+    for i, tool in enumerate(value):
+        if not isinstance(tool, str) or not TOOL.fullmatch(tool):
+            shown = _show(tool) if isinstance(tool, str) else type(tool).__name__
+            raise PackError(f"{path}: tools[{i}] ({shown}) must be a program's name as it is typed (letters, digits, "
+                            "_ . + -, at most 64, not starting with . + or -), not a path")
+        if tool in value[:i]:
+            raise PackError(f"{path}: tools lists {tool} twice")
+    return tuple(value)
+
+
+def missing_on_host(tools: Sequence[str], path: str | None = None) -> list[str]:
+    """The `tools` that are not programs on this machine's PATH (`path`, by default this
+    process's), in their order: looked up in its absolute folders only, as an engine's
+    programs are (l1/runner.py safe_path, find_program)."""
+    from .l1.runner import find_program, safe_path
+
+    folders = safe_path(path)
+    return [tool for tool in tools if find_program(tool, folders) is None]
+
+
+def missing_in_image(image: str, tools: Sequence[str], *, docker: str | None = None) -> list[str]:
+    """The `tools` that are not programs on the PATH of the docker image `image`, in their
+    order: one throwaway container (`docker run --rm`, never pulled, no network) runs the
+    lookup an engine's container runs (l1/container.py), on the image's PATH with only its
+    absolute folders. PackError when docker or the image does not answer it (no docker, the
+    image is not on this machine or has no bash, no answer in LOOKUP_TIMEOUT seconds): what is
+    missing is then not known, and nothing is guessed."""
+    from .l1.container import _LOOKUP
+    from .l1.runner import safe_path
+
+    tools = list(dict.fromkeys(tools))
+    for tool in tools:
+        if not TOOL.fullmatch(tool):
+            raise PackError(f"{_show(tool)} is not a program's name")
+    if not tools:
+        return []
+    docker = docker or shutil.which("docker", path=safe_path())
+    if docker is None:
+        raise PackError(f"docker is not on PATH, so the image {_show(image)} cannot be asked for its programs")
+    argv = [docker, "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "bash", image,
+            "-c", _LOOKUP, "flightdeck-pack", *tools]
+    try:
+        done = subprocess.run(argv, capture_output=True, timeout=LOOKUP_TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise PackError(f"docker did not say within {LOOKUP_TIMEOUT:g} s which programs the image {_show(image)} has") from None
+    except OSError as exc:
+        raise PackError(f"docker cannot be run ({exc.strerror or type(exc).__name__})") from None
+    parts = done.stdout.decode("utf-8", "replace").split("\0")
+    if done.returncode != 0 or len(parts) != len(tools) + 2 or parts[-1]:
+        lines = done.stderr.decode("utf-8", "replace").strip().splitlines()
+        said = _show(lines[-1]) if lines else f"docker run exited {done.returncode}"
+        raise PackError(f"the image {_show(image)} did not say which programs it has (it needs bash): {said}")
+    return [tool for tool, at in zip(tools, parts[1:-1]) if not at.startswith("/")]
 
 
 def lane_note(info: PackInfo, seen_at: str | None = None) -> str:
