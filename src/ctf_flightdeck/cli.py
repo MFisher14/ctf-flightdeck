@@ -814,11 +814,12 @@ def _mount() -> None:
     )
     from . import models_cli
     from .l1 import cli as l1_cli
-    from .platform import ctfd_cli
+    from .platform import ctfd_cli, gamemaster_cli
 
     app.add_typer(preflight_cli.app, name="preflight", rich_help_panel=EVENT,
                   help="Check an event profile (event.toml): what the rules allow, and what flightdeck will do.")
     app.add_typer(ctfd_cli.app, name="ctfd", rich_help_panel=EVENT)
+    app.add_typer(gamemaster_cli.app, name="gm", rich_help_panel=EVENT)
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
     app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
