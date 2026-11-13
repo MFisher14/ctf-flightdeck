@@ -100,12 +100,25 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
     NewChallengePrompt TextArea { height: 10; }
     """
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True),
-                Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True)]
+                Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True),
+                Binding("ctrl+o", "choose_files", "choose files", priority=True)]
 
     def __init__(self, name: str = "", *, paster=None) -> None:
         super().__init__()
         self.given_name = name
         self.paster = paster  # saves the clipboard's image as a file and returns its path; raises with the reason
+
+    def add_files(self, files) -> None:
+        """Put files in the box, each on a line of its own (a drop, the file window, a paste)."""
+        box = self.query_one("#new-text", TextArea)
+        box.text = box.text + ("" if not box.text or box.text.endswith("\n") else "\n") + "".join(f"{file}\n" for file in files)
+        box.move_cursor(box.document.end)
+
+    async def action_choose_files(self) -> None:
+        """ctrl+o: the operating system's file window, for a terminal where a drop does not arrive."""
+        files = await self.app.pick_files()
+        if files:
+            self.add_files(files)
 
     def action_paste_image(self) -> None:
         """ctrl+v: the image on the clipboard becomes a file, and its path a line of the box.
@@ -130,8 +143,8 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
             yield Static(Text("New challenge", style="bold"))
             yield Static(Text("Name, as the site shows it:"), classes="muted")
             yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
-            yield Static(Text("Everything you have: paste the description, drag files and screenshots in (each shows as its path; "
-                              "the line under the box says what is attached), and put the target's address (https://... or "
+            yield Static(Text("Everything you have: paste the description; add files with ctrl+o (or drag them in); the line "
+                              "under the box says what is attached. Put the target's address (https://... or "
                               "nc host port) on a line of its own:"), classes="muted")
             yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
             yield Static(Text("no file attached", style="bold"), id="new-attached")
@@ -139,7 +152,7 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
                 yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
                 yield Input(placeholder="points (optional)", id="new-points", classes="short")
             yield Static(Text(""), id="new-problem")
-            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+v", "paste a screenshot from the clipboard"),
+            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste a screenshot"),
                                ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
     def on_mount(self) -> None:

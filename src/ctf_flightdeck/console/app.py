@@ -19,6 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 from rich.text import Text
+from textual import events
 from textual.app import App
 from textual.driver import Driver
 from textual.drivers.linux_driver import LinuxDriver
@@ -240,6 +241,69 @@ class FlightdeckApp(App[None]):
     def warn(self, text: str) -> None:
         self.say(text, "warning")
 
+    async def on_event(self, event: events.Event) -> None:
+        """Files dropped on the terminal arrive as pasted paths. Wherever the focus is, they
+        go where files belong (take_drop) instead of into whatever widget had the focus;
+        any other paste goes on as usual."""
+        if isinstance(event, events.Paste) and not event.is_forwarded and self.take_drop(event.text):
+            return
+        await super().on_event(event)
+
+    def take_drop(self, text: str) -> bool:
+        """Whether `text` was files dropped (or pasted) on the console, now taken: into the
+        /new form's box when it is open; otherwise onto the command bar as an /attach to
+        finish with Enter. False for any text that is not only paths of files that exist."""
+        from ..addchallenge import _take_paths
+        from .screens import NewChallengePrompt
+
+        if self.adder is None or len(text) > 20000:
+            return False
+        files, rest = [], []
+        for line in text.splitlines():
+            left, found = _take_paths(line) if line.strip() else ("", [])
+            files += found
+            rest.append(left.strip())
+        if not files or any(rest):
+            return False
+        if isinstance(self.screen, NewChallengePrompt):
+            self.screen.add_files(files)
+            return True
+        screen = self.screen
+        bar = screen.query("#bar-input")
+        if not bar:
+            return False
+        field = bar.first()
+        quoted = " ".join(f"'{file}'" for file in files)
+        typed = field.value.strip()
+        field.value = (typed if typed.startswith("/attach") else "/attach") + f" {quoted} "
+        field.focus()
+        field.cursor_position = len(field.value)
+        lane = getattr(screen, "lane_id", None)
+        target = self.deck.lanes[lane].challenge_id if lane in self.deck.lanes else None
+        self.say(f"{len(files)} file{'' if len(files) == 1 else 's'} ready: press Enter to attach to {target}" if target
+                 else f"{len(files)} file{'' if len(files) == 1 else 's'} ready: type the challenge's name after /attach, then Enter")
+        return True
+
+    async def pick_files(self, *, many: bool = True) -> list:
+        """The operating system's file window (filepick.choose), off the event loop so lanes
+        go on while it is open. [] when cancelled; a warning when there is no such window."""
+        import asyncio
+
+        from ..filepick import PickError, choose
+
+        try:
+            return await asyncio.to_thread(choose, many=many)
+        except PickError as exc:
+            self.warn(str(exc))
+            return []
+
+    async def _attach_picked(self, cid: str) -> None:
+        files = await self.pick_files()
+        if files:
+            ok, message = self.attacher(cid, files)
+            self.say(message, "information" if ok else "warning")
+            self.refresh_view()
+
     def attach(self, arg: str, lane_id: str | None = None) -> None:
         """/attach [challenge] <files>: the files named (dragged onto the command bar) go into
         the challenge's folder, and its lanes start afresh with them. Without a challenge: the
@@ -250,8 +314,10 @@ class FlightdeckApp(App[None]):
             self.warn("/attach adds files to a challenge on a board you fill yourself")
             return
         rest, files = _take_paths(arg) if arg.strip() else ("", [])
-        if not files:
-            self.warn("/attach: no file found. Type /attach, a space, then drag the file onto this bar (or paste its full path)")
+        if not files:  # no file named: the file window
+            cid = self._challenge_arg(rest, lane_id)
+            if cid is not None:
+                self.run_worker(self._attach_picked(cid), exclusive=False)
             return
         cid = self._challenge_arg(rest, lane_id)
         if cid is None:

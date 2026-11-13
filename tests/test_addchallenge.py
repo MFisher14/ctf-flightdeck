@@ -471,10 +471,108 @@ def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_p
                         break
                     await pilot.pause(0.01)
                 assert "doll.bin" in run.driver.runs[second.id].messages[1]["content"]
-                await pilot.press(*"/attach matryoshka", "enter")
-                await pilot.pause()
-                assert "no file found" in app._status[0]
             await run.shutdown()
             run.close()
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------- a drop anywhere, and the file window
+
+
+def test_files_dropped_on_the_console_go_to_the_new_form_or_onto_an_attach_whatever_has_the_focus(tmp_path):
+    from textual import events
+
+    handout = tmp_path / "my doll.bin"
+    handout.write_bytes(b"x")
+    dropped = str(handout).replace(" ", "\\ ") + " "  # as a terminal pastes a dropped file
+
+    async def main():
+        with FakeModelServer(responder=lambda request: tool_call_reply("shell", {"command": "sleep 0.2"})) as server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                await app.on_event(events.Paste(dropped))  # the fleet: the board has the focus, not the bar
+                await pilot.pause()
+                bar = app.screen.query_one("#bar-input")
+                assert bar.value == f"/attach '{handout}' " and bar.has_focus and "1 file ready" in app._status[0]
+                bar.value = ""
+                await app.on_event(events.Paste("just some words"))  # not files: an ordinary paste
+                await pilot.pause()
+                assert bar.value == "just some words"
+                bar.value = ""
+                await pilot.press(*"/new Doll", "enter")
+                await pilot.pause()
+                app.screen.query_one("#new-category").focus()  # the focus is not on the box
+                await app.on_event(events.Paste(dropped))
+                await pilot.pause()
+                assert str(handout) in app.screen.query_one("#new-text").text and app.screen.query_one("#new-category").value == ""
+                assert "1 file attached: my doll.bin" in str(app.screen.query_one("#new-attached").render())
+                await pilot.press("escape")
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+def test_ctrl_o_and_a_bare_attach_open_the_file_window_and_take_what_was_chosen(tmp_path, monkeypatch):
+    from ctf_flightdeck import filepick
+
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"inside")
+    asked = []
+    monkeypatch.setattr(filepick, "choose", lambda **kw: asked.append(kw) or [handout])
+
+    async def main():
+        with FakeModelServer(responder=lambda request: tool_call_reply("shell", {"command": "sleep 0.2"})) as server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                await pilot.press(*"/new Doll", "enter")
+                await pilot.pause()
+                await pilot.press("ctrl+o")
+                for _ in range(200):
+                    if str(handout) in app.screen.query_one("#new-text").text:
+                        break
+                    await pilot.pause(0.01)
+                assert "1 file attached: doll.bin" in str(app.screen.query_one("#new-attached").render())
+                await pilot.press("escape")
+                run.add_challenge(NewChallenge(name="Bare", description="d"))
+                await pilot.pause()
+                await pilot.press(*"/attach bare", "enter")
+                for _ in range(300):
+                    if (run.options.board / "bare" / "doll.bin").exists():
+                        break
+                    await pilot.pause(0.01)
+                assert (run.options.board / "bare" / "doll.bin").read_bytes() == b"inside" and len(asked) == 2
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize(("platform", "tools", "code", "out", "expected"), [
+    ("darwin", {"osascript"}, 0, "{a}\n{b}\n", 2),
+    ("darwin", {"osascript"}, 1, "", 0),  # cancelled
+    ("linux", {"zenity"}, 0, "{a}\n/no/such/file\n", 1),
+])
+def test_the_file_window_returns_the_files_chosen_that_exist(tmp_path, platform, tools, code, out, expected):
+    from types import SimpleNamespace
+
+    from ctf_flightdeck import filepick
+
+    a, b = tmp_path / "a.bin", tmp_path / "b c.txt"
+    a.write_bytes(b"1")
+    b.write_text("2")
+    run = lambda argv, **kw: SimpleNamespace(returncode=code, stdout=out.format(a=a, b=b))  # noqa: E731
+    chosen = filepick.choose(platform=platform, which=lambda t: t if t in tools else None, run=run)
+    assert len(chosen) == expected and all(path.exists() for path in chosen)
+
+
+def test_no_file_window_on_this_machine_is_said():
+    from ctf_flightdeck import filepick
+
+    with pytest.raises(filepick.PickError, match="paste the file's full path"):
+        filepick.choose(platform="linux", which=lambda t: None)

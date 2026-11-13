@@ -594,6 +594,10 @@ Walk" --text - --file postcard.txt` does the same, and a run that is playing pic
 seconds; so does a challenge folder you make yourself. flightdeck shows each flag; you submit it
 on the site and press `a` if it was accepted or `d` if not.
 
+`ctrl+o` in the form opens your system's file window (Finder's on macOS) to choose the
+challenge's files, for a terminal where a drop does not arrive; `/attach <challenge>` with no
+file opens the same window. Files dropped on the console are taken wherever the focus is: into
+the form when it is open, otherwise onto the command bar as an `/attach` to finish with Enter.
 In the form, the line under the box says what is attached (each file's name and size) and the
 target it found, so you see a drop land before you add the challenge. A file dropped anywhere
 is taken: in the middle of a line, or on the name. `ctrl+v` pastes a screenshot from the

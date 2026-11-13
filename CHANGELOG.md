@@ -4,6 +4,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `ctrl+o` in `/new`, and `/attach` with no file, open your system's file window to choose
+  files. Files dropped on the console are taken wherever the focus is.
+
 - `flightdeck` on its own opens a home screen in the console's own style: resume an event you
   played, start a new CTF from a form, practice, a demo, or install the solver pack. With no
   config it offers to get you started.

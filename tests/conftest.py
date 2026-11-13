@@ -50,3 +50,19 @@ def calm_host(monkeypatch):
         return governor.Reading(load=Fact(0.5), cpus=Fact(8), free_ram=Fact(16 * GIB), free_disk=Fact(200 * GIB), disk_path=str(path))
 
     monkeypatch.setattr(governor, "probe", calm)
+
+
+@pytest.fixture(autouse=True)
+def no_real_file_window(monkeypatch):
+    """No test opens the operating system's file window (filepick.choose): one that would
+    fails instead. A test of the window gives its own stand-in."""
+    from ctf_flightdeck import filepick
+
+    real = filepick.choose
+
+    def guarded(*args, **kwargs):
+        if "run" not in kwargs and "which" not in kwargs:
+            raise AssertionError("a test would have opened a real file window: give filepick.choose a stand-in")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(filepick, "choose", guarded)
