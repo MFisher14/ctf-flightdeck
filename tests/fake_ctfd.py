@@ -229,6 +229,14 @@ class FakeCTFd:
         self.fails: dict[int, int] = {}  # the account's wrong flags per challenge: what its limit counts
         self.attempts: dict[int, int] = {}  # its correct, wrong and partial answers: what the details say it used
         self.hold_attempts: threading.Event | None = None  # set: answers to flags wait for it (a slow CTFd)
+        # the docker_per_team container plugin (site-root routes, POST {"chal_id": N}): challenge id -> its container
+        self.containers: dict[int, dict] = {}
+        self.container_cap = 3  # the team's cap: a start past it is refused with HTTP 400
+        self.container_seconds = 1800  # how long a container lives; a renew sets it again
+        self.container_types = ("container",)  # only challenges of these types have one
+        self.container_host = "instances.example.test"
+        self.teammate_containers = 0  # slots a teammate's containers take, which this account cannot see
+        self._next_port = 31000
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
         self._lock = threading.Lock()
@@ -308,6 +316,9 @@ class FakeCTFd:
     def _route(self, method: str, route: str, query: dict, headers: dict[str, str], body: bytes) -> Reply:
         if route.startswith("/files/") and method == "GET":
             return self._file(route, query, headers)
+        if route.startswith("/containers/api/") and method == "POST":
+            refused = self._refused(headers)
+            return refused if refused is not None else self._container(route.rsplit("/", 1)[1], body)
         if not route.startswith("/api/v1/"):
             return not_found()
         refused = self._refused(headers)
@@ -331,6 +342,39 @@ class FakeCTFd:
         if method == "GET" and route == "/api/v1/users/me/solves":
             mine = self.user_solved if self.team_mode and self.user_solved is not None else self.solved
             return self._solves(set() if self.no_team else mine)
+        return not_found()
+
+    def _container(self, action: str, body: bytes) -> Reply:
+        """The docker_per_team plugin: request (start), view_info (status), renew, stop."""
+        try:
+            number = json.loads(body or b"{}").get("chal_id")
+        except ValueError:
+            return Reply(400, {"error": "Invalid request"})
+        c = self.challenges.get(number) if isinstance(number, int) else None
+        if c is None or c.type not in self.container_types:
+            return Reply(400, {"error": "Challenge not found"})
+        running = self.containers.get(c.id)
+        if action == "request":
+            if running is None:
+                if len(self.containers) + self.teammate_containers >= self.container_cap:
+                    return Reply(400, {"error": f"Max containers ({self.container_cap}) reached. Please stop a running container before starting a new one."})
+                running = self.containers[c.id] = {"hostname": self.container_host, "port": self._next_port, "expires": self.container_seconds}
+                self._next_port += 1
+            return Reply(200, {"status": "created", **running})
+        if action == "view_info":
+            if running is None:
+                return Reply(200, {"status": "Challenge not started"})
+            return Reply(200, {"status": "already_running", **running})
+        if action == "renew":
+            if running is None:
+                return Reply(400, {"error": "Challenge not started"})
+            running["expires"] = self.container_seconds
+            return Reply(200, {"success": "Instance renewed", "expires": running["expires"]})
+        if action == "stop":
+            if running is None:
+                return Reply(400, {"error": "No instance found"})
+            del self.containers[c.id]
+            return Reply(200, {"success": "Challenge stopped"})
         return not_found()
 
     def _refused(self, headers: dict[str, str]) -> Reply | None:
