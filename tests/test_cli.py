@@ -367,6 +367,7 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
         ("l1 list", "pack"): "PACK", ("l1 route", "pack"): "PACK", ("l1 run", "pack"): "PACK", ("build check", "pack"): "PACK",
         ("l1 route", "challenge_dir"): "CHALLENGE_DIR", ("l1 run", "challenge_dir"): "CHALLENGE_DIR",
         ("build gap", "challenge_dir"): "CHALLENGE_DIR",
+        ("pack install", "source"): "SOURCE", ("pack image", "pack"): "PACK", ("pack info", "pack"): "PACK",
     }
     for command in (["writeups"], ["models"], ["init"], ["l1", "run"]):  # as printed: no <bool> but --help's own
         shown = CliRunner().invoke(cli.app, [*command, "--help"], terminal_width=200).output
@@ -771,7 +772,7 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
         "Play": ["mock", "play", "practice"],
         "Before and during an event": ["preflight", "ctfd", "team"],
         "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
-        "Solvers (L1)": ["l1", "build"],
+        "Solvers (L1)": ["l1", "pack", "build"],
     }
 
 

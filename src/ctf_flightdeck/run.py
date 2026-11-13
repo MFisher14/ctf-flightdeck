@@ -78,11 +78,12 @@ import getpass
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1222,7 +1223,20 @@ class _Submits:
     "already solved" (by the account, so by the team) is news, not a problem: the run takes
     CTFd's word for it, as for a solve its poll finds, without waiting for the player's
     answer about this flag. A flag still on its way when the run ends is named then
-    (unsent()), as not known to have been submitted."""
+    (unsent()), as not known to have been submitted.
+
+    A rate limit that passes is waited out and the flag sent again (P33), up to RESENDS times:
+    CTFd said it did not check the flag ("ratelimited", after the verifier ruled out a
+    challenge that is out of tries), so there is no answer to count twice. The wait is what
+    CTFd asks ("Try again in N seconds", at most RESEND_MAX) or RESEND_WAIT, a little over
+    the minute CTFd's limits count in. Flags queued behind it wait too: they are the same
+    account's, and would be refused the same way. Never for a challenge whose tries are
+    counted: CTFd records a refused try against the limit, so those stay the player's (D21).
+    When the last send is refused too, the flag goes back to the player as before."""
+
+    RESENDS = 3  # sends after the first, for one flag
+    RESEND_WAIT = 65.0  # seconds, when CTFd names no wait: its limits count the last minute
+    RESEND_MAX = 300.0  # the longest wait taken from CTFd's own words
 
     def __init__(self, verifier: CTFdVerifier, link: CTFdLink) -> None:
         self.verifier = verifier
@@ -1233,6 +1247,7 @@ class _Submits:
         self.queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (lane, challenge, flag) to send, in order
         self.sending: tuple[str, str, str] | None = None  # the one sent now, until its answer is applied
         self.errors: list[str] = []  # bookkeeping that failed (a flightdeck bug), shown when the run ends
+        self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep  # the wait before a flag is sent again
 
     def __call__(self, lane_id: str, challenge_id: str, flag: str) -> None:
         self.queue.put_nowait((lane_id, challenge_id, flag))
@@ -1243,13 +1258,25 @@ class _Submits:
             item = await self.queue.get()
             self.sending = item
             lane_id, challenge_id, flag = item
-            try:
-                verdict = await asyncio.to_thread(self.verifier.submit, challenge_id, flag)
-            except Exception as exc:  # a bug in the verifier: the outcome is not known, and the worker goes on
-                verdict = Verdict(None, error=(
-                    f"flightdeck could not submit it ({type(exc).__name__}: {exc}); it may have reached CTFd: check the "
-                    "challenge there before submitting it again"
-                ))
+            sends = 0
+            while True:
+                try:
+                    verdict = await asyncio.to_thread(self.verifier.submit, challenge_id, flag)
+                except Exception as exc:  # a bug in the verifier: the outcome is not known, and the worker goes on
+                    verdict = Verdict(None, error=(
+                        f"flightdeck could not submit it ({type(exc).__name__}: {exc}); it may have reached CTFd: check the "
+                        "challenge there before submitting it again"
+                    ))
+                sends += 1
+                wait = self.resend_after(challenge_id, verdict) if sends <= self.RESENDS else None
+                if wait is None:
+                    break
+                with contextlib.suppress(Exception):  # the note is a courtesy: the resend does not hang on it
+                    self.deck.note(lane_id, (
+                        f"CTFd rate-limited the submission of {_show(flag)} and did not check it; flightdeck sends it "
+                        f"again in {wait:g}s (send {sends + 1} of {self.RESENDS + 1})"
+                    ))
+                await self.sleep(wait)
             try:
                 self.answer(lane_id, challenge_id, flag, verdict)
             except Exception as exc:  # a bug: said now and at the end, and the next flag still goes
@@ -1258,6 +1285,20 @@ class _Submits:
                 with contextlib.suppress(Exception):
                     self.deck.warn(problem, challenge=challenge_id, data={"source": "ctfd"})
             self.sending = None
+
+    def resend_after(self, challenge_id: str, verdict: Verdict) -> float | None:
+        """How long to wait before sending the flag again, or None when it is not sent again:
+        only a rate limit CTFd says passes, at a challenge whose tries nobody counts."""
+        attempt = verdict.attempt
+        if verdict.ok is not None or attempt is None or attempt.status != "ratelimited" or attempt.tries_left is not None:
+            return None
+        ch = self.deck.challenges.get(challenge_id) if self.deck is not None else None
+        if ch is None or ch.limited:
+            return None
+        said = re.search(r"\bin (\d{1,5}) seconds?\b", attempt.message or "")
+        if said is None:
+            return self.RESEND_WAIT
+        return min(float(said.group(1)) + 1.0, self.RESEND_MAX)
 
     def answer(self, lane_id: str, challenge_id: str, flag: str, verdict: Verdict) -> None:
         """CTFd's answer to a flag, on the deck's thread: the run's bookkeeping, then the deck's."""

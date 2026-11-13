@@ -40,6 +40,7 @@ INCLUDE = (
 EXCLUDE = (
     "tests/test_legacy_workflows_hm05.py",      # the events' legacy agent workflows (not exported)
     "tests/test_writeup_organizer_briefs.py",   # the organizer-brief writeup tooling's real examples
+    "tests/test_writeup_organizer_assemble.py", # the same tooling (docs/writeups/organizer is not exported)
 )
 # Top-level names this repo owns: an export never touches them.
 OWNED = ("maint", "flightdeck", "README.md", "pack.toml", "setup.sh", ".gitignore", ".dockerignore", ".venv",

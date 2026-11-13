@@ -14,5 +14,6 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 uv venv --quiet --allow-existing -p 3.12 .venv
-uv pip install --quiet -p .venv/bin/python -r requirements.txt --override maint/overrides.txt
+# both files: requirements.txt is what the pack asks for, requirements.lock.txt every version its suite ran on
+uv pip install --quiet -p .venv/bin/python -r requirements.lock.txt -r requirements.txt --override maint/overrides.txt
 .venv/bin/python -c "import ctf; print('setup: the pack environment is ready:', __import__('sys').version.split()[0])"

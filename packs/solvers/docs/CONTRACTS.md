@@ -453,7 +453,7 @@ env.legacy_names("CTF_TOKEN") # ("CSCTF_TOKEN", "HUNTRESS_GM_TOKEN", "HUNTRESS_T
   (`CTF_PLATFORM_URL` <- `CSCTF_URL`, `HUNTRESS_GM_URL`; `CTF_TOKEN` <- `CSCTF_TOKEN`,
   `HUNTRESS_GM_TOKEN`; `CTF_COOKIE` <- `CSCTF_COOKIE`; `CTF_TEAM_ID` <- `CSCTF_TEAM_ID`), then
   `HUNTRESS_<suffix>`, then `CSCTF_<suffix>`. The canonical name wins when both are set.
-- Canonical names in use: `CTF_EVENT`, `CTF_WORKDIR`, `CTF_REALDATA`, `CTF_REAL_CHALLENGES`, `CTF_REHEARSAL_CORPUS`, `CTF_GEO_DATASET` (the frozen OSINT geolocation dataset, section 2), `CTF_FACTOR_TABLE` (the offline factor table, section 2, B-244), `CTF_RUN_LIVE`,
+- Canonical names in use: `CTF_EVENT`, `CTF_EVENTS_DIR` (a folder of `<slug>/event.toml` profiles used instead of `<repo>/events`: the flightdeck adapter writes the profile of the board being played there), `CTF_WORKDIR`, `CTF_REALDATA`, `CTF_REAL_CHALLENGES`, `CTF_REHEARSAL_CORPUS`, `CTF_GEO_DATASET` (the frozen OSINT geolocation dataset, section 2), `CTF_FACTOR_TABLE` (the offline factor table, section 2, B-244), `CTF_RUN_LIVE`,
   `CTF_TESTING`, `CTF_STRICT_TESTS`, `CTF_PLATFORM_URL`, `CTF_TOKEN`, `CTF_COOKIE`, `CTF_TEAM_ID`,
   `CTF_HANDOFF_AS` (the handoff board's actor, section 45), `CTF_LANES_DIR` (Codex build-lane state, B-179), `CTF_GATE_STATE` (the regression gate's state folder, section 23),
   `CTF_STATUS_STATE` (the live status state folder, section 47), `CTF_WORKREG_STATE` (the build-time

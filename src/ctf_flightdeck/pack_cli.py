@@ -31,16 +31,16 @@ ConfigOpt = Annotated[Path | None, typer.Option("--config", dir_okay=False, help
 
 @app.command("install")
 def install(
-    source: Annotated[str | None, typer.Argument(metavar="[SOURCE]", show_default=False, help="A git address (https://, ssh://, git@host:path) or a folder on this machine. Left out: flightdeck's own solver pack.")] = None,
+    source: Annotated[str | None, typer.Argument(metavar="SOURCE", show_default=False, help="A git address (https://, ssh://, git@host:path) or a folder on this machine. Left out: flightdeck's own solver pack.")] = None,
     ref: Annotated[str | None, typer.Option("--ref", help="A branch or tag of the pack to fetch (flightdeck's own pack: this release's tag).")] = None,
     subdir: Annotated[str | None, typer.Option("--subdir", help="The pack is this folder of the repository at SOURCE.")] = None,
     name: Annotated[str | None, typer.Option("--name", help="The folder name the fetched pack gets (default: from its address).")] = None,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Run the pack's setup command and build its image without asking.")] = False,
-    no_setup: Annotated[bool, typer.Option("--no-setup", help="Do not run the pack's setup command.")] = False,
-    image: Annotated[bool | None, typer.Option("--image/--no-image", show_default=False, help="Build the pack's Docker image (default: when your config runs lanes in Docker).")] = None,
-    lane_tools: Annotated[bool | None, typer.Option("--lane-tools/--no-lane-tools", show_default=False, help="Let the lanes' models call the pack's engines (default: yes, when the pack says how).")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", metavar="", help="Run the pack's setup command and build its image without asking.")] = False,
+    no_setup: Annotated[bool, typer.Option("--no-setup", metavar="", help="Do not run the pack's setup command.")] = False,
+    image: Annotated[bool | None, typer.Option("--image/--no-image", show_default=False, metavar="", help="Build the pack's Docker image (default: when your config runs lanes in Docker).")] = None,
+    lane_tools: Annotated[bool | None, typer.Option("--lane-tools/--no-lane-tools", show_default=False, metavar="", help="Let the lanes' models call the pack's engines (default: yes, when the pack says how).")] = None,
     config: ConfigOpt = None,
-    no_config: Annotated[bool, typer.Option("--no-config", help="Do not write the pack into your config; print the lines instead.")] = False,
+    no_config: Annotated[bool, typer.Option("--no-config", metavar="", help="Do not write the pack into your config; print the lines instead.")] = False,
 ) -> None:
     """Fetch a solver pack, set it up, and write it into your config's [l1] table."""
     from . import pack as packs
@@ -131,7 +131,7 @@ def install(
 
 @app.command("image")
 def image_command(
-    pack: Annotated[Path | None, typer.Argument(metavar="[PACK]", show_default=False, exists=True, file_okay=False, help="The pack's folder (default: your config's [l1] pack).")] = None,
+    pack: Annotated[Path | None, typer.Argument(metavar="PACK", show_default=False, exists=True, file_okay=False, help="The pack's folder (default: your config's [l1] pack).")] = None,
     config: ConfigOpt = None,
 ) -> None:
     """Build the Docker image a pack's engines run in, and write it into your config."""
@@ -160,7 +160,7 @@ def image_command(
 
 @app.command("info")
 def info_command(
-    pack: Annotated[Path | None, typer.Argument(metavar="[PACK]", show_default=False, exists=True, file_okay=False, help="The pack's folder (default: your config's [l1] pack).")] = None,
+    pack: Annotated[Path | None, typer.Argument(metavar="PACK", show_default=False, exists=True, file_okay=False, help="The pack's folder (default: your config's [l1] pack).")] = None,
     config: ConfigOpt = None,
 ) -> None:
     """Show what a pack is: its name, engines, setup command and image."""

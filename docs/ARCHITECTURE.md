@@ -415,6 +415,10 @@ challenge's details (`Pull.tries`; only where the challenge takes no partial ans
 closes a challenge with none left and opens it again, parked, when a later pull finds tries
 (`Deck.platform_tries`).
 
+A rate limit that passes is waited out and the flag sent again by the run's submit worker
+(`run._Submits.work`, P33): up to three more sends, after the wait CTFd names or 65 seconds,
+never at a challenge whose tries are counted. `CTFdClient.attempt` itself still sends once.
+
 ### Event runs
 
 Where: `run.py`.

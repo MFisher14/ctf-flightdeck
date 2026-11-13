@@ -55,3 +55,35 @@ def _restore_interpreter_limits():
         sys.setrecursionlimit(rlimit)
         if dlimit is not None:
             sys.set_int_max_str_digits(dlimit)
+
+
+# ---- the pack (packs/solvers in ctf-flightdeck) -----------------------------------------------------
+# Tests of the master repository's own layout and build process read files the export leaves out.
+# They are listed in maint/master-only-tests.txt and deselected here, so a run counts them as
+# deselected, never as passed. A listed test that no longer exists fails the run: the list is stale.
+_MASTER_ONLY = REPO / "maint" / "master-only-tests.txt"
+
+
+def _master_only() -> set:
+    if not _MASTER_ONLY.is_file():
+        return set()
+    lines = _MASTER_ONLY.read_text(encoding="utf-8").splitlines()
+    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+
+
+def pytest_collection_modifyitems(config, items):
+    listed = _master_only()
+    if not listed:
+        return
+    kept, dropped = [], []
+    for item in items:
+        (dropped if item.nodeid in listed else kept).append(item)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
+    whole_run = not config.option.keyword and not config.option.markexpr and not getattr(config, "workerinput", None) \
+        and all(Path(str(a).split("::")[0]).resolve() in (REPO, REPO / "tests") for a in (config.args or [str(REPO)]))
+    stale = listed - {i.nodeid for i in dropped}
+    if whole_run and stale and not config.option.collectonly:
+        raise pytest.UsageError("maint/master-only-tests.txt lists tests that were not collected (remove them): "
+                                + ", ".join(sorted(stale)[:5]) + (f" and {len(stale) - 5} more" if len(stale) > 5 else ""))

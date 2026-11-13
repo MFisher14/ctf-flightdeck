@@ -22,6 +22,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A route can say `any = true` (every challenge), and an engine is given the event's flag
   format in `FLIGHTDECK_FLAG_FORMAT`.
 
+### CTFd
+
+- A flag CTFd rate-limited without checking it is sent again by itself: flightdeck waits what
+  CTFd asks (or 65 seconds) and resends, up to three more times, and says so on the lane.
+  Before, the flag went back to you at once and autopilot disengaged. A challenge whose tries
+  CTFd counts is never resent to: those tries stay yours.
+
 ## 0.3.0 (2026-11-12)
 
 Autopilot (M5): flightdeck runs an event by rule while you are away, inside a run budget,
