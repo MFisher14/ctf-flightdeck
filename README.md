@@ -81,6 +81,9 @@ flightdeck play ~/ctf/example-ctf --autopilot --budget-dollars 20   # while you 
 flightdeck play ~/ctf/some-board                                    # or any folder of challenges
 ```
 
+Already installed? `uv tool upgrade ctf-flightdeck` (or `pipx upgrade ctf-flightdeck`) gets the
+newest release; `flightdeck --version` says which you have. Your config and keys stay as they are.
+
 `practice` and `play` spend money on your model API unless the model runs on your machine. Each
 lane stops and asks you at $2 or 400,000 tokens by default. Stuck? Run `flightdeck` on its own
 and it says what to do next.

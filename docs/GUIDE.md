@@ -30,6 +30,17 @@ lane image and your terminal's size. Before the console opens, `play` and `pract
 API whether it takes your key and serves every model in your ladder, and stop with what to fix if
 not. `ctfdeck` and `ctf-flightdeck` are other names for the `flightdeck` command.
 
+### Upgrade
+
+```sh
+uv tool upgrade ctf-flightdeck     # or: pipx upgrade ctf-flightdeck
+flightdeck --version               # which release you have now
+```
+
+Your config, keys file, event folders and run folders are not touched. From a clone, pull and
+install it over the old one: `git pull`, then `uv tool install --force .`. If you use the solver
+pack, run `flightdeck pack install` again after an upgrade so the pack matches the release.
+
 ### Install with Homebrew or apt
 
 Not yet: 0.2.0 is on PyPI only. Both arrive with the first release after 0.2.0, and until then
