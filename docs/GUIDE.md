@@ -310,6 +310,18 @@ for you as well (`wrong_stop = 3` under `[lanes]`; 0 turns it off): a lane that 
 not get to spray the platform. A flag CTFd rate-limited without checking it is sent again by
 flightdeck after the wait CTFd asks for, up to three more times, before it comes back to you.
 
+A right solve can lose its spelling on the way: a cipher with one letter case gives the flag in
+capitals, a decoder wraps a wrapped flag twice. With `variant_tries = 2` under `[lanes]` (0, the
+default, turns it off; 12 is the most), when the platform calls a flag wrong flightdeck proposes
+its other spellings on the same lane, best first: the lost case, the doubled wrapper, leet and
+letters, accents, spaces and underscores, the prefix as the event's flag format spells it. One
+at a time, the next only after the platform called the one before wrong, and at most that many
+per challenge in a run. A variant is a flag like any other: under `submit = "confirm"` it waits
+for you, and under auto submit it goes out only where a flag the lane claims would (never past
+`wrong_stop`, never on a challenge whose tries are counted, never when its first spelling went
+out on your yes), so a wrong one is a wrong try at the platform. The approval and the lane's
+transcript say which flag it is a variant of and what changed.
+
 Some platforms limit the tries at a challenge's flag (CTFd's "max attempts"). Every flag for such
 a challenge waits for your approval, under auto submit too, and the approval says how many tries
 are left. To let auto submit spend those tries without you, the last one included, set

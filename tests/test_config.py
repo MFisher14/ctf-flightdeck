@@ -242,6 +242,11 @@ def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
     for bad in ("-1", "1.5", '"3"', "true"):
         assert "lanes.wrong_stop must be a whole number, 0 or more" in error(write(tmp_path, LADDER + f"[lanes]\nwrong_stop = {bad}\n"))
     assert load_config(write(tmp_path, LADDER + '[lanes]\nsubmit_limited = "auto"\n')).lanes.submit_limited == "auto"
+    assert load_config(write(tmp_path, LADDER)).lanes.variant_tries == 0  # flag variants are off unless asked for
+    assert load_config(write(tmp_path, LADDER + "[lanes]\nvariant_tries = 12\n")).lanes.variant_tries == 12
+    for bad in ("-1", "13", "1.5", '"3"', "true"):
+        assert "lanes.variant_tries must be a whole number from 0 to 12 (0: no variants)" in error(
+            write(tmp_path, LADDER + f"[lanes]\nvariant_tries = {bad}\n"))
     for bad in ("true", '"yes"', '"off"'):
         assert 'lanes.submit_limited must be "auto" or "confirm"' in error(write(tmp_path, LADDER + f"[lanes]\nsubmit_limited = {bad}\n"))
 

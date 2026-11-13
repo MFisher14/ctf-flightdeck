@@ -65,6 +65,7 @@ from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
 from .core.model import SUBMIT_POLICIES
+from .flagvariants import MAX_VARIANTS
 from .pricing import RATES, Price
 from .text import untrusted
 
@@ -82,7 +83,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
-_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop")
+_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop", "variant_tries")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
@@ -184,6 +185,7 @@ class LaneConfig:
     submit: str = "confirm"  # confirm | auto
     submit_limited: str = "confirm"  # confirm | auto: under submit auto, spend a challenge's counted tries without the player
     wrong_stop: int = 3  # under submit auto: after this many wrong flags at a challenge its next ones wait for the player; 0: never
+    variant_tries: int = 0  # other spellings of a flag the platform rejected that flightdeck proposes per challenge (flagvariants); 0: none
 
 
 @dataclass(frozen=True)
@@ -559,6 +561,10 @@ submit_limited = "confirm"      # a challenge whose tries the platform counts (C
                                 # the last try included: a wrong flag can use up the tries, for your whole team
 wrong_stop = 3                  # under submit "auto": once the platform called this many flags wrong at one challenge,
                                 # its next flags wait for you (a lane that guesses does not spray the platform). 0: never
+variant_tries = 0               # when the platform calls a flag wrong, flightdeck can propose its other spellings (the
+                                # letter case a cipher lost, a doubled wrapper, leet), best first, one at a time: at most
+                                # this many per challenge (0 to 12). Each is a flag like any other: it waits for you
+                                # wherever a lane's flag would, and under submit "auto" a wrong one is a wrong try. 0: none
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
@@ -1155,7 +1161,15 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         submit=_choice(path, table, ("lanes", "submit"), defaults.submit, SUBMIT_POLICIES),
         submit_limited=_choice(path, table, ("lanes", "submit_limited"), defaults.submit_limited, SUBMIT_POLICIES),
         wrong_stop=_wrong_stop(path, table, defaults.wrong_stop),
+        variant_tries=_variant_tries(path, table, defaults.variant_tries),
     )
+
+
+def _variant_tries(path: Path, table: dict, default: int) -> int:
+    value = table.get("variant_tries", default)
+    if not _is_int(value) or not 0 <= value <= MAX_VARIANTS:
+        raise _error(path, ("lanes", "variant_tries"), f"must be a whole number from 0 to {MAX_VARIANTS} (0: no variants){_got(value)}")
+    return value
 
 
 def _wrong_stop(path: Path, table: dict, default: int) -> int:

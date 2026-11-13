@@ -28,10 +28,10 @@ from typer.testing import CliRunner
 from ctf_flightdeck import cli
 from ctf_flightdeck.console.screens import QuitPrompt
 from ctf_flightdeck.core import interventions as iv
-from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState, PendingKind
+from ctf_flightdeck.core.model import ChallengeStatus, DeckConfig, EventKind, LaneState, PendingKind
 from ctf_flightdeck.platform.ctfd import CTFdVerifier
 from ctf_flightdeck.platform.manual import cannot_check
-from ctf_flightdeck.run import YOU, YOU_OR_YOUR_TEAM, YOUR_TEAM, RunError, RunOptions, prepare_run
+from ctf_flightdeck.run import YOU, YOU_OR_YOUR_TEAM, YOUR_TEAM, RunError, RunOptions, prepare_run, variant_tries_note
 from ctf_flightdeck.team import TeamChannel, init_folder
 
 from fake_ctfd import FLAG_FORMAT, TOKEN, FakeChallenge, FakeCTFd, Reply, sample
@@ -912,3 +912,21 @@ def test_a_team_folder_without_its_marker_is_refused_with_how_to_make_one(tmp_pa
     with pytest.raises(RunError, match="is not a team folder .*`flightdeck team init "):
         prepare_run(RunOptions(board=folder_board(tmp_path), config=config(tmp_path), team_dir=tmp_path / "team", handle="alpha"))
     assert not (tmp_path / "runs").exists()
+
+
+def test_variant_tries_in_the_config_reaches_the_deck_and_the_runs_notes_say_so(tmp_path):
+    root = folder_board(tmp_path)
+    off = prepare_run(RunOptions(board=root, config=config(tmp_path)))
+    off.close()
+    assert off.deck.config.variant_tries == 0 and not any(note.startswith("variant_tries = ") for note in off.notes())
+    cfg = config(tmp_path)
+    cfg.write_text(cfg.read_text().replace('runtime = "host"\n', 'runtime = "host"\nvariant_tries = 2\n'))
+    run = prepare_run(RunOptions(board=root, config=cfg))
+    run.close()
+    assert run.deck.config.variant_tries == 2 and run.deck.config.submit == "confirm"
+    said = ("variant_tries = 2 in your config: when the platform calls a flag wrong, flightdeck proposes up to 2 other "
+            "spellings of it per challenge, one at a time")
+    assert said + "; each waits for you, as every flag does" in run.notes()
+    auto = variant_tries_note(DeckConfig(event="t", submit="auto", variant_tries=1))
+    assert auto.endswith("up to 1 other spelling of it per challenge, one at a time; under submit auto each goes out as a "
+                         "lane's own flag would, and a wrong one is a wrong try")
