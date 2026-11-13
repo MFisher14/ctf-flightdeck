@@ -3,6 +3,7 @@ command, and the config's [l1] table. No network: every git address is a file://
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -306,3 +307,182 @@ def test_install_turns_lane_tools_on_only_for_a_pack_that_says_how(tmp_path, con
     assert invoke("install", noted, "--config", config).exit_code == 0 and load_config(config).l1.lane_tools is True
     assert invoke("install", noted, "--no-lane-tools", "--config", config).exit_code == 0
     assert load_config(config).l1.lane_tools is False and "# lane_tools = true" in config.read_text()
+
+
+# ---------------------------------------------------------------- the programs a pack's engines call (tools)
+
+STAND_IN_DOCKER = r"""#!/bin/sh
+# A stand-in docker for the pack-tools lookups: never the real docker, and no container.
+# `image inspect` and `run` know the images named in images.txt beside it; `run ... --entrypoint
+# bash IMAGE -c SCRIPT ARGS` runs SCRIPT with this machine's bash on the "image's" PATH: the
+# folder image-bin beside it, and a relative entry that must never be searched.
+here="${0%/*}"  # no dirname: PATH holds this folder alone
+for a in "$@"; do printf '%s\037' "$a" >> "$here/calls.log"; done
+printf '\036' >> "$here/calls.log"
+case "$1" in
+  version) echo 99.0.0-fake; exit 0 ;;
+  image) [ "$2" = inspect ] && /usr/bin/grep -qx -- "$3" "$here/images.txt" && exit 0; exit 1 ;;
+  run)
+    [ -f "$here/run.fail" ] && { /bin/cat "$here/run.fail" >&2; exit 125; }
+    image=""; prev=""
+    for a in "$@"; do if [ "$prev" = bash ]; then image="$a"; break; fi; prev="$a"; done
+    /usr/bin/grep -qx -- "$image" "$here/images.txt" || { echo "Unable to find image '$image' locally" >&2; exit 125; }
+    while [ "$1" != "-c" ]; do shift; done
+    shift
+    cd "$here/work" && PATH="$here/image-bin:relative-bin:" exec /bin/bash -c "$@" ;;
+esac
+echo "stand-in docker: unexpected call: $*" >&2
+exit 64
+"""
+
+
+def program(folder: Path, name: str) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    exe = folder / name
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def stand_in_docker(tmp_path: Path, monkeypatch, *, images: tuple[str, ...] = (), has: tuple[str, ...] = (),
+                    path: str | None = None) -> Path:
+    """STAND_IN_DOCKER as the only docker on PATH (with `path` after it), knowing `images`,
+    each holding the programs `has`. A program of the same name in the folder a relative PATH
+    entry names (work/relative-bin, and the working folder itself) must not count as found.
+    Returns its folder: calls.log there lists every call."""
+    folder = tmp_path / "stand-in-docker"
+    folder.mkdir()
+    (folder / "docker").write_text(STAND_IN_DOCKER)
+    (folder / "docker").chmod(0o755)
+    (folder / "images.txt").write_text("".join(f"{image}\n" for image in images))
+    (folder / "image-bin").mkdir()
+    for name in has:
+        program(folder / "image-bin", name)
+    program(folder / "work" / "relative-bin", "planted")
+    program(folder / "work", "planted")
+    monkeypatch.setenv("PATH", str(folder) + (f"{os.pathsep}{path}" if path else ""))
+    return folder
+
+
+def docker_calls(folder: Path) -> list[list[str]]:
+    log = folder / "calls.log"
+    if not log.exists():
+        return []
+    return [call.split("\x1f")[:-1] for call in log.read_text().split("\x1e")[:-1]]
+
+
+def test_a_pack_toml_lists_the_programs_its_engines_call(tmp_path):
+    root = make_pack(tmp_path / "p", toml='name = "p"\ntools = ["tshark", "7zz", "mdb-export", "g++", "zip2john", "7z2john.pl"]\n')
+    assert packs.read(root).tools == ("tshark", "7zz", "mdb-export", "g++", "zip2john", "7z2john.pl")
+    assert packs.read(make_pack(tmp_path / "none", toml='name = "p"\n')).tools == ()
+    assert packs.read(make_pack(tmp_path / "plain", toml=None)).tools == ()
+
+
+@pytest.mark.parametrize(("toml", "message"), [
+    ('tools = "tshark"\n', "tools must be a list of at most 200 program names"),
+    ('tools = [1]\n', r"tools\[0\] \(int\) must be a program's name"),
+    ('tools = ["ok", "/usr/bin/tshark"]\n', r"tools\[1\] \(/usr/bin/tshark\) must be a program's name as it is typed .*, not a path"),
+    ('tools = ["../x"]\n', r"tools\[0\]"),
+    ('tools = ["--rm"]\n', r"tools\[0\]"),
+    ('tools = ["a b"]\n', r"tools\[0\]"),
+    ('tools = ["x;id"]\n', r"tools\[0\]"),
+    ('tools = [""]\n', r"tools\[0\]"),
+    ('tools = ["' + "a" * 65 + '"]\n', r"tools\[0\]"),
+    ('tools = ["bad\\u001b[31m"]\n', r"tools\[0\] \(bad\^\[\[31m\)"),
+    ('tools = ["tshark", "upx", "tshark"]\n', "tools lists tshark twice"),
+    ("tools = [" + ", ".join(f'"t{i}"' for i in range(201)) + "]\n", "at most 200"),
+])
+def test_a_bad_tools_list_is_refused_saying_which_entry(tmp_path, toml, message):
+    root = make_pack(tmp_path / "p", toml='name = "p"\n' + toml)
+    with pytest.raises(packs.PackError, match=message):
+        packs.read(root)
+
+
+def test_tools_missing_on_this_machine_are_looked_up_in_paths_absolute_folders_only(tmp_path, monkeypatch):
+    program(tmp_path / "bin", "tshark")
+    program(tmp_path / "bin2", "upx")
+    program(tmp_path / "here", "planted")  # in the working folder: a relative PATH entry must not find it
+    (tmp_path / "bin" / "notes").write_text("not a program\n")  # there, but not executable
+    monkeypatch.chdir(tmp_path / "here")
+    path = os.pathsep.join(["", ".", str(tmp_path / "bin"), "relative", str(tmp_path / "bin2")])
+    assert packs.missing_on_host(["tshark", "binwalk", "upx", "planted", "notes"], path) == ["binwalk", "planted", "notes"]
+    assert packs.missing_on_host(["tshark"], "") == ["tshark"]
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    assert packs.missing_on_host(["tshark", "upx"]) == ["upx"]  # by default this process's PATH
+    assert packs.missing_on_host([]) == []
+
+
+def test_tools_missing_in_an_image_are_asked_of_one_throwaway_container_with_no_network(tmp_path, monkeypatch):
+    docker = stand_in_docker(tmp_path, monkeypatch, images=("demo-pack:1",), has=("tshark", "upx"))
+    assert packs.missing_in_image("demo-pack:1", ["tshark", "binwalk", "upx", "planted"]) == ["binwalk", "planted"]
+    (call,) = docker_calls(docker)
+    assert call[:10] == ["run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "bash", "demo-pack:1", "-c"]
+    assert call[11:] == ["flightdeck-pack", "tshark", "binwalk", "upx", "planted"]  # one container for every name
+    assert "-v" not in call and "--mount" not in call  # nothing of this machine goes in
+
+
+def test_an_image_that_cannot_be_asked_is_an_error_never_a_list_of_missing_tools(tmp_path, monkeypatch):
+    docker = stand_in_docker(tmp_path, monkeypatch, images=("demo-pack:1",), has=("tshark",))
+    with pytest.raises(packs.PackError, match=r"the image gone:1 did not say which programs it has \(it needs bash\): "
+                                              "Unable to find image 'gone:1' locally"):
+        packs.missing_in_image("gone:1", ["tshark"])
+    (docker / "run.fail").write_text('exec: "bash": executable file not found in $PATH\n')
+    with pytest.raises(packs.PackError, match="executable file not found"):
+        packs.missing_in_image("demo-pack:1", ["tshark"])
+    with pytest.raises(packs.PackError, match="--privileged is not a program's name"):
+        packs.missing_in_image("demo-pack:1", ["--privileged"])
+    before = len(docker_calls(docker))
+    assert packs.missing_in_image("demo-pack:1", []) == [] and len(docker_calls(docker)) == before  # nothing to ask
+    monkeypatch.setenv("PATH", str(tmp_path / "no-docker-here"))
+    with pytest.raises(packs.PackError, match="docker is not on PATH, so the image demo-pack:1 cannot be asked"):
+        packs.missing_in_image("demo-pack:1", ["tshark"])
+
+
+def tools_pack(tmp_path: Path, *, image: bool) -> Path:
+    toml = 'name = "demo-pack"\ntools = ["tshark", "binwalk", "upx"]\n'
+    if image:
+        toml += '[image]\ntag = "demo-pack:1"\ndockerfile = "Dockerfile"\n'
+    root = make_pack(tmp_path / "p", toml=toml)
+    (root / "Dockerfile").write_text("FROM scratch\n")
+    return root
+
+
+def test_pack_info_lists_the_tools_and_which_are_missing_on_this_machine(tmp_path, config, monkeypatch):
+    root = tools_pack(tmp_path, image=False)
+    program(tmp_path / "bin", "tshark")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    lines = invoke("info", root).output.splitlines()
+    assert "tools: 3 programs its engines call: tshark binwalk upx" in lines
+    assert "  on this machine: missing binwalk upx" in lines
+    assert not [line for line in lines if "in the image" in line]  # no image of its own to look in
+    for name in ("binwalk", "upx"):
+        program(tmp_path / "bin", name)
+    assert "  on this machine: all on PATH" in invoke("info", root).output.splitlines()
+    plain = invoke("info", make_pack(tmp_path / "plain", toml='name = "plain"\n')).output.splitlines()
+    assert "tools: none listed (its pack.toml has no `tools`)" in plain
+
+
+def test_pack_info_looks_in_the_packs_image_when_it_is_built_and_says_so_when_it_is_not(tmp_path, config, monkeypatch):
+    root = tools_pack(tmp_path, image=True)
+    docker = stand_in_docker(tmp_path, monkeypatch, images=(), has=("tshark", "binwalk"))
+    lines = invoke("info", root).output.splitlines()
+    assert "  on this machine: missing tshark binwalk upx" in lines
+    assert "  in the image demo-pack:1: not looked up, since it is not built" in lines
+    assert not [call for call in docker_calls(docker) if call[0] == "run"]  # an absent image is never run, or pulled
+    (docker / "images.txt").write_text("demo-pack:1\n")
+    lines = invoke("info", root).output.splitlines()
+    assert "image: demo-pack:1 (built)" in lines and "  in the image demo-pack:1: missing upx" in lines
+    program(docker / "image-bin", "upx")
+    assert "  in the image demo-pack:1: all there" in invoke("info", root).output.splitlines()
+    (docker / "run.fail").write_text("Cannot connect to the Docker daemon\n")
+    said = invoke("info", root)
+    assert said.exit_code == 0 and "  in the image demo-pack:1: not looked up: the image demo-pack:1 did not say which programs it has" in said.output
+
+
+def test_flightdecks_own_pack_lists_tools_its_engines_name(tmp_path):
+    own = packs.own_pack()
+    if own is None:
+        pytest.skip("not run: this flightdeck is not a source checkout with packs/solvers beside it")
+    tools = packs.read(own).tools
+    assert {"tshark", "binwalk", "exiftool", "7zz"} <= set(tools) and list(tools) == sorted(tools)
+    assert not {"docker", "claude", "python3"} & set(tools)  # what flightdeck itself brings or checks is not the pack's to list

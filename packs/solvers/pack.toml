@@ -2,6 +2,12 @@ name = "flightdeck-solvers"
 version = "1.0.0"
 description = "No-model solvers: recursive unpack and flag sweep, decoders, and 800 analysis engines for crypto, forensics, reversing, web and more."
 engines = "flightdeck"
+# The programs the engines call that are not Python: `flightdeck doctor` and `flightdeck pack info`
+# name the ones missing where the engines run. Each engine works without the ones it does not call.
+tools = [
+    "7zz", "binwalk", "exiftool", "john", "mdb-export", "mdb-tables", "nasm", "qpdf", "rar2john",
+    "sage", "tesseract", "tshark", "unshadow", "upx", "zbarimg", "zip2john",
+]
 
 [setup]
 command = "./setup.sh"

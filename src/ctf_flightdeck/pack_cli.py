@@ -2,7 +2,7 @@
 
     flightdeck pack install [SOURCE]     # flightdeck's own solver pack when SOURCE is left out
     flightdeck pack image                # build the image your config's pack runs its engines in
-    flightdeck pack info [PACK]          # what a pack is, and whether it is ready
+    flightdeck pack info [PACK]          # what a pack is, whether it is ready, and the programs it calls that are missing
 
 SOURCE is a git address or a folder on this machine. A pack is code you choose to run: its
 setup command runs on this machine as you, so `install` shows the command and asks before
@@ -163,7 +163,7 @@ def info_command(
     pack: Annotated[Path | None, typer.Argument(metavar="PACK", show_default=False, exists=True, file_okay=False, help="The pack's folder (default: your config's [l1] pack).")] = None,
     config: ConfigOpt = None,
 ) -> None:
-    """Show what a pack is: its name, engines, setup command and image."""
+    """Show what a pack is: its name, engines, setup command and image, and the programs it calls that are missing."""
     from . import pack as packs
     from .config import ConfigError, default_config_path, load_config
     from .l1.manifest import ManifestError, discover
@@ -191,6 +191,22 @@ def info_command(
     else:
         there = _image_present(info.image.tag)
         typer.echo(f"image: {info.image.tag} ({'built' if there else 'not built: `flightdeck pack image`'})")
+    if not info.tools:
+        typer.echo("tools: none listed (its pack.toml has no `tools`)")
+        return
+    typer.echo(f"tools: {len(info.tools)} programs its engines call: {' '.join(info.tools)}")
+    absent = packs.missing_on_host(info.tools)
+    typer.echo("  on this machine: " + (f"missing {' '.join(absent)}" if absent else "all on PATH"))
+    if info.image is not None:
+        if not there:
+            typer.echo(f"  in the image {info.image.tag}: not looked up, since it is not built")
+            return
+        try:
+            absent = packs.missing_in_image(info.image.tag, info.tools)
+        except packs.PackError as exc:
+            typer.echo(f"  in the image {info.image.tag}: not looked up: {exc}")
+        else:
+            typer.echo(f"  in the image {info.image.tag}: " + (f"missing {' '.join(absent)}" if absent else "all there"))
 
 
 def _build_image(info, lane_image: str | None, *, yes: bool) -> bool:
