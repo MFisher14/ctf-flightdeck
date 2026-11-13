@@ -16,7 +16,10 @@ RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debc
       mdbtools nasm upx-ucl john \
       libmagic1 libzbar0 libgmp10 libmpfr6 libmpc3 \
       build-essential pkg-config curl ca-certificates libgmp-dev libmpfr-dev libmpc-dev libssl-dev libffi-dev \
- && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
+ && ln -s "$(command -v 7z)" /usr/local/bin/7zz
+# Not in this image, and named by `flightdeck doctor` as missing: sage (several GB), and john's zip2john and
+# rar2john (the jumbo build only; docker/toolkit builds it).
 COPY --from=uv /uv /usr/local/bin/uv
 COPY requirements.txt requirements.lock.txt maint/overrides.txt /tmp/pack/
 # A few pins have no Linux wheel for every CPU and build from source with Rust (base2048 on arm64):
