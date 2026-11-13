@@ -462,6 +462,7 @@ class Run:
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
             config_path=str(self.config.source) if self.config.source is not None else "",
             adder=self.add_challenge if self.watches_folder else None,
+            paster=self.paste_image if self.watches_folder else None,
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -665,11 +666,36 @@ class Run:
 
     def add_challenge(self, new) -> tuple[bool, str]:
         """The console's /new: write the challenge's folder on the board (addchallenge.create)
-        and release it now. (whether it was added, what to tell the player)."""
-        from .addchallenge import AddError, create
+        and release it now. (whether it was taken, what to tell the player). A challenge with
+        images is added once the lanes' model has read them (imageread.read): their text goes
+        into its description, and the answer here says it is on its way."""
+        from .addchallenge import AddError, slug
+        from .imageread import MAX_IMAGES, is_image
 
         if not self.watches_folder:
             return False, "this board comes from the platform: challenges are added there, not here"
+        try:
+            slug(new.name)
+        except AddError as exc:
+            return False, str(exc)
+        images = [file for file in new.files if is_image(file)][:MAX_IMAGES]
+        if images and self.client is not None and not self.deck.closing:
+            task = asyncio.create_task(self._add_read(new, images), name="flightdeck screenshot reader")
+            self._tasks.append(task)
+            return True, (f"reading {len(images)} image{'' if len(images) == 1 else 's'} with {self.model} for "
+                          f"{new.name!r}, then a lane starts on it (a few seconds)")
+        return self._add_now(new)
+
+    def paste_image(self) -> Path:
+        """ctrl+v in the /new form: the clipboard's image as a file in the run folder
+        (imageread.clipboard_image; ImageError when there is none)."""
+        from .imageread import clipboard_image
+
+        return clipboard_image(self.dir / "pasted")
+
+    def _add_now(self, new) -> tuple[bool, str]:
+        from .addchallenge import AddError, create
+
         try:
             folder = create(self.options.board, new)
         except AddError as exc:
@@ -680,6 +706,28 @@ class Run:
         return True, (f"added {folder.name}: {files} file{'' if files == 1 else 's'}"
                       + (f", {len(new.urls)} address{'' if len(new.urls) == 1 else 'es'}" if new.urls else "")
                       + "; a lane starts on it when one is free")
+
+    async def _add_read(self, new, images: Sequence[Path]) -> None:
+        """Read each image's text with the lanes' model, then add the challenge with that text
+        after its description. An image that cannot be read is a warning; the challenge is
+        added all the same, the image in its handout."""
+        from .imageread import ImageError, read
+
+        description = new.description
+        for image in images:
+            try:
+                text = await read(self.client, self.model, image)
+            except ImageError as exc:
+                self.deck.warn(f"/new: {exc}; the challenge is added without that image's text (paste the text if you can)",
+                               data={"source": "board"})
+                continue
+            except Exception as exc:  # a bug: the challenge must still be added
+                self.deck.warn(f"/new: could not read {_show(image.name)}: {type(exc).__name__}: {exc}", data={"source": "board"})
+                continue
+            description = (description + "\n\n" if description else "") + f"[Text read from the image {image.name} by {self.model}:]\n{text}"
+        ok, said = self._add_now(replace(new, description=description))
+        if not ok:
+            self.deck.warn(f"/new: {said}", data={"source": "board"})
 
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""

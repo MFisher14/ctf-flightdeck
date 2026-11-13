@@ -234,3 +234,136 @@ def test_new_is_refused_on_the_mocks_board(tmp_path):
             assert "scripted" in app._status[0] and app._status[1] == "warning"
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------- screenshots
+
+
+PNG = bytes.fromhex("89504e470d0a1a0a") + b"synthetic image bytes"
+
+
+def test_the_anthropic_client_sends_a_pasted_image_as_an_image_block():
+    from ctf_flightdeck import imageread
+    from ctf_flightdeck.agent.anthropic_client import to_anthropic
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "shot.png"
+        path.write_bytes(PNG)
+        turns = to_anthropic(imageread.message(path)[1:])
+    (turn,) = turns
+    kinds = [block["type"] for block in turn["content"]]
+    assert kinds == ["text", "image"]
+    source = turn["content"][1]["source"]
+    import base64
+
+    assert (source["type"], source["media_type"]) == ("base64", "image/png") and base64.b64decode(source["data"]) == PNG
+
+
+def test_an_image_that_is_no_image_or_too_big_is_refused_before_any_model_is_asked(tmp_path):
+    from ctf_flightdeck import imageread
+
+    (tmp_path / "notes.txt").write_text("x")
+    big = tmp_path / "big.png"
+    big.write_bytes(b"0" * (imageread.MAX_BYTES + 1))
+    for path, why in [(tmp_path / "notes.txt", "not a PNG"), (big, "at most 4 MB")]:
+        with pytest.raises(imageread.ImageError, match=why):
+            imageread.message(path)
+
+
+@pytest.mark.parametrize(("platform", "tools", "code", "out", "error"), [
+    ("linux", {"xclip"}, 0, PNG, None),
+    ("linux", {"wl-paste", "xclip"}, 1, b"", "no image on the clipboard"),
+    ("linux", set(), 0, PNG, "needs wl-paste"),
+    ("darwin", set(), 0, b"", "needs osascript"),
+])
+def test_the_clipboards_image_is_saved_as_a_file_or_the_reason_is_said(tmp_path, platform, tools, code, out, error):
+    from types import SimpleNamespace
+
+    from ctf_flightdeck import imageread
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv[0])
+        return SimpleNamespace(returncode=code, stdout=out)
+
+    which = lambda tool: f"/usr/bin/{tool}" if tool in tools else None  # noqa: E731
+    if error:
+        with pytest.raises(imageread.ImageError, match=error):
+            imageread.clipboard_image(tmp_path / "pasted", platform=platform, which=which, run=run)
+        assert not list((tmp_path / "pasted").glob("*.png"))  # nothing half-written is left
+    else:
+        saved = imageread.clipboard_image(tmp_path / "pasted", platform=platform, which=which, run=run)
+        assert saved.read_bytes() == PNG and saved.name == "screenshot-1.png" and calls == ["xclip"]
+        assert imageread.clipboard_image(tmp_path / "pasted", platform=platform, which=which, run=run).name == "screenshot-2.png"
+
+
+def test_a_screenshot_pasted_into_new_is_read_by_the_model_and_its_text_reaches_the_lane(tmp_path):
+    from fake_model import text_reply
+
+    shot = tmp_path / "clip.png"
+    shot.write_bytes(PNG)
+    server = FakeModelServer([text_reply("Unholy Trinity\ncrypto 200\nRecover the key.\nPicture: a dark page."),
+                              tool_call_reply("submit_flag", {"flag": FLAG})])
+
+    async def main():
+        with server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            app.paster = lambda: shot  # the clipboard, as the run would save it
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                await pilot.press(*"/new Trinity", "enter")
+                await pilot.pause()
+                await pilot.press("ctrl+v")
+                await pilot.pause()
+                assert str(shot) in app.screen.query_one("#new-text").text
+                await pilot.press("ctrl+s")
+                for _ in range(500):
+                    if run.deck.lanes:
+                        break
+                    await pilot.pause(0.01)
+                (lane,) = run.deck.lanes.values()
+                for _ in range(500):
+                    if len(server.chats()) >= 2:
+                        break
+                    await pilot.pause(0.01)
+            await run.shutdown()
+            run.close()
+            asked, brief = server.chats()[0]["json"]["messages"], server.chats()[1]["json"]["messages"][1]["content"]
+            assert asked[1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")  # the image went to the model once
+            assert "Recover the key." in brief and "clip.png" in brief  # and its text, and the file, to the lane
+            spec = json.loads((run.options.board / "trinity" / "challenge.json").read_text())
+            assert "[Text read from the image clip.png by fake/small:]" in spec["description"]
+            assert (run.options.board / "trinity" / "clip.png").read_bytes() == PNG
+
+    asyncio.run(main())
+
+
+def test_an_image_the_model_cannot_read_is_a_warning_and_the_challenge_is_added_with_the_file(tmp_path):
+    from fake_model import FakeReply
+
+    shot = tmp_path / "clip.png"
+    shot.write_bytes(PNG)
+    server = FakeModelServer([FakeReply(status=400, body={"error": {"message": "this model takes no images"}})])
+
+    async def main():
+        with server:
+            run = prepare_run(options(tmp_path, server))
+            warnings = []
+            run.deck.subscribe(lambda e: warnings.append(e.text) if e.kind.value == "warning" else None)
+            run.release()
+            ok, said = run.add_challenge(NewChallenge(name="Blind", description="typed text", files=(shot,)))
+            assert ok and "reading 1 image" in said
+            for _ in range(500):
+                if "blind" in run.deck.challenges:
+                    break
+                await asyncio.sleep(0.01)
+            assert run.deck.challenges["blind"].description == "typed text"
+            assert any("could not read clip.png" in w and "without that image's text" in w for w in warnings)
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())

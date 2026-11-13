@@ -3943,9 +3943,25 @@ def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_
 
     async def script(pilot):
         await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/config")  # alone: the settings dialog, with what the run has now
+        assert type(app.screen).__name__ == "ConfigPrompt"
+        assert app.screen.query_one("#config-lanes").value == "1" and app.screen.query_one("#config-submit").value == "confirm"
+        assert "/home/player/.config/ctf-flightdeck/config.toml" in prompt_text(app)
+        await press(pilot, "escape")
+        assert deck.config.max_lanes == 1 and len(deck.active_lanes()) == 1  # esc changes nothing
         await send(pilot, app, "/config")
-        shown = status_line(app)
-        assert "lanes 1 · submit confirm (flags wait for you)" in shown and "/config lanes N|unlimited, /config submit auto|confirm" in shown
+        app.screen.query_one("#config-lanes").value = "2"
+        app.screen.query_one("#config-submit").value = "auto"
+        await press(pilot, "enter")
+        assert len(deck.active_lanes()) == 2 and deck.config.submit == "auto"
+        assert "Lanes at once: 2" in status_line(app) and "Auto approve is on" in status_line(app)
+        await send(pilot, app, "/config")
+        app.screen.query_one("#config-lanes").value = "lots"
+        await press(pilot, "enter")
+        assert_warning(app, "Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+        assert deck.config.max_lanes == 2
+        await send(pilot, app, "/config submit confirm")
+        await send(pilot, app, "/config lanes 1")
         await send(pilot, app, "/config file")
         assert "your config file: /home/player/.config/ctf-flightdeck/config.toml" in status_line(app)
         await send(pilot, app, "/config lanes 2")

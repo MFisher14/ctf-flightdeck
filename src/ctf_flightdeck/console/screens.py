@@ -98,11 +98,31 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
     NewChallengePrompt .short { width: 40; }
     NewChallengePrompt #new-problem { color: $warning; }
     """
-    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True)]
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True),
+                Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True)]
 
-    def __init__(self, name: str = "") -> None:
+    def __init__(self, name: str = "", *, paster=None) -> None:
         super().__init__()
         self.given_name = name
+        self.paster = paster  # saves the clipboard's image as a file and returns its path; raises with the reason
+
+    def action_paste_image(self) -> None:
+        """ctrl+v: the image on the clipboard becomes a file, and its path a line of the box.
+        (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)"""
+        note = self.query_one("#new-problem", Static)
+        if self.paster is None:
+            note.update(Text("pasting an image is not available here; drag the file in"))
+            return
+        try:
+            path = self.paster()
+        except Exception as exc:  # ImageError: no image on the clipboard, or no tool to read it
+            note.update(Text(str(exc)))
+            return
+        box = self.query_one("#new-text", TextArea)
+        box.text = box.text + ("" if not box.text or box.text.endswith("\n") else "\n") + f"{path}\n"
+        box.move_cursor(box.document.end)
+        note.update(Text(f"pasted the clipboard's image as {path.name}; the model reads its text when you add the challenge",
+                         style="green"))
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -117,7 +137,8 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
                 yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
                 yield Input(placeholder="points (optional)", id="new-points", classes="short")
             yield Static(Text(""), id="new-problem")
-            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
+            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+v", "paste a screenshot from the clipboard"),
+                               ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
     def on_mount(self) -> None:
         field = self.query_one("#new-name", Input)
@@ -143,6 +164,49 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
         description, files, urls = parse(self.query_one("#new-text", TextArea).text)
         self.dismiss(NewChallenge(name=name, category=self.query_one("#new-category", Input).value.strip(),
                                   points=int(points_text or 0), description=description, files=files, urls=urls))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
+    """/config: this run's settings in one place. Lanes at once and what happens to a flag a
+    lane finds; Enter applies both. The answer is (lanes as typed, submit), or None."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="ConfigPrompt") + "ConfigPrompt > Vertical { width: 110; }"
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "apply", "apply", priority=True)]
+
+    def __init__(self, lanes: str, submit: str, *, lanes_note: str = "", submit_note: str = "", config_path: str = "") -> None:
+        super().__init__()
+        self.lanes, self.submit = lanes, submit
+        self.lanes_note, self.submit_note, self.config_path = lanes_note, submit_note, config_path
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("Settings for this run", style="bold"))
+            yield Static(Text("Lanes at once: a number, or unlimited" + (f" ({self.lanes_note})" if self.lanes_note else "") + ":"),
+                         classes="muted")
+            yield Input(value=self.lanes, id="config-lanes")
+            yield Static(Text("When a lane finds a flag" + (f" ({self.submit_note})" if self.submit_note else "") + ":"), classes="muted")
+            yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
+                          (Text("auto: it is sent at once (auto approve)"), "auto")],
+                         value=self.submit, allow_blank=False, id="config-submit")
+            where = f"These last for this run. Your config file keeps the defaults: {self.config_path}" if self.config_path \
+                else "These last for this run."
+            yield Static(Text(where), classes="muted")
+            yield Static(_keys(("enter", "apply"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
+
+    def on_mount(self) -> None:
+        field = self.query_one(Input)
+        field.cursor_blink = False
+        field.focus()
+
+    @on(Input.Submitted)
+    def _submitted(self) -> None:
+        self.action_apply()
+
+    def action_apply(self) -> None:
+        self.dismiss((self.query_one(Input).value.strip(), str(self.query_one(Select).value)))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

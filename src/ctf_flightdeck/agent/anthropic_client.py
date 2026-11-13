@@ -482,9 +482,9 @@ def to_anthropic(messages: Sequence[dict]) -> list[dict]:
             result = {"type": "tool_result", "tool_use_id": call_id, "content": _text_of(message.get("content"), where)}
             _add(turns, "user", [result])
         elif role == "user":
-            text = _text_of(message.get("content"), where)
-            if text:
-                _add(turns, "user", [{"type": "text", "text": text}])
+            blocks = _user_blocks(message.get("content"), where)
+            if blocks:
+                _add(turns, "user", blocks)
         elif role == "assistant":
             raw = message.get(CONTENT_KEY)
             if raw is not None:
@@ -528,6 +528,27 @@ def _from_openai(message: dict, where: str) -> list[dict]:
             arguments = {}  # the call ran with arguments that were not JSON, and its result said so
         blocks.append({"type": "tool_use", "id": call_id, "name": name,
                        "input": arguments if isinstance(arguments, dict) else {}})
+    return blocks
+
+
+def _user_blocks(content: object, where: str) -> list[dict]:
+    """A user message's content as Messages API blocks: its text, and each image given as an
+    OpenAI image_url part with a base64 data URL (imageread.message) as an image block."""
+    if not isinstance(content, list) or not any(isinstance(part, dict) and part.get("type") == "image_url" for part in content):
+        text = _text_of(content, where)
+        return [{"type": "text", "text": text}] if text else []
+    blocks: list[dict] = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            url = part.get("image_url", {}).get("url") if isinstance(part.get("image_url"), dict) else None
+            head, sep, data = url.partition(";base64,") if isinstance(url, str) else ("", "", "")
+            if not sep or not head.startswith("data:image/") or not data:
+                raise ValueError(f"{where}: an image that is not a base64 data URL cannot go to the Anthropic API")
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": head[len("data:"):], "data": data}})
+        else:
+            text = _text_of([part], where)
+            if text:
+                blocks.append({"type": "text", "text": text})
     return blocks
 
 

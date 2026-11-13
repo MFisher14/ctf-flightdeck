@@ -71,6 +71,7 @@ class FlightdeckApp(App[None]):
         run_dir: str = "",
         config_path: str = "",
         adder: Callable[[object], tuple[bool, str]] | None = None,
+        paster: Callable[[], object] | None = None,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -82,6 +83,7 @@ class FlightdeckApp(App[None]):
         self._on_start = on_start
         self._on_exit = on_exit
         self._run_dir = run_dir
+        self.paster = paster  # ctrl+v in the /new form: saves the clipboard's image and returns its path (None: no pasting)
         self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
@@ -239,7 +241,7 @@ class FlightdeckApp(App[None]):
             self.say(message, "information" if ok else "warning")
             self.refresh_view()
 
-        self.push_screen(NewChallengePrompt(name), done)
+        self.push_screen(NewChallengePrompt(name, paster=self.paster), done)
 
     def inform(self, text: str) -> None:
         self.say(text)
@@ -575,17 +577,14 @@ class FlightdeckApp(App[None]):
         self.refresh_view()
 
     def configure(self, arg: str) -> None:
-        """/config: say this run's settings and how to change them; /config file: where the
+        """/config: open the settings dialog (config_dialog); /config file: where the
         config file is. /config lanes N (or
         unlimited): how many lanes run at once. /config submit auto|confirm: auto approve on
         or off. Each change is for the rest of this run; the config file keeps its own."""
         words = arg.split()
         deck = self.deck
         if not words:
-            cfg = deck.config
-            auto = "auto (flags go at once)" if cfg.submit == "auto" else "confirm (flags wait for you)"
-            self.say(f"lanes {lanes_text(cfg.max_lanes)} · submit {auto} · change: /config lanes N|unlimited, /config submit auto|confirm",
-                     "information")
+            self.config_dialog()
             return
         if words == ["file"]:
             self.say(f"your config file: {self.config_path}" if self.config_path else "this console has no config file (the mock)",
@@ -607,6 +606,41 @@ class FlightdeckApp(App[None]):
             outcome = deck.set_submit({"on": "auto", "off": "confirm"}.get(value, value))
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
+
+    def config_dialog(self) -> None:
+        """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the
+        same deck calls as /config lanes and /config submit, so the event's rules hold."""
+        from .screens import ConfigPrompt
+
+        deck, cfg = self.deck, self.deck.config
+        before = ("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit)
+
+        def done(answer: tuple[str, str] | None) -> None:
+            if answer is None or answer == before:
+                return
+            lanes, submit = answer
+            said, ok = [], True
+            if lanes.lower() != before[0]:
+                value = lanes.lower()
+                if value in ("unlimited", "max", "∞"):
+                    outcome = deck.set_max_lanes(UNLIMITED_LANES)
+                elif value.isascii() and value.isdigit():
+                    outcome = deck.set_max_lanes(int(value))
+                else:
+                    self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+                    return
+                said.append(outcome.message)
+                ok = ok and outcome.ok
+            if submit != before[1]:
+                outcome = deck.set_submit(submit)
+                said.append(outcome.message)
+                ok = ok and outcome.ok
+            self.say(" ".join(said), "information" if ok else "warning")
+            self.refresh_view()
+
+        lanes_note = f"the event's rules allow {cfg.lanes_ceiling} at most" if cfg.lanes_ceiling is not None else ""
+        submit_note = "the event's rules do not let flightdeck submit, so auto is refused" if cfg.submit_ceiling != "auto" else ""
+        self.push_screen(ConfigPrompt(*before, lanes_note=lanes_note, submit_note=submit_note, config_path=self.config_path), done)
 
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""
