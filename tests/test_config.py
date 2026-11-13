@@ -779,3 +779,54 @@ def test_the_example_shows_the_autopilot_table():
     said = " ".join(line.lstrip("# ") for line in text.splitlines())
     assert "never spends a challenge's last try, and reroutes no request a model declined" in said
     assert "It needs the Docker runtime and a run budget" in said
+
+
+# ---------------------------------------------------------------------- [governor]
+
+
+def test_the_governor_table_is_read_and_is_on_with_its_defaults_when_there_is_none(tmp_path):
+    from ctf_flightdeck.config import GovernorConfig
+
+    plain = load_config(write(tmp_path, filled(example_config())))  # the example's table is all comments
+    assert plain.governor == GovernorConfig(enabled=True, max_load_per_cpu=3.0, min_free_ram_mb=2048, min_free_disk_mb=10240)
+    assert load_config(write(tmp_path, LADDER)).governor == GovernorConfig()  # no table at all
+    body = "enabled = false\nmax_load_per_cpu = 2\nmin_free_ram_mb = 4096\nmin_free_disk_mb = 0\n"
+    text = filled(example_config()).replace("\n[governor]\n#", "\n#", 1) + f"\n[governor]\n{body}"
+    assert load_config(write(tmp_path, text)).governor == GovernorConfig(
+        enabled=False, max_load_per_cpu=2.0, min_free_ram_mb=4096, min_free_disk_mb=0)
+    one = load_config(write(tmp_path, LADDER + "[governor]\nmax_load_per_cpu = 1.5\n")).governor  # the rest keep their defaults
+    assert one == GovernorConfig(max_load_per_cpu=1.5)
+
+
+@pytest.mark.parametrize(("body", "problem"), [
+    ('enabled = "no"', "governor.enabled must be true or false (got a string)"),
+    ("enabled = 0", "governor.enabled must be true or false (got 0)"),
+    ("max_load_per_cpu = -1", "governor.max_load_per_cpu must be a number from 0 to 1000: the load average per CPU above which no "
+                              "new lane starts (0: no limit) (got -1)"),
+    ("max_load_per_cpu = nan", "governor.max_load_per_cpu must be a number from 0 to 1000"),
+    ("max_load_per_cpu = inf", "governor.max_load_per_cpu must be a number from 0 to 1000"),
+    ("max_load_per_cpu = true", "governor.max_load_per_cpu must be a number from 0 to 1000"),
+    ("min_free_ram_mb = 1.5", "governor.min_free_ram_mb must be a whole number of MiB from 0 to 1073741824: the RAM available below "
+                              "which no new lane starts (0: no limit) (got 1.5)"),
+    ("min_free_ram_mb = -1", "governor.min_free_ram_mb must be a whole number of MiB"),
+    ('min_free_disk_mb = "10 GB"', "governor.min_free_disk_mb must be a whole number of MiB from 0 to 1073741824: the free disk at "
+                                   "the run folder below which no new lane starts (0: no limit) (got a string)"),
+    ("min_free_disk_mb = 9999999999999", "governor.min_free_disk_mb must be a whole number of MiB"),
+    ("max_load = 3", "governor.max_load"),
+])
+def test_a_bad_governor_table_is_refused_naming_the_key(tmp_path, body, problem):
+    assert problem in error(write(tmp_path, LADDER + f"[governor]\n{body}\n"))
+
+
+def test_the_example_shows_the_governor_table_with_the_defaults_it_has():
+    from ctf_flightdeck.config import GovernorConfig
+
+    text = example_config()
+    assert "\n[governor]\n" in text
+    defaults = GovernorConfig()
+    for key in ("enabled", "max_load_per_cpu", "min_free_ram_mb", "min_free_disk_mb"):
+        shown = re.search(rf"^# {key} = (\S+) ", text, flags=re.M)
+        assert shown, key
+        assert tomllib.loads(f"value = {shown.group(1)}")["value"] == getattr(defaults, key), key  # the example shows the default
+    said = " ".join(line.lstrip("# ") for line in text.splitlines())
+    assert "no NEW lane starts" in said and "it never stops or pauses one" in said and "one lane always starts" in said

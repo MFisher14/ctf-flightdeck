@@ -72,7 +72,7 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot", "governor")
 NOTIFY_KINDS = ("flag", "needs-you", "disengaged")  # what [notify] on may list, and its default: all three
 _API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
@@ -212,6 +212,22 @@ class AutopilotConfig:
     budget_tokens: int | None = None  # and in tokens; engaging needs at least one of the two
 
 
+MAX_GOVERNOR_LOAD = 1000.0  # the largest [governor] max_load_per_cpu accepted
+MAX_GOVERNOR_MB = 1024 * 1024 * 1024  # the largest [governor] min_free_ram_mb or min_free_disk_mb accepted (1 PiB)
+
+
+@dataclass(frozen=True)
+class GovernorConfig:
+    """[governor] (governor.py): the host limits past which no new lane starts. The defaults
+    are the solver pack's governor's (packs/solvers/ctf/governor.py): its hard load limit, the
+    RAM it wants for one more heavy agent, and its disk floor of 10 GiB."""
+
+    enabled: bool = True  # false: the machine is not read and no start is held for it
+    max_load_per_cpu: float = 3.0  # the 1-minute load average per CPU above which no new lane starts; 0: no limit
+    min_free_ram_mb: int = 2048  # the RAM available, in MiB, below which no new lane starts; 0: no limit
+    min_free_disk_mb: int = 10240  # the free disk at the run folder, in MiB, below which no new lane starts; 0: no limit
+
+
 @dataclass(frozen=True)
 class Config:
     api: ApiConfig
@@ -228,6 +244,7 @@ class Config:
     light_tables: dict[str, LightConfig] = field(default_factory=dict)  # [light.<job>]: a job's own engine
     notify: NotifyConfig = NotifyConfig()  # [notify]; no webhook when the config has none
     autopilot: AutopilotConfig = AutopilotConfig()  # [autopilot]; off, with no budget, when the config has none
+    governor: GovernorConfig = GovernorConfig()  # [governor]; on, with its defaults, when the config has none
 
 
 @dataclass(frozen=True)
@@ -286,6 +303,7 @@ def _config(path: Path, doc: dict) -> Config:
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
         autopilot=_autopilot(path, _table(path, doc, "autopilot")),
+        governor=_governor(path, _table(path, doc, "governor")),
         agents=agents,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
         light=light,
@@ -630,6 +648,17 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # engage = false                # true: every play engages it
 # budget_dollars = 20.0         # the whole run's budget in dollars
 # budget_tokens = 20000000      # and, or instead, in tokens (needed when a model has no price)
+
+[governor]
+# The host governor: while this machine is past one of these limits no NEW lane starts. The lanes
+# at work carry on (it never stops or pauses one), the queue keeps its order, and starts resume by
+# themselves when the reading recovers; with no lane at work one lane always starts. A warning
+# says when it begins to hold starts, and which limit, and another when it stops. A reading
+# flightdeck cannot take holds nothing. `flightdeck doctor` shows the readings.
+# enabled = true                # false: the machine is not read
+# max_load_per_cpu = 3.0        # the 1-minute load average divided by the CPUs; 0: no limit
+# min_free_ram_mb = 2048        # the RAM available without swapping, in MiB; 0: no limit
+# min_free_disk_mb = 10240      # the free disk where the run folder is, in MiB; 0: no limit
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -1241,6 +1270,28 @@ def _autopilot(path: Path, table: dict) -> AutopilotConfig:
         raise _error(path, ("autopilot", "engage"), "is true, and autopilot needs a run budget: set budget_dollars or "
                                                     "budget_tokens beside it")
     return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens)
+
+
+def _governor(path: Path, table: dict) -> GovernorConfig:
+    _known(path, ("governor",), table, ("enabled", "max_load_per_cpu", "min_free_ram_mb", "min_free_disk_mb"))
+    defaults = GovernorConfig()
+    enabled = table.get("enabled", defaults.enabled)
+    if not isinstance(enabled, bool):
+        raise _error(path, ("governor", "enabled"), f"must be true or false{_got(enabled)}")
+    load = table.get("max_load_per_cpu", defaults.max_load_per_cpu)
+    if not _is_number(load) or not 0 <= load <= MAX_GOVERNOR_LOAD:
+        raise _error(path, ("governor", "max_load_per_cpu"),
+                     f"must be a number from 0 to {MAX_GOVERNOR_LOAD:g}: the load average per CPU above which no new lane "
+                     f"starts (0: no limit){_got(load)}")
+    floors = {}
+    for name, what in (("min_free_ram_mb", "the RAM available"), ("min_free_disk_mb", "the free disk at the run folder")):
+        value = table.get(name, getattr(defaults, name))
+        if not _is_int(value) or not 0 <= value <= MAX_GOVERNOR_MB:
+            raise _error(path, ("governor", name),
+                         f"must be a whole number of MiB from 0 to {MAX_GOVERNOR_MB}: {what} below which no new lane "
+                         f"starts (0: no limit){_got(value)}")
+        floors[name] = value
+    return GovernorConfig(enabled=enabled, max_load_per_cpu=float(load), **floors)
 
 
 def _run_dir(path: Path, table: dict) -> Path:
