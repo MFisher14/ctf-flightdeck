@@ -66,6 +66,8 @@ from urllib.parse import SplitResult, urlsplit
 
 from .config import Config, ConfigError
 from .flagformat import problem as flag_format_problem
+from .platform.instances import InstancesConfig
+from .platform.instances import parse_config as parse_instances
 from .text import untrusted
 
 
@@ -118,7 +120,7 @@ OTHER_SERVICE_SUFFIXES = ("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN", "_ACCESS_KE
 """How other services' key variables are usually named, so OTHER_SERVICE_KEYS need not list
 them all. A name with CTFD in it is taken for a CTFd token's variable even so (CTFD_API_KEY)."""
 
-_TABLES = ("event", "rules", "policies")
+_TABLES = ("event", "rules", "policies", "instances")
 _EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team", "start", "end")
 _RULE_KEYS = ("ai_allowed", "platform_automation", "live_targets", "max_lanes")
 _PLATFORM_ONLY = {"url": "ctfd", "token_env": "ctfd", "board": "manual"}
@@ -188,6 +190,8 @@ class EventProfile:
     platform_automation: bool
     live_targets: str  # "allowed" | "confirm" | "off"
     max_lanes: int | None = None  # the rules' upper bound on lanes at once, if they set one
+    # [instances]: how a challenge's own container is started on the platform (platform/instances.py); None: no table
+    instances: InstancesConfig | None = None
     # where it came from
     explicit: frozenset[str] = frozenset()  # the stages whose policy the [policies] table sets; the rest are derived
     source: Path | None = None  # the file it was read from
@@ -320,6 +324,11 @@ def check(
         _check_ctfd(profile, requested, env, model_config, refuse, warn)
     else:
         _check_manual(profile, refuse)
+    if profile.instances is not None:
+        why = instances_off(profile, requested)
+        if why:
+            warn.append(f"the [instances] table does nothing in this run: {why}, so flightdeck starts no instance "
+                        "(start one on the site yourself; a lane then works from the files)")
     for key, platform in _PLATFORM_ONLY.items():
         if getattr(profile, key) is not None and profile.platform != platform:
             warn.append(f'event.{key} is only for platform "{platform}", so this {profile.platform} profile does not use it')
@@ -591,6 +600,21 @@ def describe(
     return lines
 
 
+def instances_off(profile: EventProfile, policies: Policies) -> str:
+    """Why flightdeck starts no instance on the platform under this profile and these policies,
+    or "" when it does: it needs the [instances] table, CTFd, the rules' leave to use the
+    platform's API, and an instance policy of auto (starting one is reaching it)."""
+    if profile.instances is None:
+        return "the profile has no [instances] table"
+    if profile.platform != "ctfd":
+        return f'the platform is "{profile.platform}", and only CTFd has a container plugin flightdeck knows'
+    if not profile.platform_automation:
+        return "the rules do not allow flightdeck to use the platform's API (rules.platform_automation is false)"
+    if policies.instance is not Policy.AUTO:
+        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto"'
+    return ""
+
+
 def example_profile() -> str:
     """A commented event profile that loads; the player edits it to the event's rules."""
     return EXAMPLE
@@ -626,6 +650,15 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 # agents = "auto"                   # start model-driven lanes
 # submit = "confirm"                # submit flags to the platform
 # instance = "confirm"              # let lanes reach challenge instances
+
+# Optional, CTFd only: challenges whose instance the platform starts when asked (a container
+# per team, a few at a time). With this table and the instance policy "auto", flightdeck starts
+# one before a lane works its challenge, keeps at most max_running going, and stops it when the
+# challenge is solved or nobody works it. See BOARDS.md for a plugin that is not listed.
+# [instances]
+# plugin = "docker_per_team"        # the site's container plugin: docker_per_team, or ctfd_docker (unconfirmed)
+# types = ["container"]             # CTFd challenge types that have such an instance (a pull records each challenge's type)
+# max_running = 3                   # the most kept running at once: the site's cap for a team, or less
 """
 
 
@@ -668,10 +701,20 @@ def load_profile(path: Path) -> tuple[EventProfile, Policies]:
             required='"allowed", "confirm" or "off": may lanes touch challenge instances, only after you say yes, or never',
         ),
         max_lanes=_max_lanes(path, rules),
+        instances=_instances(path, doc),
         explicit=frozenset(stages),
         source=path,
     )
     return profile, replace(defaults(profile), **stages)
+
+
+def _instances(path: Path, doc: dict) -> InstancesConfig | None:
+    if "instances" not in doc:
+        return None
+    try:
+        return parse_instances(doc["instances"])
+    except ValueError as exc:
+        raise ProfileError(f"{_show(path)}: {exc}") from None
 
 
 def _parse(path: Path) -> dict:

@@ -174,3 +174,54 @@ def test_the_plugins_own_scheme_wins_over_the_category():
         fake.script("POST", REQUEST, Reply(200, {"url": "https://box.example.test:8443/app", "remaining": 600}))
         got = client(fake).start("second")
     assert isinstance(got, Instance) and got.url(web=False) == "https://box.example.test:8443"
+
+
+# ---------------------------------------------------------------- the event profile
+
+
+PROFILE = """
+[event]
+name = "Ev"
+platform = "ctfd"
+url = "https://ctf.example.test"
+token_env = "CTFD_TOKEN"
+
+[rules]
+ai_allowed = true
+platform_automation = true
+live_targets = "allowed"
+"""
+
+
+def test_an_event_profile_reads_its_instances_table_and_says_when_it_does_nothing(tmp_path):
+    from ctf_flightdeck import preflight
+
+    path = tmp_path / "event.toml"
+    path.write_text(PROFILE + '\n[instances]\nplugin = "docker_per_team"\ntypes = ["container"]\nmax_running = 2\n')
+    profile, policies = preflight.load_profile(path)
+    assert profile.instances is not None and profile.instances.max_running == 2 and profile.instances.types == ("container",)
+    assert preflight.instances_off(profile, policies) == ""  # live_targets allowed: the instance policy is auto
+    path.write_text(PROFILE.replace('"allowed"', '"confirm"') + '\n[instances]\nplugin = "docker_per_team"\n')
+    profile, policies = preflight.load_profile(path)
+    assert 'the instance policy is "confirm"' in preflight.instances_off(profile, policies)
+    problems = preflight.check(profile, policies, max_lanes=None, environ={"CTFD_TOKEN": "x"})
+    assert any("the [instances] table does nothing in this run" in p.message and not p.refuse for p in problems)
+    path.write_text(PROFILE)
+    assert preflight.load_profile(path)[0].instances is None
+
+
+def test_a_bad_instances_table_in_a_profile_names_the_file_and_the_key(tmp_path):
+    from ctf_flightdeck import preflight
+
+    path = tmp_path / "event.toml"
+    path.write_text(PROFILE + '\n[instances]\nplugin = "whale"\n')
+    with pytest.raises(preflight.ProfileError, match="event.toml: instances.plugin whale is not a plugin flightdeck knows"):
+        preflight.load_profile(path)
+
+
+def test_the_example_profile_still_loads_and_shows_the_table_commented(tmp_path):
+    from ctf_flightdeck import preflight
+
+    path = tmp_path / "event.toml"
+    path.write_text(preflight.example_profile())
+    assert preflight.load_profile(path)[0].instances is None and "# [instances]" in preflight.example_profile()

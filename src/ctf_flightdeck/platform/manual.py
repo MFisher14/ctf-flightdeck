@@ -47,7 +47,9 @@ ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 ID_RULE = "lower-case letters, digits and _ . - (not first), at most 64 characters"
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
-CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts")
+CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts", "instance", "type")
+ON_DEMAND = "on-demand"  # "instance": the platform starts the challenge's instance when asked (platform/instances.py)
+TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")  # "type": the platform's own name for the challenge's kind
 BOARD_KEYS = ("event", "flag_format")
 
 CATEGORY_CODES = {
@@ -262,6 +264,10 @@ def _challenge(directory: Path) -> BoardChallenge:
             )
     files = _files(directory, path, data.get("files", _MISSING))
     urls = _urls(path, data.get("urls", _MISSING))
+    instance = _field(path, data, "instance", lambda v: v == ON_DEMAND, f'"{ON_DEMAND}" (the platform starts its instance when asked), or left out',
+                      default="")
+    kind = _field(path, data, "type", lambda v: isinstance(v, str) and TYPE.fullmatch(v) is not None,
+                  "the platform's name for the challenge's type: letters, digits, _ . and -, at most 64", default="")
     challenge = Challenge(
         id=cid,
         name=name,
@@ -272,6 +278,8 @@ def _challenge(directory: Path) -> BoardChallenge:
         files=files,
         live=bool(urls),
         max_attempts=max_attempts,
+        on_demand=instance == ON_DEMAND,
+        platform_type=kind,
     )
     return BoardChallenge(challenge=challenge, handout=directory, urls=urls)
 
