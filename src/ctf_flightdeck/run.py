@@ -733,6 +733,7 @@ def prepare_run(options: RunOptions) -> Run:
         submit=options.submit,
         submit_limited=config.lanes.submit_limited,
         wrong_stop=config.lanes.wrong_stop,
+        variant_tries=config.lanes.variant_tries,
         models=ladder,
         **({"flag_format": flag_format} if flag_format else {}),
     )
@@ -741,6 +742,8 @@ def prepare_run(options: RunOptions) -> Run:
         plan.notes.append(SPENDS_TRIES)
     elif config.lanes.submit_limited == "auto":
         plan.notes.append(f'submit_limited = "auto" in your config does nothing in this run: submit is "{deck_config.submit}", so every flag waits for you')
+    if deck_config.variant_tries:
+        plan.notes.append(variant_tries_note(deck_config))
     handouts = {b.challenge.id: b.handout for b in board.challenges}
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
@@ -1175,6 +1178,16 @@ SPENDS_TRIES = (
     'submit_limited = "auto" in your config: a flag for a challenge whose tries the platform counts goes out without you, '
     "the last try included; a wrong flag can use up the tries"
 )
+
+
+def variant_tries_note(config: DeckConfig) -> str:
+    """What the start of a run says when flag variants are on ([lanes] variant_tries)."""
+    most = config.variant_tries
+    text = (f"variant_tries = {most} in your config: when the platform calls a flag wrong, flightdeck proposes up to {most} "
+            f"other spelling{'s' if most != 1 else ''} of it per challenge, one at a time")
+    if config.submit == "auto":
+        return text + "; under submit auto each goes out as a lane's own flag would, and a wrong one is a wrong try"
+    return text + "; each waits for you, as every flag does"
 
 
 def _event_submit(options: RunOptions, policies: Policies):

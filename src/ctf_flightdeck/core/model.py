@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ..flagformat import check as check_flag_format
+from ..flagvariants import MAX_VARIANTS
 
 ME = "me"
 """Owner name for the player themself (claims, manual solves)."""
@@ -382,6 +383,7 @@ class DeckConfig:
     submit: str = "confirm"  # stage policy for submitting flags
     submit_limited: str = "confirm"  # "auto": under submit auto, a challenge's counted tries are spent without the player
     wrong_stop: int = 3  # under submit auto: once this many flags were wrong at a challenge, its next ones wait for the player; 0: never
+    variant_tries: int = 0  # variants of a flag the platform rejected that the deck proposes per challenge in a run (flagvariants); 0: none
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
 
     def __post_init__(self) -> None:
@@ -395,6 +397,8 @@ class DeckConfig:
             raise ValueError(f"submit_limited {self.submit_limited!r} is not known; known: {', '.join(SUBMIT_POLICIES)}")
         if not isinstance(self.wrong_stop, int) or isinstance(self.wrong_stop, bool) or self.wrong_stop < 0:
             raise ValueError(f"wrong_stop must be a whole number, 0 or more, got {self.wrong_stop!r}")
+        if not isinstance(self.variant_tries, int) or isinstance(self.variant_tries, bool) or not 0 <= self.variant_tries <= MAX_VARIANTS:
+            raise ValueError(f"variant_tries must be a whole number from 0 to {MAX_VARIANTS}, got {self.variant_tries!r}")
         check_flag_format(self.flag_format, "the deck's flag_format")  # the backstop: every loader checks it first
 
     @property
