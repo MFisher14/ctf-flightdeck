@@ -184,13 +184,14 @@ def test_start_with_no_token_says_where_it_goes_and_does_not_launch(tmp_path, mo
     assert f"play: flightdeck play {folder}" in result.output and setup == []
 
 
-def test_a_by_hand_event_says_how_to_add_a_challenge(tmp_path, monkeypatch, setup):
+def test_a_by_hand_event_starts_empty_says_how_to_add_a_challenge_and_launches(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n2\n\nn\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n2\n\nn\ny\n")
     assert result.exit_code == 0, result.output
-    assert "challenge.json" in result.output and f"then: flightdeck play {folder}" in result.output
-    assert load_profile(folder / "event.toml")[0].platform == "manual" and setup == []
+    assert "type /new" in result.output and "flightdeck add" in result.output
+    assert load_profile(folder / "event.toml")[0].platform == "manual"
+    assert [call["board"] for call in setup] == [folder]  # an empty board plays: challenges are added in the console
 
 
 def test_start_offers_the_solver_pack_and_a_failed_install_does_not_undo_the_event(tmp_path, monkeypatch, setup):
@@ -207,7 +208,7 @@ def test_start_offers_the_solver_pack_and_a_failed_install_does_not_undo_the_eve
 
     monkeypatch.setattr(pack_cli, "install", install)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n2\n\ny\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n2\n\ny\nn\n")
     assert result.exit_code == 0, result.output
     assert len(asked) == 1 and asked[0]["source"] is None and asked[0]["yes"] is False  # the pack's own questions still asked
     assert "solvers (L1): not installed (the reason is above)" in result.output

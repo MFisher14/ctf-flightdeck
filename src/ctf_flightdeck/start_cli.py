@@ -184,13 +184,8 @@ def start(
         typer.echo(token_note)
     _status(folder, config_path, offer_pack=interactive, config=config)
     if platform != "ctfd":
-        typer.echo(
-            "next: add the challenges. For each one, make a folder in the board folder, put its handout files there, and a\n"
-            "challenge.json beside them, like:\n"
-            '  {"name": "Crab Walk", "category": "crypto", "points": 50, "description": "the text from the site", "files": ["postcard.txt"]}\n'
-            f"then: flightdeck play {folder}"
-        )
-        return
+        typer.echo("The board starts empty. In the console, type /new to hand over a challenge: its name, then its text, files and\n"
+                   "screenshots (drag them in). A lane starts on it at once. From another terminal: flightdeck add --help")
     _launch(folder, config, launch, interactive, ready=" not set yet" not in token_note)
 
 
@@ -266,3 +261,48 @@ def _show(value: object) -> str:
 def _fail(message: str, *, status: int = 2) -> NoReturn:
     typer.echo(f"flightdeck: {message}", err=True)
     raise typer.Exit(status)
+
+
+def add(
+    folder: Annotated[Path, typer.Argument(metavar="FOLDER", show_default=False, file_okay=False,
+                                           help="The event's folder (the one `flightdeck start` made), or a board folder.")],
+    name: Annotated[str, typer.Option("--name", "-n", help="The challenge's name, as the site shows it.")],
+    text: Annotated[str | None, typer.Option("--text", "-t", help="Its description; `-` reads it from standard input. A line that is "
+                                             "only a web address or `nc host port` is also taken as its instance.")] = None,
+    file: Annotated[list[Path] | None, typer.Option("--file", "-f", help="A file, screenshot or folder of its handout (repeat for more).")] = None,
+    url: Annotated[list[str] | None, typer.Option("--url", "-u", help="Its instance: https://host[:port], or `nc host port` (repeat for more).")] = None,
+    category: Annotated[str, typer.Option("--category", "-c", help="Its category: web, crypto, pwn...")] = "",
+    points: Annotated[int, typer.Option("--points", "-p", min=0, help="Its points.")] = 0,
+) -> None:
+    """Add a challenge to a board you fill yourself: makes its folder from a name, its text
+    and its files. A run that is playing the board starts a lane on it within seconds."""
+    import sys
+
+    from . import addchallenge
+    from . import start as events
+    from .config import ConfigError, expand
+
+    try:
+        folder = expand(folder)
+        files = tuple(expand(item) for item in file or ())
+    except ConfigError as exc:
+        _fail(str(exc))
+    board = folder / events.BOARD_DIR if events.is_event_folder(folder) else folder
+    if not board.is_dir():
+        _fail(f"{board} is not a folder: give the event's folder (`flightdeck start` makes one) or a board folder")
+    if text == "-":
+        text = sys.stdin.read()
+    description, found, addresses = addchallenge.parse(text or "")
+    for item in url or ():
+        ((_, _, more)) = addchallenge.parse(item)
+        if not more:
+            _fail(f"--url: {_show(item)} is not a web address (https://host) or `nc host port`")
+        addresses += tuple(a for a in more if a not in addresses)
+    try:
+        made = addchallenge.create(board, addchallenge.NewChallenge(
+            name=name, category=category, points=points, description=description,
+            files=tuple(dict.fromkeys(files + found)), urls=addresses))
+    except addchallenge.AddError as exc:
+        _fail(str(exc))
+    typer.echo(f"added {made}")
+    typer.echo(f"a run playing this board starts a lane on it within seconds; otherwise: flightdeck play {folder}")

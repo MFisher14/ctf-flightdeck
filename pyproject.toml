@@ -60,3 +60,8 @@ addopts = "-ra"
 dev = [
     "pytest>=9.2.0",
 ]
+
+[tool.uv]
+# An install from a clone (`uv tool install .`) is rebuilt when the source changes, not only
+# when this file does: without this, uv reuses its cached build while the version stays the same.
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

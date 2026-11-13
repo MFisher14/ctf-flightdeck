@@ -3,6 +3,8 @@ help."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
@@ -11,13 +13,16 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ..core.model import AlertKind, Challenge, ChallengeStatus
 from ..text import untrusted
 from . import theme
 from .commands import COMMANDS
 from .views import HELD, LATER, sending_chip
+
+if TYPE_CHECKING:
+    from ..addchallenge import NewChallenge
 
 MODAL_CSS = """
 {name} {{ align: center middle; background: $background 60%; }}
@@ -75,6 +80,69 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
     @on(Input.Submitted)
     def _submit(self, event: Input.Submitted) -> None:
         self.dismiss((event.value, str(self.query_one(Select).value)))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
+    """/new: a challenge the player hands over. A name, and one box for everything they
+    have: the description as the site shows it, files and screenshots dragged in (a terminal
+    pastes a dropped file as its path), and the instance's address on a line of its own.
+    addchallenge.parse sorts the box into description, files and addresses."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="NewChallengePrompt") + """
+    NewChallengePrompt > Vertical { width: 124; }
+    NewChallengePrompt TextArea { height: 12; margin-top: 1; border: round #3c4146; }
+    NewChallengePrompt TextArea:focus { border: round $accent; }
+    NewChallengePrompt .short { width: 40; }
+    NewChallengePrompt #new-problem { color: $warning; }
+    """
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True)]
+
+    def __init__(self, name: str = "") -> None:
+        super().__init__()
+        self.given_name = name
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text("New challenge", style="bold"))
+            yield Static(Text("Name, as the site shows it:"), classes="muted")
+            yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
+            yield Static(Text("Everything you have: paste the description, drag files and screenshots in (each lands as a path "
+                              "on its own line), and put the instance's address (https://... or nc host port) on a line of its own:"),
+                         classes="muted")
+            yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
+            with Horizontal():
+                yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
+                yield Input(placeholder="points (optional)", id="new-points", classes="short")
+            yield Static(Text(""), id="new-problem")
+            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
+
+    def on_mount(self) -> None:
+        field = self.query_one("#new-name", Input)
+        field.cursor_blink = False
+        (self.query_one("#new-text", TextArea) if self.given_name else field).focus()
+
+    @on(Input.Submitted, "#new-name")
+    def _named(self) -> None:
+        self.query_one("#new-text", TextArea).focus()  # Enter in the name goes on to the box
+
+    def action_add(self) -> None:
+        from ..addchallenge import AddError, NewChallenge, parse, slug
+
+        name = " ".join(self.query_one("#new-name", Input).value.split())
+        points_text = self.query_one("#new-points", Input).value.strip()
+        try:
+            slug(name)
+            if points_text and not (points_text.isdigit() and len(points_text) <= 6):
+                raise AddError("points must be a whole number, or left empty")
+        except AddError as exc:
+            self.query_one("#new-problem", Static).update(Text(str(exc)))
+            return
+        description, files, urls = parse(self.query_one("#new-text", TextArea).text)
+        self.dismiss(NewChallenge(name=name, category=self.query_one("#new-category", Input).value.strip(),
+                                  points=int(points_text or 0), description=description, files=files, urls=urls))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

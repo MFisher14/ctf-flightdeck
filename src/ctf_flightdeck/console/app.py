@@ -70,6 +70,7 @@ class FlightdeckApp(App[None]):
         on_exit: Callable[[], Awaitable[None]] | None = None,
         run_dir: str = "",
         config_path: str = "",
+        adder: Callable[[object], tuple[bool, str]] | None = None,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -81,6 +82,7 @@ class FlightdeckApp(App[None]):
         self._on_start = on_start
         self._on_exit = on_exit
         self._run_dir = run_dir
+        self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
@@ -119,6 +121,8 @@ class FlightdeckApp(App[None]):
             self._catch_signals()  # before any lane starts
         if self._on_start is not None:
             self._on_start()
+        if self.adder is not None and not self.deck.challenges:
+            self.say("The board is empty. Type /new to add a challenge: its name, then its text, files and screenshots.")
 
     async def action_quit(self) -> None:
         """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
@@ -219,6 +223,23 @@ class FlightdeckApp(App[None]):
 
     def warn(self, text: str) -> None:
         self.say(text, "warning")
+
+    def new_challenge(self, name: str = "") -> None:
+        """/new: ask for a challenge (NewChallengePrompt), put it on the board and let a lane take it."""
+        if self.adder is None:
+            self.warn("/new adds a challenge to a board you fill yourself; this board comes from the platform" if self._ticker is None
+                      else "/new adds a challenge to a real board; the mock's board is scripted")
+            return
+        from .screens import NewChallengePrompt
+
+        def done(new) -> None:
+            if new is None:
+                return
+            ok, message = self.adder(new)
+            self.say(message, "information" if ok else "warning")
+            self.refresh_view()
+
+        self.push_screen(NewChallengePrompt(name), done)
 
     def inform(self, text: str) -> None:
         self.say(text)
@@ -636,6 +657,8 @@ class FlightdeckApp(App[None]):
             self.refresh_view()
         elif name == "config":
             self.configure(arg)
+        elif name == "new":
+            self.new_challenge(arg)
         elif name == "unhold":
             self.unhold()
         elif name == "autopilot":

@@ -4,6 +4,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A board you fill yourself can start empty, and `/new` in the console hands a challenge to a
+  lane: its name, then one box for its description, its files and screenshots (dragged in) and
+  its instance's address. `flightdeck add` does the same from another terminal, and a run picks
+  up any challenge folder added to its board while it plays.
+- `flightdeck pack install` in a copy installed from a clone (`uv tool install .`) uses that
+  clone's pack, and such an install is rebuilt when the source changes.
+
 - `flightdeck start` sets up an event and plays it: it asks for the event's name, site, flag
   format and CTFd access token, makes the event's folder (`event.toml` and `board/`), keeps the
   token in your keys file, says whether the solver pack is installed (and offers it), and

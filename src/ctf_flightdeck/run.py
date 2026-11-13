@@ -123,7 +123,7 @@ from .platform.gamemaster import GameMasterClient, GameMasterError
 from .platform.gamemaster import check_site as check_gm_site
 from .platform.gamemaster import load_ids as load_gm_ids
 from .platform.gamemaster_run import GameMasterLink, listed_solved
-from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
+from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, challenge_folders, load_board, load_challenge
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
@@ -181,6 +181,7 @@ class RunOptions:
     team_dir: Path | None = None  # the team folder teammates' flightdecks share (team.py)
     handle: str | None = None  # our handle in the team folder; default: the login name
     wave_seconds: float = WAVE_SECONDS
+    folder_seconds: float = 2.0  # a folder board: how often its folder is looked at for challenges added during the run
     solves_seconds: float = SOLVES_SECONDS
     team_seconds: float = POLL_SECONDS  # how often the team folder is read
     governor_seconds: float = GOVERNOR_SECONDS  # how often the host governor reads this machine again
@@ -259,6 +260,7 @@ class Run:
     _notes: list[str] = field(default_factory=list, repr=False)
     _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
     _urls: dict[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
+    _folders: dict[str, float] = field(default_factory=dict, repr=False)  # board folders looked at: name -> its challenge.json's mtime
     _unmirror: Callable[[], None] | None = field(default=None, repr=False)
     _watcher: TeamWatcher | None = field(default=None, repr=False)
     _team_stop: asyncio.Event | None = field(default=None, repr=False)
@@ -354,6 +356,10 @@ class Run:
         if self.governor is not None:  # its first reading was taken before the deck had a lane to start
             self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        if self.watches_folder:  # a folder board takes challenges added during the run
+            for b in self.board.challenges:
+                self._folders[b.handout.name] = _mtime(b.handout)
+            self._tasks.append(asyncio.create_task(self._folder(), name="flightdeck board folder"))
         if state is not None:
             self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
         if self.ctfd is not None:
@@ -455,6 +461,7 @@ class Run:
         app = FlightdeckApp(
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
             config_path=str(self.config.source) if self.config.source is not None else "",
+            adder=self.add_challenge if self.watches_folder else None,
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -611,6 +618,69 @@ class Run:
             self._apply_solves()
         self._apply_tries(result.tries, asked=asked)
 
+    @property
+    def watches_folder(self) -> bool:
+        """Whether challenges added to the board's folder during the run are played: a folder
+        board (one flightdeck does not pull from a platform), without an answers file (a
+        practice set is whole from the start)."""
+        return self.ctfd is None and self.gm is None and self.options.board is not None and not self.board.answers \
+            and (self.profile is None or self.profile.platform == "manual")
+
+    async def _folder(self) -> None:
+        while True:
+            await asyncio.sleep(self.options.folder_seconds)
+            try:
+                self.scan_board()
+            except Exception as exc:  # a bug: say so, and keep looking
+                self.deck.warn(f"could not read the board folder for new challenges: {type(exc).__name__}: {exc}", data={"source": "board"})
+
+    def scan_board(self) -> list[str]:
+        """Release the challenges whose folders appeared on the board since the last look
+        (the console's /new, `flightdeck add`, or a folder the player made); the ids released.
+        A folder that cannot be read is a warning, once for each state of its challenge.json:
+        a corrected file is read again. One whose id the board already has is left out and said."""
+        if not self.watches_folder or self.deck.closing:
+            return []
+        new: list[BoardChallenge] = []
+        for folder in challenge_folders(self.options.board):
+            stamp = _mtime(folder)
+            if self._folders.get(folder.name) == stamp:
+                continue
+            self._folders[folder.name] = stamp
+            try:
+                item = load_challenge(folder)
+            except BoardError as exc:
+                self.deck.warn(f"board: not added: {exc}", data={"source": "board"})
+                continue
+            cid = item.challenge.id
+            if cid in self.deck.challenges or any(b.challenge.id == cid for b in new):
+                if cid != folder.name or self._handouts.get(cid) != item.handout:
+                    self.deck.warn(f"board: not added: {_show(folder)} has the id {cid}, which the board already has", data={"source": "board"})
+                continue  # the same folder, its challenge.json touched: the run keeps what it read at first
+            new.append(item)
+        if new:
+            self._add(new)
+            self.deck.release([b.challenge for b in new], self.entries(new), "Added")
+        return [b.challenge.id for b in new]
+
+    def add_challenge(self, new) -> tuple[bool, str]:
+        """The console's /new: write the challenge's folder on the board (addchallenge.create)
+        and release it now. (whether it was added, what to tell the player)."""
+        from .addchallenge import AddError, create
+
+        if not self.watches_folder:
+            return False, "this board comes from the platform: challenges are added there, not here"
+        try:
+            folder = create(self.options.board, new)
+        except AddError as exc:
+            return False, str(exc)
+        if folder.name not in self.scan_board():
+            return False, f"{_show(folder)} was written but could not be added: the warning above says why"
+        files = len(self.driver.files.get(folder.name, ()))
+        return True, (f"added {folder.name}: {files} file{'' if files == 1 else 's'}"
+                      + (f", {len(new.urls)} address{'' if len(new.urls) == 1 else 'es'}" if new.urls else "")
+                      + "; a lane starts on it when one is free")
+
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""
         self.board = replace(self.board, challenges=self.board.challenges + tuple(new))
@@ -714,7 +784,11 @@ def prepare_run(options: RunOptions) -> Run:
     plan = _plan(options, config, runtime)
     options = plan.options
     engage, budget = _autopilot_asked(options, config, runtime)
-    board = None if plan.ctfd else _load_board(options)
+    # a by-hand event's board may be empty: the player adds challenges as they go (/new, `flightdeck add`)
+    board = None if plan.ctfd else _load_board(options, empty_ok=plan.profile is not None and plan.profile.platform == "manual")
+    if board is not None and not board.challenges:
+        plan.notes.append("the board is empty: in the console, /new adds a challenge (its name, then its text and files); "
+                          "`flightdeck add` does the same from another terminal")
     ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
         ladder = _agent_ladder(options.agent, config, plan.notes)
@@ -1202,14 +1276,22 @@ def _check_options(options: RunOptions) -> None:
         raise RunError(f"submit must be confirm or auto, not {options.submit!r}")
 
 
-def _load_board(options: RunOptions) -> Board:
+def _mtime(folder: Path) -> float:
+    """When a challenge folder's challenge.json was last written (0.0 when it cannot be read)."""
+    try:
+        return (folder / "challenge.json").stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _load_board(options: RunOptions, *, empty_ok: bool = False) -> Board:
     if options.board is None:
         raise RunError(
             "name the board: `flightdeck play BOARD` (a folder of challenge folders), or give an event profile with "
             "--event EVENT.toml"
         )
     try:
-        return load_board(options.board, answers=options.answers)
+        return load_board(options.board, answers=options.answers, empty_ok=empty_ok)
     except BoardError as exc:
         raise RunError(str(exc)) from None
 

@@ -858,6 +858,7 @@ def _mount() -> None:
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
     app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
     app.command("start", rich_help_panel=PLAY)(start_cli.start)
+    app.command("add", rich_help_panel=EVENT)(start_cli.add)
     app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)

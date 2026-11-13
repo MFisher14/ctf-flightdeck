@@ -574,10 +574,20 @@ with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/examp
 same for a folder already set up. Every question has an option (`flightdeck start --help`), for
 a script.
 
-By hand: for each challenge make a folder under `board/`, put its files there and a
-`challenge.json` beside them ([Play a board](#play-a-board) shows one), then `flightdeck play`
-the event's folder. flightdeck shows each flag; you submit it on the site and press `a` if it
-was accepted or `d` if not.
+By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
+`/new` to hand a challenge over. The form asks for its name and has one box for everything you
+have: paste the description as the site shows it, drag in its files and screenshots (your
+terminal pastes each as a path, one to a line), and put the instance's address (`https://...`
+or `nc host port`) on a line of its own. `ctrl+s` adds it: flightdeck makes the challenge's
+folder under `board/`, copies the files in, and a lane starts on it at once. Category and
+points are optional. From another terminal, `flightdeck add ~/ctf/example-ctf --name "Crab
+Walk" --text - --file postcard.txt` does the same, and a run that is playing picks it up within
+seconds; so does a challenge folder you make yourself. flightdeck shows each flag; you submit it
+on the site and press `a` if it was accepted or `d` if not.
+
+flightdeck's own lanes read text. A screenshot is handed over as a file like any other, and a
+lane reads what is in it only if its tools can (a coding-agent lane, `--agent claude`, reads
+images itself): paste the challenge's text as text.
 
 To write the event file yourself instead, from the event's rules:
 

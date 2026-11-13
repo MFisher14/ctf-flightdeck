@@ -123,9 +123,10 @@ def category_code(category: str) -> str:
     return CATEGORY_CODES.get(category_key(category), category.strip().lower())
 
 
-def load_board(folder: Path, *, answers: Path | None = None) -> Board:
+def load_board(folder: Path, *, answers: Path | None = None, empty_ok: bool = False) -> Board:
     """Read a board folder. `answers` names an answers file; without it, the folder's own
-    answers.sha256.json is used if there is one."""
+    answers.sha256.json is used if there is one. `empty_ok`: a folder with no challenge in
+    it yet is a board of none (an event the player adds challenges to as they go)."""
     try:
         folder = Path(folder).expanduser()
     except RuntimeError:  # ~user for a user that does not exist
@@ -164,13 +165,37 @@ def load_board(folder: Path, *, answers: Path | None = None) -> Board:
             raise BoardError(f"{_show(spec)}: id {cid} is also the id of {_show(seen[cid])}")
         seen[cid] = spec
         challenges.append(item)
-    if not challenges:
+    if not challenges and not empty_ok:
         hint = ""
         if _present(root / CHALLENGE_FILE):
             hint = f"; it has a {CHALLENGE_FILE} of its own, so point at the folder that holds it"
         raise BoardError(f"{_show(root)}: no challenge directories (subdirectories with a {CHALLENGE_FILE}){hint}")
     used = _answers(root, answers, challenges)
     return Board(event, flag_format, tuple(challenges), used, tuple(skipped))
+
+
+def load_challenge(directory: Path) -> BoardChallenge:
+    """One challenge folder, read as load_board reads each (BoardError when it cannot be)."""
+    try:
+        return _challenge(directory)
+    except OSError as exc:
+        raise BoardError(f"{_show(directory / CHALLENGE_FILE)}: cannot read it ({exc.strerror})") from None
+
+
+def challenge_folders(root: Path) -> list[Path]:
+    """The folders under a board that hold a challenge.json, by name; links are left out."""
+    try:
+        entries = sorted(root.iterdir(), key=lambda entry: entry.name)
+    except OSError:
+        return []
+    found = []
+    for entry in entries:
+        try:
+            if not entry.is_symlink() and entry.is_dir() and _present(entry / CHALLENGE_FILE):
+                found.append(entry)
+        except OSError:
+            continue
+    return found
 
 
 class AnswerVerifier:
