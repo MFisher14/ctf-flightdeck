@@ -11,8 +11,8 @@ The grain is one entry per lane (Attempt), not one per command. A lane runs tens
 commands, and the harness does not know which of them "found something": what it knows is the
 plan the lane set, which programs its shell commands ran and how often, its last steps, what it
 reported finding, the files it changed, what became of each flag it gave (the deck's notes and
-the player's answers: core/summary.py), the alerts the detectors raised on it (a loop, a stall,
-effort past the challenge's value: the harness's own verdict on its course) and how it ended
+the player's answers: core/summary.py), the course and budget alerts raised on it (a loop, a
+stall, effort past the challenge's value: the harness's own verdict on its course) and how it ended
 (gave up and why, killed, stopped, still running). So an entry says "this approach, with these
 tools, ended this way", which is what a later lane needs to not repeat it:
 
@@ -62,7 +62,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
-from .model import ActionKind, EventKind, Lane, LaneState
+from .model import COURSE_ALERTS, ActionKind, AlertKind, EventKind, Lane, LaneState
 from .summary import ALERT, ARTIFACT, NAME, PATH, RESULT, STATUS, _count, _fair_cut, _flag_fates, _one, _quoted
 
 if TYPE_CHECKING:
@@ -102,6 +102,9 @@ OPEN_STATES = {
     LaneState.TAKEOVER: "in the player's hands (a take-over)",
 }
 SOLVED = "solved the challenge"
+VERDICTS = COURSE_ALERTS | {AlertKind.BUDGET}
+"""The alerts an entry keeps: those about a lane's course, and its budget. A flag found is in
+the entry as a flag, and an alert about a teammate says nothing of what the lane tried."""
 
 
 @dataclass(frozen=True)
@@ -126,7 +129,7 @@ class Attempt:
     found: tuple[str, ...]  # what it reported finding, oldest first
     files: tuple[tuple[str, str], ...]  # the files it changed, newest last: (path, status)
     flags: tuple[tuple[str, tuple[str, ...]], ...]  # each flag it gave and what became of it, in order
-    alerts: tuple[tuple[str, str], ...]  # each kind of alert raised on it, with its newest reason: (label, reason)
+    alerts: tuple[tuple[str, str], ...]  # each kind of course or budget alert raised on it (VERDICTS), with its newest reason: (label, reason)
 
     def data(self) -> dict[str, object]:
         """The entry as plain data (for the run folder's record)."""
@@ -138,7 +141,7 @@ def attempt(deck: Deck, lane: Lane) -> Attempt:
     steps = [a for a in lane.actions if a.kind is ActionKind.STEP]
     alerts: dict[str, str] = {}
     for action in lane.actions:
-        if action.kind is ActionKind.ALERT:
+        if action.kind is ActionKind.ALERT and action.alert in VERDICTS:
             alerts.pop(action.text, None)
             alerts[action.text] = action.output  # the newest reason, and the newest kind last
     how = f"fork of {lane.parent}" if lane.parent else ""
