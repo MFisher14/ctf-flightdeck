@@ -114,6 +114,27 @@ flag. When a lane finds one, the console shows it and asks you to submit it on t
 yourself; then press `a` if the platform accepted it or `d` if it did not. The same holds for a
 challenge the answers file does not list.
 
+## A series of challenges
+
+A board often splits one lab into several challenges on the same target. flightdeck links them by
+name alone: two challenges are siblings when their names have the same start, compared in lower
+case with punctuation folded to spaces. The start is
+
+- the part before the first separator: a colon followed by a space, a hyphen or a bar with a space
+  on both sides, or an en or em dash ("Harbor Lab: Read the Certificate", "Harbor Lab - The Gate",
+  "Ghost Ship | Logbook"), or
+- with no separator, the part before a trailing part number ("Harbor Lab Part 3", "Harbor Lab
+  Task 2", "Harbor Lab (2/3)").
+
+A start that is only a category or a label ("Web: SQL Login", "Warmup: Hello"), only a part
+number ("Task 2 - Read it"), or shorter than three letters and digits links nothing.
+
+A lane on a challenge of a series is told of its siblings and may read the files a sibling's
+ended lane left ([the guide](GUIDE.md#play-a-board)). A challenge whose description reads as a
+continuation ("continuation of the same lab", "see the first task") while no other challenge
+shares the start of its name is told so, and its lane's log says it: name the challenges of one
+lab alike when you write a board by hand.
+
 ## A board is untrusted
 
 Everything in a board folder comes from someone else: a platform, a challenge author, a teammate.
@@ -125,7 +146,8 @@ flightdeck treats all of it as data.
   1 MB is refused.
 - Symlinks are never followed, and no path may leave its challenge folder.
 - A challenge's text reaches a lane's model fenced as data, never as instructions, and reaches
-  your terminal with escape sequences made harmless.
+  your terminal with escape sequences made harmless. What one lane hands another (what it tried,
+  a sibling challenge's files) is challenge-derived, and is fenced and named as data the same way.
 
 ## A board from CTFd
 

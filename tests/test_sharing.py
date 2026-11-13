@@ -16,7 +16,7 @@ import pytest
 
 from ctf_flightdeck.agent import prompts, sharing
 from ctf_flightdeck.agent.facts import FLAG_REMOVED
-from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace
+from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace, WorkspaceError
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core import shared
 from ctf_flightdeck.core.deck import Deck, QueueEntry
@@ -189,6 +189,39 @@ def test_fence_markers_in_what_a_lane_wrote_cannot_close_the_fence_and_its_long_
             await lab.finish()
 
     own.run(main())
+
+
+def test_a_fresh_lane_after_a_kill_takes_the_first_look_already_made_and_the_light_model_is_asked_once(tmp_path):
+    """The first look is one per challenge per run already (agent/facts.py: FirstLooks keeps it by
+    challenge): a lane started again on the challenge pays for no second one, and reads the first
+    lane's attempt beside it."""
+    import light_kit as kit
+    from test_light_route import brief_of, first_look_of, looping, opened_after_the_first_look
+
+    lanes = FakeModelServer(responder=looping)
+    with lanes, kit.LightModel({"family": "audio-signal", "recon": "Files: a WAV.\nLikely: SSTV."}) as light:
+        async def main():
+            lab = kit.Lab(tmp_path, lanes, {"hiss": kit.handout(tmp_path, "hiss", {"hiss.wav": "RIFF data"})},
+                          lights=kit.lights(light.engine()))
+            try:
+                lab.release(kit.challenge("hiss", "for", "Slow-scan pictures."))
+                first = await opened_after_the_first_look(lab, "hiss")
+                await kit.until(lambda: first.turns >= 1, "the first lane's turn")
+                assert lab.deck.apply(iv.Kill(first.id, requeue=True)).ok
+                again = next(x for x in lab.deck.lanes.values() if x.id != first.id)
+                await kit.until(lambda: any(c["json"]["session_id"].endswith(again.id) for c in lanes.chats()), "the fresh lane's call")
+                ours = next(c for c in lanes.chats() if c["json"]["session_id"].endswith(again.id))
+                assert first_look_of(brief_of(ours)) == first_look_of(brief_of(lanes.chats()[0])) == (
+                    "Specialist it suits: audio-signal (" + first_look_of(brief_of(ours)).split("(", 1)[1])
+                assert "Files: a WAV." in first_look_of(brief_of(ours))
+                assert sorted(light.asked()) == ["family", "recon"]  # one computation for the two lanes
+                assert len(lab.routes()) == 1
+                handed = ours["json"]["messages"][2]["content"]
+                assert handed.startswith(sharing.OTHERS) and f"{first.id} (" in handed
+            finally:
+                await lab.finish()
+
+        own.asyncio.run(main())
 
 
 # ====================================================================== the series (the agent driver, host workspaces)
@@ -436,6 +469,9 @@ def test_a_started_container_takes_no_new_mount_and_overlapping_targets_are_refu
     with pytest.raises(ValueError, match="overlaps /work, the lane's copy"):
         workspace.mount(tmp_path / "a", "/work/series")
     assert workspace.mounts == ((str((tmp_path / "a").resolve()), "/series/a"),)
+    own.asyncio.run(workspace.close())  # never started: nothing of docker's to remove
+    with pytest.raises(WorkspaceError, match="the lane's container was already started"):
+        workspace.mount(tmp_path / "a", "/series/b")
 
 
 @pytest.mark.parametrize("cid,name", [("12", "12"), ("Harbor Lab 1", "Harbor_Lab_1"), ("../../etc", "_.._etc"), ("...", "_"), ("", "_"),

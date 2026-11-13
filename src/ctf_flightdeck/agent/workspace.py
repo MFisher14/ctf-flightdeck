@@ -829,7 +829,7 @@ class DockerWorkspace:
         or over, a mount it already has; WorkspaceError once prepare() has begun: a running
         container takes no new mount."""
         if self._started or self._closed:
-            raise WorkspaceError(f"cannot mount {source} at {target}: the lane's container was already started")
+            raise WorkspaceError(f"cannot mount {source} at {target}: the lane's container was already started, or its workspace closed")
         real, where = _read_only_mount(source, target)
         new = PurePosixPath(where)
         for _, other in self.mounts:
