@@ -215,7 +215,11 @@ def start(
             kept = vpn.keep(folder, vpn_source)
         except vpn.VPNError as exc:
             _fail(str(exc))
-        typer.echo(f"vpn: kept as {kept.file} (yours only); `flightdeck play` offers to connect it, and `flightdeck vpn up {folder}` does it now")
+        typer.echo(f"vpn: kept as {kept.file} (yours only)")
+        from . import vpn_cli
+
+        if vpn_cli.ensure_tool(kept):  # installs wg-quick or openvpn when it is missing, on a yes
+            typer.echo(f"vpn: ready; `flightdeck play` offers to connect it, and `flightdeck vpn up {folder}` does it now")
     _status(folder, config_path, offer_pack=interactive, config=config)
     if platform != "ctfd":
         typer.echo("The board starts empty. In the console, type /new to hand over a challenge: its name, then its text, files and\n"

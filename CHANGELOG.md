@@ -11,7 +11,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A challenge with no file and no target says so when added, and its lane is told to say what
   is missing and stop instead of spending its budget waiting.
 - `flightdeck vpn add|up|status|down` keeps an event's WireGuard or OpenVPN file and connects
-  it; `flightdeck start` asks for the file and `flightdeck play` offers to connect it.
+  it; `flightdeck start` asks for the file and `flightdeck play` offers to connect it. A missing
+  `wg-quick` or `openvpn` is installed with your package manager, on your yes.
 
 - A board you fill yourself can start empty, and `/new` in the console hands a challenge to a
   lane: its name, then one box for its description, its files and screenshots (dragged in) and

@@ -600,11 +600,14 @@ challenge's name, and drag the file onto the command bar. Its lane starts afresh
 **A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
 `.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by
 you only. `flightdeck play` says whether it looks connected and offers to connect it; it shows
-the `sudo` command first, and sudo asks for your password itself. By hand:
+the `sudo` command first, and sudo asks for your password itself. When the file's tool is not on
+this machine (`wg-quick` for WireGuard, `openvpn` for OpenVPN), flightdeck shows the command
+that installs it with your package manager (Homebrew, apt, dnf or pacman) and runs it on your
+yes. By hand:
 
 ```sh
 flightdeck vpn add ~/ctf/example-ctf ~/Downloads/team.conf   # for an event already set up
-flightdeck vpn up ~/ctf/example-ctf                          # connect (needs wg-quick or openvpn)
+flightdeck vpn up ~/ctf/example-ctf                          # connect (installs wg-quick or openvpn if missing)
 flightdeck vpn status ~/ctf/example-ctf
 flightdeck vpn down ~/ctf/example-ctf
 ```

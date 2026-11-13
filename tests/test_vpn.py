@@ -110,3 +110,50 @@ def test_play_says_an_events_vpn_is_down_before_the_run_starts(tmp_path, monkeyp
     result = CliRunner().invoke(cli.app, ["play", str(tmp_path / "event")])
     assert "is NOT connected" in result.output and "cannot reach this event's live targets" in result.output
     assert "stopped by the test" in result.output  # nobody to ask: said, and the run goes on to start
+
+
+@pytest.mark.parametrize(("platform", "have", "argv"), [
+    ("darwin", {"brew"}, ["brew", "install", "wireguard-tools"]),
+    ("darwin", set(), None),
+    ("linux", {"apt-get", "dnf"}, ["sudo", "apt-get", "install", "-y", "wireguard-tools"]),
+    ("linux", {"pacman"}, ["sudo", "pacman", "-S", "--noconfirm", "wireguard-tools"]),
+])
+def test_the_install_command_is_this_machines_package_managers(tmp_path, platform, have, argv):
+    assert vpn.install_command(kept(tmp_path), platform, lambda tool: tool if tool in have else None) == argv
+
+
+def test_a_missing_vpn_tool_is_installed_on_a_yes_before_connecting_and_never_without_one(tmp_path, monkeypatch):
+    import subprocess
+
+    ovpn = kept(tmp_path, "team.ovpn", "client\n")
+    have = {"brew"}
+    monkeypatch.setattr(vpn.shutil, "which", lambda tool: f"/opt/bin/{tool}" if tool in have else None)
+    monkeypatch.setattr(vpn.sys, "platform", "darwin")
+    monkeypatch.setattr(vpn, "install_command", lambda found: ["brew", "install", "openvpn"])
+    monkeypatch.setattr(vpn, "connected", lambda *a, **k: None)
+    ran = []
+
+    def run(argv, **kw):
+        ran.append(argv)
+        if argv[0] == "brew":
+            have.add("openvpn")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    result = CliRunner().invoke(cli.app, ["vpn", "up", str(ovpn.folder)])  # nobody to ask
+    assert result.exit_code == 2 and "brew install openvpn" in result.output and ran == []
+    result = CliRunner().invoke(cli.app, ["vpn", "up", str(ovpn.folder), "--yes"])
+    assert result.exit_code == 0, result.output
+    assert ran[0] == ["brew", "install", "openvpn"] and ran[1][:2] == ["sudo", "/opt/bin/openvpn"]
+    assert "installed openvpn" in result.output
+
+
+def test_with_no_package_manager_the_missing_tool_is_named_and_nothing_runs(tmp_path, monkeypatch):
+    import subprocess
+
+    found = kept(tmp_path)
+    monkeypatch.setattr(vpn.shutil, "which", lambda tool: None)
+    monkeypatch.setattr(vpn, "connected", lambda *a, **k: False)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("nothing may run"))
+    result = CliRunner().invoke(cli.app, ["vpn", "up", str(found.folder), "--yes"])
+    assert result.exit_code == 2 and "wg-quick is not on this machine" in result.output and "no package" in result.output

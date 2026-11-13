@@ -45,8 +45,9 @@ def add(folder: Annotated[Path, typer.Argument(metavar="FOLDER", show_default=Fa
         kept = vpn.keep(expand(folder), expand(file))
     except (vpn.VPNError, ConfigError) as exc:
         _fail(str(exc))
-    typer.echo(f"vpn: kept as {kept.file} ({'WireGuard' if kept.kind == 'wireguard' else 'OpenVPN'}); "
-               f"`flightdeck vpn up {kept.folder}` connects it")
+    typer.echo(f"vpn: kept as {kept.file} ({'WireGuard' if kept.kind == 'wireguard' else 'OpenVPN'})")
+    if ensure_tool(kept):
+        typer.echo(f"vpn: ready; `flightdeck vpn up {kept.folder}` connects it, and `flightdeck play` offers to")
 
 
 @app.command("up")
@@ -57,6 +58,36 @@ def up(target: Target, yes: Annotated[bool, typer.Option("--yes", "-y", metavar=
         raise typer.Exit(code)
 
 
+def ensure_tool(found, *, yes: bool = False) -> bool:
+    """The VPN's tool is on this machine, installing it when it is not: the package manager's
+    command is shown and run on a yes. False, with the reason said, when it still is not."""
+    from . import vpn
+
+    if vpn.has_tool(found):
+        return True
+    argv = vpn.install_command(found)
+    what = "WireGuard" if found.kind == "wireguard" else "OpenVPN"
+    if argv is None:
+        typer.echo(f"flightdeck: this event's VPN is {what}, and {found.tool} is not on this machine; flightdeck found no package "
+                   f"manager to install it with (Homebrew, apt, dnf or pacman): install {found.tool}, then run this again", err=True)
+        return False
+    typer.echo(f"vpn: this event's VPN is {what}, and {found.tool} is not on this machine. To install it:")
+    typer.echo("  " + " ".join(argv))
+    if not yes:
+        if not sys.stdin.isatty():
+            typer.echo("flightdeck: there is no terminal to ask at: run the command above yourself, or pass --yes", err=True)
+            return False
+        if not typer.confirm("Install it now?", default=True):
+            typer.echo(f"vpn: {found.tool} was not installed, so the VPN cannot be connected")
+            return False
+    done = subprocess.run(argv)
+    if done.returncode != 0 or not vpn.has_tool(found):
+        typer.echo(f"flightdeck: {found.tool} was not installed (exit {done.returncode}); what the package manager said is above", err=True)
+        return False
+    typer.echo(f"vpn: installed {found.tool}")
+    return True
+
+
 def connect(found, *, yes: bool = False) -> int:
     """Show the command that connects `found`, run it on a yes, and say how it stands. 0 when
     it is connected (or was already)."""
@@ -65,6 +96,8 @@ def connect(found, *, yes: bool = False) -> int:
     if vpn.connected(found) is True:
         typer.echo(vpn.status_line(found, True))
         return 0
+    if not ensure_tool(found, yes=yes):
+        return 2
     try:
         argv = vpn.up_command(found)
     except vpn.VPNError as exc:

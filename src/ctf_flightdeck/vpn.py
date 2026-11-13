@@ -110,6 +110,24 @@ def install_hint(vpn: VPN, platform: str = sys.platform) -> str:
     return f"{vpn.tool} is not on this machine: {how}"
 
 
+def install_command(vpn: VPN, platform: str = sys.platform, which: Callable[[str], str | None] | None = None) -> list[str] | None:
+    """What installs the VPN's tool with this machine's package manager (Homebrew on macOS;
+    apt, dnf or pacman on Linux), or None when none of them is here."""
+    which = which or shutil.which
+    package = "wireguard-tools" if vpn.kind == "wireguard" else "openvpn"
+    if platform == "darwin":
+        return ["brew", "install", package] if which("brew") else None
+    for manager, argv in (("apt-get", ["sudo", "apt-get", "install", "-y", package]), ("dnf", ["sudo", "dnf", "install", "-y", package]),
+                          ("pacman", ["sudo", "pacman", "-S", "--noconfirm", package])):
+        if which(manager):
+            return argv
+    return None
+
+
+def has_tool(vpn: VPN, which: Callable[[str], str | None] | None = None) -> bool:
+    return (which or shutil.which)(vpn.tool) is not None
+
+
 def up_command(vpn: VPN, which: Callable[[str], str | None] | None = None) -> list[str]:
     """What connects the VPN. VPNError when its tool is missing."""
     tool = (which or shutil.which)(vpn.tool)
