@@ -271,7 +271,7 @@ def test_a_follow_up_is_told_of_its_solved_sibling_and_where_its_files_are_and_n
             assert lines[:4] == [
                 sharing.SERIES, prompts.FENCE_OPEN,
                 "Harbor Lab: Read the Certificate (misc, 100 points): solved by L01 in this run",
-                f"  Its files: {where} (L01's workspace as it ended; read-only)",
+                f"  Its files: {where} (L01's workspace as it ended; to read, not to change)",
             ]
             assert lines[4] == "  L01 (small; 2 turns): solved the challenge" and "    Plan: read the subject of cert.pem" in lines
             assert "    Files it changed: answer.txt (added)" in lines
@@ -427,8 +427,9 @@ def test_a_docker_lane_gets_each_siblings_workspace_mounted_read_only_under_seri
     where = roots(tmp_path, *lanes)
     workspace = docker_workspace(tmp_path)
     shares = sharing.attach(deck, deck.challenges["print"], workspace, where.get)
-    assert [(s.challenge, s.lane, s.where, s.problem) for s in shares] == [
-        ("read", "L01", "/series/read", ""), (third.id, "L02", "/series/lab_3_.._x", ""), (fourth.id, "L03", "/series/lab_3_.._x-2", ""),
+    assert [(s.challenge, s.lane, s.where, s.problem, s.mounted) for s in shares] == [
+        ("read", "L01", "/series/read", "", True), (third.id, "L02", "/series/lab_3_.._x", "", True),
+        (fourth.id, "L03", "/series/lab_3_.._x-2", "", True),
     ]
     args = workspace.run_args()
     for lane, target in zip(lanes, ("/series/read", "/series/lab_3_.._x", "/series/lab_3_.._x-2")):

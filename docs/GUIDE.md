@@ -322,7 +322,7 @@ Challenges whose names share a start are a series ("Harbor Lab: Read the Certifi
 Lab: Fingerprint the Certificate"; [Boards](BOARDS.md#a-series-of-challenges) has the rule). A lane
 on one of them is told of its siblings: which are solved, what the lane that worked a sibling
 found, and where that lane's files are, to read and not to change: the folder itself on the host
-runtime, `/series/<challenge id>` in Docker. A lane that still runs shares no files. A sibling's
+runtime, `/series/<challenge id>` in Docker (mounted read-only). A lane that still runs shares no files. A sibling's
 flag is never in the brief. A lane's log says what its brief was given.
 
 Some platforms limit the tries at a challenge's flag (CTFd's "max attempts"). Every flag for such
