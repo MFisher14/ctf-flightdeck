@@ -755,7 +755,8 @@ class DockerWorkspace:
 
     `mounts` are more bind mounts, each (a path on this machine, where the container sees
     it), read-only: an L1 engine's container (l1/container.py) gets the pack and flightdeck's
-    boot script this way. A lane's own container has none.
+    boot script this way, and a lane's own the player's pack under [l1] lane_tools. mount()
+    adds one before prepare(): a sibling challenge's workspace (agent/sharing.py).
 
     `labels` go on the container (`docker run --label`): a run's containers carry the run
     and the flightdeck that started them (leftovers.labels()), so the next start can find
@@ -821,6 +822,20 @@ class DockerWorkspace:
         self._ready = False
         self._closed = False
         self._clients: set[asyncio.subprocess.Process] = set()  # docker exec clients still running
+
+    def mount(self, source: Path, target: str) -> None:
+        """One more read-only bind mount (see `mounts`), for a container not started yet.
+        ValueError when it cannot be one (_read_only_mount), or when `target` is, or lies in
+        or over, a mount it already has; WorkspaceError once prepare() has begun: a running
+        container takes no new mount."""
+        if self._started or self._closed:
+            raise WorkspaceError(f"cannot mount {source} at {target}: the lane's container was already started, or its workspace closed")
+        real, where = _read_only_mount(source, target)
+        new = PurePosixPath(where)
+        for _, other in self.mounts:
+            old = PurePosixPath(other)
+            _require(not (new == old or old in new.parents or new in old.parents), f"mount target {where} overlaps {other}, mounted already")
+        self.mounts += ((real, where),)
 
     async def prepare(self) -> None:
         if self._closed:

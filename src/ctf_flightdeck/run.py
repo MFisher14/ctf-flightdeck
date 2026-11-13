@@ -140,6 +140,8 @@ from .preflight import (
 )
 from .notify import Notifier, NotifyError
 from .runrecord import write_run_info, write_run_setup
+from .sharedfile import NAME as SHARED_NAME
+from .sharedfile import SharedFile
 from .status import NAME as STATUS_NAME
 from .status import StatusFile
 from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
@@ -266,6 +268,7 @@ class Run:
     processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
     lights: object = None  # light.Lights: the light engines its jobs share (closed after the watch)
     status: StatusFile | None = None  # status.json in the run folder, for whatever is not the console
+    shared: SharedFile | None = None  # shared.json in the run folder: what each lane of each challenge tried (core/shared.py)
     notifier: Notifier | None = None  # the notification webhook, when [notify] names one
     autopilot: Autopilot | None = None  # the run's autopilot (autopilot.py): off until engaged
     instances: InstanceRunner | None = None  # starts and stops the platform's on-demand instances (instancerun.py); None: it starts none
@@ -305,7 +308,8 @@ class Run:
         submits = self._submits.errors if self._submits is not None else []
         record = [self.processes.problem] if self.processes is not None and self.processes.problem else []
         status = [self.status.problem] if self.status is not None and self.status.problem else []
-        return [*self.driver.errors, *submits, *self._errors, *record, *status]
+        shared = [self.shared.problem] if self.shared is not None and self.shared.problem else []
+        return [*self.driver.errors, *submits, *self._errors, *record, *status, *shared]
 
     def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
         """The challenges (default: the board's) in triage order: cheap first (fewest points,
@@ -426,6 +430,8 @@ class Run:
         self.transcripts.close()
         if self.status is not None:  # before the log closes: a write that fails is a warning in it
             self.status.close()
+        if self.shared is not None:
+            self.shared.close()
         self.log.close()
         if self.processes is not None:
             self.processes.finish()
@@ -933,6 +939,8 @@ def prepare_run(options: RunOptions) -> Run:
     log.attach(deck)
     status = StatusFile(run_dir / STATUS_NAME, deck, run=run_dir.name, held=held)  # after the log: its warning is logged
     status.attach()
+    shared = SharedFile(run_dir / SHARED_NAME, deck, run=run_dir.name, held=held)
+    shared.attach()
     notifier = None
     if webhook is not None:
         env = config.notify.webhook_env
@@ -978,6 +986,7 @@ def prepare_run(options: RunOptions) -> Run:
     instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
+        shared=shared,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, gm=gm, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,

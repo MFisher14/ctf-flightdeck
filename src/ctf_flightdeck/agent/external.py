@@ -146,7 +146,7 @@ from ..l1.runner import scan
 from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
-from . import owntext, prompts
+from . import owntext, prompts, sharing
 from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .held import Secrets as _Secrets
@@ -1044,6 +1044,10 @@ class _Run:
         self.recon = ""  # what of the first look was back then: in every opening brief of the lane
         self.opened = False  # the CLI has had its first opening: nothing more goes into the brief
         self.l1_text: str | None = None  # what the L1 engines found (prompts.l1_results): after the brief in every opening
+        # the sibling workspaces it may read, picked now (a docker lane's container mounts them), and what it is handed
+        # of other lanes' work and its series at its first opening (agent/sharing.py): after the brief in every opening
+        self.shares = sharing.attach(driver.deck, challenge, workspace, driver.root_of)
+        self.handover = ""
         self._delivering = False
 
     # ------------------------------------------------------------------ the deck's view
@@ -1423,6 +1427,8 @@ class _Run:
 
     def opening(self) -> str:
         """The start of a fresh context: the brief (the flag format in its fence, as data), what
+        the lane was handed of other lanes' work and its series at its first opening
+        (agent/sharing.py: fenced as data, the same text every time), what
         the L1 engines found (once they have run: fenced as data, the same text every time, so
         a stronger model never pays to redo what they did or ruled out), and the summary after
         an escalation. The first opening is the CLI's first model call: the brief takes the
@@ -1433,6 +1439,9 @@ class _Run:
             look, self.look = self.look, None
             if look is not None:
                 self.recon = self.driver.looks.opening(look, self.driver.deck, self.lane_id, self.driver.flag_re)
+            first = self.lane()
+            if first is not None:
+                self.handover = self.driver.redact(sharing.opening(self.driver.deck, first, self.shares))
         lane = self.lane()
         cid = self.challenge.id
         text = prompts.brief(
@@ -1441,6 +1450,8 @@ class _Run:
             instance=self.driver.instance, shell_hosts=getattr(self.workspace, "shell_hosts", None),
             toolkit=self.driver.l1.toolkit if self.driver.l1 is not None else "",
         )
+        if self.handover:
+            text += "\n\n" + self.handover
         if self.l1_text is not None:
             text += "\n\n" + self.l1_text
         if self.escalation is not None:
@@ -2409,6 +2420,11 @@ class ExternalDriver:
 
     def redirect(self, lane: Lane, text: str) -> None:
         self._tell(lane, f"The player changed your plan to: {untrusted(text, one_line=True)}")
+
+    def root_of(self, lane_id: str) -> Path | None:
+        """The folder of that lane's workspace on this machine, when this driver ran it."""
+        run = self.runs.get(lane_id)
+        return Path(run.workspace.root) if run is not None else None
 
     def escalate(self, lane: Lane, model: str, summary: EscalationSummary) -> None:
         run = self.runs.get(lane.id)
