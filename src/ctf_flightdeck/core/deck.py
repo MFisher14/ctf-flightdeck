@@ -11,6 +11,13 @@ Rules the deck enforces:
   rest wait in the queue, which drains as lanes finish, except while it is held
   (hold_queue: a failure every lane would hit) until the player lifts the hold
   (release_hold);
+- before a queued lane starts, the start gate is asked (start_gate: the run's host governor,
+  governor.py): while it names a limit no new lane starts, the queue stays as it is and the
+  lanes at work carry on, none stopped or paused. It is no hold: nothing is asked of the
+  player, autopilot stays engaged, and lanes start again when the gate clears (at the next
+  lane's end, or when the run asks again: recheck_starts). One warning says when starts begin
+  to be held and why, one when they are no longer. With no lane active the gate is not asked:
+  one lane always starts;
 - a candidate flag must match the flag format; with submit policy "confirm" it waits
   for the player's approval, with "auto" it is submitted at once;
 - a board's verifier answers at once (an answers file, or never: the player submits by
@@ -194,6 +201,9 @@ class Deck:
         self._spent: set[str] = set()  # challenges out of tries: closed until tries come back (_out_of_tries)
         self._answered: dict[str, float] = {}  # challenge id -> when the platform last answered one of its flags
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
+        # asked before a queued lane starts: why none should now ("" to start), or None for no gate
+        self.start_gate: Callable[[], str] | None = None
+        self.gated = ""  # why the start gate holds new lanes back now, "" while it does not
         self._ended_by_hold: list[str] = []  # lanes that what the hold is about ended: release_hold queues their challenges again
         self.closing = False  # the run is closing (close()): its lanes stop without ending
         self.autopilot = None  # the run's autopilot (autopilot.Autopilot sets it), if it has one: its `guarding` is read here
@@ -870,6 +880,9 @@ class Deck:
             if self.held:  # no lane starts until the player lifts the hold, whatever slots are free
                 self._note(lane, f"fork queued first ({model}): the queue is held", self._by)
                 return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue, which is held: {self.held}")
+            if self.gated and len(self.active_lanes()) < self.config.max_lanes:  # a free slot the start gate keeps empty
+                self._note(lane, f"fork queued first ({model}): no new lane starts for now", self._by)
+                return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; no new lane starts for now: {self.gated}")
             self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", self._by)
             return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; all {self.config.max_lanes} lanes are busy")
         self._note(lane, f"forked to {started.id} ({model})", self._by)
@@ -1208,10 +1221,47 @@ class Deck:
             if not lane.finished:
                 self.driver.stop(lane)
 
+    def recheck_starts(self) -> None:
+        """Ask the start gate again, and start the queued lanes it now lets start. What sets
+        the gate calls this when its answer may have changed (the run's governor tick): a lane
+        that ends asks by itself. While starts are held it asks with nothing queued too, so
+        the warning that they are no longer held is not left waiting for a queue."""
+        self._on_thread("recheck_starts")
+        if self.closing:
+            return
+        if self.gated:
+            self._gate_holds()
+        self._fill()
+
+    def _gate_holds(self) -> bool:
+        """Whether the start gate holds new lanes back now. Its answer is kept (gated), with a
+        warning when starts begin to be held (the gate's reason) and one when they are no
+        longer: never one per time it is asked, nor one for a reason that changed meanwhile."""
+        reason = self.start_gate() if self.start_gate is not None else ""
+        if not isinstance(reason, str):
+            raise TypeError(f"the start gate must answer with a string (\"\" to start), not {type(reason).__name__}")
+        was, self.gated = self.gated, reason
+        if reason and not was:
+            self._emit(
+                EventKind.WARNING,
+                f"no new lane starts for now: {reason}; the lanes at work carry on, and queued lanes start by "
+                "themselves once this machine is back within the limit ([governor] in your config)",
+                data={"gated": True, "reason": reason},
+            )
+        elif was and not reason:
+            self._emit(
+                EventKind.WARNING,
+                f"queued lanes start again: this machine is back within its limits (it was: {was})",
+                data={"gated": False, "reason": was},
+            )
+        return bool(reason)
+
     def _fill(self) -> None:
         """Start queued lanes while there are free slots (none while the queue is held, or the
-        run is closing)."""
+        run is closing), each after the start gate was asked, unless no lane is active."""
         while self.queue and not self.held and not self.closing and len(self.active_lanes()) < self.config.max_lanes:
+            if self.active_lanes() and self._gate_holds():
+                return
             entry = self.queue.pop(0)
             ch = self.challenges[entry.challenge]
             if self._workable(ch):

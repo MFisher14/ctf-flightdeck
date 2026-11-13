@@ -52,7 +52,7 @@ LOCAL_HOST = "127.0.0.1"
 COMMAND_TIMEOUT = 2.0  # seconds for sysctl
 # The operating system's own programs, where the system keeps them: found there when a PATH
 # leaves their folder out (a cron job, `env -i`, a stripped shell). Only these, only there.
-SYSTEM_PROGRAMS = {"Darwin": {"sysctl": "/usr/sbin"}}
+SYSTEM_PROGRAMS = {"Darwin": {"sysctl": "/usr/sbin", "vm_stat": "/usr/bin"}}  # vm_stat: governor.py
 GPU_TIMEOUT = 5.0  # seconds for nvidia-smi, whose first call can wait for the driver to load
 HTTP_TIMEOUT = 1.0  # seconds for a server on this machine to list its models
 MAX_BODY = 4 * 1024 * 1024  # bytes of a model list read at most
