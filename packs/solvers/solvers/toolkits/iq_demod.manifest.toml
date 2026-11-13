@@ -1,0 +1,31 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-158.
+# CLI engine: prints a triage then a SolverResult JSON line (intake reads the last-line SolverResult).
+# The IQ-to-frames dispatcher: a saved IQ capture is demodulated as TETRA (pi/4-DQPSK), P25 (C4FM),
+# LoRa, GFSK, POCSAG and SSTV (FM audio, header and clock sync), the bits go to the bit-level parsers
+# already in the tree (sec_lmr_tetra, sec_lmr_p25, rf2_lora_phy, wav_linecode, sdr_protocols,
+# rf2_sstv_modes), and the reading that carries the event flag (ctf.flagfmt) is chosen.
+# It reads files only: it never opens an SDR and never runs GNU Radio or rtl_sdr.
+id = "toolkits.iq_demod"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/iq_demod.py"
+capabilities = ["executes", "cli", "radio", "iq", "tetra", "p25", "lora", "gfsk", "pocsag", "sstv"]
+inputs = ["ext:.cu8", "ext:.cs8", "ext:.cs16", "ext:.cf32", "ext:.cfile", "ext:.sigmf-data"]
+needs_tools = ["py:numpy"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-158: a raw IQ capture reaches the demodulation dispatcher
+files = ["ext:.cu8", "ext:.cs8", "ext:.cs16", "ext:.cf32", "ext:.cfile", "ext:.sigmf-data"]
+priority = 32
+
+[[routes]]  # B-158: the description says it is an off-air recording to demodulate
+keywords = ["iq capture", "iq file", "iq samples", "sdr capture", "sdr recording", "sigmf", "off the air", "demodulate"]
+priority = 63
+
+[intake]  # B-158: demodulate each IQ file in the handout at intake (deterministic, crib-selected: no model needed)
+select = "files"
+run = "per-file"
+match = ["ext:.cu8", "ext:.cs8", "ext:.cs16", "ext:.cf32", "ext:.cfile", "ext:.sigmf-data"]
+args = ["{file}", "--out", "{out}"]
+max_files = 4
+timeout = 180

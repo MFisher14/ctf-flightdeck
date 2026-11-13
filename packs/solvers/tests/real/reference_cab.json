@@ -1,0 +1,2402 @@
+{
+ "note": "Written in round 4 of backlog row 283 (2026-10-13). cabextract: version 1.11 (libmspack) in a Docker container with no network, on the files of manifest_cab.json; a member's 'cabextract' is the SHA-256 of what it unpacked, 'failed' where it reported an error for the member, null where it wrote no file for it (a name it would not write, or a member matched by no name). 'reader' is what solvers/metadata-forensics/readers_msi.py gave then: 'same', 'unknown', or a digest of its own where cabextract has none (stored bytes of a member cabextract did not write). 'decoders' names, per folder, the decoders that unpacked an LZX or Quantum folder. quantum_built: cabinets the test rebuilds with its mirror encoder; cabextract and 7zz 26.03 unpacked each to 'sha256' where 'valid', and refused each where not (matches over a frame's end).",
+ "cabinets": {
+  "cabextract-bugs-cve-2010-2800-mszip-infinite-loop.cab": {
+   "methods": [
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 16,
+     "method": "mszip",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "a data block that does not unpack to its stated size"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-bugs-cve-2010-2801-qtm-flush.cab": {
+   "methods": [
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 524159,
+     "method": "quantum",
+     "cabextract": "0e005e3d2c88e64a5bf04c0a8cecc7ddeb2b820c28d70af04f0aa11d66be4045",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; a Quantum "
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "cabextract-bugs-cve-2014-9556-qtm-infinite-loop.cab": {
+   "methods": [
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 4294967231,
+     "method": "quantum",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; a Quantum "
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "cabextract-bugs-cve-2014-9732-folders-segfault.cab": {
+   "methods": [
+    "none",
+    15
+   ],
+   "members": [
+    {
+     "size": 1,
+     "method": "none",
+     "cabextract": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+     "reader": "same"
+    },
+    {
+     "size": 1,
+     "method": null,
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a folder of a compression type the format does not name"
+    },
+    {
+     "size": 1,
+     "method": "none",
+     "cabextract": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-bugs-cve-2015-4470-mszip-over-read.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 1
+  },
+  "cabextract-bugs-cve-2015-4471-lzx-under-read.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "cabextract-bugs-filename-read-violation-1.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 6,
+     "method": "none",
+     "cabextract": null,
+     "reader": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-bugs-filename-read-violation-2.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "cabextract-bugs-filename-read-violation-3.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "cabextract-bugs-filename-read-violation-4.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "cabextract-bugs-lzx-main-tree-no-lengths.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 16,
+     "method": "lzx",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; bsdtar did"
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "cabextract-bugs-lzx-premature-matches.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 2,
+     "method": "lzx",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; bsdtar did"
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "cabextract-bugs-qtm-max-size-block.cab": {
+   "methods": [
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 32768,
+     "method": "quantum",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; a Quantum "
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "mspack-cabd-bad_folderindex.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 77,
+     "method": "none",
+     "cabextract": null,
+     "reader": "64df1b1e403b6636236bde07ead5039c8a74f91dd3c27d5d6249b46c9e62131d"
+    },
+    {
+     "size": 74,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-bad_nofiles.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [],
+   "decoders": {}
+  },
+  "mspack-cabd-bad_nofolders.cab": {
+   "methods": [],
+   "members": [
+    {
+     "size": 77,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet"
+    },
+    {
+     "size": 74,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-bad_signature.cab": {
+   "refused": "no cabinet header",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-cve-2010-2800-mszip-infinite-loop.cab": {
+   "methods": [
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 16,
+     "method": "mszip",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "a data block that does not unpack to its stated size"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-cve-2014-9556-qtm-infinite-loop.cab": {
+   "methods": [
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 4294967231,
+     "method": "quantum",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; a Quantum "
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "mspack-cabd-cve-2014-9732-folders-segfault.cab": {
+   "methods": [
+    "none",
+    15
+   ],
+   "members": [
+    {
+     "size": 1,
+     "method": "none",
+     "cabextract": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+     "reader": "same"
+    },
+    {
+     "size": 1,
+     "method": null,
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a folder of a compression type the format does not name"
+    },
+    {
+     "size": 1,
+     "method": "none",
+     "cabextract": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-cve-2015-4470-mszip-over-read.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 1
+  },
+  "mspack-cabd-cve-2015-4471-lzx-under-read.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-cve-2017-11423-fname-overread.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 7,
+     "method": "none",
+     "cabextract": null,
+     "reader": "b22b009134622b6508d756f1062455d71a7026594eacb0badf81f4f677929ebe"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-cve-2018-18584-qtm-max-size-block.cab": {
+   "methods": [
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 32768,
+     "method": "quantum",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; a Quantum "
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "mspack-cabd-filename-read-violation-1.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 6,
+     "method": "none",
+     "cabextract": null,
+     "reader": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-filename-read-violation-2.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-filename-read-violation-3.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-filename-read-violation-4.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-hidden-file-bad-folderid.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-hidden-file-beyond-eof.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-hidden-files.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-lzx-main-tree-no-lengths.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 16,
+     "method": "lzx",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; bsdtar did"
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "mspack-cabd-lzx-premature-matches.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 2,
+     "method": "lzx",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; bsdtar did"
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "mspack-cabd-mszip_lzx_qtm.cab": {
+   "methods": [
+    "mszip",
+    "lzx",
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 57,
+     "method": "mszip",
+     "cabextract": "6a2d9536b995c42a9b9daa2c2eaabf9a1e13e594669a420f8d3e66150af33cff",
+     "reader": "same"
+    },
+    {
+     "size": 187,
+     "method": "lzx",
+     "cabextract": "e978598104671296857e0543f4280f4d4e0506dd3cad5162e9f2a4f604fafc78",
+     "reader": "same"
+    },
+    {
+     "size": 59,
+     "method": "quantum",
+     "cabextract": "bdcfdaf09e54d61f950b165b201d4ad5f5acfdecff1fc5641e382aa382c74b45",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "1": [
+     "7zz",
+     "bsdtar"
+    ],
+    "2": [
+     "7zz",
+     "the decoder here"
+    ]
+   }
+  },
+  "mspack-cabd-multi_basic_pt1.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 38,
+     "method": "continued",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-multi_basic_pt2.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 38,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-multi_basic_pt3.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 38,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-multi_basic_pt4.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 38,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-multi_basic_pt5.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 38,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 76,
+     "method": "continued",
+     "cabextract": null,
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-normal_255c_filename.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 7,
+     "method": "none",
+     "cabextract": "b22b009134622b6508d756f1062455d71a7026594eacb0badf81f4f677929ebe",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-normal_2files_1folder.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 77,
+     "method": "none",
+     "cabextract": "64df1b1e403b6636236bde07ead5039c8a74f91dd3c27d5d6249b46c9e62131d",
+     "reader": "same"
+    },
+    {
+     "size": 74,
+     "method": "none",
+     "cabextract": "5b4e00033bbbd82cbec442f906cff18790cb043783cf7ea1bd25067ec954a562",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-normal_2files_2folders.cab": {
+   "methods": [
+    "mszip",
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 31,
+     "method": "mszip",
+     "cabextract": "74830f0b25143889f3e6f79798ac90bed21462b50faa33818fb75af01ed9dc67",
+     "reader": "same"
+    },
+    {
+     "size": 36,
+     "method": "mszip",
+     "cabextract": "97a5f0999ca55a8aecaced20fd0c5c28df0d0035691264e3964dbe1a9123f891",
+     "reader": "same"
+    },
+    {
+     "size": 23,
+     "method": "lzx",
+     "cabextract": "a9cf18335bc692ceaba67292da1864382869a7009e0e638d95020d9e84f2f70c",
+     "reader": "same"
+    },
+    {
+     "size": 28,
+     "method": "lzx",
+     "cabextract": "c88392cfceb1cc9a2582e8f466a7748e92da2bddd3cc489baae39ad87f6e9626",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "1": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "mspack-cabd-partial_nodata.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_nofiles.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_nofolder.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_shortextheader.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_shortfile1.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_shortfile2.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_shortfolder.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_shortheader.cab": {
+   "refused": "no cabinet header",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_nofname.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_noninfo.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_nonname.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_nopinfo.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_nopname.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_shortfname.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_shortninfo.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_shortnname.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_shortpinfo.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-partial_str_shortpname.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "mspack-cabd-reserve_---.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_--D.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_-F-.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_-FD.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_H--.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_H-D.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_HF-.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-reserve_HFD.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "13b896d551a100401b0d3982e0729efc2e8d7aeb09a36c0a51e48ec2bd15ea8b",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "none",
+     "cabextract": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "mspack-cabd-search_basic.cab": {
+   "refused": "no cabinet header",
+   "cabextract_files": 2
+  },
+  "mspack-cabd-search_tricky1.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 2
+  },
+  "cabextract-cabs-case-ascii.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-case-utf8.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-dir.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 77,
+     "method": "none",
+     "cabextract": "64df1b1e403b6636236bde07ead5039c8a74f91dd3c27d5d6249b46c9e62131d",
+     "reader": "same"
+    },
+    {
+     "size": 74,
+     "method": "none",
+     "cabextract": "5b4e00033bbbd82cbec442f906cff18790cb043783cf7ea1bd25067ec954a562",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-dirwalk-vulns.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-encoding-koi8.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-encoding-latin1.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-encoding-sjis.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-large-files-cab.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 14689228,
+     "method": "lzx",
+     "cabextract": "30e0e3f37c7bdd389b5d1c73d08b2e2b422c50b5c32362e9995504e7c80cb1c1",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "cabextract-cabs-mixed.cab": {
+   "methods": [
+    "mszip",
+    "lzx",
+    "quantum"
+   ],
+   "members": [
+    {
+     "size": 57,
+     "method": "mszip",
+     "cabextract": "6a2d9536b995c42a9b9daa2c2eaabf9a1e13e594669a420f8d3e66150af33cff",
+     "reader": "same"
+    },
+    {
+     "size": 187,
+     "method": "lzx",
+     "cabextract": "e978598104671296857e0543f4280f4d4e0506dd3cad5162e9f2a4f604fafc78",
+     "reader": "same"
+    },
+    {
+     "size": 59,
+     "method": "quantum",
+     "cabextract": "bdcfdaf09e54d61f950b165b201d4ad5f5acfdecff1fc5641e382aa382c74b45",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "1": [
+     "7zz",
+     "bsdtar"
+    ],
+    "2": [
+     "7zz",
+     "the decoder here"
+    ]
+   }
+  },
+  "cabextract-cabs-search.cab": {
+   "refused": "no cabinet header",
+   "cabextract_files": 8
+  },
+  "cabextract-cabs-simple.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 77,
+     "method": "none",
+     "cabextract": "64df1b1e403b6636236bde07ead5039c8a74f91dd3c27d5d6249b46c9e62131d",
+     "reader": "same"
+    },
+    {
+     "size": 74,
+     "method": "none",
+     "cabextract": "5b4e00033bbbd82cbec442f906cff18790cb043783cf7ea1bd25067ec954a562",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-split-1.cab": {
+   "methods": [
+    "mszip",
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 2000,
+     "method": "mszip",
+     "cabextract": "416e95ff9e088dca5fa43eeb41acb104852a6c812f3762ac72d6801d1da0ccc2",
+     "reader": "same"
+    },
+    {
+     "size": 8000,
+     "method": "continued",
+     "cabextract": "1b1366101b3cd6297c0852d133686887b4539c4d5d4e7a96eb944d04c2d9deb0",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 40000,
+     "method": "continued",
+     "cabextract": "35a052709780ba369567875f644a0cc97059298f0724429a191d066fb27f05c4",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-split-2.cab": {
+   "methods": [
+    "mszip",
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 8000,
+     "method": "continued",
+     "cabextract": "1b1366101b3cd6297c0852d133686887b4539c4d5d4e7a96eb944d04c2d9deb0",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 40000,
+     "method": "continued",
+     "cabextract": "35a052709780ba369567875f644a0cc97059298f0724429a191d066fb27f05c4",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 50000,
+     "method": "continued",
+     "cabextract": "998ef19336dd0c9e953b33c109c943fa362a1b5f6aa7649d6f33a6a31a6f4e6e",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-split-3.cab": {
+   "methods": [
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 50000,
+     "method": "continued",
+     "cabextract": "998ef19336dd0c9e953b33c109c943fa362a1b5f6aa7649d6f33a6a31a6f4e6e",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-split-4.cab": {
+   "methods": [
+    "mszip",
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 50000,
+     "method": "continued",
+     "cabextract": "998ef19336dd0c9e953b33c109c943fa362a1b5f6aa7649d6f33a6a31a6f4e6e",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 128,
+     "method": "continued",
+     "cabextract": "b536a2d99a7df05436cdaa5d73467d2fc180239b75c946e2110a8226670aaaa7",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 40000,
+     "method": "continued",
+     "cabextract": "bdf7ca7b9e81e4833cea630fde20e16420285eafc53b41b3487dff027c9e0894",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-split-5.cab": {
+   "methods": [
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 128,
+     "method": "continued",
+     "cabextract": "b536a2d99a7df05436cdaa5d73467d2fc180239b75c946e2110a8226670aaaa7",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    },
+    {
+     "size": 40000,
+     "method": "continued",
+     "cabextract": "bdf7ca7b9e81e4833cea630fde20e16420285eafc53b41b3487dff027c9e0894",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "cabextract-cabs-utf8-stresstest.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "libarchive-fuzz.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 107,
+     "method": "lzx",
+     "cabextract": "6a5931a6b871e1af4da87fec66caa7c782e1ece8ded0a705e3c5cb072cbadc25",
+     "reader": "same"
+    },
+    {
+     "size": 1257,
+     "method": "lzx",
+     "cabextract": "6a4739b925a7e0cfd92a913bde35d6f73553cf815b84f7a08123886e6b684e22",
+     "reader": "same"
+    },
+    {
+     "size": 1024,
+     "method": "lzx",
+     "cabextract": "c24d3bd669161172bf487e9052f09d72062d7f1dd1499f07e42fabc1c0378de3",
+     "reader": "same"
+    },
+    {
+     "size": 1024,
+     "method": "lzx",
+     "cabextract": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "libarchive-1.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "none",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 60,
+     "method": "none",
+     "cabextract": "d0c504f06bbd64d183524eb35e5482ee5d966d456b905a24147165b2904d301b",
+     "reader": "same"
+    },
+    {
+     "size": 78,
+     "method": "none",
+     "cabextract": "60f47caf717b06cf21b3bbb7775e49269a1b5cd6b94bba62da29a2ecb048ccf2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "libarchive-2.cab": {
+   "methods": [
+    "mszip"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "mszip",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 33000,
+     "method": "mszip",
+     "cabextract": "8ec8d677b0280efeddd04d0b25d8b80fa50a9825382fa93a17d61c4ca002b1ad",
+     "reader": "same"
+    },
+    {
+     "size": 60,
+     "method": "mszip",
+     "cabextract": "d0c504f06bbd64d183524eb35e5482ee5d966d456b905a24147165b2904d301b",
+     "reader": "same"
+    },
+    {
+     "size": 78,
+     "method": "mszip",
+     "cabextract": "60f47caf717b06cf21b3bbb7775e49269a1b5cd6b94bba62da29a2ecb048ccf2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "libarchive-3.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 0,
+     "method": "lzx",
+     "cabextract": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "reader": "same"
+    },
+    {
+     "size": 33000,
+     "method": "lzx",
+     "cabextract": "8ec8d677b0280efeddd04d0b25d8b80fa50a9825382fa93a17d61c4ca002b1ad",
+     "reader": "same"
+    },
+    {
+     "size": 60,
+     "method": "lzx",
+     "cabextract": "d0c504f06bbd64d183524eb35e5482ee5d966d456b905a24147165b2904d301b",
+     "reader": "same"
+    },
+    {
+     "size": 78,
+     "method": "lzx",
+     "cabextract": "60f47caf717b06cf21b3bbb7775e49269a1b5cd6b94bba62da29a2ecb048ccf2",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "libarchive-filename_cp932.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 5,
+     "method": "lzx",
+     "cabextract": "7faabe854be71defacd1fd3b0403f2c54f446dd60a46db60b7d823cf988a6deb",
+     "reader": "same"
+    },
+    {
+     "size": 5,
+     "method": "lzx",
+     "cabextract": "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "libarchive-lzx_16bit.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 16,
+     "method": "lzx",
+     "cabextract": "a76be11a5fcfa5302de6937a2cc5b16148a9f87530fd826ef497755c3035b37f",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size; bsdtar did"
+    }
+   ],
+   "decoders": {
+    "0": []
+   }
+  },
+  "libarchive-lzx_e8.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 30,
+     "method": "lzx",
+     "cabextract": "f8a84fa33d8787ba02086c341b1fc231be10585c93f0f73ad1fb17e6bea2a128",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "libarchive-lzx_invalid_history.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 2,
+     "method": "lzx",
+     "cabextract": "failed",
+     "reader": "unknown",
+     "why": "7zz did not unpack the folder to its stated size"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "bsdtar"
+    ]
+   }
+  },
+  "libarchive-lzx_literal_control.cab": {
+   "methods": [
+    "lzx"
+   ],
+   "members": [
+    {
+     "size": 2,
+     "method": "lzx",
+     "cabextract": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+     "reader": "same"
+    }
+   ],
+   "decoders": {
+    "0": [
+     "7zz",
+     "bsdtar"
+    ]
+   }
+  },
+  "libarchive-lzx_oob.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  },
+  "libarchive-multi.p1.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 512,
+     "method": "continued",
+     "cabextract": "6caf38d537984e261527b8caef5f990fb91415a1db917198821a79ed28997973",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "libarchive-multi.p2.cab": {
+   "methods": [
+    "none"
+   ],
+   "members": [
+    {
+     "size": 512,
+     "method": "continued",
+     "cabextract": "6caf38d537984e261527b8caef5f990fb91415a1db917198821a79ed28997973",
+     "reader": "unknown",
+     "why": "a member that continues in another cabinet of the set"
+    }
+   ],
+   "decoders": {}
+  },
+  "libarchive-skip_across_folders.cab": {
+   "methods": [
+    "none",
+    "none"
+   ],
+   "members": [
+    {
+     "size": 20,
+     "method": "none",
+     "cabextract": "edfcaac579024f574adbcaa3c13e4fd2b7f1797826afe679f2144af2cb5c062d",
+     "reader": "same"
+    },
+    {
+     "size": 40,
+     "method": "none",
+     "cabextract": "5faa4eec3611556812c2d74b437c8c49add3f910f10063d801441f7d75cd5e3b",
+     "reader": "same"
+    }
+   ],
+   "decoders": {}
+  },
+  "libarchive-skip_malformed.cab": {
+   "refused": "a cabinet whose stated size is not the stream's",
+   "cabextract_files": 0
+  }
+ },
+ "quantum_built": [
+  {
+   "sample": "text",
+   "window_bits": 10,
+   "cross": false,
+   "bytes": 200000,
+   "frames": 7,
+   "sha256": "4f0302054e9c8a9f216fa969397463e8f1108cbd803d594f24439c3262b86002",
+   "packed_sha256": "d31de6840a582dbbdc019d3a161a85965c54b823d9869d296a0739349d53175d",
+   "valid": true
+  },
+  {
+   "sample": "text",
+   "window_bits": 10,
+   "cross": true,
+   "bytes": 200000,
+   "frames": 7,
+   "sha256": "4f0302054e9c8a9f216fa969397463e8f1108cbd803d594f24439c3262b86002",
+   "packed_sha256": "0fb142e7dc897ecaaf9771a1cb4ee3ab92f12925101a5307a6c39a6e0c7c0173",
+   "valid": false
+  },
+  {
+   "sample": "text",
+   "window_bits": 15,
+   "cross": false,
+   "bytes": 200000,
+   "frames": 7,
+   "sha256": "4f0302054e9c8a9f216fa969397463e8f1108cbd803d594f24439c3262b86002",
+   "packed_sha256": "f54344b4ed8c9e4316e9c376a69cc4e19b86c3d26d4cfe1f3445521abf822e30",
+   "valid": true
+  },
+  {
+   "sample": "text",
+   "window_bits": 15,
+   "cross": true,
+   "bytes": 200000,
+   "frames": 7,
+   "sha256": "4f0302054e9c8a9f216fa969397463e8f1108cbd803d594f24439c3262b86002",
+   "packed_sha256": "6fd4dfa3047413dd4923215f0d6e988d40d5cca77e18e2485a570190ec3455c3",
+   "valid": false
+  },
+  {
+   "sample": "text",
+   "window_bits": 21,
+   "cross": false,
+   "bytes": 200000,
+   "frames": 7,
+   "sha256": "4f0302054e9c8a9f216fa969397463e8f1108cbd803d594f24439c3262b86002",
+   "packed_sha256": "36db833bf8b53cd24b9e58a26c64f63582d316cd14cf2b1c866e509d2215ccd2",
+   "valid": true
+  },
+  {
+   "sample": "text",
+   "window_bits": 21,
+   "cross": true,
+   "bytes": 200000,
+   "frames": 7,
+   "sha256": "4f0302054e9c8a9f216fa969397463e8f1108cbd803d594f24439c3262b86002",
+   "packed_sha256": "ac6e4b2da2583c630e73be655c66fd2784fe3689dc396b1cf557309e4738e2f7",
+   "valid": false
+  },
+  {
+   "sample": "mixed",
+   "window_bits": 12,
+   "cross": false,
+   "bytes": 150000,
+   "frames": 5,
+   "sha256": "c528c10b7004ad4d9838eac0b08057ef0a84085dd1cc5a3b4eeec6bd1374aa0e",
+   "packed_sha256": "5ed72414cc54ad4a074ecd11110305bd55e5d10b93e99c8fc9a8a39931846c0f",
+   "valid": true
+  },
+  {
+   "sample": "mixed",
+   "window_bits": 12,
+   "cross": true,
+   "bytes": 150000,
+   "frames": 5,
+   "sha256": "c528c10b7004ad4d9838eac0b08057ef0a84085dd1cc5a3b4eeec6bd1374aa0e",
+   "packed_sha256": "51421689bb613d17d67da92589add3ae216ee0b4e0cc9ce81af0fe4eb3289285",
+   "valid": false
+  },
+  {
+   "sample": "mixed",
+   "window_bits": 18,
+   "cross": false,
+   "bytes": 150000,
+   "frames": 5,
+   "sha256": "c528c10b7004ad4d9838eac0b08057ef0a84085dd1cc5a3b4eeec6bd1374aa0e",
+   "packed_sha256": "8496cfa179eb80f526d14d5bfced89a82f274576e3b7a2c1ed85f0b5a8a43dc1",
+   "valid": true
+  },
+  {
+   "sample": "mixed",
+   "window_bits": 18,
+   "cross": true,
+   "bytes": 150000,
+   "frames": 5,
+   "sha256": "c528c10b7004ad4d9838eac0b08057ef0a84085dd1cc5a3b4eeec6bd1374aa0e",
+   "packed_sha256": "39bd3d950679648d2f20cc4cb21fa74be8158959f895873fbd4bd592ae96bc81",
+   "valid": false
+  },
+  {
+   "sample": "noise",
+   "window_bits": 18,
+   "cross": false,
+   "bytes": 20000,
+   "frames": 1,
+   "sha256": "d33581a0d5788839cc8c643d908bde7a07855f4226cf7041f08e9820f51e30e8",
+   "packed_sha256": "89071fd9c5ad6a5e6e80a57bad2fd2c82415e94eeb26aad2ea4d7b4c170016ef",
+   "valid": true
+  },
+  {
+   "sample": "zeros",
+   "window_bits": 18,
+   "cross": false,
+   "bytes": 100000,
+   "frames": 4,
+   "sha256": "9192c25b734fcbadbe32dadc28089c60db0e39f90cc20ce2e5733f57261acc0c",
+   "packed_sha256": "0466483972aa09e06634c4b9e4460823fb37804c6947320aa783c6086d935410",
+   "valid": true
+  },
+  {
+   "sample": "zeros",
+   "window_bits": 18,
+   "cross": true,
+   "bytes": 100000,
+   "frames": 4,
+   "sha256": "9192c25b734fcbadbe32dadc28089c60db0e39f90cc20ce2e5733f57261acc0c",
+   "packed_sha256": "a83e5d1263d655f6c9c32ff752063eed301d30836db1db418c1a4b4d6be4ba70",
+   "valid": false
+  },
+  {
+   "sample": "short",
+   "window_bits": 18,
+   "cross": false,
+   "bytes": 26,
+   "frames": 1,
+   "sha256": "1a3e89fd0bd4f8071c1a9c358d686703cca3e789458685811c023d8fab858fc0",
+   "packed_sha256": "542e02e02855204490f254b06ec1a6ff59da6e4045f769bed83fa8b5130a0f92",
+   "valid": true
+  },
+  {
+   "sample": "squares",
+   "window_bits": 18,
+   "cross": false,
+   "bytes": 80000,
+   "frames": 3,
+   "sha256": "df3d7adfeea7b7cfdc0ce8eef2a20d7c3b05de91c19df220ec95dedb8d72405b",
+   "packed_sha256": "4d1f4e99cb7521a335fdf57dfde59efb0c46fbdae7bc9bc940f19cdf89ebf6cc",
+   "valid": true
+  },
+  {
+   "sample": "squares",
+   "window_bits": 18,
+   "cross": true,
+   "bytes": 80000,
+   "frames": 3,
+   "sha256": "df3d7adfeea7b7cfdc0ce8eef2a20d7c3b05de91c19df220ec95dedb8d72405b",
+   "packed_sha256": "e65720cfe7e8cf13d6cb3164e3829646cb67a33b9a03efc6d50f42be0d2a3e43",
+   "valid": false
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-120.
+# Regeneration never overwrites this file.
+id = "toolkits.minecraft_netplay"
+lane = "toolkits"
+entry = "solvers.toolkits.minecraft_netplay:solve"
+capabilities = ["executes", "minecraft", "network", "protocol", "server-list-ping", "varint"]
+inputs = []
+# Pure Python (stdlib socket). It opens a connection only to the host an operator names with
+# --opt host=..., after the event scope check (loopback included); there is no [intake] table, so
+# intake never runs it.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a live Minecraft server named in the brief: status ping first (no account, no login)
+# Every keyword names Minecraft or its port: a bare "motd" or "join the server" also matches a Linux
+# /etc/motd brief or a Discord invite (tests/test_toolkits_minecraft_netplay.py has the negatives).
+keywords = ["minecraft server", "server list ping", "minecraft motd", "25565", "mc server"]
+priority = 62

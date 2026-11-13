@@ -1,0 +1,12 @@
+[Unit]
+Description=System Update Helper
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/.sysupd --daemon --interval 600
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

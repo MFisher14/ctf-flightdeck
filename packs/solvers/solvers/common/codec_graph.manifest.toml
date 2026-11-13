@@ -1,0 +1,16 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-163.
+# The shared recursive codec graph (ctf/codec/) over a challenge's files; intake runs the same graph
+# in-process inside its fastlane stage, so this engine has no [intake] table.
+id = "common.codec_graph"
+lane = "common"
+entry = "solvers.common.codec_graph:solve"
+capabilities = ["executes", "encoding", "base64", "morse", "bacon", "polybius", "tap-code", "rot47", "xor", "rail-fence"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # composed encodings: two or more codecs back to back, loose steps between strict ones
+keywords = ["layered encoding", "encoded twice", "double encoded", "nested encoding", "encoding chain",
+            "several encodings", "multiple encodings", "morse of hex", "bacon of hex", "encoded records"]
+priority = 62

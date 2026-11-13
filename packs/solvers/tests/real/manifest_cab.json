@@ -1,0 +1,725 @@
+{
+ "files": [
+  {
+   "name": "mspack-cabd-bad_folderindex.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/bad_folderindex.cab",
+   "source": "libmspack",
+   "bytes": 253,
+   "sha256": "011e30c814ac61aadfca88c415a379baff9e2e7639b0cbcb38b421d767474a8e"
+  },
+  {
+   "name": "mspack-cabd-bad_nofiles.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/bad_nofiles.cab",
+   "source": "libmspack",
+   "bytes": 253,
+   "sha256": "49040cb133f2dbe06158eb5672c66a116ec3a4a58e5d237e0a88a691279bc31f"
+  },
+  {
+   "name": "mspack-cabd-bad_nofolders.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/bad_nofolders.cab",
+   "source": "libmspack",
+   "bytes": 253,
+   "sha256": "23170315f2cf83f2774f6735663fb07f719bc0e488249303f939392fd99a11a3"
+  },
+  {
+   "name": "mspack-cabd-bad_signature.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/bad_signature.cab",
+   "source": "libmspack",
+   "bytes": 37,
+   "sha256": "7b6c118991a4e97918e9696a4cd1cee76158e73293f59c3d619cc190661e3f3d"
+  },
+  {
+   "name": "mspack-cabd-cve-2010-2800-mszip-infinite-loop.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2010-2800-mszip-infinite-loop.cab",
+   "source": "libmspack",
+   "bytes": 85,
+   "sha256": "3b93f97710a8d2361ae6464f5888abafd622732f4913c27c517578e06c256fa9"
+  },
+  {
+   "name": "mspack-cabd-cve-2014-9556-qtm-infinite-loop.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2014-9556-qtm-infinite-loop.cab",
+   "source": "libmspack",
+   "bytes": 268,
+   "sha256": "2e6f57d26e12f3f1c0f1f968d7ebb92e77ea7720ea6f9e18f11eb00ef0e845ad"
+  },
+  {
+   "name": "mspack-cabd-cve-2014-9732-folders-segfault.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2014-9732-folders-segfault.cab",
+   "source": "libmspack",
+   "bytes": 116,
+   "sha256": "f4d8514c2a8352b8fb13be896fb3179662e0cef36c58312bf8f775e1663d07fe"
+  },
+  {
+   "name": "mspack-cabd-cve-2015-4470-mszip-over-read.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2015-4470-mszip-over-read.cab",
+   "source": "libmspack",
+   "bytes": 212,
+   "sha256": "24e64dd19eb6fba1cac21017bf38327acd773453d1b8fe77b27bf7a06237f32a"
+  },
+  {
+   "name": "mspack-cabd-cve-2015-4471-lzx-under-read.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2015-4471-lzx-under-read.cab",
+   "source": "libmspack",
+   "bytes": 152,
+   "sha256": "4afbf92314b20625970123acc9dc9682b745765ce16ae1e08ae857e333c74e85"
+  },
+  {
+   "name": "mspack-cabd-cve-2017-11423-fname-overread.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2017-11423-fname-overread.cab",
+   "source": "libmspack",
+   "bytes": 332,
+   "sha256": "d9e678ce8f43a107ab03aa2c8298a1eca083ca4fc089863dcdeebe2b11c1b35c"
+  },
+  {
+   "name": "mspack-cabd-cve-2018-18584-qtm-max-size-block.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/cve-2018-18584-qtm-max-size-block.cab",
+   "source": "libmspack",
+   "bytes": 38990,
+   "sha256": "3ba0c719d8fb12dc531e2a7790c2d15c12d8840de8e4ddc60572c4145181fbf4"
+  },
+  {
+   "name": "mspack-cabd-filename-read-violation-1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/filename-read-violation-1.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "56680e32a66c070dcb3cedf6140bd921570ca66681f631c16f435348c7ab9f9a"
+  },
+  {
+   "name": "mspack-cabd-filename-read-violation-2.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/filename-read-violation-2.cab",
+   "source": "libmspack",
+   "bytes": 78,
+   "sha256": "7c3cfb546f22e9c0a58e83801b267743dabb1cbcff54608c4e2a970eacb4799f"
+  },
+  {
+   "name": "mspack-cabd-filename-read-violation-3.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/filename-read-violation-3.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "0d4ab17615d0f04875534f793058508bf2a15da6ea50316628e230cd2ded0e9f"
+  },
+  {
+   "name": "mspack-cabd-filename-read-violation-4.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/filename-read-violation-4.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "3ada151c203d355ace5eec86396c9f07c7abc12b73b4cacea028a353a446b136"
+  },
+  {
+   "name": "mspack-cabd-hidden-file-bad-folderid.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/hidden-file-bad-folderid.cab",
+   "source": "libmspack",
+   "bytes": 80,
+   "sha256": "e277b01f4bc0bb11ad62d140ab22878b67b505a12f2446d314fa125e975a661a"
+  },
+  {
+   "name": "mspack-cabd-hidden-file-beyond-eof.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/hidden-file-beyond-eof.cab",
+   "source": "libmspack",
+   "bytes": 62,
+   "sha256": "b3895a03e82bca7bafcf4e51e09f00ce5d8ed17cf2d77066b5030ac2a1e0f170"
+  },
+  {
+   "name": "mspack-cabd-hidden-files.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/hidden-files.cab",
+   "source": "libmspack",
+   "bytes": 164,
+   "sha256": "33e5e45dfc4907184c204fcd97917924983d34a3b0b50898c8df020e2cba6b36"
+  },
+  {
+   "name": "mspack-cabd-lzx-main-tree-no-lengths.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/lzx-main-tree-no-lengths.cab",
+   "source": "libmspack",
+   "bytes": 93,
+   "sha256": "fd0ce6a326f735e4ad4bad8704f515a9eea9a0317e2a3b3c535ae3a15ca7d434"
+  },
+  {
+   "name": "mspack-cabd-lzx-premature-matches.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/lzx-premature-matches.cab",
+   "source": "libmspack",
+   "bytes": 125,
+   "sha256": "09f25f73b76058196f27486dbb3ca4ff8f57d5cba5f548db727844155b911244"
+  },
+  {
+   "name": "mspack-cabd-mszip_lzx_qtm.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/mszip_lzx_qtm.cab",
+   "source": "libmspack",
+   "bytes": 379,
+   "sha256": "0ce0b55fe705b744d41bb361170c0467db30da0c7f9bdd386d5dade71a78e171"
+  },
+  {
+   "name": "mspack-cabd-multi_basic_pt1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/multi_basic_pt1.cab",
+   "source": "libmspack",
+   "bytes": 221,
+   "sha256": "3658aaf68b0d538a5b321919f1de3eb1bcc258cba44e97b07a1938230995c632"
+  },
+  {
+   "name": "mspack-cabd-multi_basic_pt2.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/multi_basic_pt2.cab",
+   "source": "libmspack",
+   "bytes": 274,
+   "sha256": "ce5fac4470fb850ae593de70ab03d3493069b77f8f81376216768bbf74e52321"
+  },
+  {
+   "name": "mspack-cabd-multi_basic_pt3.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/multi_basic_pt3.cab",
+   "source": "libmspack",
+   "bytes": 274,
+   "sha256": "e58b57f63ac0858effa75ceb6f242b447fbce6a910d3840c37228fdbc9e7bc95"
+  },
+  {
+   "name": "mspack-cabd-multi_basic_pt4.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/multi_basic_pt4.cab",
+   "source": "libmspack",
+   "bytes": 274,
+   "sha256": "fbcd45e503c3cffd5f5946ccc45bbc46b9884fe47abef7d09247154c7f8148fb"
+  },
+  {
+   "name": "mspack-cabd-multi_basic_pt5.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/multi_basic_pt5.cab",
+   "source": "libmspack",
+   "bytes": 221,
+   "sha256": "16ebbb274c8dc09f98415795212683b9ea8b2d6450080a79ab63cd5cdbac7cc4"
+  },
+  {
+   "name": "mspack-cabd-normal_255c_filename.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/normal_255c_filename.cab",
+   "source": "libmspack",
+   "bytes": 331,
+   "sha256": "fb9bba673ed309eeafcee77c6194a3b9c9baaa54b47a1999f1b280c21f29a7ef"
+  },
+  {
+   "name": "mspack-cabd-normal_2files_1folder.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/normal_2files_1folder.cab",
+   "source": "libmspack",
+   "bytes": 253,
+   "sha256": "590791307b407a6ec6d885542952b7eb6575defde68e06d25bac4f41a9b634fd"
+  },
+  {
+   "name": "mspack-cabd-normal_2files_2folders.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/normal_2files_2folders.cab",
+   "source": "libmspack",
+   "bytes": 285,
+   "sha256": "fad633b3f88add4d2852e6da3dabf8e12d0c0a32df42ce16512f68908a4b0d1e"
+  },
+  {
+   "name": "mspack-cabd-partial_nodata.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_nodata.cab",
+   "source": "libmspack",
+   "bytes": 94,
+   "sha256": "e7ba7901e4b38a64d6c8fb49e8ba77a13308beaba061a77ad747181766f1e6c1"
+  },
+  {
+   "name": "mspack-cabd-partial_nofiles.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_nofiles.cab",
+   "source": "libmspack",
+   "bytes": 44,
+   "sha256": "2d1980b8cbe9857ae39b62fad9168a96fc30810d8729fc9a92e1319089c12795"
+  },
+  {
+   "name": "mspack-cabd-partial_nofolder.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_nofolder.cab",
+   "source": "libmspack",
+   "bytes": 36,
+   "sha256": "88ab2bb7a6f7d1a2e59ad3badbe3687651589b81a4b6c05b14e6b388bdba0712"
+  },
+  {
+   "name": "mspack-cabd-partial_shortextheader.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_shortextheader.cab",
+   "source": "libmspack",
+   "bytes": 38,
+   "sha256": "ff3bd292ab019824c92278ca63b24d57f4040345bd1c05f64fb7184d07b0d4ab"
+  },
+  {
+   "name": "mspack-cabd-partial_shortfile1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_shortfile1.cab",
+   "source": "libmspack",
+   "bytes": 59,
+   "sha256": "d5bfee6000d8c0471d1f1db67223abaaa2ec99031cb47b7a4c9994b07d5e1344"
+  },
+  {
+   "name": "mspack-cabd-partial_shortfile2.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_shortfile2.cab",
+   "source": "libmspack",
+   "bytes": 83,
+   "sha256": "29cf5a97b404e014a0bc143a43f02ff208b19203419a655645def6d5296dcd4f"
+  },
+  {
+   "name": "mspack-cabd-partial_shortfolder.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_shortfolder.cab",
+   "source": "libmspack",
+   "bytes": 43,
+   "sha256": "4c143f002ce619e66bedecd2fae7046db133b42ff6d0f48194ab9a2fb4144395"
+  },
+  {
+   "name": "mspack-cabd-partial_shortheader.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_shortheader.cab",
+   "source": "libmspack",
+   "bytes": 35,
+   "sha256": "f55c6dd28b5939a09bccdf5b7e7ae0aea129603e0d6df019d021fbc7987bdad9"
+  },
+  {
+   "name": "mspack-cabd-partial_str_nofname.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_nofname.cab",
+   "source": "libmspack",
+   "bytes": 134,
+   "sha256": "29001eeaa397db3c854c224fffefcd135122b6de009ce28036184aef54179d58"
+  },
+  {
+   "name": "mspack-cabd-partial_str_noninfo.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_noninfo.cab",
+   "source": "libmspack",
+   "bytes": 85,
+   "sha256": "6d337b13d02e8e3aca210ebe8f30bdc328ba313a7071fb32fbd9674479f93042"
+  },
+  {
+   "name": "mspack-cabd-partial_str_nonname.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_nonname.cab",
+   "source": "libmspack",
+   "bytes": 73,
+   "sha256": "3999099ea8a3cdb2db30cba01ea9d30273ab68efbfe2f52015483b01e75c03d8"
+  },
+  {
+   "name": "mspack-cabd-partial_str_nopinfo.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_nopinfo.cab",
+   "source": "libmspack",
+   "bytes": 48,
+   "sha256": "6ad5d7542828b72dce21166d4a8acdaebf04e5505cb24d95962d30d496be3b05"
+  },
+  {
+   "name": "mspack-cabd-partial_str_nopname.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_nopname.cab",
+   "source": "libmspack",
+   "bytes": 36,
+   "sha256": "2ae2295fed585e5fd9e042b6ab16d0f3f782a20ade3a011f23e74c295176dfb9"
+  },
+  {
+   "name": "mspack-cabd-partial_str_shortfname.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_shortfname.cab",
+   "source": "libmspack",
+   "bytes": 146,
+   "sha256": "933d3aee0b789fa47319d3b60713d45b7f80127693e02e753e1f9cf48d0a5879"
+  },
+  {
+   "name": "mspack-cabd-partial_str_shortninfo.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_shortninfo.cab",
+   "source": "libmspack",
+   "bytes": 109,
+   "sha256": "0602b07c20fce311714d74d682870699a1900667eeb75acb1b2500e23087ca99"
+  },
+  {
+   "name": "mspack-cabd-partial_str_shortnname.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_shortnname.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "95d239ae300e38b99defba95f909a7ad8b106a42116a1d075d71234f437a670d"
+  },
+  {
+   "name": "mspack-cabd-partial_str_shortpinfo.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_shortpinfo.cab",
+   "source": "libmspack",
+   "bytes": 72,
+   "sha256": "1963ef2a0a09a8e9ffab85ab226e0c3ca451b59feabe78ed8f277a3751ec113f"
+  },
+  {
+   "name": "mspack-cabd-partial_str_shortpname.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/partial_str_shortpname.cab",
+   "source": "libmspack",
+   "bytes": 47,
+   "sha256": "41eaba6617f2d5c3e76067f46cff9069df0779c4b78da1dad078e2d132f8f060"
+  },
+  {
+   "name": "mspack-cabd-reserve_---.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_---.cab",
+   "source": "libmspack",
+   "bytes": 126,
+   "sha256": "00c218c33684a7548b2f883dc71b36eb910abc0e938038d7e967553cfeb5b00f"
+  },
+  {
+   "name": "mspack-cabd-reserve_--D.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_--D.cab",
+   "source": "libmspack",
+   "bytes": 174,
+   "sha256": "c76611d6f84a8a14b4fbf6c2117a6a9bff4dcb448afd7e0019a2d158f5849713"
+  },
+  {
+   "name": "mspack-cabd-reserve_-F-.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_-F-.cab",
+   "source": "libmspack",
+   "bytes": 152,
+   "sha256": "093f71c2ce79223a5c6b8d68eea5e0bbd5c66c81d21c1a338a069b0b6f6553a6"
+  },
+  {
+   "name": "mspack-cabd-reserve_-FD.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_-FD.cab",
+   "source": "libmspack",
+   "bytes": 200,
+   "sha256": "238a611079c5d141fa8807ac51d21759cde994dfbccf1b94984b08b8da383b3a"
+  },
+  {
+   "name": "mspack-cabd-reserve_H--.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_H--.cab",
+   "source": "libmspack",
+   "bytes": 152,
+   "sha256": "2b5160a4865a0a7e2054e892389969a0a9894b62aa73b54810f330a43f66dcbf"
+  },
+  {
+   "name": "mspack-cabd-reserve_H-D.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_H-D.cab",
+   "source": "libmspack",
+   "bytes": 200,
+   "sha256": "c8bd7b0ecec2a3137a7983d42ecf600f4b3c7a33821537d2e0990bda511d3402"
+  },
+  {
+   "name": "mspack-cabd-reserve_HF-.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_HF-.cab",
+   "source": "libmspack",
+   "bytes": 178,
+   "sha256": "d1ea378d26017c4ce1e6843eb662872d01a3620840f3c3ebbc99b3569100f821"
+  },
+  {
+   "name": "mspack-cabd-reserve_HFD.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/reserve_HFD.cab",
+   "source": "libmspack",
+   "bytes": 226,
+   "sha256": "c5c9cf32c25e83bd336efbee5be0afe18cf4c87644ca682a7c97f815f808c8ab"
+  },
+  {
+   "name": "mspack-cabd-search_basic.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/search_basic.cab",
+   "source": "libmspack",
+   "bytes": 524,
+   "sha256": "187abf012189d595f68709ee0358fdecb91204d28f94aea984b5222878e15447"
+  },
+  {
+   "name": "mspack-cabd-search_tricky1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/libmspack/test/test_files/cabd/search_tricky1.cab",
+   "source": "libmspack",
+   "bytes": 257,
+   "sha256": "93b66b341aea74a9812509d62fedc74b92fa4deb8636b71821e128ba141f3cc6"
+  },
+  {
+   "name": "cabextract-cabs-case-ascii.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/case-ascii.cab",
+   "source": "libmspack",
+   "bytes": 162,
+   "sha256": "229d7bde6ee3cb8467d1cdd13f3bd0ed28d8cf1cec85b51da15cd0ca4a5cee5c"
+  },
+  {
+   "name": "cabextract-cabs-case-utf8.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/case-utf8.cab",
+   "source": "libmspack",
+   "bytes": 578,
+   "sha256": "a8c2571bf2c5d8e96236cf1d00c36a8715dae935ac9b470d3925b380fa2b3017"
+  },
+  {
+   "name": "cabextract-cabs-dir.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/dir.cab",
+   "source": "libmspack",
+   "bytes": 253,
+   "sha256": "f0ad92527041c0bc4c1818aff7c703420f27fe22738e951965749486aa0e0a71"
+  },
+  {
+   "name": "cabextract-cabs-dirwalk-vulns.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/dirwalk-vulns.cab",
+   "source": "libmspack",
+   "bytes": 1244,
+   "sha256": "eae6754e0c7806ed6da986454b369b058f0ce1d47fc18004284458b38faee630"
+  },
+  {
+   "name": "cabextract-cabs-encoding-koi8.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/encoding-koi8.cab",
+   "source": "libmspack",
+   "bytes": 175,
+   "sha256": "70c24433688db02d58c0059e13d14e7c395401f345ac08175982ca0152931341"
+  },
+  {
+   "name": "cabextract-cabs-encoding-latin1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/encoding-latin1.cab",
+   "source": "libmspack",
+   "bytes": 199,
+   "sha256": "1fe684f2f1f89b3daba923973dd194e481ca537df7bf7b1fc5954f8806dcf8f1"
+  },
+  {
+   "name": "cabextract-cabs-encoding-sjis.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/encoding-sjis.cab",
+   "source": "libmspack",
+   "bytes": 463,
+   "sha256": "404dbbf9f3a0ad8e9824ab9a3fc7638d53c32dfda87c923416c7fe89476b4cff"
+  },
+  {
+   "name": "cabextract-cabs-large-files-cab.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/large-files-cab.cab",
+   "source": "libmspack",
+   "bytes": 26554,
+   "sha256": "7137966abdffca1c3cfcf4119bc5a6d2f91f2e546e98f3a2ee013f9aa33b93df"
+  },
+  {
+   "name": "cabextract-cabs-mixed.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/mixed.cab",
+   "source": "libmspack",
+   "bytes": 379,
+   "sha256": "0ce0b55fe705b744d41bb361170c0467db30da0c7f9bdd386d5dade71a78e171"
+  },
+  {
+   "name": "cabextract-cabs-search.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/search.cab",
+   "source": "libmspack",
+   "bytes": 3031,
+   "sha256": "aa4a34924fbe48aa9bff08edc32f7742b9dad0e4cda51fdbd345fba1de2b7467"
+  },
+  {
+   "name": "cabextract-cabs-simple.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/simple.cab",
+   "source": "libmspack",
+   "bytes": 253,
+   "sha256": "590791307b407a6ec6d885542952b7eb6575defde68e06d25bac4f41a9b634fd"
+  },
+  {
+   "name": "cabextract-cabs-split-1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/split-1.cab",
+   "source": "libmspack",
+   "bytes": 30000,
+   "sha256": "802de38233dbdeb5ff006c14e62c504740320385f16f1db63bcef4811c768413"
+  },
+  {
+   "name": "cabextract-cabs-split-2.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/split-2.cab",
+   "source": "libmspack",
+   "bytes": 30000,
+   "sha256": "e364408c0549b8845d929e1d5b85cd8ae53dc7216382fd935f8adad9a1e5f55f"
+  },
+  {
+   "name": "cabextract-cabs-split-3.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/split-3.cab",
+   "source": "libmspack",
+   "bytes": 30000,
+   "sha256": "567fff7f7029129643072f62b9ef1256dbfd1e45f8707936cd30f8b735571a71"
+  },
+  {
+   "name": "cabextract-cabs-split-4.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/split-4.cab",
+   "source": "libmspack",
+   "bytes": 30000,
+   "sha256": "a3589cdf11e420c39b3e32162d7b59135bb0863dab54eb19a2abb987a7c1f266"
+  },
+  {
+   "name": "cabextract-cabs-split-5.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/split-5.cab",
+   "source": "libmspack",
+   "bytes": 22150,
+   "sha256": "fc9ed6b84b2d766019cc8b314ce0199d06f907225fe3604fbfbfafafdb449447"
+  },
+  {
+   "name": "cabextract-cabs-utf8-stresstest.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/cabs/utf8-stresstest.cab",
+   "source": "libmspack",
+   "bytes": 1995,
+   "sha256": "73c6bd0ff6fabf2d702a48ad286cb642aad14e8807384e0f9de72601c84eae20"
+  },
+  {
+   "name": "cabextract-bugs-cve-2010-2800-mszip-infinite-loop.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/cve-2010-2800-mszip-infinite-loop.cab",
+   "source": "libmspack",
+   "bytes": 85,
+   "sha256": "3b93f97710a8d2361ae6464f5888abafd622732f4913c27c517578e06c256fa9"
+  },
+  {
+   "name": "cabextract-bugs-cve-2010-2801-qtm-flush.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/cve-2010-2801-qtm-flush.cab",
+   "source": "libmspack",
+   "bytes": 285,
+   "sha256": "78bb4c9540e36d3d4228e22cdff0a5677f9c2dddc4239c322277d0b9125d8364"
+  },
+  {
+   "name": "cabextract-bugs-cve-2014-9556-qtm-infinite-loop.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/cve-2014-9556-qtm-infinite-loop.cab",
+   "source": "libmspack",
+   "bytes": 268,
+   "sha256": "2e6f57d26e12f3f1c0f1f968d7ebb92e77ea7720ea6f9e18f11eb00ef0e845ad"
+  },
+  {
+   "name": "cabextract-bugs-cve-2014-9732-folders-segfault.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/cve-2014-9732-folders-segfault.cab",
+   "source": "libmspack",
+   "bytes": 116,
+   "sha256": "f4d8514c2a8352b8fb13be896fb3179662e0cef36c58312bf8f775e1663d07fe"
+  },
+  {
+   "name": "cabextract-bugs-cve-2015-4470-mszip-over-read.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/cve-2015-4470-mszip-over-read.cab",
+   "source": "libmspack",
+   "bytes": 212,
+   "sha256": "24e64dd19eb6fba1cac21017bf38327acd773453d1b8fe77b27bf7a06237f32a"
+  },
+  {
+   "name": "cabextract-bugs-cve-2015-4471-lzx-under-read.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/cve-2015-4471-lzx-under-read.cab",
+   "source": "libmspack",
+   "bytes": 152,
+   "sha256": "4afbf92314b20625970123acc9dc9682b745765ce16ae1e08ae857e333c74e85"
+  },
+  {
+   "name": "cabextract-bugs-filename-read-violation-1.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/filename-read-violation-1.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "56680e32a66c070dcb3cedf6140bd921570ca66681f631c16f435348c7ab9f9a"
+  },
+  {
+   "name": "cabextract-bugs-filename-read-violation-2.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/filename-read-violation-2.cab",
+   "source": "libmspack",
+   "bytes": 78,
+   "sha256": "7c3cfb546f22e9c0a58e83801b267743dabb1cbcff54608c4e2a970eacb4799f"
+  },
+  {
+   "name": "cabextract-bugs-filename-read-violation-3.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/filename-read-violation-3.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "0d4ab17615d0f04875534f793058508bf2a15da6ea50316628e230cd2ded0e9f"
+  },
+  {
+   "name": "cabextract-bugs-filename-read-violation-4.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/filename-read-violation-4.cab",
+   "source": "libmspack",
+   "bytes": 84,
+   "sha256": "3ada151c203d355ace5eec86396c9f07c7abc12b73b4cacea028a353a446b136"
+  },
+  {
+   "name": "cabextract-bugs-lzx-main-tree-no-lengths.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/lzx-main-tree-no-lengths.cab",
+   "source": "libmspack",
+   "bytes": 93,
+   "sha256": "fd0ce6a326f735e4ad4bad8704f515a9eea9a0317e2a3b3c535ae3a15ca7d434"
+  },
+  {
+   "name": "cabextract-bugs-lzx-premature-matches.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/lzx-premature-matches.cab",
+   "source": "libmspack",
+   "bytes": 125,
+   "sha256": "09f25f73b76058196f27486dbb3ca4ff8f57d5cba5f548db727844155b911244"
+  },
+  {
+   "name": "cabextract-bugs-qtm-max-size-block.cab",
+   "url": "https://raw.githubusercontent.com/kyz/libmspack/55d501976171397ccd5d5a7a1ca7da065b1d9a06/cabextract/test/bugs/qtm-max-size-block.cab",
+   "source": "libmspack",
+   "bytes": 38990,
+   "sha256": "3ba0c719d8fb12dc531e2a7790c2d15c12d8840de8e4ddc60572c4145181fbf4"
+  },
+  {
+   "name": "libarchive-fuzz.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_fuzz.cab.uu",
+   "source": "libarchive",
+   "bytes": 2065,
+   "sha256": "c6017283be7cf4f4f659637d15ad6e15366d15994d6b878c57b01f5cfa048cdd",
+   "sha256_uu": "d6f9aa70f30b676cec6f900bcefb9cb8fa3fa4f65150d68fa2d49c399e4d00fb"
+  },
+  {
+   "name": "libarchive-1.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_1.cab.uu",
+   "source": "libarchive",
+   "bytes": 266,
+   "sha256": "0672797c111fca020fefe1b4b86de410f0eed36b52482a5bd282527392124d0e",
+   "sha256_uu": "5e0ddc4738c068ea83d0dac1d43acd5de694db50b2782399e7dd0390d4f50a17"
+  },
+  {
+   "name": "libarchive-2.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_2.cab.uu",
+   "source": "libarchive",
+   "bytes": 245,
+   "sha256": "c1a19b9c5f0d185079292ebb7ac0378e773d5ffd92e3b118c111178200064d85",
+   "sha256_uu": "d5f8c627bad5668ff8a5c8a41a2b88f47c178b1a8643209aa8521d45dca90403"
+  },
+  {
+   "name": "libarchive-3.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_3.cab.uu",
+   "source": "libarchive",
+   "bytes": 289,
+   "sha256": "e0e679fc38b64ee633dd9d162518f498f70252a10b7670ec7932dfe750cbcea8",
+   "sha256_uu": "ff82116b0d06e09b8fc0bba05172215a3f7a9b9382f976e09af8e6720becf937"
+  },
+  {
+   "name": "libarchive-filename_cp932.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_filename_cp932.cab.uu",
+   "source": "libarchive",
+   "bytes": 148,
+   "sha256": "8ec3c22099c581595f48ad21fa2bfbdbb7026a21a9f2958375532b826e4cd805",
+   "sha256_uu": "228eb191556f4b7eba80d780616d0328a074c4a97ba6775e1d939921aae3a7e3"
+  },
+  {
+   "name": "libarchive-lzx_16bit.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_lzx_16bit.cab.uu",
+   "source": "libarchive",
+   "bytes": 130,
+   "sha256": "b4f405c3053cff3b268c666b2e87a5e516e756791f3a8fcdb2aeac472de78f39",
+   "sha256_uu": "35d4205fd1984d2b4d3dee0fcebf8966a81137bca50c783e869a4372ebfeb260"
+  },
+  {
+   "name": "libarchive-lzx_e8.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_lzx_e8.cab.uu",
+   "source": "libarchive",
+   "bytes": 125,
+   "sha256": "94e940b88b42e83f62847e728c47e4fa86bebed7f34913d8822279f618f248f8",
+   "sha256_uu": "6b28af735551e7464aeee952c12ba58cb184c9c213a3320832eca7f6433f8c80"
+  },
+  {
+   "name": "libarchive-lzx_invalid_history.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_lzx_invalid_history.cab.uu",
+   "source": "libarchive",
+   "bytes": 118,
+   "sha256": "8921c790dc52db1f5822ec21db0095b70b71b79140b13d04e1dcab0d1d0d7346",
+   "sha256_uu": "617e8d6dbc98a37a76768c04d944922904159eacf825af7262c02b6992f563b8"
+  },
+  {
+   "name": "libarchive-lzx_literal_control.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_lzx_literal_control.cab.uu",
+   "source": "libarchive",
+   "bytes": 118,
+   "sha256": "228bd4b6ed1f4f6c531434f77fb81e0c23609f334e6c1980ab16fc453df954bb",
+   "sha256_uu": "7696704fd649b84d64f074d7ab45dbfe796576b79171c8cf0e2a092133822683"
+  },
+  {
+   "name": "libarchive-lzx_oob.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_lzx_oob.cab.uu",
+   "source": "libarchive",
+   "bytes": 329,
+   "sha256": "553422109814a20be3c6f5c08ace46c2c0661e14d4d93af4161f8992810ce138",
+   "sha256_uu": "cefc31d5f730abfb75fcd81e78b5475bf796582610ed232b190f2853db664202"
+  },
+  {
+   "name": "libarchive-multi.p1.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_multi.p1.cab.uu",
+   "source": "libarchive",
+   "bytes": 512,
+   "sha256": "0dad014b11a122d08a4cb7aca1c76f8bd07cc730f0f7733bc1a885464d5ba33f",
+   "sha256_uu": "bc83508394631b8724902333d87f18cc9e12efe4af0a332e11199fab816cbc9f"
+  },
+  {
+   "name": "libarchive-multi.p2.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_multi.p2.cab.uu",
+   "source": "libarchive",
+   "bytes": 216,
+   "sha256": "4f92ee4ff26d063fd99c28b62f638982d8c6c9d9f82fabef52e8607a8ffa038d",
+   "sha256_uu": "7a98d3880671f013c868f3130144642b8248918aa8f490f1ceff336a0f185392"
+  },
+  {
+   "name": "libarchive-skip_across_folders.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_skip_across_folders.cab.uu",
+   "source": "libarchive",
+   "bytes": 164,
+   "sha256": "5f229a37e749d1eac7b6a779745739894a65fc36e116df49b2a0ffc94f386aec",
+   "sha256_uu": "f00185e72172671f4edc0dd2722bd1ea7ead1a062b58dcfceefdda47c9a1ac8d"
+  },
+  {
+   "name": "libarchive-skip_malformed.cab",
+   "url": "https://raw.githubusercontent.com/libarchive/libarchive/b8189c9b34cd7a88eb09989c349b368f99d0787a/libarchive/test/test_read_format_cab_skip_malformed.cab.uu",
+   "source": "libarchive",
+   "bytes": 4096,
+   "sha256": "97d41d21b7ced0826c890d28ae88c0e3b59b6965ad035cd5e31c4d5ecbe39cdf",
+   "sha256_uu": "260eb08ebf208febc4e3a6b560c655a335628032293f71824a2bd930ae70db04"
+  }
+ ]
+}

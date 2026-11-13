@@ -1,0 +1,19 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-241.
+# import-only: MachOImage is its main public class, not a contract entry; `ctf run` refuses library engines.
+# It maps a 64-bit Mach-O (x86-64, arm64) for the whole-image emulator: callers reach it through
+# native_image.load(data, macho=True) / native_image.emulate_symbol, which pick it by the file's magic (a plain
+# load() refuses a Mach-O, so ELF-only callers decline on one). The keyword route
+# surfaces it for a reverse challenge whose description names a macOS binary.
+id = "common.macho_image"
+lane = "common"
+entry = "solvers.common.macho_image:MachOImage"
+capabilities = ["library", "macho", "emulation"]
+inputs = ["magic:0xfeedfacf", "magic:0xcafebabe"]
+needs_tools = ["py:unicorn", "py:capstone"]
+cost_class = "medium"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["mach-o crackme", "macos crackme", "macos binary", "mach-o reverse", "dylib function"]
+priority = 44

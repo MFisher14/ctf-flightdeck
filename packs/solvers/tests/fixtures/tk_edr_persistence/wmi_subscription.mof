@@ -1,0 +1,17 @@
+instance of __EventFilter
+{
+    Name = "DailyCheck";
+    EventNamespace = "root\\cimv2";
+    QueryLanguage = "WQL";
+    Query = "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_LocalTime' AND TargetInstance.Hour = 3";
+};
+instance of CommandLineEventConsumer
+{
+    Name = "DailyCheckRunner";
+    CommandLineTemplate = "powershell.exe -w hidden -f C:\\ProgramData\\dc.ps1";
+};
+instance of __FilterToConsumerBinding
+{
+    Consumer = "CommandLineEventConsumer.Name=\"DailyCheckRunner\"";
+    Filter = "__EventFilter.Name=\"DailyCheck\"";
+};

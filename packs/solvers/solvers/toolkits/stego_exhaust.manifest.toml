@@ -1,0 +1,19 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-182.
+id = "toolkits.stego_exhaust"
+lane = "toolkits"
+entry = "solvers.toolkits.stego_exhaust:solve"
+capabilities = ["executes", "stego", "lsb", "bitplane", "png", "bmp", "gif", "jpeg", "wav", "exif", "crc", "spectrogram", "ocr", "metadata"]
+inputs = ["magic:\u0089PNG", "magic:BM", "ext:.bmp", "magic:GIF8", "magic:0xffd8ff", "ext:.jpg", "ext:.jpeg", "magic:RIFF", "ext:.wav", "ext:.webp", "ext:.tif", "ext:.tiff"]
+needs_tools = ["py:numpy", "py:PIL"]
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # B-182: a stego row with media: after the cheap readers (carve_stego 29/30, render sweep 28/31), the whole
+# catalog once, ending in a deterministic verdict (flag, open, or nothing further with every step not run named)
+category = ["stego"]
+files = ["magic:\u0089PNG", "magic:BM", "ext:.bmp", "magic:GIF8", "magic:0xffd8ff", "ext:.jpg", "ext:.jpeg", "magic:RIFF", "ext:.wav"]
+priority = 25
+
+[[routes]]  # B-182: a brief or an operator note that asks for the stego catalog to be exhausted
+keywords = ["nothing further", "stego exhaust", "exhaust the stego", "every bit plane", "all bit planes"]
+priority = 61

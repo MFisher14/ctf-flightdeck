@@ -1,0 +1,706 @@
+{
+ "sources": {
+  "h24": "ThisGuyNeedsABeer/Huntress-CTF-2024@21aba809f732fa6a0a6db420026c639dcf891e16",
+  "h25": "TheGroundZero/CTF-Huntress_2025@1d6f3d2f1f9ec50877206361ca41545a02d0cfb5",
+  "flipper": "flipperdevices/flipperzero-firmware@76bddb682f907928afab3bbd9e015bc4e3e4ee6e",
+  "rtl433": "merbanan/rtl_433_tests@1aa8c29d6b9383739d1aeed495dbc5069b704392",
+  "bincopy": "eerimoq/bincopy@57bb6cb1d56460fe1df3d30d317b2bfc260ae359",
+  "pycan": "hardbyte/python-can@b4f82abede25ff83376be793a2935c41f81c3869",
+  "icsim": "zombieCraig/ICSim@2b3333ef866987d8adc9c15ff15b9b9189edf85b",
+  "mfdread": "zhovner/mfdread@b0697dcd6a424e85e119981cc5c66214d6a0d514",
+  "zsteg": "zed-0xff/zsteg@b75b578ea13ed207561a46b8620b843c0a894422",
+  "zbar": "mchehab/zbar@2d7bada6ecc247e508640b31fe31e323731dadc1",
+  "minidump": "rust-minidump/rust-minidump@48364b0b5087db2512d2d7fc2596fac329287a41",
+  "dfvfs": "log2timeline/dfvfs@917cefc9426d6ded2687d2b55164ded25b44fcb7",
+  "rsactf": "RsaCtfTool/RsaCtfTool@c107d86e6aa87f029ce77244debb895da20522d1",
+  "cryptopals": "https://cryptopals.com/static/challenge-data/",
+  "ocatak": "ocatak/apache-http-logs@56348b7fdae416955755c2f2f12bcbda78301720",
+  "haralyzer": "haralyzer/haralyzer@29ffe0d2e26dc97b2adaa329328beb228ba8c356",
+  "elastic": "elastic/examples@6d86454ebb7a850bcd7e80abe86fe683370018a6"
+ },
+ "clones": {
+  "h24": "Huntress-CTF-2024",
+  "h25": "CTF-Huntress_2025"
+ },
+ "files": [
+  {
+   "toolkit": "rf",
+   "dest": "huntress/transmissions.wav",
+   "src": "h24:miscellaneous/1200_transmissions_COMPLETED/transmissions.wav",
+   "what": "Huntress 2024 '1200 Transmissions': minimodem --rx 1200 prints flag{f28d133e7174c412c1e39b4a84158fa3} (write-up)",
+   "sha256": "cd5c5c676b1cfb30c5a4728cddeaf2dc675f12e9ca36f79f9f731e6030cdaf98"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "huntress/maximum_sound.wav",
+   "src": "h25:day03/maximum_sound.wav",
+   "what": "Huntress 2025 'Maximum Sound': SSTV image holding a MaxiCode (write-up); 44100 Hz mono 16 bit, 4910241 frames (file)",
+   "sha256": "e2c829f3bbdf56d9967062bf0a777843ff47193e62f80b3528ddad53e726f208"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/princeton.sub",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/subghz/princeton.sub",
+   "what": "key file: Princeton, 24 bit, key 95D5D4, TE 400, 433920000 Hz (the file's own fields)",
+   "sha256": "4e58f7dfa03d0d9457f4214df1c7f62c04e4f960d335fcea406d38297dac9975"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/princeton_raw.sub",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/subghz/princeton_raw.sub",
+   "what": "RAW capture; first packet hand-decoded (long pulse = 1): 0111 1100 0101 0111 0000 0011 = 7C5703",
+   "sha256": "0fe7e7ccdf6722652be6d1012bb26b39bc1d9a79f4aef74fac6a8fc750acdf08"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/came_raw.sub",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/subghz/came_raw.sub",
+   "what": "RAW capture; first packet hand-decoded by the CAME rule (start pulse, then off-on pairs, long gap = 1): 001000010110",
+   "sha256": "df91daa10bc431ae1abe62cfb42bc35ea68c3a65fc68d74d5e2d2e1b42566dd4"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/nice_flo_raw.sub",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/subghz/nice_flo_raw.sub",
+   "what": "RAW capture; first packet by the Nice FLO rule starts 010111",
+   "sha256": "5c83f0cfb79915919fc565c17ce9c67567d160644bf0e105b93fad876954619e"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/security_pls_2_0.sub",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/subghz/security_pls_2_0.sub",
+   "what": "key file: Security+ 2.0, 62 bit, key 00 00 3D 29 0F B9 BE EE",
+   "sha256": "5b9ac5820f06675a7ea27e97257e60e297e917812f4ef76d294521aaf0e86bfd"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/test_random_raw.sub",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/subghz/test_random_raw.sub",
+   "what": "RAW noise (the firmware's negative test): no message may be read from it",
+   "sha256": "f73b9bad1b6d29ac27d001fa23cdd6a0e5407f67a44b8a776dc92c5b0c58b21b"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/Ntag215.nfc",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/nfc/Ntag215.nfc",
+   "what": "NTAG215, UID 04 51 5C FA 6F 73 81, ATQA 00 44, SAK 00, 135 pages",
+   "sha256": "334b8cbbed684713b2518d333ac076eb2413440cac8897d16108276552b2b709"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/Ntag216.nfc",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/nfc/Ntag216.nfc",
+   "what": "NTAG216, UID 04 D9 65 0A 32 5E 80, 231 pages",
+   "sha256": "e307c759e42e6ed8cf217b18e1bc0c46151a0bf896b3027fa760e47b263c5ab8"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/Ultralight_C.nfc",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/nfc/Ultralight_C.nfc",
+   "what": "Mifare Ultralight C, UID 04 BA FF CA 4D 5D 80",
+   "sha256": "ba2801b71005a6a0e278c2d344756ca03f609112aa2fd28b5f07d6035bb43e1a"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/Felica.nfc",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/nfc/Felica.nfc",
+   "what": "FeliCa, UID 29 9F FA 53 AB 75 87 6E",
+   "sha256": "10e6b1dbbe31439da0a9c9968f9df5f4a0a7e1a917e4d999ebbd46089cb83619"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/Slix_cap_default.nfc",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/nfc/Slix_cap_default.nfc",
+   "what": "SLIX (ISO 15693), UID E0 04 01 08 49 D0 DC 81",
+   "sha256": "f1be1e9c45962164600a2a0fa1e67970724f108235e4eeffadb0144aefc8a35e"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/test_nec.irtest",
+   "src": "flipper:applications/debug/unit_tests/resources/unit_tests/infrared/test_nec.irtest",
+   "what": "Flipper IR test file (decoder vectors): 7 signals",
+   "sha256": "a1bfa8a9603c036cba30f66a467167928cc0e8095818507726ab4feb1e260b7d"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "flipper/tv.ir",
+   "src": "flipper:applications/main/infrared/resources/infrared/assets/tv.ir",
+   "what": "IR library file: 771 `name:` entries",
+   "sha256": "540885101a9eec29afa5e532b20a77d69e4c41ccded8824519d048338817e8a1"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "rtl433/generic_remote_01_gfile001.cu8",
+   "src": "rtl433:tests/generic_remote/01/gfile001.cu8",
+   "what": "SC2260 remote: rtl_433 says id 5069 (0x13CD) cmd 192 (0xC0), so the 24 bits are 13CDC0",
+   "sha256": "2e9e30926932fa9343285917a1de99f4e27e6ffe4c818e898b3c60e464b80a60"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "rtl433/generic_remote_01_gfile002.cu8",
+   "src": "rtl433:tests/generic_remote/01/gfile002.cu8",
+   "what": "SC2260 remote: id 5069 cmd 12, so 13CD0C",
+   "sha256": "2eff76c59e69b6f53291576e93e03a2e68c52b307337faac95556f2360454da4"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "rtl433/nexus_01_gfile001.cu8",
+   "src": "rtl433:tests/nexus/01/gfile001.cu8",
+   "what": "Nexus-TH: id 181, battery 0, channel 2, 19.0 C, 71 %: 36 bits 10110101 0 0 01 000010111110 1111 01000111",
+   "sha256": "e4a27a908b69e20fc416d84492608226b42db77f53a3f6d9dd5c3b4c951c2598"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "rtl433/prologue_01_gfile001.cu8",
+   "src": "rtl433:tests/prologue/01/gfile001.cu8",
+   "what": "Prologue-TH: subtype 9, id 78, battery 1, button 0, channel 1, 1.0 C: bits start 1001 01001110 1 0 00 000000001010",
+   "sha256": "8b7332ae48bb804bc9cf2ab144ba77fbd4e57bc1decb6ee1c1a0d40c8ed27c61"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "bincopy/empty_main.s19",
+   "src": "bincopy:tests/files/empty_main.s19",
+   "what": "bincopy's own info: header bincopy/empty_main.s19, execution start 0x00400400, lowest address 0x00400238, 1667 data bytes",
+   "sha256": "56c7888dad589ebabc75bc7b8c8a484cd15c489be20fe6695cfffd20a5c8f511"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "bincopy/empty_main.hex",
+   "src": "bincopy:tests/files/empty_main.hex",
+   "what": "the same image as Intel HEX: start 0x00400400, lowest address 0x00400238",
+   "sha256": "9bfe3629eefd267e4f0e850919a9eb84bd4bb0b2fc5b17804c6dd3d7fb1c9785"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "bincopy/in.s19",
+   "src": "bincopy:tests/files/in.s19",
+   "what": "S19 with header 'hello', three data records at 0x0000, the text 'Hello world.'",
+   "sha256": "82239350cf07ba12a07bf265dbccfe8ea887fd12c4a264cc9fbf2536ca0836fe"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "bincopy/in.hex",
+   "src": "bincopy:tests/files/in.hex",
+   "what": "Intel HEX: two data records, 64 bytes at 0x0100",
+   "sha256": "ea56ce96f68ff3395bc47be8f50b32cee11449e78f2133c22fecf3ec77290f17"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "can/sample-can.log",
+   "src": "icsim:data/sample-can.log",
+   "what": "candump -l log of a car simulator: 6158 lines, 34 distinct ids (wc, sort -u)",
+   "sha256": "6fbaf2f78e4d9eef30cafc8c39c837390ae9534771cd3cb74768d4594641270c"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "can/logfile.asc",
+   "src": "pycan:test/data/logfile.asc",
+   "what": "Vector ASC with status, statistic, error and J1939TP lines: ten data frames, ids 6F8, 6F9, 18EBFF00x",
+   "sha256": "e3501125412852bdfa62b59dab51dc09009d92a6b1215e7a86f01fc5bef4549b"
+  },
+  {
+   "toolkit": "rf",
+   "dest": "mfc/dump.mfd",
+   "src": "mfdread:dump.mfd",
+   "what": "MIFARE Classic 4K dump: UID 33BD9D3F, BCC 2C, sector 0 key A A0A1A2A3A4A5 (the MAD key), 40 sectors",
+   "sha256": "f2d304537f8263ac032124e5273c1fef213f9374be14219602eac46922164043"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "huntress/qrception.png",
+   "src": "h25:day01/qrception/qrception.png",
+   "what": "Huntress 2025 'QRception': a QR whose payload is a QR drawn in ANSI half blocks; the write-up's flag is flag{e1487f138f885bfef64f07cdeac96908}",
+   "sha256": "d5d06f9a0cdaa0d55337a472c77a7383d813f3ddd683869bf9fcd46cd43f3c3d"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "huntress/Half-Life_3_OST.mp3",
+   "src": "h24:warmups/unbelievable_COMPLETED/Half-Life_3_OST.mp3",
+   "what": "Huntress 2024 'Unbelievable': a PNG (800x200) named .mp3; the flag is text drawn in the picture (OCR in the write-up)",
+   "sha256": "0f33ec86710e901eceb6894c96eaab8d88be66f859a4338186e2225a855dcd27"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/extradata.png",
+   "src": "zsteg:samples/extradata.png",
+   "what": "zsteg's spec: foobar1 (after the last scanline), foobar2 (after the zlib stream), foobar3 (after IEND)",
+   "sha256": "204d396438f4c4b0fff68ede30d06ff5105ed6c05be4a59335c34377ea771c64"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/Code.png",
+   "src": "zsteg:samples/Code.png",
+   "what": "zsteg's spec: the iTXt Comment is base64 QkJCQjIAAACR2PFtcCA6q2eaC8SR+8dmD/zNzLQC+td3tFQ4qx8O447TDeuZw5P+0SsbEcYR\\n78jKLw==",
+   "sha256": "535bc3b880615d95eded5d9ba6d77a87714505299bd2486a3caaa58b50eb4dd0"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/stg300.png",
+   "src": "zsteg:samples/stg300.png",
+   "what": "zsteg's spec: LSB text with Congrats and 4E34B38257200616FB75CD869B8C3CF0",
+   "sha256": "614cb3297fe1f53297da2d16bef52430ea84cfc0eddd5303129fff919149de4f"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/06_enc.png",
+   "src": "zsteg:samples/06_enc.png",
+   "what": "zsteg's spec: LSB text starting 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod'",
+   "sha256": "89a15f5e8d0cee78d07651cfc5d2fd708d7caf4f8f29884546b99dac69f29c49"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/cats.png",
+   "src": "zsteg:samples/cats.png",
+   "what": "zsteg's spec (RuCTF 2012): 'Second cat is Marussia', 'Hello, third kitten is Bessy', 'Fourth and last cat is Luke', 'Good, but look a bit deeper...'",
+   "sha256": "f1f3c9ed50df3077a5d13d067c5a37cd29f713ddaa0ecc9d8c1b72b87c3b0e51"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/square.bmp",
+   "src": "zsteg:samples/hackquest/square.bmp",
+   "what": "zsteg's spec: thesecretpasswordis:jedimaster (bit 1 of the stored bytes, row padding included)",
+   "sha256": "3e76725aca7948038d347f7fbec4ed83319820b7de03d50195da4bb6c1ae6635"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/crypt.bmp",
+   "src": "zsteg:samples/hackquest/crypt.bmp",
+   "what": "zsteg's spec: 111Hello",
+   "sha256": "3b68c9838b7ec469a7df2888f98f388fbe7d8b64daa844ff733cf2dcbd0aa53e"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/stegano1.bmp",
+   "src": "zsteg:samples/wechall/stegano1.bmp",
+   "what": "zsteg's spec: 'Look what the hex-edit revealed: passwd:steganoI' (the pixel bytes themselves)",
+   "sha256": "31f9a488a9af52ef1a369a88d10b48e51c7edd85bb79f9e30fafc8d74f0c0ef0"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/plte1.png",
+   "src": "zsteg:samples/plte1.png",
+   "what": "zsteg's spec: a zip inside PLTE, md5 e125f0f322fd1e99050dba688968385c",
+   "sha256": "9086625bded777e693cee5cc018cc4c255bed1f3eaa534917fda1b20c0d814eb"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/flower_rgb1.png",
+   "src": "zsteg:samples/flower_rgb1.png",
+   "what": "punkroy sample, 1 bit RGB: SuperSecretMessage (zsteg's flowers spec)",
+   "sha256": "1160e85a9e0115402209721d08f17171c8b99279b07b4767ceb96ebb3fbdecbc"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/flower.png",
+   "src": "zsteg:samples/flower.png",
+   "what": "the cover picture of the flower set: nothing hidden",
+   "sha256": "ef194d79b7090ac1e578c4b8920a9d7280f3de05987f007e961778008b157f29"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/code-128.png",
+   "src": "zbar:examples/code-128.png",
+   "what": "zbar's sha1sum file: sha1('CODE-128:https://github.com/mchehab/zbar\\n') = cc53bf34878f769fc3611020c11e572f2853bd2a",
+   "sha256": "4c6a4699896e92d08d8aa921816e02171b5253dc410408e6b3fb3e3b6d3691f9"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/code-39.png",
+   "src": "zbar:examples/code-39.png",
+   "what": "sha1 of zbarimg's line 7537d593ea42393a43bc0eda0a896c0e31017dd8 (CODE-39:ZBAR-9876543210)",
+   "sha256": "0ed191d27f48d5d1aefb6964447609b0101dd147aaf1ed5046f18df3d70396e8"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/ean-13.png",
+   "src": "zbar:examples/ean-13.png",
+   "what": "sha1 of zbarimg's line 53429fc04dfcf674349e2db6cfbaf73e301fc3dc (EAN-13:9789876543217)",
+   "sha256": "7f82e0ac25561ac0d1d87b6110acda8bb7f2f4d0a5529464ab1944caead4a2cd"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/ean-8.png",
+   "src": "zbar:examples/ean-8.png",
+   "what": "sha1 of zbarimg's line 4095418b74efbb026dd730543558fefdda46f5b9 (EAN-8:98765430)",
+   "sha256": "3131d62fa9ee6cacfcdead43e5170dc3f9843386167fb1b6fe2deae0ad6d66c5"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/i2-5.png",
+   "src": "zbar:examples/i2-5.png",
+   "what": "sha1 of zbarimg's line 5501245dbba21c153f690787fc97ab50c973b846 (I2/5:9876543210)",
+   "sha256": "68ba1394c77b2fcec8790a3f437d13f4e15497f9e8194a726f29b907e9cf1376"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/databar.png",
+   "src": "zbar:examples/databar.png",
+   "what": "sha1 of zbarimg's line aebbdbed0b32d7fd72f1245e3fb384822d492062 (DataBar:0198765432109879)",
+   "sha256": "0aa9fa739e06579159b300c4c8278c414784b537d1458fb79b30e9a2c474eec5"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/qr-code.png",
+   "src": "zbar:examples/qr-code.png",
+   "what": "sha1 of zbarimg's line b350ca7efad7a50c5ac082d5c683a8e8d8d380a7 (QR-Code:https://github.com/mchehab/zbar)",
+   "sha256": "65b127c6aee76884f7794b0af4582f2eb1a027b24ecb43b57aeb10eae69c51c2"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zbar/qr-code-inverted.png",
+   "src": "zbar:examples/qr-code-inverted.png",
+   "what": "the same QR, light on dark: the same text",
+   "sha256": "4299755f1444a257cafec2551c9df6c2b0fcb163d6fbe26ee64e698c0c8a2329"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "minidump/test.dmp",
+   "src": "minidump:testdata/test.dmp",
+   "what": "rust-minidump's stackwalk snapshot: Windows NT 5.1.2600 Service Pack 2, x86, EXCEPTION_ACCESS_VIOLATION_WRITE at 0x45, 2 threads, 13 modules, main module test_app.exe",
+   "sha256": "24b0ea7794b2d2523c46c9aea72c03ccbb0ab88ad76d8258d3752c7b71d233ff"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "minidump/linux-mini.dmp",
+   "src": "minidump:testdata/linux-mini.dmp",
+   "what": "a Linux minidump (rust-minidump test data)",
+   "sha256": "ec4b64062545eb9874d25037bf0624c96a49098eed20b595344c72d344381576"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/fat12.raw",
+   "src": "dfvfs:test_data/fat12.raw",
+   "what": "7z l: a_directory/a_file (53), a_directory/another_file (22), passwords.txt (116)",
+   "sha256": "60aacdf576dad24743d80a66a045bcdfbbd0ef4d368cece060bf087ee114da2f"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/ext2.raw",
+   "src": "dfvfs:test_data/ext2.raw",
+   "what": "the same three files and the link a_link -> a_directory/another_file, on ext2",
+   "sha256": "a6c2f0e39afe6c6ab432ca5465349fcefe8dc944398e97b2d957d3f89dbb5d80"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/ext4.raw",
+   "src": "dfvfs:test_data/ext4.raw",
+   "what": "the same on ext4",
+   "sha256": "d88dd5f6774526a94ad74e061c6a4245fef302e03c917277fb4043e30ed8b434"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/iso9660.raw",
+   "src": "dfvfs:test_data/iso9660.raw",
+   "what": "the same three files on ISO9660",
+   "sha256": "7b9d0c5fbd5a22458eeb2288f2076d65b3541c6e27df449f96e372270fce7720"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/mbr.raw",
+   "src": "dfvfs:test_data/mbr.raw",
+   "what": "7z l: an MBR disk with two partitions of 66048 bytes (one primary, one logical), each ext2 with the same files",
+   "sha256": "94e2ddff3cae988c24ccb04f5e8302d161b4195a1e6ff60084225c44fb6076ba"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/ntfs.raw",
+   "src": "dfvfs:test_data/ntfs.raw",
+   "what": "7z l: NTFS with a_directory/a_file, a_directory/another_file, passwords.txt, a_link (NTFS is not read by the toolkit)",
+   "sha256": "28a2f08b20d39c09e5f6b88f568fa863866b45b2e04b66bcbea33177cff88714"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/syslog.newc.cpio",
+   "src": "dfvfs:test_data/syslog.newc.cpio",
+   "what": "a cpio (newc) holding one file, syslog, 1247 bytes",
+   "sha256": "94e668bec666fbf9ce4d9d68fc9296ac4c3e231a6ab84f5e684bd90f49d8b53a"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "dfvfs/syslog.bin.cpio",
+   "src": "dfvfs:test_data/syslog.bin.cpio",
+   "what": "the same as an old binary cpio",
+   "sha256": "84bb569cf2a018db29e70d55d8b69d8463dcbd77d70f1213c2f9e7de0d21c5c7"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/flower_rgb2.png",
+   "src": "zsteg:samples/flower_rgb2.png",
+   "what": "punkroy sample, 2 bits a sample RGB: SuperSecretMessage (zsteg's flowers spec)",
+   "sha256": "155f3d7a4bd702cec169af0d2d80a2d550f93a21178585390138f1ed141e7c90"
+  },
+  {
+   "toolkit": "carve_stego",
+   "dest": "zsteg/flower_rgb3.png",
+   "src": "zsteg:samples/flower_rgb3.png",
+   "what": "the same message at 3 bits a sample: NOT read by the toolkit (one and two bits only)",
+   "sha256": "68b1ce36036e996e07b4282a4c751262cfff45c09798bfc21d155e9dbd709188"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "huntress/strive_marish_solve.py",
+   "src": "h24:cryptography/strive_marish_leadman_typecdr_COMPLETED/solve.py",
+   "what": "Huntress 2024 'Strive Marish Leadman TypeCDR': the service's p, q, d, e, n and ciphertext as the write-up saved them; flag{cf614b15ac1dd461a2e48afdfe21b8e8}",
+   "sha256": "ba987170b8c528d4b627b78d3b946b4be65c966cfb39149a5f3d2822340ebd65"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "huntress/strive_marish_solve.txt",
+   "src": "h24:cryptography/strive_marish_leadman_typecdr_COMPLETED/solve.txt",
+   "what": "the write-up text: TWO parameter sets of two sessions in one file (they contradict each other: nothing may be answered)",
+   "sha256": "2d2911b1f70ceb02ba842c8910cffb899799079d9e0037edc8098b9337c87aa4"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/wiener.pub",
+   "src": "rsactf:examples/wiener.pub",
+   "what": "4096-bit key with a small d (GreHack): Wiener; with wiener.cipher the message is GREHACK_WIENER_ATTACK_ARE_GREAT_WITH_SMALL_D",
+   "sha256": "d74333e703edef9a773d7673403896941a0d1ddc49cbcf6500d2d33afceedd0e"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/wiener.cipher",
+   "src": "rsactf:examples/wiener.cipher",
+   "what": "PKCS#1 v1.5 ciphertext of wiener.pub (raw bytes)",
+   "sha256": "980676fd1fd934a843d9cb53892e178ab2e261a09d0e8fd18e13d50d0491337c"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/small_q.pub",
+   "src": "rsactf:examples/small_q.pub",
+   "what": "1040-bit n with the factor 54311 (trial division)",
+   "sha256": "f6a9dca7349163cbb87310fc41ba6ead25040af9aee7052a93f25e99efdbe43d"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/small_q.cipher",
+   "src": "rsactf:examples/small_q.cipher",
+   "what": "raw ciphertext; m = hQdK+dKleMJqth/dofWyFaiWp3PW7jil, checked by m^e mod n == c",
+   "sha256": "8e529e3ce8a533f2884f4f1281e5baff06b6c75fee46a59cf3b4896874681ab7"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/close_primes.pub",
+   "src": "rsactf:examples/close_primes.pub",
+   "what": "1024-bit n = p*q with p and q close: Fermat",
+   "sha256": "63db38b6da1cd145dc50f6853dd4c02d4ec1310ed973eed112a965cc2f2b661c"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/close_primes.cipher",
+   "src": "rsactf:examples/close_primes.cipher",
+   "what": "raw ciphertext; m = XtCgoEKksjKFWlqOSxqsEhK/+tsr1k5c, checked by m^e mod n == c",
+   "sha256": "50d31b51c61d32246b93f1df821d6ab39fa821ee1a1ffab6212960e4b2c9f22c"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/boneh_durfee.pub",
+   "src": "rsactf:examples/boneh_durfee.pub",
+   "what": "1024-bit key with a small d (inside Wiener's bound)",
+   "sha256": "cf96c157ecc1993201b6d0b422b427b260a986d7e7dd5ac4af8906aaabd91f8d"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/commonfactor3.pub",
+   "src": "rsactf:examples/commonfactor3.pub",
+   "what": "2048-bit key sharing a 1024-bit prime with commonfactor8.pub (math.gcd)",
+   "sha256": "dff290210827adb8c152a991dd1b3b2c7d24256af3997f85ab82bbd36349ffa8"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/commonfactor8.pub",
+   "src": "rsactf:examples/commonfactor8.pub",
+   "what": "see commonfactor3.pub",
+   "sha256": "84be16e82403ad50a48db95db660e22ab2a97ffe33f462de08cf95ff9f192431"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/commonfactor1.pub",
+   "src": "rsactf:examples/commonfactor1.pub",
+   "what": "2048-bit key that shares no prime with commonfactor3.pub or commonfactor8.pub (gcd 1)",
+   "sha256": "5c6c60ca1080cd88ac672e775c61ba7983b312bbeb5f2f3c9d030ddda9d885d7"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/conspicuous.priv",
+   "src": "rsactf:examples/conspicuous.priv",
+   "what": "a private key PEM: n, e, d, p, q given",
+   "sha256": "80343da653f4642f344ae0030fc1adb202dc56d218252af934e91c1feef61022"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/pollard_rho.pub",
+   "src": "rsactf:examples/pollard_rho.pub",
+   "what": "257-bit n that the toolkit does NOT factor inside a second (no weakness it knows)",
+   "sha256": "fd7531ed18204baa8271b1b1d1c08c66e9bef91077bfa941f6cd6a0b79c200e2"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/small_exponent.pub",
+   "src": "rsactf:examples/small_exponent.pub",
+   "what": "4096-bit key, e = 3; with small_exponent.cipher there is no exact cube root of c + k*n for k < 20000 (gmpy2): nothing may be answered",
+   "sha256": "899391eac5ddc88c351256352a8a4d4922ba6b43614456a11f11a093ad06e7a7"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "rsactf/small_exponent.cipher",
+   "src": "rsactf:examples/small_exponent.cipher",
+   "what": "513 bytes: 512 of ciphertext and a line end",
+   "sha256": "945d326984a72d842f713d69960d21e203fbc25cd95370691aa0e96c9225e04f"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "cryptopals/4.txt",
+   "src": "cryptopals:4.txt",
+   "what": "Cryptopals 1.4: 327 hex lines, one is single-byte XOR (key 0x35) of 'Now that the party is jumping\\n'",
+   "sha256": "c87c921c561bf2a69cf4847dd6649f6d05430fcabae80fe5e78b56d78978a436"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "cryptopals/6.txt",
+   "src": "cryptopals:6.txt",
+   "what": "Cryptopals 1.6: base64, repeating-key XOR under 'Terminator X: Bring the noise'; the text starts \"I'm back and I'm ringin' the bell\"",
+   "sha256": "9cce7ff2a0ade90b54c0e20ee8283c0cd8caa7663f995eff2d7b9ace3bd53d8d"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "cryptopals/7.txt",
+   "src": "cryptopals:7.txt",
+   "what": "Cryptopals 1.7: base64, AES-128-ECB under 'YELLOW SUBMARINE'; the same lyrics",
+   "sha256": "c50fd4291beb52b9fbac8c4bddc5454c7757d0988359e5625e430bc7cdd709c3"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "cryptopals/8.txt",
+   "src": "cryptopals:8.txt",
+   "what": "Cryptopals 1.8: 204 hex lines; line 133 (from 1) is the ECB one (its block 08649af70dc06f4fd5d2d69c744cd283 comes four times)",
+   "sha256": "d61d668f428e48b70c4148ba6a3201afb6d6bd8f630686f23162400683a066b7"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "cryptopals/10.txt",
+   "src": "cryptopals:10.txt",
+   "what": "Cryptopals 2.10: base64, AES-128-CBC under 'YELLOW SUBMARINE' with a zero IV; the same lyrics",
+   "sha256": "81fbeb6c3194bac8191cfcc8dbb63b705f1d499d3d43ab7795627501dbe34925"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "huntress/angler_access_token.json",
+   "src": "h25:day12/angler/access_token.json",
+   "what": "Huntress 2025 'Angler': an Entra access token (RS256 JWT) as the write-up saved it: aud https://graph.microsoft.com/, exp 1762673349 (base64 of the token's own parts)",
+   "sha256": "00368e837d2137c2d840b95e5d84e9b1ede2b791f29fe1194b0e4685974c9269"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "huntress/angler_scribbles.dat",
+   "src": "h25:day12/angler/scribbles.dat",
+   "what": "Huntress 2025 'Angler': hex of a Blowfish-CBC ciphertext; key and IV are both the bytes 42 6c 6f 77 66 69 73 68 ('Blowfish', given in the prompt)",
+   "sha256": "eec2652284c128200195287f8958074101bb1388885bdd58f7afb95dc52dd3fa"
+  },
+  {
+   "toolkit": "modern_crypto",
+   "dest": "huntress/angler_scribbles2.dat",
+   "src": "h25:day12/angler/scribbles2.dat",
+   "what": "the write-up's decryption of scribbles.dat (CyberChef): the plaintext the toolkit must reproduce",
+   "sha256": "3bb7d7ec0badc6e8ef1b061eb664fc630e3c1ca7f620f96a3f565d1964e53b1a"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "logs/acunetix.txt",
+   "src": "ocatak:acunetix.txt",
+   "what": "research data set, Apache combined log of an Acunetix scan of a lab host, every line wrapped in one more pair of quotes: 6539 lines, one client 192.168.4.25, 258 lines with status 404 (grep), the marker acunetix_wvs_security_test in 52 requests",
+   "sha256": "c11125de242e68c524c7ca3b9e844dd64cbaa897c85d71df5d4946127f440136"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "logs/netsparker.txt",
+   "src": "ocatak:netsparker.txt",
+   "what": "the same lab, a Netsparker scan: 7314 lines, one client 192.168.4.164, 2602 with status 404",
+   "sha256": "2ce9f8319f694fdff6723bc5e9ed520c0976491d559e922da53097ec150e4b10"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "logs/w3af.txt",
+   "src": "ocatak:w3af.txt",
+   "what": "the same lab, a w3af scan: 3996 lines, three clients, 490 with status 404, user agent w3af.org on 3914 lines",
+   "sha256": "f0657b2f81b4a01178ed6b64f4cf976282a1d93b38fd5084d9e01f0bec38c543"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "logs/apache_logs",
+   "src": "elastic:Common Data Formats/apache_logs/apache_logs",
+   "what": "ordinary traffic of a public site: 10000 lines, 1753 clients, 213 with status 404 (an independent line reader)",
+   "sha256": "f15c31e905f86c7b4b6ab44aee74d0a2086dce89f010187d983edea7ef0364ef"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "logs/nginx_json_logs",
+   "src": "elastic:Common Data Formats/nginx_json_logs/nginx_json_logs",
+   "what": "nginx JSON lines (status under `response`): 51462 lines, 2660 clients, 33876 with status 404",
+   "sha256": "05131a0ec5c40884fbf4a066f8a9244b6475ae6a5844b1f10fb38d42d8ff6967"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "har/humanssuck.net.har",
+   "src": "haralyzer:tests/data/humanssuck.net.har",
+   "what": "a browser HAR: 4 entries, all GET, all 200 (json.load)",
+   "sha256": "7249693b9c58f8243812b439aeab30e133114b3a6b00bd0758ab0fcaaa3c2caa"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "har/cnn.har",
+   "src": "haralyzer:tests/data/cnn.har",
+   "what": "a browser HAR of a news front page: 145 entries, all GET, 138 with status 200",
+   "sha256": "3f984b5cfd0c65851d0f98b6d92fc838a9d838c744349f8b15133d5de4679629"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "huntress/moveable_app.zip",
+   "src": "h24:web/moveable_COMPLETED/app.zip",
+   "what": "Huntress 2024 'MOVEable': the Flask source handed out; the write-up names SQL injection and insecure deserialization (pickle.loads at app.py line 149, route /download/<filename>/<sessionid>)",
+   "sha256": "b4ccbc5ed56078342cc17ec76f8c080fb82111e67af6b37f9dadf1872153c3e7"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "huntress/emotional/server.js",
+   "src": "h25:day06/emotional/server.js",
+   "what": "Huntress 2025 'Emotional': the write-up names server-side template injection: ejs.render at line 34 (route /), fed by the emoji value posted to /setEmoji",
+   "sha256": "c28154452027677b048760a454a3b00eef7790cfc1c6cf629c630bb94393a19d"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "huntress/emotional/views/index.ejs",
+   "src": "h25:day06/emotional/views/index.ejs",
+   "what": "the page template of the same application",
+   "sha256": "72088e956e428aad8d0f41efaf037fdedc000d7aea3e2cce5cca2693a326396e"
+  },
+  {
+   "toolkit": "web_evidence",
+   "dest": "huntress/angler_access_token.json",
+   "src": "h25:day12/angler/access_token.json",
+   "what": "Huntress 2025 'Angler': an RS256 access token; alg RS256, aud https://graph.microsoft.com/",
+   "sha256": "00368e837d2137c2d840b95e5d84e9b1ede2b791f29fe1194b0e4685974c9269"
+  },
+  {
+   "toolkit": "malconfig",
+   "dest": "in_plain_sight.exe",
+   "src": "h24:reverse_engineering/in_plain_sight_COMPLETED/in_plain_sight.exe",
+   "what": "Huntress 2024 'In Plain Sight': a real native PE32 (4.7 MB, proof=pe, no .NET, no config). Used to prove xor_pe recovers a real PE XOR-ed under a key, and that a 4.7 MB file is scanned under budget",
+   "sha256": "aaf6846a4346e462cffac18377a79633a0b64498ae5bcbda90b4079354adfa88"
+  },
+  {
+   "toolkit": "malconfig",
+   "dest": "ping_me_defanged.vbs",
+   "src": "h24:malware/ping_me_COMPLETED/ping_me_defanged.vbs",
+   "what": "Huntress 2024 'Ping Me', defanged by the write-up author: a VBScript with no binary malware config; malconfig reads it as text and validates no config",
+   "sha256": "18e084dcd96a4b21fdc86012b042797174217bff515f91f620c8c45fcd15fb84"
+  },
+  {
+   "toolkit": "malconfig",
+   "dest": "HelpfulDesk.dll",
+   "src": "h24:web/helpful_desk_COMPLETED/helpfuldesk-1.1.zip!HelpfulDesk.dll",
+   "what": "Huntress 2024 'Helpful Desk': the real ASP.NET assembly (PE32 with a CLI header, 96768 bytes); dotnet() reads 248 #US user strings and no RedLine-style key=value pairs; a benign app, so no config and signal 0.0 with no question",
+   "sha256": "696cd7b79772cb30d52c3cfd012a5706996789ea15496f916d2a6770064a2bae"
+  }
+ ]
+}

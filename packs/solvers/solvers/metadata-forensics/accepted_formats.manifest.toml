@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Written by hand for B-218.
+# import-only: format_candidates.pick loads it for the probe order; `ctf accepted-formats` is its command line
+id = "metadata_forensics.accepted_formats"
+lane = "metadata-forensics"
+entry = "solvers.metadata-forensics.accepted_formats:harvest"
+capabilities = ["library", "metadata", "answer-format", "judge-vocabulary"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a description that asks a property in the judge's form vocabulary (B-218)
+category = ["forensics", "misc"]
+keywords = ["answer_format", "accepted format", "accepted_values", "8-4-4-4-12"]
+priority = 64

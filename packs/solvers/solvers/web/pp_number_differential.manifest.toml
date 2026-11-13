@@ -1,0 +1,38 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-047.
+# Offline, plan-only: a static prototype-pollution gadget scanner (flatted /
+# lodash.merge / recursive assign) and a JSON number-differential model
+# (sci-notation / duplicate-key / float64-precision read differently by a
+# gateway vs a Node backend), plus an unlock-token driver that sends nothing
+# unless the caller hands it a loopback transport. It never touches the network.
+id = "web.pp_number_differential"
+lane = "web"
+entry = "solvers.web.pp_number_differential:solve"
+capabilities = ["plan", "prototype-pollution", "json", "number-differential", "node", "gateway", "auth"]
+inputs = ["ext:.js", "ext:.json", "name:*.body"]
+needs_tools = []
+cost_class = "cheap"
+status = "plan-only"
+
+[[routes]]  # keyword nudge, web only
+category = ["web"]
+keywords = [
+    "prototype pollution",
+    "proto pollution",
+    "__proto__",
+    "lodash.merge",
+    "defaultsdeep",
+    "flatted",
+    "number differential",
+    "json interop",
+    "sci notation",
+    "scientific notation",
+    "duplicate key",
+    "gateway bypass",
+    "unlock token",
+]
+priority = 62
+
+[[routes]]  # file-shape nudge: served JS or JSON bodies in a web challenge
+category = ["web"]
+files = ["ext:.js", "ext:.mjs", "name:*.body"]
+priority = 31

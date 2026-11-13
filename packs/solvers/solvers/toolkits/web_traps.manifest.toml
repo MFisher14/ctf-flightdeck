@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-104 (hard tail #2: detect and flag only).
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "toolkits.web_traps"
+lane = "toolkits"
+entry = "solvers.toolkits.web_traps:solve"
+capabilities = ["analysis", "llm", "prompt-injection", "honeypot", "regex", "web"]
+inputs = ["ext:.py", "ext:.js", "ext:.ts", "ext:.php", "ext:.rb", "ext:.go", "ext:.html", "ext:.txt", "ext:.md"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # anti-AI honeypot / prompt-injection wording in the brief: flag it before anything acts on it
+keywords = ["webhook", "your prompt", "system prompt", "agent's prompt", "the agent", "ai agent", " llm ", "language model", "if you are an ai", "ignore previous", "ignore all previous", "prompt injection", "ai-review", "ai review", "honeypot", "ctfd", "discord.com/api", " chatgpt ", " claude ", "requestbin", "pipedream", "ngrok", "interact.sh"]
+priority = 28
+
+[[routes]]  # shipped web source: regex validation gates that leave the input open (no end anchor, ^a|b$, ...)
+category = ["web"]
+files = ["ext:.py", "ext:.js", "ext:.ts", "ext:.php", "ext:.rb", "ext:.go"]
+priority = 27
+
+[intake]  # B-002 adapter: read the brief and the handout as data, flag a honeypot or an open regex gate; no network
+select = "route"
+run = "challenge"
+timeout = 60

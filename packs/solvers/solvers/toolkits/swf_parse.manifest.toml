@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-117.
+id = "toolkits.swf_parse"
+lane = "toolkits"
+entry = "solvers.toolkits.swf_parse:solve"
+capabilities = ["executes", "swf", "flash", "avm1", "actionscript", "disassembler", "qr", "stego", "carve"]
+inputs = ["magic:FWS", "magic:CWS", "magic:ZWS", "ext:.swf"]
+needs_tools = ["py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-117: every Flash movie, whatever the category (PINK 21 was a stego row)
+files = ["magic:FWS", "magic:CWS", "magic:ZWS", "ext:.swf"]
+priority = 66
+
+[[routes]]  # B-117: the words of a Flash brief
+keywords = [".swf", "shockwave", "flash player", "flash movie", "flash game", "actionscript", "avm1"]
+priority = 64
+
+[intake]  # B-117: read every Flash movie at intake: flags in the inflated body, AVM1 listing and constants, codes in bitmaps
+select = "files"
+run = "challenge"
+match = ["magic:FWS", "magic:CWS", "magic:ZWS", "ext:.swf"]
+timeout = 60
+spawns = false

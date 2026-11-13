@@ -1,0 +1,36 @@
+#Software: Microsoft Internet Information Services 10.0
+#Version: 1.0
+#Date: 2026-10-08 09:00:00
+#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken
+2026-10-08 09:00:11 10.0.0.5 GET /default.aspx - 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 30
+2026-10-08 09:01:11 10.0.0.5 GET /download.aspx file=q3-report.pdf 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 31
+2026-10-08 09:02:11 10.0.0.5 GET /Content/site.css - 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 32
+2026-10-08 09:03:11 10.0.0.5 GET /api/orders page=2 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 33
+2026-10-08 09:04:11 10.0.0.5 GET /reports/q3.aspx year=2026 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 34
+2026-10-08 09:05:11 10.0.0.5 GET /default.aspx - 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 35
+2026-10-08 09:06:11 10.0.0.5 GET /download.aspx file=q3-report.pdf 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 36
+2026-10-08 09:07:11 10.0.0.5 GET /Content/site.css - 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 37
+2026-10-08 09:08:11 10.0.0.5 GET /api/orders page=2 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 38
+2026-10-08 09:09:11 10.0.0.5 GET /reports/q3.aspx year=2026 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 39
+2026-10-08 09:10:11 10.0.0.5 GET /default.aspx - 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 40
+2026-10-08 09:11:11 10.0.0.5 GET /download.aspx file=q3-report.pdf 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 41
+2026-10-08 09:12:11 10.0.0.5 GET /Content/site.css - 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 42
+2026-10-08 09:12:47 10.0.0.5 GET /download.aspx file=..%2f..%2f..%2f..%2fwindows%2fwin.ini 443 - 198.51.100.23 python-requests/2.32.3 - 200 0 0 12
+2026-10-08 09:13:11 10.0.0.5 GET /api/orders page=2 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 43
+2026-10-08 09:13:47 10.0.0.5 GET /download.aspx file=..%2f..%2f..%2f..%2fwindows%2fwin.ini 443 - 198.51.100.23 python-requests/2.32.3 - 200 0 0 12
+2026-10-08 09:14:11 10.0.0.5 GET /reports/q3.aspx year=2026 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 44
+2026-10-08 09:15:11 10.0.0.5 GET /default.aspx - 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 45
+2026-10-08 09:16:11 10.0.0.5 GET /download.aspx file=q3-report.pdf 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 46
+2026-10-08 09:17:11 10.0.0.5 GET /Content/site.css - 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 47
+2026-10-08 09:18:11 10.0.0.5 GET /api/orders page=2 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 48
+2026-10-08 09:19:11 10.0.0.5 GET /reports/q3.aspx year=2026 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 49
+2026-10-08 09:20:11 10.0.0.5 GET /default.aspx - 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 50
+2026-10-08 09:21:11 10.0.0.5 GET /download.aspx file=q3-report.pdf 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 51
+2026-10-08 09:22:11 10.0.0.5 GET /Content/site.css - 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 52
+2026-10-08 09:23:11 10.0.0.5 GET /api/orders page=2 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 53
+2026-10-08 09:24:11 10.0.0.5 GET /reports/q3.aspx year=2026 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 54
+2026-10-08 09:25:11 10.0.0.5 GET /default.aspx - 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 55
+2026-10-08 09:26:11 10.0.0.5 GET /download.aspx file=q3-report.pdf 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 56
+2026-10-08 09:27:11 10.0.0.5 GET /Content/site.css - 443 - 192.0.2.31 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 57
+2026-10-08 09:28:11 10.0.0.5 GET /api/orders page=2 443 - 192.0.2.77 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 58
+2026-10-08 09:29:11 10.0.0.5 GET /reports/q3.aspx year=2026 443 - 203.0.113.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 59

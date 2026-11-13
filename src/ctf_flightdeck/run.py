@@ -726,11 +726,23 @@ def prepare_run(options: RunOptions) -> Run:
     handouts = {b.challenge.id: b.handout for b in board.challenges}
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
+    toolkit, lane_image, lane_mounts = "", config.lanes.image, ()
+    if manifests is not None and config.l1.lane_tools:
+        toolkit = _lane_toolkit(options.pack)
+        if runtime == "docker":
+            # the lane sees the pack where it is on this machine, read-only, and runs in the
+            # pack's image: the pack's own Python and tools are there, not in the lane image
+            lane_mounts = ((options.pack, str(options.pack)),)
+            lane_image = config.l1.image or config.lanes.image
+            if lane_image != config.lanes.image and agent is not None:
+                _check_image_has(lane_image, agent.kind)  # the CLI must be in the image its lane runs in
+        plan.notes.append("L1: the lanes' models may call your pack's engines (lane_tools)"
+                          + (f"; lanes run in {lane_image} with the pack mounted read-only" if runtime == "docker" else ""))
     if manifests is not None:
         l1 = L1Stage(
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
-            engine_image=config.l1.image if runtime == "docker" else None,
+            engine_image=config.l1.image if runtime == "docker" else None, toolkit=toolkit,
             labels=marks, record=processes, urls=urls,
         )
     write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
@@ -776,11 +788,12 @@ def prepare_run(options: RunOptions) -> Run:
             return DockerWorkspace(
                 root,
                 handouts[challenge.id],
-                image=config.lanes.image,
+                image=lane_image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
                 reach=reach,
                 later=later,
                 labels=marks,
+                mounts=lane_mounts,
             )
         return HostWorkspace(root, handouts[challenge.id], record=processes)
 
@@ -1624,6 +1637,17 @@ def _check_docker(image: str) -> None:
             f"the lane image {image} is not on this machine, and flightdeck never fetches images by "
             f"itself: run {how}, or set [lanes] image in your config"
         )
+
+
+def _lane_toolkit(pack: Path) -> str:
+    """The pack's note for the lanes' briefs ([l1] lane_tools), or RunError: the pack must say
+    how a lane calls it."""
+    from . import pack as packs
+
+    try:
+        return packs.lane_note(packs.read(pack))
+    except packs.PackError as exc:
+        raise RunError(f"[l1] lane_tools is on, but {exc}; turn lane_tools off, or use a pack that brings a lane note") from None
 
 
 def _check_l1_image(image: str) -> None:

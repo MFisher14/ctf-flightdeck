@@ -2,6 +2,26 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+### The solver pack
+
+- flightdeck now has a solver pack: the no-model solvers its author won events with, in the
+  repository's `packs/solvers/`. `flightdeck pack install` fetches it, builds its Python
+  environment (after asking) and its Docker image, and writes it into your config. On every
+  challenge it unpacks the handout recursively, searches it for the flag under layered
+  encodings, runs its matching analysis engines (some 800) and its decoders, and tells the
+  lane's model what it found. It is not in the PyPI package.
+- `flightdeck pack install SOURCE` installs any pack from a git address or a folder;
+  `flightdeck pack info` and `flightdeck pack image` show a pack and build its image. A pack
+  says what it needs in a `pack.toml` (docs/SOLVERS.md).
+- `[l1] lane_tools = true` (which `pack install` sets): every lane's brief says where the pack
+  is and how to call it, so a lane's model can list the engines that fit, read a category's
+  playbook and run an engine itself. Docker lanes then run in the pack's image.
+- `[l1] image`: the Docker image your pack's engines run in, when it is not the lane image.
+- A route can say `any = true` (every challenge), and an engine is given the event's flag
+  format in `FLIGHTDECK_FLAG_FORMAT`.
+
 ## 0.3.0 (2026-11-12)
 
 Autopilot (M5): flightdeck runs an event by rule while you are away, inside a run budget,

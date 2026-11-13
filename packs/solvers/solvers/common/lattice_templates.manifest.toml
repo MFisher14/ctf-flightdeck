@@ -1,0 +1,19 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-157.
+# Template lattice constructions (bounded linear systems, hidden number, truncated LCG, subset sum,
+# modular ratio, integer relation): build the basis, reduce it through common.algebra_service on a
+# named backend, return only exactly checked solutions.
+id = "common.lattice_templates"
+lane = "common"
+entry = "cli:python solvers/common/lattice_templates.py"
+capabilities = ["analysis", "cli", "legacy-output", "documented", "lattice", "hnp", "knapsack", "lcg", "ntru"]
+inputs = []
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # B-157: a crypto brief that names one of the template cases; below the dedicated
+            # engines' keyword nudges (60), so a specialised recovery is listed first
+category = ["crypto"]
+keywords = ["hidden number", "truncated lcg", "truncated linear congruential", "ntru", "low-density",
+            "integer relation", "small unknowns", "biased nonce", "kannan"]
+priority = 59

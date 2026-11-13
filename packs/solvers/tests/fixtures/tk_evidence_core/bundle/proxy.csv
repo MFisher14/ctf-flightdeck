@@ -1,0 +1,11 @@
+time,src_ip,user,method,url,status,bytes,user_agent
+2026-10-08T02:15:02Z,10.20.0.15,svc_backup,GET,http://cdn.update-check.example/stage.ps1,200,1840,curl/8.4.0
+2026-10-08T02:15:09Z,10.20.0.15,svc_backup,GET,http://cdn.update-check.example/payload.bin,200,600,Microsoft-CryptoAPI/10.0
+2026-10-08T02:15:40Z,10.20.0.15,svc_backup,POST,http://beacon.c2-relay.example/checkin,200,12,Microsoft-CryptoAPI/10.0
+2026-10-08T02:16:40Z,10.20.0.15,svc_backup,POST,http://beacon.c2-relay.example/checkin,200,12,Microsoft-CryptoAPI/10.0
+2026-10-08T02:17:40Z,10.20.0.15,svc_backup,POST,http://beacon.c2-relay.example/checkin,404,0,Microsoft-CryptoAPI/10.0
+2026-10-08T01:02:11Z,10.20.0.22,j.ortiz,GET,http://intranet.corp.example/wiki,200,5120,Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+2026-10-08T01:05:54Z,10.20.0.22,j.ortiz,GET,http://intranet.corp.example/wiki/vpn,200,7311,Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+2026-10-08T01:40:20Z,10.20.0.22,j.ortiz,GET,http://news.site.example/today,200,20480,Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+2026-10-08T03:10:00Z,10.20.0.31,m.chen,GET,http://intranet.corp.example/wiki,200,5120,Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+2026-10-08T03:12:30Z,10.20.0.31,m.chen,GET,http://news.site.example/today,200,20480,Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36

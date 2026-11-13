@@ -1,0 +1,97 @@
+# modbus_replay spec template: the RECONCILIATION REPORT family.
+#
+# Shape: a capture of Modbus/TCP writes, a station profile that says which writes are *confirmed*
+# (accepted echo, then the very next client ADU is an exact FC03 readback that is itself answered),
+# an integer safety screen over each confirmed snapshot, and a canonical text report whose hash,
+# truncated and encoded, is the answer.
+#
+# Copy this file to <challenge>/modbus-replay.toml, replace every value with what the handout says,
+# paste the handout's test vector into [[vector]], then:
+#     python -m ctf run toolkits.modbus_replay <challenge>
+# Nothing is emitted until the vector reproduces. Every value below is an invented example.
+# Reference: docs/toolkits/modbus_replay.md.
+schema = 1
+
+[capture]
+# file = "capture.pcapng"        # only needed when the handout holds several Modbus captures
+
+[scope]
+server_port = 502
+unit = 9
+# client = "192.0.2.10"
+# server = "192.0.2.20"
+
+[pairing]
+mode = "pending"                 # a response answers the one pending request with its transaction id and unit
+
+[select]
+function = 16
+quantity = [1, 2, 3]             # allowed quantities
+window = [0x2000, 0x2002]        # start >= lowest and start + quantity - 1 <= highest
+
+[select.readback]                # the confirmation rule: the next client ADU after the write's normal
+function = 3                     # response must be exactly this read, answered normally, used once
+start = 0x2000
+quantity = 3
+fields = ["rate", "valve", "armed"]   # names of the words read back, in order: the row's fields
+
+[rows]
+initial = { rate = 10, valve = 100, armed = 0 }   # the row before row 0: prev_<name> of row 0, init_<name> in lines
+
+[[rows.derive]]                  # computed in order on every row; integers only, // is floor division
+name = "flow"
+expr = "rate * valve // 100"
+
+[[rows.derive]]
+name = "jump"
+expr = "abs(flow - prev_flow)"   # prev_<name>: the previous row's field (row 0: the initial row)
+
+[[rows.derive]]
+name = "unsafe"
+expr = "armed == 1 and jump > 50"
+
+[[rows.check]]                   # evidence checks on the capture's rows (never on a vector's rows);
+name = "armed is a boolean"      # a false one refuses the output
+expr = "armed == 0 or armed == 1"
+
+[expect]
+rows = 3                         # "the incident has exactly N confirmed snapshots"
+
+[output]
+kind = "report"
+# Lines: {name} or {name:04X} (zero fill, width, then d, x or X). In header/footer: n (row count),
+# init_<name>, aggregates. In row: also i (zero-based), tid, unit, start, quantity, w0.. (written words),
+# rb_tid, the readback fields and the derived columns. tid is the write's transaction id.
+header = [
+  "example-reconciliation-v1",
+  "initial;rate={init_rate};valve={init_valve};armed={init_armed}",
+  "n={n}",
+]
+row = "i={i};tid={tid:04X};rate={rate};valve={valve};armed={armed}"
+footer = ["unsafe-mask={mask:04X}"]
+newline = "lf"                   # lf | crlf
+final_newline = false
+hash = "sha256"
+digest_bytes = 20                # the first N raw digest bytes (0 or absent: all)
+encoding = "base32-nopad"
+wrap = "event"
+
+[[output.aggregate]]
+name = "mask"
+kind = "bitmask"                 # bitmask | sum | count
+expr = "unsafe"
+width = 16
+first = "msb"                    # row 0 is the most significant bit ("lsb": the least)
+
+[[vector]]                       # the handout's test vector: rows as field tables
+name = "handout test vector"
+rows = [
+  { tid = 0x0101, rate = 80, valve = 100, armed = 1 },
+  { tid = 0x0102, rate = 80, valve = 100, armed = 0 },
+]
+# initial = { rate = 10, valve = 100, armed = 0 }        # when the vector's initial row differs
+expect_initial = { flow = 10 }                            # derived values the handout states
+expect_rows = [ { flow = 80, jump = 70, unsafe = 1 }, { flow = 80, jump = 0, unsafe = 0 } ]
+expect_text = "example-reconciliation-v1\ninitial;rate=10;valve=100;armed=0\nn=2\ni=0;tid=0101;rate=80;valve=100;armed=1\ni=1;tid=0102;rate=80;valve=100;armed=0\nunsafe-mask=8000"
+expect_digest = "ddf4940e0d97783ed48682b0098882a52b384722697314a217ff8d0e4f524c0d"   # hex of the whole digest
+expect = "3X2JIDQNS54D5VEGQKYATCECUUVTQRZC"                                           # the encoded value

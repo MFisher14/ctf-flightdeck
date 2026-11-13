@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Written by hand for B-045.
+# A CLI hand tool: it builds synthetic malicious archives and reads a saved audit
+# response offline; `ctf run` executes it as __main__ (cli entry, legacy-output).
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+id = "web.archive_smuggle"
+lane = "web"
+entry = "cli:python solvers/web/archive_smuggle.py"
+capabilities = ["plan", "cli", "legacy-output", "archive", "zip", "tar", "traversal"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "plan-only"
+
+[[routes]]  # keyword nudge, only when the category is web
+category = ["web"]
+# Archive-specific phrases only: plain "path traversal" / "symlink" belong to the LFI and
+# traversal engines and must not route a plain web challenge here.
+keywords = ["archive upload", "zip slip", "zip-slip", "tar slip", "archive path traversal",
+            "zip symlink", "tar symlink", "tar hardlink", "tar extract", "malicious archive"]
+priority = 80

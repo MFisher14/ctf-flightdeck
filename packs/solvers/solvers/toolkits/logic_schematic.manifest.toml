@@ -1,0 +1,27 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-134.
+id = "toolkits.logic_schematic"
+lane = "toolkits"
+entry = "solvers.toolkits.logic_schematic:solve"
+capabilities = ["executes", "stego", "png", "circuit", "netlist", "logic-gates", "simulator", "logigator"]
+inputs = ["magic:\u0089PNG", "ext:.gif", "ext:.bmp", "ext:.webp"]
+needs_tools = ["py:numpy", "py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-134: a brief that names logic gates, a circuit or a circuit editor
+keywords = ["logic gate", "logic circuit", "logic schematic", "circuit schematic", "logisim", "logigator",
+            "nand gate", "nor gate"]
+priority = 63
+
+[[routes]]  # B-134: any image may be a circuit-editor export; the reader gates itself (not one -> none)
+files = ["magic:\u0089PNG", "ext:.gif", "ext:.bmp", "ext:.webp"]
+priority = 26
+
+[intake]  # B-134: read the netlist and sweep at intake. A printable reading that is not in the event flag
+          # format is reported as text only (status unsure, no flags, braces escaped when the printed result
+          # would otherwise match), so intake never takes it for a found flag. It starts no program and
+          # imports only Pillow and numpy, so it runs under either network guard.
+select = "files"
+run = "challenge"
+match = ["magic:\u0089PNG", "ext:.gif", "ext:.bmp", "ext:.webp"]
+timeout = 60    # intake's per-challenge engine budget; the engine's own CPU budget (seconds, default 40) is under it

@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-026.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "binary.invert_checks"
+lane = "binary"
+entry = "solvers.binary.invert_checks:solve"
+capabilities = ["analysis", "reverse", "elf", "symbolic", "z3", "crackme", "jvm", "mixer"]
+inputs = ["magic:0x7f454c46", "magic:0xcafebabe"]
+# needs_tools is intentionally empty: z3, capstone and pyelftools are in .venv (always present). solve()
+# preflights them and the in-tree ELF reader / JVM decoder and returns status "blocked" naming whichever
+# is missing, never a silent empty result. Only i386/amd64 ELFs are lifted; any other arch is a named
+# skip in the notes. Java class files (CAFEBABE, Mach-O universal headers told apart) are read
+# statically, never loaded or run.
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # reverse solver band (40-49): invert byte-compare checks (free slot; decompile 39 feeds it)
+category = ["reverse"]
+priority = 41
+
+[[routes]]  # keyword nudge: crackme / keygen / per-byte-check challenges
+category = ["reverse"]
+keywords = ["crackme", "keygen", "serial", "license", "password check", "byte compare"]
+priority = 61

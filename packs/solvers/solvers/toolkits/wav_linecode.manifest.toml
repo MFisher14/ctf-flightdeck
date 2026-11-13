@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-083.
+# CLI engine: prints a triage then a SolverResult JSON line (intake scans stdout and reads the
+# last-line SolverResult). The signal-in adapter in front of the carried modems (rf.py,
+# signal_stego_depth.py): FSK / NRZ / NRZ-I / Manchester line codes, UART-8N1 / HDLC / sync-word
+# framings, chosen by the event flag prefix crib (ctf.flagfmt).
+id = "toolkits.wav_linecode"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/wav_linecode.py"
+capabilities = ["executes", "cli", "audio", "wav", "fsk", "manchester", "nrz", "uart"]
+inputs = ["ext:.wav", "magic:RIFF"]
+needs_tools = ["py:numpy"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-083: every WAV reaches the line-code adapter (FSK/Manchester/NRZ bursts carrying a flag)
+files = ["ext:.wav"]
+priority = 30
+
+[intake]  # B-083: decode each WAV in the handout at intake (deterministic, crib-selected: no model needed)
+select = "files"
+run = "per-file"
+match = ["ext:.wav", "magic:RIFF"]
+max_files = 8
+timeout = 30

@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186).
+# Written by hand for B-107 (Multi-layer proof-replay / mesh-protocol chain harness).
+# import-only: solve is its main public callable, not a contract entry; `ctf run` refuses library engines.
+# This is a HARNESS over the existing single-vuln engines (recon_router, realtime_read,
+# state_transaction), not a new vulnerability engine: it maintains the ordered X-Chain proof header,
+# dispatches each recognizable layer to the owning engine, and surfaces the rest for the model.
+id = "web.proof_chain"
+lane = "web"
+entry = "solvers.web.proof_chain:solve"
+capabilities = ["library", "websocket"]
+inputs = []
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # proof-replay gauntlet / binary WS mesh harness; distinct keywords from the engines it drives
+category = ["web"]
+keywords = ["proof replay", "proof-replay", "x-chain", "ordered proof header", "multi-layer gauntlet",
+            "mesh protocol", "binary websocket mesh", "subprotocol negotiation", "chain harness"]
+priority = 60

@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-117.
+id = "web.route_crawl"
+lane = "web"
+entry = "solvers.web.route_crawl:solve"
+capabilities = ["executes", "crawler", "comments", "routes", "gif", "ocr", "recon"]
+inputs = ["ext:.html", "ext:.htm"]
+needs_tools = ["py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-117: the words of a hidden-route web brief (Spooky Scopophobia: comments, camera feeds, a held-back GIF frame)
+category = ["web"]
+keywords = ["html comment", "source comment", "view source", "hidden route", "hidden page", "hidden feed", "camera feed",
+            "security camera", "cctv", "unlisted page"]
+priority = 62
+
+[intake]  # B-117: saved pages only (no request is made at intake): comments, named routes, identifiers, what to fetch next.
+# The saved run starts no program: OCR of saved GIF frames is toolkits.gif_reveal's, so the two do not spend the
+# challenge's 60 s intake budget on the same frames. Its own budget is 10 s (route_crawl.SAVED_SECONDS).
+select = "files"
+run = "challenge"
+match = ["ext:.html", "ext:.htm"]
+timeout = 30
+spawns = false

@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-165.
+# import-only: the entry names the kit's main public class; `ctf run` refuses library engines on purpose.
+# The capstone/lief helpers are optional (py:*): the pure-Python kit (api-hash, time-lock,
+# env-fingerprint, accepted-input) imports with neither present.
+id = "binary.re_workbench"
+lane = "binary"
+entry = "solvers.binary.re_workbench:ApiHashNamer"
+capabilities = ["library", "static-re", "windows"]
+inputs = []
+needs_tools = ["py:capstone", "py:lief"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["api hash", "api-hashing", "time-lock", "environment fingerprint", "accepted input", "crackme"]
+priority = 58

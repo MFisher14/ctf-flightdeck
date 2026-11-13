@@ -1,0 +1,15 @@
+name = "flightdeck-solvers"
+version = "1.0.0"
+description = "No-model solvers: recursive unpack and flag sweep, decoders, and 800 analysis engines for crypto, forensics, reversing, web and more."
+engines = "flightdeck"
+
+[setup]
+command = "./setup.sh"
+
+[image]
+tag = "ctf-flightdeck-pack:1"
+dockerfile = "flightdeck/Dockerfile"
+context = "."
+
+[lanes]
+note = "flightdeck/LANE.md"

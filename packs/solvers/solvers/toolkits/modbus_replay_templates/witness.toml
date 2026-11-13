@@ -1,0 +1,66 @@
+# modbus_replay spec template: the WITNESS family.
+#
+# Shape: a capture of Modbus/TCP writes, a prose safety policy ("a target write is unsafe when a
+# prerequisite register is not 1 just before its normal response") and a witness format
+# ("hash(prefix || request PDU || response PDU of every unsafe target, in response order)").
+#
+# Copy this file to <challenge>/modbus-replay.toml, replace every value with what the handout says,
+# paste the handout's test vector into [[vector]], then:
+#     python -m ctf run toolkits.modbus_replay <challenge>
+# Nothing is emitted until the vector reproduces. Every value below is an invented example.
+# Reference: docs/toolkits/modbus_replay.md.
+schema = 1
+
+[capture]
+# file = "capture.pcapng"        # only needed when the handout holds several Modbus captures
+
+[scope]
+server_port = 502
+unit = 1                         # ADUs of another unit are left out of the conversation
+# client = "192.0.2.10"          # narrow when the capture holds several conversations
+# server = "192.0.2.20"
+
+[pairing]
+# immediate: a response counts only when the ADU directly before it is its request ("one request and
+#            its response completed before the next request").
+# pending:   a response answers the one pending request with its transaction id and unit.
+mode = "immediate"
+
+[registers]                      # name = zero-based PDU address of each word the policy reads
+permit = 0x0020
+isolated = 0x0021
+
+[replay]
+# initial = { permit = 0, isolated = 0 }   # state before the first observation, when the handout gives one
+# unknown = 0                               # or: assume this word for a register not yet observed
+                                            # (neither given: an unobserved register in `when` is an error)
+
+[select]
+function = 16                    # 16 (write multiple) or 6 (write single)
+start = [0x0030, 0x0031]         # the target addresses
+quantity = [1]
+state = "before"                 # register state just "before" (or "after") the write's normal response
+when = "not (permit == 1 and isolated == 1)"    # the unsafe predicate; omit to keep every target
+order = "response"               # rows in normal-response order ("request": request order)
+
+[expect]                         # counts the handout states; a mismatch refuses the output
+ineligible = 2                   # accepted writes of this function that are not targets
+# rows = 16                      # known counts: adus transactions accepted exceptions unanswered rejected
+                                 #               writes targets ineligible discarded unselected rows
+
+[output]
+kind = "witness"
+prefix_text = "EXAMPLE-WITNESS/1\u0000"   # or prefix_hex = "45 58 ..." (one of the two)
+parts = ["request_pdu", "response_pdu"]   # per row, in this order. Also: request_adu, response_adu
+                                          # (with MBAP), request_data, response_data (PDU without the code)
+hash = "sha256"                  # none md5 sha1 sha224 sha256 sha384 sha512 sha3_256 sha3_512
+# digest_bytes = 24              # keep only the first N digest bytes
+encoding = "hex"                 # hex hex-upper base32 base32-nopad base64 base64-nopad base64url base64url-nopad
+wrap = "event"                   # event: <event flag prefix>{value}; "none"; or text with one {} for the value
+
+[[vector]]                       # the handout's test vector: the same parts as [output] parts, as hex
+name = "handout serialisation vector"
+rows = [
+  { request_pdu = "10 00 30 00 01 02 00 07", response_pdu = "10 00 30 00 01" },
+]
+expect = "55cb568a2a365eede64e6fda1c9d31d956dc41605fccdf0bd0b76c932d75ce4b"   # the encoded value, no wrapper

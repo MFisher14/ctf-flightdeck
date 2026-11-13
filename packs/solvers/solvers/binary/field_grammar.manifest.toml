@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-216 (binary lane reader generalization).
+# import-only: parse is its main public callable, not a contract entry; `ctf run` refuses library engines
+id = "binary.field_grammar"
+lane = "binary"
+entry = "solvers.binary.field_grammar:parse"
+capabilities = ["library"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["binary field grammar", "per-build role id", "has_section rule"]
+priority = 60

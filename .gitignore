@@ -33,3 +33,6 @@ build/
 
 # Agent worktrees (Claude Code)
 .claude/worktrees/
+
+# The solver pack (packs/solvers): its test fixtures include synthetic log files
+!packs/solvers/tests/fixtures/**/*.log

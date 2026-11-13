@@ -1,0 +1,33 @@
+# TEMPLATE for a player-declared permission rules file. This is not any event's declaration.
+#
+# THE PLAYER OWNS AND WRITES the real file, events/<slug>/permissions.toml. It records the
+# known-good actions the player pre-authorises ahead of an event, so the harness need not stop and
+# ask for each one. It is a transparent declaration the player reviews and installs in their own
+# harness. Nothing in it grants a permission by itself, and no agent edits it. Where one exists,
+# each rule points at a sanctioned helper (a purpose-built `ctf` command) that performs the action
+# the safe way, so the broad, interrupt-prone form is not needed at all.
+# See docs/CONTRACTS.md section 1 and `ctf permissions --helpers-only`.
+#
+# To use it: copy it to events/<slug>/permissions.toml, set `slug`, confirm or replace every rule,
+# then delete the `example = true` line. Until that line is gone, `ctf permissions` labels the file
+# as an unconfirmed example and `ctf permissions --check` fails on it.
+#
+# The rules below are drawn from what interrupted past events (the most denials were at Huntress).
+
+example = true
+# slug = "<event slug>"
+
+[[allow]]
+id = "worktree-commit"
+action = "commit inside an agent's own git worktree on its item/work branch"
+reason = "build agents commit their assigned item in their own worktree; never main"
+scope = "worktree"
+helper = "worktree-commit"
+note = "the helper refuses main/master with no override; it never pushes or rewrites history"
+
+[[allow]]
+id = "abandon-attempt"
+action = "stop working a challenge and record why"
+reason = "giving up on a dead-end attempt is a normal play decision; it should be logged, not forced"
+scope = "play"
+helper = "abandon"

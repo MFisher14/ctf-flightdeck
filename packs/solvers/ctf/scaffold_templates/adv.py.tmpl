@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""@@NAME@@: adversarial scaffold (python -m ctf scaffold adv). Fill TARGET, seed() and SUBJECT, then run:
+
+    .venv/bin/python @@NAME@@.py                     every variant: same / declined / changed / raised
+    .venv/bin/python @@NAME@@.py --seed 7 --max 40   other mutations, fewer of them
+    .venv/bin/python @@NAME@@.py --only bitflip      only the variants whose label matches
+
+A variant must answer as the base did, or decline (None, or the id left out). A different confident
+answer fails unless oracle() says the mutation changed the truth. Exit 1 on a raise or such a change.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "@@REPO@@")
+from ctf import scaffold as S  # noqa: E402
+
+TARGET = "@@TARGET@@"   # FILE.py:FUNCTION or package.module:FUNCTION
+SUBJECT = 0              # which argument is mutated: an index into the case's args, or a keyword name
+
+
+def seed():
+    """The one case every variant is derived from. The subject may be bytes, text, a {name: bytes}
+    delivery or a JSON object."""
+    sample = Path("sample.bin")
+    return S.case("base", sample.read_bytes() if sample.is_file() else b"")
+
+
+def oracle(label, case, base_output, output):
+    """True when a changed answer is right for this variant (the mutation changed the fact)."""
+    return False
+
+
+if __name__ == "__main__":
+    sys.exit(S.adversarial_main(TARGET, seed, subject=SUBJECT, oracle=oracle))

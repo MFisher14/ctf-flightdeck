@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-122.
+# capabilities, inputs, needs_tools and cost_class are set by hand to match the engine's contract.
+# Regeneration never overwrites this file.
+id = "web.browser_xss"
+lane = "web"
+entry = "solvers.web.browser_xss:solve"
+# Executes target-authored JavaScript in a real sandboxed headless browser (B-150's ctf.web_browser
+# worker) to confirm reflected/DOM XSS. "gated" marks it as an explicitly-invoked helper: it carries
+# NO [intake] table, so the no-model Layer-1 intake pass never runs it; an operator/agent invokes it
+# with `python -m ctf run web.browser_xss <dir> --opt target=...`. The browser harness is absent by
+# default, so an un-gated run still blocks loudly with a browser-harness reason -- it never runs cold.
+capabilities = ["executes", "live", "gated", "browser", "web", "xss"]
+inputs = []
+needs_tools = ["browser-harness"]
+cost_class = "cheap"
+status = "active"
+
+# A keyword nudge so triage can *suggest* this helper for a browser-execution XSS web row. Suggesting
+# is not running: default Layer 1 (ctf.web_lane / intake) runs a fixed read-only set, not every routed
+# engine, and this engine needs the browser harness and executes target code, so it only runs when
+# explicitly invoked. Distinct from client_side_depth's offline DOM-XSS keywords (that is a library).
+[[routes]]
+category = ["web"]
+keywords = ["reflected xss", "dom xss", "browser xss", "execute xss", "xss dialog", "alert xss"]
+priority = 61

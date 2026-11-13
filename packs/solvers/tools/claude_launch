@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Start Claude Code inside the solver filesystem fence (B-219).
+
+    tools/claude_launch [fence options] [--effort E] [--dry-run] [--print-settings] [-- extra claude args]
+
+Writes <workspace>/.fence/claude-settings.json (mode 0600) and runs, from the workspace,
+`claude --settings <that file> [extra args]`. The settings deny the file tools and sandboxed Bash
+every denied root (~/.codex, ~/.claude, ~/Library, browser and messaging stores, the notification
+database, unified logs, snapshots, ~/pentest-tools, ~/Downloads except the drop folder, ...),
+confine the file tools to the repo + workspace (blockReadsOutsideWorkingDirectories), turn the
+sandbox on with failIfUnavailable (no unsandboxed fallback) and disable bypassPermissions mode.
+Nothing is written to ~/.claude or to the repo's .claude/settings.json.
+
+With --challenge ID (or $CTF_CHALLENGE) the launch is budget-gated (R-09, tools/launch_gate.py): a
+capped or stopped challenge is refused (exit 3) with the reason and the command that lifts it; the
+agent runs supervised, is re-checked every --gate-poll seconds and stopped (exit 3) when the challenge
+becomes capped or stopped. A print-mode run (-p) gets --output-format stream-json --verbose and its
+usage is charged to the challenge; an interactive session is gated but not metered.
+
+The agent starts with CLAUDE_CODE_AUTO_COMPACT_WINDOW set to the Claude compaction threshold (B-032,
+ctf/compaction.py: 200K, CTF_COMPACT_CLAUDE overrides, "off" leaves the default); a setting that would
+disable or move it (DISABLE_AUTO_COMPACT, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, another window) is refused.
+
+Prompt-cache TTL (B-118, ctf/cache_ttl.py): the agent starts with CLAUDE_CODE_PROMPT_CACHE_TTL=5m, so its
+main-thread cache writes are 5-minute writes (CTF_CACHE_TTL_CLAUDE overrides, "off" leaves the default).
+--standby marks a warm standby agent (B-037) that idles on `ctf standby take`: it gets 1h
+(CTF_CACHE_TTL_STANDBY overrides). Subagent TTLs are never set. A real launch reads the installed CLI
+build (never runs it) and stops with exit 2 when it has no such variable; a conflicting inherited
+setting (another CLAUDE_CODE_PROMPT_CACHE_TTL; FORCE_PROMPT_CACHING_5M under 1h) is refused. A TTL a
+parent launch set (marked by CTF_CACHE_TTL_LAUNCHED) is replaced, so an orchestrator can start standbys.
+
+--effort E (default: the event profile's [models].effort, B-095; none when no event resolves) pins
+the session's reasoning effort with the CLI's --effort flag. A real launch that the gate admits
+reads `claude --help` once (no session, nothing cached) and stops with exit 2, naming the flag, when
+the installed CLI documents none; a seat the gate took is given back. A dry run never runs the CLI:
+it prints the command and says on stderr that the flag was not checked.
+
+B-201 (tools/route_launch.py): on an event whose profile has a [routing] table, a launch with a role
+(--role / $CTF_ROLE) is routed by role, --difficulty and --category: the route's Claude model is passed
+as `--model` unless a passthrough `-- --model M` names one (that wins) and its effort fills --effort when
+not given; the route is recorded on agent_launch. A route naming a speed tier is refused here.
+
+Fence options are those of `python -m ctf fence`. Arguments after `--` go to claude; ones that
+would undo the fence (--dangerously-skip-permissions, a second --settings, --add-dir,
+--permission-mode bypassPermissions) are refused by name. See docs/fence.md.
+"""
+import argparse
+import json
+import os
+import shlex
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ctf import cache_ttl as _cache_ttl  # noqa: E402
+from ctf import compaction as _compaction  # noqa: E402
+from ctf import env as _env  # noqa: E402
+from ctf import event as _event  # noqa: E402
+from ctf import fence as _fence  # noqa: E402
+from ctf import fence_launch as _launch  # noqa: E402
+from ctf import notes as _notes  # noqa: E402
+from ctf.cli import fence as _cli  # noqa: E402
+from tools import launch_gate as _gate  # noqa: E402
+from tools import route_launch as _route  # noqa: E402
+
+
+def _profile_effort(event_slug):
+    """B-095: the launch-pinned reasoning effort from the event profile's [models].effort, or None
+    when no event resolves (then no --effort is passed). A profile that fails to load is left to the
+    fence step, which reports it by name; it is not masked here."""
+    slug = event_slug or _env.get("CTF_EVENT")
+    if not slug:
+        return None
+    try:
+        return _event.load(slug).models.effort
+    except (_event.EventError, FileNotFoundError, OSError):
+        return None
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    extra: list[str] = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, extra = argv[:i], argv[i + 1:]
+    p = argparse.ArgumentParser(prog="claude_launch", description=__doc__.split("\n\n")[0])
+    _cli.add_fence_options(p)
+    p.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
+    p.add_argument("--effort", help="reasoning effort to pin for the session via the CLI's --effort "
+                   "flag (default: the event profile's [models].effort, B-095); the escalation ladder "
+                   "ramps it by relaunching. A real launch fails loudly if the installed CLI "
+                   "documents no effort flag; a dry run does not run the CLI")
+    p.add_argument("--dry-run", action="store_true", help="write the settings, print the command")
+    p.add_argument("--print-settings", action="store_true", help="print the settings JSON and exit")
+    p.add_argument("--standby", action="store_true",
+                   help="a warm standby agent (B-037) that idles on `ctf standby take`: 1h prompt-cache "
+                   "writes instead of the main-thread 5m (B-118)")
+    p.add_argument("--no-notes", action="store_true",
+                   help="do not push the player-notes feed into the session (B-168)")
+    _gate.add_gate_options(p)
+    _route.add_route_options(p)
+    a = p.parse_args(argv)
+    gate = None
+    session = None
+    why = "the launcher exited before the agent started"
+    try:
+        try:
+            f = _cli.fence_from_args(a)
+            if a.print_settings:
+                print(json.dumps(f.claude_settings(), indent=2))
+                return 0
+            _launch.check_claude_extra(extra)
+            a.model = _route.passthrough_model(extra)   # B-201: a passthrough --model wins
+            given_model = a.model
+            route = _route.route_for(a, "claude")       # B-201: the event's model router (opt-in)
+            _route.apply_route(route, a, "claude")      # refuses a Claude speed tier by name
+            if a.model is not None and given_model is None:
+                extra = ["--model", a.model, *extra]    # the route's model
+            if a.effort is None:                        # B-095: default to the profile's launch effort
+                a.effort = _profile_effort(a.event)
+            compact_env = _compaction.claude_env()      # B-032: refuses a conflicting setting
+            ttl_role = "standby" if a.standby else "main"
+            ttl_set, ttl_unset = _cache_ttl.launch_env(ttl_role)   # B-118: refuses a conflicting setting
+            if not a.dry_run and shutil.which(a.claude_bin) is None:   # before the gate takes a seat
+                raise _launch.LaunchError(f"claude CLI not found ({a.claude_bin!r}); install it or set "
+                                          "CLAUDE_BIN")
+            if ttl_set and not a.dry_run and _cache_ttl.check_build(a.claude_bin) is None:
+                print(f"claude_launch: {a.claude_bin} is a launcher script: cannot confirm the CLI knows "
+                      f"{_cache_ttl.CLAUDE_TTL_VAR}; the {ttl_role} cache TTL may be ignored", file=sys.stderr)
+            session, refused = _gate.claim_session(a, "claude", dry_run=a.dry_run)   # B-175
+            if refused is not None:
+                return refused
+            gate = _gate.gate_for(a, "claude")
+            usage = None
+            if gate is not None:
+                extra, usage = _gate.claude_metering(extra)
+                _route.record_route(gate, route, "default", effort=a.effort)   # B-201: on agent_launch
+                refused = _gate.admit(gate, dry_run=a.dry_run)
+                if refused is not None:
+                    return refused
+                extra = _gate.no_spawn_args(gate) + extra     # B-143: helpers and forks do not spawn
+            if a.effort and not a.dry_run:
+                # B-095: the one `claude --help` call of a real launch. After the gate, so a refused
+                # launch costs no CLI start; a CLI that documents no effort flag (or cannot be run) is
+                # a LaunchError, and the finally below gives an admitted seat back.
+                _launch.claude_effort_flag(a.claude_bin)
+            settings = _fence.write_claude_settings(f)
+            if not a.no_notes:
+                try:
+                    feed = _notes.Feed.for_event(a.event)
+                except ValueError as e:     # EventError: no workdir resolves
+                    raise _notes.NotesError(f"player notes: no event workdir ({e}); set --event / "
+                                            "CTF_EVENT, or pass --no-notes") from None
+                _notes.install_claude_hooks(settings, feed.root,
+                                            challenge=gate.challenge_id if gate is not None else None)
+                print(f"player notes: pushed into the session from {feed.root}", file=sys.stderr)
+            cmd = _launch.claude_argv(settings, claude_bin=a.claude_bin, extra=extra, effort=a.effort)
+        except (_fence.FenceError, _launch.LaunchError, _gate.GateError, _notes.NotesError,
+                _compaction.CompactionError, _route.RouteLaunchError,
+                _cache_ttl.CacheTtlError, FileNotFoundError) as e:
+            why = f"launcher error: {e}"
+            print(f"claude_launch: {e}", file=sys.stderr)
+            return 2
+        except Exception as e:  # EventError and friends: named, never a traceback
+            why = f"launcher error: {type(e).__name__}: {e}"
+            print(f"claude_launch: {type(e).__name__}: {e}", file=sys.stderr)
+            return 2
+        if a.dry_run:
+            if a.effort:
+                print(f"effort: {a.effort} (dry run: the CLI was not asked whether it documents "
+                      f"{_launch.CLAUDE_EFFORT_FLAG}; a real launch checks)", file=sys.stderr)
+            if ttl_set:
+                print(f"cache TTL: {ttl_set[_cache_ttl.CLAUDE_TTL_VAR]} for a {ttl_role} agent (dry run: the "
+                      f"CLI build was not checked for {_cache_ttl.CLAUDE_TTL_VAR}; a real launch checks)",
+                      file=sys.stderr)
+            unset = "".join(f"-u {k} " for k in ttl_unset)
+            envs = (f"env {unset}" if unset else "") + "".join(
+                f"{k}={shlex.quote(v)} " for k, v in {**compact_env, **ttl_set}.items())
+            print(f"cd {shlex.quote(str(f.workspace))} && {envs}" + " ".join(shlex.quote(x) for x in cmd))
+            return 0
+        os.environ.update(compact_env)       # the agent (and its subagents) inherit the threshold
+        os.environ.update(ttl_set)           # B-118: the main-thread TTL (subagents read their own var)
+        for k in ttl_unset:
+            os.environ.pop(k, None)
+        if gate is not None:
+            if usage is None:
+                _gate.unmetered_notice(gate)
+            try:
+                return _gate.supervise(cmd, gate, cwd=f.workspace, usage=usage, interactive=usage is None,
+                                       poll_seconds=a.gate_poll, session=session)
+            except OSError as e:
+                if gate.started:
+                    raise
+                why = f"could not start {cmd[0]}: {e}"
+                print(f"claude_launch: {why}", file=sys.stderr)
+                return 2
+        os.chdir(f.workspace)
+        os.environ.update(_gate.exec_owner_env("claude", _gate.challenge_from(a.challenge)))  # B-175
+        os.execvp(cmd[0], cmd)
+    finally:
+        _gate.release_unstarted(gate, why)     # B-143: a seat taken by a run that never started
+        _gate.release_session(session)         # B-175: the session name is free again
+
+
+if __name__ == "__main__":
+    sys.exit(main())

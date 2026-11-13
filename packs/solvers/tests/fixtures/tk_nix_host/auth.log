@@ -1,0 +1,37 @@
+Oct  8 02:09:27 web01 sshd[702]: Accepted publickey for alice from 198.51.100.20 port 50211 ssh2: ED25519 SHA256:n0tAr3alK3yn0tAr3alK3yn0tAr3alK3yn0tAr3alK3y0
+Oct  8 02:09:27 web01 sshd[702]: pam_unix(sshd:session): session opened for user alice(uid=1000) by (uid=0)
+Oct  8 02:19:27 web01 sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/systemctl status nginx
+Oct  8 02:29:27 web01 CRON[744]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+Oct  8 02:29:27 web01 CRON[745]: (root) CMD (   cd / && run-parts --report /etc/cron.hourly)
+Oct  8 02:49:27 web01 sshd[800]: Invalid user admin from 192.0.2.50 port 41000
+Oct  8 02:49:28 web01 sshd[800]: Failed password for invalid user admin from 192.0.2.50 port 41000 ssh2
+Oct  8 02:49:30 web01 sshd[801]: Invalid user test from 192.0.2.50 port 41001
+Oct  8 02:49:31 web01 sshd[801]: Failed password for invalid user test from 192.0.2.50 port 41001 ssh2
+Oct  8 02:49:33 web01 sshd[802]: Invalid user oracle from 192.0.2.50 port 41002
+Oct  8 02:49:34 web01 sshd[802]: Failed password for invalid user oracle from 192.0.2.50 port 41002 ssh2
+Oct  8 02:49:36 web01 sshd[803]: Invalid user ubuntu from 192.0.2.50 port 41003
+Oct  8 02:49:37 web01 sshd[803]: Failed password for invalid user ubuntu from 192.0.2.50 port 41003 ssh2
+Oct  8 03:09:28 web01 sshd[900]: Failed password for root from 203.0.113.77 port 52000 ssh2
+Oct  8 03:09:48 web01 sshd[901]: Failed password for root from 203.0.113.77 port 52001 ssh2
+Oct  8 03:10:08 web01 sshd[902]: Failed password for deploy from 203.0.113.77 port 52002 ssh2
+Oct  8 03:10:28 web01 sshd[903]: Failed password for root from 203.0.113.77 port 52003 ssh2
+Oct  8 03:10:47 web01 sshd[904]: Invalid user admin from 203.0.113.77 port 52004
+Oct  8 03:10:48 web01 sshd[904]: Failed password for invalid user admin from 203.0.113.77 port 52004 ssh2
+Oct  8 03:11:08 web01 sshd[905]: Failed password for deploy from 203.0.113.77 port 52005 ssh2
+Oct  8 03:11:28 web01 sshd[906]: Failed password for root from 203.0.113.77 port 52006 ssh2
+Oct  8 03:11:48 web01 sshd[907]: Failed password for root from 203.0.113.77 port 52007 ssh2
+Oct  8 03:12:08 web01 sshd[908]: Failed password for deploy from 203.0.113.77 port 52008 ssh2
+Oct  8 03:12:28 web01 sshd[909]: Failed password for root from 203.0.113.77 port 52009 ssh2
+Oct  8 03:12:47 web01 sshd[910]: Invalid user admin from 203.0.113.77 port 52010
+Oct  8 03:12:48 web01 sshd[910]: Failed password for invalid user admin from 203.0.113.77 port 52010 ssh2
+Oct  8 03:13:08 web01 sshd[911]: Failed password for deploy from 203.0.113.77 port 52011 ssh2
+Oct  8 03:13:37 web01 sshd[911]: message repeated 3 times: [ Failed password for deploy from 203.0.113.77 port 52011 ssh2]
+Oct  8 03:13:47 web01 sshd[911]: error: maximum authentication attempts exceeded for deploy from 203.0.113.77 port 52011 ssh2 [preauth]
+Oct  8 03:14:27 web01 sshd[930]: Accepted password for deploy from 203.0.113.77 port 52040 ssh2
+Oct  8 03:14:27 web01 sshd[930]: pam_unix(sshd:session): session opened for user deploy(uid=1001) by (uid=0)
+Oct  8 03:15:08 web01 sudo:   deploy : TTY=pts/1 ; PWD=/home/deploy ; USER=root ; COMMAND=/usr/bin/cat /etc/shadow
+Oct  8 03:16:02 web01 useradd[977]: new group: name=sysupd, GID=1002
+Oct  8 03:16:02 web01 useradd[977]: new user: name=sysupd, UID=0, GID=0, home=/var/lib/sysupd, shell=/bin/bash, from=/dev/pts/1
+Oct  8 03:16:03 web01 usermod[981]: add 'sysupd' to group 'sudo'
+Oct  8 03:16:04 web01 passwd[983]: pam_unix(passwd:chauthtok): password changed for sysupd
+Oct  8 03:24:27 web01 sshd[930]: pam_unix(sshd:session): session closed for user deploy

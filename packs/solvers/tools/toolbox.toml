@@ -1,0 +1,182 @@
+# The binary toolbox (B-142): host tools that past CTF editions needed to solve a challenge and that
+# no engine ships. One entry per tool; `python -m ctf toolbox verify` checks each is present, answers
+# its version probe and has what it needs at runtime; `python -m ctf toolbox install` plans (default,
+# a dry run) or runs (--apply) the installs; the Brewfile at the repo root is rendered from here
+# (`python -m ctf toolbox brewfile --write`); docs/CAPABILITIES.md lists each tool (`python -m ctf
+# engines generate`). The preflight doctor (ctf/doctor.py, check `toolbox`) runs verify.
+#
+# Keys (ctf/toolbox.py validates them; an unknown key is an error):
+#   name        unique id
+#   kind        binary (found on PATH or at an app-bundle path) | clone (a git checkout under
+#               $CTF_TOOLBOX_DIR, run with this repo's Python) | file (a library or bundle that must exist)
+#   role        core (verify fails without it) | optional (reported, never fails)
+#   bins        binary: names looked up on PATH, first found wins; extra_bins must also be found
+#   app_paths   binary: absolute fallbacks when no bin is on PATH (macOS app bundles)
+#   version_args, version_re, min_version   the probe: argv after the program, the regex whose first
+#               group is the version (default: the first dotted number), the lowest version accepted
+#   dest, entry, rev                        clone: folder under $CTF_TOOLBOX_DIR, the script, the
+#               pinned commit (a checkout at another commit is reported as drift)
+#   candidates, env_dir, file_name          file: absolute paths, one must exist; env_dir names a variable
+#               whose folder is tried first for file_name
+#   needs       other entries this one needs at runtime (verified with it, installed before it)
+#   install     { brew = "formula" } | { cask = "cask" } | { git = "url" } (clone) |
+#               { manual = "what a human does" } (never run by the tool)
+#   system      true when the installer asks for an admin password, a system extension or a reboot:
+#               planned like the rest, but `install --apply` runs it only with --system
+#   provides, past_need, playbook, note     documentation (CAPABILITIES.md, the install plan)
+
+[[tool]]
+name = "sops"
+kind = "binary"
+role = "core"
+bins = ["sops"]
+version_args = ["--version", "--disable-version-check"]   # without the flag sops asks GitHub for the latest
+version_re = 'sops (\d+\.\d+\.\d+)'
+install = { brew = "sops" }
+provides = "decrypt a sops-encrypted YAML/JSON/ENV file with a leaked age/PGP key"
+past_need = "key-leak to decrypt chains (2024/2025 opsec archetype)"
+playbook = "docs/playbooks/opsec.md"
+
+[[tool]]
+name = "age"
+kind = "binary"
+role = "core"
+bins = ["age"]
+extra_bins = ["age-keygen"]
+version_args = ["--version"]
+version_re = 'v?(\d+\.\d+\.\d+)'
+install = { brew = "age" }
+provides = "decrypt an age file with a leaked identity; age-keygen derives the recipient"
+past_need = "2025 Parano1d (ccrypt, then KeePass, then age)"
+playbook = "docs/playbooks/opsec.md"
+
+[[tool]]
+name = "rclone"
+kind = "binary"
+role = "core"
+bins = ["rclone"]
+version_args = ["version"]
+version_re = 'rclone v(\d+\.\d+\.\d+)'
+install = { brew = "rclone" }
+provides = "reveal an obscured rclone.conf password; read a crypt remote with a leaked config"
+past_need = "key-leak to decrypt chains (rclone config archetype)"
+playbook = "docs/playbooks/opsec.md"
+
+[[tool]]
+name = "git-crypt"
+kind = "binary"
+role = "core"
+bins = ["git-crypt"]
+version_args = ["--version"]
+version_re = 'git-crypt (\d+\.\d+\.\d+)'
+install = { brew = "git-crypt" }
+provides = "unlock a git-crypt repository with a leaked symmetric key"
+past_need = "2025 Secret (git-crypt history)"
+playbook = "docs/playbooks/opsec.md"
+
+[[tool]]
+name = "ccrypt"
+kind = "binary"
+role = "core"
+bins = ["ccrypt"]
+version_args = ["--version"]
+version_re = 'ccrypt (\d+\.\d+(?:\.\d+)?)'
+install = { brew = "ccrypt" }
+provides = "decrypt a .cpt file with a leaked passphrase"
+past_need = "2025 Parano1d (ccrypt, then KeePass, then age)"
+playbook = "docs/playbooks/opsec.md"
+
+[[tool]]
+name = "websocat"
+kind = "binary"
+role = "core"
+bins = ["websocat"]
+version_args = ["--version"]
+version_re = 'websocat (\d+\.\d+\.\d+)'
+install = { brew = "websocat" }
+provides = "talk to a WebSocket endpoint from the shell (client, listener, relay)"
+past_need = "2025 rev Covert: a second localhost websocket listener"
+playbook = "docs/playbooks/web.md"
+
+[[tool]]
+name = "keepassxc-cli"
+kind = "binary"
+role = "core"
+bins = ["keepassxc-cli"]
+app_paths = ["/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli"]
+version_args = ["--version"]
+version_re = '(\d+\.\d+\.\d+)'
+install = { cask = "keepassxc" }
+provides = "open a KeePass .kdbx with a leaked password or key file (show, export); never a cracker"
+past_need = "2025 Parano1d and Acme Analytics chains"
+playbook = "docs/playbooks/opsec.md"
+
+[[tool]]
+name = "macfuse"
+kind = "file"
+role = "core"
+candidates = ["/Library/Filesystems/macfuse.fs"]
+install = { cask = "macfuse" }
+system = true                  # sudo installer + a kernel/system extension + a reboot
+provides = "the FUSE layer VeraCrypt mounts volumes through on macOS"
+past_need = "needed by veracrypt"
+note = "macFUSE asks for a system extension: approve it in System Settings, Privacy & Security, and reboot (Apple Silicon: allow kernel extensions from Recovery first)"
+
+[[tool]]
+name = "veracrypt"
+kind = "binary"
+role = "core"
+bins = ["veracrypt"]
+app_paths = ["/Applications/VeraCrypt.app/Contents/MacOS/VeraCrypt"]
+version_args = ["--text", "--version"]
+version_re = 'VeraCrypt (\d+\.\d+(?:\.\d+)?)'
+needs = ["macfuse"]
+install = { cask = "veracrypt" }
+system = true                  # a sudo .pkg installer, useless (and gated) until macFUSE is in
+provides = "open a VeraCrypt/TrueCrypt volume in text mode (outer or hidden decoy volume) with a leaked password"
+past_need = "2025 Parano1d decoy volume"
+playbook = "docs/playbooks/forensics.md"
+
+[[tool]]
+name = "nss"
+kind = "file"
+role = "core"
+candidates = [
+  "/opt/homebrew/lib/libnss3.dylib",
+  "/usr/local/opt/nss/lib/libnss3.dylib",
+  "/usr/local/lib/libnss3.dylib",
+  "/Applications/Firefox.app/Contents/MacOS/libnss3.dylib",
+]
+env_dir = "NSS_LIB_PATH"
+file_name = "libnss3.dylib"
+install = { brew = "nss" }
+provides = "Mozilla NSS (libnss3), which firefox_decrypt loads to decrypt logins.json"
+past_need = "needed by firefox_decrypt"
+
+[[tool]]
+name = "firefox_decrypt"
+kind = "clone"
+role = "core"
+dest = "firefox_decrypt"
+entry = "firefox_decrypt.py"
+rev = "17403633c1413e0937134ca2233a54fbe6ea6865"
+version_args = ["--version"]
+version_re = '(\d+\.\d+\.\d+)'
+min_version = "1.1.2"          # 1.1.2 added the Apple Silicon Homebrew NSS path
+needs = ["nss"]
+install = { git = "https://github.com/unode/firefox_decrypt" }
+provides = "decrypt the saved logins of a Firefox profile folder (key4.db + logins.json, primary password if set)"
+past_need = "2025 forensics Artifacts: Firefox profile, then the vault password, then 7z"
+playbook = "docs/playbooks/forensics.md"
+
+[[tool]]
+name = "sage"
+kind = "binary"
+role = "optional"
+bins = ["sage"]
+version_args = ["--version"]
+version_re = 'SageMath version (\d+\.\d+(?:\.\d+)?)'
+install = { manual = "SageMath has no Homebrew formula: use the pinned toolchain image (B-188) or a conda-forge env, and put `sage` on PATH" }
+provides = "SageMath for lattice, isogeny and number-field crypto"
+past_need = "lattice and isogeny crypto (several editions)"
+playbook = "docs/playbooks/crypto.md"

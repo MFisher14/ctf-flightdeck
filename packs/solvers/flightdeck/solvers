@@ -1,0 +1,10 @@
+#!/bin/sh
+# The pack's engines from a lane's shell: see lane_cli.py. Uses the pack's own Python.
+here=$(cd "$(dirname "$0")" && pwd)
+pack=$(dirname "$here")
+if [ -n "$FLIGHTDECK_PACK_PYTHON" ] && [ -x "$FLIGHTDECK_PACK_PYTHON" ]; then py=$FLIGHTDECK_PACK_PYTHON
+elif [ -x /opt/flightdeck-pack/venv/bin/python ]; then py=/opt/flightdeck-pack/venv/bin/python
+elif [ -x "$pack/.venv/bin/python" ]; then py=$pack/.venv/bin/python
+else echo "solvers: the pack has no Python environment here" >&2; exit 2
+fi
+PYTHONDONTWRITEBYTECODE=1 exec "$py" "$here/lane_cli.py" "$@"

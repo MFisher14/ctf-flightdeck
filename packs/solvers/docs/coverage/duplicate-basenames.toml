@@ -1,0 +1,89 @@
+# Engine modules that share a basename on purpose (R-10). `python -m ctf engines lint` checks each
+# entry against the tree: the files that share the name, and the one a flat `import <basename>` gets
+# on the engine sys.path (tools/, then web, warmups, script-analysis, mobile-android,
+# metadata-forensics, binary, toolkits, common). A shared name that is not listed here is lint error
+# `duplicate-basename`; an entry whose files or flat import no longer match is the same error; an
+# entry for a name no longer shared is `stale-duplicate-doc`.
+#
+# A flat import of one of these names is unambiguous only from the folder of `flat_import`; from any
+# other folder lint reports `ambiguous-import`, and the caller loads the exact file instead
+# (solvers/common/_shadowed.py: common_module("name") or module_at(path, alias)).
+# A new engine picks a basename no other engine uses (docs/BUILDING.md); this list is for the carried pairs.
+
+[[duplicate]]
+basename = "agent_trace"
+files = ["solvers/common/agent_trace.py", "solvers/toolkits/agent_trace.py"]
+flat_import = "solvers/toolkits/agent_trace.py"
+reason = "common: the readers (transcripts, MCP/agent configs, RAG corpora). toolkits: the toolkit face (CLI, question side), which loads the common readers by path."
+
+[[duplicate]]
+basename = "ai_model_files"
+files = ["solvers/common/ai_model_files.py", "solvers/toolkits/ai_model_files.py"]
+flat_import = "solvers/toolkits/ai_model_files.py"
+reason = "common: the static model-file readers (pickle, GGUF, ONNX, ...). toolkits: the question side and CLI, which loads the common readers by path as `reader`."
+
+[[duplicate]]
+basename = "classical"
+files = ["solvers/common/classical.py", "solvers/toolkits/classical.py"]
+flat_import = "solvers/toolkits/classical.py"
+reason = "Two different libraries. common: the classical-cipher library (encoders, decoders, key recovery, cracking) that warmups and mobile-android/codec_classical use; crib_decode and codec_classical load it with _shadowed.common_module. warmups exotic, formats_more and transposition still import it flat (ambiguous-import, baselined: on the engine sys.path they get the toolkits copy; see docs/build-log/R-10.md). toolkits: the classical half of the modern_crypto toolkit."
+
+[[duplicate]]
+basename = "cloud_container"
+files = ["solvers/common/cloud_container.py", "solvers/toolkits/cloud_container.py"]
+flat_import = "solvers/toolkits/cloud_container.py"
+reason = "common: the implementation. toolkits: a 36-line toolkit face that loads it by path so tools/run.py and tools/verify.py find it like any other toolkit."
+
+[[duplicate]]
+basename = "day_patch_template"
+files = ["solvers/metadata-forensics/day_patch_template.py", "solvers/mobile-android/day_patch_template.py", "solvers/script-analysis/day_patch_template.py"]
+flat_import = "solvers/script-analysis/day_patch_template.py"
+reason = "One live-fix skeleton per CSCTF lane, copied to a role-owned candidate and filled in. Nothing imports a template by name."
+
+[[duplicate]]
+basename = "evidence_core"
+files = ["solvers/common/evidence_core.py", "solvers/toolkits/evidence_core.py"]
+flat_import = "solvers/toolkits/evidence_core.py"
+reason = "common: the shared evidence layer. toolkits: its toolkit face, which loads the common file by path."
+
+[[duplicate]]
+basename = "generic"
+files = ["solvers/binary/generic.py", "solvers/script-analysis/generic.py"]
+flat_import = "solvers/script-analysis/generic.py"
+reason = "Each CSCTF lane's day-agnostic module: binary answers dNN question sets from headers and HCFG; script-analysis answers for a language it has never seen. Binary code loads its own by path (evidence.py, d29, d30, structural_recover, selftest); script-analysis imports it flat."
+
+[[duplicate]]
+basename = "malconfig"
+files = ["solvers/common/malconfig.py", "solvers/toolkits/malconfig.py"]
+flat_import = "solvers/toolkits/malconfig.py"
+reason = "common: the config-extraction readers. toolkits: the runner contract and command, which loads the readers by path as `lib`."
+
+[[duplicate]]
+basename = "modern_crypto"
+files = ["solvers/common/modern_crypto.py", "solvers/toolkits/modern_crypto.py"]
+flat_import = "solvers/toolkits/modern_crypto.py"
+reason = "common: the maths and readers. toolkits: the question side and CLI, which loads the common file by path. The common crypto modules (crypto_faults, crypto_malleability, oracle_aead, rsa_attacks) load it with _shadowed.common_module."
+
+[[duplicate]]
+basename = "nix_host"
+files = ["solvers/common/nix_host.py", "solvers/toolkits/nix_host.py"]
+flat_import = "solvers/toolkits/nix_host.py"
+reason = "common: the Linux/macOS host readers. toolkits: the question logic, lane signal and command, which loads the readers by path; toolkits/artifact_timeline imports the toolkit flat, as intended."
+
+[[duplicate]]
+basename = "respell"
+files = ["solvers/binary/respell.py", "solvers/mobile-android/respell.py", "solvers/script-analysis/respell.py"]
+flat_import = "solvers/script-analysis/respell.py"
+reason = "Each CSCTF lane's wiring of the shared deception primitives. The lanes load their own by path under a lane name (binary_respell, mobile_respell)."
+
+[[duplicate]]
+basename = "selftest"
+files = ["solvers/binary/selftest.py", "solvers/metadata-forensics/selftest.py", "solvers/mobile-android/selftest.py"]
+flat_import = "solvers/mobile-android/selftest.py"
+reason = "Each CSCTF lane's offline self-test, run as a script. mobile-android/selftest_day9 imports its own lane's flat."
+
+[[duplicate]]
+basename = "stated_spec"
+files = ["solvers/metadata-forensics/stated_spec.py", "solvers/mobile-android/stated_spec.py"]
+flat_import = "solvers/mobile-android/stated_spec.py"
+reason = "Each lane's reader of a question's stated spec. metadata-forensics loads its own by path (metadata_stated_spec); mobile-android/codec_search imports its own flat."

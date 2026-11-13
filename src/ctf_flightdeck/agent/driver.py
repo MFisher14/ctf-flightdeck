@@ -963,7 +963,8 @@ class AgentDriver:
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
                                          approach, flag_format=self.deck.config.flag_format, recon=run.recon,
-                                         instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None)),
+                                         instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None),
+                                         toolkit=self.l1.toolkit if self.l1 is not None else ""),
             },
         ]
         if run.l1_message is not None:

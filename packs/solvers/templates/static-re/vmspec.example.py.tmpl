@@ -1,0 +1,70 @@
+"""Worked VMSpec for a custom bytecode VM -- copy and edit when the challenge ships one.
+
+This is scaffold DATA, not an engine: it lives under templates/ and is copied into a workbench by
+`ctf re-workbench scaffold`. It imports the kit's vm_lifter and shows the three steps -- decode,
+lift, interpret -- on a tiny stack machine. Replace the opcode table and handlers with the ones you
+reverse out of the target. Nothing here runs the challenge binary.
+
+Run it from the workbench folder with:  {{REPO}}/tools/ctfpy vmspec.example.py
+(or plain `python -I vmspec.example.py`: the kit's folder below was filled in by the scaffold).
+"""
+from __future__ import annotations
+
+import sys
+
+# tools/ctfpy puts the kit on sys.path; a bare run adds the checkout the workbench was scaffolded from.
+try:
+    from vm_lifter import Operand, VMInsn, VMOp, VMSpec, disassemble, interpret, lift
+except ModuleNotFoundError:
+    sys.path.insert(0, "{{REPO}}/solvers/binary")
+    from vm_lifter import Operand, VMInsn, VMOp, VMSpec, disassemble, interpret, lift
+
+
+def build_spec() -> VMSpec:
+    """A 16-bit stack VM: push imm16, add, xor-with-imm8, emit a byte, halt."""
+    opcodes = {
+        0x00: VMOp("halt", ir="halt"),
+        0x01: VMOp("push", (Operand("imm", 2),), ir="push {0}"),
+        0x02: VMOp("add", ir="add"),
+        0x03: VMOp("xor", (Operand("imm", 1),), ir="xor {0}"),
+        0x04: VMOp("emit", ir="emit"),
+    }
+
+    def h_push(st, ops):
+        st.stack.append(ops[0])
+
+    def h_add(st, ops):
+        b, a = st.stack.pop(), st.stack.pop()
+        st.stack.append((a + b) & 0xFFFF)
+
+    def h_xor(st, ops):
+        st.stack.append(st.stack.pop() ^ ops[0])
+
+    def h_emit(st, ops):
+        st.output.append(st.stack.pop() & 0xFF)
+
+    def h_halt(st, ops):
+        st.halted = True
+
+    return VMSpec(
+        opcodes=opcodes,
+        handlers={"push": h_push, "add": h_add, "xor": h_xor, "emit": h_emit, "halt": h_halt},
+    )
+
+
+def main() -> int:
+    spec = build_spec()
+    # push 0x40; push 0x01; add; emit   -> 'A'
+    bytecode = bytes.fromhex("01400001010002" + "04" + "00")
+    insns = disassemble(bytecode, spec)
+    print("--- listing ---")
+    for line in lift(insns, spec):
+        print(f"  {line.offset:04x}: {line.text}")
+    state = interpret(insns, spec)
+    print("--- output ---")
+    print("  ", bytes(state.output))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

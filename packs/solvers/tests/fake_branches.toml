@@ -1,0 +1,12 @@
+# Fake-branch waivers (B-196, ctf/integrity/fakes.py; `python -m ctf integrity fakes`).
+#
+# Every `if` that reads CTF_TESTING or PYTEST_CURRENT_TEST in ctf/, solvers/ or tools/ needs a test that
+# reaches it with the flag OFF. When the static audit cannot see such a test, or none can exist, add a
+# table keyed <file>::<function>:
+#
+#   ["ctf/x.py::f"]
+#   tests  = ["tests/test_x.py::test_f_real_path"]   # evidence the audit cannot see (each must exist)
+#   reason = "why no non-fake test can exist"        # or a waiver, listed loudly by every run
+#
+# An entry that matches no fake branch, or names a test that does not exist, fails the audit.
+# Empty when B-196 shipped: every branch it found has a test (tests/test_fake_branch_real_paths.py).

@@ -190,6 +190,7 @@ class L1Config:
     pack: Path | None = None  # a folder of L1 engines (manifests); None: no L1 stage
     concurrency: int = 4  # engines run at once on one challenge
     image: str | None = None  # the docker image engines run in when lanes run in Docker; None: the lane image
+    lane_tools: bool = False  # lanes' models may call the pack's engines: the pack mounted read-only, its note in the brief
 
 
 @dataclass(frozen=True)
@@ -639,6 +640,8 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # `flightdeck pack install` fetches flightdeck's own solver pack, sets it up and writes both lines.
 # pack = "~/ctf/solvers"        # no pack: no L1 stage
 # image = "ctf-flightdeck-pack:1"  # Docker lanes: the image engines run in (a pack's own, with what its engines need); unset: the lane image
+# lane_tools = true             # the lanes' models may call the pack's engines too (a pack that says how: flightdeck's own does).
+#                               # Docker lanes then run in the image above, with the pack mounted read-only
 concurrency = 4                 # engines run at once on one challenge
 
 [notify]
@@ -1168,7 +1171,7 @@ def _agents(path: Path, table: dict) -> dict[str, tuple[str, ...]]:
 
 
 def _l1(path: Path, table: dict) -> L1Config:
-    _known(path, ("l1",), table, ("pack", "concurrency", "image"))
+    _known(path, ("l1",), table, ("pack", "concurrency", "image", "lane_tools"))
     defaults = L1Config()
     concurrency = table.get("concurrency", defaults.concurrency)
     if not _is_int(concurrency) or concurrency < 1:
@@ -1178,7 +1181,12 @@ def _l1(path: Path, table: dict) -> L1Config:
         image = _string(path, table, ("l1", "image"), "")
         if not image or image.startswith("-") or not _plain(image):
             raise _error(path, ("l1", "image"), "must be a docker image name: no spaces or control characters, and not starting with -")
+    lane_tools = table.get("lane_tools", False)
+    if not isinstance(lane_tools, bool):
+        raise _error(path, ("l1", "lane_tools"), f"must be true or false{_got(lane_tools)}")
     if "pack" not in table:
+        if lane_tools:
+            raise _error(path, ("l1", "lane_tools"), "needs a pack: set [l1] pack too")
         return L1Config(concurrency=concurrency, image=image)
     raw = _string(path, table, ("l1", "pack"), "")
     try:
@@ -1187,7 +1195,7 @@ def _l1(path: Path, table: dict) -> L1Config:
         raise _error(path, ("l1", "pack"), "starts with ~ for a home directory that cannot be found") from None
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
-    return L1Config(pack=pack, concurrency=concurrency, image=image)
+    return L1Config(pack=pack, concurrency=concurrency, image=image, lane_tools=lane_tools)
 
 
 def _notify(path: Path, table: dict) -> NotifyConfig:

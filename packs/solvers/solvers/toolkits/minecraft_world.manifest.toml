@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-120.
+# Regeneration never overwrites this file.
+id = "toolkits.minecraft_world"
+lane = "toolkits"
+entry = "solvers.toolkits.minecraft_world:solve"
+capabilities = ["executes", "minecraft", "nbt", "anvil", "game-world", "signs", "books"]
+inputs = ["name:level.dat", "ext:.mca", "ext:.schem", "ext:.schematic", "ext:.litematic", "ext:.nbt"]
+# Pure Python on top of research_ff_nbt and ffgame_anvil_semantics: no external tool, no network.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a Minecraft challenge by its wording: the world walker ranks above the one-region readers
+keywords = ["minecraft", "level.dat", "world save", "world download", "playerdata"]
+priority = 64
+
+[[routes]]  # a world folder or region file in the handout, whatever the category says
+files = ["name:level.dat", "ext:.mca", "ext:.schem", "ext:.schematic", "ext:.litematic", "ext:.nbt"]
+priority = 46
+
+[intake]  # B-002: walk every world in the handout at intake (offline; bounded by its own CPU budget)
+select = "files"
+run = "challenge"
+match = ["name:level.dat", "ext:.mca", "ext:.schem", "ext:.schematic", "ext:.litematic", "ext:.nbt"]
+timeout = 120

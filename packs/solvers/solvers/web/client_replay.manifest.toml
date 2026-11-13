@@ -1,0 +1,28 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-131.
+# Harvests a shipped client's User-Agent and URL constants from the handout (offline; what intake
+# runs) and, with `--opt replay=true`, replays them against in-scope URLs and their first-level
+# links (ctf/clientreplay.py; every URL passes ctf.scope.check_url first).
+id = "web.client_replay"
+lane = "web"
+entry = "solvers.web.client_replay:solve"
+capabilities = ["executes", "user-agent", "replay", "http", "strings", "disk-image"]
+inputs = ["ext:.img", "ext:.iso", "ext:.py", "ext:.js", "ext:.apk", "ext:.jar", "ext:.exe"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the description points at a shipped client or its User-Agent
+keywords = ["user-agent", "user agent", "useragent", "custom browser", "shipped browser", "built-in browser"]
+priority = 62
+
+[[routes]]  # a bootable image may ship a client: its constants are read from the raw image
+category = ["forensics", "stego", "misc", "reverse"]
+files = ["ext:.iso", "name:*uefi*.img", "name:*boot*.img", "name:*disk*.img"]
+priority = 26
+
+[intake]  # B-002 input adapter: harvest only (intake has no network); the replay is a separate, explicit run
+select = "files"
+run = "challenge"
+match = ["ext:.img", "ext:.iso", "ext:.py", "ext:.js", "ext:.apk", "ext:.jar", "ext:.exe",
+         "magic:0x7f454c46", "magic:MZ"]
+timeout = 120

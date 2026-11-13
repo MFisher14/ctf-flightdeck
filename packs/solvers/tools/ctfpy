@@ -1,0 +1,50 @@
+#!/bin/sh
+# ctfpy: run any engine, script or snippet with this checkout's interpreter, sys.path and env (B-187).
+#
+#   tools/ctfpy <engine> [args]          a manifested engine by id or name (toolkits.network, network)
+#   tools/ctfpy path/to/script.py [args] like `python script.py`; a manifested engine is recorded
+#   tools/ctfpy -m module [args]         like `python -m module`
+#   tools/ctfpy -c 'code' [args]         like `python -c`; flat engine imports work (import network)
+#   tools/ctfpy --info                   show the interpreter, repo, sys.path and workdir in use
+#   tools/ctfpy                          an interactive console with the engine sys.path
+#   options before the target: --no-ledger, --challenge-id ID
+#
+# The interpreter runs in isolated mode (-I): PYTHONPATH, PYTHONHOME and the user site are ignored, so
+# a stray environment cannot change which modules load. The repo is the checkout this script lives in
+# (a worktree resolves to itself). The interpreter is the first of: $CTF_PYTHON, <checkout>/.venv,
+# the main checkout's .venv (a fresh worktree has none of its own). None found = exit 2, named.
+# Engine runs append engine.run to <workdir>/ledger.jsonl (see ctf/engines/runner.py).
+set -eu
+
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname "$self")/$link ;;
+    esac
+done
+repo=$(cd "$(dirname "$self")/.." && pwd -P)
+
+py=""
+if [ -n "${CTF_PYTHON:-}" ]; then
+    if [ ! -x "$CTF_PYTHON" ]; then
+        echo "ctfpy: CTF_PYTHON=$CTF_PYTHON is not an executable interpreter" >&2
+        exit 2
+    fi
+    py=$CTF_PYTHON
+elif [ -x "$repo/.venv/bin/python" ]; then
+    py=$repo/.venv/bin/python
+else
+    common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [ -n "$common" ] && [ -x "$(dirname "$common")/.venv/bin/python" ]; then
+        py=$(dirname "$common")/.venv/bin/python
+    fi
+fi
+if [ -z "$py" ]; then
+    echo "ctfpy: no interpreter: $repo/.venv/bin/python is missing and no main-checkout .venv was found" >&2
+    echo "ctfpy: run ./setup.sh in the main checkout, or set CTF_PYTHON=/path/to/python" >&2
+    exit 2
+fi
+
+exec "$py" -I "$repo/ctf/engines/_boot.py" --repo "$repo" --via ctfpy "$@"

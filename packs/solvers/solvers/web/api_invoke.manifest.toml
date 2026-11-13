@@ -1,0 +1,21 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186).
+# Written by hand for B-123 (Descriptor-driven API invocation engine).
+# import-only: solve is its main public callable, not a contract entry; `ctf run` refuses library engines.
+# Gated reader (off by default, CTF_WEB_APICALL=on): takes one already-inventoried, exact-linked
+# descriptor record (AsyncAPI/OpenRPC via descriptor_inventory, WSDL/protobuf/gRPC-web via
+# service_descriptors) and drives exactly one bounded read-only operation against the descriptor's own
+# same-origin server, surfacing the proof. Writes, unknowns and off-host targets are refused, never sent.
+id = "web.api_invoke"
+lane = "web"
+entry = "solvers.web.api_invoke:solve"
+capabilities = ["library"]
+inputs = []
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # descriptor-driven RPC/SOAP/message-bus invocation; distinct from the recon readers it follows
+category = ["web"]
+keywords = ["descriptor invocation", "api invocation", "json-rpc call", "openrpc call", "soap request",
+            "wsdl operation", "grpc-web call", "asyncapi channel", "rpc method call", "invoke descriptor"]
+priority = 55

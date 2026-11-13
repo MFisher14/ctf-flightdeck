@@ -1,0 +1,32 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-085.
+# Regeneration never overwrites this file.
+id = "mobile_android.android_backup_sqlite"
+lane = "mobile-android"
+entry = "solvers.mobile-android.android_backup_sqlite:solve"
+capabilities = ["executes", "android", "adb-backup", "sqlite", "wal", "protobuf", "deflate", "unpack"]
+inputs = ["magic:ANDROID BACKUP", "magic:SQLite format 3", "magic:0x377f0682", "magic:0x377f0683"]
+# Standard library on the answering path. Only an encrypted backup with a password uses the pinned
+# `cryptography` package, and its absence is a named error for that backup, not a reason to skip the engine.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # an adb backup by its wording; above toolkits.ff_androidab_backup (63), which only inventories
+keywords = [".ab backup", "android backup", "adb backup"]
+priority = 64
+
+[[routes]]  # WAL recovery by its wording, on a mobile or forensics brief; one below toolkits.sqlite_timetravel (61), which
+# shares the "wal file" wording (merge batch 904)
+category = ["mobile", "forensics"]
+keywords = ["write-ahead", "-wal", "wal file", "wal frame", "stale frame", "withdrawn message", "deleted message"]
+priority = 60
+
+[[routes]]  # an Android backup or a SQLite WAL in the handout, whatever the category says
+files = ["magic:ANDROID BACKUP", "magic:0x377f0682", "magic:0x377f0683"]
+priority = 46
+
+[intake]  # B-002: unwrap every .ab and read every database with its WAL at intake (offline, CPU-budgeted)
+select = "files"
+run = "challenge"
+match = ["magic:ANDROID BACKUP", "magic:0x377f0682", "magic:0x377f0683"]
+timeout = 90

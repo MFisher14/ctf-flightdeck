@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-216 (binary lane reader generalization).
+# import-only: read is its main public callable, not a contract entry; `ctf run` refuses library engines
+id = "binary.container_symbols"
+lane = "binary"
+entry = "solvers.binary.container_symbols:read"
+capabilities = ["library", "elf", "pe", "macho"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["coff symbol", "coff raw order", "stripped build symbols", "lc_symtab"]
+priority = 61

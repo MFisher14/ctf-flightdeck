@@ -95,8 +95,11 @@ def shell_names(hosts: Mapping[str, str]) -> str:
     )
 
 
+TOOLKIT = "The player's solver toolkit (the player installed it; its author's words, not the challenge's):"
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
-          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None) -> str:
+          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "") -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -110,7 +113,9 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     that the event's rules keep the lane off it (OFF_LIMITS), also when the board lists none:
     a service named only in the description or a file is as much off limits. `shell_hosts`
     (a Docker lane's: DockerWorkspace.shell_hosts) adds shell_names() after the fence, unless
-    the lane is kept off the instance."""
+    the lane is kept off the instance. `toolkit` is the player's solver pack's own note
+    (pack.lane_note: [l1] lane_tools), after the challenge's fence and outside it: the pack is
+    the player's code, never the challenge's."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -134,6 +139,8 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         lines.append(OFF_LIMITS)
     elif shell_hosts:
         lines.append(shell_names(shell_hosts))
+    if toolkit.strip():
+        lines += [TOOLKIT, _MARKER.sub(MARKER_REMOVED, toolkit.strip())]
     if recon.strip():
         lines += [FIRST_LOOK, fenced(recon)]
     if approach:

@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Written by `python -m ctf engines generate`, then corrected
+# by hand (B-227): the language-blind plan/descriptor reader. generic.read() asks it for every extension; the CLI
+# prints what one file's containers give whole. Text only: nothing is executed.
+id = "script_analysis.blind_reader"
+lane = "script-analysis"
+entry = "cli:python solvers/script-analysis/blind_reader.py"
+capabilities = ["analysis", "cli", "legacy-output", "plan", "base64", "descriptor"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-227: a script whose questions ask for a plan or descriptor rebuilt from encoded material
+keywords = ["reconstructed plan", "analysis descriptor", "tagged descriptor", "decoded plan", "script plan"]
+priority = 58

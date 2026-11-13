@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-117.
+id = "toolkits.gif_reveal"
+lane = "toolkits"
+entry = "solvers.toolkits.gif_reveal:solve"
+capabilities = ["executes", "gif", "animation", "frames", "ocr", "stego", "qr"]
+inputs = ["magic:GIF87a", "magic:GIF89a"]
+needs_tools = ["py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-117: every GIF, whatever the category (Spooky Scopophobia was a web row); a still GIF is none at once
+files = ["magic:GIF87a", "magic:GIF89a"]
+priority = 31
+
+[[routes]]  # B-117: the words of a hidden-frame brief
+keywords = ["animated gif", "hidden frame", "frame by frame", "timed reveal", "blink and you", "single frame", "flashes by"]
+priority = 63
+
+[intake]  # B-117: pull every frame of every GIF at intake (tesseract reads them when it is installed).
+# The engine's own budget is 20 s (gif_reveal.DEFAULT_SECONDS), a third of the challenge's 60 s intake budget.
+select = "files"
+run = "challenge"
+match = ["magic:GIF87a", "magic:GIF89a"]
+timeout = 45
+spawns = true

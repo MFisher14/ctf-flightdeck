@@ -1,0 +1,18 @@
+# Engine manifest (docs/CONTRACTS.md section 6). B-052: the static-nostdlib SROP/execve autobuilder.
+# A PLAN engine: it recognises the static no-PIE nostdlib regime for one local ELF, scans for a
+# syscall/sigreturn + inline memory-syscall surface and a .bss read pivot, and assembles an SROP or
+# staged-read execve chain.  It never runs or assembles against the binary (status plan-only).
+# Hand-written, not generated.
+id = "toolkits.srop_autobuild"
+lane = "toolkits"
+entry = "solvers.toolkits.srop_autobuild:solve"
+capabilities = ["plan", "elf", "pwn", "srop", "execve", "static", "nostdlib", "syscall"]
+inputs = []
+needs_tools = ["py:elftools"]
+cost_class = "cheap"
+status = "plan-only"
+
+[[routes]]
+category = ["pwn"]
+keywords = ["nostdlib", "static no-pie", "syscall gadget", "staged read pivot", "execve chain", "sigreturn frame"]
+priority = 63

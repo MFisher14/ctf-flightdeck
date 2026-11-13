@@ -1,0 +1,15 @@
+--- a/ctf/paths.py
++++ b/ctf/paths.py
+@@ -52,6 +52,12 @@
+ 
+ 
+ def events_root() -> Path:
++    """<repo>/events, or $CTF_EVENTS_DIR: a folder of <slug>/event.toml profiles outside the checkout
++    (the flightdeck adapter writes the profile of the board being played there; the pack itself may
++    be mounted read-only)."""
++    override = env.get("CTF_EVENTS_DIR")
++    if override:
++        return _resolve(override)
+     return _REPO / "events"
+ 
+ 

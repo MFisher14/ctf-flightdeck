@@ -1,0 +1,23 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-082.
+# Modbus/TCP capture replay: ADUs in capture order, request/response pairing, holding-register state
+# replay, and a spec-driven witness/report builder that emits nothing until the handout's test vector
+# reproduces. Offline: it reads the supplied capture and never opens a socket. The policy and output
+# grammar are prose per challenge, so they come from a spec the agent writes
+# (<challenge>/modbus-replay.toml; templates in solvers/toolkits/modbus_replay_templates/).
+id = "toolkits.modbus_replay"
+lane = "toolkits"
+entry = "solvers.toolkits.modbus_replay:solve"
+capabilities = ["executes", "modbus", "pcap", "ics", "replay", "witness", "report", "documented"]
+inputs = ["ext:.pcap", "ext:.pcapng", "magic:0x0a0d0d0a", "name:modbus-replay.toml"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-082: a brief that names Modbus, in any category (above ics_scada's general nudge at 60)
+keywords = ["modbus", "mbap", "holding register"]
+priority = 66
+
+[intake]  # B-082: pair and replay the capture at intake (no model); the flag needs the agent's spec
+select = "route"
+run = "challenge"
+timeout = 30

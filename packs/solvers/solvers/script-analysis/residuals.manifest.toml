@@ -1,0 +1,18 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Written by `python -m ctf engines generate`, then corrected
+# by hand (B-247): the Script lane's residual readers (the exact HUNTRESS_DESCRIPTOR key in YAML/HCL/Dockerfile/.env,
+# wrapped tagged comments, untagged deep layers and long XOR, batch `set` copies, computed JavaScript values, nested
+# base64 hosts). generic.read() asks it after its own readers; the CLI prints the copies one file holds. Text only:
+# nothing is executed.
+id = "script_analysis.residuals"
+lane = "script-analysis"
+entry = "cli:python solvers/script-analysis/residuals.py"
+capabilities = ["analysis", "cli", "legacy-output", "plan", "descriptor", "base32", "base64", "base85", "gzip", "xor",
+                "yaml", "hcl", "javascript"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-247: a script or CI/IaC config whose questions ask for a plan held in a descriptor key or deep layers
+keywords = ["huntress_descriptor", "github actions", "terraform", "ci config", "nested encoded", "layered descriptor"]
+priority = 52

@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-agent
+  namespace: monitoring
+spec:
+  template:
+    spec:
+      serviceAccountName: node-agent-sa
+      hostPID: true
+      containers:
+        - name: agent
+          image: registry.example.com/ops/node-agent:2.3.1
+          securityContext:
+            privileged: true
+          env:
+            - name: LOG_LEVEL
+              value: debug
+        - name: sidecar
+          image: registry.example.com/ops/sidecar:0.9.0
+      volumes:
+        - name: sock
+          hostPath:
+            path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-secrets
+  namespace: monitoring
+data:
+  DB_PASS: aHVudGVyMi1leGFtcGxl

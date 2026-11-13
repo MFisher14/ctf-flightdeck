@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+id = "toolkits.lt_flat_capnp"
+lane = "toolkits"
+entry = "solvers.toolkits.lt_flat_capnp:solve"
+capabilities = ["executes", "flatbuffers", "capnproto", "schema-formats", "forensics"]
+inputs = ["ext:.capnp", "ext:.bfbs"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+# Neither format has a magic number, so only the description or the extension routes here; the engine
+# itself tests the structure of every file it is given.
+[[routes]]
+keywords = ["flatbuffer", "flatc", "capnp", "capnproto", "cap'n proto"]
+priority = 61
+
+[[routes]]
+files = ["ext:.capnp", "ext:.bfbs"]
+priority = 29
+
+[intake]  # B-002: only when the router routes the challenge here (no magic to select files by)
+run = "challenge"
+timeout = 60

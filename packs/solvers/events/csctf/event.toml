@@ -1,0 +1,48 @@
+# CSCTF 2026 (Chronos Security CTF): a past event, kept as a profile fixture. Facts from
+# the CSCTF source repo (2026-ctf-csctf, read-only): CTFd teams mode; flag format CSCTF{...} with rare CTF{...}/chronos{...}
+# outliers (ctf/config.py DEFAULT_FLAG_FORMAT, AGENTS.md); guarded auto-submit with a 3-wrong stop;
+# never buy hints. Dates 6 Nov 13:00 UTC to 8 Nov 13:00 UTC. Host is a placeholder (.example).
+slug = "csctf"
+name = "CSCTF 2026"
+categories = ["Web", "Pwn", "Crypto", "Reverse engineering", "Forensics", "Misc", "Linux", "Windows",
+              "Operational security", "OSINT", "Network", "Mobile", "ICS", "ML", "Welcome"]
+sectors = ["energy", "telecom", "finance", "healthcare", "defence"]
+dates = { start = 2026-11-06T13:00:00Z, end = 2026-11-08T13:00:00Z }
+
+[platform]
+kind = "ctfd"
+base_url = "https://2026.ctf-platform.example"
+
+[flag]
+prefixes = ["CSCTF", "chronos", "CTF", "flag"]
+body = "[^}\\n]{1,256}"
+case = "prefix-insensitive"
+
+[rules]
+submit_mode = "auto"
+wrong_answer_stop = 3
+guess_budget = 0
+hints_allowed = false
+flag_sharing = "allowed"
+ai_on_platform = "allowed"
+live_service_scope = ["*.ctf-platform.example"]
+web_state_changing = false
+
+[writeups]
+redact_flags = true
+
+# B-173: the player authorized candidate sweeps at the event but had to re-say "bypass the guard"
+# on every run (session review, csctf codex issue 9). One authorization now covers one paced run;
+# the guard stays on otherwise.
+[sweep]
+mode = "player-authorized"
+
+[budget]
+per_point = 0.5
+floor = 25.0
+ceiling = 250.0
+
+# B-211: the release clock. Two waves, 6 Nov and 7 Nov 15:00 EET = 13:00 UTC (the source repo's
+# AGENTS.md "When"); the first is also dates.start. `ctf clock` and ctf.quota count down to them.
+[allowance]
+releases = [2026-11-06T13:00:00Z, 2026-11-07T13:00:00Z]

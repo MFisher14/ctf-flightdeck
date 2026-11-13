@@ -1,0 +1,46 @@
+# The reader catalog Layer 1 asks before it stops on a MISSING id (B-139, docs/CONTRACTS.md section 38;
+# ctf/askreaders.py is the source of truth for this schema). Data only: unknown keys are errors.
+#
+# One [[reader]] per reader or field catalog. A lane asks its own readers first (those that list it in
+# `lanes`), then the readers of every lane (`lanes = ["*"]`), in the order they appear here, then the
+# one-field files an agent wrote under <workdir>/ask-readers/<lane>/ (`ctf ask-readers template`).
+#
+#   name         unique; the option names of a merged offer carry it
+#   lanes        the labels lanes that ask it (binary, metadata, mobile, script, warmups, a toolkit
+#                prefix), or "*" for every lane
+#   module       the reader's file, relative to the repo root; loaded by path (ctf.packs)
+#   call         how it is asked one question:
+#                  solve_set  module.<function>(questions, files, ctx) -> {qid: answer}
+#                  fields     module.<function>(member name, member bytes, questions) -> {qid: answer},
+#                             once per delivered member
+#                  apk        module.<function>(questions, apk members, apk bytes) -> {qid: answer}, once
+#                             per delivered zip that holds classes.dex or AndroidManifest.xml
+#   function     the function's name (default: solve_set, fields, solve_questions by call)
+#   kind         reader | catalog
+#   needs_tools  as an engine manifest's (a missing one makes the reader `unavailable`, named)
+#   note         why it is here
+
+[[reader]]
+name = "binary.field_catalog"
+lanes = ["binary", "metadata"]
+module = "solvers/binary/field_catalog.py"
+call = "fields"
+kind = "catalog"
+note = "Huntress row 111 catalog: every field a later day may ask of a binary sample (ELF, PE, Mach-O, wasm, DEX, jar, HCFG containers)"
+
+[[reader]]
+name = "metadata.properties_strict"
+lanes = ["metadata", "binary"]
+module = "solvers/metadata-forensics/properties_strict.py"
+call = "solve_set"
+kind = "reader"
+note = "the metadata property registry with its synonym and guess paths (Day 9 pe.coff_machine_u16_hex, Day 10 *_rva_hex)"
+
+[[reader]]
+name = "mobile.apk_facts"
+lanes = ["mobile"]
+module = "solvers/mobile-android/apk_facts.py"
+call = "apk"
+function = "solve_questions"
+kind = "reader"
+note = "facts of one Android or iOS package: manifest, DEX strings, signing certificate, mapping.txt"

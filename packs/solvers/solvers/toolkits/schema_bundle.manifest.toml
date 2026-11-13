@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). B-159, hand-written.
+# Decodes EXI / ASN.1 / bit-dictionary bodies against schemas in the operator's bundle
+# (tools/assets.toml `schema-bundle`); docs/toolkits/schema_bundle.md has the per-schema record.
+id = "toolkits.schema_bundle"
+lane = "toolkits"
+entry = "solvers.toolkits.schema_bundle:solve"
+capabilities = ["executes", "documented", "exi", "asn1", "iso15118", "v2x", "vmf"]
+inputs = ["magic:$EXI"]
+needs_tools = ["py:pycrate_asn1c"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the bodies the sector engines leave opaque: route here once the header engines have run
+keywords = ["exi body", "exi stream", "schema-informed exi", "v2g_message", "supportedappprotocol", "din spec 70121", "cam release 2", "denm release 2", "ts 103 900", "ts 103 831", "vmf k-series", "k-series message"]
+priority = 58

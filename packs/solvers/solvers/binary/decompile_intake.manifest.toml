@@ -1,0 +1,36 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-011 and B-054.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "binary.decompile_intake"
+lane = "binary"
+entry = "solvers.binary.decompile_intake:solve"
+# B-054 added bundle / NODE_SEA unpack: a .NET single-file bundle and a Node single-executable blob
+# are extracted and their assemblies decompiled, hence the unpack / node_sea / bundle capabilities.
+capabilities = ["analysis", "decompile", "elf", "pe", "macho", "dotnet", "reverse",
+                "unpack", "node_sea", "dotnet_bundle"]
+inputs = ["magic:0x7f454c46", "magic:MZ", "magic:0xfeedface", "magic:0xfeedfacf", "magic:0xcafebabe",
+          "magic:0x20da4301"]
+# needs_tools is intentionally empty: the backends (r2ghidra / ghidra / ilspycmd) are alternatives, so
+# a hard needs_tools would require ALL of them. The engine detects a fitting backend itself and returns
+# a loud, named `blocked` when none is installed (no silent fallback).
+needs_tools = []
+cost_class = "heavy"
+status = "active"
+
+[[routes]]  # reverse lane: decompile feeds B-024/B-025/B-026 (infra, below the solver band 40-49)
+category = ["reverse"]
+priority = 39
+
+[[routes]]  # pwn binaries are decompiled too
+category = ["pwn"]
+priority = 41
+
+[intake]  # B-002/B-011/B-054 input adapter: decompile every native/.NET binary and unpack every
+# .NET-bundle / NODE_SEA container in the handout at intake. The NODE_SEA magic lets a standalone
+# blob (no native host) select the engine too; a bundle apphost is already a native file.
+select = "files"
+run = "challenge"
+match = ["magic:0x7f454c46", "magic:MZ", "magic:0xfeedface", "magic:0xfeedfacf", "magic:0xcafebabe",
+         "magic:0x20da4301"]
+timeout = 300
+spawns = true

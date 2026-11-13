@@ -1,0 +1,19 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-128.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "toolkits.pki_weakkey"
+lane = "toolkits"
+entry = "solvers.toolkits.pki_weakkey:solve"
+capabilities = ["analysis", "crypto", "certificate", "asn1", "ecdsa", "ecc"]
+inputs = []
+# cryptography is a pinned Python dependency (requirements.in), not a system tool; the engine returns
+# a loud, named `blocked` if it is ever unimportable (no silent fallback). So needs_tools is empty.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # crypto lane solver band (40-49): weak-EC CA key from PKI ceremony artifacts
+category = ["crypto"]
+keywords = ["weak ec key", "small scalar", "tiny private key", "pki ceremony", "hsm log",
+            "certificate csr", "ecdsa proof", "sign the challenge", "p-384 ca"]
+priority = 44

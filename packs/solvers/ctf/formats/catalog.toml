@@ -1,0 +1,348 @@
+# Ranked format catalog (B-162). Loaded by ctf/formats/__init__.py; rendered by `python -m ctf formats`.
+#
+# One [[format]] per file format a forensics / metadata lane is likely to be handed as a member, ranked by
+# likelihood (rank 1 is the most likely). The ranking is a judgement from the 2026 events: the Huntress
+# Metadata lane met a new member format on most of its stop days (MSI on day 13, LNK on 14, DOCX on 15,
+# WAV on 17, mail members on 18), and general CTF forensics deliveries put office documents and mail
+# first. Re-rank by editing `rank`; ranks must be 1..N without gaps.
+#
+#   id          the format (also what `ctf formats identify` prints)
+#   rank        1..N, unique
+#   label       one line for people
+#   basis       why it sits at this rank
+#   extensions  the names a delivery usually gives it (an extension alone is a weak, unsure match)
+#   refines     a broader format this one is a kind of (an MSI is a compound file): when both match the
+#               bytes, the finer one is reported and the broader one is dropped
+#   namespaces  the metadata lane's property namespaces that read it (solvers/metadata-forensics)
+#   samples     the synthetic builders of ctf/formats/corpus.py (each has its own checks)
+#   [[format.nearest]]  a spelling no reader registers that the lane must still read through the
+#               nearest reader, always unsure: asked (the property as a question names it), reader (the
+#               registered reader it must land on), sample
+#   [[format.gaps]]     a plausible spelling that nothing reads yet: listed so the matrix shows it, and
+#               so a builder can close it (asked, sample, note)
+
+[[format]]
+id = "ooxml"
+rank = 1
+label = "Office Open XML documents (docx, xlsx, pptx)"
+basis = "the most common document delivery; DOCX stopped the Huntress Metadata lane on day 15"
+extensions = [".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm"]
+namespaces = ["docx", "xlsx", "pptx", "office", "ooxml"]
+samples = ["ooxml_docx", "ooxml_xlsx", "ooxml_pptx"]
+nearest = [
+  { asked = "docx.dc_title", reader = "docx.title", sample = "ooxml_docx" },
+]
+gaps = [
+  { asked = "word.title", sample = "ooxml_docx", note = "no namespace alias from word/excel/powerpoint to docx/xlsx/pptx" },
+]
+
+[[format]]
+id = "eml"
+rank = 2
+label = "Internet mail (RFC 5322 / MIME) with attachments and attached messages"
+basis = "mail with attachments is a staple of phishing and DFIR handouts; mail members stopped the lane on day 18"
+extensions = [".eml", ".msg.eml", ".mbox"]
+namespaces = ["eml"]
+samples = ["eml_attachments"]
+nearest = [
+  { asked = "email.subject", reader = "eml.subject", sample = "eml_attachments" },
+  { asked = "message.message_id", reader = "eml.message_id", sample = "eml_attachments" },
+]
+
+[[format]]
+id = "lnk"
+rank = 3
+label = "Windows shell link (.lnk)"
+basis = "the standard Windows execution artifact; LNK stopped the lane on day 14"
+extensions = [".lnk"]
+namespaces = ["lnk"]
+samples = ["lnk_shortcut"]
+nearest = [
+  { asked = "shortcut.target_path", reader = "lnk.target_path", sample = "lnk_shortcut" },
+  { asked = "lnk.header_target_size_bytes", reader = "lnk.target_size_bytes", sample = "lnk_shortcut" },
+]
+gaps = [
+  { asked = "lnk.working_directory_path", sample = "lnk_shortcut", note = "a trailing word that only restates the field" },
+]
+
+[[format]]
+id = "riff"
+rank = 4
+label = "RIFF family: WAVE audio, AVI video, WebP images"
+basis = "audio and image members are common stego and metadata handouts; WAV stopped the lane on day 17"
+extensions = [".wav", ".avi", ".webp", ".ani", ".rmi"]
+namespaces = ["riff", "wav", "avi", "webp", "media"]
+samples = ["riff_wav", "riff_avi", "riff_webp", "riff_other"]
+nearest = [
+  { asked = "riff_file.form_type", reader = "riff.form_type", sample = "riff_other" },
+  { asked = "wave.sample_rate", reader = "wav.sample_rate_hz", sample = "riff_wav" },
+  { asked = "wav.header_channels", reader = "wav.channels", sample = "riff_wav" },
+  { asked = "avi.header_width", reader = "avi.width_pixels", sample = "riff_avi" },
+  { asked = "webp.vp8l_header_width", reader = "webp.vp8l_width", sample = "riff_webp" },
+  { asked = "media.block_align", reader = "wav.block_align", sample = "riff_wav" },
+  { asked = "media.chunk_ids", reader = "riff.chunk_ids", sample = "riff_wav" },
+]
+
+[[format]]
+id = "ole"
+rank = 5
+label = "Compound File Binary (OLE/CFB): legacy Office documents and other structured storage"
+basis = "legacy .doc/.xls/.ppt and maldoc handouts are CFB; the container of MSI and Outlook .msg"
+extensions = [".doc", ".xls", ".ppt", ".msg", ".ole", ".cfb"]
+namespaces = ["ole", "cfb"]
+samples = ["ole_document"]
+nearest = [
+  { asked = "doc.title", reader = "ole.title", sample = "ole_document" },
+  { asked = "compound_file.sector_size", reader = "ole.header_sector_size", sample = "ole_document" },
+]
+gaps = [
+  { asked = "ole.document_title", sample = "ole_document", note = "a word that only says where the field lives" },
+]
+
+[[format]]
+id = "msi"
+rank = 6
+label = "Windows Installer database (.msi): tables, summary stream, embedded cabinet"
+basis = "installers are a common packed-payload handout; MSI ProductCode stopped the lane on day 13"
+extensions = [".msi", ".msp", ".mst"]
+refines = "ole"
+namespaces = ["msi", "ole", "cfb"]
+samples = ["msi_package", "msi_package_lzx"]
+nearest = [
+  { asked = "installer.product_code_guid", reader = "msi.product_code_guid", sample = "msi_package" },
+  { asked = "msi.property_table_product_code_guid", reader = "msi.product_code_guid", sample = "msi_package" },
+]
+gaps = [
+  { asked = "msi.cabinet_member_name_list", sample = "msi_package", note = "a collection word after a singular core" },
+]
+
+[[format]]
+id = "cab"
+rank = 7
+label = "Microsoft Cabinet (.cab): stored, MSZIP, LZX and Quantum folders"
+basis = "the payload of installers and updates; LZX and Quantum folders were asked for on day 13"
+extensions = [".cab"]
+namespaces = ["cab"]
+samples = ["cab_mszip", "cab_stored"]
+nearest = [
+  { asked = "cabinet.set_id", reader = "cab.set_id", sample = "cab_mszip" },
+  { asked = "mscf.file_count", reader = "cab.file_count", sample = "cab_mszip" },
+]
+gaps = [
+  { asked = "cab.member_name_list", sample = "cab_mszip", note = "a collection word after a singular core" },
+]
+
+[[format]]
+id = "msix"
+rank = 8
+label = "MSIX / AppX packages and bundles"
+basis = "the modern Windows package; a zip whose manifest carries the identity facts"
+extensions = [".msix", ".appx", ".msixbundle", ".appxbundle"]
+namespaces = ["msix"]
+samples = ["msix_package"]
+nearest = [
+  { asked = "appx.identity_name", reader = "msix.identity_name", sample = "msix_package" },
+  { asked = "msix.manifest_identity_name", reader = "msix.identity_name", sample = "msix_package" },
+]
+
+[[format]]
+id = "media"
+rank = 9
+label = "Media containers beside RIFF: MP4 / MOV / M4A, Matroska / WebM, FLAC, Ogg, AIFF"
+basis = "audio and video members are stego and metadata staples; Day 17 asked media.* names, answered in ffprobe's vocabulary"
+extensions = [".mp4", ".m4a", ".m4v", ".mov", ".3gp", ".mkv", ".mka", ".webm", ".flac", ".ogg", ".oga", ".opus", ".aif", ".aiff", ".aifc"]
+namespaces = ["media", "mp4", "mkv"]
+samples = ["media_mp4", "media_mkv"]
+nearest = [
+  { asked = "media.ftyp_minor_version", reader = "mp4.ftyp_minor_version", sample = "media_mp4" },
+  { asked = "video.ftyp_major_brand", reader = "mp4.ftyp_major_brand", sample = "media_mp4" },
+  { asked = "media.doc_type", reader = "mkv.doc_type", sample = "media_mkv" },
+  { asked = "audio.muxing_app", reader = "mkv.muxing_app", sample = "media_mkv" },
+]
+gaps = [
+  { asked = "media.primary_video_pixel_format", sample = "media_mp4", note = "the pixel format is the codec's (an SPS), not the container's; no reader settles it" },
+]
+
+[[format]]
+id = "dotnet"
+rank = 10
+label = ".NET / CLR assemblies (managed PE: CLR header, metadata root, #~ tables, heaps, debug directory)"
+basis = "managed executables are a common reversing and metadata handout; dotnet.mvid_guid stopped the Huntress Metadata lane on day 12 (B-222)"
+extensions = [".dll", ".exe", ".winmd", ".netmodule"]
+namespaces = ["dotnet"]
+samples = ["dotnet_assembly"]
+nearest = [
+  { asked = "clr.module_version_id_guid", reader = "dotnet.mvid", sample = "dotnet_assembly" },
+  { asked = "managed.assembly_name", reader = "dotnet.assembly_name", sample = "dotnet_assembly" },
+]
+gaps = [
+  { asked = "dotnet.typedef_name_list", sample = "dotnet_assembly", note = "a collection word after a plural core" },
+  { asked = "assembly.mvid", sample = "dotnet_assembly", note = "no namespace alias from assembly to dotnet" },
+]
+
+# ---- B-251: the long tail. None of these stopped a 2026 lane; they rank after the observed formats (media, B-223, is rank 9; dotnet, B-222, rank 10), in
+# the order a forensics handout is likely to hold them. Readers: solvers/toolkits/lt_*.py, named for
+# the lane by solvers/metadata-forensics/readers_longtail.py.
+
+[[format]]
+id = "tnef"
+rank = 11
+label = "TNEF stream (winmail.dat, application/ms-tnef): message, MAPI properties, attachments"
+basis = "the attachment Outlook sends to non-Outlook mail clients; follows the mail formats above"
+extensions = [".tnef"]
+namespaces = ["tnef"]
+samples = ["tnef_winmail"]
+nearest = [
+  { asked = "winmail.subject", reader = "tnef.subject", sample = "tnef_winmail" },
+]
+
+[[format]]
+id = "jxl"
+rank = 12
+label = "JPEG XL image: bare codestream or ISO BMFF container with metadata boxes"
+basis = "a newer image format whose boxes carry Exif, XMP and arbitrary payloads; a stego and metadata carrier"
+extensions = [".jxl"]
+namespaces = ["jxl"]
+samples = ["jxl_container", "jxl_codestream"]
+nearest = [
+  { asked = "jpegxl.width", reader = "jxl.width", sample = "jxl_container" },
+]
+
+[[format]]
+id = "parquet"
+rank = 13
+label = "Apache Parquet columnar file: footer schema, key/value metadata, column values"
+basis = "the usual export of data pipelines and cloud logs; a schema format the Day 30 matrix left blocked"
+extensions = [".parquet", ".pq"]
+namespaces = ["parquet"]
+samples = ["parquet_rows"]
+
+[[format]]
+id = "avro"
+rank = 14
+label = "Apache Avro object container: embedded schema, codec, records"
+basis = "a self-describing record export (Kafka, Hadoop); a schema format the Day 30 matrix left blocked"
+extensions = [".avro"]
+namespaces = ["avro"]
+samples = ["avro_events"]
+
+[[format]]
+id = "tflite"
+rank = 15
+label = "TensorFlow Lite model (FlatBuffers, TFL3): tensors, operators, metadata buffers"
+basis = "the on-device model format of mobile and ML handouts; the Day 30 matrix left its metadata unread"
+extensions = [".tflite", ".lite"]
+namespaces = ["tflite"]
+samples = ["tflite_keywords"]
+
+[[format]]
+id = "coreml"
+rank = 16
+label = "Core ML model (.mlmodel protobuf, also inside an .mlpackage): description and metadata"
+basis = "the Apple model format of iOS and ML handouts; the Day 30 matrix left its metadata unread"
+extensions = [".mlmodel"]
+namespaces = ["coreml"]
+samples = ["coreml_classifier"]
+
+[[format]]
+id = "thrift"
+rank = 17
+label = "Apache Thrift message (strict binary protocol envelope): method, type, sequence id, fields"
+basis = "the RPC wire format of service captures and of Parquet's own metadata; read with no IDL"
+extensions = [".thriftbin"]
+namespaces = ["thrift"]
+samples = ["thrift_call"]
+
+# ------------------------------------------------------------------ B-248: the metadata lane's residual readers
+# Ranked after the B-162 formats: each is a staple of a forensics or metadata handout that met the Huntress lane
+# with a reader gap (a property spelling, a container field or a record version), now read and held here.
+
+[[format]]
+id = "png"
+rank = 18
+label = "PNG images with tEXt metadata"
+basis = "image metadata handouts; png.text_chunk_keywords was captured by the png_text_<keyword> family in the Day 13 drill"
+extensions = [".png"]
+namespaces = ["png", "image"]
+samples = ["png_text"]
+
+[[format]]
+id = "regf"
+rank = 19
+label = "Windows registry hive (regf), with a base-block file name that is not the root key's name"
+basis = "a DFIR staple; the Day 25 hive's base-block name was a host-label decoy of the root key name"
+extensions = [".hiv", ".hve", ".dat", ".hive"]
+namespaces = ["regf"]
+samples = ["regf_decoy"]
+nearest = [
+  { asked = "registry.hive_root_key_name", reader = "regf.root_key_name", sample = "regf_decoy" },
+  { asked = "registry.hive_file_name", reader = "regf.base_block_file_name", sample = "regf_decoy" },
+]
+
+[[format]]
+id = "tiff"
+rank = 20
+label = "TIFF images with an embedded ICC profile"
+basis = "scanned documents and camera rasters; the embedded profile was an open row of the lane (TIFF/HEIF ICC)"
+extensions = [".tif", ".tiff", ".dng"]
+namespaces = ["tiff", "icc", "image"]
+samples = ["tiff_icc"]
+
+[[format]]
+id = "heif"
+rank = 21
+label = "HEIF / HEIC / AVIF stills with an ICC colour property"
+basis = "phone photos; the primary item's colr 'prof' profile was an open row of the lane"
+extensions = [".heic", ".heif", ".avif"]
+namespaces = ["heic", "avif", "icc"]
+samples = ["heif_icc"]
+
+[[format]]
+id = "usn"
+rank = 22
+label = "NTFS change journal ($UsnJrnl:$J): V2, V3 and V4 range-tracking records"
+basis = "a DFIR staple; V4 and mixed-version journals were open in the day-30 coverage matrix (F7)"
+extensions = [".usn"]
+namespaces = ["usn"]
+samples = ["usn_mixed", "usn_v4_first"]
+nearest = [
+  { asked = "usnjrnl.record_count", reader = "usn.record_count", sample = "usn_mixed" },
+]
+
+[[format]]
+id = "coff"
+rank = 23
+label = "COFF object files, classic and bigobj"
+basis = "object and library handouts; bigobj COFF was not read by the lane"
+extensions = [".obj", ".o"]
+namespaces = ["coff"]
+samples = ["coff_bigobj"]
+nearest = [
+  { asked = "obj.number_of_sections", reader = "coff.number_of_sections", sample = "coff_bigobj" },
+]
+
+[[format]]
+id = "ar"
+rank = 24
+label = "Unix ar archives (static libraries)"
+basis = "static library handouts; a scalar ar.member_<field> name was not read by the lane"
+extensions = [".a", ".lib", ".ar"]
+namespaces = ["ar"]
+samples = ["ar_single"]
+
+[[format]]
+id = "disk"
+rank = 25
+label = "Partitioned raw disk images (GPT and MBR)"
+basis = "a raw .img stopped the Huntress Metadata lane on day 28 (disk.partition_start_lba_sequence, a GPT behind a protective MBR); disk images are a DFIR staple"
+extensions = [".img", ".raw", ".dd"]
+namespaces = ["disk", "gpt", "mbr"]
+samples = ["disk_gpt", "disk_mbr"]
+nearest = [
+  { asked = "disk_image.partition_count", reader = "disk.partition_count", sample = "disk_gpt" },
+  { asked = "raw_disk.partition_name_sequence", reader = "disk.partition_name_sequence", sample = "disk_gpt" },
+]
+gaps = [
+  { asked = "disk.partition_type_name_sequence", sample = "disk_gpt", note = "no table from a type GUID or MBR code to a type name (fdisk, sgdisk and Windows name them differently)" },
+  { asked = "disk.logical_partition_start_lba_sequence", sample = "disk_mbr", note = "MBR extended partitions: the EBR chain of logical partitions is not walked (a disk with one is Unknown)" },
+]

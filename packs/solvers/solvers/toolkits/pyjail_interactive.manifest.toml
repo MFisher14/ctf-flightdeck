@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Interactive pyjail escape driver (B-051): drives an
+# object-graph escape over an injected transport (a scope-checked live_harness.Session; it opens no
+# socket of its own) -- recon by in-band probe with per-probe markers built in-jail, hex in-band
+# output capture, flag candidate. It never submits; the CLI is an offline dry-run.
+id = "toolkits.pyjail_interactive"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/pyjail_interactive.py"
+capabilities = ["analysis", "cli", "legacy-output", "symbolic"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["pwn", "misc"]
+keywords = ["interactive jail", "repl escape", "live jail", "escape over connection"]
+priority = 58

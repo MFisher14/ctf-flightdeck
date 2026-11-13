@@ -1,0 +1,13 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-055.
+id = "common.chicken"
+lane = "common"
+entry = "cli:python solvers/common/chicken.py"
+capabilities = ["analysis", "cli", "legacy-output", "esolang", "chicken", "vm"]
+inputs = ["ext:.chicken"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-055: a rev/misc brief that names the Chicken esolang
+keywords = ["chicken esolang", "chicken language", "chicken chicken"]
+priority = 60

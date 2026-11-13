@@ -1,0 +1,45 @@
+# Engine manifest (docs/CONTRACTS.md section 6). B-136: the Linux memory-image triage opener
+# (openers/layer1.toml lane memory-forensics). Written by hand.
+# The no-tool stage (banner, exact-banner ISF match, flag and flag-lead carve) needs nothing and starts
+# nothing, so intake and `ctf arm` run it under the network guard. `--vol` (linux.psaux, linux.bash,
+# linux.pslist in the Docker sandbox) is a step of its own: intake's guard cuts the docker socket.
+# An AVML version 2 image (snappy-compressed) is decompressed with cramjam, which requirements.in pins;
+# it is not in needs_tools because a LiME or raw image needs nothing: without it the stage says so
+# (`image_note = AVML version 2: not decompressed (py:cramjam ...)`) and reads the file's bytes as they stand.
+# The opener is Linux-only. The routes that name Linux capture formats sit above toolkits.memory (47)
+# and toolkits.memory_depth (60); the generic memory keywords sit below toolkits.memory, so a Windows
+# or macOS memory challenge is not sent here first.
+id = "toolkits.vol_triage"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/vol_triage.py"
+capabilities = ["analysis", "cli", "memory", "volatility", "linux", "lime", "carve"]
+inputs = ["magic:EMiL", "magic:AVML", "ext:.lime", "ext:.avml", "ext:.mem", "ext:.vmem"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a LiME or AVML image, by its bytes or its name
+category = ["forensics"]
+files = ["magic:EMiL", "magic:AVML", "ext:.lime", "ext:.avml"]
+priority = 62
+
+[[routes]]  # the brief names a Linux capture or a Linux plugin
+keywords = [".lime", "lime dump", "avml", "linux.psaux", "linux.bash", "dwarf2json"]
+priority = 61
+
+[[routes]]  # the brief names a memory capture of no stated system: after toolkits.memory (47)
+keywords = ["memory dump", "memory capture", "memory forensics", "ram dump"]
+priority = 46
+
+# The no-tool stage on every memory image of the handout; the delivery is searched for the kernel's ISF.
+# originals = true: the sweep copies no file over 256 MiB into its scratch folder (ctf.sweep.MAX_SOURCE,
+# 512 MiB in all) and a memory image is nearly always larger, so the image is also taken by its own path
+# in the handout. The opener reads it through mmap, never whole.
+[intake]
+select = "files"
+run = "per-file"
+match = ["magic:EMiL", "magic:AVML", "ext:.lime", "ext:.avml", "ext:.mem", "ext:.vmem"]
+args = ["--symbols", "{folder}", "{file}"]
+max_files = 2
+timeout = 60
+originals = true

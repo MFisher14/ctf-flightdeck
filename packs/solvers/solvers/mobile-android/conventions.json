@@ -1,0 +1,172 @@
+{
+  "mobile.codec/plain": {
+    "accepted": "plain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-01/mobile-android-day-01-exported-trust: base, time trial and mastery (3 sets) all CORRECT (attempts 3ac37e60, b94ce620, 1ee65be4); every APK's assets/huntress_puzzle.json names codec plain: data is the answer",
+      "challenges/day-04/mobile-android-day-04-pending-intent-relay/notes.md codec table"
+    ]
+  },
+  "mobile.codec/reverse": {
+    "accepted": "reverse",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-02/mobile-android-day-02-deep-link-drift: base, time trial and mastery (3 sets) all CORRECT (attempts 1f173bea, b9630634, a86c3278); every APK's assets/huntress_puzzle.json names codec reverse: data reversed is the answer",
+      "challenges/day-04/mobile-android-day-04-pending-intent-relay/notes.md codec table"
+    ]
+  },
+  "mobile.codec/base64": {
+    "accepted": "base64",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-03/mobile-android-day-03-intent-injection: base, time trial and mastery (3 sets) all CORRECT (attempts 0d2121ba, cc71aa89, 1f11b42f); every APK's assets/huntress_puzzle.json names codec base64: data base64-decoded is the answer",
+      "challenges/day-04/mobile-android-day-04-pending-intent-relay/notes.md codec table"
+    ]
+  },
+  "mobile.codec/xor": {
+    "accepted": "xor",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/mobile-android-day-04-pending-intent-relay: base, time trial and mastery (3 sets) all CORRECT (attempts 198989cc, 8ed1ed1e, 933322dc); every APK's assets/huntress_puzzle.json names codec xor: data base64-decoded, then every byte XOR the key field",
+      "challenges/day-04/mobile-android-day-04-pending-intent-relay/notes.md codec table"
+    ]
+  },
+  "mobile.codec/split": {
+    "accepted": "split:by-order",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:08:01Z accepted split:by-order scope=key attempt=27b444f0-3408-4da6-a1a8-400ae544437c ids=answer"
+    ]
+  },
+  "mobile.codec/hex": {
+    "accepted": "hex",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:03Z accepted hex scope=key attempt=ea527228-a8ec-4d4e-8511-c6261f393359 ids=answer"
+    ]
+  },
+  "mobile.codec/caesar": {
+    "accepted": "caesar",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:04Z accepted caesar scope=key attempt=0698831c-c41c-4d15-8579-5e86e75fd20c ids=answer"
+    ]
+  },
+  "mobile.codec/native": {
+    "accepted": "native:so-secret",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-15T13:00:34Z accepted native:so-secret scope=key attempt=7bc2f072-a32d-47c1-96e4-81281311053d ids=answer"
+    ]
+  },
+  "mobile.codec/indexed": {
+    "accepted": "indexed:by-order:@data:chars",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:00:03Z accepted indexed:by-order:@data:chars scope=key attempt=d8c92461-55d3-419c-b6b0-d322e9bf3904 ids=answer"
+    ]
+  },
+  "mobile.codec/reflection": {
+    "accepted": "reflection:plain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-19T13:00:24Z accepted reflection:plain scope=key attempt=259568de-6dcf-4940-bee6-c0d3ff0e4619 ids=answer"
+    ]
+  },
+  "mobile.codec/apk-string:dex": {
+    "accepted": "apk-string:dex",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-20T13:00:04Z accepted apk-string:dex scope=key attempt=e0442824-2662-41a8-984d-c7f670377141 ids=answer"
+    ]
+  },
+  "mobile.codec/analysis": {
+    "accepted": "analysis:dex-chain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:18:19Z accepted analysis:dex-chain scope=key attempt=b5bc4a45-65eb-4692-a362-4de91df7c86e ids=answer"
+    ]
+  },
+  "mobile.codec/apk-pieces:dex-method": {
+    "accepted": null,
+    "rejected": [
+      "apk-pieces:dex-method"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:18:23Z rejected apk-pieces:dex-method scope=key attempt=aad9a54c-0c31-406a-8426-d873bc2891bb ids=set1.answer"
+    ]
+  },
+  "mobile.answer/proposed.aad9a54c#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:shipped:apk-pieces:dex-method"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:18:23Z rejected enum:shipped:apk-pieces:dex-method scope=key attempt=aad9a54c-0c31-406a-8426-d873bc2891bb ids=set2.answer"
+    ]
+  },
+  "mobile.answer/proposed.4d18388c#candidates": {
+    "accepted": null,
+    "rejected": [
+      "model:case_id_plus_part_e37d13"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:00:11Z rejected model:case_id_plus_part_e37d13 scope=key attempt=4d18388c-d73e-4a3a-8e0b-eb541129563c ids=answer"
+    ]
+  },
+  "mobile.codec/split+feature": {
+    "accepted": "split:by-order+feature",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:02:53Z accepted split:by-order+feature scope=key attempt=4d18388c-d73e-4a3a-8e0b-eb541129563c ids=answer"
+    ]
+  },
+  "mobile.codec/analysis+split-asset": {
+    "accepted": "analysis:dex-chain+split-asset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:07:32Z accepted analysis:dex-chain+split-asset scope=key attempt=0436fdbe-dadd-4329-a123-3dea54ce1238 ids=answer"
+    ]
+  },
+  "mobile.codec/packet": {
+    "accepted": "search:hex>unwrapped",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:07Z accepted search:hex>unwrapped scope=key attempt=ad6fcda5-551a-4e8e-b25f-4da1ad5655f7 ids=answer"
+    ]
+  },
+  "mobile.codec/table": {
+    "accepted": "table:sub-key-step",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:30Z accepted table:sub-key-step scope=key attempt=7d16c681-11fa-43be-9542-93c972628f8a ids=answer"
+    ]
+  },
+  "mobile.codec/layered": {
+    "accepted": "search:base64>reverse>prefix-roll-xor",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:06Z accepted search:base64>reverse>prefix-roll-xor scope=key attempt=57c7c931-a0aa-448a-9cdf-707f07c9cbcc ids=answer"
+    ]
+  }
+}

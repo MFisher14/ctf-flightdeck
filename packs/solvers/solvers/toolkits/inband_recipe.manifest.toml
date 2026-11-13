@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-080.
+# In-band protocol recipe decoder: tolerant TCP reassembly of every capture in the bundle (bad-checksum
+# segments dropped, first valid copy wins, forged copies reported), then a cheap model turns the
+# protocol descriptor the capture itself carries into a decoder, which runs ONLY in tools/sandbox.py.
+# It spawns the Claude CLI and the sandbox, so it is NOT an intake engine (intake is no-model and
+# offline): it runs only when routed. A missing CLI or a down sandbox is a `blocked` result by name.
+id = "toolkits.inband_recipe"
+lane = "toolkits"
+entry = "solvers.toolkits.inband_recipe:solve"
+capabilities = ["executes", "pcap", "tcp", "protocol", "decoder", "reassembly"]
+inputs = ["ext:.pcap", "ext:.pcapng"]
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # the vocabulary of a capture whose protocol is described in-band, with forged copies
+category = ["forensics", "networking", "ics"]
+keywords = ["in-band protocol", "protocol is described", "custom protocol", "relay tap", "keystream",
+            "forged segment", "forged frame", "bad checksum", "checksum mismatch", "duplicate segment"]
+priority = 63

@@ -1,0 +1,299 @@
+# Stale references in the maintained docs, known when B-196 shipped the doc lint
+# (python -m ctf integrity doclint). Most name files of the source repos that were not carried into
+# the master. The lint fails on any finding NOT listed here, and on an entry that matches no finding
+# any more (fix the doc, then delete its entry). docs/CAPABILITIES.md is generated from the engine
+# manifests: fix those through the manifest, then regenerate.
+
+[[known]]
+doc = "docs/CAPABILITIES.md"
+rule = "path"
+ref = "docs/retro/day-21-predictions-binary.md"
+reason = "generated from an engine manifest that names a retro note not carried into the master"
+
+[[known]]
+doc = "docs/CAPABILITIES.md"
+rule = "path"
+ref = "docs/retro/day-21-predictions-metadata.md"
+reason = "generated from an engine manifest that names a retro note not carried into the master"
+
+[[known]]
+doc = "docs/playbooks/osint.md"
+rule = "path"
+ref = "tools/verify.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/README.md"
+rule = "path"
+ref = "tools/lanes.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/README.md"
+rule = "path"
+ref = "tools/lane_match.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/README.md"
+rule = "path"
+ref = "tools/verify.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/README.md"
+rule = "path"
+ref = "tools/preflight.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/README.md"
+rule = "path"
+ref = "tools/switches.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/README.md"
+rule = "path"
+ref = "tools/accept.sh"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/agent_trace.md"
+rule = "path"
+ref = "tests/test_tk_agent_trace.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/agent_trace.md"
+rule = "path"
+ref = "tools/list"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/agent_trace.md"
+rule = "path"
+ref = "tests/test_tk_real_round_d_review.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/ai_model_files.md"
+rule = "path"
+ref = "tests/test_tk_real_round_d_review.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/email.md"
+rule = "path"
+ref = "tests/test_tk_email.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/email.md"
+rule = "path"
+ref = "tests/test_day12_new_lane_toolkits.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/email.md"
+rule = "path"
+ref = "tests/test_day12_new_lane_wording.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/forensics.md"
+rule = "path"
+ref = "docs/retro/day24plus-buildplan-web-toolkits.md"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/malconfig.md"
+rule = "path"
+ref = "tests/test_tk_malconfig.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/modern_crypto.md"
+rule = "path"
+ref = "tests/test_tk_modern_crypto.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/modern_crypto.md"
+rule = "path"
+ref = "tests/test_day30_classical_stated.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/modern_crypto.md"
+rule = "path"
+ref = "tests/test_day30_crypto_paillier_rabin.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/modern_crypto.md"
+rule = "path"
+ref = "tests/test_tk_modern_crypto_budget.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/nix_host.md"
+rule = "path"
+ref = "tests/test_tk_nix_host.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/pwn.md"
+rule = "path"
+ref = "docs/retro/day24plus-buildplan-web-toolkits.md"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/real-data.md"
+rule = "path"
+ref = "tools/accept.sh"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/real-data.md"
+rule = "path"
+ref = "tests/test_tk_real_round_d.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/real-data.md"
+rule = "path"
+ref = "tests/test_tk_real_round_d_review.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/real-data.md"
+rule = "path"
+ref = "tools/lane_match.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/real-data.md"
+rule = "path"
+ref = "tools/verify.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/real-data.md"
+rule = "path"
+ref = "tools/preflight.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/repo_supply_chain.md"
+rule = "path"
+ref = "tools/install.ps1"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/rf.md"
+rule = "path"
+ref = "tests/test_tk_rf.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/sqlite_artifacts.md"
+rule = "path"
+ref = "tests/test_tk_sqlite_artifacts.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/stego_tools.md"
+rule = "path"
+ref = "tests/test_sandbox.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/web.md"
+rule = "path"
+ref = "docs/research/web-speed-benchmark.md"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/web.md"
+rule = "path"
+ref = "tests/test_day20_web_oob.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/web.md"
+rule = "path"
+ref = "tests/test_day20_speed_web_agent_oob.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/web_evidence.md"
+rule = "path"
+ref = "tests/test_day18_web.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/web_evidence.md"
+rule = "path"
+ref = "docs/retro/day-18/predictions-web.md"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_warmups_formats.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_warmups_day9.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "solvers/warmups/selftest.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_warmups_day13.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_day18_warmups.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "docs/retro/day-18/predictions-warmups.md"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_mobile_classical.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_mobile_day9.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/warmups-formats.md"
+rule = "path"
+ref = "tests/test_classical.py"
+reason = "names a file of the source repos that was not carried into the master"
+
+[[known]]
+doc = "docs/toolkits/cloudlogs.md"
+rule = "path"
+ref = "tests/test_tk_cloudlogs.py"
+reason = "names a file of the source repos that was not carried into the master"

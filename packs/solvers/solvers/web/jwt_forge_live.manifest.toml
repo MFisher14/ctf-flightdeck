@@ -1,0 +1,22 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-019.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "web.jwt_forge_live"
+lane = "web"
+entry = "solvers.web.jwt_forge_live:solve"
+# Live, scope-locked sweep (executes against a target). The jku/x5u branch needs cryptography (a repo
+# dependency), but the engine runs its HS256/alg=none/kid/RS256->HS256 catalogue without it, so no
+# hard needs_tools; a missing cryptography surfaces only as a named note on a jku/x5u request.
+capabilities = ["executes", "live", "jwt", "jose", "auth", "web"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+# No [intake] table: this engine contacts a live target, and intake denies engines the network.
+# It is a fastlane-callable engine, routed to for JWT-authenticated live web challenges.
+[[routes]]  # keyword nudge (band 60+): distinct from webauth_jose_edge's offline JOSE edge keywords
+category = ["web"]
+keywords = ["jwt forge", "forge jwt", "rs256 to hs256", "algorithm confusion", "json web token",
+            "jwt key confusion", "kid traversal", "jwt none"]
+priority = 62

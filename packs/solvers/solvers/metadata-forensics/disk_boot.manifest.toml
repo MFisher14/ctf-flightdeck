@@ -1,0 +1,32 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-131.
+# Identifies the handout's disk images and writes the networkless QEMU/OVMF boot plan
+# (ctf/diskboot.py). It never boots: `python -m ctf disk-boot start` is the operator's step.
+id = "metadata_forensics.disk_boot"
+lane = "metadata-forensics"
+entry = "solvers.metadata-forensics.disk_boot:solve"
+capabilities = ["analysis", "disk-image", "boot", "qemu", "uefi", "gpt", "mbr", "iso"]
+inputs = ["ext:.img", "ext:.iso", "ext:.qcow2", "ext:.vmdk", "ext:.vhdx", "ext:.vhd", "ext:.vdi",
+          "magic:0x514649fb", "magic:KDMV", "magic:vhdxfile"]
+# needs_tools is empty on purpose: planning needs nothing. The boot itself needs docker and the
+# ctf-qemu-boot:1 image; `ctf disk-boot start` names them when they are missing.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a bootable image in a forensics / stego / misc / reverse handout
+category = ["forensics", "stego", "misc", "reverse"]
+files = ["ext:.iso", "ext:.qcow2", "ext:.vmdk", "ext:.vhdx", "ext:.vhd", "ext:.vdi",
+         "magic:0x514649fb", "magic:KDMV", "magic:vhdxfile", "name:*uefi*.img", "name:*boot*.img",
+         "name:*disk*.img"]
+priority = 27
+
+[[routes]]  # the description says the handout is something to boot
+keywords = ["boot the", "bootable", "boots into", "operating system image", "uefi", "qemu", "disk image of an os"]
+priority = 61
+
+[intake]  # B-002 input adapter: plan the boot of every disk image at intake (static; nothing is booted)
+select = "files"
+run = "challenge"
+match = ["ext:.img", "ext:.iso", "ext:.qcow2", "ext:.vmdk", "ext:.vhdx", "ext:.vhd", "ext:.vdi",
+         "magic:0x514649fb", "magic:KDMV", "magic:vhdxfile"]
+timeout = 30

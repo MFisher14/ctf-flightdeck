@@ -1,0 +1,35 @@
+#!/bin/sh
+# clock_hook: the B-211 clock hook for Claude Code. Every prompt gets the current Eastern time and the
+# event's next-release countdown in its context (python -m ctf clock --hook), so no agent works out the
+# time from memory or from a log line.
+#
+#   tools/clock_hook [--event SLUG] [--hook-event UserPromptSubmit|SessionStart] [--now WHEN]
+#
+# Install (a human step; nothing installs it for you): in the event workdir's .claude/settings.json,
+#   "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command",
+#             "command": "<checkout>/tools/clock_hook --hook-event UserPromptSubmit"}]}],
+#             "SessionStart":     [{"hooks": [{"type": "command",
+#             "command": "<checkout>/tools/clock_hook --hook-event SessionStart"}]}]}
+# with CTF_EVENT=<slug> in the session's environment (or --event SLUG in the command).
+#
+# A hook that exits 2 blocks the prompt, so this never does: when `ctf clock` itself fails (no
+# interpreter, an import error), the context gets a named CLOCK line instead and the exit is 0.
+set -u
+
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname "$self")/$link ;;
+    esac
+done
+repo=$(cd "$(dirname "$self")/.." && pwd -P)
+
+out=$("$repo/tools/ctfpy" -m ctf clock --hook "$@") && rc=0 || rc=$?
+if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$out"
+    exit 0
+fi
+printf 'CLOCK: unavailable (tools/clock_hook: `ctf clock --hook` exited %s; its stderr names the reason). Do not guess the time: run `date` or `python -m ctf clock`.\n' "$rc"
+exit 0

@@ -810,7 +810,7 @@ def config_command(
 
 def _mount() -> None:
     from . import (
-        build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, share_cli, team_cli, writeup_cli,
+        build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, team_cli, writeup_cli,
     )
     from . import models_cli
     from .l1 import cli as l1_cli
@@ -821,6 +821,7 @@ def _mount() -> None:
     app.add_typer(ctfd_cli.app, name="ctfd", rich_help_panel=EVENT)
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
+    app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
     app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)

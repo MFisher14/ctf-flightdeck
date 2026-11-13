@@ -1,0 +1,33 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-061.
+# Contract engine: solve(challenge_dir, profile, **opts) -> SolverResult, offline (no network from a
+# plain engine run). CLI: `fingerprint` and `forge` are offline; `live --url --schema [--submit ID]`
+# forges against one scope-approved endpoint (MacEndpointClient + run_live, no redirects followed) from
+# the operator's signing-spec schema, and --submit hands the flag to the B-006 submit queue.
+id = "common.mac_lenext_forge"
+lane = "common"
+entry = "solvers.common.mac_lenext_forge:solve"
+capabilities = ["executes", "crypto", "mac", "hash"]
+inputs = ["json"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # keyword route: ranks high when the brief names secret-prefix MAC length extension
+category = ["crypto"]
+keywords = ["length extension", "hash length extension", "length-extension", "secret-prefix mac",
+            "secret prefix mac", "merkle-damgard", "merkle damgard", "keyed hash", "keyed-hash mac",
+            "mac forgery", "forge mac", "hashpump", "h(key || message)", "signing specification"]
+priority = 62
+
+[[routes]]  # file route: a signing-spec / sample handout carrying a MAC token or (message, signature)
+files = ["name:*spec*.json", "name:*sample*.json", "name:*mac*.json"]
+priority = 32
+
+# Intake (B-002): on a JSON handout, read the MAC + any signing spec and forge offline when the secret
+# is present. Self-verified (H(secret || message) must equal the tag), so a wrong read recovers
+# nothing. Offline: no network, no spawned processes.
+[intake]
+run = "challenge"
+select = "files"
+match = ["ext:.json"]
+timeout = 60

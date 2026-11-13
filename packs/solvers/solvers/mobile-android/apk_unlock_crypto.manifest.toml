@@ -1,0 +1,21 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). B-086.
+# Hand-written: wires the Android unlock-crypto chain solver into routing and intake.
+id = "mobile_android.apk_unlock_crypto"
+lane = "mobile-android"
+entry = "solvers.mobile-android.apk_unlock_crypto:solve"
+capabilities = ["executes", "apk", "crypto", "aes", "certificate", "mobile"]
+inputs = ["ext:.apk", "ext:.apks", "ext:.xapk"]
+needs_tools = ["py:cryptography"]
+cost_class = "medium"
+status = "active"
+
+[intake]  # B-002 input adapter: run on any challenge shipping an APK, whatever the stated category
+select = "files"
+run = "challenge"
+match = ["ext:.apk", "ext:.apks", "ext:.xapk"]
+timeout = 300
+
+[[routes]]  # Mobile challenges shipping an APK: derive + brute the AES unlock key chain
+category = ["mobile"]
+files = ["ext:.apk", "ext:.apks", "ext:.xapk"]
+priority = 31

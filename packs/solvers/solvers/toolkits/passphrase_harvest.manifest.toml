@@ -1,0 +1,28 @@
+# Engine manifest (docs/CONTRACTS.md section 6). B-076: quoted-string passphrase harvest from a stego
+# cover's sibling notes, tried with steghide. Written by hand. The candidate listing is pure Python and runs
+# at intake (on the sweep's scratch copy, so a cover an XMODEM transfer or an archive gave is taken too);
+# `--steghide` calls stego_tools.steghide_extract, which runs steghide in the sandbox (tools/sandbox.py,
+# docker exec): a step of its own, since intake's guard cuts the docker socket. needs_tools stays empty
+# because the intake stage needs nothing; the --steghide stage says `blocked` with the reason when the
+# sandbox is down.
+id = "toolkits.passphrase_harvest"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/passphrase_harvest.py"
+capabilities = ["analysis", "cli", "steghide", "passphrase", "harvest"]
+inputs = ["ext:.jpg", "ext:.jpeg", "ext:.bmp", "ext:.wav", "ext:.au"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the brief points at a passphrase written beside the cover
+category = ["stego", "forensics", "misc"]
+keywords = ["passphrase", "steghide", "pass phrase", "key phrase", "quoted word"]
+priority = 58
+
+[intake]
+select = "files"
+run = "per-file"
+match = ["ext:.jpg", "ext:.jpeg", "ext:.bmp", "ext:.wav", "ext:.au"]
+args = ["{file}"]
+max_files = 8
+timeout = 30

@@ -1,0 +1,5 @@
+{
+  "_comment": "B-040 seed: role build-word -> the member-basename suffixes that name that build, best first. Data, not code. Read by solvers/binary/d29.py when a variant-diffing question does not spell the member out (no 'basename ends <x>'). Seeded from judged evidence; the built-in O3/O0 fallback in d29.py is always tried last, so a missing or empty entry still reads the original Day 29 delivery.",
+  "optimized": ["o3.elf"],
+  "unoptimized": ["o0.elf"]
+}

@@ -1,0 +1,92 @@
+# The baseline ledger (B-153; ctf/gate/baseline.py, docs/CONTRACTS.md section 23): tests known to go red
+# on the baseline tree, with the reason and the date each was entered. It never turns a red green: the
+# gate splits every red into new (not listed here) and baseline (listed) reds, so a red run is
+# attributable. tests/gate.toml names this file as `baseline`.
+#
+#   python -m ctf gate baseline check     validate; refuse an entry whose test file is gone
+#   python -m ctf gate baseline add tests/test_x.py::test_y --kind flaky --reason "..."   (dated today)
+#   python -m ctf gate baseline keys      the junit keys, one per line (for junit_diff --known-flaky)
+#
+# kind: flaky (load- or order-dependent: passes alone), env (needs something this host lacks), stale
+# (an expectation the code has moved past), broken (a real defect another item owns). Remove an entry
+# in the commit that fixes it. The first entries are the Phase 2-3 merge queue's known-flaky list as of
+# 2026-11-12: each failed in a loaded full-suite run and passed when rerun alone.
+version = 1
+
+[[red]]
+id = "tests/test_stego_review.py::test_part_a"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_stego_review.py::test_part_b"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_stego_review.py::test_part_b_waits_for_a_slow_daemon_probe"
+kind = "flaky"
+reason = "merge-queue full runs under load: a slow-daemon timing probe; passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_msi_reader.py::test_a_hanging_tool_never_runs_for_the_facts_page_and_is_cut_and_not_rerun"
+kind = "flaky"
+reason = "merge-queue full runs under load: a hanging-tool cut timing check; passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_hygiene.py::test_read_env_files_follow_the_sweeps_rule"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_common_classical_open.py::test_english_as_it_is_is_not_hill_climbed"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_submit_queue.py::test_pacing_holds_across_processes"
+kind = "flaky"
+reason = "merge-queue full runs under load: a cross-process pacing timing check; passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_submit_queue_cli.py::test_status_reports_the_shared_budget_and_pause"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_adapt_pool_queue.py::test_a_dead_worker_s_set_is_solved_serially"
+kind = "flaky"
+reason = "merge-queue full runs under load: a dead-worker timing check; passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_failover.py::test_lanes_run_at_once_by_default_and_one_by_one_with_parallel_1"
+kind = "flaky"
+reason = "merge-queue full runs under load: a lanes-at-once concurrency check; passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_wave122_esolang3.py::test_wired"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_spawn.py::test_an_admitted_launch_whose_agent_never_starts_gives_the_seat_back[codex_launch]"
+kind = "flaky"
+reason = "merge-queue full runs under load: a never-starts timing check; passed when rerun alone"
+since = 2026-11-12
+
+[[red]]
+id = "tests/test_arm.py::test_a_registered_group_with_no_member_left_is_expired"
+kind = "flaky"
+reason = "merge-queue full runs under load: failed in the suite, passed when rerun alone"
+since = 2026-11-12

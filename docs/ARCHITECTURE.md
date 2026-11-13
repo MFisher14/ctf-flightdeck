@@ -340,6 +340,8 @@ next to the workspace.
 |---|---|---|
 | L1 packs | `l1/` | `SolverResult`, engine manifests, the router, the runner and the importer. [More](#l1-packs). |
 | L1 stage | `agent/l1stage.py` | A lane runs the engines routed to its challenge before its first model call, or before its coding-agent CLI is started. [More](#l1-stage). |
+| Pack install | `pack.py`, `pack_cli.py` | `flightdeck pack install \| image \| info`: fetch a pack (a git clone, or one folder of a repository), read its `pack.toml`, run its setup command when the player agrees, build its image, and write `[l1] pack` and `image` into the config as a text edit that must load or is undone. |
+| The solver pack | `packs/solvers/` (not in the wheel) | The author's solvers, exported from his master by `packs/solvers/maint/export.py`. `flightdeck/intake_engine.py` is its one flightdeck engine: the pack's whole no-model intake on a challenge's copy, reported as one `SolverResult`. `flightdeck/lane_cli.py` (`solvers fit \| run \| doc \| playbook \| list`) is what a lane's model calls under `[l1] lane_tools`, and `flightdeck/LANE.md` what the brief says about it (`prompts.brief(toolkit=...)`). The pack has its own `ctf` package, Python environment and test suite; nothing in `src/` imports it. |
 
 ### L1 packs
 

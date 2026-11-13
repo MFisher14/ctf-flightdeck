@@ -1,0 +1,4 @@
+# The image needs only the pinned requirements.
+*
+!requirements.txt
+!maint/overrides.txt

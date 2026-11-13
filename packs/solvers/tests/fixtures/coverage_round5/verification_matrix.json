@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "generated_for": "coverage-round5",
+  "scope": "offline synthetic verification evidence; no submission and no live OSINT",
+  "note": "Coverage record for the synthetic test_chain_* tests in tests/test_round5_cross_engine_integration.py, carried from the CSCTF round-5 coverage workspace. Only the cross_engine_integrations section is kept; the source's per-lane fuzz counts and run totals describe that workspace's runs, not this repo's.",
+  "cross_engine_integrations": [
+    {
+      "lane": "barcode",
+      "test": "test_chain_barcode_dmre_rs_to_flag",
+      "gate": "ECC200 RS plus independent ZXing decode",
+      "synthetic_only": true
+    },
+    {
+      "lane": "crypto",
+      "test": "test_chain_crypto_ecdh_es_authenticated_jwe_to_flag",
+      "gate": "AES-GCM authentication after X25519 ConcatKDF",
+      "synthetic_only": true
+    },
+    {
+      "lane": "disk",
+      "test": "test_chain_qcow2_zstd_disk_recovery_to_flag",
+      "gate": "QCOW2 mapping plus independent Zstd decompression",
+      "synthetic_only": true
+    },
+    {
+      "lane": "artifact",
+      "test": "test_chain_systemd_journal_zstd_field_to_flag",
+      "gate": "journal declared size plus independent Zstd decompression",
+      "synthetic_only": true
+    },
+    {
+      "lane": "pwn",
+      "test": "test_chain_pwn_modprobe_serialization_stays_review_only",
+      "gate": "byte-exact serialization; explicitly not exploitability verified",
+      "synthetic_only": true,
+      "submission_ready": false
+    },
+    {
+      "lane": "reverse",
+      "test": "test_chain_reverse_verified_wasm_custom_name_to_flag",
+      "gate": "strict WASM section framing and exact source slice",
+      "synthetic_only": true
+    },
+    {
+      "lane": "web",
+      "test": "test_chain_web_reversible_waf_encoding_to_flag",
+      "gate": "stdlib inverse transform equality",
+      "synthetic_only": true
+    },
+    {
+      "lane": "osint",
+      "test": "test_chain_mocked_osint_search_stays_human_pin",
+      "gate": "mock transport only; explicit human-review lead",
+      "synthetic_only": true,
+      "submission_ready": false,
+      "network": "mocked"
+    },
+    {
+      "lane": "llm",
+      "test": "test_chain_llm_unicode_tag_decode_to_inert_flag",
+      "gate": "exact Unicode tag decoding; text remains inert",
+      "synthetic_only": true
+    },
+    {
+      "lane": "ecc",
+      "test": "test_chain_hamming_ecc_warmup_crc_to_flag",
+      "gate": "Hamming correction plus independent outer CRC-32",
+      "synthetic_only": true
+    },
+    {
+      "lane": "language",
+      "test": "test_chain_ebcdic_language_roundtrip_to_flag",
+      "gate": "strict CP037 byte-for-byte re-encoding",
+      "synthetic_only": true
+    },
+    {
+      "lane": "evm",
+      "test": "test_chain_evm_push_literal_with_exact_disassembly_to_flag",
+      "gate": "exact PUSH immediate and STOP disassembly",
+      "synthetic_only": true
+    },
+    {
+      "lane": "stego",
+      "test": "test_chain_matrix_stego_crc_frame_to_flag",
+      "gate": "C5TG declared length and CRC-32",
+      "synthetic_only": true
+    },
+    {
+      "lane": "signal",
+      "test": "test_chain_bfsk_signal_crc_frame_to_flag",
+      "gate": "BFSK symbol decode plus C5TG CRC-32",
+      "synthetic_only": true
+    },
+    {
+      "lane": "network_ics",
+      "test": "test_chain_pnio_ndr_record_to_flag",
+      "gate": "PNIO block length, offsets, API and index checks",
+      "synthetic_only": true
+    },
+    {
+      "lane": "mobile_rf",
+      "test": "test_chain_mobile_rf_uf2_reconstruction_to_flag",
+      "gate": "complete conflict-free UF2 reconstruction",
+      "synthetic_only": true
+    }
+  ]
+}

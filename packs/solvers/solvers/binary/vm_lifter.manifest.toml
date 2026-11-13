@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-165.
+# import-only: the agent supplies the VMSpec; `ctf run` refuses library engines on purpose.
+id = "binary.vm_lifter"
+lane = "binary"
+entry = "solvers.binary.vm_lifter:disassemble"
+capabilities = ["library", "static-re"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["custom vm", "bytecode interpreter", "vm obfuscation", "handler table", "dispatch loop"]
+priority = 59

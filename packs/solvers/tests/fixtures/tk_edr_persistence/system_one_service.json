@@ -1,0 +1,30 @@
+[
+ {
+  "Event": {
+   "System": {
+    "Provider": {
+     "#attributes": {
+      "Name": "Service Control Manager"
+     }
+    },
+    "EventID": {
+     "#text": 7045
+    },
+    "TimeCreated": {
+     "#attributes": {
+      "SystemTime": "2026-10-07T02:17:40.000000Z"
+     }
+    },
+    "Channel": "System",
+    "Computer": "DC-01.corp.example"
+   },
+   "EventData": {
+    "ServiceName": "WinUpdateHelper",
+    "ImagePath": "C:\\ProgramData\\wuh\\wuhelper.exe -k netsvcs",
+    "ServiceType": "user mode service",
+    "StartType": "auto start",
+    "AccountName": "LocalSystem"
+   }
+  }
+ }
+]

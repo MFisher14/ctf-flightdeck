@@ -1,0 +1,28 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written routing for B-226.
+# import-only: map_pe is its main public callable, not a contract entry; `ctf run` refuses library engines.
+# A library engine may still carry routes: they surface the toolkit in `ctf engines route` /
+# `ctf triage` so the Windows-PE / native-emulation class (Day-30 SHA1-Hulud) lands agents on the
+# ready setup (`ready_environment`, the carried WindowsEnvironment/SafeUnicorn harness: VEH, TLS,
+# clocks, hashed-API tables). capstone/unicorn are optional (py:*): the mapper, the hashed-API table
+# and the TLS parse import with neither; `ready_environment` reports their absence, never degrades.
+id = "toolkits.pe_emu"
+lane = "toolkits"
+entry = "solvers.toolkits.pe_emu:map_pe"
+capabilities = ["library", "pe", "windows", "emulation", "static-re", "x86-64"]
+inputs = ["magic:MZ", "ext:.exe"]
+needs_tools = ["py:unicorn", "py:capstone"]
+cost_class = "cheap"
+status = "active"
+
+# Keyword route: a reverse challenge whose description names the native-emulation class.
+[[routes]]
+category = ["reverse"]
+keywords = ["windows pe", "pe32", "portable executable", "native emulation", "api-hash table", "import hash", "windows api emulation", "veh single-step", "tls callback"]
+priority = 57
+
+# Flag-only PE route: a reverse challenge that hands out a PE image (MZ magic covers .exe and .dll),
+# even when the description says nothing. This is the Day-30 shape: a Windows PE, a flag to submit.
+[[routes]]
+category = ["reverse"]
+files = ["magic:MZ", "ext:.exe", "ext:.sys"]
+priority = 29

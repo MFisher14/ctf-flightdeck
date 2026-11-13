@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-255.
+# import-only: a live blind injection needs the caller's send() and the player's go-ahead; `ctf run` refuses library engines
+id = "web.blind_extract"
+lane = "web"
+entry = "solvers.web.blind_extract:extract"
+capabilities = ["library", "blind", "timing", "oob", "sqli", "cmdi"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a live blind injection with no output: calibrated timing or out-of-band extraction (matrix WR5)
+category = ["web"]
+keywords = ["blind command injection", "blind injection", "no output", "out-of-band", "oob", "timing oracle", "time-based blind"]
+priority = 63

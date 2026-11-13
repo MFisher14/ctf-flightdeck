@@ -1,0 +1,11 @@
+[Unit]
+Description=Network time sync helper
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ntpsyncd --config /etc/ntpsyncd.conf
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target

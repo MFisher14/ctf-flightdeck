@@ -1,0 +1,67 @@
+[
+ {
+  "id": "chunk-001",
+  "text": "Expense reports are due on the fifth working day of each month.",
+  "metadata": {
+   "source": "handbook/page-1.md"
+  },
+  "embedding": [
+   0.9,
+   0.1,
+   0.0,
+   0.1
+  ]
+ },
+ {
+  "id": "chunk-002",
+  "text": "Laptops are refreshed every three years; request a replacement through the service desk.",
+  "metadata": {
+   "source": "handbook/page-2.md"
+  },
+  "embedding": [
+   0.1,
+   0.9,
+   0.1,
+   0.0
+  ]
+ },
+ {
+  "id": "chunk-003",
+  "text": "The cafeteria is open from 08:00 to 15:00 on working days.",
+  "metadata": {
+   "source": "handbook/page-3.md"
+  },
+  "embedding": [
+   0.0,
+   0.2,
+   0.9,
+   0.1
+  ]
+ },
+ {
+  "id": "chunk-004",
+  "text": "Travel must be booked through the corporate portal at least seven days ahead.​‌‌‌​​‌‌​‌‌​​‌​‌​‌‌​‌‌‌​​‌‌​​‌​​​​‌​​​​​​‌‌‌​‌​​​‌‌​‌​​​​‌‌​​‌​‌​​‌​​​​​​‌‌​​​‌‌​‌‌​‌​​​​‌‌​​​​‌​‌‌‌​‌​​​​‌​​​​​​‌‌​‌​​​​‌‌​‌​​‌​‌‌‌​​‌‌​‌‌‌​‌​​​‌‌​‌‌‌‌​‌‌‌​​‌​​‌‌‌‌​​‌​​‌​​​​​​‌‌‌​‌​​​‌‌​‌‌‌‌​​‌​​​​​​‌‌​‌​​​​‌‌‌​‌​​​‌‌‌​‌​​​‌‌‌​​​​​‌‌‌​​‌‌​​‌‌‌​‌​​​‌​‌‌‌‌​​‌​‌‌‌‌​‌‌‌​​‌​​‌‌​​​​‌​‌‌​​‌‌‌​​‌​‌‌‌​​‌‌​​​‌​​‌‌​​​​‌​‌‌​​‌​​​‌‌​​​‌‌​‌‌​​‌​​​‌‌​‌‌‌​​​‌​‌‌‌​​‌‌​​‌​‌​‌‌‌‌​​​​‌‌​​​​‌​‌‌​‌‌​‌​‌‌‌​​​​​‌‌​‌‌​​​‌‌​​‌​‌​​‌​‌‌‌‌​‌‌‌​​​‌",
+  "metadata": {
+   "source": "handbook/page-4.md"
+  },
+  "embedding": [
+   0.6,
+   0.1,
+   0.1,
+   0.7
+  ]
+ },
+ {
+  "id": "chunk-005",
+  "text": "Badges are issued at the front desk on the first day.",
+  "metadata": {
+   "source": "handbook/page-5.md"
+  },
+  "embedding": [
+   0.1,
+   0.0,
+   0.3,
+   0.9
+  ]
+ }
+]

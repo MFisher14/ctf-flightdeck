@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-078.
+# Regeneration never overwrites this file.
+id = "toolkits.dicom_snmp_timeline"
+lane = "toolkits"
+entry = "solvers.toolkits.dicom_snmp_timeline:solve"
+capabilities = ["analysis", "dicom", "snmp", "pcap", "timeline", "xor", "network", "forensics"]
+inputs = ["ext:.pcap", "ext:.pcapng", "ext:.log", "ext:.xml", "ext:.csv", "ext:.bin"]
+# No external tool: the capture reader (network.py), the DICOM upper-layer/DIMSE reader
+# (healthcare.py) and the SNMP decoder (net_auth.py) are pure Python. It never opens a socket and
+# never submits: candidates are ranked into <challenge>/recon/dicom_snmp_timeline/candidates.txt.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # DICOM exfil captures with SNMP traps / device XML (csctf 9159): count C-STORE-RQ, rank the recipe
+category = ["networking", "forensics", "misc"]
+keywords = ["c-store", "dicom", "pacs", "snmp trap", "snmp_trap", "medical imaging", "imaging device",
+            "exfil stream", "exfiltration stream", "p-data-tf"]
+priority = 64
+
+[intake]  # B-002: run on the whole challenge when the router routes it here (a capture is the anchor)
+select = "route"
+run = "challenge"
+match = ["ext:.pcap", "ext:.pcapng", "name:*.pcap.gz"]
+timeout = 120

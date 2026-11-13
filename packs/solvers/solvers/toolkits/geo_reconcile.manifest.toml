@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-111.
+# Regeneration never overwrites this file.
+id = "toolkits.geo_reconcile"
+lane = "toolkits"
+entry = "solvers.toolkits.geo_reconcile:solve"
+capabilities = ["analysis", "network", "geo", "ais", "radar", "report"]
+inputs = []
+# No external tool: the geometry, the assignment and the schema walk are pure Python. The contract
+# entry is offline (a mirrored evidence pack); the live fetch and the gated POST are driven by
+# `python -m ctf geo-reconcile`, never by intake.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # two sensor logs of the same tracks + a report judged by the instance (csctf 9101)
+category = ["networking", "ics", "forensics", "misc"]
+keywords = ["sensor-reconciliation", "sensor reconciliation", "reconciliation report", "coastal radar",
+            "radar track", "radar contacts", "closest approach", "ais spoof", "spoofed ais",
+            "false broadcast"]
+priority = 66

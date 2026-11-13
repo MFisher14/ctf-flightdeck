@@ -1,0 +1,27 @@
+# Racer brief: {{CHALLENGE}}
+
+You are one of {{AGENTS}} agents reversing this artifact in parallel. Work the shared ladder in
+`README.md`. Do not reinvent the harness: run Python with `{{REPO}}/tools/ctfpy` and import the kit
+(`re_workbench`, `vm_lifter`, `shared_findings` (tools/), and `pe_emu` for mapping, compare sites and bounded
+emulation).
+
+## Rules
+
+- **Never run the challenge binary natively or in Docker.** Prove opcode and validator semantics by
+  reimplementing them and checking against observed I/O (`vm_lifter.interpret`,
+  `re_workbench.AcceptedInputSearch.verify`). The only emulation is `pe_emu.SafeUnicorn` (denying API
+  stubs, instruction and wall budgets), and only where the event's rules allow it.
+- **Record findings as you go** into `findings.jsonl` via `shared_findings.FindingsBoard.record`.
+  Check `board.latest()` before starting a thread of work someone else already closed.
+- **Claim a sub-area** by recording a `hypothesis` with a stable `key` (e.g. `op-0x1a`, `stage2`,
+  `keyschedule`) so two racers do not both chase it.
+- **Evidence before claims.** Every finding carries a one-line, human-checkable `evidence` string
+  (an address, a decoded value, a constant).
+
+## Acceptance
+
+- A flag is only `accepted` when it passes the board's pinned gate (`board.accept(...)`; pinned gate:
+  {{GATE}}). An unproven guess stays a `candidate`.
+- A gate-passed candidate goes through `ctf submit <id> <flag>`: the event's submit_mode and the
+  SubmitGate decide whether it is sent on sight or queued for the operator.
+- When `board.accepted()` lists a flag, stop your thread and record what you were doing.

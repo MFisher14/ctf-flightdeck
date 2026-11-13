@@ -1,0 +1,5 @@
+# OS and editor files never reach the image or its content hash (ctf.toolchain.images.context_files)
+**/.DS_Store
+**/._*
+**/*.swp
+**/*~

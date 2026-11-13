@@ -1,0 +1,282 @@
+# The pinned toolchain images (B-188). One entry per image; ctf/toolchain/images.py validates the keys
+# (an unknown key is an error) and lints each Dockerfile (`python -m ctf toolchain lint`).
+#
+#   name            unique id (lower-case)
+#   tag             repo:tag, never latest
+#   dockerfile      repo-relative; must sit inside context
+#   context         repo-relative build folder
+#   role            core (the doctor warns while it is not ok) | optional
+#   platform        linux/<arch> when the image is not native (Sage is amd64 only)
+#   args            build args { NAME = "value" }
+#   py              requirements.in names the image installs: staged at build time with their pins
+#                   (toolchain-requirements.txt) and every pin as constraints (toolchain-constraints.txt)
+#   [[image.download]]  name, url (https), sha256 (64 hex; empty = unlocked: the build is refused until a
+#                   human records it), arg (passed as <arg>_URL and <arg>_SHA256; the Dockerfile checks it)
+#   smoke           the env-check: commands run in a fresh networkless container (`ctf toolchain smoke`)
+#   versions        { tool = "version" } this image provides (`ctf toolchain versions` picks by these)
+#   default_for     tools this image serves when a challenge names no version (one image per tool)
+#   managed         false: another tool builds it (built_by); `ctf toolchain build` skips it
+#   pinned          false: lint findings are reported, not fatal (unpinned_reason says why)
+#   provides        what it is for
+
+[[image]]
+name = "toolkit"
+tag = "ctf-toolkit:1"
+dockerfile = "docker/toolkit/Dockerfile"
+context = "docker/toolkit"
+role = "core"
+py = ["capstone", "lief", "pefile", "unicorn", "pyelftools", "pycryptodome", "z3-solver", "sympy", "gmpy2",
+      "scapy", "pwntools"]
+smoke = [["ctf-envcheck"], ["tshark", "--version"], ["perl", "-c", "/opt/john/7z2john.pl"]]
+provides = "tshark, zsteg, john jumbo with a working 7z2john, 7-Zip, and the Python RE/crypto stack at the master's pins"
+
+[[image.download]]
+name = "john-jumbo"
+# The jumbo-1 release tarball. If it does not build with the image's compiler, point url at a
+# bleeding-jumbo commit tarball (https://github.com/openwall/john/archive/<commit>.tar.gz) instead.
+url = "https://github.com/openwall/john/archive/refs/tags/1.9.0-Jumbo-1.tar.gz"
+sha256 = ""            # unlocked: `curl -fsSL <url> | shasum -a 256`, then record it here (human step)
+arg = "JOHN"
+
+[[image]]
+name = "sage-10.5"
+tag = "ctf-sage:10.5"
+dockerfile = "docker/sage/Dockerfile"
+context = "docker/sage"
+role = "optional"
+platform = "linux/amd64"
+args = { SAGE_TAG = "10.5" }
+versions = { sage = "10.5" }
+smoke = [["sage", "--version"]]
+provides = "SageMath 10.5: the release a past challenge's E.gens() answer depended on"
+
+[[image]]
+name = "sage-10.7"
+tag = "ctf-sage:10.7"
+dockerfile = "docker/sage/Dockerfile"
+context = "docker/sage"
+role = "optional"
+platform = "linux/amd64"
+args = { SAGE_TAG = "10.7" }
+versions = { sage = "10.7" }
+default_for = ["sage"]
+smoke = [["sage", "--version"]]
+provides = "SageMath 10.7: the current tagged release, used when a challenge names no Sage version"
+
+[[image]]
+name = "sandbox-1"
+tag = "csctf-sandbox:1"
+dockerfile = "docker/sandbox/Dockerfile"
+context = "docker/sandbox"
+role = "optional"
+managed = false
+built_by = "`.venv/bin/python tools/sandbox.py build` (the armed opener's sandbox)"
+smoke = [["upx", "--version"], ["tshark", "--version"]]
+provides = "the detonation sandbox: upx, tshark, Volatility 3, oletools, binwalk, 7-Zip, YARA"
+
+[[image]]
+name = "sandbox-2"
+tag = "csctf-sandbox:2"
+dockerfile = "docker/sandbox/Dockerfile.2"
+context = "docker/sandbox"
+role = "core"
+managed = false
+built_by = "`.venv/bin/python tools/sandbox.py build`"
+smoke = [["zsteg", "--help"], ["r2", "-v"], ["bulk_extractor", "-V"]]
+provides = "sandbox :1 plus stego, OCR, metadata, carving, PDF, audio, radio and radare2 + r2ghidra"
+
+[[image]]
+name = "pwn"
+tag = "csctf-pwn:1"
+dockerfile = "docker/pwn/Dockerfile"
+context = "docker/pwn"
+role = "optional"
+platform = "linux/amd64"
+managed = false
+built_by = "setup.sh (`docker build --platform linux/amd64 -t csctf-pwn:1 docker/pwn`)"
+pinned = false
+unpinned_reason = "carried CSCTF image: pwntools/ROPgadget/ropper float, one_gadget/pwndbg/GEF are best-effort (`|| true`); a pinned rebuild is a follow-up"
+smoke = [["python3", "-c", "import pwn"], ["gdb-multiarch", "--version"]]
+provides = "x86-64 pwn/RE userland: gdb-multiarch, qemu-user, pwntools, ROPgadget, ropper"
+
+[[image]]
+name = "pwn-multiarch"
+tag = "csctf-pwn-multiarch:1"
+dockerfile = "docker/pwn-multiarch/Dockerfile"
+context = "docker/pwn-multiarch"
+role = "optional"
+platform = "linux/amd64"
+managed = false
+built_by = "setup.sh (`docker build --platform linux/amd64 -t csctf-pwn-multiarch:1 docker/pwn-multiarch`)"
+pinned = false
+unpinned_reason = "carried CSCTF image: pip packages float and the cross toolchains are best-effort (`|| true`); a pinned rebuild is a follow-up"
+smoke = [["qemu-aarch64-static", "--version"], ["python3", "-c", "import pwn"]]
+provides = "ARM/AArch64/MIPS/RISC-V pwn: qemu-user-static, cross compilers, gdb-multiarch, pwntools"
+
+[[image]]
+name = "analysis"
+tag = "csctf-analysis:1"
+dockerfile = "docker/analysis/Dockerfile"
+context = "docker/analysis"
+role = "optional"
+managed = false
+built_by = "a human (`docker build -t csctf-analysis:1 docker/analysis`)"
+pinned = false
+unpinned_reason = "carried image: angr/qiling/pwntools/capstone resolve unpinned and Triton is best-effort; a pinned rebuild is a follow-up"
+smoke = [["python3", "-c", "import angr, qiling"]]
+provides = "the runtime for generated angr/Triton/Qiling harnesses"
+
+# ---- B-242: one pinned image per runtime, for the runtime semantic adapters (binary.runtime_trace) --
+# All share the context docker/runtime (the entry script and the self-test fixtures), so a change to
+# any file there marks every one of them stale. Each base image is an exact tag AND its digest. They
+# are run only by tools/sandbox.py runtime_run (no network, no host mount), which refuses an image
+# whose label is not the current content hash. `smoke` re-runs the build's self-test the way
+# runtime_run does: the fixture goes in as the request tar on stdin, through the entry script, under
+# the exact argv _runtime_plans.build_plan gives (interpreter flags included; tests/test_runtime_images.py
+# holds the two equal), and the trace must report the string the fixture builds at run time.
+
+[[image]]
+name = "runtime-wasm"
+tag = "ctf-runtime-wasm:1"
+dockerfile = "docker/runtime/wasm/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+py = ["wasmtime"]
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.wasm /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 50000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "fuel-bounded WebAssembly (wasmtime at the master's pin) for the Wasm semantic adapter"
+
+[[image]]
+name = "runtime-jvm"
+tag = "ctf-runtime-jvm:25"
+dockerfile = "docker/runtime/jvm/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/Selftest.class /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 java -XX:+UseSerialGC -Xmx384m -Xss2m -XX:TieredStopAtLevel=1 -XX:+PerfDisableSharedMem -Djava.awt.headless=true -cp /opt/runner TraceRunner --artifact /work/artifact.bin --deps /work/dep --fuel 0 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "JDK 25 (class files up to version 69) for the Java class / jar semantic adapter"
+
+[[image]]
+name = "runtime-dotnet"
+tag = "ctf-runtime-dotnet:10"
+dockerfile = "docker/runtime/dotnet/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/Selftest.dll /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 dotnet /opt/runner/TraceRunner.dll --artifact /work/artifact.bin --deps /work/dep --fuel 0 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = ".NET 10 runtime for the CIL assembly semantic adapter"
+
+[[image]]
+name = "runtime-lua"
+tag = "ctf-runtime-lua:1"
+dockerfile = "docker/runtime/lua/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.lua /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 lua5.4 /opt/runner/trace_runner.lua --artifact /work/artifact.bin --deps /work/dep --fuel 20000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok && /usr/local/bin/ctf-runtime-entry 35 lua5.3 /opt/runner/trace_runner.lua --artifact /work/artifact.bin --deps /work/dep --fuel 20000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok && /usr/local/bin/ctf-runtime-entry 35 lua5.2 /opt/runner/trace_runner.lua --artifact /work/artifact.bin --deps /work/dep --fuel 20000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok && /usr/local/bin/ctf-runtime-entry 35 lua5.1 /opt/runner/trace_runner.lua --artifact /work/artifact.bin --deps /work/dep --fuel 20000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok && /usr/local/bin/ctf-runtime-entry 35 luajit /opt/runner/trace_runner.lua --artifact /work/artifact.bin --deps /work/dep --fuel 20000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT for the Lua source / bytecode semantic adapter"
+
+[[image]]
+name = "runtime-node-20"
+tag = "ctf-runtime-node:20"
+dockerfile = "docker/runtime/node/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { NODE_REF = "node:20.20.2-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.js /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 node --max-old-space-size=384 /opt/runner/trace_runner.js --artifact /work/artifact.bin --deps /work/dep --fuel 0 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "Node.js 20 for the JavaScript / V8 cached-data semantic adapter"
+
+[[image]]
+name = "runtime-node-22"
+tag = "ctf-runtime-node:22"
+dockerfile = "docker/runtime/node/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { NODE_REF = "node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.js /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 node --max-old-space-size=384 /opt/runner/trace_runner.js --artifact /work/artifact.bin --deps /work/dep --fuel 0 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "Node.js 22 for the JavaScript / V8 cached-data semantic adapter"
+
+[[image]]
+name = "runtime-node-24"
+tag = "ctf-runtime-node:24"
+dockerfile = "docker/runtime/node/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { NODE_REF = "node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.js /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 node --max-old-space-size=384 /opt/runner/trace_runner.js --artifact /work/artifact.bin --deps /work/dep --fuel 0 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "Node.js 24 for the JavaScript / V8 cached-data semantic adapter (the default for source)"
+
+[[image]]
+name = "runtime-python-3.8"
+tag = "ctf-runtime-python:3.8"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.8.20-slim-bookworm@sha256:1d52838af602b4b5a831beb13a0e4d073280665ea7be7f69ce2382f29c5a613f" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.8 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "runtime-python-3.9"
+tag = "ctf-runtime-python:3.9"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.9.25-slim-bookworm@sha256:a02e9c5406c416c504d6c9a1a306ff4080c3173f1008d192f953bd20382a2d5c" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.9 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "runtime-python-3.10"
+tag = "ctf-runtime-python:3.10"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.10.22-slim-bookworm@sha256:5be5aaecb962a41567bc8041f1e9e3432cb085b037fe057f9a562630b2e4b370" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.10 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "runtime-python-3.11"
+tag = "ctf-runtime-python:3.11"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.11.18-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.11 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "runtime-python-3.12"
+tag = "ctf-runtime-python:3.12"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.12 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "runtime-python-3.13"
+tag = "ctf-runtime-python:3.13"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.13.18-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.13 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "runtime-python-3.14"
+tag = "ctf-runtime-python:3.14"
+dockerfile = "docker/runtime/python/Dockerfile"
+context = "docker/runtime"
+role = "optional"
+args = { PYTHON_REF = "python:3.14.10-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b" }
+smoke = [["sh", "-c", "rm -rf /tmp/req && mkdir -p /tmp/req/dep && cp /opt/selftest/selftest.pyc /tmp/req/artifact.bin && tar -C /tmp/req -cf /tmp/req.tar artifact.bin dep && /usr/local/bin/ctf-runtime-entry 35 python3 -I -B /opt/runner/trace_runner.py --artifact /work/artifact.bin --deps /work/dep --fuel 5000000 --seconds 30 --max-events 512 < /tmp/req.tar | grep -q ctf-selftest-ok"]]
+provides = "CPython 3.14 for the cross-version .pyc semantic adapter"
+
+[[image]]
+name = "qemu-boot"
+tag = "ctf-qemu-boot:1"
+dockerfile = "docker/qemu-boot/Dockerfile"
+context = "docker/qemu-boot"
+role = "optional"
+smoke = [["ctf-boot-envcheck"], ["qemu-system-x86_64", "--version"]]
+provides = "QEMU (x86-64, TCG) with OVMF and socat: the networkless boot-and-observe harness for challenge disk images (B-131, `ctf disk-boot`)"

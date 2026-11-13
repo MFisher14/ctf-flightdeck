@@ -1,0 +1,18 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186).
+# Written by hand for B-020 (Mass-assignment / BOLA / OpenAPI privesc engine).
+# import-only: probe is its main public callable, not a contract entry; `ctf run` refuses library engines.
+# The web lane (B-007) drives it against the scope-locked live target.
+id = "web.privesc_probe"
+lane = "web"
+entry = "solvers.web.privesc_probe:probe"
+capabilities = ["library", "openapi"]
+inputs = []
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # mass-assignment / BOLA / IDOR / OpenAPI privesc; distinct keywords from web.object_refs (79)
+category = ["web"]
+keywords = ["mass assignment", "mass-assignment", "bola", "broken object level", "privilege escalation",
+            "privesc", "tenant isolation", "openapi", "forced browsing privilege"]
+priority = 70

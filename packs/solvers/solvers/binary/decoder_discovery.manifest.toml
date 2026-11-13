@@ -1,0 +1,29 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-166.
+# Automatic decoder-function discovery for a native ELF: function map, call-site argument binding,
+# B-011 (recon/decompile pseudocode) and B-026 (invert_checks mixer / check readers) leads, ranking,
+# and evaluation of each bound call in the whole loaded image (common/native_image.emulate_call).
+id = "binary.decoder_discovery"
+lane = "binary"
+entry = "solvers.binary.decoder_discovery:solve"
+capabilities = ["analysis", "reverse", "elf", "emulate", "decoder", "native"]
+inputs = ["magic:0x7f454c46"]
+# needs_tools is intentionally empty: capstone and unicorn are in .venv (pinned in requirements.in).
+# solve() preflights capstone and native_image and returns status "blocked" naming what is missing.
+# Where native_emulate's Darwin/arm64 guard turns Unicorn off, integer / image-pointer calls of an
+# x86-64 image still run on native_behavior's exact evaluator and anything else is "blocked", named.
+# x86-64 and AArch64 ELF64 images only (native_image's loader); another image is a named skip.
+# Nothing of the sample runs on the host: functions are emulated inside the loaded image.
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # reverse solver band: the free slot between decompile (39) and the check inverter (41),
+# whose output and readers it uses as leads
+category = ["reverse"]
+priority = 40
+
+[[routes]]  # keyword nudge: a decoder / decryption routine inside a native binary
+category = ["reverse"]
+keywords = ["decoder", "decode function", "decrypt function", "decryption routine", "obfuscated string",
+            "hidden function", "never called"]
+priority = 62

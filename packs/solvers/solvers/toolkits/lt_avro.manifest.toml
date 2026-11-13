@@ -1,0 +1,26 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+id = "toolkits.lt_avro"
+lane = "toolkits"
+entry = "solvers.toolkits.lt_avro:solve"
+capabilities = ["executes", "avro", "schema-formats", "deflate", "snappy", "forensics"]
+inputs = ["magic:Obj\u0001", "ext:.avro"]
+# cramjam (snappy) and zstandard are needed only for a container under that codec: without one the
+# file is reported blocked with the needs_tool name
+needs_tools = ["py:cramjam", "py:zstandard"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # an Avro object container anywhere in the handout
+files = ["magic:Obj\u0001", "ext:.avro"]
+priority = 31
+
+[[routes]]
+keywords = ["avro"]
+priority = 61
+
+[intake]  # B-002: read every Avro container at intake (pure Python, offline)
+select = "files"
+run = "challenge"
+match = ["magic:Obj\u0001"]
+timeout = 60

@@ -1,0 +1,66 @@
+# Binary lane: question-id conventions for ctf.idresolve (B-010). Data, not code.
+#
+# The Game Master's Day 1 and Day 2 Binary routes were re-asked from 2026-10-06 under ids with no dNN_
+# prefix (slot<N>_<field>, c_<field>, cpp_<field>, and bare config members / C++ facts). The lane's readers
+# (d01.py, d02.py through evidence.solve_set) answer the cumulative ids below; this table says which
+# cumulative id each new id is and which delivered member is its sample. It replaces the archived
+# per-first-word shims (orient_routes.py and 14 two-line modules). Anything not named here or not a whole
+# field name of a known id under the scope's prefix stays unanswered.
+#
+#   python -m ctf resolve-ids status.json --conventions solvers/binary/id_conventions.toml
+#   ctf.idresolve.ResolvingSolver.from_conventions(<this file>, evidence.solve_set)
+
+known = [
+  "d01_artifact_sha256_1",
+  "d01_analysis_elf_class", "d01_analysis_endianness", "d01_analysis_machine", "d01_analysis_elf_type",
+  "d01_analysis_marker", "d01_analysis_has_symtab", "d01_analysis_exported_symbol",
+  "d01_analysis_recover_code", "d01_analysis_entry_point", "d01_analysis_section_names",
+  "d01_analysis_symbols", "d01_analysis_disassembly",
+  "d02_artifact_sha256_1", "d02_analysis_format", "d02_analysis_xor_key_hex", "d02_analysis_config_crc32_hex",
+  "d02_analysis_config_campaign", "d02_analysis_config_domain", "d02_analysis_config_url",
+  "d02_analysis_config_mutex",
+  "d02_analysis_has_cpp_vtable", "d02_analysis_has_cpp_typeinfo", "d02_analysis_mangled_score_symbol",
+  "d02_analysis_vtable_symbol", "d02_analysis_typeinfo_symbol", "d02_analysis_typeinfo_name_symbol",
+]
+strip = '(?:d\d+_)?(?:analysis_|artifact_)?'
+
+# Day 1 Time Trial / Mastery: evidence.zip holds slot-<N>.elf (m-slot-<N>.elf in a Mastery), one C ELF each.
+[[scope]]
+name = "slot"
+match = 'slot(?P<n>\d+)_'
+prefix = "d01_"
+fields = { sha256 = "artifact_sha256_1" }
+members = '(?:^|[-_.])slot[-_]?0*{n}(?!\d)'
+hand_as = "d01-"
+single = true
+
+# Day 2: the C ELF of Day 1 (day01-c.elf).
+[[scope]]
+name = "c"
+match = 'c_'
+prefix = "d01_"
+fields = { sha256 = "artifact_sha256_1" }
+members = '^(?:d|day)0*1(?!\d)'
+hand_as = "d01-"
+single = true
+
+# Day 2: the C++ build (day02-cpp.elf or .exe).
+[[scope]]
+name = "cpp"
+match = 'cpp_'
+prefix = "d02_"
+fields = { sha256 = "artifact_sha256_1", format = "analysis_format", xor_key = "analysis_xor_key_hex", config_crc32 = "analysis_config_crc32_hex" }
+members = '^(?:d|day)0*2(?!\d)'
+hand_as = "d02-"
+single = true
+
+# Day 2: the C++ build's HCFG config members and C++ facts, asked under their bare names. The match is
+# zero-width (the whole id is the field) and anchored to the end, so no longer id falls in this scope.
+[[scope]]
+name = "d02-bare"
+match = '(?=(?:campaign|domain|url|mutex|has_cpp_vtable|has_cpp_typeinfo|mangled_score_symbol|vtable_symbol|typeinfo_symbol|typeinfo_name_symbol)\Z)'
+prefix = "d02_"
+fields = { campaign = "analysis_config_campaign", domain = "analysis_config_domain", url = "analysis_config_url", mutex = "analysis_config_mutex" }
+members = '^(?:d|day)0*2(?!\d)'
+hand_as = "d02-"
+single = true

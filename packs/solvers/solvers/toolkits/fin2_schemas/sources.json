@@ -1,0 +1,30 @@
+{
+  "retrieved": "2026-11-05",
+  "note": "Unmodified published XSD bytes. pain/camt downloaded from Rabobank; pacs from the Moov fedwire20022 implementation repository mirror. Official ISO download returned HTTP 403. SHA256 pins these exact offline copies; no runtime retrieval.",
+  "files": [
+    {
+      "file": "pain.001.001.03.xsd",
+      "source": "https://media.rabobank.com/asset/d939bc3f-db84-4aa8-8457-ebad788f59c3/pain-001-001-03-xsd.zip",
+      "sha256": "6bb5c6f24250ab807f31f6164142bafd6d43bad8d162a926e258ff4c11e128af",
+      "bytes": 45859
+    },
+    {
+      "file": "pain.001.001.09.xsd",
+      "source": "https://media.rabobank.com/asset/24ec64f9-89c8-48fe-a15b-9962eaec1737/pain-001-001-09-xsd-2019.zip",
+      "sha256": "de038b373e47b0077b1832ddd81f4b2f1eb25d35721f62da1e38b7f5a09fda24",
+      "bytes": 56918
+    },
+    {
+      "file": "camt.053.001.08.xsd",
+      "source": "https://media.rabobank.com/asset/562d03a8-a703-4a19-abfe-e7692a5ae22f/camt-053-001-08-2019.xsd",
+      "sha256": "338e9cb0c9989b5181802a7b773eece070d6815fc9d6483ac0579117bc24ccba",
+      "bytes": 106100
+    },
+    {
+      "file": "pacs.008.001.08.xsd",
+      "source": "https://raw.githubusercontent.com/moov-io/fedwire20022/master/xsd/iso/pacs.008.001.08.xsd",
+      "sha256": "cf048155f70cacd03f1f1dfadf66cba8752be93c249c267351782fd6adb023f7",
+      "bytes": 58040
+    }
+  ]
+}

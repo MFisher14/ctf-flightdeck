@@ -64,6 +64,7 @@ from ..platform.manual import BOARD_FILE, CHALLENGE_FILE, category_code
 from ..text import untrusted
 
 SUFFIX = ".manifest.toml"
+PACK_FILE = "pack.toml"  # optional, at the top of a pack: what it needs (pack.py), and where its engines are
 WORKSPACE_LOG = "prepare.log"  # <workspace>/.flightdeck/prepare.log: every workspace has one once prepared
 SCRIPT_SUFFIXES = (".py", ".sh", ".bash", ".pl", ".rb", ".js")  # a word ending so names a script file
 STALE = "this manifest was written by `flightdeck l1 import` and is stale: run the import again"
@@ -235,12 +236,38 @@ def walk_pack(pack: Path, *, generated: bool = True) -> tuple[list[Path], list[t
     with why), both sorted by path."""
     found: list[Path] = []
     skipped: list[tuple[Path, str]] = []
-    for path, why in _walk(Path(pack).absolute(), generated):
+    for path, why in _walk(engines_folder(Path(pack).absolute()), generated):
         if why is None:
             found.append(path)
         else:
             skipped.append((path, why))
     return sorted(found), sorted(skipped)
+
+
+def engines_folder(pack: Path) -> Path:
+    """The folder of `pack` that is searched for manifests: the pack itself, or the folder its
+    pack.toml names (`engines = "flightdeck"`). A pack that carries files of another tool
+    named *.manifest.toml keeps its flightdeck manifests in a folder of their own that way.
+    The rest of the pack is still the pack: mounted in an engine's container, and where a
+    manifest's paths may point."""
+    path = pack / PACK_FILE
+    if not path.is_file() or path.is_symlink():
+        return pack
+    try:
+        if path.stat().st_size > MAX_BYTES:
+            raise ManifestError(path, None, f"is over {MAX_BYTES // 1024} KB")
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ManifestError(path, None, f"cannot be read as TOML ({untrusted(str(exc), one_line=True)})") from None
+    name = data.get("engines")
+    if name is None:
+        return pack
+    if not isinstance(name, str) or not name or os.path.isabs(name) or ".." in PurePosixPath(name).parts:
+        raise ManifestError(path, "engines", "must be the path of a folder inside the pack")
+    folder = pack / name
+    if folder.is_symlink() or not folder.is_dir():
+        raise ManifestError(path, "engines", f"{_value(name)} is not a folder of the pack")
+    return folder
 
 
 def challenge_files(directory: Path) -> str | None:

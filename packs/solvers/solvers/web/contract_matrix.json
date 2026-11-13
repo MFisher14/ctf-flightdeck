@@ -1,0 +1,253 @@
+{
+  "schema": 1,
+  "note": "B-184 web contract library. Each class is one observed Layer-1 web exploit contract: a fingerprint (evidence signals), a cold/agent/none disposition, the handler that closes it, and a synthetic offline fixture. Fixtures are fully synthetic evidence (no real challenge data). The router scores evidence against every class and, when nothing clears the threshold, falls through to the novel_web agent class so a novel bug is never silently 'cold-solved'. Sources are summarized from the cohort session reports; no IPs, session ids or usage records are carried.",
+  "threshold": 3,
+  "classes": [
+    {
+      "id": "post_event_forge",
+      "title": "POST event forgery, wire field names unlike the clue display labels",
+      "disposition": "cold",
+      "handler": "web.contract_library.forge_grid",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["event", "forge", "owner", "create", "submit", "proof", "post"],
+        "methods": ["POST"],
+        "response_markers": ["missing field", "unknown field", "invalid signature", "bad request", "unprocessable"],
+        "status_codes": [400, 422],
+        "needs_write": true
+      },
+      "fixture": "post_event_forge",
+      "source": "Huntress web cohort: agents anchored on an HMAC guess and the clue display labels; the accepted payload was a flat {event, owner} POST with wire names. The mode was widely solved black-box, so no signature was required.",
+      "notes": "forge_grid enumerates label-to-wire mutations simplest-first and omits any signature field; the minimizer drops auth-looking noise."
+    },
+    {
+      "id": "route_trust_guarded",
+      "title": "Clue-advertised route whose path contains a guarded/destructive word",
+      "disposition": "cold",
+      "handler": "web.contract_library.route_trust",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["advertised", "endpoint", "route", "hit", "call", "visit", "use the"],
+        "methods": ["GET", "POST"],
+        "response_markers": [],
+        "status_codes": [],
+        "has_advertised_route": true,
+        "advertised_route_guarded": true
+      },
+      "fixture": "route_trust_guarded",
+      "source": "Huntress Day 27 (summary): the shared scope guard blocks any path with a destructive-looking word, so even a reset-style route the clue itself pointed at had to go to an agent.",
+      "notes": "route_trust relaxes the destructive-word guard for a same-origin route that the clue advertises verbatim; it never trusts an off-origin advertised URL."
+    },
+    {
+      "id": "target_described_contract",
+      "title": "Self-describing control/mutation contract advertised by the target",
+      "disposition": "cold",
+      "handler": "web.contract_executor",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["contract", "control", "mutation", "action", "advertis", "policy", "allowed", "restricted"],
+        "methods": ["GET", "POST", "PUT"],
+        "response_markers": ["control", "mutation", "action_route"],
+        "status_codes": [],
+        "has_contract_graph": true
+      },
+      "fixture": "target_described_contract",
+      "source": "Huntress Day 28 (summary): when the target itself described a control/mutation contract, the cold path located the right routes and then stalled, because nothing could carry out the described steps. Discovery was adequate; execution of a target-supplied contract was the gap B-149 fills.",
+      "notes": "Delegated to B-149 web.contract_executor.build_contract; B-184 only recognises the class and hands off the clue graph."
+    },
+    {
+      "id": "ssrf_internal_case",
+      "title": "SSRF to an advertised internal case service then a non-owned object (IDOR)",
+      "disposition": "cold",
+      "handler": "web.recon_router",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["ssrf", "internal", "fetch", "case", "service", "url", "callback", "object"],
+        "methods": ["GET", "POST"],
+        "response_markers": ["case", "internal"],
+        "status_codes": [],
+        "needs_write": false
+      },
+      "fixture": "ssrf_internal_case",
+      "source": "Huntress Day 27: SSRF chained through an advertised internal case service to a non-owned object; a single payload against one route could not express it.",
+      "notes": "Handled by the carried web.recon_router cold reader; B-184 routes to it."
+    },
+    {
+      "id": "signed_manifest_bypass",
+      "title": "Signed-manifest integrity bypass: keep the signed digest, swap the restricted hook",
+      "disposition": "cold",
+      "handler": "web.recon_router",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["manifest", "signed", "signature", "digest", "hook", "integrity", "restricted"],
+        "methods": ["POST", "PUT"],
+        "response_markers": ["signature", "digest", "manifest"],
+        "status_codes": [],
+        "needs_write": true
+      },
+      "fixture": "signed_manifest_bypass",
+      "source": "Huntress Day 27: preserve the signed digest/signature and replace only the advertised hook with the one policy marks restricted.",
+      "notes": "Handled by the carried web.recon_router cold reader; B-184 routes to it."
+    },
+    {
+      "id": "double_spend_race",
+      "title": "Double-spend / proof-reuse race",
+      "disposition": "cold",
+      "handler": "web.double_spend",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["race", "double", "spend", "concurrent", "balance", "once", "atomic"],
+        "methods": ["POST"],
+        "response_markers": ["balance", "insufficient", "spent"],
+        "status_codes": [],
+        "needs_write": true
+      },
+      "fixture": "double_spend_race",
+      "source": "Huntress Day 27 (summary): a concurrent-spend race was closed by an agent, not by a cold reader.",
+      "notes": "Handled by the carried web.double_spend reader; B-184 routes to it. The race itself is B-234/B-236 territory."
+    },
+    {
+      "id": "websocket_proof",
+      "title": "WebSocket proof delivery / realtime channel",
+      "disposition": "cold",
+      "handler": "web.realtime_read",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["websocket", "ws", "socket", "realtime", "subscribe", "channel", "stream"],
+        "methods": ["GET"],
+        "response_markers": ["upgrade", "websocket", "101"],
+        "status_codes": [101],
+        "needs_write": false
+      },
+      "fixture": "websocket_proof",
+      "source": "Huntress Day 27 (summary): the proof arrived over a WebSocket push, and only an agent picked it up.",
+      "notes": "Routed to the carried web.realtime_read reader; the dedicated class hardening is B-237."
+    },
+    {
+      "id": "protocol_class_novel",
+      "title": "Day-specific protocol class with no generic reader",
+      "disposition": "agent",
+      "handler": "agent",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": ["protocol", "handshake", "frame", "custom", "binary", "fail open", "fail-open"],
+        "methods": ["GET", "POST"],
+        "response_markers": [],
+        "status_codes": [],
+        "novel_protocol": true
+      },
+      "fixture": "protocol_class_novel",
+      "source": "Huntress Day 28 (summary): each web lane met a bespoke wire protocol the shared web solver had no reader for, and agents closed both by writing a dedicated reader on the spot.",
+      "notes": "No cold reader exists; the router escalates to a reasoning agent and records the class for a later exact reader."
+    },
+    {
+      "id": "novel_web",
+      "title": "Unrecognised web contract (catch-all)",
+      "disposition": "agent",
+      "handler": "agent",
+      "fingerprint": {
+        "category": ["web"],
+        "clue_keywords": [],
+        "methods": [],
+        "response_markers": [],
+        "status_codes": [],
+        "catch_all": true
+      },
+      "fixture": "novel_web",
+      "source": "Every web day in the cohort had at least one novel bug a reader could not cover; the honest default is to escalate, not to guess.",
+      "notes": "Scores below every other class by construction; the router returns it only when nothing clears the threshold, so a novel bug is handed to an agent rather than silently 'cold-solved'."
+    }
+  ],
+  "fixtures": {
+    "post_event_forge": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "POST an Event to /api/events to forge ownership. The form shows Event and Owner.",
+      "method": "POST",
+      "advertised_routes": ["/api/events"],
+      "responses": [
+        {"route": "/api/events", "status": 400, "body": "{\"error\": \"missing field\"}"}
+      ]
+    },
+    "route_trust_guarded": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "Use the advertised endpoint /admin/reset-token to rotate your token, then read the proof.",
+      "method": "POST",
+      "advertised_routes": ["/admin/reset-token"],
+      "responses": []
+    },
+    "target_described_contract": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "The service advertises an action route with a control value and a restricted mutation; the policy marks which action is allowed.",
+      "method": "POST",
+      "advertised_routes": ["/api/action"],
+      "contract_graph": {
+        "action_route": "/api/action",
+        "action_method": "POST",
+        "control": {"role": "user"},
+        "mutation": {"role": "owner"}
+      },
+      "responses": [
+        {"route": "/api/action", "status": 200, "body": "{\"control\": \"user\", \"mutation\": \"owner\"}"}
+      ]
+    },
+    "ssrf_internal_case": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "The fetch endpoint will retrieve an internal case service URL; read a case object you do not own.",
+      "method": "POST",
+      "advertised_routes": ["/api/fetch"],
+      "responses": [
+        {"route": "/api/fetch", "status": 200, "body": "{\"case\": \"internal\"}"}
+      ]
+    },
+    "signed_manifest_bypass": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "Upload a signed manifest; the digest is checked but the hook field is not re-signed. A restricted hook is rejected.",
+      "method": "POST",
+      "advertised_routes": ["/api/manifest"],
+      "responses": [
+        {"route": "/api/manifest", "status": 403, "body": "{\"error\": \"signature\", \"digest\": \"ok\"}"}
+      ]
+    },
+    "double_spend_race": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "Spend the credit once to reveal the proof; the balance check is not atomic under concurrent requests.",
+      "method": "POST",
+      "advertised_routes": ["/api/spend"],
+      "responses": [
+        {"route": "/api/spend", "status": 200, "body": "{\"balance\": 1}"}
+      ]
+    },
+    "websocket_proof": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "Subscribe to the realtime channel over WebSocket to receive the proof frame.",
+      "method": "GET",
+      "advertised_routes": ["/ws"],
+      "responses": [
+        {"route": "/ws", "status": 101, "body": "", "headers": {"Upgrade": "websocket"}}
+      ]
+    },
+    "protocol_class_novel": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "A custom fail-open handshake frame protocol guards the proof; parse the frames to proceed.",
+      "method": "POST",
+      "advertised_routes": ["/proto"],
+      "responses": []
+    },
+    "novel_web": {
+      "category": "web",
+      "base_url": "http://target.local/",
+      "clue": "An unusual mechanism no reader has seen before.",
+      "method": "GET",
+      "advertised_routes": [],
+      "responses": []
+    }
+  }
+}

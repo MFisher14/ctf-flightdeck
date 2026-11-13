@@ -1,0 +1,28 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-058.
+# Pyc-vs-source differential: every pyc whose header (PEP 552 source hash, source size, cache-name tag)
+# disagrees with the .py beside it, in folders and in zip/wheel/egg/pyz archives nested to 4 levels.
+# Reads headers and source bytes only: nothing is unmarshalled, imported, compiled or spawned.
+id = "binary.pyc_diff"
+lane = "binary"
+entry = "solvers.binary.pyc_diff:solve"
+capabilities = ["analysis", "pyc", "python", "bytecode", "tamper"]
+inputs = ["ext:.pyc", "ext:.pyo", "ext:.py", "name:*.cpython-*.pyc"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a handout holding compiled Python: does each pyc still match the source beside it?
+category = ["reverse", "forensics", "misc"]
+files = ["ext:.pyc", "ext:.pyo"]
+priority = 32
+
+[[routes]]  # the description points at a pyc swapped under a clean source
+keywords = ["__pycache__", "tampered pyc", "pyc tamper", "trojaned pyc", "unchecked-hash", "unchecked hash",
+            "source hash"]
+priority = 62
+
+[intake]  # B-002 input adapter: a pyc anywhere in the handout (the sweep unpacks nested zips) runs it once
+select = "files"
+run = "challenge"
+match = ["ext:.pyc", "ext:.pyo"]
+timeout = 60

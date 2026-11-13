@@ -1,0 +1,12 @@
+services:
+  web:
+    image: registry.example.com/shop/web:5.0.1
+    ports: ["8080:80"]
+    environment:
+      - SESSION_SECRET=sess_EXAMPLE_789
+      - TZ=UTC
+  db:
+    image: postgres:16
+    privileged: true
+    volumes:
+      - /srv/pgdata:/var/lib/postgresql/data

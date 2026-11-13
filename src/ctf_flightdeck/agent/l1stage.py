@@ -64,6 +64,7 @@ class L1Stage:
     labels: Mapping[str, str] = field(default_factory=dict)  # on each engine's container: the run's (leftovers.labels())
     record: ProcessRecord | None = None  # the run's record of process groups: an engine on this machine is in it while it runs
     urls: Mapping[str, Sequence[str]] = field(default_factory=dict)  # challenge id -> its live instance: what online engines in Docker reach
+    toolkit: str = ""  # [l1] lane_tools: the pack's note for a lane's brief (pack.lane_note); "": lanes are not told of the pack
 
     def __post_init__(self) -> None:
         if self.image is not None and self.pack is None:

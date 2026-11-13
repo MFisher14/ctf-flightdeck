@@ -1,0 +1,27 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-092.
+id = "toolkits.federated_leakage"
+lane = "toolkits"
+entry = "solvers.toolkits.federated_leakage:solve"
+capabilities = ["executes", "ml", "gradient-inversion", "federated", "npz"]
+inputs = ["ext:.npz"]
+needs_tools = ["py:numpy"]
+cost_class = "cheap"
+status = "active"
+
+[intake]  # B-092: read every .npz in the handout at intake, whatever the category (the 9096 class was filed as misc)
+select = "files"
+run = "challenge"
+match = ["ext:.npz"]
+timeout = 60
+
+[[routes]]  # a NumPy archive in an ML or misc challenge: one above common.cpa_npz (62), this one is the cheap read
+category = ["ml", "misc"]
+files = ["ext:.npz"]
+priority = 63
+
+[[routes]]  # the words of a federated-update or gradient-leakage brief, before any file is down
+# "federated" alone is left out on purpose: a federated identity or login brief is not this class, and so are
+# "model update", "weight update" and "shared model": a firmware or product brief says them too
+keywords = ["federated learning", "federated averaging", "fedavg", "gradient inversion", "gradient leak",
+            "learning update"]
+priority = 66

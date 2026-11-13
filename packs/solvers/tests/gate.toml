@@ -1,0 +1,161 @@
+# The regression gate's map (B-195; ctf/gate, `python -m ctf gate`; schema in ctf/gate/config.py and
+# docs/CONTRACTS.md section 19). Selection is a time saver between full runs, never a replacement: every
+# batch gets one full run. When a change you make is reported "no test maps to", either a test is missing
+# or the file belongs in `inert` or in a [[scan]] rule; add it here.
+version = 1
+
+tests = ["tests/test_*.py", "tests/real/test_*.py"]
+
+# Import roots besides each file's own folder: the repo root and what the root conftest.py puts on sys.path.
+roots = ["", "solvers/common", "solvers/toolkits", "solvers/binary", "solvers/metadata-forensics",
+         "solvers/mobile-android", "solvers/script-analysis", "solvers/warmups", "solvers/web", "tools", "tests"]
+
+# Inputs of every test: a change runs everything, and each is part of every warm key.
+global = ["conftest.py", "pytest.ini", "tests/conftest.py", "ctf/testing/**", "tests/known_failures.toml",
+          "tests/gate.toml", "requirements.txt", "requirements.lock.txt", "requirements.in"]
+
+# Files no test reads: a change that maps to no test selects nothing instead of forcing a full run.
+inert = ["docs/**", "*.md", "events/*/legacy-agent-config/**", ".gitignore", ".githooks/**", "LICENSE*"]
+
+basename_max = 8
+
+# Environment knobs that change what a test does; each enters every warm key.
+env = ["CTF_EVENT", "CTF_STRICT_TESTS", "CTF_RUN_LIVE", "CTF_REALDATA", "CTF_TESTING"]
+
+# Real-data scripts read a corpus outside the repo whose content no key covers: always run them.
+no_warm = ["tests/real/**"]
+
+# Strict not-run (B-196, ctf/gate/notrun.py): `ctf gate run` fails a file whose tests passed but where a test
+# did not run, unless its kind is listed here or given with --allow-not-run. live tests never run without
+# --run-live; xfail and known-fail are declared, reviewed expectations (tests/known_failures.toml). A skip
+# for a missing tool, corpus or package is NOT accepted by default: install it or say so on the command line.
+not_run_ok = ["live", "xfail", "known-fail"]
+
+# B-153: the tracked ledger of tests known red on the baseline (ctf/gate/baseline.py). The gate splits
+# every red into new and baseline reds with it; it never turns a red green.
+baseline = "tests/gate_baseline.toml"
+
+[wall]
+base_seconds = 600
+max_scale = 4.0
+
+# B-153: a lane gate (`ctf gate run --lane L`) fits in five minutes or fails loudly (exit 3). Costs are
+# idle-host estimates from <state>/timings.json (ctf/gate/budget.py); `ctf gate budget` lists them.
+# full_only: files no five-minute lane can hold, run by the full and pre-arm gates only (every lane run
+# names them as not run). test_day26_rsa_lattice.py is about 250 s of CPU alone (pure-Python LLL; its
+# lane-sized twin test_day26_rsa_lattice_fast.py stays in the lanes); test_carry_checklist.py is a
+# meta-test that reruns about 30 other test files, each already in its own lanes.
+[budget]
+lane_seconds = 300
+full_only = ["tests/test_day26_rsa_lattice.py", "tests/test_carry_checklist.py"]
+
+# B-153: `ctf gate prearm` runs each of these as <python> <argv...> before its full gate; any non-zero
+# exit refuses the full gate (exit 4). The generated-file checks (docs/BUILDING.md) and the guard lint.
+[[prearm]]
+name = "requirements"
+argv = ["tools/requirements_gen.py", "--check"]
+
+[[prearm]]
+name = "engines"
+argv = ["-m", "ctf", "engines", "generate", "--check"]
+
+[[prearm]]
+name = "coverage"
+argv = ["-m", "ctf", "engines", "coverage", "--check"]
+
+[[prearm]]
+name = "events"
+argv = ["-m", "ctf", "check-event"]
+
+[[prearm]]
+name = "guards"
+argv = ["tools/guard_audit.py"]
+
+[[scan]]
+why = "single-source scans: every file for legacy env names, workdir resolvers and flag regexes"
+tests = ["tests/test_single_sources.py", "tests/test_single_sources_events.py"]
+inputs = ["**/*.py", "**/*.sh", "**/*.toml", "csctf", "tools/ctfpy", "tools/claude_launch", "tools/codex_launch"]
+
+[[scan]]
+why = "the dangling-import gate imports every module of the tree"
+tests = ["tests/test_tools_import_gate.py"]
+inputs = ["**/*.py"]
+
+[[scan]]
+why = "engine discovery, route lint and the committed coverage matrix read every manifest, engine and test file"
+tests = ["tests/test_engines_*.py"]
+inputs = ["solvers/**", "speedrun/**", "tests/**/*.py", "docs/coverage/**", "ctf/engines/**"]
+
+[[scan]]
+why = "the hollow-test audit and the real-data runner list test files"
+tests = ["tests/test_testing_audit.py", "tests/test_testing_real_runner.py"]
+inputs = ["tests/**/*.py", "tools/test_audit.py", "docs/migration/HOLLOW-TESTS.md"]
+
+[[scan]]
+why = "event profiles and the event template are found by folder"
+tests = ["tests/test_contracts_event.py", "tests/test_event_scaffold.py", "tests/test_single_sources_events.py"]
+inputs = ["events/**", "templates/event/**"]
+
+[[scan]]
+why = "the build-plan ranking reads BUILD-PLAN.md"
+tests = ["tests/test_buildplan.py"]
+inputs = ["BUILD-PLAN.md"]
+
+[[scan]]
+why = "the generated primer and file index (B-199) walk ctf/, tools/ and solvers/ and name the start-here docs"
+tests = ["tests/test_primer.py"]
+inputs = ["ctf/**/*.py", "tools/**/*.py", "solvers/**/*.py", "docs/PRIMER.md", "docs/FILE-INDEX.md", "docs/*.md",
+          "CLAUDE.md", "BUILD-PLAN.md"]
+
+[[scan]]
+why = "the baseline ledger test validates tests/gate_baseline.toml and checks every entry names a test file"
+tests = ["tests/test_gate_baseline.py"]
+inputs = ["tests/gate_baseline.toml", "tests/test_*.py"]
+
+[[scan]]
+why = "ctf/cli/__init__.py discovers every command module in its folder (pkgutil)"
+tests = ["tests/test_contracts_cli.py"]
+inputs = ["ctf/cli/*.py"]
+
+[[scan]]
+why = "B-196 doc lint reads every maintained doc (docs are otherwise inert) and lists the ctf commands"
+tests = ["tests/test_integrity_tree_docs.py"]
+inputs = ["docs/**/*.md", "README.md", "CLAUDE.md", "AGENTS.md", "BUILD-PLAN.md", "tests/doclint_known.toml",
+          "ctf/cli/*.py"]
+
+[[scan]]
+why = "B-196 tree checks: fake branches in every source file, collection of every test file, the known solves"
+tests = ["tests/test_integrity_tree.py"]
+inputs = ["ctf/**/*.py", "solvers/**/*.py", "tools/**/*.py", "tests/**/*.py", "tests/fake_branches.toml",
+          "tests/collection_known.toml", "tests/known_solves.toml", "pytest.ini", "solvers/**/*.manifest.toml"]
+
+# A lane is the quick check for one area (`ctf gate run --lane L`, five minutes at --jobs 2, B-153). A test
+# is in a lane when the file itself or what it imports or names directly matches a glob and no "!glob" of
+# the lane. The hubs nearly every test imports (ctf/__init__.py, paths, env, event, flagfmt, the cli
+# package) are in no lane: a change to one is gated by the impact gate (--base) and the full gate, since
+# its 100-300 dependents cannot fit five minutes. ctf/ and solvers/toolkits/ are split so each part fits.
+[lanes]
+core-a-e = ["ctf/a**", "ctf/b**", "ctf/c**", "ctf/d**", "ctf/e**", "!ctf/cli/**", "!ctf/engines/**", "!ctf/event.py",
+            "!ctf/env.py"]
+core-f-l = ["ctf/f**", "ctf/g**", "ctf/h**", "ctf/i**", "ctf/j**", "ctf/k**", "ctf/l**", "!ctf/flagfmt.py",
+            "!ctf/gate/**", "!ctf/intake/**", "!ctf/ledger.py"]
+core-m-r = ["ctf/m**", "ctf/n**", "ctf/o**", "ctf/p**", "ctf/q**", "ctf/r**", "!ctf/paths.py", "!ctf/platform/**",
+            "!ctf/result.py"]
+core-s-z = ["ctf/s**", "ctf/t**", "ctf/u**", "ctf/v**", "ctf/w**", "ctf/x**", "ctf/y**", "ctf/z**", "csctf"]
+cli = ["ctf/cli/**", "!ctf/cli/__init__.py"]
+engines = ["ctf/engines/**"]
+intake = ["ctf/intake/**"]
+platform = ["ctf/platform/**"]
+ledger = ["ctf/ledger.py", "ctf/result.py"]
+gate = ["ctf/gate/**", "ctf/cli/gate.py"]
+tools = ["tools/**"]
+common = ["solvers/common/**"]
+toolkits = ["solvers/toolkits/a*", "solvers/toolkits/b*", "solvers/toolkits/c*", "solvers/toolkits/d*", "solvers/toolkits/e*", "solvers/toolkits/f*", "solvers/toolkits/g*", "solvers/toolkits/h*", "solvers/toolkits/i*", "solvers/toolkits/j*", "solvers/toolkits/k*", "solvers/toolkits/l*", "solvers/toolkits/m*", "solvers/toolkits/n*", "solvers/toolkits/o*"]
+toolkits-p-z = ["solvers/toolkits/**", "!solvers/toolkits/a*", "!solvers/toolkits/b*", "!solvers/toolkits/c*", "!solvers/toolkits/d*", "!solvers/toolkits/e*", "!solvers/toolkits/f*", "!solvers/toolkits/g*", "!solvers/toolkits/h*", "!solvers/toolkits/i*", "!solvers/toolkits/j*", "!solvers/toolkits/k*", "!solvers/toolkits/l*", "!solvers/toolkits/m*", "!solvers/toolkits/n*", "!solvers/toolkits/o*"]
+binary = ["solvers/binary/**"]
+web = ["solvers/web/**"]
+metadata-forensics = ["solvers/metadata-forensics/**"]
+mobile-android = ["solvers/mobile-android/**"]
+script-analysis = ["solvers/script-analysis/**"]
+warmups = ["solvers/warmups/**"]
+speedrun = ["speedrun/**"]

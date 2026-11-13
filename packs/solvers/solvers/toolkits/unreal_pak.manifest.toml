@@ -1,0 +1,30 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-120.
+# Regeneration never overwrites this file.
+id = "toolkits.unreal_pak"
+lane = "toolkits"
+entry = "solvers.toolkits.unreal_pak:solve"
+capabilities = ["executes", "unreal", "pak", "game-world", "literal-pool", "utf16", "unpack"]
+inputs = ["ext:.pak", "ext:.uasset", "ext:.umap", "ext:.locres", "ext:.utoc", "ext:.ucas"]
+# zlib and hashlib are stdlib. AES (an encrypted index or entry, only when a key is supplied) uses the
+# pinned `cryptography` package and fails with a named reason when it is absent.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # an Unreal game by its wording
+# No bare "unreal" (it is in "unrealistic" and "an unreal amount") and no ".pak" (a Quake or other
+# pak): the file route below takes a .pak that is in the handout. " ue4 " and " ue5 " are whole words
+# (the router's space-padded convention), so a brief that starts or ends with one is matched and
+# "value4" or "queue5" is not.
+keywords = ["unreal engine", "unreal game", " ue4 ", " ue5 ", "unrealpak", "uasset"]
+priority = 64
+
+[[routes]]  # Unreal archives and cooked assets in the handout, whatever the category says
+files = ["ext:.pak", "ext:.uasset", "ext:.umap", "ext:.locres", "ext:.utoc", "ext:.ucas"]
+priority = 46
+
+[intake]  # B-002: read every .pak and Unreal binary in the handout at intake (offline, CPU-budgeted)
+select = "files"
+run = "challenge"
+match = ["ext:.pak", "ext:.uasset", "ext:.umap", "ext:.locres", "ext:.utoc", "ext:.ucas"]
+timeout = 120

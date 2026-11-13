@@ -1,0 +1,239 @@
+# Backlog row 147: the second sandbox image, csctf-sandbox:2, built BESIDE csctf-sandbox:1
+# (tools/sandbox/Dockerfile, row 91, which the armed opener's 08:40 job starts and which this file
+# never replaces or retags).
+# Built locally only:  .venv/bin/python tools/sandbox.py build   (docker build -t csctf-sandbox:2 -f Dockerfile.2)
+# It holds everything :1 holds, at the same versions (the first four steps are :1's own, word for
+# word, so Docker reuses their layers), and adds the stego, audio, picture, PDF, carving, radio and
+# disassembly tools below. Run-time settings are those of :1 (tools/sandbox.py): --network none, a
+# read-only root, no home or repository mount, CPU, memory and process limits, /drop read-only and
+# one writable /out. Every download is pinned by SHA-256.
+
+# ---- bulk_extractor is not in Debian: built from its release in a stage of its own -------------
+FROM python:3.12-slim-trixie AS bulk
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ make flex pkg-config libssl-dev zlib1g-dev libexpat1-dev \
+    libre2-dev libsqlite3-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN python3 - <<'PY'
+import hashlib, io, tarfile, urllib.request
+url = "https://github.com/simsong/bulk_extractor/releases/download/v2.2.0/bulk_extractor-2.2.0.tar.gz"
+data = urllib.request.urlopen(url, timeout=300).read()
+assert hashlib.sha256(data).hexdigest() == "b9e15d40d711aa43590e1bf1a25d30943e3bad8371281d7c80d3803a6f34c268", "bulk_extractor checksum mismatch"
+tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall("/src")
+PY
+RUN cd /src/bulk_extractor-2.2.0 \
+ && ./configure --prefix=/opt/be --disable-libewf --disable-dependency-tracking CXXFLAGS="-O1 -g0 -Wno-error -Wno-error=unused-result" \
+ && make -j"$(nproc)" -C src bulk_extractor \
+ && install -D -s src/bulk_extractor /opt/be/bin/bulk_extractor
+
+# ---- B-167: pycdc (the general-purpose CPython .pyc decompiler) is built in a stage of its own ----
+# pycdc (zrax/pycdc) has no tagged release, so the tarball of one upstream commit, pinned by SHA-256
+# like every other download in this file. To move the pin: pick a commit of zrax/pycdc, download
+# https://github.com/zrax/pycdc/archive/<commit>.tar.gz, and write the commit and its sha256 here.
+FROM python:3.12-slim-trixie AS pycdc
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ cmake make ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN python3 - <<'PY'
+import hashlib, io, tarfile, urllib.request
+commit = "b4289760970dbc399684f1e155ec6d1ea1cc787e"
+url = f"https://github.com/zrax/pycdc/archive/{commit}.tar.gz"
+data = urllib.request.urlopen(url, timeout=300).read()
+assert hashlib.sha256(data).hexdigest() == "d7d8c53d37a1a586097145b532fca02535db2f2f0999b3b1e910133c9941bf31", "pycdc checksum mismatch"
+tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall("/src")
+PY
+RUN cd /src/pycdc-b4289760970dbc399684f1e155ec6d1ea1cc787e \
+ && cmake -DCMAKE_BUILD_TYPE=Release . \
+ && make -j"$(nproc)" pycdc pycdas \
+ && install -D -s pycdc /opt/pycdc/bin/pycdc \
+ && install -D -s pycdas /opt/pycdc/bin/pycdas
+
+# ---- the image ---------------------------------------------------------------------------------
+FROM python:3.12-slim-trixie
+
+ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1
+
+# tshark, binwalk, 7-Zip (7z) and YARA from Debian; tshark is asked no debconf question.
+RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debconf-set-selections \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends tshark binwalk 7zip yara file xz-utils \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+
+# upx from its own release, the same 5.2.1 the player installed with Homebrew (Debian's upx-ucl is
+# 4.2.4, which may not unpack what a 5.x packer made), checked against its pinned SHA-256.
+RUN python3 - <<'PY'
+import hashlib, io, subprocess, tarfile, urllib.request
+arch = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
+sums = {"arm64": "a72d112c5970a904a31da0b9c84f919bc16b9a311787c12245508544a78c7d36",
+        "amd64": "402162aad30af47e60dbd767fb2e64ca394ace9727ba1f40283641f1d1b91657"}
+url = f"https://github.com/upx/upx/releases/download/v5.2.1/upx-5.2.1-{arch}_linux.tar.xz"
+data = urllib.request.urlopen(url, timeout=120).read()
+assert hashlib.sha256(data).hexdigest() == sums[arch], "upx release checksum mismatch"
+with tarfile.open(fileobj=io.BytesIO(data), mode="r:xz") as tf:
+    member = next(m for m in tf.getmembers() if m.name.endswith("/upx"))
+    open("/usr/local/bin/upx", "wb").write(tf.extractfile(member).read())
+PY
+RUN chmod 755 /usr/local/bin/upx && upx --version | head -1
+
+# Volatility 3 and oletools from PyPI, pinned.
+RUN pip install volatility3==2.7.0 oletools==0.60.2
+# jsonpickle so the deserialization runtime-verification tests can prove a jsonpickle gadget executes
+# ONLY inside this networkless sacrificial container (the engine that builds the gadget is host-tested).
+# --target the system site-packages: the image runs with HOME=/tmp, so a plain `pip install` lands in
+# /tmp/.local (user site), which `python3 -I` (used by the runtime-verification tests) does not see.
+RUN pip install --target=/usr/local/lib/python3.12/site-packages jsonpickle==4.1.4
+# PyInstaller extraction (2024 Ransom/Chrono-key) — static unpack of a CArchive to its .pyc members.
+RUN pip install pyinstxtractor-ng==2026.7.3
+
+# ---- row 147 from here -------------------------------------------------------------------------
+# Debian's own: steghide, stegseek, outguess, stegsnow (stego); tesseract (OCR, English); exiftool,
+# exiv2, pngcheck (metadata); foremost, scalpel, sleuthkit (carving and file systems); qpdf, poppler
+# (pdftotext, pdfimages, pdfdetach, pdfinfo, pdftoppm), mutool (PDF); ffmpeg, sox (audio, frames,
+# spectrograms); zbar (zbarimg) and qrencode (QR and barcodes); multimon-ng and minimodem (DTMF,
+# AFSK, POCSAG, FSK); rtl_433 (ISM-band devices from IQ files); binutils (strings, objdump,
+# readelf); ruby for zsteg; the shared libraries of the Python readers below.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    steghide stegseek outguess stegsnow \
+    tesseract-ocr tesseract-ocr-eng \
+    libimage-exiftool-perl exiv2 pngcheck \
+    foremost scalpel sleuthkit \
+    qpdf poppler-utils mupdf-tools \
+    ffmpeg sox libsox-fmt-all \
+    zbar-tools qrencode libzbar0 \
+    multimon-ng minimodem rtl-433 \
+    binutils ruby libsndfile1 unzip libre2-11 libexpat1 libssl3t64 \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+
+# zsteg (a Ruby gem, pure Ruby with its dependencies), pinned.
+RUN gem install --no-document zsteg -v 0.2.13 && command -v zsteg
+
+# radare2 and the r2ghidra decompiler plugin (the Ghidra decompiler as a native library: no JVM),
+# both from their own 6.2.4 releases, pinned by SHA-256. The plugin and its sleigh files go to
+# radare2's system plugin folder: the home folder is a tmpfs at run time.
+RUN python3 - <<'PY'
+import hashlib, io, os, subprocess, urllib.request, zipfile
+arch = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
+deb = {"arm64": "bbf48ee7bd5d8282f65a297dcabd34c9961a500e62d6b036679caab187b32ef1",
+       "amd64": "7019eedc0e0e87d1f53d6b8f5fc62b898567679c5efdce7fbfc557c9e7655e90"}
+plug = {"arm64": ("arm-64", "a8ac843c4e23e6cbf3c4e0975d84215f4706172109130fa0ee2229bc56faec26"),
+        "amd64": ("x86-64", "344a7a2be1fb89d1780b0f5c9ee02c41255fec1cde90eb45bf3d313a43881b7a")}
+data = urllib.request.urlopen(f"https://github.com/radareorg/radare2/releases/download/6.2.4/radare2_6.2.4_{arch}.deb", timeout=300).read()
+assert hashlib.sha256(data).hexdigest() == deb[arch], "radare2 release checksum mismatch"
+open("/tmp/r2.deb", "wb").write(data)
+subprocess.check_call(["dpkg", "-i", "/tmp/r2.deb"])
+os.unlink("/tmp/r2.deb")
+name, want = plug[arch]
+data = urllib.request.urlopen(f"https://github.com/radareorg/r2ghidra/releases/download/6.2.4/r2ghidra-6.2.4-linux-{name}.zip", timeout=300).read()
+assert hashlib.sha256(data).hexdigest() == want, "r2ghidra release checksum mismatch"
+dest = subprocess.check_output(["r2", "-H", "R2_LIBR_PLUGINS"], text=True).strip()
+os.makedirs(dest, exist_ok=True)
+with zipfile.ZipFile(io.BytesIO(data)) as zf:
+    for m in zf.infolist():
+        if m.filename.startswith("plugins/") and not m.is_dir():
+            out = os.path.join(dest, m.filename[len("plugins/"):])
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            open(out, "wb").write(zf.read(m))
+print("r2ghidra in", dest)
+PY
+RUN r2 -v | head -1 && r2 -q -c 'Lc~ghidra' -- | head -3
+
+# Python inside the image: the SSTV decoder (colaclanth/sstv at a pinned commit and SHA-256), the
+# SSTV encoder pysstv (to make test recordings), and the readers of row 147, at the versions of
+# requirements-toolkits.txt where the venv has them.
+RUN python3 - <<'PY'
+import hashlib, urllib.request
+url = "https://github.com/colaclanth/sstv/archive/3e556eee8ad4c4425799cb652bac26ee58f8e113.tar.gz"
+data = urllib.request.urlopen(url, timeout=120).read()
+assert hashlib.sha256(data).hexdigest() == "33a8e4102bbe0337e9254c03732e24a9366a648b77c333cd4c7ae5ba9c35532c", "sstv checksum mismatch"
+open("/tmp/sstv.tar.gz", "wb").write(data)
+PY
+RUN pip install numpy==2.5.3 pillow==12.3.0 scipy==1.18.1 soundfile==0.14.0 PySSTV==0.5.7 /tmp/sstv.tar.gz \
+    pyzbar==0.1.9 pypdf==6.19.0 scapy==2.8.0 python-evtx==0.8.1 regipy==6.4.0 lnkparse3==1.6.0 \
+    extract-msg==0.56.1 fickling==0.1.12 \
+ && rm -f /tmp/sstv.tar.gz \
+ && printf '#!/bin/sh\nexec python3 -I -m pysstv "$@"\n' > /usr/local/bin/pysstv && chmod 755 /usr/local/bin/pysstv
+# The decoder asks the terminal for its width to draw a progress bar, and `docker exec` gives it no
+# terminal: its command is started with a fixed width instead.
+RUN printf '%s\n' '#!/usr/local/bin/python3 -I' 'import os, sys' \
+    'os.get_terminal_size = lambda *a: os.terminal_size((80, 24))' \
+    'from sstv.__main__ import main' 'sys.exit(main())' > /usr/local/bin/sstv \
+ && chmod 755 /usr/local/bin/sstv \
+ && sstv --help >/dev/null && python3 -c "import pysstv, pyzbar.pyzbar, scapy, pypdf, Evtx, regipy, LnkParse3, extract_msg, fickling"
+
+COPY --from=bulk /opt/be/bin/bulk_extractor /usr/local/bin/bulk_extractor
+RUN bulk_extractor -V
+
+# ---- B-167: Python / JVM bytecode decompilers -------------------------------------------------
+# pycdc and its disassembler pycdas (CPython .pyc -> source / disassembly, built above) and decompyle3
+# (a pure-Python fallback for 3.7 / 3.8 bytecode, pinned). The JVM decompilers CFR and Vineflower are
+# single jars from their own releases, pinned by SHA-256, run on a headless JRE. All run on /drop input
+# and print to stdout or write .java into /out; none reaches the network at run time (--network none).
+COPY --from=pycdc /opt/pycdc/bin/pycdc /usr/local/bin/pycdc
+COPY --from=pycdc /opt/pycdc/bin/pycdas /usr/local/bin/pycdas
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends default-jre-headless \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+# --target the system site-packages, as for jsonpickle above: `python3 -I` does not see the user site.
+RUN pip install --target=/usr/local/lib/python3.12/site-packages decompyle3==3.9.2
+RUN python3 - <<'PY'
+import hashlib, io, urllib.request, zipfile
+jars = {
+    "/opt/cfr.jar": (
+        "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar",
+        "f686e8f3ded377d7bc87d216a90e9e9512df4156e75b06c655a16648ae8765b2",
+        "org/benf/cfr/reader/Main.class"),
+    "/opt/vineflower.jar": (
+        "https://github.com/Vineflower/vineflower/releases/download/1.11.1/vineflower-1.11.1.jar",
+        "a615d07ddbbcd489369674f40e42df639c32be95410890b38f173d5c1e2ea39c",
+        "org/jetbrains/java/decompiler/main/decompiler/ConsoleDecompiler.class"),
+}
+for dest, (url, want, main_class) in jars.items():
+    data = urllib.request.urlopen(url, timeout=300).read()
+    assert hashlib.sha256(data).hexdigest() == want, f"{dest} checksum mismatch"
+    assert main_class in zipfile.ZipFile(io.BytesIO(data)).namelist(), f"{dest} has no {main_class}"
+    open(dest, "wb").write(data)
+PY
+# Wrappers: a fixed name for each tool, as tools/sandbox.py runs them (`cfr {in}`, `pycdc {in}`, ...).
+# The JVM runs with the serial collector: fewer threads under the container's process limit.
+# decompyle3 has no __main__ module; its console entry is decompyle3.bin.decompile:main_bin.
+RUN printf '#!/bin/sh\nexec java -XX:+UseSerialGC -jar /opt/cfr.jar "$@"\n' > /usr/local/bin/cfr \
+ && printf '#!/bin/sh\nexec java -XX:+UseSerialGC -jar /opt/vineflower.jar "$@"\n' > /usr/local/bin/vineflower \
+ && printf '%s\n' '#!/usr/local/bin/python3 -I' 'import sys' \
+    'from decompyle3.bin.decompile import main_bin' 'sys.exit(main_bin())' > /usr/local/bin/decompyle3 \
+ && chmod 755 /usr/local/bin/cfr /usr/local/bin/vineflower /usr/local/bin/decompyle3
+# Each of these fails the build when its tool cannot start (as `RUN bulk_extractor -V` does above).
+RUN pycdc --help && pycdas --help && decompyle3 --version && java -XX:+UseSerialGC -version
+
+# Backlog row 167: the leftover-killing wrapper (identical to the :1 image). tools/sandbox.py runs a
+# tool through it as `csctf-run S TOOL ARGS`, which runs `timeout -k 1 S TOOL ARGS` in a new
+# session (setsid, so a new process group) and kills the whole group when the call ends, so children
+# the tool leaves behind die instead of filling the container's pids limit. The exit status is passed
+# through, and the build smoke-tests it (and so setsid). It is optional at run time, so an older image
+# without it still works.
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'S=$1' 'shift' \
+    'setsid timeout -k 1 "$S" "$@" &' \
+    'pid=$!' \
+    'trap "kill -TERM -$pid 2>/dev/null" EXIT HUP INT TERM' \
+    'wait "$pid"; code=$?' \
+    'kill -TERM -$pid 2>/dev/null' \
+    'exit $code' \
+    > /usr/local/bin/csctf-run \
+ && chmod 755 /usr/local/bin/csctf-run \
+ && csctf-run 3 sh -c 'exit 7'; [ "$?" = 7 ]
+
+# The tools run as an unprivileged user; /drop is mounted read-only, /out is the only writable
+# place besides a small /tmp.
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin sandbox \
+ && mkdir -p /drop /out && chown sandbox /out
+USER sandbox
+# The root is read-only at run time: every tool caches under the tmpfs /tmp.
+ENV HOME=/tmp XDG_CACHE_HOME=/tmp/cache
+WORKDIR /out
+LABEL csctf.sandbox="row-147"
+# The container only waits; every tool is run in it by `docker exec` (tools/sandbox.py run).
+CMD ["sleep", "infinity"]

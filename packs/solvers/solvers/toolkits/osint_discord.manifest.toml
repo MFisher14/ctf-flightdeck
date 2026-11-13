@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-112.
+id = "toolkits.osint_discord"
+lane = "toolkits"
+entry = "solvers.toolkits.osint_discord:solve"
+capabilities = ["analysis", "osint", "discord", "acrostic", "recognition-word"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-112: a challenge that says its flag is in the event's Discord server (tag or brief)
+keywords = ["discord"]
+priority = 72
+
+[intake]  # B-112: at intake, rank the captured server snapshot for this challenge, or card the player
+run = "challenge"
+timeout = 120

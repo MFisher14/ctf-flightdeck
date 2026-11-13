@@ -1,0 +1,27 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-022.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "web.sqli_exfil"
+lane = "web"
+entry = "solvers.web.sqli_exfil:solve"
+capabilities = ["executes", "analysis", "sql", "sqli", "blind", "unicode", "ssti"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # time/boolean blind SQLi recovered from a saved access log (deterministic, from the handout)
+category = ["web", "forensics"]
+keywords = ["access log", "blind sql", "blind sqli", "time-based", "sleep(", "exfiltrat"]
+priority = 62
+
+[[routes]]  # decode-mismatch (multibyte charset) and str.format/SSTI object-traversal payload building
+category = ["web"]
+keywords = ["gbk", "addslashes", "charset bypass", "decode mismatch", "str.format", "second-order", "stored sqli"]
+priority = 61
+
+[intake]  # B-002 adapter: rebuild a blind-SQLi secret from any access log in the handout, no model, no network
+select = "files"
+run = "challenge"
+match = ["ext:.log", "name:*access*", "name:*nginx*"]
+timeout = 120

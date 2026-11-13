@@ -1,0 +1,35 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-021.
+# Offline, plan-only: generates auth/allowlist-gate bypass payloads and runs a
+# no-model static duplicate-case-key detector over the challenge artifacts.
+# It never sends a request and never touches the network.
+id = "web.parser_differential"
+lane = "web"
+entry = "solvers.web.parser_differential:solve"
+capabilities = ["plan", "unicode", "nfkc", "url", "json", "vhost", "ssrf", "auth"]
+inputs = ["ext:.json", "ext:.js", "name:openapi*.json", "name:*.ndjson"]
+needs_tools = []
+cost_class = "cheap"
+status = "plan-only"
+
+[[routes]]  # keyword nudge, web only
+category = ["web"]
+keywords = [
+    "parser differential",
+    "nfkc",
+    "unicode normal",
+    "casefold",
+    "confusable",
+    "vhost",
+    "host header",
+    "host-header",
+    "duplicate key",
+    "allowlist bypass",
+    "auth bypass",
+    "split horizon",
+]
+priority = 63
+
+[[routes]]  # file-shape nudge: served JS or JSON bodies in a web challenge
+category = ["web"]
+files = ["ext:.json", "ext:.js", "name:openapi*.json"]
+priority = 32

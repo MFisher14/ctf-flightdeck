@@ -1,0 +1,3 @@
+#!/bin/sh
+# Commit guard: secrets, organizer evidence, oversized files. See .githooks/secret_scan.py.
+exec python3 -I "$(git rev-parse --show-toplevel)/.githooks/secret_scan.py" --staged

@@ -711,6 +711,8 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
         ("concurrency = 0", "l1.concurrency must be a whole number, at least 1"),
         ('image = "-v /:/host"', "l1.image must be a docker image name"),
         ('image = ""', "l1.image must not be empty"),
+        ('lane_tools = "yes"', "l1.lane_tools must be true or false"),
+        ('lane_tools = true', "l1.lane_tools needs a pack"),
         ('engines = "x"', "l1.engines"),
     ],
 )

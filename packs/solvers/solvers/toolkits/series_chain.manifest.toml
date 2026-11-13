@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-090.
+id = "toolkits.series_chain"
+lane = "toolkits"
+entry = "solvers.toolkits.series_chain:solve"
+capabilities = ["analysis", "osint", "series", "certificate", "favicon", "fingerprint", "reuse"]
+inputs = []
+needs_tools = ["py:cryptography"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-090: a task that says it continues an earlier task of the same lab, whatever the category
+keywords = ["continuation of the same lab", "continuation of the same", "continuation of the previous",
+            "see the first task", "see the previous task", "same lab as", "continues from the previous task"]
+priority = 67
+
+[intake]  # B-090: run at intake on a continuation brief; reads the sibling folders in the workdir as data, offline
+select = "route"
+run = "challenge"
+timeout = 30
+spawns = false

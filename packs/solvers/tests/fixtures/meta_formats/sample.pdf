@@ -1,0 +1,62 @@
+%PDF-1.3
+%‚„œ”
+1 0 obj
+<<
+/Producer (fixture\055pdf 1\0560)
+/Title (Fixture Report)
+/Author (A\056 Fixture)
+/Company (Huntress Fixture Co)
+/CaseNumber (HX\0552026\0550042)
+>>
+endobj
+2 0 obj
+<<
+/Type /Pages
+/Count 1
+/Kids [ 4 0 R ]
+>>
+endobj
+3 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+4 0 obj
+<<
+/Type /Page
+/Resources <<
+>>
+/MediaBox [ 0.0 0.0 612 792 ]
+/Parent 2 0 R
+/Annots [ 5 0 R ]
+>>
+endobj
+5 0 obj
+<<
+/Type /Annot
+/Subtype /Link
+/Rect [ 0.0 0.0 10 10 ]
+/A <<
+/S /URI
+/URI (https\072\057\057example\056test\057fixture)
+>>
+>>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000182 00000 n 
+0000000241 00000 n 
+0000000290 00000 n 
+0000000402 00000 n 
+trailer
+<<
+/Size 6
+/Root 3 0 R
+/Info 1 0 R
+>>
+startxref
+543
+%%EOF

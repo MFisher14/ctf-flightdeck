@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs the pack's intake engine with the pack's own Python: the one in the pack image when engines
+# run in Docker (/opt/flightdeck-pack/venv), else the pack's .venv (made by setup.sh).
+here=$(cd "$(dirname "$0")" && pwd)
+pack=$(dirname "$here")
+if [ -n "$FLIGHTDECK_PACK_PYTHON" ] && [ -x "$FLIGHTDECK_PACK_PYTHON" ]; then py=$FLIGHTDECK_PACK_PYTHON
+elif [ -x /opt/flightdeck-pack/venv/bin/python ]; then py=/opt/flightdeck-pack/venv/bin/python
+elif [ -x "$pack/.venv/bin/python" ]; then py=$pack/.venv/bin/python
+else
+  printf '{"schema": 1, "status": "blocked", "notes": "the pack has no Python environment: run its setup.sh (host lanes) or build its image (Docker lanes)"}\n'
+  exit 0
+fi
+PYTHONDONTWRITEBYTECODE=1 exec "$py" "$here/intake_engine.py" "$@"

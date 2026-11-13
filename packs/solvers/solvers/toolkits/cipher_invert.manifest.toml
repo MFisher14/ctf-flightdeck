@@ -1,0 +1,33 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-110.
+# Regeneration never overwrites this file.
+id = "toolkits.cipher_invert"
+lane = "toolkits"
+entry = "solvers.toolkits.cipher_invert:solve"
+capabilities = ["executes", "cipher", "crypto", "invert", "symbolic", "z3", "sbox", "python"]
+inputs = ["ext:.py"]
+# needs_tools is intentionally empty. The algebraic pass and the black-box search need nothing
+# outside the standard library. Only the SMT fallback needs z3 (in .venv): when it is missing and
+# a cipher needed it, solve() returns status "blocked" naming it, never a silent empty result.
+# The handout source is parsed and evaluated by the closed interpreter in _cipher_vm.py; it is never
+# compiled, imported or run, and the engine starts no process.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a Python source in a crypto / misc / reverse handout: the custom cipher to run backward
+category = ["crypto", "misc", "reverse"]
+files = ["ext:.py"]
+priority = 52
+
+[[routes]]  # keyword nudge: home-built cipher wording, with or without the source attached
+category = ["crypto", "misc", "reverse"]
+keywords = ["custom cipher", "home-built", "homemade cipher", "homebrew cipher", "scrambler",
+            "runs it backward", "run it backward", "preimage", "s-box", "sbox"]
+priority = 59  # below crypto_faults' fault / white-box AES wording (60): a white-box S-box is its, not ours
+
+[intake]  # B-002 input adapter: invert the cipher at intake when the router sends the challenge here
+select = "route"
+run = "challenge"
+match = ["ext:.py"]
+timeout = 60
+spawns = false

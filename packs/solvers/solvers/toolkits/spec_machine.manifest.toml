@@ -1,0 +1,22 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-057.
+# The agent writes the machine spec (*.machine.toml) from the challenge's prose specification; the
+# engine checks it against the worked examples and, given --opt host / --opt port, plays the service.
+# No [intake] table: there is no spec at intake time, and the service half needs the network.
+id = "toolkits.spec_machine"
+lane = "toolkits"
+entry = "solvers.toolkits.spec_machine:solve"
+capabilities = ["executes", "documented", "vm", "interpreter", "netplay"]
+inputs = ["name:*.machine.toml", "name:*.machine.json"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a spec file is in the challenge folder: this is the engine that reads it
+files = ["name:*.machine.toml", "name:*.machine.json"]
+priority = 72
+
+[[routes]]  # "implement the machine from its specification and answer N programs" challenges
+category = ["misc", "programming", "reverse"]
+keywords = ["build an interpreter", "write an interpreter", "implement an interpreter",
+            "implement the machine", "instruction set specification"]
+priority = 60

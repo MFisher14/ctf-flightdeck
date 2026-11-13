@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+id = "toolkits.lt_tnef"
+lane = "toolkits"
+entry = "solvers.toolkits.lt_tnef:solve"
+capabilities = ["executes", "tnef", "email", "attachments", "mapi", "forensics"]
+inputs = ["magic:x\u009f>\"", "name:winmail.dat", "ext:.tnef"]
+# compressed_rtf is needed only for a compressed RTF body: without it the body is listed as undecoded
+needs_tools = ["py:compressed_rtf"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a TNEF stream (winmail.dat) anywhere in the handout
+files = ["magic:x\u009f>\"", "name:winmail.dat", "ext:.tnef"]
+priority = 31
+
+[[routes]]
+keywords = ["tnef", "winmail"]
+priority = 61
+
+[intake]  # B-002: read every TNEF stream at intake (pure Python, offline)
+select = "files"
+run = "challenge"
+match = ["magic:x\u009f>\""]
+timeout = 60

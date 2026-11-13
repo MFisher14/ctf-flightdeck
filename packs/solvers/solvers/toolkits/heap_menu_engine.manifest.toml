@@ -1,0 +1,18 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186, B-053).
+# Version-aware PLAN engine for new/edit/read/free heap menus: maps menu ops to primitives, detects
+# the off-by-strlen bug, and selects the glibc-version-correct technique keyed off heap_version_matrix.
+# Plan-only, legacy-output: the CLI prints its own reviewable plan JSON, not a SolverResult.
+id = "toolkits.heap_menu_engine"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/heap_menu_engine.py"
+capabilities = ["plan", "cli", "legacy-output", "heap", "pwn"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "plan-only"
+
+[[routes]]  # pwn menu-heap exploitation nudge
+category = ["pwn"]
+keywords = ["heap menu", "menu heap", "house of force", "off-by-null", "off-by-strlen",
+            "tcache poison", "__free_hook", "new/edit/free"]
+priority = 62
