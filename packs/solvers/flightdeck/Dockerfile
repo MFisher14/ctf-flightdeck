@@ -13,6 +13,7 @@ RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debc
       bash coreutils file xxd bsdextrautils binutils unzip 7zip bzip2 xz-utils zstd sqlite3 \
       curl ca-certificates netcat-openbsd jq git \
       libimage-exiftool-perl binwalk tshark qpdf zbar-tools tesseract-ocr \
+      mdbtools nasm upx-ucl john \
       libmagic1 libzbar0 libgmp10 libmpfr6 libmpc3 \
       build-essential pkg-config curl ca-certificates libgmp-dev libmpfr-dev libmpc-dev libssl-dev libffi-dev \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man

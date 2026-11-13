@@ -31,6 +31,40 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   running instance is used and left alone. `docs/BOARDS.md` has the details.
 - `challenge.json` takes `"instance": "on-demand"` and `type`; `ctfd pull` records CTFd's type.
 
+### Flags
+
+- `[lanes] variant_tries` (0 to 12, off by default): when the platform calls a flag wrong,
+  flightdeck proposes its other spellings on the same lane, best first and one at a time: the
+  letter case a cipher lost, a doubled wrapper, leet, accents, spaces and underscores, and the
+  prefix as the flag format spells it. Each is a flag like any other: it waits for you wherever
+  a lane's own flag would, and the approval says which flag it is a variant of and what changed.
+- Rotating flags: add `"rotates": 300` to a challenge's `challenge.json` when its flag changes
+  every 300 seconds. The lane is told to fetch the flag right before submitting, and flightdeck
+  sends a flag only in the window it was found in: one that waited into a later window is not
+  sent, the lane fetches a fresh one, and nothing is counted as wrong. The first 6 wrong flags
+  at such a challenge do not count toward `wrong_stop`. Under submit confirm such flags usually
+  rotate out while they wait; a run says so at its start.
+
+### Autopilot
+
+- A second opinion on a timer: `second_after` under `[autopilot]` (seconds) forks a challenge's
+  only lane onto another model of your ladder once it has run that long unsolved, or at once
+  when a flag of it is judged wrong; `third_after` adds a third lane on a third model. Off by
+  default, once per challenge each.
+
+### Your machine
+
+- The host governor: while this machine's load per CPU, available RAM or free disk at the run
+  folder is past its limit, no new lane starts; running lanes carry on, and starts resume by
+  themselves. Limits are in the new `[governor]` config table (`max_load_per_cpu`,
+  `min_free_ram_mb`, `min_free_disk_mb`; `enabled = false` turns it off). A warning says when
+  starts are held and why, and another when they resume.
+- `flightdeck doctor` has a `host` line: the load, RAM and disk readings, and any `[governor]`
+  limit that binds now.
+- A pack's `pack.toml` can list the programs its engines call (`tools = [...]`). `flightdeck
+  doctor` (`pack tools`) and `flightdeck pack info` name the ones missing on this machine or in
+  the image the engines run in.
+
 ### The console
 
 - `/note <text>` tells every lane at once (an organizer's ruling, a replaced handout): running

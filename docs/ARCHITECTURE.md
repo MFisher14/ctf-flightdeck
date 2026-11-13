@@ -125,6 +125,26 @@ a reply that a kill, a solve or quitting cut short (`_count_cut()` in `agent/dri
 still in flight when quitting (or a kill) cancels it brings back no usage, so its cost is not
 counted: the run's totals can be below what the API bills by that one call per lane.
 
+**Flag variants** (`flagvariants.py`, `Deck._variant`; P37). `flagvariants.variants(value, flag_format)` is pure: at most 12 other
+spellings of a value, ranked, each matching the event's flag format and carrying what changed. The safe fixes come first
+(whitespace, a doubled wrapper, the prefix as the format names it), then case, diacritics, spaces, leet and wrap. With
+`DeckConfig.variant_tries` above 0, the deck consumes that list after the platform's own wrong answer to a flag: it proposes the
+next variant not known wrong, not waiting and not on its way, on the first lane that sent the flag and is still open, through
+`_candidate`, so no rule on a lane's flag is bypassed; one at a time and at most `variant_tries` per challenge per run. A submit
+event for a variant carries `variant_of` and `variant_changes`.
+
+**Rotating flags** (P39). `Challenge.rotates` (the board's `rotates` key) gives a challenge windows of that many seconds, counted
+on the deck's `wall` clock (Unix time on this machine: the run clock starts at 0 and cannot place a clock boundary). `_candidate`
+records when each flag of such a challenge was last claimed, and `Deck.rotated(challenge, flag)` says why it would be dead now: a
+later window, or under `ROTATE_MARGIN` seconds of its window left. The deck asks at an approval, under auto at the claim, and when
+a queued flag's turn comes; the run's submitter asks before every send. A dead flag is dropped: `LaneDriver.rotated` tells each
+open lane to fetch a fresh one, a warning event carries `rotated_out`, and nothing enters the known-wrong flags. `wrong_flags`
+leaves the first `ROTATING_MISSES` wrong answers at such a challenge out of the wrong-answer stop.
+
+**What holds a start without holding the queue.** Two things keep `_fill` from starting a lane without `hold_queue` (which needs
+the player and disengages autopilot): `Deck.waits` (a challenge whose instance is not up is passed over, the next in the queue
+starts: P36) and `Deck.start_gate` (the host governor: no new lane at all while a limit binds, unless none is at work: P40).
+
 ## 4. Lanes
 
 | Piece | Where | Job |
@@ -355,6 +375,12 @@ process group, a timeout), the importer (manifests for a folder of plain scripts
 them). `flightdeck l1 list | route | run | import`. [SOLVERS.md](SOLVERS.md) is the guide to writing
 a pack.
 
+**Pack tools** (`pack.py`; P41). `pack.toml` takes an optional `tools` list of program names. It is advisory: no run reads it.
+`pack.missing_on_host()` looks the names up in PATH's absolute folders; `pack.missing_in_image()` runs the L1 container's lookup
+script in one `docker run --rm --pull never --network none` of the image and raises when the image cannot be asked. `doctor`'s
+non-essential `pack tools` check uses the first for host lanes and the second for Docker lanes, and `flightdeck pack info` prints
+both.
+
 ### L1 stage
 
 Where: `agent/l1stage.py`.
@@ -465,6 +491,13 @@ a notifier listens for and the post-flight report lists.
 Board format: a folder in which each subfolder with a `challenge.json` is a challenge, with an
 optional `board.json` (the event's name and flag format) and an optional `answers.sha256.json`
 (each flag's sha256, outside the challenge folders). [BOARDS.md](BOARDS.md) has every key.
+
+**A second opinion on a timer** (P38). `_opinions` runs in each step after the alert rules. With `[autopilot] second_after` set, a
+workable, unsolved challenge with exactly one open lane and nothing queued gets `Fork(lane, model)` by `Actor.AUTOPILOT` once
+that lane has run that many seconds or `Deck.wrong_flags` for the challenge is above 0: the next rung above the lane's, else the
+lowest other ladder model. `third_after` does the same for a challenge with exactly two open lanes, onto a model neither runs.
+Each once per challenge. Nothing is forked while the queue is held, past the run budget, or while any open lane of the challenge
+is one P23 leaves alone. On an event loop an alarm wakes a step when the next opinion falls due.
 
 ## 7. Detection and the light model
 
@@ -584,6 +617,13 @@ and notes the flag format it checks and where that came from; wires the deck, dr
 console; releases the board on the console's loop. Every run hands its driver every secret it
 holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the
 notification webhook's URL, the CTFd token), so a keys file that cannot be read stops a run before it starts.
+
+**Host governor** (`governor.py`; P40). `probe()` reads the machine through a `hardware.Host` and three injectable readers: the
+1-minute load and CPU count, available RAM (Linux `MemAvailable`; macOS `vm_stat` free, inactive and speculative pages) and free
+disk at the run folder. Each reading is a value or the reason it is unknown. `decide(reading, policy, running_lanes)` is pure and
+names each `[governor]` limit that binds; unknown readings and limits of 0 bind nothing. `prepare_run` takes the first reading and
+sets `Deck.start_gate`; `Run._govern` reads again every 15 seconds in a worker thread and calls `Deck.recheck_starts()`. One
+warning event when starts begin to be held (`gated: true`) and one when they resume.
 
 ### Event log
 
