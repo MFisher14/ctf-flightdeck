@@ -296,6 +296,21 @@ Lanes start on the lowest-point challenges first (most solves first among equals
 queue. Every lane is a model conversation, capped per lane by `[lanes] token_cap` and
 `dollar_cap` (400,000 tokens and $2 by default; an alert at 80%, your approval at 100%).
 
+A challenge is often worked by more than one lane in a run: a fork, a fresh lane after a kill, the
+next model up the ladder. A lane that starts on a challenge other lanes worked or still work reads,
+after its brief, what each of them tried: its plan, the programs it ran, its last steps, what
+became of its flags, the alerts on it and how it ended. flightdeck writes that record itself from
+what the lanes did (no model is asked to), it is handed over as data like the challenge's own
+text, and it is kept short (3,000 characters). The same record is in the run folder as
+`shared.json` when the run ends.
+
+Challenges whose names share a start are a series ("Harbor Lab: Read the Certificate", "Harbor
+Lab: Fingerprint the Certificate"; [Boards](BOARDS.md#a-series-of-challenges) has the rule). A lane
+on one of them is told of its siblings: which are solved, what the lane that worked a sibling
+found, and where that lane's files are, to read and not to change: the folder itself on the host
+runtime, `/series/<challenge id>` in Docker (mounted read-only). A lane that still runs shares no
+files. A sibling's flag is never in the brief. A lane's log says what its brief was given.
+
 A flag a lane finds waits for you: `a` or `1` submits it, `d` or `0` declines. On a folder board
 flightdeck checks a flag against the board's `answers.sha256.json` when it has one. Without one
 it cannot check: submit the flag on the platform yourself, then press `a` if it was accepted or
@@ -310,29 +325,13 @@ for you as well (`wrong_stop = 3` under `[lanes]`; 0 turns it off): a lane that 
 not get to spray the platform. A flag CTFd rate-limited without checking it is sent again by
 flightdeck after the wait CTFd asks for, up to three more times, before it comes back to you.
 
-A challenge is often worked by more than one lane in a run: a fork, a fresh lane after a kill, the
-next model up the ladder. A lane that starts on a challenge other lanes worked or still work reads,
-after its brief, what each of them tried: its plan, the programs it ran, its last steps, what
-became of its flags, the alerts on it and how it ended. flightdeck writes that record itself from
-what the lanes did (no model is asked to), it is handed over as data like the challenge's own
-text, and it is kept short (3,000 characters). The same record is in the run folder as
-`shared.json` when the run ends.
-
-Challenges whose names share a start are a series ("Harbor Lab: Read the Certificate", "Harbor
-Lab: Fingerprint the Certificate"; [Boards](BOARDS.md#a-series-of-challenges) has the rule). A lane
-on one of them is told of its siblings: which are solved, what the lane that worked a sibling
-found, and where that lane's files are, to read and not to change: the folder itself on the host
-runtime, `/series/<challenge id>` in Docker (mounted read-only). A lane that still runs shares no files. A sibling's
-flag is never in the brief. A lane's log says what its brief was given.
-
 Some platforms limit the tries at a challenge's flag (CTFd's "max attempts"). Every flag for such
 a challenge waits for your approval, under auto submit too, and the approval says how many tries
 are left. To let auto submit spend those tries without you, the last one included, set
 `submit_limited = "auto"` under `[lanes]`; a wrong flag can then use up the tries for your whole
 team. flightdeck says so when a run starts.
 
-Every run writes a run folder with an append-only `events.jsonl`, each lane's transcript, a
-`shared.json` (what each lane of each challenge tried) and a
+Every run writes a run folder with an append-only `events.jsonl`, each lane's transcript and a
 `status.json` that says how the run stands ([the status file](#the-status-file)); a
 board with answers (like the practice set) ends with a scorecard, and any other run with one line
 that says what it spent: its tokens and dollars ("at least" when some spend had no price). If

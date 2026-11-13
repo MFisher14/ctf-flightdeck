@@ -868,9 +868,10 @@ def prepare_run(options: RunOptions) -> Run:
         )
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
+        shared=shared,
         options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
-        processes=processes, lights=lights, status=status, shared=shared, notifier=notifier, autopilot=autopilot, engage=engage,
+        processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
     )
     if submits is not None:
         submits.solved = run._apply_solves
