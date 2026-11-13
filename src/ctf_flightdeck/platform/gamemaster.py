@@ -614,13 +614,10 @@ class GameMasterClient:
                     request=request,
                 )
             os.chmod(temp, 0o644)
-            taken = None
             try:
                 path, placeholder = _create(folder, name)
             except CTFdError as exc:  # 99 files of that name there already
-                taken = str(exc)
-            if taken is not None:
-                raise GameMasterError(taken, request=request)
+                raise GameMasterError(str(exc), request=request) from None
             os.close(placeholder)
             os.replace(temp, path)
             done = True
