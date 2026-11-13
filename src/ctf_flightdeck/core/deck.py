@@ -273,11 +273,18 @@ class Deck:
         their places, and the lanes behind them start meanwhile. Lanes already on it go on."""
         self._on_thread("wait_for")
         self.waits[challenge_id] = why
+        ch = self.challenges.get(challenge_id)
+        if ch is not None and not ch.closed and not ch.note:
+            ch.note = why  # what the board says of it while it waits
 
     def ready(self, challenge_id: str) -> None:
         """What a challenge waited for is there: its queued lanes may start, in the free slots."""
         self._on_thread("ready")
-        if self.waits.pop(challenge_id, None) is not None:
+        why = self.waits.pop(challenge_id, None)
+        if why is not None:
+            ch = self.challenges.get(challenge_id)
+            if ch is not None and ch.note == why:
+                ch.note = ""
             self._fill()
 
     def wrong_flags(self, challenge_id: str) -> int:
