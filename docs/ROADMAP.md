@@ -3,6 +3,49 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not yet released: M6, the solver pack (2026-11-13)
+
+The author's own solvers and the pipeline he won events with come into flightdeck (D24; P29 to
+P35 in [DECISIONS.md](DECISIONS.md); [SOLVERS.md](SOLVERS.md) says how to use the pack).
+
+Built:
+
+- **The solver pack, as an optional install.** `packs/solvers/` in this repository, never in the
+  PyPI package: `flightdeck pack install` fetches it, builds its Python environment and its
+  Docker image, and writes it into the config. Its whole no-model intake runs on every
+  challenge as one engine: recursive unpack, flag search under layered encodings, some 800
+  analysis engines routed by category and file type, decoders. Only a flag it can show the
+  source of is handed over as a flag.
+- **The pack as the lanes' toolkit** (`[l1] lane_tools`): every lane's brief says how to call
+  the engines and read the category playbooks, and Docker lanes run in the pack's image.
+- **From the pack's pipeline, into flightdeck's own:** a flag CTFd rate-limited without checking
+  it is waited out and sent again (P33); the wrong-answer stop (P34); `/note`, a note for every
+  lane (P35).
+- **The pack's own suite** runs in its folder (`packs/solvers/README.md`); the tests of the
+  master repository's layout that the export leaves behind are listed and deselected, never
+  counted as passed.
+
+Still to port from the pack's pipeline (`packs/solvers/ctf/`), most useful first. Until then each
+exists only in the pack, for a player who runs it by hand:
+
+- **Instances on demand.** Starting, renewing and stopping a challenge's own container through a
+  CTFd container plugin, and a slot scheduler that gives the few slots to the most valuable
+  challenges (`ctf/instances.py`, `ctf/instsched.py`). flightdeck today reaches only an instance
+  the board already lists.
+- **Flag variants within the tries left.** A near miss (case, wrapper, prefix) tried in a ranked
+  order, inside the event's rules (`ctf/flagcheck.py`). It touches P10 and D21.
+- **A second opinion on a timer.** A second model started beside a stalled lane after a set
+  time, not only one rung up in its place (`ctf/escalation.py`).
+- **What lanes share.** A hypothesis ledger and a read map across the lanes of one challenge, so
+  a fork or an escalation does not repeat a dead method (`ctf/hypothesis.py`, `ctf/readmap.py`).
+- **Rotating flags** (`ctf/dynamic.py`), **series chaining** (`ctf/series.py`), **the host
+  governor** (load, memory, disk: `ctf/governor.py`), **doctor checks for the pack's tools**
+  (`ctf/toolbox.py`), and **the Game Master platform** (`ctf/platform/gamemaster.py`).
+
+Not ported, because flightdeck has its own: the dispatcher, the board watcher, budgets and the
+ledger, the leftovers reaper, writeups. Not portable: what drives the Claude Code and Codex
+harnesses (launchers, permission profiles, worktrees, build lanes).
+
 ## Released: 0.3.0, M5 Autopilot (2026-11-12)
 
 Engage autopilot and flightdeck runs the event end to end while you are away; take the controls

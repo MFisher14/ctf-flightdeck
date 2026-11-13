@@ -33,9 +33,16 @@ def adapter():
     return module
 
 
+REQUIRE_PACK = "FLIGHTDECK_REQUIRE_PACK"  # =1: a test that needs the pack's environment fails where there is none (CI)
+
+
 def needs_environment() -> None:
-    if not (PACK / ".venv" / "bin" / "python").exists():
-        pytest.skip("not run: the pack has no Python environment (packs/solvers/setup.sh makes it)")
+    if (PACK / ".venv" / "bin" / "python").exists():
+        return
+    why = "the pack has no Python environment (packs/solvers/setup.sh makes it)"
+    if os.environ.get(REQUIRE_PACK) == "1":
+        pytest.fail(f"{REQUIRE_PACK}=1, and {why}")
+    pytest.skip(f"not run: {why}")
 
 
 def intake(handout: Path, tmp_path: Path, flag_format: str = FORMAT):

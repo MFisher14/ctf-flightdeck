@@ -53,3 +53,23 @@ jobs:
         env:
           FLIGHTDECK_REQUIRE_LANE_IMAGE: "1"
         run: uv run pytest -v tests/test_l1_lane_image.py tests/test_egress.py
+
+  # The solver pack (packs/solvers) as flightdeck runs it: its setup script builds its Python
+  # environment (its pinned libraries, from PyPI), then the tests that run its intake on synthetic
+  # challenges must run (FLIGHTDECK_REQUIRE_PACK=1 fails them where the environment is absent).
+  # On macOS, where the pack was built and its own suite runs; that suite (some 42,000 tests,
+  # packs/solvers/README.md) is not run here.
+  solver-pack:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Set the pack up
+        run: packs/solvers/setup.sh
+      - name: The pack's intake on synthetic challenges, and the pack installer
+        env:
+          FLIGHTDECK_REQUIRE_PACK: "1"
+        run: uv run pytest -v tests/test_solver_pack.py tests/test_pack.py

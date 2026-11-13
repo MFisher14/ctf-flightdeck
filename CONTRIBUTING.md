@@ -68,6 +68,14 @@ machine to be sure nothing was skipped:
 FLIGHTDECK_REQUIRE_DOCKER=1 FLIGHTDECK_REQUIRE_LANE_IMAGE=1 uv run pytest
 ```
 
+The solver pack (`packs/solvers/`, D24) has an environment and a suite of its own:
+`packs/solvers/setup.sh` builds the environment, the tests in `tests/test_solver_pack.py` then run
+the pack's intake on synthetic challenges (without the environment they report as not run; CI's
+`solver-pack` job sets `FLIGHTDECK_REQUIRE_PACK=1`, which makes that a failure), and
+`packs/solvers/README.md` says how to run the pack's own suite. Only the maintainer's export
+(`packs/solvers/maint/export.py`) changes the pack's exported files; a fix to an engine goes in a
+pull request as usual and is carried back to the master by him.
+
 A Docker test tells pytest it cannot run through `docker_not_run()` in `tests/l1_kit.py`, never
 a plain `pytest.skip`: that is what the variables turn into a failure.
 
