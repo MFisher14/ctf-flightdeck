@@ -850,13 +850,15 @@ def prepare_run(options: RunOptions) -> Run:
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
     switch, has_fallback = _refusal_switch(client, ladder)
-    autopilot = Autopilot(deck, budget, refusals=switch)
+    autopilot = Autopilot(deck, budget, refusals=switch, second_after=config.autopilot.second_after,
+                          third_after=config.autopilot.third_after)
     autopilot.attach()  # after the watch: it sees the alerts the watch raised
     if engage:
         plan.notes += start_notes(
             plan.policies, submit=deck_config.submit, spends_tries=deck_config.spends_tries, instance=instance, budget=budget,
             waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
+            second_after=config.autopilot.second_after, third_after=config.autopilot.third_after,
         )
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,

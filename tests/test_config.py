@@ -765,16 +765,38 @@ def test_the_autopilot_table_is_read_and_is_off_with_no_budget_by_default(tmp_pa
     ("budget_tokens = 1.5", "autopilot.budget_tokens must be a whole number above 0: the whole run's budget in tokens (got 1.5)"),
     ('engage = "yes"', "autopilot.engage must be true or false (got a string)"),
     ("budget = 5", "autopilot.budget"),
+    ("second_after = -1", "autopilot.second_after must be a whole number of seconds, 0 or more (0: never) (got -1)"),
+    ("second_after = 2.5", "autopilot.second_after must be a whole number of seconds, 0 or more (0: never) (got 2.5)"),
+    ("second_after = true", "autopilot.second_after must be a whole number of seconds, 0 or more (0: never) (got true)"),
+    ('third_after = "480"', "autopilot.third_after must be a whole number of seconds, 0 or more (0: never) (got a string)"),
+    ("second_after = 180\nthird_after = 180",
+     "autopilot.third_after must be more than second_after (180): the third lane comes after the second (got 180)"),
+    ("second_after = 180\nthird_after = 60", "autopilot.third_after must be more than second_after (180)"),
 ])
 def test_a_bad_autopilot_table_is_refused_naming_the_key(tmp_path, body, problem):
     text = filled(example_config()).replace("\n[autopilot]\n#", "\n#", 1) + f"\n[autopilot]\n{body}\n"
     assert problem in error(write(tmp_path, text))
 
 
+def test_the_second_and_third_opinion_timers_are_read_and_off_by_default(tmp_path):
+    plain = load_config(write(tmp_path, filled(example_config())))
+    assert (plain.autopilot.second_after, plain.autopilot.third_after) == (0, 0)  # nothing changes for who did not ask
+
+    def timers(body: str) -> tuple[int, int]:
+        text = filled(example_config()).replace("\n[autopilot]\n#", "\n#", 1) + f"\n[autopilot]\n{body}\n"
+        pilot = load_config(write(tmp_path, text)).autopilot
+        return pilot.second_after, pilot.third_after
+
+    assert timers("second_after = 180\nthird_after = 480") == (180, 480)
+    assert timers("second_after = 180") == (180, 0)
+    assert timers("third_after = 60") == (0, 60)  # the third alone: nothing to be later than
+    assert timers("second_after = 0\nthird_after = 0") == (0, 0)
+
+
 def test_the_example_shows_the_autopilot_table():
     text = example_config()
     assert "\n[autopilot]\n" in text
-    for key in ("engage", "budget_dollars", "budget_tokens"):
+    for key in ("engage", "budget_dollars", "budget_tokens", "second_after", "third_after"):
         assert re.search(rf"^# {key} = ", text, flags=re.M), key
     said = " ".join(line.lstrip("# ") for line in text.splitlines())
     assert "never spends a challenge's last try, and reroutes no request a model declined" in said

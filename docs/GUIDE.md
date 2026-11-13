@@ -563,6 +563,12 @@ as quitting does. Under the pull policy `auto`, new waves are pulled on the usua
 | A lane's effort is out of proportion to the challenge | kills it and parks the challenge for the next round |
 | A lane asks for more budget (its own cap) | approves it while the run budget has room: the lane's caps go up a step and it carries on (a lane whose spend has no price waits for you) |
 | The queue is dry and no lane runs | queues each unsolved challenge a lane gave up on, on the next model up, lowest points first, once per rung |
+| A challenge's only lane has run `second_after` seconds unsolved, or the platform called a flag of it wrong (only when you set `second_after`) | forks a second lane on another model of your ladder, once per challenge |
+| The first of a challenge's two lanes has run `third_after` seconds (only when you set `third_after`) | forks a third lane on a model neither runs, once per challenge |
+
+The last two are off until you set them, in seconds, under `[autopilot]`: `second_after = 180` and
+`third_after = 480` are a second opinion after three minutes and a third after eight. They need a
+ladder with two and three models, and each fork spends from the run budget like any lane.
 
 Under `submit = "auto"` a flag a lane claims is submitted, as without autopilot. A lane that is
 paused or taken over, or that waits for your answer, is left alone.
