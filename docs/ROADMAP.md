@@ -33,7 +33,8 @@ Built:
 - **From playing it** (the mock, then a real event from the README): `/config` in the console
   for the lane limit and auto approve (P45); `flightdeck start`, one command that sets an event
   up and plays it, and `flightdeck play FOLDER` with no `--event` (P46); an empty board
-  you fill from the console with `/new`, or with `flightdeck add` (P47).
+  you fill from the console with `/new`, or with `flightdeck add` (P47); pasted screenshots and
+  `/attach` (P48); an event's VPN file kept and connected (P49).
 - **The pack's own suite** runs in its folder (`packs/solvers/README.md`); the tests of the
   master repository's layout that the export leaves behind are listed and deselected, never
   counted as passed.

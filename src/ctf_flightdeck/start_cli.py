@@ -44,6 +44,7 @@ def start(
     url: Annotated[str | None, typer.Option("--url", help="The event site's address (ctfd).")] = None,
     flag: Annotated[str | None, typer.Option("--flag", metavar="PREFIX", help="What comes before the { in a flag (PP for PP{...}), or a regular expression.")] = None,
     submit: Annotated[str | None, typer.Option("--submit", metavar="confirm|auto", help="confirm: you approve each flag; auto: a flag a lane claims is sent at once.")] = None,
+    vpn_file: Annotated[Path | None, typer.Option("--vpn", metavar="FILE", dir_okay=False, help="The event's VPN file for its live targets (WireGuard .conf or OpenVPN .ovpn).")] = None,
     ai_allowed: Annotated[bool, typer.Option("--ai-allowed", metavar="", help="The event's rules allow AI tools (asked at a terminal).")] = False,
     launch: Annotated[bool | None, typer.Option("--launch/--no-launch", metavar="", show_default=False, help="Play the event once it is set up (default: asked at a terminal).")] = None,
     config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="Config file (default: your config).")] = None,
@@ -166,6 +167,33 @@ def start(
         except keys.KeysError as exc:
             _fail(str(exc))
 
+    # ---- the event's VPN file, when its live targets are behind one
+    from . import vpn
+
+    vpn_source = None
+    try:
+        if vpn_file is not None:
+            vpn_source = expand(vpn_file)
+            vpn.kind_of(vpn_source)
+        elif interactive:
+            def vpn_answer(typed: str):
+                typed = typed.strip().strip("'\"").replace("\\ ", " ")
+                if not typed:
+                    return None
+                path = Path(typed).expanduser()
+                if not path.is_file():
+                    raise typer.BadParameter(f"{path}: no such file (drag the file onto this window, or press Enter for none)")
+                try:
+                    vpn.kind_of(path)
+                except vpn.VPNError as exc:
+                    raise typer.BadParameter(str(exc)) from None
+                return path
+
+            vpn_source = typer.prompt("VPN file for the event's live targets (a WireGuard .conf or OpenVPN .ovpn: drag it in); "
+                                      "Enter if the event has none", default="", show_default=False, value_proc=vpn_answer) or None
+    except (vpn.VPNError, ConfigError) as exc:
+        _fail(f"--vpn: {exc}")
+
     # ---- the folder and the event file
     answers = events.EventAnswers(name=name, platform=platform, url=url, token_env=token_env, flag_format=flag_format, submit=submit)
     try:
@@ -182,6 +210,12 @@ def start(
         typer.echo(f"  {board}/   the challenges: one folder each, with its files and a challenge.json")
     if token_note:
         typer.echo(token_note)
+    if vpn_source is not None:
+        try:
+            kept = vpn.keep(folder, vpn_source)
+        except vpn.VPNError as exc:
+            _fail(str(exc))
+        typer.echo(f"vpn: kept as {kept.file} (yours only); `flightdeck play` offers to connect it, and `flightdeck vpn up {folder}` does it now")
     _status(folder, config_path, offer_pack=interactive, config=config)
     if platform != "ctfd":
         typer.echo("The board starts empty. In the console, type /new to hand over a challenge: its name, then its text, files and\n"

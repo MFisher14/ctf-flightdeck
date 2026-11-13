@@ -97,6 +97,7 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
     NewChallengePrompt TextArea:focus { border: round $accent; }
     NewChallengePrompt .short { width: 40; }
     NewChallengePrompt #new-problem { color: $warning; }
+    NewChallengePrompt TextArea { height: 10; }
     """
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True),
                 Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True)]
@@ -129,10 +130,11 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
             yield Static(Text("New challenge", style="bold"))
             yield Static(Text("Name, as the site shows it:"), classes="muted")
             yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
-            yield Static(Text("Everything you have: paste the description, drag files and screenshots in (each lands as a path "
-                              "on its own line), and put the instance's address (https://... or nc host port) on a line of its own:"),
-                         classes="muted")
+            yield Static(Text("Everything you have: paste the description, drag files and screenshots in (each shows as its path; "
+                              "the line under the box says what is attached), and put the target's address (https://... or "
+                              "nc host port) on a line of its own:"), classes="muted")
             yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
+            yield Static(Text("no file attached", style="bold"), id="new-attached")
             with Horizontal():
                 yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
                 yield Input(placeholder="points (optional)", id="new-points", classes="short")
@@ -144,6 +146,26 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
         field = self.query_one("#new-name", Input)
         field.cursor_blink = False
         (self.query_one("#new-text", TextArea) if self.given_name else field).focus()
+
+    @on(TextArea.Changed, "#new-text")
+    def _show_attached(self) -> None:
+        """Say under the box what it holds: the files found in it (name and size) and the target."""
+        from ..addchallenge import attached_text, parse
+
+        _, files, urls = parse(self.query_one("#new-text", TextArea).text)
+        self.query_one("#new-attached", Static).update(Text(attached_text(files, urls), style="bold green" if files else "bold"))
+
+    @on(Input.Changed, "#new-name")
+    def _dropped_on_the_name(self, event: Input.Changed) -> None:
+        """A file dropped while the name has the focus lands in the name: move it to the box."""
+        from ..addchallenge import _take_paths
+
+        rest, files = _take_paths(event.value) if event.value.strip() else (event.value, [])
+        if not files:
+            return
+        box = self.query_one("#new-text", TextArea)
+        box.text = box.text + ("" if not box.text or box.text.endswith("\n") else "\n") + "".join(f"{file}\n" for file in files)
+        event.input.value = rest
 
     @on(Input.Submitted, "#new-name")
     def _named(self) -> None:

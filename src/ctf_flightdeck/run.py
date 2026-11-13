@@ -463,6 +463,7 @@ class Run:
             config_path=str(self.config.source) if self.config.source is not None else "",
             adder=self.add_challenge if self.watches_folder else None,
             paster=self.paste_image if self.watches_folder else None,
+            attacher=self.attach_files if self.watches_folder else None,
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -686,6 +687,32 @@ class Run:
                           f"{new.name!r}, then a lane starts on it (a few seconds)")
         return self._add_now(new)
 
+    def attach_files(self, challenge_id: str, files: Sequence[Path]) -> tuple[bool, str]:
+        """The console's /attach: copy files into a challenge's folder on the board, and start
+        its lanes afresh so each works in a copy that has them (a lane's workspace is a copy
+        made when it starts). (whether they were attached, what to tell the player)."""
+        from .addchallenge import AddError, attach
+        from .core import interventions as iv
+
+        handout = self._handouts.get(challenge_id)
+        if not self.watches_folder or handout is None:
+            return False, "files are attached to a challenge on a board you fill yourself"
+        try:
+            names = attach(handout, files)
+            item = load_challenge(handout)
+        except (AddError, BoardError) as exc:
+            return False, str(exc)
+        self._folders[handout.name] = _mtime(handout)
+        self.driver.files[challenge_id] = item.challenge.files
+        self.deck.challenges[challenge_id].files = item.challenge.files
+        restarted = [lane.id for lane in self.deck.lanes_on(challenge_id) if lane in self.deck.active_lanes()]
+        for lane_id in restarted:
+            self.deck.apply(iv.Kill(lane_id, requeue=True))
+        if not restarted and not self.deck.queued(challenge_id):
+            self.deck.apply(iv.Queue(challenge_id))
+        what = f"attached {', '.join(names)} to {challenge_id}"
+        return True, what + (f"; {', '.join(restarted)} restarted as a fresh lane with it" if restarted else "; a lane starts on it when one is free")
+
     def paste_image(self) -> Path:
         """ctrl+v in the /new form: the clipboard's image as a file in the run folder
         (imageread.clipboard_image; ImageError when there is none)."""
@@ -703,6 +730,9 @@ class Run:
         if folder.name not in self.scan_board():
             return False, f"{_show(folder)} was written but could not be added: the warning above says why"
         files = len(self.driver.files.get(folder.name, ()))
+        if not files and not new.urls:  # the lane has the description and nothing else: said, so it is no surprise
+            return True, (f"added {folder.name} with NO file and no target: its lane has only the description. "
+                          f"If it needs a file: /attach {folder.name}")
         return True, (f"added {folder.name}: {files} file{'' if files == 1 else 's'}"
                       + (f", {len(new.urls)} address{'' if len(new.urls) == 1 else 'es'}" if new.urls else "")
                       + "; a lane starts on it when one is free")

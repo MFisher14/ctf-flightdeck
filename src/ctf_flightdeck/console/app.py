@@ -72,6 +72,7 @@ class FlightdeckApp(App[None]):
         config_path: str = "",
         adder: Callable[[object], tuple[bool, str]] | None = None,
         paster: Callable[[], object] | None = None,
+        attacher: Callable[[str, list], tuple[bool, str]] | None = None,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -84,6 +85,7 @@ class FlightdeckApp(App[None]):
         self._on_exit = on_exit
         self._run_dir = run_dir
         self.paster = paster  # ctrl+v in the /new form: saves the clipboard's image and returns its path (None: no pasting)
+        self.attacher = attacher  # /attach: copies files into a challenge's folder and restarts its lanes (None: not this board)
         self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
@@ -225,6 +227,26 @@ class FlightdeckApp(App[None]):
 
     def warn(self, text: str) -> None:
         self.say(text, "warning")
+
+    def attach(self, arg: str, lane_id: str | None = None) -> None:
+        """/attach [challenge] <files>: the files named (dragged onto the command bar) go into
+        the challenge's folder, and its lanes start afresh with them. Without a challenge: the
+        open lane's, or the one selected on the board."""
+        from ..addchallenge import _take_paths
+
+        if self.attacher is None:
+            self.warn("/attach adds files to a challenge on a board you fill yourself")
+            return
+        rest, files = _take_paths(arg) if arg.strip() else ("", [])
+        if not files:
+            self.warn("/attach: no file found. Type /attach, a space, then drag the file onto this bar (or paste its full path)")
+            return
+        cid = self._challenge_arg(rest, lane_id)
+        if cid is None:
+            return
+        ok, message = self.attacher(cid, files)
+        self.say(message, "information" if ok else "warning")
+        self.refresh_view()
 
     def new_challenge(self, name: str = "") -> None:
         """/new: ask for a challenge (NewChallengePrompt), put it on the board and let a lane take it."""
@@ -693,6 +715,8 @@ class FlightdeckApp(App[None]):
             self.configure(arg)
         elif name == "new":
             self.new_challenge(arg)
+        elif name == "attach":
+            self.attach(arg, lane_id)
         elif name == "unhold":
             self.unhold()
         elif name == "autopilot":

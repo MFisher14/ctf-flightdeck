@@ -585,9 +585,33 @@ Walk" --text - --file postcard.txt` does the same, and a run that is playing pic
 seconds; so does a challenge folder you make yourself. flightdeck shows each flag; you submit it
 on the site and press `a` if it was accepted or `d` if not.
 
-flightdeck's own lanes read text. A screenshot is handed over as a file like any other, and a
-lane reads what is in it only if its tools can (a coding-agent lane, `--agent claude`, reads
-images itself): paste the challenge's text as text.
+In the form, the line under the box says what is attached (each file's name and size) and the
+target it found, so you see a drop land before you add the challenge. A file dropped anywhere
+is taken: in the middle of a line, or on the name. `ctrl+v` pastes a screenshot from the
+clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the terminal's own way (cmd+v).
+flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
+once for each image's text and puts it in the description; the image is in the handout too. A
+model that takes no images is said, and the challenge is added without that text.
+
+A challenge added with no file and no target says so, and its lane is told to say what is
+missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
+challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file.
+
+**A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
+`.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by
+you only. `flightdeck play` says whether it looks connected and offers to connect it; it shows
+the `sudo` command first, and sudo asks for your password itself. By hand:
+
+```sh
+flightdeck vpn add ~/ctf/example-ctf ~/Downloads/team.conf   # for an event already set up
+flightdeck vpn up ~/ctf/example-ctf                          # connect (needs wg-quick or openvpn)
+flightdeck vpn status ~/ctf/example-ctf
+flightdeck vpn down ~/ctf/example-ctf
+```
+
+The VPN is this machine's. Lanes on the host runtime use it as any program does. A Docker
+lane reaches a target through flightdeck's fence, which leaves by this machine's routes; if a
+target you can reach from your shell is not reached from a Docker lane, play with `--host`.
 
 To write the event file yourself instead, from the event's rules:
 

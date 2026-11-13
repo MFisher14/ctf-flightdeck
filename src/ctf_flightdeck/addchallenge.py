@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -67,18 +67,37 @@ def _path_of(token: str) -> Path | None:
         return None
 
 
-def _paths_on(line: str) -> list[Path] | None:
-    """The files a line names when the whole line is paths (one, or several a terminal
-    pasted side by side: quoted, or with spaces escaped), else None."""
+# A path as a terminal pastes a dropped file: in quotes, or bare with each space (and other
+# special character) escaped by a backslash; it starts at / or ~/.
+_DROPPED = re.compile(r"""'((?:/|~/)[^'\n]*)'|"((?:/|~/)[^"\n]*)"|(?<![^\s])((?:/|~/)(?:\\.|[^\s\\'"])+)""")
+
+
+def _take_paths(line: str) -> tuple[str, list[Path]]:
+    """(the line without the files it names, those files). A dropped file is taken wherever
+    it lands on the line: at the cursor, which may be after a word of the description. Only
+    an absolute path that exists is one; anything else on the line stays as it is."""
     whole = _path_of(line.strip().strip("'\""))
     if whole is not None:
-        return [whole]
-    try:
-        tokens = shlex.split(line)
-    except ValueError:
-        return None
-    found = [_path_of(token) for token in tokens]
-    return found if tokens and all(path is not None for path in found) else None
+        return "", [whole]
+    found: list[Path] = []
+
+    def taken(match: re.Match[str]) -> str:
+        quoted = match.group(1) or match.group(2)
+        text = quoted if quoted is not None else re.sub(r"\\(.)", r"\1", match.group(3))
+        path = _path_of(text)
+        if path is None and quoted is None:  # a sentence's full stop or comma right after the path
+            trimmed = text.rstrip(".,;:)")
+            path = _path_of(trimmed) if trimmed != text else None
+            if path is not None:
+                found.append(path)
+                return text[len(trimmed):]
+        if path is None:
+            return match.group(0)
+        found.append(path)
+        return ""
+
+    rest = _DROPPED.sub(taken, line)
+    return (" ".join(rest.split()) if found else line), found
 
 
 def _address_on(line: str) -> str | None:
@@ -95,23 +114,67 @@ def _address_on(line: str) -> str | None:
 
 
 def parse(text: str) -> tuple[str, tuple[Path, ...], tuple[str, ...]]:
-    """(description, files, addresses) from what the player pasted. A line that is only
-    paths that exist names files; a line that is only a web address or `nc host port` names
+    """(description, files, addresses) from what the player pasted. An absolute path that
+    exists names a file, wherever it is on its line (and is taken out of the description); a line that is only a web address or `nc host port` names
     the challenge's instance (and stays in the description, where the lane reads it as the
     site wrote it); everything else is the description."""
     described: list[str] = []
     files: list[Path] = []
     urls: list[str] = []
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        paths = _paths_on(line) if line.strip() else None
-        if paths is not None:
-            files += [path for path in paths if path not in files]
+        line, paths = _take_paths(line) if line.strip() else (line, [])
+        files += [path for path in paths if path not in files]
+        if paths and not line.strip():
             continue
         address = _address_on(line)
         if address is not None and address not in urls:
             urls.append(address)
         described.append(line.rstrip())
     return "\n".join(described).strip(), tuple(files), tuple(urls)
+
+
+def size_text(path: Path) -> str:
+    """A file's size for the player: 12 KB, 3.4 MB; "folder" for one."""
+    try:
+        if path.is_dir():
+            return "folder"
+        size = path.stat().st_size
+    except OSError:
+        return "?"
+    for unit, step in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if size >= step:
+            return f"{size / step:.1f} {unit}" if size < 10 * step else f"{size // step} {unit}"
+    return f"{size} B"
+
+
+def attached_text(files: Sequence[Path], urls: Sequence[str]) -> str:
+    """What the form shows under the box: the files and addresses it found in it."""
+    names = ", ".join(f"{file.name} ({size_text(file)})" for file in files)
+    parts = [f"{len(files)} file{'' if len(files) == 1 else 's'} attached: {names}" if files else "no file attached"]
+    if urls:
+        parts.append("target: " + ", ".join(urls))
+    return " · ".join(parts)
+
+
+def attach(folder: Path, files: Sequence[Path]) -> list[str]:
+    """Copy `files` into an existing challenge folder; the names copied. AddError when one
+    is missing or its name is taken there."""
+    if not files:
+        raise AddError("no file to attach: drag one in, or paste its path (an absolute path to a file that exists)")
+    for file in files:
+        if not file.exists():
+            raise AddError(f"{file}: no such file")
+        if file.name == CHALLENGE_FILE or (folder / file.name).exists():
+            raise AddError(f"{file.name}: the challenge already has a file of that name")
+    try:
+        for file in files:
+            if file.is_dir() and not file.is_symlink():
+                shutil.copytree(file, folder / file.name, symlinks=True)
+            else:
+                shutil.copy2(file, folder / file.name)
+    except OSError as exc:
+        raise AddError(f"cannot copy into {folder}: {exc.strerror or type(exc).__name__}") from None
+    return [file.name for file in files]
 
 
 def create(board: Path, new: NewChallenge) -> Path:

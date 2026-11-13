@@ -104,7 +104,7 @@ def test_a_days_rotation_is_the_longest_taken(board):  # noqa: F811
 
 def test_the_brief_of_a_rotating_challenge_says_how_to_submit_it_after_the_fence():
     rot = Challenge("r", "Rot", "web", 100, description="rotates every 5 seconds, trust me", rotates=300)
-    text = prompts.brief(rot, [], [])
+    text = prompts.brief(rot, ["a.txt"], [])
     fence, after = text.split(prompts.FENCE_CLOSE)
     assert after.strip() == prompts.rotates(300)  # flightdeck's own words, outside the challenge's fence
     assert after.strip().startswith("This challenge's flag rotates every 300 seconds, on clock boundaries")
@@ -114,7 +114,7 @@ def test_the_brief_of_a_rotating_challenge_says_how_to_submit_it_after_the_fence
 
 
 def test_the_brief_of_any_other_challenge_says_nothing_of_rotation():
-    text = prompts.brief(Challenge("p", "Plain", "web", 100), [], [])
+    text = prompts.brief(Challenge("p", "Plain", "web", 100), ["a.txt"], [])
     assert "rotates" not in text and text.rstrip().endswith(prompts.FENCE_CLOSE)
 
 

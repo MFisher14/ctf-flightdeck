@@ -118,6 +118,17 @@ def rotated_out(flag: str, every: int) -> str:
 TOOLKIT = "The player's solver toolkit (the player installed it; its author's words, not the challenge's):"
 
 
+# Said after the fence, in flightdeck's own words, when the board gives a challenge no file
+# and no instance: a lane that waits for a file that is not coming spends its whole budget
+# listing an empty workspace.
+NOTHING_GIVEN = (
+    "This challenge came with no files and no live instance: the description is all there is, and nothing more will "
+    "appear in the workspace while you work. If it can be solved from the description, solve it. If it needs a file or "
+    "a service you were not given, say in one sentence exactly what is missing and stop: do not list the workspace "
+    "again and do not wait."
+)
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
           recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "") -> str:
     """The first user message: the challenge as the lane should see it.
@@ -156,6 +167,8 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         _description(challenge.description),
         FENCE_CLOSE,
     ]
+    if not files and not urls and not off:
+        lines.append(NOTHING_GIVEN)
     if off:
         lines.append(OFF_LIMITS)
     elif shell_hosts:

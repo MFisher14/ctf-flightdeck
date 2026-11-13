@@ -155,7 +155,7 @@ def test_a_keys_file_others_can_read_is_not_added_to(tmp_path):
 def test_at_a_terminal_start_asks_makes_the_folder_keeps_the_token_out_of_sight_and_launches(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "ctf" / "example"
-    answers = f"Example CTF 2026\n{folder}\ny\n1\nctf.example.org\nEX\n2\n{SECRET}\nn\ny\n"
+    answers = f"Example CTF 2026\n{folder}\ny\n1\nctf.example.org\nEX\n2\n{SECRET}\n\nn\ny\n"
     result = run(input=answers)
     assert result.exit_code == 0, result.output
     profile, policies = load_profile(folder / "event.toml")
@@ -178,7 +178,7 @@ def test_start_does_not_set_up_an_event_whose_rules_forbid_ai(tmp_path, monkeypa
 def test_start_with_no_token_says_where_it_goes_and_does_not_launch(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\nctfd\nhttps://ctf.example.org\n\n1\n\nn\n")
+    result = run(input=f"Example CTF\n{folder}\ny\nctfd\nhttps://ctf.example.org\n\n1\n\n\nn\n")
     assert result.exit_code == 0, result.output
     assert "token: not set yet. Put CTFD_TOKEN_EXAMPLE_CTF=<your CTFd access token> in" in result.output
     assert f"play: flightdeck play {folder}" in result.output and setup == []
@@ -187,7 +187,7 @@ def test_start_with_no_token_says_where_it_goes_and_does_not_launch(tmp_path, mo
 def test_a_by_hand_event_starts_empty_says_how_to_add_a_challenge_and_launches(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n2\n\nn\ny\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n2\n\n\nn\ny\n")
     assert result.exit_code == 0, result.output
     assert "type /new" in result.output and "flightdeck add" in result.output
     assert load_profile(folder / "event.toml")[0].platform == "manual"
@@ -208,7 +208,7 @@ def test_start_offers_the_solver_pack_and_a_failed_install_does_not_undo_the_eve
 
     monkeypatch.setattr(pack_cli, "install", install)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n2\n\ny\nn\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n2\n\n\ny\nn\n")
     assert result.exit_code == 0, result.output
     assert len(asked) == 1 and asked[0]["source"] is None and asked[0]["yes"] is False  # the pack's own questions still asked
     assert "solvers (L1): not installed (the reason is above)" in result.output

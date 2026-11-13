@@ -4,6 +4,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `/config` alone opens a settings dialog: lanes at once and what happens to a flag.
+- In `/new`, `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads the
+  text of a challenge's images into its description. The form says what is attached, and takes
+  a file dropped anywhere. `/attach` adds files to a challenge afterwards and restarts its lane.
+- A challenge with no file and no target says so when added, and its lane is told to say what
+  is missing and stop instead of spending its budget waiting.
+- `flightdeck vpn add|up|status|down` keeps an event's WireGuard or OpenVPN file and connects
+  it; `flightdeck start` asks for the file and `flightdeck play` offers to connect it.
+
 - A board you fill yourself can start empty, and `/new` in the console hands a challenge to a
   lane: its name, then one box for its description, its files and screenshots (dragged in) and
   its instance's address. `flightdeck add` does the same from another terminal, and a run picks

@@ -250,6 +250,8 @@ def play(
 
     asked = _path(board) if board else None
     board, event = resolve(asked, event)  # a folder `flightdeck start` made: its event.toml and its board/
+    if asked is not None and not _vpn_ready(asked, ask=_at_terminal() and not headless):
+        raise typer.Exit(1)
     options = RunOptions(
         board=board,
         answers=_path(answers) if answers else None,
@@ -299,6 +301,31 @@ def play(
     if console.return_code:  # the console failed (Textual has printed why): not a run that ended as asked
         typer.echo("flightdeck: the console failed: the run's lanes were stopped as when you quit", err=True)
         raise typer.Exit(1)
+
+
+def _vpn_ready(folder: Path, *, ask: bool) -> bool:
+    """Before an event with a VPN file is played: say whether the VPN looks connected, and at
+    a terminal offer to connect it when it does not. False only when the player chose to stop."""
+    from . import vpn, vpn_cli
+
+    found = vpn.find(folder)
+    if found is None:
+        return True
+    try:
+        state = vpn.connected(found)
+    except vpn.VPNError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        return True
+    if state is not False:
+        typer.echo(f"flightdeck: {vpn.status_line(found, state)}", err=True)
+        return True
+    typer.echo(f"flightdeck: {vpn.status_line(found, state)}", err=True)
+    if not ask:
+        typer.echo("flightdeck: lanes cannot reach this event's live targets until it is connected", err=True)
+        return True
+    if vpn_cli.connect(found) == 0:
+        return True
+    return typer.confirm("The VPN is not connected, so lanes cannot reach live targets. Play anyway?", default=False)
 
 
 def _has_entries(folder: Path) -> bool:
@@ -844,7 +871,7 @@ def config_command(
 
 def _mount() -> None:
     from . import (
-        build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, start_cli, team_cli, writeup_cli,
+        build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, start_cli, team_cli, vpn_cli, writeup_cli,
     )
     from . import models_cli
     from .l1 import cli as l1_cli
@@ -855,6 +882,7 @@ def _mount() -> None:
     app.add_typer(ctfd_cli.app, name="ctfd", rich_help_panel=EVENT)
     app.add_typer(gamemaster_cli.app, name="gm", rich_help_panel=EVENT)
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
+    app.add_typer(vpn_cli.app, name="vpn", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
     app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
     app.command("start", rich_help_panel=PLAY)(start_cli.start)

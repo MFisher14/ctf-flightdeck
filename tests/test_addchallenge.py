@@ -367,3 +367,114 @@ def test_an_image_the_model_cannot_read_is_a_warning_and_the_challenge_is_added_
             run.close()
 
     asyncio.run(main())
+
+
+def test_a_file_dropped_in_the_middle_of_a_line_is_attached_and_taken_out_of_the_text(tmp_path):
+    plain, spaced = tmp_path / "matryoshka.bin", tmp_path / "Screenshot 2026 at 4.38 PM.png"
+    plain.write_bytes(b"1")
+    spaced.write_bytes(b"2")
+    escaped = str(spaced).replace(" ", "\\ ")
+    description, files, _ = addchallenge.parse(f"Open the doll {plain} and look inside. Also see '{spaced}'\nand {escaped}.\n")
+    assert files == (plain, spaced)
+    assert description == "Open the doll and look inside. Also see\nand ."
+    assert addchallenge.parse(f"see {tmp_path}/missing.bin for it")[1] == ()  # a path that is not there stays text
+
+
+def test_the_form_says_what_it_found(tmp_path):
+    file = tmp_path / "a.bin"
+    file.write_bytes(b"x" * 2048)
+    assert addchallenge.attached_text((file,), ("tcp://h:1",)) == "1 file attached: a.bin (2.0 KB) · target: tcp://h:1"
+    assert addchallenge.attached_text((), ()) == "no file attached"
+
+
+# ---------------------------------------------------------------------- what is attached, and /attach
+
+
+def test_the_form_shows_what_is_attached_and_a_file_dropped_on_the_name_goes_to_the_box(tmp_path):
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"x" * 10)
+
+    async def main():
+        with FakeModelServer([]) as server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                await pilot.press(*"/new", "enter")
+                await pilot.pause()
+                shown = lambda: str(app.screen.query_one("#new-attached").render())  # noqa: E731
+                assert shown() == "no file attached"
+                name = app.screen.query_one("#new-name")
+                name.value = f"Matryoshka {handout}"  # the drop landed where the cursor was: in the name
+                await pilot.pause()
+                assert name.value == "Matryoshka" and str(handout) in app.screen.query_one("#new-text").text
+                assert shown() == "1 file attached: doll.bin (10 B)"
+                await pilot.press("escape")
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+def test_a_challenge_added_with_nothing_says_so_and_its_lane_is_told_to_stop_not_wait(tmp_path):
+    from fake_model import text_reply
+
+    server = FakeModelServer([text_reply("A sample file is missing.")] * 3)
+
+    async def main():
+        with server:
+            run = prepare_run(options(tmp_path, server))
+            run.release()
+            ok, said = run.add_challenge(NewChallenge(name="Matryoshka", description="Open the doll."))
+            assert ok and "with NO file and no target" in said and "/attach matryoshka" in said
+            for _ in range(500):
+                if server.chats():
+                    break
+                await asyncio.sleep(0.01)
+            brief = server.chats()[0]["json"]["messages"][1]["content"]
+            assert "came with no files and no live instance" in brief and "do not wait" in brief
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_path):
+    from fake_model import text_reply
+
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"inside")
+    server = FakeModelServer(responder=lambda request: tool_call_reply("shell", {"command": "sleep 0.2"}))
+
+    async def main():
+        with server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                run.add_challenge(NewChallenge(name="Matryoshka", description="Open the doll."))
+                for _ in range(500):
+                    if run.deck.lanes:
+                        break
+                    await pilot.pause(0.01)
+                (first,) = run.deck.lanes
+                await pilot.press(*f"/attach matryoshka {handout}", "enter")
+                for _ in range(500):
+                    if len(run.deck.lanes) == 2:
+                        break
+                    await pilot.pause(0.01)
+                assert "attached doll.bin to matryoshka" in app._status[0] and f"{first} restarted" in app._status[0]
+                assert (run.options.board / "matryoshka" / "doll.bin").read_bytes() == b"inside"
+                second = [lane for lane in run.deck.lanes.values() if lane.id != first][0]
+                for _ in range(500):
+                    if second.id in run.driver.runs and run.driver.runs[second.id].messages:
+                        break
+                    await pilot.pause(0.01)
+                assert "doll.bin" in run.driver.runs[second.id].messages[1]["content"]
+                await pilot.press(*"/attach matryoshka", "enter")
+                await pilot.pause()
+                assert "no file found" in app._status[0]
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
