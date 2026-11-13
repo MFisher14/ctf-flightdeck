@@ -557,6 +557,7 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     checks.append(Check("machine", True, hardware.doctor_line(environ, machine=machine), essential=False))
     path = (config_path or default_config_path()).expanduser()
     config = None
+    host_at = len(checks)  # where the host line goes: after the machine, once the config says where runs go
     if not path.exists():
         checks.append(Check("config", False, f"no config at {path}", "run `flightdeck init` to write one"))
     else:
@@ -592,6 +593,9 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
         checks += agent_checks
     docker = _docker_checks(config)
     checks += docker
+    if config is not None and config.l1.pack is not None:
+        checks += _pack_tools_checks(config, environ, docker_runs=any(c.name == "docker" and c.ok for c in docker))
+    checks.insert(host_at, _host_check(config, environ))
     image_there = any(c.name == "lane image" and c.ok for c in docker)
     if agent is not None and found and image_there and config is not None and config.lanes.runtime == "docker":
         checks.append(_agent_image_check(agent, config))  # play --agent runs the CLI inside that image
@@ -602,6 +606,81 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     if columns:
         checks.append(_terminal_check(columns, lines, config))
     return checks
+
+
+def _host_check(config, environ: Mapping[str, str], reading=None) -> Check:
+    """The host governor's readings now (governor.py): the load per CPU, the RAM available and
+    the free disk where runs go (the config's runs folder, else the default one), and any
+    `[governor]` limit that binds, which would hold a run's new lanes back. Never essential:
+    a busy machine is no broken setup. `reading`: as probed, else probed here."""
+    from . import governor, hardware
+    from .config import DEFAULT_RUN_DIR, GovernorConfig
+
+    policy = config.governor if config is not None else GovernorConfig()
+    if reading is None:
+        try:
+            runs = config.run_dir if config is not None else Path(DEFAULT_RUN_DIR).expanduser()
+        except RuntimeError:  # no home folder to expand ~ with
+            runs = Path.cwd()
+        reading = governor.probe(runs, hardware.RealHost(environ))
+    said = governor.summary(reading)
+    if not policy.enabled:
+        return Check("host", True, f"{said}; the governor is off ([governor] enabled = false): no lane is held back for these",
+                     essential=False)
+    binding = governor.decide(reading, policy, 0).limits
+    if binding:
+        return Check(
+            "host", False, f"{said}; over a limit now: {binding}",
+            "a run would start one lane at a time until this clears (the lanes at work carry on); free the machine up, "
+            "or change the limit under [governor] in your config", essential=False,
+        )
+    return Check("host", True, f"{said}; within the [governor] limits, so a run holds no lane back", essential=False)
+
+
+def _pack_tools_checks(config, environ: Mapping[str, str], *, docker_runs: bool) -> list[Check]:
+    """The programs the config's pack says its engines call (`tools` in its pack.toml) that
+    are missing where the engines run: on this machine's PATH for the host runtime; for
+    Docker, in the image they run in (`[l1] image`, else the lane image), asked of one
+    throwaway container with no network (pack.missing_in_image). Never essential: an engine
+    whose program is missing says so when it runs, and the rest still work. When the image
+    cannot be asked (no Docker, not on this machine), the line says that, and nothing about
+    what is missing. A pack that lists no tools gets no line."""
+    from . import pack as packs
+
+    name = "pack tools"
+    try:
+        info = packs.read(config.l1.pack)
+    except packs.PackError as exc:
+        return [Check(name, False, str(exc), "fix the pack's pack.toml", essential=False)]
+    tools = info.tools
+    if not tools:
+        return []
+    count = f"{len(tools)} program{'' if len(tools) == 1 else 's'}"
+    unrun = "an engine that needs a missing one says so and does not run; the rest work"
+    if config.lanes.runtime == "host":
+        absent = packs.missing_on_host(tools, environ.get("PATH", ""))
+        if not absent:
+            return [Check(name, True, f"all {count} the pack's engines call are on PATH", essential=False)]
+        return [Check(name, False, f"not on PATH: {' '.join(absent)} ({len(absent)} of the {count} the pack's engines call)",
+                      f"install them ({unrun})", essential=False)]
+    own = config.l1.image
+    image = own or config.lanes.image
+    what = f"the pack image {image}" if own else f"the lane image {image} (no [l1] image: engines run in it)"
+    build = "`flightdeck pack image` builds it" if own else "`flightdeck image build` builds flightdeck's own"
+    if not docker_runs:
+        return [Check(name, False, f"not looked up: Docker is not running, so {what} cannot be asked which of the "
+                                   f"{count} the pack's engines call it has", essential=False)]
+    if not image_present(image):
+        return [Check(name, False, f"not looked up: {what} is not on this machine, so which of the {count} the pack's "
+                                   "engines call it has is not known", build, essential=False)]
+    try:
+        absent = packs.missing_in_image(image, tools)
+    except packs.PackError as exc:
+        return [Check(name, False, f"not looked up: {exc}", essential=False)]
+    if not absent:
+        return [Check(name, True, f"all {count} the pack's engines call are in {what}", essential=False)]
+    return [Check(name, False, f"not in {what}: {' '.join(absent)} ({len(absent)} of the {count} the pack's engines call)",
+                  f"add them to the image ({unrun})", essential=False)]
 
 
 def _terminal_check(columns: int, lines: int, config) -> Check:
