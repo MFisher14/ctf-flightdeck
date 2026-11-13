@@ -4,8 +4,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
-- `flightdeck` on its own opens a menu: resume an event you played, start a new one, practice,
-  or the mock. With no config it sets flightdeck up and starts an event in one go.
+- `flightdeck` on its own opens a home screen in the console's own style: resume an event you
+  played, start a new CTF from a form, practice, a demo, or install the solver pack. With no
+  config it offers to get you started.
 - Your first console, and the mock, open on a welcome screen that says what you are looking at
   and what to press; on an empty board, Enter goes straight to adding a challenge.
 

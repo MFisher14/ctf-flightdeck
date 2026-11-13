@@ -70,58 +70,78 @@ MAX_RESUME = 6  # events offered on the opening menu, most recently played first
 
 
 def _home() -> None:
-    """`flightdeck` alone, at a terminal: resume an event, start a new one, practice or the
-    mock. With no config yet, starting an event asks init's questions first (start_cli)."""
-    from . import events
-    from .config import ConfigError, default_config_path
-    from .text import untrusted
+    """`flightdeck` alone, at a terminal: the home screen (console/home.py), then what the
+    player chose there."""
+    from . import events, start_cli
+    from .config import ConfigError, default_config_path, load_config
+    from .console import home
 
-    typer.echo(f"flightdeck {__version__}: play CTFs with a fleet of AI agents, and stay the pilot.\n")
     try:
-        have = default_config_path().exists()
+        path = default_config_path()
+        have = path.exists()
+        loaded = load_config(path) if have else None
     except ConfigError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
-    found = events.known()[:MAX_RESUME] if have else []
-    choices: list[tuple[str, Callable[[], None]]] = []
-
-    def offer(label: str, action: Callable[[], None]) -> None:
-        choices.append((label, action))
-        typer.echo(f"  {len(choices)}  {label}")
-
-    for event in found:
-        count = f"{event.challenges} challenge{'' if event.challenges == 1 else 's'}"
-        offer(f"Resume {untrusted(event.title, one_line=True)}   ({count} · played {events.ago(event.played)} · {event.folder})",
-              lambda folder=event.folder: play(board=folder))
-    from . import start_cli
-
-    offer("Start a new CTF   (asks for its name, site, token and VPN file, then launches)" if have
-          else "Set up flightdeck and start a CTF   (a few questions: your model API, then the event)", lambda: start_cli.start())
-    if have:
-        offer("Practice   (14 small challenges on your model; spends tokens)", lambda: practice())
-    offer("Mock   (the console on fake data: no setup, nothing spent)", lambda: mock())
-    typer.echo("  q  Quit\n")
-    if have:
-        from .config import load_config
-
-        try:
-            typer.echo(start_cli.pack_line(load_config(default_config_path())) + "\n")
-        except ConfigError as exc:
-            typer.echo(f"flightdeck: {exc}\n", err=True)
-
-    def answer(text: str):
-        text = text.strip().lower()
-        if text in ("q", "quit", "exit"):
-            return None
-        if text.isdigit() and 1 <= int(text) <= len(choices):
-            return choices[int(text) - 1][1]
-        raise typer.BadParameter(f"choose a number from 1 to {len(choices)}, or q")
-
-    chosen = typer.prompt("Choose", default="1", value_proc=answer)
-    if chosen is None:
-        typer.echo("Every command: flightdeck --help")
+    status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
+    menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
+                      pack_installed=loaded is not None and loaded.l1.pack is not None)
+    choice = _home_choice(menu, status)
+    if choice is None:
         return
-    chosen()
+    kind = choice[0]
+    if kind == "resume":
+        play(board=choice[1])
+    elif kind == "new":
+        _start_new(choice[1])
+    elif kind == "practice":
+        practice()
+    elif kind == "mock":
+        mock()
+    elif kind == "pack":
+        from . import pack_cli
+
+        pack_cli.install()
+    elif kind == "setup":
+        start_cli.start()
+
+
+def _home_choice(menu, status: str):
+    from .console.home import HomeApp
+
+    return HomeApp(menu, status).run()
+
+
+def _start_new(new) -> None:
+    """Set up the event the home screen's form described, and play it: the token to the keys
+    file, the event folder, the VPN file (its tool installed on a yes), then the console."""
+    from . import events, keys, vpn, vpn_cli
+    from . import start as starts
+
+    def fail(text: str) -> NoReturn:
+        typer.echo(f"flightdeck: {text}", err=True)
+        raise typer.Exit(2)
+
+    answers = new.answers
+    try:
+        if new.token:
+            keys.save(answers.token_env, new.token)
+        starts.write(new.folder, answers)
+        if new.vpn is not None:
+            vpn_cli.ensure_tool(vpn.keep(new.folder, new.vpn))
+    except (keys.KeysError, starts.StartError, vpn.VPNError) as exc:
+        fail(str(exc))
+    events.remember(new.folder)
+    typer.echo(f"flightdeck: set up {new.folder}", err=True)
+    if answers.platform == "ctfd" and not new.token:
+        try:
+            there = keys.source(answers.token_env) is not None
+        except keys.KeysError as exc:
+            fail(str(exc))
+        if not there:
+            fail(f"no token yet: put {answers.token_env}=<your CTFd access token> in {keys.keys_path()} (chmod 600), "
+                 f"then `flightdeck` resumes this event")
+    play(board=new.folder)
 
 
 def _next_steps() -> str:

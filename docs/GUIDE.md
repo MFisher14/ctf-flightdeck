@@ -23,10 +23,14 @@ flightdeck practice           # 14 small practice challenges: spends tokens on y
 A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
 uses it. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
 
-`flightdeck` on its own, at a terminal, opens a menu: resume an event (the ones you set up or
-played, most recent first), start a new one, the practice set, or the mock; it also says
-whether your no-model solvers (L1) are installed. With no config yet it offers to set flightdeck
-up and start an event in one go. In a script or a pipe it asks nothing and prints the commands
+`flightdeck` on its own, at a terminal, opens the home screen: resume an event (the ones you
+set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
+a demo, or install the solver pack when you have none. Arrow keys move, Enter chooses, `q` quits.
+"Start a new CTF" is a form on that screen with the questions `flightdeck start` asks; `ctrl+s`
+sets the event up and opens its console. Steps that need your password (connecting a VPN,
+installing its tool or the solver pack) are asked in the plain terminal before the console
+opens. With no config yet the home screen offers "Get started", which asks about your model API
+in the terminal and then your first event. In a script or a pipe it asks nothing and prints the commands
 instead. The first console you open, and the mock, start on a welcome screen: what the board,
 the lanes and the command bar are, and the keys you need; Enter goes on (on an empty board, to
 adding your first challenge). `flightdeck doctor` checks Python,

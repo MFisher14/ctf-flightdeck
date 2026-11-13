@@ -72,10 +72,10 @@ Then just run it:
 flightdeck
 ```
 
-It opens on a short menu: resume an event you played before, start a new one, the practice
-set, or the mock. Starting one asks for the event's name, its site, your access token and its
-VPN file, makes the event's folder, and launches. Your first console opens on a welcome screen
-that says what you are looking at and the three keys you need.
+It opens on flightdeck's home screen: resume an event you played before, start a new one, the
+practice set, or a demo. Starting one is a form on that screen (the event's name, its site, your
+access token, its VPN file); it makes the event's folder and launches. Your first console opens
+on a welcome screen that says what you are looking at and the three keys you need.
 
 The same things by name, for a script or a habit:
 
