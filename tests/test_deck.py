@@ -2583,3 +2583,30 @@ def test_a_declined_flag_is_not_a_wrong_one_and_wrong_stop_zero_never_stops():
     mine = lane_on(confirm, "c0")
     confirm.report(mine.id, TurnReport(flag="t{maybe}"))
     assert confirm.apply(iv.Decline(mine.id)).ok and confirm.wrong_flags("c0") == 0
+
+
+def test_a_note_for_every_lane_reaches_the_running_ones_and_each_lane_started_later():
+    deck, driver, _ = make_deck(n=3, max_lanes=2)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    outcome = deck.tell_all("  the organizers replaced every handout: download again  ")
+    note = "the organizers replaced every handout: download again"
+    assert outcome.ok and outcome.message.startswith("2 lanes read it on their next turn, and every lane started later")
+    assert first.hints == [note] and second.hints == [note]
+    assert driver.named("hint") == [(first.id, note), (second.id, note)]
+    deck.report(first.id, TurnReport(gave_up="no lead"))  # a slot frees: the third challenge's lane starts
+    third = lane_on(deck, "c2")
+    assert third.hints == [note] and driver.named("hint")[-1] == (third.id, note)  # told at its start
+    assert not deck.tell_all("   ").ok and deck.standing == [note]
+
+
+def test_a_note_for_every_lane_passes_over_a_lane_in_the_players_hands_and_stops_at_twelve():
+    deck, driver, _ = make_deck(n=2, max_lanes=2)
+    mine, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    assert deck.apply(iv.TakeOver(mine.id)).ok
+    outcome = deck.tell_all("flags are lower-case")
+    assert outcome.ok and "1 lane read it" in outcome.message and "1 passed over" in outcome.message
+    assert mine.hints == [] and other.hints == ["flags are lower-case"]
+    for n in range(11):
+        assert deck.tell_all(f"note {n}").ok
+    refused = deck.tell_all("one too many")
+    assert not refused.ok and "12 notes for every lane are standing already" in refused.message and len(deck.standing) == 12

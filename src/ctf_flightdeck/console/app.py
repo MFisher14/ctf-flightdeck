@@ -594,6 +594,10 @@ class FlightdeckApp(App[None]):
             cid = self._challenge_arg(arg, lane_id)
             if cid is not None:
                 self.claim_toggle(cid)
+        elif name == "note":
+            outcome = self.deck.tell_all(arg)
+            self.say(outcome.message, "information" if outcome.ok else "warning")
+            self.refresh_view()
         elif name == "unhold":
             self.unhold()
         elif name == "autopilot":

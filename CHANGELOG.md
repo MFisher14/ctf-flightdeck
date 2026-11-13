@@ -22,6 +22,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A route can say `any = true` (every challenge), and an engine is given the event's flag
   format in `FLIGHTDECK_FLAG_FORMAT`.
 
+### The console
+
+- `/note <text>` tells every lane at once (an organizer's ruling, a replaced handout): running
+  lanes read it on their next turn, and lanes started later read it at their start.
+
 ### CTFd
 
 - Under submit auto, once the platform has called three flags wrong at one challenge, that

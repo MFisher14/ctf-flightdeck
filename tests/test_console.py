@@ -3918,3 +3918,19 @@ def test_help_lists_the_autopilot_command():
         assert "/autopilot [on|off] engage autopilot (it needs a run budget), or take the controls back" in prompt_text(app)
 
     drive(app, script, size=(160, 100))
+
+
+def test_slash_note_tells_every_lane_from_a_lanes_chat_box_and_is_not_that_lanes_message_alone():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=2))
+    deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo")], [QueueEntry(n, "glm") for n in ("alpha", "bravo")])
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing)
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/note the handouts were replaced: download again")
+        assert deck.lanes["L01"].hints == deck.lanes["L02"].hints == ["the handouts were replaced: download again"]
+        assert "2 lanes read it on their next turn, and every lane started later" in status_line(app)
+        await send(pilot, app, "/note")
+        assert deck.standing == ["the handouts were replaced: download again"]  # an empty note is refused, and said
+
+    drive(app, script)

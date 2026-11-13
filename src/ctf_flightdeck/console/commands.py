@@ -34,6 +34,7 @@ COMMANDS = (
     Command("takeover", "", "a shell in the lane's workspace; exit it to hand the lane back"),
     Command("diff", "[file]", "show the files the lane changed"),
     Command("open", "<lane>", "open a lane in the focus view"),
+    Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
     Command("queue", "<challenge>", "queue a parked or new challenge", lane=False),
     Command("unhold", "", "lift the hold on the queue once its cause is fixed (a key or model id changed in "
                           "your config needs a new run)", lane=False),

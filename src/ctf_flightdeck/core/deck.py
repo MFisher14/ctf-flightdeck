@@ -126,6 +126,7 @@ class QueueEntry:
     dollar_cap: float | None = None
 
 
+MAX_STANDING = 12  # notes for every lane kept for lanes started later (Deck.tell_all)
 REJECTED = "rejected by the platform"
 SAID_REJECTED = "the player said the platform rejected it"
 DECLINED = "the player declined to submit it"
@@ -188,6 +189,7 @@ class Deck:
         self._listeners: list[Callable[[Event], None]] = []
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
+        self.standing: list[str] = []  # the player's notes for every lane (tell_all): a lane started later reads them at its start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
         self._spent: set[str] = set()  # challenges out of tries: closed until tries come back (_out_of_tries)
         self._answered: dict[str, float] = {}  # challenge id -> when the platform last answered one of its flags
@@ -804,6 +806,39 @@ class Deck:
         self._note(lane, text, Actor.PLAYER, ActionKind.MESSAGE)
         return Outcome(True, f"{lane.id} reads it on its next turn")
 
+    def _tell(self, lane: Lane, text: str) -> None:
+        """One of the player's notes for every lane, to this lane: read on its next turn."""
+        lane.hints.append(text)
+        self.driver.hint(lane, text)
+        self._note(lane, text, Actor.PLAYER, ActionKind.MESSAGE)
+
+    def tell_all(self, text: str) -> Outcome:
+        """The player's note for every lane (an organizer's ruling, a handout that was replaced,
+        a format everyone gets wrong): each open lane that still takes turns reads it on its
+        next turn, and every lane started later in this run reads it at its start. It changes
+        no lane's course (no alert is cleared: it is not about one lane). A lane in the
+        player's hands, or one that only waits for its flag's answer, is passed over and
+        counted. At most MAX_STANDING notes are kept for later lanes: each is in the context
+        of every lane from then on."""
+        self._on_thread("tell_all")
+        text = text.strip()
+        if not text:
+            return Outcome(False, "Empty note; nothing sent")
+        if len(self.standing) >= MAX_STANDING:
+            return Outcome(False, f"{MAX_STANDING} notes for every lane are standing already; a lane's own message (h) still works")
+        self.standing.append(text)
+        told = passed = 0
+        for lane in list(self.lanes.values()):
+            if lane.finished:
+                continue
+            if lane.state is LaneState.TAKEOVER or lane.gave_up_later:
+                passed += 1
+                continue
+            self._tell(lane, text)
+            told += 1
+        rest = f"; {passed} passed over (in your hands, or waiting only for a flag's answer)" if passed else ""
+        return Outcome(True, f"{told} lane{'s' if told != 1 else ''} read it on their next turn, and every lane started later{rest}")
+
     def _redirect(self, lane: Lane, text: str) -> Outcome:
         if not text:
             return Outcome(False, "Empty plan; nothing changed")
@@ -1252,6 +1287,8 @@ class Deck:
             ch.id,
             data={"model": lane.model, "parent": entry.parent, "attempt": entry.attempt, "approach": entry.approach},
         )
+        for text in self.standing:  # what the player told every lane before this one started
+            self._tell(lane, text)
         return lane
 
     def _finish(self, lane: Lane, state: LaneState, result: str, then: ChallengeStatus = ChallengeStatus.PARKED) -> None:
