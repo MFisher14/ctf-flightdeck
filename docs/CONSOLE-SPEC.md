@@ -354,7 +354,8 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   `flightdeck doctor` says when the last action is. A running lane that has done nothing yet (no
   turn, no step of its own, nothing spent, no coding-agent CLI turn whose cost is on its way)
   reads `starting` in muted text in the state column, and its cost is blank; the filter finds it
-  by `starting`. The model, turns and idle time are in the
+  by `starting` and not by `run`, as its row says (in `deck` and the compact layout, whose rows
+  say `run`, so does the filter). The model, turns and idle time are in the
   focus view's title. The panel's
   title is `lanes n/m`, then ` · N waiting` when the queue is not empty, ` · ✓ N solved` when
   any are, ` · sort X` only when the sort is not by attention, and the filter as in `deck`.

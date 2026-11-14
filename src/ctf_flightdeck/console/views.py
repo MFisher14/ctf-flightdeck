@@ -922,13 +922,18 @@ def quit_summary(deck: Deck, run_dir: str = "") -> Text:
     return out
 
 
-def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
+def lane_matches(deck: Deck, lane: Lane, query: str, *, simple: bool = False) -> bool:
+    """`lane` has every word of `query` in what its row and its challenge say. `simple`: the
+    simple layout's list is drawn (the compact one not winning over it), whose row says
+    `starting` of a lane that has done nothing yet, in place of `run`; elsewhere the row says
+    `run`. The filter reads the state the row shows (lane_cells)."""
     if not query:
         return True
     ch = deck.challenges[lane.challenge_id]
     hay = " ".join(
-        [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model, lane.state.value, lane.last_action, lane.plan]
-        + ([STARTING] if starting(lane) else [])  # what the simple list says of it (lane_cells)
+        [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model,
+         STARTING if simple and starting(lane) else lane.state.value,  # the state as its row says it (lane_cells)
+         lane.last_action, lane.plan]
         + [a.kind.tag for a in lane.alerts]
         + ([PENDING_TAG[lane.pending.kind]] if lane.pending else [])
     ).lower()
@@ -958,7 +963,7 @@ def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = 
     if query:
         text.append(" · filter ", theme.MUTED)
         text.append(untrusted(query, one_line=True), f"bold {theme.YELLOW}")
-        hidden = sum(1 for lane in deck.needing() if not lane_matches(deck, lane, query))
+        hidden = sum(1 for lane in deck.needing() if not lane_matches(deck, lane, query, simple=simple and not compact))
         if hidden:
             text.append(f" · {hidden} needing you hidden", f"bold {theme.RED}")
     return text

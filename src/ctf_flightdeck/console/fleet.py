@@ -425,7 +425,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         lanes = [
             lane
             for lane in sort_lanes(deck.lanes.values(), self.sort, deck.now)
-            if views.lane_matches(deck, lane, self.filter_text)
+            if views.lane_matches(deck, lane, self.filter_text, simple=self.simple)
         ]
         active = [lane for lane in lanes if not lane.finished]
         done = [lane for lane in lanes if lane.finished]
@@ -586,7 +586,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = deck.lanes[lane_id]
         if lane.finished:
             self.show_finished = True
-        if not views.lane_matches(deck, lane, self.filter_text):
+        if not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             self.filter_text = ""
         self.selected_lane = self._lane_cursor = lane_id
         self.board_focused = False
@@ -616,7 +616,7 @@ class FleetScreen(Screen, inherit_bindings=False):
             lanes = deck.lanes_on(self.selected_challenge)
             return lanes[0] if len(lanes) == 1 else None
         lane = deck.lanes.get(self.selected_lane or "")
-        if lane is None or not views.lane_matches(deck, lane, self.filter_text):
+        if lane is None or not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             return None
         return lane
 
@@ -647,7 +647,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = deck.lanes.get(self.selected_lane or "")
         if lane is None:
             self.fd.warn("Select a lane first")
-        elif not views.lane_matches(deck, lane, self.filter_text):
+        elif not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             self.fd.warn(f"{lane.id} is hidden by the filter; esc clears it")
             return None
         return lane

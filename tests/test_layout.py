@@ -667,6 +667,18 @@ def test_a_lane_that_has_done_nothing_yet_says_starting_and_no_cost_in_the_simpl
         app.run_command("/layout simple", "")
         await pilot.pause()
         assert cell(app, "lanes", "L02", "state") == "starting"
+        app.fleet.set_filter("starting")  # the filter finds what the rows say, in each layout
+        await pilot.pause()
+        assert lane_rows(app) == ["L02"]
+        app.run_command("/layout deck", "")
+        await pilot.pause()
+        assert lane_rows(app) == []  # the deck's rows say `run`: no lane starting there
+        app.fleet.set_filter("run")
+        await pilot.pause()
+        assert lane_rows(app) == ["L01", "L02"]
+        app.run_command("/layout simple", "")
+        await pilot.pause()
+        assert lane_rows(app) == ["L01"]
 
     drive(app, script, SIZE)
 
@@ -695,8 +707,12 @@ def test_only_a_running_lane_that_has_done_and_spent_nothing_is_starting():
     assert row("L07", simple=True) == ("starting", "")
     assert row("L07") == ("run", "$.00") and row("L07", compact=True) == ("run", "$.00")
     assert row("L07", compact=True, simple=True) == ("run", "$.00")  # the compact layout wins: its state column has five cells
-    found = [lane.id for lane in deck.lanes.values() if views.lane_matches(deck, lane, "starting")]
+    found = [lane.id for lane in deck.lanes.values() if views.lane_matches(deck, lane, "starting", simple=True)]
     assert found == ["L01", "L07"]  # the filter finds what the list says
+    # where the row says `run` (the deck and compact layouts), so does the filter: `starting` finds no lane there
+    assert not [lane.id for lane in deck.lanes.values() if views.lane_matches(deck, lane, "starting")]
+    assert views.lane_matches(deck, deck.lanes["L07"], "run") and not views.lane_matches(deck, deck.lanes["L07"], "run", simple=True)
+    assert views.lane_matches(deck, deck.lanes["L05"], "run", simple=True)  # it has done something: its row says run
 
 
 def simple_fit(available: int) -> dict[str, int]:
