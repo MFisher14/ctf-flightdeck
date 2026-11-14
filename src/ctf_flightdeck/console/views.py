@@ -1276,12 +1276,27 @@ def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lan
     return " ".join([f"/{name}"] + ([named] if named else []) + ([text] if text else []))
 
 
-def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False) -> RenderableType:
-    """What the lane needs from the player right now, with the answers as commands. In the
-    compact layout each answer is one row, its number first and its command cut at the edge:
-    the reasons wrap, and every answer's number stays on the card. In the simple layout
-    (`simple`) a lane that needs nothing has no card: an empty Text, and a lane that has ended
-    says esc goes back to the lanes (that layout's word for the fleet)."""
+def card_border(lane: Lane) -> str:
+    """The colour of the border of `lane`'s "needs you now" card: the most urgent alert's that
+    wants an answer, else an approval's, else the plain one (a message not read yet, an alert
+    that needs no answer). "" when the lane has no card: it has ended, or nothing is open on it."""
+    if lane.finished or not (lane.alerts or lane.pending is not None or lane.hints):
+        return ""
+    top = top_answerable(lane)
+    if top is not None:
+        return theme.alert_colors(top.kind)[1]
+    return theme.PURPLE if lane.pending is not None else theme.BORDER
+
+
+def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False, calm: bool = False) -> RenderableType:
+    """What the lane needs from the player right now, with the answers as commands: the
+    approval it waits for first, then every open alert with its reason and its suggestions,
+    then the messages it has not read yet. In the compact layout each answer is one row, its
+    number first and its command cut at the edge: the reasons wrap, and every answer's number
+    stays on the card. In the simple layout (`simple`) a lane that needs nothing has no card:
+    an empty Text, and a lane that has ended says esc goes back to the lanes (that layout's
+    word for the fleet). `calm`: the rows of calm_card, as Text; the view draws their border
+    (card_border)."""
     one_row = {"no_wrap": True, "overflow": "ellipsis"} if compact else {}
     if lane.finished:
         return Text.assemble(
@@ -1289,22 +1304,35 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
             (untrusted(lane_text(deck, lane, lane.result), one_line=True), theme.TEXT),
             (f"   this lane has ended; esc goes back to the {'lanes' if simple else 'fleet'}", theme.MUTED),
         )
+    border = card_border(lane)
+    if not border:
+        if simple:
+            return Text("")
+        return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
+    if calm:
+        return calm_card(deck, lane)
     rows: list[RenderableType] = []
-    border = ""
     numbered = {(answer.key, answer.text): answer.number for answer in quick_answers(lane)}
     top = top_answerable(lane)
+    if lane.pending is not None:  # first: its numbers are the ones a digit answers, and the first rows are never the ones cut
+        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane.pending.detail, one_line=True), theme.TEXT)))
+        indent = " " if compact else "   "
+        rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
+        rows.append(Text.assemble((indent, ""), _number("0"), ("/decline", f"bold {theme.ACCENT}"), (f"   {no}", theme.MUTED), **one_row))
+        for later in lane.waiting:
+            rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
     for alert in sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind]):
         label = Text.assemble(("▲ ", alert_style(alert.kind)), (alert.kind.label, alert_style(alert.kind)), ("  ", ""))
         if alert.kind in INFORMATIONAL_ALERTS:
             label.append(untrusted(lane_text(deck, lane, alert.reason), one_line=True), theme.MUTED)
             rows.append(label)
             continue
-        border = border or theme.alert_colors(alert.kind)[1]
         label.append(untrusted(lane_text(deck, lane, alert.reason), one_line=True), theme.TEXT)
         rows.append(label)
         for s in alert.suggestions:
             if s.key in ("a", "d") and lane.pending is not None:
-                continue  # the approval lines below say it
+                continue  # the approval's rows above say it
             command = suggestion_command(s.key, lane_text(deck, lane, s.text), lane.id, show_lane=False)
             number = numbered.get((s.key, s.text)) if alert is top else None
             line = Text(" " if compact else "   ", **one_row)
@@ -1319,25 +1347,111 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
         if alert is top and alert.kind in COURSE_ALERTS:  # what /dismiss would take down
             rows.append(Text.assemble(("     " if compact else "       ", ""), ("/dismiss", f"bold {theme.ACCENT}"),
                                       ("   not a problem: take the alert down, the lane carries on", theme.MUTED), **one_row))
-    if lane.pending is not None:
-        border = border or theme.PURPLE
-        yes, no = PENDING_ANSWERS[lane.pending.kind]
-        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane.pending.detail, one_line=True), theme.TEXT)))
-        indent = " " if compact else "   "
-        rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
-        rows.append(Text.assemble((indent, ""), _number("0"), ("/decline", f"bold {theme.ACCENT}"), (f"   {no}", theme.MUTED), **one_row))
-        for later in lane.waiting:
-            rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
     for hint in lane.hints:
         rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(lane_text(deck, lane, hint), one_line=True), theme.ACCENT)))
-    if not rows:
-        if simple:
-            return Text("")
-        return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
-    if border:
+    if top is not None or lane.pending is not None:
         rows.append(Text("a number answers (chat box empty)" if compact else
                          "press a number to answer (chat box empty), / to pick a command, or write a message", theme.MUTED))
-    return Panel(Group(*rows), box=box.ROUNDED, border_style=border or theme.BORDER, padding=(0, 1), title=Text("needs you now", "bold"), title_align="left")
+    return Panel(Group(*rows), box=box.ROUNDED, border_style=border, padding=(0, 1), title=Text("needs you now", "bold"), title_align="left")
+
+
+# ---------------------------------------------------------------------- the calm card (details off)
+
+ALSO_WORDS = {  # an alert that is open beside the card's question, in a word or two
+    AlertKind.LOOP: "looping",
+    AlertKind.EFFORT: "past its effort budget",
+    AlertKind.HINT: "ignores the hint",
+    AlertKind.DIRECTION: "wrong direction",
+    AlertKind.STALL: "stalled",
+    AlertKind.BUDGET: "near its cap",
+    AlertKind.FLAG: "a flag to check",
+    AlertKind.TEAMMATE: "teammate",
+}
+_ASKED_BY = {  # the alert an approval is about: the approval is the question, so the alert is not named beside it
+    PendingKind.BUDGET: AlertKind.BUDGET,
+    PendingKind.SUBMIT: AlertKind.FLAG,
+    PendingKind.CONFIRM: AlertKind.FLAG,
+}
+CALM_ANSWERS = 3  # the numbered answers the calm card shows; the rest are counted
+CALM_QUOTE = 48  # characters of the text an answer sends that the calm card quotes
+SENDS_TEXT = ("h", "r", "f")  # the answers that send their suggested text at once (FlightdeckApp.answer)
+
+
+def _count(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _shows_all(out: Text) -> None:
+    """After a row that leaves something out: the key that shows the full card."""
+    out.append("   ")
+    out.append("ctrl+o", f"bold {theme.ACCENT}")
+    out.append(" shows all", theme.MUTED)
+
+
+def calm_card(deck: Deck, lane: Lane) -> Text:
+    """The "needs you now" card with details off: three rows at most, each cut at the edge by
+    the view, and never a list of commands (the full card has them: ctrl+o).
+
+    Row 1 is the question: the approval the lane waits for, else its most urgent alert that
+    wants an answer, with its reason. Row 2 is its numbered answers, in the order and with the
+    numbers of quick_answers, so a digit answers what row 1 asks; an answer that sends a text
+    at once quotes the start of it. Row 3, only when something else is open, names it: the
+    other alerts in a word or two each, further approvals, messages the lane has not read yet.
+
+    With no question (no approval, no alert that wants an answer): an alert that needs no
+    answer as the full card shows it, and the message not read yet, or how many there are.
+    Empty when nothing is open on the lane."""
+    pending, top = lane.pending, top_answerable(lane)
+    alerts = sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind])
+    rows: list[Text] = []
+    if pending is None and top is None:
+        for alert in alerts:
+            rows.append(Text.assemble((f"▲ {alert.kind.label}  ", alert_style(alert.kind)), (lane_line(deck, lane, alert.reason), theme.MUTED)))
+        if len(lane.hints) == 1:
+            rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (lane_line(deck, lane, lane.hints[0]), theme.ACCENT)))
+        elif lane.hints:
+            row = Text(f"› {len(lane.hints)} messages sent, not read yet", theme.MUTED)
+            _shows_all(row)
+            rows.append(row)
+        return Text("\n").join(rows)
+    answers = Text()
+    if pending is not None:
+        asked = _ASKED_BY.get(pending.kind)
+        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(pending.detail, one_line=True)[:LINE_CHARS], theme.TEXT)))
+        # in the approval's own words: a flag's answer in quick_answers is the detail, which row 1 has
+        for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind]):
+            answers.append("   " if answers else "  ")
+            answers.append(answer.number, f"bold {theme.ACCENT}")
+            answers.append(f" {label}", theme.MUTED)
+    else:
+        asked = top.kind
+        rows.append(Text.assemble((f"▲ {top.kind.label}: ", alert_style(top.kind)), (lane_line(deck, lane, top.reason), theme.TEXT)))
+        numbered = quick_answers(lane)
+        for answer in numbered[:CALM_ANSWERS]:
+            answers.append("   " if answers else "  ")
+            answers.append(answer.number, f"bold {theme.ACCENT}")
+            answers.append(f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED)
+            if answer.text and answer.key in SENDS_TEXT:
+                text = lane_line(deck, lane, answer.text)  # cut after the credentials are out: no part of one is left
+                answers.append(f' "{text[:CALM_QUOTE]}{"…" if len(text) > CALM_QUOTE else ""}"', theme.TEXT)
+        if len(numbered) > CALM_ANSWERS:
+            answers.append(f"   +{len(numbered) - CALM_ANSWERS} more", theme.MUTED)
+        if top.kind in COURSE_ALERTS:  # what /dismiss would take down
+            answers.append("   " if answers else "  ")
+            answers.append("/dismiss", f"bold {theme.ACCENT}")
+            answers.append(" not a problem", theme.MUTED)
+    if answers:
+        rows.append(answers)
+    also = [ALSO_WORDS[kind] for kind in dict.fromkeys(alert.kind for alert in alerts) if kind is not asked]
+    if pending is not None and lane.waiting:
+        also.append(f"{_count(len(lane.waiting), 'more approval', 'more approvals')} after this one")
+    if lane.hints:
+        also.append(f"{_count(len(lane.hints), 'message', 'messages')} it has not read yet")
+    if also:
+        row = Text(f"  also: {' · '.join(also)}", theme.MUTED)
+        _shows_all(row)
+        rows.append(row)
+    return Text("\n").join(rows)
 
 
 def _number(number: str | None) -> Text:
