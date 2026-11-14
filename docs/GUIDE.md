@@ -273,11 +273,13 @@ commands; `esc` goes back).
 
 A lane's view is calm: each thing the lane did is one row, cut at the edge of the pane. A run
 of tool calls is two rows, how many and the last one (`⏺ 12 tool calls`, then what it is doing
-now); a long command or output shows its first line and ` …+6 lines`; an alert is its name and
-turn; the model's own words are the one thing that wraps. `ctrl+o` (or `/details`) shows every
-line of every command and output, and again hides them; it works while you are typing, and
-what you typed stays. `pgup` and `pgdn` scroll, and the view stays where you are reading until
-you are back at the end.
+now); a long command, output or note from flightdeck (your L1 engines' intake too) shows its
+first line and ` …+6 lines`; an alert is its name and turn (`▲ Loop alert · turn 11`), and why
+it fired is in the box below; the model's own words are the one thing that wraps. `ctrl+o` (or
+`/details`) shows every line of every command and output, and again hides them; it works while
+you are typing, and what you typed stays. `pgup` and `pgdn` scroll, and the view stays where
+you are reading until you are back at the end. Of a very long transcript the newest 300
+entries are drawn, and the first row says how many came before: `pgup` there shows 300 more.
 
 The box under the transcript, **needs you now**, is as short: three rows at most. The first is
 what the lane asks: the approval it waits for (`◆ waiting for you: raise the cap by 50%`), or
@@ -336,8 +338,9 @@ On a phone (flightdeck in tmux, attached over SSH) the console has a compact lay
 columns down: the header keeps what needs you and the run's dollars; each lane's row has its
 alert, state and cost; the line under the list wraps the reason and puts one answer on a row, so
 `a`, `d` and the number keys work as on a wide terminal. A lane opens with what it needs above its
-transcript; the files pane and diffs need 65 columns. `flightdeck doctor` says when your terminal
-gets this layout and what it leaves out.
+transcript, every line of it (`ctrl+o` gives the calm transcript there too; the needs-you box
+keeps every answer on a row of its own); the files pane and diffs need 65 columns.
+`flightdeck doctor` says when your terminal gets this layout and what it leaves out.
 
 `q` asks first while lanes are open, and a run cannot be resumed.
 
@@ -808,10 +811,12 @@ model that takes no images is said, and the challenge is added without that text
 A challenge added with no file and no target says so, and its lane is told to say what is
 missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
 challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file,
-and the status line names the fresh lane (`attached extra.txt to doll; L01 restarted as L02`).
+and the status line names the fresh lane (`attached extra.txt to doll; L01 restarted as L02`);
+the lane that ended reads `killed: to restart with extra.txt; re-queued fresh`.
 Typed in the lane's own view, `/attach` needs no name, and the view goes to the fresh lane with
 whatever you were typing; `/kill` there does the same. If no lane can start yet (the queue is
-held, every lane is busy) the view moves when one does, unless you have gone elsewhere meanwhile.
+held, every lane is busy) the status line says `L01 ended, a fresh lane starts when one is free`,
+and the view moves when one does, unless you have gone elsewhere meanwhile.
 
 **A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
 `.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by

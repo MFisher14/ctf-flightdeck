@@ -52,9 +52,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   as the transcript does (before, the card showed the value).
 - A lane that restarts takes its view with it: `/attach` or `/kill` typed in a lane's own view
   moves the view to the fresh lane, with what you were typing (before, the view stayed on the
-  dead lane). `/attach` names the fresh lane (`L01 restarted as L02`), and the ended lane reads
-  `killed: to restart with extra.txt`. In the simple layout the chat box names its lane
-  (`message L01 · / commands`).
+  dead lane). While no lane can start (the queue is held, every lane is busy) the view moves
+  when one does, and it never moves you from where you went meanwhile. `/attach` names the
+  fresh lane (`L01 restarted as L02`, or `L01 ended, a fresh lane starts when one is free`), and
+  the ended lane reads `killed: to restart with extra.txt`. In the simple layout the chat box
+  names its lane (`message L01 · / commands`).
 - Text in the console selects and copies: drag over a lane's transcript, its needs-you box,
   the header or the status line and it is copied when you let go (`copied 212 characters`); a
   double-click copies a whole entry, a triple-click the transcript. `ctrl+c` copies the

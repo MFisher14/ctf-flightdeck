@@ -269,6 +269,37 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   (67 columns with the answers; narrower, the edge cuts `ctrl+o details` first, and `/help`
   still lists it). The empty chat box names the lane a message goes to (`message L01 · /
   commands`), and a lane that has ended says `esc goes back to the lanes`.
+
+  A lane that waits for more budget with its Loop, Effort and Stall alerts open, after an L1
+  intake note of 15 lines and 15 tool calls, most of several lines: 13 rows of transcript and a
+  card of three. With details on (`ctrl+o`) the same lane is 40 lines, the long ones wrapped,
+  and a card of 15 rows or more.
+
+  ```
+   flightdeck ╱ practice ╱ ▲ 1 need you ╱ $0.00
+  ╭─ L01 · Baby RSA  cry 0 · glm · wait · turn 15 · 424k tok · $0.00 · idle 0s ──────────────────────╮
+  │ · L1 intake: unsure (handout: 3 file(s), 41 unpacked member(s) (17 ELF, 9 text, 6 zip, 5 png,…   │
+  │ ⏺ $ unzip -o handout.zip -d work \ …+1 line → Archive:  handout.zip …+2 lines                    │
+  │ ▲ Effort vs value alert · turn 1                                                                 │
+  │ ⏺ 9 tool calls                                                                                   │
+  │   ⎿ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                  │
+  │ ▲ Stall alert · turn 10                                                                          │
+  │ ⏺ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                    │
+  │ ▲ Loop alert · turn 11                                                                           │
+  │ ⏺ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                    │
+  │ ▲ Budget alert · turn 12                                                                         │
+  │ ⏺ 3 tool calls                                                                                   │
+  │   ⎿ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                  │
+  │ ◆ asked you · turn 15: raise the cap by 50% (now 424k of 400k tokens)                            │
+  │ ╭─ needs you now ──────────────────────────────────────────────────────────────────────────────╮ │
+  │ │ ◆ waiting for you: raise the cap by 50% (now 424k of 400k tokens)                            │ │
+  │ │   1 more budget   0 stop the lane                                                            │ │
+  │ │   also: looping · past its effort budget · stalled   ctrl+o shows all                        │ │
+  │ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
+  ╰───────────────────────────────────────────────────────────────────────────────────────── plan - ─╯
+  ╭ message L01 · / commands ────────────────────────────────────────────────────────────────────────╮
+   1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details
+  ```
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
   list with nothing typed in the command bar, and only while it is the one lane. Later lanes
@@ -350,7 +381,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/theme [name]` | Alone: the themes there are, the one in use marked. With a name: the console's colours for the rest of this run, and the status line says the config line that keeps it. A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
 |  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
-|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |
+|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started; `L01, L02 restarted as L03, and 1 more starts when a lane is free` when only some have; `no fresh lane started: …` and the reason when none can). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
