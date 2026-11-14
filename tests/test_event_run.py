@@ -217,6 +217,47 @@ def test_agents_off_by_the_rules_refuses_the_run_and_says_to_play_by_hand(tmp_pa
     assert not (tmp_path / "runs").exists()
 
 
+def with_rules(profile: Path, *lines: str) -> Path:
+    """The profile with more [rules] keys, written as TOML lines."""
+    text = profile.read_text()
+    assert "[policies]" not in text  # the lines go at the end, so [rules] must be the last table
+    profile.write_text(text + "\n".join(lines) + "\n")
+    return profile
+
+
+def test_no_challenge_material_to_a_model_refuses_the_run_in_that_rules_own_words(tmp_path):
+    """AI help is allowed, so this is not the no-AI refusal: a lane would give its model the
+    challenge's text and files, which the rules forbid, and nothing is started or written."""
+    root = folder_board(tmp_path)
+    profile = with_rules(event(tmp_path, platform="manual", board=root), "material_to_models = false")
+    with pytest.raises(RunError) as caught:
+        prepare_run(RunOptions(event=profile, config=config(tmp_path)))
+    said = str(caught.value)
+    assert said == (
+        "the event's rules do not allow challenge material to be given to a model (rules.material_to_models = false), and "
+        "every lane gives its model the challenge's text and files, so agents are off: `flightdeck play` plays with agent "
+        "lanes, so it does not start. Play by hand; `flightdeck l1 run` runs your no-model solvers")
+    assert "rules.ai_allowed" not in said
+    assert not (tmp_path / "runs").exists()
+
+
+def test_the_declared_label_is_said_before_the_run_and_recorded_with_it(tmp_path):
+    from ctf_flightdeck.runrecord import read_run_setup
+
+    root = folder_board(tmp_path)
+    profile = with_rules(event(tmp_path, platform="manual", board=root), 'declared_label = "Human-Led AI"')
+    run = prepare_run(RunOptions(event=profile, config=config(tmp_path)))
+    run.close()
+    assert run.notes()[0] == (
+        "declared label: Human-Led AI (what your team declared to the event: rules.declared_label; flightdeck shows it "
+        "and records it with the run, and checks nothing by it)")
+    assert read_run_setup(run.log.path.parent)["label"] == "Human-Led AI"
+    plain = prepare_run(RunOptions(event=event(tmp_path, platform="manual", board=root, name="plain.toml"), config=config(tmp_path)))
+    plain.close()
+    assert not [note for note in plain.notes() if "declared label" in note]
+    assert read_run_setup(plain.log.path.parent)["label"] == ""
+
+
 def test_a_refusal_from_the_profile_check_stops_the_run_in_preflights_words(tmp_path, token):
     cfg = config(tmp_path)
     with FakeCTFd(three()) as fake:

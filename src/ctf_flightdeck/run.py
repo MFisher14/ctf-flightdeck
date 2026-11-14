@@ -151,6 +151,7 @@ from .preflight import (
     check,
     deck_submit,
     instances_off,
+    label_line,
     load_profile,
     looser,
     no_agents,
@@ -1083,9 +1084,10 @@ def prepare_run(options: RunOptions) -> Run:
             engine_image=config.l1.image if runtime == "docker" else None, toolkit=toolkit,
             labels=marks, record=processes, urls=urls,
         )
-    write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
+    write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`, and the solve records
         config, options, deck_config, ladder, agent=options.agent, ctfd=bool(plan.ctfd),
         engines=len(manifests) if manifests is not None else 0,
+        label=profile.declared_label if profile is not None else None,
     ))
     try:
         client = build_client(config, key, spare_key) if agent is None else None
@@ -1498,6 +1500,8 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
     if policies.agents in (Policy.MANUAL, Policy.OFF):
         raise RunError(no_agents(profile, policies))
     notes: list[str] = []
+    if profile.declared_label is not None:  # said first, before every run: what the team told the event
+        notes.append(f"declared label: {label_line(profile.declared_label)}")
     lanes = options.max_lanes
     if lanes is None:
         lanes = config.lanes.max_lanes
@@ -2342,11 +2346,13 @@ def api_kind(base_url: str) -> str:
 
 def _setup(
     config: Config, options: RunOptions, deck_config: DeckConfig, ladder: Sequence[str], *,
-    agent: str | None, ctfd: bool, engines: int,
+    agent: str | None, ctfd: bool, engines: int, label: str | None = None,
 ) -> dict[str, object]:
     """How this run is set up, for RUN_DIR/setup.json and the flight card. It names models
     and settings only: no path, no key or its variable, no address, no event and no
-    challenge."""
+    challenge. `label` is the event profile's rules.declared_label (None: none, or no
+    profile): a few plain words the team declared to the event, which the card and the solve
+    records show."""
     from .config import light_specs
     from .practice_set import practice_dir
 
@@ -2373,6 +2379,7 @@ def _setup(
         "board": board,
         "token_cap": config.lanes.token_cap,
         "dollar_cap": config.lanes.dollar_cap,
+        "label": label or "",
     }  # autopilot is not here: the flight card reads it from the run log, which says whether it was engaged
 
 
