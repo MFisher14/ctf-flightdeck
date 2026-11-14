@@ -308,19 +308,32 @@ class Takeover:
         shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
         root = run.workspace.root
         try:
-            await asyncio.to_thread(write_inside, root, HISTORY, b"")
-            self.history = True
-        except OSError:
-            self.history = False  # then its lines could be the lane's: they are not read
-        self.before = await asyncio.to_thread(take_snapshot, root)
+            try:
+                await asyncio.to_thread(write_inside, root, HISTORY, b"")
+                self.history = True
+            except OSError:
+                self.history = False  # then its lines could be the lane's: they are not read
+            self.before = await asyncio.to_thread(take_snapshot, root)
+        except BaseException:  # no shell opens: the folder made for it goes now
+            self.abandon()
+            raise
         return shell
+
+    def abandon(self) -> None:
+        """The shell begin() gave never ran (the console could not hand over the terminal, or
+        its program could not start): its HOME goes, and the lane is told nothing, since
+        nothing was done in its workspace."""
+        self._remove_home()
+
+    def _remove_home(self) -> None:
+        if self.shell is not None:  # the workspace's close tries again
+            problem = remove_shell_home(self.shell)
+            if problem:
+                self.driver.errors.append(f"{self.run.lane_id}: {problem}")
 
     def finish(self) -> str:
         run = self.run
-        if self.shell is not None:  # the shell has exited: its HOME goes (the workspace's close tries again)
-            problem = remove_shell_home(self.shell)
-            if problem:
-                self.driver.errors.append(f"{run.lane_id}: {problem}")
+        self._remove_home()  # the shell has exited: its HOME goes
         root = run.workspace.root
         changes = changed_files(self.before, take_snapshot(root), root) if self.before is not None else []
         if changes:

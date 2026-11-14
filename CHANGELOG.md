@@ -2,6 +2,15 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- A take-over whose shell cannot open no longer leaves the console frozen. When `docker` (or
+  `bash`) is not there to run, the shell ends at once with an error (the lane's container is
+  gone), or a signal ends it, you are back in the console straight away, the lane is handed
+  back as it was (a paused lane stays paused), and the status line says why: `the shell did
+  not start: docker was not found (is it installed and on your PATH?)`, or `the shell exited at
+  once with status 1`. A shell that never ran is not told to the lane.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,

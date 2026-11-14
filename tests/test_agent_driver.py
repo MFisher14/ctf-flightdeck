@@ -1858,6 +1858,48 @@ def test_each_take_over_shell_gets_a_home_of_its_own_outside_the_workspace_gone_
     run(main())
 
 
+def test_a_take_over_shell_that_never_ran_loses_its_home_and_the_lane_hears_nothing(tmp_path, monkeypatch):
+    """P69: abandon() (the shell's program could not start) and a begin() that fails after the
+    home was made both remove it at once, not only when the workspace closes."""
+    from ctf_flightdeck.agent import driver as driver_module
+    from ctf_flightdeck.agent.workspace import WorkspaceError
+
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            notes = list(lab.driver.runs[lane.id].notes)
+            session = take_over(lab, lane)
+            home = (await asyncio.wait_for(session.begin(), 10)).home
+            assert home.is_dir()
+            session.abandon()
+            assert not os.path.lexists(home) and lab.driver.errors == []
+            assert lab.driver.runs[lane.id].notes == notes  # no "the player took over your shell"
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+
+            made = []
+            real = driver_module.remove_shell_home
+
+            def snapshot_fails(root):
+                raise WorkspaceError(f"cannot snapshot workspace {root}")
+
+            monkeypatch.setattr(driver_module, "take_snapshot", snapshot_fails)
+            monkeypatch.setattr(driver_module, "remove_shell_home", lambda spec: made.append(spec.home) or real(spec))
+            session = take_over(lab, lane)
+            with pytest.raises(WorkspaceError, match="cannot snapshot workspace"):
+                await asyncio.wait_for(session.begin(), 10)
+            monkeypatch.undo()
+            assert len(made) == 1 and not os.path.lexists(made[0])
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+            await lab.finish()
+
+    run(main())
+
+
 def test_no_take_over_before_the_workspace_is_ready(tmp_path):
     from ctf_flightdeck.core.driver import TakeoverRefused
 

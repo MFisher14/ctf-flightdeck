@@ -3,6 +3,17 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not released: eleven proposals, P69 to P79 (2026-11-14)
+
+Proposals built and waiting for a release, in the order of their numbers in
+[DECISIONS.md](DECISIONS.md) (P69 to P79); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md).
+
+- **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
+  container that is gone, a cancel: the console comes back at once, the lane is handed back as
+  it was, and the status line says why. Until now Textual's suspend was never left when the
+  shell's start raised, and the console drew nothing.
+
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
 Eighteen proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P51 to P68),
