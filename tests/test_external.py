@@ -157,7 +157,10 @@ class Fake:
     def records(self, kind: str | None = None) -> list[dict]:
         if not self.record.exists():
             return []
-        out = [json.loads(line) for line in self.record.read_text().splitlines() if line.strip()]
+        # The fake CLI appends while a test polls: a last line with no newline yet is still being
+        # written, so only whole lines are read.
+        whole = self.record.read_text().rpartition("\n")[0]
+        out = [json.loads(line) for line in whole.splitlines() if line.strip()]
         return [r for r in out if kind is None or r["rec"] == kind]
 
     def starts(self) -> list[dict]:
