@@ -108,6 +108,12 @@ class FakeAnthropicServer:
             self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
 
+    def think(self, seconds: float) -> None:
+        """A slow responder's wait: `seconds`, as time.sleep would, but over as soon as the
+        context is being left. Leaving waits for the request threads, and one asleep held
+        the test for the rest of its seconds after the client had long given up."""
+        self.leaving.wait(seconds)
+
     def _answer(self, method: str, path: str, headers: dict[str, str], body: object) -> FakeReply:
         record = {"path": path, "headers": headers, "json": body}
         with self._lock:

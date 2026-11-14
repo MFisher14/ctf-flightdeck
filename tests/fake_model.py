@@ -10,9 +10,10 @@ client sent.
 The server listens on the loopback interface only, in a background thread. The responder
 runs on the server's request threads, possibly several at once: keep it quick and
 thread-safe, unless a test means it to be slow (to make the client time out). A slow responder
-does not sleep for a set time, which a loaded machine can outlast and which the test then waits
-out: it holds its answer until what the test waits for has happened (`held_until_retried`), or
-until the test is over (`server.leaving`).
+that must lose a race does not sleep for a set time, which a loaded machine can outlast: it
+holds its answer until what the test waits for has happened (`held_until_retried`), or until
+the test is over (`server.leaving`). One that is only slow waits with `server.think(seconds)`,
+never time.sleep: leaving the context then does not wait the rest of its seconds out.
 
 With `models`, GET /v1/models lists those ids as an OpenAI-compatible server does, or gives
 that FakeReply (without, it answers 404, as a server that lists none). With `key`, every
@@ -100,6 +101,12 @@ class FakeModelServer:
         if self._serving is not None:
             self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
+
+    def think(self, seconds: float) -> None:
+        """A slow responder's wait: `seconds`, as time.sleep would, but over as soon as the
+        context is being left. Leaving waits for the request threads, and one asleep held
+        the test for the rest of its seconds after the client had long given up."""
+        self.leaving.wait(seconds)
 
     def chats(self) -> list[dict]:
         """The requests made to the chat endpoint (the model calls), in order."""

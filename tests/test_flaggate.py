@@ -162,7 +162,7 @@ class Verdict:
         if verdict == "unsure":
             self.server = FakeDeciderServer(responder=picks(L.STAND_IN, 0.5))
         elif verdict == "timeout":
-            self.server = FakeModelServer(responder=lambda r: time.sleep(1.5) or text_reply(L.STAND_IN))
+            self.server = FakeModelServer(responder=lambda r: self.server.think(1.5) or text_reply(L.STAND_IN))
         else:
             said = {"real": "real", "stand-in": "stand-in", "refused": "I'm sorry, I can't help with that.",
                     "outside": "It is probably a stand-in, but I cannot be sure."}[verdict]
@@ -300,7 +300,7 @@ def test_a_hanging_check_never_delays_the_next_model_call(tmp_path):
 
 
 def test_a_check_that_takes_too_long_lets_the_flag_go_as_today_and_says_so(tmp_path):
-    with FakeModelServer(responder=lambda r: time.sleep(2.0) or text_reply("stand-in")) as light, \
+    with FakeModelServer(responder=lambda r: light.think(2.0) or text_reply("stand-in")) as light, \
             FakeModelServer(responder=keeps_working(tool_call_reply("submit_flag", {"flag": CANDIDATE}))) as lanes:
         gate = FlagGate(model_light(light, timeout=0.3), timeout=0.3)
 
