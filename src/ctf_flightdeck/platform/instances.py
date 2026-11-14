@@ -489,23 +489,41 @@ def _address(text: str) -> tuple[str | None, str | None, int | None]:
     return scheme, host.lower(), int(port) if port else None
 
 
-_URL_WITHIN = re.compile(r"https?://[^\s/:\"'<>]+(?::\d{1,5})?")
+_URL_WITHIN = re.compile(r"(https?)://([^\s/?#\"'<>]*)")  # the scheme, and all that comes before the path
 _NC_WITHIN = re.compile(r"(?<![\w.-])(?:nc|ncat|telnet)\s+([^\s:\"'<>]+)[:\s]+(\d{1,5})(?![\w-])")
-_PAIR_WITHIN = re.compile(r"(?<![\w.@/-])([A-Za-z0-9][A-Za-z0-9.-]*):(\d{1,5})(?![\w-])")
+_PAIR_WITHIN = re.compile(r"(?<![\w.@/-])([A-Za-z0-9][A-Za-z0-9.-]*):(\d{1,5})(?![\w@:-])")
+_NAME_WITHIN = re.compile(r"(?:[A-Za-z0-9-]+\.)+[A-Za-z][A-Za-z0-9-]*")  # a dotted name whose last part starts with a letter
+_IPV4_WITHIN = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
 
 
 def _within(text: str) -> tuple[str | None, str | None, int | None]:
     """(scheme, host, port) of the first address in a line a person wrote for players, such
     as "curl -v http://host:8080", "Connect with: nc host 31337" or a link's HTML: the first
     URL, else the first nc line, else the first host:port. Only the host and the port are
-    taken, each checked as _address checks them; the rest of the line is never used."""
+    taken, each checked as _address checks them; the rest of the line is never used.
+
+    It never guesses: a wrong address would brief a lane with, and fence it to, a host the
+    organiser did not name. So:
+    - a URL's host is what follows the last @ before its path ("http://name:password@host/":
+      the name and the password are not taken), and a first URL that does not read (letters
+      after its port, say) is no address at all: nothing else in the line is tried;
+    - a host:port inside a sentence counts only when the host is a dotted name or an IPv4
+      address. "12:30" is a time, "ctf:1234" a name and a password, "1.5:30" a version; a
+      host with no dot is read only after nc, or when it is the whole answer (_address)."""
     text = text[:2000]
     found = _URL_WITHIN.search(text)
     if found:
-        return _address(found.group(0))
-    found = _NC_WITHIN.search(text) or _PAIR_WITHIN.search(text)
+        authority = found.group(2).rstrip(".,;:!?)]}")  # the sentence's own punctuation after a URL that ends there
+        if "\\" in authority:  # clients disagree on where such a URL's host is
+            return None, None, None
+        return _address(f"{found.group(1)}://{authority.rpartition('@')[2]}")
+    found = _NC_WITHIN.search(text)
     if found:
         return _address(f"{found.group(1)}:{found.group(2)}")
+    for found in _PAIR_WITHIN.finditer(text):
+        host = found.group(1)
+        if _NAME_WITHIN.fullmatch(host) or (_IPV4_WITHIN.fullmatch(host) and all(int(part) <= 255 for part in host.split("."))):
+            return _address(f"{host}:{found.group(2)}")
     return None, None, None
 
 

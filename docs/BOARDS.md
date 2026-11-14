@@ -456,8 +456,13 @@ one, and tell us what happened in an issue.
 - **`chall_manager`.** The address is a line the organiser wrote. flightdeck takes the first
   URL in it, else the first `nc host port`, else the first `host:port`. A line with none of
   these (an `ssh` command, say) is shown to you as it is, and no lane starts on the challenge;
-  the instance stays up on the site, for you to use or stop there. A start the team's mana
-  cannot pay for is treated as the cap. An instance with no end is never renewed.
+  the instance stays up on the site, for you to use or stop there. flightdeck does not guess:
+  inside a sentence, a `host:port` counts only when the host is a dotted name or an IPv4
+  address, so a time (`12:30`) or a name and password (`ctf:1234`) is never taken for one, and
+  a URL that does not read is an error, not a reason to try the rest of the line. From
+  `http://name:password@host:port/` the lane gets the host and the port; the name and the
+  password are yours to pass on with a hint. A start the team's mana cannot pay for is
+  treated as the cap. An instance with no end is never renewed.
 - **ctfd-whale has no name here yet.** From its source: a start first removes whatever
   container the account runs, of any challenge; asking about a challenge other than the
   running one is refused; and the address comes as an `nc` line, a link, a pwntools snippet

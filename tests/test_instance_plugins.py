@@ -224,6 +224,27 @@ def test_chall_manager_a_line_with_no_address_flightdeck_reads_is_an_error_that_
         assert "\x1b" not in str(caught.value)
 
 
+@pytest.mark.parametrize("line", [
+    "ssh -p {port} ctf@{host} (up since 12:30)",  # a time
+    "ssh ctf@{host} -p {port}, password ctf:1234",  # a name and a password
+])
+def test_chall_manager_a_stray_word_and_number_in_the_line_is_never_taken_for_the_address(line):
+    clock = Clock()
+    with FakeCTFd(board(CHALL_MANAGER_TYPE)) as fake:
+        fake.chall_manager.connection = line
+        with pytest.raises(InstanceError, match=r"names no usable address \(ssh .*cm\.example\.test"):
+            client(fake, "chall_manager", clock).start("boxed")
+
+
+def test_chall_manager_a_url_with_a_name_and_password_gives_its_host_not_the_name():
+    clock = Clock()
+    with FakeCTFd(board(CHALL_MANAGER_TYPE)) as fake:
+        fake.chall_manager.connection = "http://admin:1234@{host}:{port}/"
+        got = client(fake, "chall_manager", clock).start("boxed")
+        assert (got.scheme, got.host, got.port) == ("http", "cm.example.test", 30001)
+        assert "admin:1234@cm.example.test" in got.said  # the organiser's line, for the player
+
+
 def test_chall_manager_refusals_mana_is_the_cap_and_the_rest_is_not():
     clock = Clock()
     with FakeCTFd(board(CHALL_MANAGER_TYPE)) as fake:

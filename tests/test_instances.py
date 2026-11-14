@@ -266,6 +266,7 @@ def test_no_answer_in_time_says_so_and_that_it_may_have_been_done():
     ("nc box.example.test 31337", (None, "box.example.test", 31337)),
     ("10.0.0.5", (None, "10.0.0.5", None)),
     ("box.example.test; rm -rf /", (None, None, None)),
+    ("challenge:1337", (None, "challenge", 1337)),  # the whole answer is host:port: a name with no dot is a host there
     ("-oProxyCommand=x", (None, None, None)),
 ])
 def test_an_address_is_read_out_of_a_url_a_host_and_port_or_an_nc_line(text, parts):
@@ -281,6 +282,23 @@ def test_an_address_is_read_out_of_a_url_a_host_and_port_or_an_nc_line(text, par
     ("ssh ctf@box.example.test -p 2222", (None, None, None)),  # no form flightdeck reads: an error, never a guess
     ("ask an admin", (None, None, None)),
     ("http://bad_host$(id):80", (None, None, None)),
+    # a URL's name and password are not its host: the host is what follows the last @
+    ("http://ctf:s3cret@box.example.test/", ("http", "box.example.test", None)),
+    ("curl -u x http://admin:1234@box.example.test:8080/login", ("http", "box.example.test", 8080)),
+    ("http://ctf@box.example.test:8080", ("http", "box.example.test", 8080)),
+    ("open http://box.example.test:8080.", ("http", "box.example.test", 8080)),  # the sentence's full stop is not the address's
+    ("(see https://box.example.test:8443)", ("https", "box.example.test", 8443)),
+    ("http://box.example.test:8080abc", (None, None, None)),  # a port with letters after it is no port: no part of it is taken
+    ("http://box.example.test:80:90/", (None, None, None)),
+    ("http://ctf:1234@/", (None, None, None)),
+    # a word and a number with a colon between them is not a host and a port: a time, a name and password, a version
+    ("ssh -p 2222 ctf@box.example.test (up since 12:30)", (None, None, None)),
+    ("ssh ctf@box.example.test -p 2222, password ctf:1234", (None, None, None)),
+    ("ssh box.example.test -l ctf -p 2222 # login ctf.player:1234@box", (None, None, None)),
+    ("build 1.5:30 of the service, started 2026.11.14:12", (None, None, None)),
+    ("the box is at challenge:1337", (None, None, None)),  # in a sentence, only a dotted name or an IPv4 address is a host
+    ("up since 12:30 at box.example.test:31337", (None, "box.example.test", 31337)),
+    ("nc box 31337", (None, "box", 31337)),  # after nc the word is a host, dotted or not
 ])
 def test_an_address_is_found_in_a_line_a_person_wrote(text, parts):
     assert _within(text) == parts
