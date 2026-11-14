@@ -486,6 +486,61 @@ def test_plugin_new_writes_a_plugin_flightdeck_accepts_and_never_writes_over_one
     assert (folder / "adapter.py").read_text() == before + "# my own routes\n"
 
 
+def test_the_skeleton_works_as_written_against_a_platform_with_its_placeholder_routes(tmp_path):
+    """The adapter `plugin new` writes is run as it is, against a stand-in platform on 127.0.0.1
+    that serves the skeleton's placeholder routes: what a player starts from must work."""
+    import http.server
+    import threading
+
+    tasks = [{"id": 17, "title": "Warm Up", "category": "misc", "points": 50, "text": "a synthetic task", "solved": True},
+             {"id": 23, "title": "Web Thing", "category": "web", "points": 250, "text": "another", "urls": ["http://127.0.0.1:8080"]}]
+    seen = []
+
+    class Platform(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def answer(self, body):
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Authorization"), None))
+            self.answer(tasks)
+
+        def do_POST(self):
+            flag = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["flag"]
+            seen.append((self.path, self.headers.get("Authorization"), flag))
+            self.answer({"status": {"flag{right}": "ok", "flag{again}": "dup", "flag{odd}": "frozen"}.get(flag, "bad")})
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Platform)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert invoke("new", "harbour", "--dir", tmp_path).exit_code == 0
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        environ = {"PATH": os.environ["PATH"], "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}
+        harbour = Caller(manifest.read(tmp_path / "harbour"), url, "Quals", TOKEN, environ=environ)
+        written = run(boards.pull_into(harbour, tmp_path / "board", plugin="harbour", url=url))
+        assert (written.added, written.problems) == (["warm-up", "web-thing"], [])
+        assert boards.load_refs(tmp_path / "board", plugin="harbour", url=url) == {"warm-up": "17", "web-thing": "23"}
+        assert load_board(tmp_path / "board").challenges[1].urls == ("http://127.0.0.1:8080",)
+        assert run(harbour.submit("17", "flag{right}")) == Verdict("correct", "ok")
+        assert run(harbour.submit("17", "flag{wrong}")) == Verdict("incorrect", "bad")
+        assert run(harbour.submit("17", "flag{again}")) == Verdict("already_solved", "dup")
+        assert run(harbour.submit("23", "flag{odd}")) == Verdict("unjudged", "frozen")  # a word it does not know is no verdict
+        assert run(harbour.solved()) == {"17"}
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert [path for path, _, _ in seen] == ["/api/tasks", "/api/tasks/17/flag", "/api/tasks/17/flag", "/api/tasks/17/flag",
+                                             "/api/tasks/23/flag", "/api/tasks"]
+    assert {auth for _, auth, _ in seen} == {f"Bearer {TOKEN}"}
+
+
 @pytest.mark.parametrize("name, why", [
     ("Harbour", "a plugin's name is the platform's name: lower-case letters, digits, - and _, starting with a letter, at most 32 characters"),
     ("ctfd", "ctfd is a platform flightdeck has built in: a plugin cannot take its name"),
