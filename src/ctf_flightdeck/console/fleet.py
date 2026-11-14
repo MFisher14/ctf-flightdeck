@@ -5,6 +5,9 @@ command bar. A line under the lane list says why the selected lane is flagged an
 to do about it. The command bar acts on the same lane the keys do. Under 100 columns the
 board hides so the lane list keeps its columns. The key line at the bottom always shows
 `? help` and `q quit`; on a narrow terminal the keys needed least are left out of it first.
+The status line is one row, and while what it says is longer than the terminal is wide it
+takes a second or a third from the lane list: an answer's last words (the config file to
+change, why something was refused) are often the ones the player needs.
 
 While the board has no challenge, the page says so where the tables would be, and what to do
 about it (EMPTY_BY_HAND, EMPTY_PLATFORM): it stays until there is one, unlike a status line.
@@ -111,7 +114,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen #board, FleetScreen #lanes { height: 1fr; }
     FleetScreen #lanes, FleetScreen #board { overflow-x: hidden; }
     FleetScreen #why { height: 2; margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
-    FleetScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    FleetScreen #status { height: auto; min-height: 1; max-height: 3; margin: 0 2; }
     FleetScreen #keys { height: 1; margin: 0 1; link-style: none; link-style-hover: underline; }
     FleetScreen.-compact #main { margin-top: 0; width: 100%; }
     FleetScreen.-compact #empty { margin: 0; padding: 0 1; }

@@ -92,7 +92,7 @@ class FocusScreen(Screen, inherit_bindings=False):
     FocusScreen #now { height: auto; max-height: 50%; }
     FocusScreen #files { height: auto; max-height: 8; background: transparent; border: none; }
     FocusScreen #diff-scroll { height: 1fr; }
-    FocusScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    FocusScreen #status { height: auto; min-height: 1; max-height: 3; margin: 0 2; }
     FocusScreen #keys { height: 1; margin: 0 1; }
     FocusScreen.-compact #main { margin-top: 0; width: 100%; }
     FocusScreen.-compact #now { max-height: 60%; }

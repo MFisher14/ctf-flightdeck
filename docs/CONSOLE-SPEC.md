@@ -59,7 +59,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   word (`/approve 2` does not approve the selected lane; name it: `/approve L02`). `/approve all`
   names no lane: it is the fleet's `A` (Interventions, below), in either view.
 - **Status line**: the latest intervention outcome or deck event (no toasts over the lanes); it
-  clears after 12 seconds. When the queue is held it says so and how to lift it: "queue held until
+  clears after 12 seconds. One row; a line longer than the terminal is wide goes on in a second
+  and a third, taken from the lane list while it shows, so its end is never cut. When the queue is held it says so and how to lift it: "queue held until
   you /unhold it: <why>". Lifting a hold that an API outage caused says how many of the challenges
   it parked were queued again.
 - **An empty board**: while the board has no challenge, the page says so where the tables would

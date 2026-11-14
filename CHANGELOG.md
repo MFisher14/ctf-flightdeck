@@ -23,6 +23,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   to write one: [docs/PLUGINS.md](docs/PLUGINS.md).
 - An empty board now says how to add a challenge and keeps saying it, and the `/` menu scrolls
   to every command and lists `/new` first when there is no lane yet.
+- A status line too long for the terminal goes on in a second row instead of being cut, so
+  what `/layout` and `/theme` answer (the config line that keeps the choice, and its file) is
+  read whole at 80 columns.
 - The mock opens in your config's layout and theme, and the home screen in its theme.
   `flightdeck doctor` measures your terminal in the layout your config names, and reports each
   plugin you added.
