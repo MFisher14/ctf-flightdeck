@@ -404,8 +404,11 @@ class NewEventForm(Screen):
             yield Input(id="vpn")
             yield ask("Folder for this event (optional; made for you):")
             yield Input(placeholder="~/ctf/<the event's name>", id="folder")
-            yield ask("Do this event's rules allow AI tools? flightdeck does not play an event that forbids them:")
-            yield Select([(Text("not answered yet"), ""), (Text("yes, the rules allow AI tools"), "yes"),
+            yield ask("Label your team declared to the event for its AI use, in the event's words (optional; like Human-Led AI):")
+            yield Input(id="label")
+            yield ask("Do this event's rules allow AI agents on the challenges, with each challenge's text and files given to a model? "
+                      "flightdeck's lanes do both, and it does not play an event that forbids either:")
+            yield Select([(Text("not answered yet"), ""), (Text("yes, the rules allow both"), "yes"),
                           (Text("no"), "no")], value="", allow_blank=False, id="ai")
         yield Static(Text(""), id="problem")  # under the scrolling questions, so it and the keys always show
         keys = Text()
@@ -445,8 +448,9 @@ class NewEventForm(Screen):
         submit = str(self.query_one("#submit", Select).value) if platform == "ctfd" else "confirm"
         ai = str(self.query_one("#ai", Select).value)
         if ai != "yes":
-            raise start.StartError("answer the last question: flightdeck's lanes are AI agents, and it sets up no event whose "
-                                   "rules forbid them")
+            raise start.StartError("answer the last question: flightdeck's lanes are AI agents that are given each challenge's "
+                                   "text and files, and it sets up no event whose rules forbid either")
+        label = start.label_answer(self._value("label"))
         try:
             folder = expand(Path(self._value("folder"))) if self._value("folder") else Path.home() / "ctf" / start.slug(name)
             typed = self._value("vpn").strip("'\"").replace("\\ ", " ")
@@ -478,7 +482,8 @@ class NewEventForm(Screen):
             notes = tuple(f"{line}, so it is not used for this event" for line in chosen.passed)
             if notes and not token and chosen.source is None:
                 raise start.StartError(f"Token: {'; '.join(notes)}. Paste this event's token: it is kept as {token_env}")
-        answers = start.EventAnswers(name=name, platform=platform, url=url, flag_format=flag, submit=submit, token_env=token_env)
+        answers = start.EventAnswers(name=name, platform=platform, url=url, flag_format=flag, submit=submit, token_env=token_env,
+                                     label=label)
         return NewEvent(answers, folder, token, vpn_file, notes)
 
     def action_launch(self) -> None:

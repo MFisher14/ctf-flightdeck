@@ -179,12 +179,13 @@ def test_a_keys_file_others_can_read_is_not_added_to(tmp_path):
 def test_at_a_terminal_start_asks_makes_the_folder_keeps_the_token_out_of_sight_and_launches(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "ctf" / "example"
-    answers = f"Example CTF 2026\n{folder}\ny\n1\nctf.example.org\nEX\n2\n{SECRET}\n\nn\ny\n"
+    answers = f"Example CTF 2026\n{folder}\ny\n\n1\nctf.example.org\nEX\n2\n{SECRET}\n\nn\ny\n"
     result = run(input=answers)
     assert result.exit_code == 0, result.output
     profile, policies = load_profile(folder / "event.toml")
     assert (profile.name, profile.url, profile.token_env) == ("Example CTF 2026", "https://ctf.example.org", "CTFD_TOKEN_EXAMPLE_CTF_2026")
     assert policies.submit is Policy.AUTO
+    assert profile.declared_label is None and "label:" not in result.output  # Enter at the label question: the event asks for none
     assert keys.load_keys(tmp_path / "keys.env") == {"CTFD_TOKEN_EXAMPLE_CTF_2026": SECRET}
     assert SECRET not in result.output and SECRET not in (folder / "event.toml").read_text()
     assert "solvers (L1): none installed" in result.output and "flightdeck pack install" in result.output
@@ -199,10 +200,67 @@ def test_start_does_not_set_up_an_event_whose_rules_forbid_ai(tmp_path, monkeypa
     assert not folder.exists() and setup == []
 
 
+def test_the_rules_question_says_what_a_lane_does_so_a_chat_only_rule_is_not_answered_yes(tmp_path, monkeypatch, setup):
+    """An event may allow asking a model about a concept and forbid giving it the challenge:
+    the one question names both things a lane does, and a no to it sets nothing up."""
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    folder = tmp_path / "example"
+    result = run(input=f"Example CTF\n{folder}\nn\n")
+    assert "AI agents to work on the challenges, with each challenge's text and files given to a model?" in result.output
+    assert ("not set up: flightdeck's lanes are AI agents that are given each challenge's text and files, and this event's "
+            "rules do not allow that") in " ".join(result.output.split())
+    assert result.exit_code == 1 and not folder.exists()
+
+
+def test_the_event_file_start_writes_says_both_rules_the_player_answered_for(tmp_path):
+    written = start.write(tmp_path / "event", start.EventAnswers(name="Hand CTF", platform="manual"))
+    text = written.read_text()
+    assert "ai_allowed = true" in text and "material_to_models = true" in text
+    assert '# declared_label = "Human-Led AI"' in text  # no label declared: the key is there to fill in
+    profile, _ = load_profile(written)
+    assert profile.ai_allowed and profile.material_to_models and profile.declared_label is None
+
+
+def test_at_a_terminal_start_asks_for_the_declared_label_and_writes_it_in_the_event_file(tmp_path, monkeypatch, setup):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    folder = tmp_path / "example"
+    result = run(input=f"Example CTF\n{folder}\ny\nan/address\n Human-Led AI \n2\n\n\nn\ny\n")
+    assert result.exit_code == 0, result.output
+    assert "Label your team declared to the event for its AI use" in result.output
+    assert "give the label as a few words as the event writes them" in result.output  # the first answer was no label: asked again
+    assert "label: Human-Led AI (what your team declared to the event; shown before each run and on its flight card)" in result.output
+    profile, policies = load_profile(folder / "event.toml")
+    assert profile.declared_label == "Human-Led AI" and policies.agents is Policy.AUTO
+
+
+def test_away_from_a_terminal_the_label_is_an_option_checked_before_anything_is_written(tmp_path, monkeypatch, setup):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    by_hand = ("--name", "Hand CTF", "--platform", "manual", "--ai-allowed")
+    refused = run(str(tmp_path / "bad"), *by_hand, "--label", "see https://example.org")
+    assert refused.exit_code == 2 and "--label: give the label as a few words" in " ".join(refused.output.split())
+    assert not (tmp_path / "bad").exists()
+    result = run(str(tmp_path / "good"), *by_hand, "--label", "Low AI")
+    assert result.exit_code == 0, result.output
+    assert load_profile(tmp_path / "good" / "event.toml")[0].declared_label == "Low AI"
+    plain = run(str(tmp_path / "plain"), *by_hand)  # no --label and nobody to ask: no label, and no question
+    assert plain.exit_code == 0 and load_profile(tmp_path / "plain" / "event.toml")[0].declared_label is None
+
+
+@pytest.mark.parametrize(("typed", "label"), [("", None), ("   ", None), ("Human-Led AI", "Human-Led AI"), (" No AI ", "No AI")])
+def test_a_label_answer_is_the_events_words_or_nothing(typed, label):
+    assert start.label_answer(typed) == label
+
+
+@pytest.mark.parametrize("typed", ["a\tb", "https://example.org", "x" * 41, "<i>", "--"])
+def test_a_label_answer_that_is_not_a_few_plain_words_is_refused(typed):
+    with pytest.raises(start.StartError, match="give the label as a few words"):
+        start.label_answer(typed)
+
+
 def test_start_with_no_token_says_where_it_goes_and_does_not_launch(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\nctfd\nhttps://ctf.example.org\n\n1\n\n\nn\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n\nctfd\nhttps://ctf.example.org\n\n1\n\n\nn\n")
     assert result.exit_code == 0, result.output
     assert "token: not set yet. Put CTFD_TOKEN_EXAMPLE_CTF=<your CTFd access token> in" in result.output
     assert f"play: flightdeck play {folder}" in result.output and setup == []
@@ -211,7 +269,7 @@ def test_start_with_no_token_says_where_it_goes_and_does_not_launch(tmp_path, mo
 def test_a_by_hand_event_starts_empty_says_how_to_add_a_challenge_and_launches(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n2\n\n\nn\ny\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n\n2\n\n\nn\ny\n")
     assert result.exit_code == 0, result.output
     assert "type /new" in result.output and "flightdeck add" in result.output
     assert load_profile(folder / "event.toml")[0].platform == "manual"
@@ -232,7 +290,7 @@ def test_start_offers_the_solver_pack_and_a_failed_install_does_not_undo_the_eve
 
     monkeypatch.setattr(pack_cli, "install", install)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n2\n\n\ny\nn\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n\n2\n\n\ny\nn\n")
     assert result.exit_code == 0, result.output
     assert len(asked) == 1 and asked[0]["source"] is None and asked[0]["yes"] is False  # the pack's own questions still asked
     assert "solvers (L1): not installed (the reason is above)" in result.output
@@ -396,7 +454,7 @@ def test_an_event_of_the_same_name_at_another_site_gets_a_token_variable_of_its_
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     old_event(tmp_path)
     folder = tmp_path / "this-year"
-    result = run(input=f"Example CTF!\n{folder}\ny\n1\nctf.example.org\nEX\n1\n{SECRET}\n\nn\nn\n")
+    result = run(input=f"Example CTF!\n{folder}\ny\n\n1\nctf.example.org\nEX\n1\n{SECRET}\n\nn\nn\n")
     assert result.exit_code == 0, result.output
     assert load_profile(folder / "event.toml")[0].token_env == "CTFD_TOKEN_EXAMPLE_CTF_2"
     assert keys.load_keys(tmp_path / "keys.env") == {"CTFD_TOKEN_EXAMPLE_CTF": OLD_SECRET, "CTFD_TOKEN_EXAMPLE_CTF_2": SECRET}
@@ -435,7 +493,7 @@ def test_an_event_at_the_same_site_as_one_set_up_before_uses_that_sites_token_ag
 def test_a_token_pasted_with_a_hidden_character_is_asked_for_again_with_the_reason(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=f"Example CTF\n{folder}\ny\n1\nctf.example.org\n\n1\n{SECRET}\u200bOPENROUTER_API_KEY=evil\n{SECRET}\n\nn\nn\n")
+    result = run(input=f"Example CTF\n{folder}\ny\n\n1\nctf.example.org\n\n1\n{SECRET}\u200bOPENROUTER_API_KEY=evil\n{SECRET}\n\nn\nn\n")
     assert result.exit_code == 0, result.output
     assert "That token has an invisible character in it (U+200B)" in result.output
     assert keys.load_keys(tmp_path / "keys.env") == {"CTFD_TOKEN_EXAMPLE_CTF": SECRET}
