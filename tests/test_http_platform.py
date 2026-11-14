@@ -103,6 +103,17 @@ def test_a_path_outside_the_subset_is_refused_by_name(path):
         parse_path("http.list.ref", path)
 
 
+@pytest.mark.parametrize("path", ["$['tok‮neg']", '$["a\u009b2J"]', "$['a​b']", "$['a\x7f']", "$['a⁦b']"])
+def test_a_quoted_name_that_does_not_show_as_itself_is_refused(path):
+    """The pre-flight and `http check` print a path as the table writes it: a bidi override,
+    a C1 control (\\x9b starts a terminal's control sequence) or a zero-width character would
+    make that line read as something it is not."""
+    with pytest.raises(ValueError, match=r"^http\.auth\.token_path: a quoted name holds a control or invisible character") as caught:
+        parse_path("http.auth.token_path", path)
+    assert path[3:-2] not in str(caught.value)
+    assert parse_path("p", "$['café key']").find({"café key": 1}) == [1]  # a name that shows as itself is fine
+
+
 def test_a_missing_list_is_told_from_an_empty_one():
     """A key that is not there is the wrong answer; a list that is there and empty is an answer."""
     path = parse_path("p", "$.data[*].id")
@@ -554,6 +565,31 @@ def test_a_detail_route_is_asked_once_for_each_new_challenge_and_its_fields_win(
                                 {"ref": "8", "name": "Eight", "points": 500, "description": "the text of 8", "files": []})
 
 
+@pytest.mark.parametrize("detail_urls, saved", [
+    (["/f/one.bin", "/f/two.bin", "/f/three.bin"], ["one.bin", "two.bin", "three.bin"]),  # more than the list's 2 names
+    (["/f/two.bin"], ["two.bin"]),  # fewer: never saved under another file's name
+])
+def test_file_urls_from_the_detail_route_are_not_named_by_the_lists_file_names(tmp_path, detail_urls, saved):
+    """The list's names are of the list's files: when the detail gives the addresses and no
+    names, each file is named from its own address."""
+    def site(request):
+        if request.route == "/api/tasks":
+            return Reply(200, {"tasks": [{"id": 7, "title": "Seven", "files": [{"url": "/f/x", "name": "listed.txt"},
+                                                                               {"url": "/f/y", "name": "other.txt"}]}]})
+        if request.route == "/api/tasks/7":
+            return Reply(200, {"urls": detail_urls})
+        return Reply(200, b"synthetic " + request.route.encode())
+
+    config = {**table(**{"list.file_urls": "$.files[*].url", "list.file_names": "$.files[*].name"}),
+              "detail": {"request": ["GET", "/api/tasks/{ref}"], "file_urls": "$.urls[*]"}}
+    with FakeSite(site) as fake:
+        reply = run(caller(fake, config).pull(tmp_path))
+    assert reply.problems == ()
+    assert reply.challenges[0]["files"] == [f"0000/{name}" for name in saved]
+    assert sorted(path.name for path in (tmp_path / "0000").iterdir()) == sorted(saved)
+    assert (tmp_path / "0000" / saved[0]).read_bytes() == b"synthetic " + detail_urls[0].encode()
+
+
 def test_the_platform_going_quiet_in_the_middle_of_a_pull_stops_it_and_says_how_many_were_not_read(tmp_path):
     """Each further challenge would wait as long: what was read lands, and the next pull asks again."""
     def site(request):
@@ -637,6 +673,35 @@ def test_a_challenges_ref_is_one_path_segment_whatever_it_holds():
         (sent,) = fake.of("submit") or [None]
         assert sent is not None and sent.path == "/api/v1/challs/..%2F..%2Fusers%2Fme%3Fx%3D%23/submit"
     assert verdict.word == "unjudged"
+
+
+@pytest.mark.parametrize("ref", [".", ".."])
+def test_a_ref_of_a_dot_or_two_is_never_sent_as_another_route(tmp_path, ref):
+    """httpx folds "/a/../b" into "/b", whatever is percent-encoded around it: the flag and
+    the token would go to a route the table never named."""
+    def site(request):
+        if request.route == "/api/tasks":
+            return Reply(200, {"tasks": [{"id": ref, "title": "Dots"}]})
+        return Reply(200, {"status": "ok"})
+
+    config = {**table(), "detail": {"request": ["GET", "/api/tasks/{ref}"], "description": "$.text"}}
+    with FakeSite(site) as fake:
+        error = failure(caller(fake, config).submit(ref, "t{x}"))
+        assert fake.requests == [] and not error.timed_out
+        reply = run(caller(fake, config).pull(tmp_path))
+        assert [r.route for r in fake.requests] == ["/api/tasks"]  # no detail asked for
+    assert str(error) == f"POST /api/tasks/{{ref}}/flag: {{ref}} is {ref}, which would name another route, so flightdeck did not send it"
+    assert reply.challenges == () and reply.problems == (
+        f"Dots: GET /api/tasks/{{ref}}: {{ref}} is {ref}, which would name another route, so flightdeck did not send it",)
+
+
+def test_a_web_page_in_answer_to_the_flag_says_the_flag_may_have_arrived():
+    """A proxy's page (a 524, a block page) can stand in front of a platform that took the
+    flag: timed_out is what makes the run's link warn that it may have arrived."""
+    with FakeSite(lambda request: Reply(524, "<!doctype html><html>A timeout occurred</html>", {"Content-Type": "text/html"})) as fake:
+        error = failure(caller(fake).submit("7", "t{x}"))
+        assert len(fake.requests) == 1
+    assert error.timed_out and str(error).startswith("the flag was sent, and then: POST /api/tasks/{ref}/flag was answered with a web page")
 
 
 def test_a_web_page_where_an_answer_should_be_is_a_stop_for_a_human_never_a_verdict(tmp_path):

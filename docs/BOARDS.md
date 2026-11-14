@@ -323,7 +323,8 @@ an rCTF instance (start it on the site), and counts no tries there: rCTF has non
 
 For another platform, write the routes yourself: its browser's network tab shows them.
 `flightdeck http example --routes` prints rCTF's table to edit. A request is `[METHOD, PATH]`;
-a path into an answer is `$` followed by `.name`, `['name']`, `[n]`, `[*]` or `.*`.
+a path into an answer is `$` followed by `.name`, `['name']`, `[n]`, `[*]` or `.*`. A quoted name
+may not hold a control or invisible character (the pre-flight shows the path as it is written).
 
 ```toml
 [http]
@@ -375,7 +376,7 @@ refs = "$.data.solves[*].id"
 | `list.request`, `items`, `ref`, `name` | Required. `items` matches one value per challenge; `ref` is the platform's id for it (a string or a whole number), which a submit is sent with. |
 | `list.category`, `points`, `solves`, `description`, `max_attempts` | Optional, as in [`challenge.json`](#challengejson). `max_attempts` makes the challenge one whose tries are counted. |
 | `list.file_urls`, `file_names` | Each file's address, and optionally its name (else the last part of the address). Both must match the same number of values. |
-| `[http.detail]` | Optional: `request` with `{ref}` in it and any of the fields above, read from one more request for each new challenge. A field here wins over the list's. |
+| `[http.detail]` | Optional: `request` with `{ref}` in it and any of the fields above, read from one more request for each new challenge. A field here wins over the list's; `file_urls` here without `file_names` names each file from its address. |
 | `submit.request`, `body` | Required for flightdeck to submit. The body is JSON; `{flag}` must be in it, and `{ref}` in the path or the body (`"{ref:int}"` as a whole value sends the ref as a number). |
 | `submit.verdict_path`, `[http.submit.verdicts]` | Where the answer holds the platform's word, and which verdict each word means: `correct`, `incorrect`, `already_solved`, `rate_limited` or `unjudged`. The answer is read whatever its HTTP status (rCTF answers a wrong flag with 400). `true` and `false` and numbers are matched as those words. |
 | `[http.submit.status]` | An HTTP status to a verdict (`429 = "rate_limited"`), used when no word decided. |

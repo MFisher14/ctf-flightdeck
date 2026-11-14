@@ -202,7 +202,11 @@ def parse_path(where: str, value: object) -> JsonPath:
         elif match["index"] is not None:
             steps.append(int(match["index"]))
         else:
-            steps.append(next(part for part in (match["name"], match["single"], match["double"]) if part is not None))
+            name = next(part for part in (match["name"], match["single"], match["double"]) if part is not None)
+            if untrusted(name, one_line=True) != name:  # the pre-flight and `http check` show the path as it is written
+                raise ValueError(f"{where}: a quoted name holds a control or invisible character (bidi, zero-width, C1): "
+                                 "a path may hold only characters that show as themselves")
+            steps.append(name)
         at = match.end()
     if len(steps) > MAX_STEPS:
         raise ValueError(f"{where} has more than {MAX_STEPS} steps")
@@ -770,7 +774,10 @@ class HttpCaller:
                     if found["ref"] not in on_board:
                         if self.config.detail is not None:
                             answer = await self._read(http, self.config.detail.request, {"ref": found["ref"]})
-                            found.update(self._read_fields("detail", self.config.detail.fields, answer.doc))
+                            detail = self._read_fields("detail", self.config.detail.fields, answer.doc)
+                            if "file_urls" in detail and "file_names" not in detail:  # the list's names are of the list's files
+                                found.pop("file_names", None)
+                            found.update(detail)
                         urls, names = found.pop("file_urls", []), found.pop("file_names", None)
                         found["files"] = await self._download(http, bare, Path(files_dir), f"{n:04d}", urls, names)
                     else:  # on the board already: its files were fetched when it was added
@@ -802,7 +809,10 @@ class HttpCaller:
         path = cfg.verdict_path
         async with self._clients() as (http, _):
             answer = await self._send(http, cfg.request, values, body=cfg.body, sends_flag=True)
-            self._refuse_page(answer)
+            try:
+                self._refuse_page(answer)
+            except CallFailed as exc:  # the flag left: a proxy's page may stand in front of a platform that took it
+                raise CallFailed(f"the flag was sent, and then: {exc}", timed_out=True) from None
             word, value = self._word(cfg, path, answer)
             if word is None and cfg.poll is not None and 200 <= answer.status < 300:
                 submission = self._scalar(cfg.poll.id_path, answer.doc)
@@ -1083,8 +1093,13 @@ class HttpCaller:
 
     def _address(self, route: Route, values: Mapping[str, str]) -> httpx.URL:
         """The route's address under event.url, each placeholder percent-encoded whole (a ref
-        of "../x" is one path segment). CallFailed unless it is on event.url's origin."""
+        of "../x" is one path segment). CallFailed unless it is on event.url's origin, and
+        for a value of "." or "..", which no encoding keeps as one segment (httpx folds it)."""
         filled = {**values, **({"game": self.config.game} if self.config.game is not None else {})}
+        for match in _PLACEHOLDER.finditer(route.path):
+            if filled[match.group(1)] in (".", ".."):
+                raise CallFailed(f"{route}: {{{match.group(1)}}} is {filled[match.group(1)]}, which would name another route, "
+                                 "so flightdeck did not send it")
         path = _PLACEHOLDER.sub(lambda match: quote(filled[match.group(1)], safe=""), route.path)
         target = None
         with contextlib.suppress(httpx.InvalidURL):
