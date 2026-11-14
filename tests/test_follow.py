@@ -1,5 +1,6 @@
 """A lane that is ended to start afresh takes the focus view with it (FlightdeckApp.follow,
-follow_restart): /attach and a kill that re-queues, typed in that lane's view.
+follow_restart): /attach and a kill that re-queues, typed in that lane's view. Also what the
+view says about the lane it is on: the simple layout's chat box and its finished line.
 
 The decks are quiet ones (the test reports the lanes' turns), with no timers. /attach's copy
 is a stand-in for Run.attach_files that waits to be let go and then restarts the challenge's
@@ -15,7 +16,7 @@ import pytest
 from ctf_flightdeck.console import views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
-from ctf_flightdeck.console.focus import FocusScreen
+from ctf_flightdeck.console.focus import CHAT_PLACEHOLDER, FocusScreen
 from ctf_flightdeck.console.screens import HelpScreen, KillPrompt
 from ctf_flightdeck.console.widgets import CommandBar
 from ctf_flightdeck.core import interventions as iv
@@ -347,3 +348,45 @@ def test_a_kill_with_a_reason_says_it_in_the_ended_lanes_result_and_a_plain_kill
                      {"intervention": "kill", "lane": "L02", "requeue": True}]  # a plain kill is logged as it always was
     assert deck.apply(iv.Kill("L03", requeue=False, why=WHY)).ok
     assert deck.lanes["L03"].result == "by the player; parked"  # a reason is why a lane restarts, not why one is parked
+
+
+# ---------------------------------------------------------------------- what the view says about its lane
+
+
+def test_the_simple_layouts_chat_box_names_the_lane_and_its_finished_line_says_lanes():
+    deck, app, _ = console("c", "d", layout="simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert chat(app).placeholder == "message L01 · / commands"
+        assert "message L01 · / commands" in region_text(app, "#chat")
+        await type_line(pilot, "/open L02")
+        assert chat(app).placeholder == "message L02 · / commands"
+        await type_line(pilot, "/kill")  # the view goes to the fresh lane, and the chat box names it
+        assert shown(app) == "L03" and chat(app).placeholder == "message L03 · / commands"
+        await type_line(pilot, "/kill park")
+        assert region_text(app, "#now").strip() == "killed: by the player; parked   this lane has ended; esc goes back to the lanes"
+        await type_line(pilot, "/layout deck")
+        assert chat(app).placeholder == CHAT_PLACEHOLDER
+        assert region_text(app, "#now").strip() == "killed: by the player; parked   this lane has ended; esc goes back to the fleet"
+        await type_line(pilot, "/layout simple")
+        assert chat(app).placeholder == "message L03 · / commands"
+
+    drive(app, script)
+
+
+def test_the_deck_and_compact_layouts_chat_box_and_finished_line_are_as_they_were():
+    assert CHAT_PLACEHOLDER == "message this lane (it reads it on its next turn) · / for commands"
+    for size, layout in (((160, 46), "deck"), ((60, 40), "deck"), ((60, 40), "simple")):  # 60 columns: the compact layout, whatever the config says
+        deck, app, _ = console("c", "d", layout=layout)
+
+        async def script(pilot, deck=deck, app=app):
+            await open_focus(pilot, app, "L01")
+            assert chat(app).placeholder == CHAT_PLACEHOLDER
+            await type_line(pilot, "/open L02")
+            assert chat(app).placeholder == CHAT_PLACEHOLDER
+            assert deck.apply(iv.Kill("L02", requeue=False)).ok
+            await pilot.pause()
+            assert "this lane has ended; esc goes back to the fleet" in " ".join(region_text(app, "#now").split())
+
+        drive(app, script, size=size)

@@ -1157,13 +1157,14 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
     """What the lane needs from the player right now, with the answers as commands. In the
     compact layout each answer is one row, its number first and its command cut at the edge:
     the reasons wrap, and every answer's number stays on the card. In the simple layout
-    (`simple`) a lane that needs nothing has no card: an empty Text."""
+    (`simple`) a lane that needs nothing has no card: an empty Text, and a lane that has ended
+    says esc goes back to the lanes (that layout's word for the fleet)."""
     one_row = {"no_wrap": True, "overflow": "ellipsis"} if compact else {}
     if lane.finished:
         return Text.assemble(
             (f"{lane.state.value}: ", f"bold {state_color(lane.state)}"),
             (untrusted(lane_text(deck, lane, lane.result), one_line=True), theme.TEXT),
-            ("   this lane has ended; esc goes back to the fleet", theme.MUTED),
+            (f"   this lane has ended; esc goes back to the {'lanes' if simple else 'fleet'}", theme.MUTED),
         )
     rows: list[RenderableType] = []
     border = ""

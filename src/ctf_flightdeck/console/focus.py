@@ -15,8 +15,9 @@ what the lane needs from you above its transcript, and no files pane.
 
 In the simple layout (FlightdeckApp.layout) the view shows a part only when it has something
 in it: the files pane once the lane changed a file, the strip on top while another lane needs
-you, the card while this one does. Its key line is short (SIMPLE_KEY_LABELS). The title is
-the same in both layouts: the lane's model, turns, tokens and idle time are there.
+you, the card while this one does. Its key line is short (SIMPLE_KEY_LABELS) and its chat
+box names the lane a message goes to (simple_placeholder). The title is the same in both
+layouts: the lane's model, turns, tokens and idle time are there.
 """
 
 from __future__ import annotations
@@ -52,6 +53,12 @@ COMPACT_KEY_LABELS = (("esc", "fleet"), ("1-9 0", "answer"), ("/", "cmd"), ("ctr
 SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("/help", "all keys"))
 SIMPLE_ANSWER_LABEL = ("1-9", "answer")
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
+# What the empty chat box says: in the deck and compact layouts, and in the simple one (the lane by name).
+CHAT_PLACEHOLDER = "message this lane (it reads it on its next turn) · / for commands"
+
+
+def simple_placeholder(lane_id: str) -> str:
+    return f"message {lane_id} · / commands"
 
 
 def _key_line(labels: tuple[tuple[str, str], ...] = KEY_LABELS) -> Text:
@@ -143,7 +150,7 @@ class FocusScreen(Screen, inherit_bindings=False):
                 with VerticalScroll(id="diff-scroll"):
                     yield Static(id="diff")
         yield Static(id="status")
-        yield CommandBar("message this lane (it reads it on its next turn) · / for commands", id="chat")
+        yield CommandBar(CHAT_PLACEHOLDER, id="chat")
         yield Static(_key_line(), id="keys")
 
     def on_mount(self) -> None:
@@ -282,6 +289,9 @@ class FocusScreen(Screen, inherit_bindings=False):
             self._show_keys(again=False)
             chat = self.query_one("#chat", CommandBar)
             chat.set_suggestions(self.fd.command_suggestions(lane.id, with_lane=False))
+            placeholder = simple_placeholder(lane.id) if simple else CHAT_PLACEHOLDER
+            if placeholder != chat.bar_placeholder:
+                chat.set_placeholder(placeholder)
 
     def _render_files(self) -> None:
         lane = self.lane
