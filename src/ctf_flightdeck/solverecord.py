@@ -159,6 +159,9 @@ class _Writer:
 
         self.steps = [step for step in flight.steps if here(step)]
         self.by_rule = [step for step in flight.by_rule if here(step)]
+        # autopilot flew some of the run: the log says it was engaged, or holds an intervention it made (on any
+        # challenge: a log that lost its engage line still shows that much)
+        self.engaged = bool(flight.pilot or flight.by_rule)
         self.l1_runs = [event for event in self.run.events if event.kind == L1 and event.challenge == self.cid]
         self.submits = [event for event in self.run.events if event.kind == "submit" and event.challenge == self.cid]
 
@@ -178,7 +181,7 @@ class _Writer:
         out += self._counts()
         out += self._flags()
         out += self._interventions("Your interventions", self.steps, "You made no intervention on this challenge or its lanes.")
-        if self.by_rule or self.flight.pilot:
+        if self.engaged:
             out += self._interventions("Autopilot's interventions, by rule", self.by_rule,
                                        "Autopilot made no intervention on this challenge or its lanes.")
         out += self._l1()
@@ -216,9 +219,8 @@ class _Writer:
         out.append(f"- Flag: {code(self.credit.flag or '')}")
         out.append(f"- Credited to: {self._credited()}")
         out.append(f"- How the flag went to the platform: {who_sent(self.submit.data)}")
-        engaged = bool(self.flight.pilot)
         out.append("- Autopilot: " + ("was engaged at some point of this run; what it did on this challenge is listed below"
-                                      if engaged or self.by_rule else "was not engaged in this run"))
+                                      if self.engaged else "was not engaged in this run"))
         return [*out, ""]
 
     def _setup(self) -> str:

@@ -285,6 +285,23 @@ def test_a_solve_autopilot_did_not_touch_says_so_in_a_run_it_flew(tmp_path):
     assert "kill" not in three and "escalate" not in three and "queue" not in three
 
 
+def test_a_run_autopilot_was_engaged_in_and_did_nothing_in_says_it_was_engaged(tmp_path):
+    run = Script(tmp_path, flags={"one": "t{one}"})
+    pilot = Autopilot(run.deck, Budget(tokens=1_000_000))
+    pilot.attach()
+    assert pilot.engage().ok
+    run.release(one())
+    lane = run.lane("one")
+    run.at(10)
+    run.turn(lane, "cat note", flag="t{one}")
+    pilot.step()  # the flag waits for the player: no rule of autopilot answers it
+    run.do(iv.Approve(lane))
+    text = record(run.close(), "one")
+    assert bullets(text, "## The solve")["Autopilot"].startswith("was engaged at some point of this run")
+    assert by_rule(text) == ["Autopilot made no intervention on this challenge or its lanes."]
+    assert bullets(text, "## The solve")["How the flag went to the platform"] == APPROVED  # the yes was the player's
+
+
 def test_a_run_without_autopilot_has_no_autopilot_section(played):
     text = record(played, "alpha")
     assert "## Autopilot's interventions, by rule" not in text
@@ -301,6 +318,9 @@ def test_a_log_that_lost_the_line_where_autopilot_was_engaged_still_shows_what_i
     two = record(load_run(tmp_path), "two")
     assert by_rule(two) == ["- T+00:00:20 · escalate · lane L02 · took effect: Escalated L02 from small to big"]
     assert bullets(two, "## The solve")["Autopilot"].startswith("was engaged at some point of this run")  # never "was not engaged"
+    three = record(load_run(tmp_path), "three")  # autopilot did nothing on Three, and the log still shows it flew the run
+    assert bullets(three, "## The solve")["Autopilot"].startswith("was engaged at some point of this run")
+    assert by_rule(three) == ["Autopilot made no intervention on this challenge or its lanes."]
 
 
 def test_a_wrong_flag_sent_for_the_challenge_is_in_its_record_beside_the_right_one(tmp_path):
