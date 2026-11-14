@@ -12,6 +12,8 @@ One terminal console: every challenge, every agent, every flag. You step in with
 <a href="https://github.com/MFisher14/ctf-flightdeck/blob/main/CONTRIBUTING.md"><img alt="Pull requests welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen"></a>
 </p>
 
+![A one-minute recording of the demo, uvx ctf-flightdeck mock: the console opens on an event in progress with six agent lanes, three of which need you; one key submits a flag a lane found; a lane that ignores the hint in its challenge's description is opened and redirected with one key, and finds the flag; a lane brute-forcing a server whose source it already has is killed and started fresh; a wave of 43 challenges drops and 16 lanes run at once; the help screen lists every key](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/demo.gif)
+
 ![The fleet view: a board of eight challenges on the left; on the right, six agent lanes sorted by what needs you, with chips for a found flag, a lane that ignores the hint, a web lane heading the wrong way and a live box a teammate holds; under the list, the found flag with 1 to submit it and 0 not to](https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/docs/screenshots/fleet.png)
 
 ## Try it in ten seconds

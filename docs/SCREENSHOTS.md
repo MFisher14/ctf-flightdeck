@@ -11,6 +11,18 @@ dashboard, which `/layout deck` switches to
 pictures in the deck layout and the default theme whatever your config says; the `simple-` moments
 and `theme-light` are switched to for their own shot.
 
+## The demo, in a minute
+
+![A one-minute recording of flightdeck mock in the simple layout: a flag is submitted with one key, a lane that ignores its hint is opened and redirected and finds the flag, a lane going the wrong way is killed and started fresh, a wave of 43 challenges drops, and the help screen lists every key](screenshots/demo.gif)
+
+This one is not a set of stills. [`scripts/demo.py`](../scripts/demo.py) opens `flightdeck mock`
+(the default scenario, the simple layout, 120 by 36) with no terminal, presses the keys a player
+would (Enter, `1`, Page Up, Esc, `k`, `r`, `?`, `q`) and moves the mock's clock itself, so the
+same frames come out every time. The line in the window's title bar is the script's caption:
+the key just pressed and what it did. The first and the last frames are drawn, not played: a
+shell prompt and the command typed at it.
+[CONTRIBUTING.md](../CONTRIBUTING.md#the-readmes-demo) says how to build it again.
+
 ## The simple layout
 
 ![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of approve, decline, open, commands, help and quit](screenshots/simple.png)

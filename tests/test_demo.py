@@ -25,6 +25,10 @@ from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "demo.py"
+GIF = ROOT / "docs" / "screenshots" / "demo.gif"
+README = ROOT / "README.md"
+RAW = "https://raw.githubusercontent.com/MFisher14/ctf-flightdeck/main/"
+WARN_BYTES = 2 * 1024 * 1024  # the commit guard calls a file over this large (.githooks/secret_scan.py)
 
 SPAN = re.compile(r'<text class="[^"]*-r\d+" x="([\d.]+)" y="([\d.]+)" textLength="([\d.]+)"[^>]*>(.*?)</text>')
 TITLE = re.compile(r'<text class="[^"]*-title"[^>]*>(.*?)</text>')
@@ -287,3 +291,18 @@ def test_gif_facts_reads_size_frames_and_seconds_from_the_file(tmp_path):
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(40))
     with pytest.raises(demo.DemoError, match="two.gif is not a GIF"):
         demo.gif_facts(path)
+
+
+def test_the_gif_in_the_repository_is_the_one_this_script_writes_and_small(played):
+    gif = demo.gif_facts(GIF)
+    # rebuilt after the last change to the demo's steps: `uv run python scripts/demo.py docs/screenshots/demo.gif`
+    assert (gif.frames, gif.seconds, gif.width) == (len(played.frames), played.seconds, demo.WIDTH)
+    assert gif.size < WARN_BYTES
+
+
+def test_the_readme_opens_on_the_demo():
+    readme = README.read_text(encoding="utf-8")
+    link = f"]({RAW}docs/screenshots/demo.gif)"
+    assert link in readme
+    # above the first section (that the link names a file the tree has is test_docs_links.py's)
+    assert readme.index(link) < readme.index("\n## ")

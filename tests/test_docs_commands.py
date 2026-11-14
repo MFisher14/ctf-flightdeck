@@ -328,6 +328,9 @@ def test_the_readme_says_of_the_mock_and_of_the_solver_pack_what_the_program_say
 # is added here.
 KEYBOARD = [
     "step in with one key.",
+    "one key submits a flag",  # the demo's recording, in words: three of them
+    "opened and redirected with one key,",
+    "the help screen lists every key]",
     "and one key sends a hint",
     "names the three keys to begin with:",
     "`?` for every key, any time.",
