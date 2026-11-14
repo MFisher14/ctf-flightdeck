@@ -233,6 +233,27 @@ def test_the_lanes_client_follows_the_config(tmp_path, monkeypatch):
         asyncio.run(client.aclose())
 
 
+
+def test_a_session_that_moved_is_unanswered_until_the_fallback_replies_to_it():
+    async def run():
+        async with pair(claude.base_url, router.base_url) as client:
+            messages = list(MESSAGES)
+            assert client.unanswered("s") is None  # on the primary
+            with pytest.raises(ModelError):
+                await client.chat("claude-haiku-5-5", messages, [], session_id="s")  # 529 twice, then the fallback's 400
+            # it moved, and the fallback has taken nothing of its context yet
+            assert client.moved("s") == client.unanswered("s") == "anthropic/claude-haiku-5.5"
+            assert client.unanswered("another lane") is None
+            reply = await client.chat("claude-haiku-5-5", messages, [], session_id="s")
+            assert reply.content == "ok" and reply.notice.startswith("moved to OpenRouter")  # the move is still said, once
+            assert client.moved("s") == "anthropic/claude-haiku-5.5" and client.unanswered("s") is None
+            assert sent_to(claude) == 2 and sent_to(router) == 2  # the call made again went to the fallback only
+
+    with FakeAnthropicServer([OVERLOADED, OVERLOADED]) as claude, \
+            FakeModelServer([error_reply(400, "no image input"), text_reply("ok")]) as router:
+        asyncio.run(run())
+
+
 # ---------------------------------------------------------------------- lanes under the driver
 
 

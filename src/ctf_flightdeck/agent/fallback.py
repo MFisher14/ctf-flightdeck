@@ -18,6 +18,11 @@ A failure that is not retryable (a bad request, a bad key, the model declining) 
 move the lane: trying another API would not change the answer, or should not. Nothing falls
 back silently either: a lane's model with no fallback model, or a fallback that fails too,
 ends the call with an error that says so.
+
+The fallback's model gets a context it has taken no request of, and may not take all that
+the primary's did (a picture, for one: agent/driver.py). Until the fallback has answered a
+moved session once, unanswered() names its model there, so the caller of a call that failed
+knows the failure may be about anything the context holds, not only about what is new in it.
 """
 
 from __future__ import annotations
@@ -36,11 +41,13 @@ if TYPE_CHECKING:
 @dataclass
 class _Moved:
     """A lane session that moved to the fallback: the context it moved in, the model there,
-    and the notice its first fallback reply still has to carry ("" once it has)."""
+    the notice its first fallback reply still has to carry ("" once it has), and whether the
+    fallback has answered a request of this context yet."""
 
     messages: list[dict]
     model: str
     notice: str
+    answered: bool = False
 
 
 class FallbackClient:
@@ -89,6 +96,13 @@ class FallbackClient:
         """The fallback model a lane session is on now, or None when it is on the primary."""
         moved = self._moved.get(session_id)
         return moved.model if moved is not None else None
+
+    def unanswered(self, session_id: str) -> str | None:
+        """The fallback model of a lane session that moved there and has had no reply from it
+        yet (no request made, or every one failed), else None. The fallback API has taken
+        nothing of such a context: not what its primary took before the move either."""
+        moved = self._moved.get(session_id)
+        return moved.model if moved is not None and not moved.answered else None
 
     def image_problem(self, model: str, session_id: str) -> str | None:
         """Why a lane's call cannot carry an image, on the API its session is on now (the
@@ -158,6 +172,7 @@ class FallbackClient:
             failed = exc
         if failed is not None:
             raise _again(failed, f"{failed} (on {self.fallback_name}, where this context moved when {self.primary_name} failed)")
+        moved.answered = True
         if moved.notice:
             notice = moved.notice + (f"; {reply.notice}" if reply.notice else "")
             moved.notice = ""
