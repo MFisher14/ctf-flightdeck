@@ -460,11 +460,14 @@ def test_a_calm_row_longer_than_the_card_is_cut_at_its_edge_and_never_wraps():
     drive(app, script, NARROW)
 
 
-def test_the_calm_card_takes_the_colours_of_a_new_theme_and_another_lanes_card_starts_at_its_first_row():
+def test_another_lanes_card_starts_at_its_first_row_and_the_calm_card_takes_the_colours_of_a_new_theme():
     deck, app, lane = four_at_once("deck")
     deck.release([Challenge("d", "Other", "misc", 100)], [QueueEntry("d", "glm")])
     (other,) = deck.lanes_on("d")
     deck.report(other.id, TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, "connect to the live instance")))
+    why = "It has read the same three files in turn for a while now, and nothing it found in them changed what it does next. "
+    deck.report(other.id, TurnReport(turn=False, alerts=tuple(alert(kind, why * 2, *STALL[1:]) for kind in (
+        AlertKind.LOOP, AlertKind.EFFORT, AlertKind.HINT, AlertKind.DIRECTION, AlertKind.STALL))))
 
     async def script(pilot):
         view = await open_focus(pilot, app, lane.id)
@@ -473,15 +476,21 @@ def test_the_calm_card_takes_the_colours_of_a_new_theme_and_another_lanes_card_s
         await pilot.pause()
         assert box.scroll_y > 0
         await open_focus(pilot, app, other.id)
-        assert box.scroll_y == 0 and one_line(card(app)).startswith("╭─ needs you now ─")
+        assert box.max_scroll_y > 0 and box.scroll_y == 0  # a card that scrolls too, at its first row
+        assert one_line(card(app)).startswith("╭─ needs you now ─") and "◆ waiting for you: connect to the live instance" in one_line(card(app))
         await press(pilot, "ctrl+o")
-        assert inside(app) == ["◆ waiting for you: connect to the live instance", "  1 use the live box   0 stay off it"]
+        assert inside(app) == [
+            "◆ waiting for you: connect to the live instance",
+            "  1 use the live box   0 stay off it",
+            "  also: looping · past its effort budget · ignores the hin…",  # cut at the card's edge
+        ]
         row = view.query_one("#now").region.y
         before = color_of(app, "needs you now", row)
-        assert before == theme.PURPLE.lower()
+        assert before == theme.alert_colors(AlertKind.LOOP)[1].lower()
         await send(pilot, app, "/theme nord")
         after = color_of(app, "needs you now", row)
-        assert after == theme.PURPLE.lower() != before and color_of(app, "◆ waiting for you", row + 1) == after
+        assert after == theme.alert_colors(AlertKind.LOOP)[1].lower() != before
+        assert color_of(app, "◆ waiting for you", row + 1) == theme.PURPLE.lower()
 
     drive(app, script, NARROW)
 
