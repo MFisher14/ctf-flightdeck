@@ -622,14 +622,16 @@ def test_doctor_says_how_an_installed_coding_agent_cli_gets_its_credential_not_t
 
 def terminal_check(tmp_path, monkeypatch, size: tuple[int, int], answers: Answers = ANSWERS) -> list[str]:
     """What `flightdeck doctor` says of a terminal of this size (its line, and its fix when it
-    warns), with a config written from `answers`. No docker on PATH and no key set: doctor
-    runs nothing and reads no key."""
+    warns), with a config written from `answers` that opens the console in the deck layout,
+    the one with the most to leave out (the simple layout's line: tests/test_layout.py).
+    No docker on PATH and no key set: doctor runs nothing and reads no key."""
     monkeypatch.setenv("PATH", str(tmp_path))
     if answers.key_env:
         monkeypatch.delenv(answers.key_env, raising=False)
     path = tmp_path / f"{answers.runtime}-{answers.max_lanes}.toml"
     if not path.exists():
         write_config(answers, path)
+        path.write_text(path.read_text() + '\n[console]\nlayout = "deck"\n')
     monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size(size))
     result = CliRunner().invoke(cli.app, ["doctor", "--config", str(path)])
     lines = result.stdout.splitlines()

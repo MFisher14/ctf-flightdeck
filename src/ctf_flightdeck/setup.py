@@ -739,19 +739,23 @@ ROOM_LANES = 16  # the terminal check looks at room for at most this many lanes 
 
 def _terminal_check(columns: int, lines: int, config) -> Check:
     """What a terminal this size leaves out of the console on a busy run with your lanes and
-    runtime, and from which size none of it (console/room.py measures it with the console's
-    own code: the header's pieces drop in the order CONSOLE-SPEC "Narrow terminals" and D16 set)."""
-    from .config import LaneConfig
+    runtime, in the layout your config opens it in, and from which size none of it
+    (console/room.py measures it with the console's own code: the header's pieces drop in the
+    order CONSOLE-SPEC "Narrow terminals" and D16 set)."""
+    from .config import ConsoleConfig, LaneConfig
     from .console.room import room
 
     lanes = config.lanes if config is not None else LaneConfig()
-    fit = room(columns, lines, max_lanes=min(lanes.max_lanes, ROOM_LANES), containerized=lanes.runtime == "docker")
+    layout = (config.console if config is not None else ConsoleConfig()).layout  # the layout the console opens in
+    fit = room(columns, lines, max_lanes=min(lanes.max_lanes, ROOM_LANES), containerized=lanes.runtime == "docker", layout=layout)
     size = f"{columns}x{lines}"
     team = f"; team mode's key line, with c claim, needs {fit.team_columns} columns" if fit.team_columns > fit.columns else ""
     missing = fit.left_out()
     if not missing:
         rows = f"each of your {lanes.max_lanes} lanes" if lanes.max_lanes > 1 else "your lane"
-        return Check("terminal", True, f"{size}: on a busy run the console shows the whole header, the board, every key "
+        # the simple layout has no board, and its key line shows the keys that apply to the selected lane
+        shows = "the whole header, its key line" if layout == "simple" else "the whole header, the board, every key"
+        return Check("terminal", True, f"{size}: on a busy run the console shows {shows} "
                                        f"and a row for {rows}" + (team if columns < fit.team_columns else ""))
     layout = ""
     if fit.compact:

@@ -791,6 +791,102 @@ def test_the_deck_layout_and_a_platforms_board_never_open_a_lane_by_themselves()
     drive(app, platform, SIZE)
 
 
+# ---------------------------------------------------------------------- what doctor measures in the simple layout
+
+
+@pytest.mark.parametrize("width", [40, 64, 65, 80, 99, 100, 200])
+def test_the_simple_layout_never_has_the_board_left_out(width):
+    fit = room.room(width, 30, max_lanes=4, containerized=True, layout="simple")
+    assert fit.board is False and not any("the board" in part for part in fit.left_out())
+    assert room.room(width, 30, max_lanes=4, containerized=True).board is (width < 100)  # the deck layout: under 100 columns
+
+
+@pytest.mark.parametrize("size", [(50, 24), (64, 30), (65, 30), (72, 17), (80, 24), (85, 18), (86, 17), (86, 18), (120, 40)])
+def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leaves_out(size, monkeypatch):
+    """room.room(layout="simple") against the console in that layout, on the busy run doctor
+    measures with: the header's pieces in both views, the lane rows, and the key lines at their
+    longest (a lane with an alert to answer and to dismiss)."""
+    from test_console import four_lanes_and_one_finished, nothing
+
+    columns_, lines = size
+    fit = room.room(columns_, lines, max_lanes=4, containerized=True, layout="simple")
+    assert fit.layout == "simple" and fit.compact is (columns_ <= 64)
+    busy = room.busy_header(max_lanes=4, containerized=True)
+    monkeypatch.setattr(views, "header_facts", lambda deck, mock="": busy)
+    pieces = {name: text for name, rank, (text, *_) in views.header_pieces(busy, simple=True) if rank}  # what can drop
+    if fit.compact:  # the compact header: no event's name, the queue in short; of what simple shows, its name can drop too
+        assert set(pieces) == {"event", "queue"}
+        pieces = {"event": pieces["event"], "flightdeck": "flightdeck"}
+    deck = four_lanes_and_one_finished()
+    deck.report("L02", TurnReport(action="strings c1", alerts=(COURSE,)))
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing, layout="simple")
+
+    async def script(pilot):
+        app.fleet.select_lane("L02")
+        await pilot.pause()
+        for view in ("fleet", "focus"):
+            header = region_text(app, "#header")
+            assert {name for name, text in pieces.items() if text not in header} == set(fit.header), (view, header)
+            keys = region_text(app, "#keys").strip().split("  ")
+            if view == "fleet":
+                assert app.fleet.board_hidden and app.fleet.compact is fit.compact
+                rows = [line for line in region_text(app, "#lanes").splitlines()[1:] if line.strip()]
+                assert len(rows) == min(fit.rows, fit.needed)
+                if fit.compact:  # the compact line, which has its own short labels: the keys it has not got
+                    has = {pair.split(" ")[0] for pair in keys}
+                    assert [f"{shown} {label}" for _, shown, label in fleet.SIMPLE_KEYS if shown not in has] == list(fit.fleet_keys), keys
+                    assert list(fit.fleet_keys) == ["x dismiss", "enter open"]
+                else:
+                    whole = [f"{shown} {label}" for _, shown, label in fleet.SIMPLE_LONGEST]
+                    assert [key for key in whole if key not in keys] == list(fit.fleet_keys), keys
+                await open_focus(pilot, app, "L02")
+            elif fit.compact:
+                assert keys == [f"{key} {label}" for key, label in focus.COMPACT_KEY_LABELS]  # whole at this width
+                assert list(fit.focus_keys) == ["/help all keys"]  # the one key of the simple line it has not got
+            else:
+                whole = [f"{key} {label}" for key, label in (focus.SIMPLE_ANSWER_LABEL, *focus.SIMPLE_KEY_LABELS)]
+                assert [key for key in whole if key not in keys] == list(fit.focus_keys), keys
+        assert (fit.left_out() == []) is (columns_ >= fit.columns and lines >= fit.lines)
+
+    drive(app, script, size=size)
+    assert (fit.columns, fit.lines) == (86, 18)  # an event name of 20 characters, four lanes
+
+
+def test_doctor_measures_the_terminal_in_the_layout_the_config_opens(tmp_path, monkeypatch):
+    from ctf_flightdeck.setup import Answers, write_config
+
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker here: doctor runs nothing
+
+    def line(layout: str | None, size: tuple[int, int]) -> list[str]:
+        path = tmp_path / f"{layout}.toml"
+        if not path.exists():
+            write_config(Answers("http://127.0.0.1:9/v1", "", ("local/model",), "docker"), path)
+            if layout is not None:
+                path.write_text(path.read_text() + f'\n[console]\nlayout = "{layout}"\n')
+        monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size(size))
+        lines = CliRunner().invoke(cli.app, ["doctor", "--config", str(path)]).stdout.splitlines()
+        at = next(i for i, text in enumerate(lines) if text[5:].startswith("terminal: "))
+        return lines[at:at + 2] if lines[at].startswith("warn") else lines[at:at + 1]
+
+    assert line(None, (100, 30)) == line("simple", (100, 30)) == [
+        "ok   terminal: 100x30: on a busy run the console shows the whole header, its key line and a row for each of your 4 lanes"
+    ]
+    assert line(None, (80, 24)) == [
+        "warn terminal: 80x24: on a busy run the console leaves out the event's name in the header",
+        "     fix: from 86x18 it leaves none of this out, with an event name of up to 20 characters (a column more for "
+        "each character more); the console still works smaller",
+    ]
+    assert line("deck", (100, 30))[0].startswith("warn terminal: 100x30: on a busy run the console leaves out dollars, tokens,")
+    narrow = line(None, (56, 40))[0]
+    assert narrow == (
+        "warn terminal: 56x40: the compact layout, for 64 columns or fewer (what needs you and why, the one-key answers, "
+        "each lane's state and cost); on a busy run the console leaves out the event's name and the flightdeck name in the "
+        "header; each lane's last action in the lane list (the lane's own view has it) and the files pane of that view (the "
+        "simple layout starts at 65 columns); x dismiss and enter open on the fleet view's key line (? lists every key); "
+        "/help all keys on the focus view's key line"
+    )
+
+
 # ---------------------------------------------------------------------- the command, and what a run opens in
 
 
