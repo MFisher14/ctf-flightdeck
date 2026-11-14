@@ -534,6 +534,20 @@ the bar and you press Enter: `/over` sent as it is gets `Unknown command /over`,
 `/approve 2` is refused instead of approving lane 2 (write `/approve L02`). `/approve` has no
 short form, because approving a flag can spend one of a challenge's tries.
 
+**Up and down** bring back what you sent, newest first, as in a shell: messages and commands,
+from either view, for this run only (nothing is saved to a file). Down past the newest gives
+back what you were typing. Change a line you brought back and press Enter to send it; nothing
+is sent while you walk. While the `/` menu is open the arrows move in the menu instead: `esc`
+closes it.
+
+**`ctrl+g`** opens what is in the box in your editor, for a long redirect or a hint you want to
+think over. flightdeck uses `$VISUAL`, or `$EDITOR` when that is not set (`export
+EDITOR=nano`, or `EDITOR="code --wait"` for an editor that opens a window). The console steps
+aside while you write and your lanes keep working. When you save and quit, the text is back in
+the box, the lines joined by spaces since the box is one line, and nothing is sent until you
+press Enter. Quit without saving, or with an error (`:cq` in vim), and the box keeps what it
+had. With neither variable set, the status line says so and nothing opens.
+
 ### Layouts
 
 The console has two layouts.

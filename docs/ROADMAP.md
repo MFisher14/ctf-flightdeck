@@ -3,11 +3,11 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eighteen proposals, P51 to P68 (2026-11-14)
+## Built, not released: nineteen proposals, P51 to P68 and P71 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P51 to P68); the lines for players are under Unreleased in
-[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 to P68 were built from the list of what comes next (the
+[DECISIONS.md](DECISIONS.md) (P51 to P68, P71); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62, P64 to P68 and P71 were built from the list of what comes next (the
 [milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
@@ -115,6 +115,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **Up and down recall what was sent; `ctrl+g` opens the bar in your editor** (P71). One
+  history for the run, shared by the lane list's bar and a lane's chat box, in memory only;
+  the `/` menu keeps the arrows while it is open. `ctrl+g` hands the terminal to `$VISUAL` or
+  `$EDITOR` and puts the text back in the bar on one line, sending nothing; with neither set it
+  says so. Not built: `ctrl+r` search, a history kept across runs, a bar of several lines.
 
 Known limits, each said where it applies:
 

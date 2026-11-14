@@ -285,6 +285,17 @@ open menu is compared with the deck and drawn again if it differs. `no_match()` 
 row for a name that is no command. The bar's Enter takes a row while the name is incomplete
 or once the arrow keys chose one (`_chosen`), and otherwise posts what is typed.
 
+**The bar's history and editor** (P71). `widgets.History` is what Enter sent, one list the app
+keeps (`FlightdeckApp.bar_history`) and hands to both screens' bars, never written to a file.
+`CommandBar.action_menu` moves in the menu while it is open and otherwise walks the history
+(`_walk`); `_changed` tells a line the walk put there (no menu) from one the player typed (the
+walk ends). `ctrl+g` (`action_editor`) runs `console/editor.py`'s `edit()` in a worker:
+`editor_command()` reads `VISUAL`, then `EDITOR`, and raises `EditorError` with the reason
+rather than choose an editor; the text goes through a `mkstemp` file and the terminal through
+`takeover.run_in_terminal`, as a take-over's shell does; `one_line()` joins what comes back and
+draws control characters with `text.untrusted()`. The bar says the outcome through the app's
+`say()`.
+
 **The bar's title** (P64). The title on the bar's border says who what is typed goes to.
 `commands.goes_to(typed)` reads the text with `parse()`, so it is what Enter would do: the
 run's for a command that takes no lane, a lane's when the command names one, otherwise the

@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- Up and down in the command bar and a lane's chat box bring back what you sent this run,
+  newest first, as a shell does; down past the newest gives back what you were typing. While
+  the `/` menu is open they still move in the menu. `ctrl+g` opens what is in the box in your
+  editor (`$VISUAL`, else `$EDITOR`); when you save and quit, the text is back in the box on one
+  line and nothing is sent until you press Enter. With no editor set it says so and opens
+  nothing ([the guide](docs/GUIDE.md#the-command-bar)).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is
