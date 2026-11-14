@@ -168,12 +168,12 @@ class SetupForm(Screen):
     BINDINGS = [Binding("escape", "back", "back"), Binding("ctrl+s", "save", "save", priority=True)]
     RUNTIMES = (("docker", "docker: a container per lane"),
                 ("host", "host: lanes run as you, on this machine, and can read your files and keys"))
+    UNDECIDED = ("", "not decided yet: looking for Docker (or choose one yourself)")  # no runtime: nothing is saved with it
 
     def __init__(self, then: str = "practice") -> None:
         super().__init__()
         self.then = then
         self._offered = ""  # the models this form put in the field: replaced with the next provider's unless the player changed them
-        self._runtime_offered = "docker"  # the runtime this form chose: Docker, until it is found that it cannot run lanes here
 
     def compose(self) -> ComposeResult:
         def ask(text: str, **more) -> Static:
@@ -196,9 +196,10 @@ class SetupForm(Screen):
             yield Input(id="models")
             yield Static(Text(""), id="modelswhy")
             yield ask(setups.RUNTIME_QUESTION + ":")
-            yield Select([(Text(label), name) for name, label in self.RUNTIMES], value=self._runtime_offered, allow_blank=False,
-                         id="runtime")
-            yield Static(Text("Looking for Docker…", style=theme.MUTED), id="dockerfound")
+            yield Select([(Text(label), name) for name, label in (self.UNDECIDED, *self.RUNTIMES)], value=self.UNDECIDED[0],
+                         allow_blank=False, id="runtime")
+            yield Static(Text("Looking for Docker… what is offered depends on whether it runs here.", style=theme.MUTED),
+                         id="dockerfound")
         yield Static(Text(""), id="problem")  # under the scrolling questions, so it and the keys always show
         keys = Text()
         for key, what in (("ctrl+s", "save and go on"), ("tab", "next field"), ("esc", "back")):
@@ -209,7 +210,7 @@ class SetupForm(Screen):
     def on_mount(self) -> None:
         self._provider_shown()
         self.query_one("#provider", Select).focus()
-        self.run_worker(self._find_docker, thread=True, name="docker", exit_on_error=False)
+        self.run_worker(self._find_docker(), name="docker")  # this screen's: cancelled when it closes or the app ends
 
     def _value(self, field: str) -> str:
         return self.query_one(f"#{field}", Input).value.strip()
@@ -219,29 +220,36 @@ class SetupForm(Screen):
 
     # ---- the runtime: Docker when it can run lanes here, else this machine
 
-    def _find_docker(self) -> None:
-        """In a thread: `docker version` can take seconds, or 20 of them when the daemon hangs."""
-        from ..agent.workspace import docker_unavailable
+    async def _find_docker(self) -> None:
+        """`docker version` can take seconds, or 20 of them when the daemon hangs: it is asked
+        beside the form, which stays the player's, and killed when the form closes or the
+        app ends, so leaving never waits for it. Until it answers the runtime is not decided
+        (UNDECIDED), and read() saves none."""
+        from ..agent.workspace import docker_unavailable_stoppable
 
-        reason = docker_unavailable()
-        try:
-            self.app.call_from_thread(self._docker_found, reason)
-        except RuntimeError:  # the app ended meanwhile: nobody to tell
-            pass
+        self._docker_found(await docker_unavailable_stoppable())
 
     def _docker_found(self, reason: str | None) -> None:
+        """Offer the runtime Docker's answer decides, unless the player chose one meanwhile:
+        any choice of theirs stands, docker too. "Not decided" is no choice from here on."""
         if not self.is_mounted:
             return
         select = self.query_one("#runtime", Select)
-        untouched = select.value == self._runtime_offered  # the player has not chosen another
-        if reason is None:
-            said = "Docker is running here, so docker is offered: the safe choice."
+        chosen = str(select.value)  # "" when the player has chosen none
+        found = "Docker is running here" if reason is None else f"Docker cannot run lanes here ({reason})"
+        if chosen:
+            said = f"{found}. Your choice, {chosen}, stands"
+            if reason is not None and chosen == "docker":
+                said += ": install or start Docker before a run, or choose host"
+            elif reason is None and chosen == "host":
+                said += ": docker is the safer one"
+            said += "."
+        elif reason is None:
+            said = f"{found}, so docker is offered: the safe choice."
         else:
-            said = (f"Docker cannot run lanes here ({reason}), so host is offered. For the safer setup, install or start Docker "
-                    "and choose docker.")
-            self._runtime_offered = "host"
-            if untouched:
-                select.value = "host"
+            said = f"{found}, so host is offered. For the safer setup, install or start Docker and choose docker."
+        select.set_options([(Text(label), name) for name, label in self.RUNTIMES])
+        select.value = chosen or ("docker" if reason is None else "host")
         self.query_one("#dockerfound", Static).update(Text(said, style=theme.MUTED))
 
     # ---- what the provider decides: the fields shown, the models offered, the key asked for
@@ -325,7 +333,11 @@ class SetupForm(Screen):
             base_url = checked("Address", setups.base_url_answer, self._value("url"))
             key_env = checked("Variable", setups.key_env_answer, self._value("keyenv"))
         ladder = checked("Models", setups.models_answer, self._value("models"))
-        runtime = checked("Runtime", setups.runtime_answer, str(self.query_one("#runtime", Select).value))
+        chosen = str(self.query_one("#runtime", Select).value)
+        if chosen == self.UNDECIDED[0]:  # never a runtime that nobody chose and nothing decided
+            raise setups.AnswerError("Runtime: still looking for Docker, which decides what is offered (up to 20 s when Docker "
+                                     "does not answer). Wait for it, or choose docker or host yourself")
+        runtime = checked("Runtime", setups.runtime_answer, chosen)
         answers = setups.answers_for(provider, ladder, runtime, base_url=base_url, key_env=key_env)
         key = self.query_one("#key", Input).value.strip() if answers.key_env else ""
         if answers.key_env:

@@ -34,7 +34,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   and Docker or host, which is offered by whether Docker runs here. `ctrl+s` saves it, and
   the home screen then offers the practice set first and starting an event one below, with
   building the lane image before both when Docker lanes need it. "Start a new CTF" with no
-  config asks the same setup first.
+  config asks the same setup first. While the form still looks for Docker it saves no
+  runtime (wait, or choose one yourself: your choice stands), and leaving it never waits for
+  a Docker that does not answer.
 - `flightdeck init` asks for your API key at a hidden prompt and keeps it in your keys file,
   so there is no file to make by hand; Enter alone skips it. It asks only at a terminal, and
   only for a key that is not set yet.

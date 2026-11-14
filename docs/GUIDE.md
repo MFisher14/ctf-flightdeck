@@ -45,8 +45,10 @@ stops with an error leaves with its reason showing.
 With no config yet the home screen does `init`'s part itself. "Get started", its first choice,
 is a form with the same questions: your model API, its key (typed out of sight; it goes to your
 keys file), the models (every API has some to offer) and Docker or host, where Docker is offered
-when it runs on your machine and host when it does not. `ctrl+s` saves it; what is wrong with
-an answer is said in the form. The home screen then says what it wrote and offers the practice
+when it runs on your machine and host when it does not. Docker can take a while to answer (up
+to 20 s when its daemon hangs): until it does the form offers neither and saves none, so wait
+for it or choose one yourself, and a choice you made meanwhile stands. Leaving the form stops
+the question. `ctrl+s` saves it; what is wrong with an answer is said in the form. The home screen then says what it wrote and offers the practice
 set first, with starting an event one below; when your lanes run in Docker and the lane image
 is not built yet, building it comes first (`flightdeck image build`, run for you in the
 terminal). "Start a new CTF" with no config asks the same setup first and then offers the

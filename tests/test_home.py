@@ -353,17 +353,69 @@ SETUP_KEY = "sk-or-synthetic-" + "0123456789abcdef" * 2  # synthetic: the key a 
 CLAUDE_ON_OPENROUTER = "anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,anthropic/claude-opus-5.5"
 
 
-def docker_on_path(tmp_path, monkeypatch, *, running: bool, image: bool = False) -> None:
+def docker_on_path(tmp_path, monkeypatch, *, running: bool, image: bool = False):
     """A stand-in `docker`, the only one on PATH: `docker version` answers as a running daemon
     does, or fails as a stopped one; `docker image inspect` finds the image or not. Never the
-    real docker, and it runs nothing."""
+    real docker, and it runs nothing. Its folder is returned: what it was asked is in `asked`
+    there, a line a call."""
     folder = tmp_path / f"docker-{'up' if running else 'down'}-{'image' if image else 'bare'}"
     folder.mkdir()
     exe = folder / "docker"
     version = "echo 27.0.0; exit 0" if running else "echo down >&2; exit 1"
-    exe.write_text(f'#!/bin/sh\n[ "$1" = "version" ] && {{ {version}; }}\n[ "$1 $2" = "image inspect" ] && exit {0 if image else 1}\nexit 64\n')
+    exe.write_text(f'#!/bin/sh\necho "$1 $2" >> "{folder}/asked"\n[ "$1" = "version" ] && {{ {version}; }}\n'
+                   f'[ "$1 $2" = "image inspect" ] && exit {0 if image else 1}\nexit 64\n')
     exe.chmod(0o755)
     monkeypatch.setenv("PATH", str(folder))
+    return folder
+
+
+SLOW_DOCKER = 10  # seconds a slow stand-in docker takes at most, when nothing lets it go on and nothing kills it
+
+
+def slow_docker(tmp_path, monkeypatch, name: str, *, running: bool = False):
+    """A stand-in `docker`, the only one on PATH, whose `docker version` does not answer, as a
+    daemon that hangs does not: it writes its process id to `pid` in its folder (returned) and
+    waits for a file `go` there, then fails as a stopped daemon does (or answers as a running
+    one). It runs nothing, and ends by itself after SLOW_DOCKER seconds."""
+    folder = tmp_path / f"docker-slow-{name}"
+    folder.mkdir()
+    exe = folder / "docker"
+    exe.write_text(f'#!/bin/sh\n[ "$1" = "version" ] || exit 64\necho $$ > "{folder}/pid"\nn=0\n'
+                   f'while [ ! -e "{folder}/go" ] && [ $n -lt {SLOW_DOCKER * 10} ]; do /bin/sleep 0.1; n=$((n+1)); done\n'
+                   + ("echo 27.0.0; exit 0\n" if running else "echo down >&2; exit 1\n"))
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(folder))
+    return folder
+
+
+async def docker_asked(pilot, folder) -> int:
+    """Wait until the slow stand-in docker is running; its process id."""
+    for _ in range(100):
+        if (folder / "pid").exists() and (folder / "pid").read_text().strip():
+            return int((folder / "pid").read_text())
+        await pilot.pause(0.05)
+    pytest.fail("the form never asked docker")
+
+
+def gone(pid: int) -> bool:
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def ended(pid: int) -> bool:
+    """Whether process `pid` is gone, given a moment for what killed it to collect it."""
+    import time
+
+    for _ in range(40):
+        if gone(pid):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 @pytest.fixture
@@ -379,14 +431,20 @@ def fresh(home, tmp_path, monkeypatch):
     return config
 
 
-async def open_setup(app, pilot, *keys):
-    """Take the menu's choice (Enter, after `keys`): the setup form, once it has looked for Docker."""
+async def looked_for_docker(app, pilot) -> None:
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+async def open_setup(app, pilot, *keys, looked: bool = True):
+    """Take the menu's choice (Enter, after `keys`): the setup form, once it has looked for
+    Docker; or at once, while it may still be looking (`looked` false)."""
     await pilot.press(*keys, "enter")
     await pilot.pause()
     form = app.screen
     assert type(form).__name__ == "SetupForm"
-    await app.workers.wait_for_complete()
-    await pilot.pause()
+    if looked:
+        await looked_for_docker(app, pilot)
     return form
 
 
@@ -487,6 +545,100 @@ def test_the_setup_form_offers_docker_where_docker_runs_and_host_where_it_does_n
     docker_on_path(tmp_path, monkeypatch, running=False)
     kind, done = drive_home(homes.items(have_config=False), docker_down)
     assert kind == "setup" and done.answers.runtime == "docker"
+
+
+def test_the_setup_form_saves_no_runtime_while_it_still_looks_for_docker_and_a_choice_made_meanwhile_stands(fresh, tmp_path, monkeypatch):
+    from textual.widgets.select import InvalidSelectValueError
+
+    from ctf_flightdeck.console import home as homes
+
+    async def saved_too_soon(app, pilot):
+        form = await open_setup(app, pilot, looked=False)
+        await docker_asked(pilot, docker)
+        assert form.query_one("#runtime").value == "" and "Looking for Docker" in said(form, "dockerfound")  # nothing offered yet
+        fill(form, provider="local")  # no key to ask for: nothing else stops the save
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+        assert "Runtime: still looking for Docker" in said(form, "problem") and "choose docker or host yourself" in said(form, "problem")
+        assert app.return_value is None  # never a runtime nobody chose and nothing decided
+        (docker / "go").touch()  # Docker answers at last: its daemon is not running
+        await looked_for_docker(app, pilot)
+        assert form.query_one("#runtime").value == "host"
+        assert "Docker cannot run lanes here (docker daemon not running (down)), so host is offered" in said(form, "dockerfound")
+        with pytest.raises(InvalidSelectValueError):  # decided now: "not decided" is no choice any more
+            fill(form, runtime="")
+        await pilot.press("ctrl+s")
+
+    docker = slow_docker(tmp_path, monkeypatch, "soon")
+    kind, done = drive_home(homes.items(have_config=False), saved_too_soon)
+    assert kind == "setup" and done.answers.runtime == "host"
+
+    async def chosen_meanwhile(app, pilot):
+        form = await open_setup(app, pilot, looked=False)
+        await docker_asked(pilot, docker)
+        fill(form, provider="local", runtime="docker")  # the player's own choice, made while the form still looks
+        await pilot.pause()
+        (docker / "go").touch()
+        await looked_for_docker(app, pilot)
+        assert form.query_one("#runtime").value == "docker"  # not turned into host: it was chosen, not left alone
+        assert ("Docker cannot run lanes here (docker daemon not running (down)). Your choice, docker, stands: install or start "
+                "Docker before a run") in said(form, "dockerfound")
+        await pilot.press("ctrl+s")
+
+    docker = slow_docker(tmp_path, monkeypatch, "meanwhile")
+    kind, done = drive_home(homes.items(have_config=False), chosen_meanwhile)
+    assert kind == "setup" and done.answers.runtime == "docker"
+
+    async def host_chosen_where_docker_runs(app, pilot):
+        form = await open_setup(app, pilot, looked=False)
+        await docker_asked(pilot, docker)
+        fill(form, provider="local", runtime="host")
+        await pilot.pause()
+        (docker / "go").touch()
+        await looked_for_docker(app, pilot)
+        assert form.query_one("#runtime").value == "host"  # theirs too, with what it gives up said
+        assert "Docker is running here. Your choice, host, stands: docker is the safer one." in said(form, "dockerfound")
+        await pilot.press("ctrl+s")
+
+    docker = slow_docker(tmp_path, monkeypatch, "host", running=True)
+    kind, done = drive_home(homes.items(have_config=False), host_chosen_where_docker_runs)
+    assert kind == "setup" and done.answers.runtime == "host"
+
+
+def test_leaving_the_setup_form_never_waits_for_a_docker_that_does_not_answer_and_leaves_none_running(fresh, tmp_path, monkeypatch):
+    import time
+
+    from ctf_flightdeck.console import home as homes
+
+    asked = []
+
+    async def back_and_quit(app, pilot):
+        await open_setup(app, pilot, looked=False)
+        asked.append(await docker_asked(pilot, docker))
+        await pilot.press("escape")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if gone(asked[-1]):
+                break
+        assert gone(asked[-1])  # the form closed: nothing goes on asking Docker behind the menu
+        await pilot.press("q")
+
+    async def chosen_and_saved(app, pilot):
+        form = await open_setup(app, pilot, looked=False)
+        asked.append(await docker_asked(pilot, docker))
+        fill(form, provider="local", runtime="host")  # the player's own choice: nothing to wait for
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+
+    for name, script in (("quit", back_and_quit), ("saved", chosen_and_saved)):
+        docker = slow_docker(tmp_path, monkeypatch, name)
+        began = time.monotonic()
+        result = drive_home(homes.items(have_config=False), script)
+        took = time.monotonic() - began
+        assert took < SLOW_DOCKER / 2, f"{name}: the home screen took {took:.1f} s to end"  # the stand-in takes SLOW_DOCKER
+        assert ended(asked[-1]), f"{name}: `docker version` was left running"
+        assert (result is None) if name == "quit" else (result[0] == "setup" and result[1].answers.runtime == "host")
+    assert len(asked) == 2
 
 
 def test_the_setup_form_asks_for_no_key_that_is_set_already(fresh, monkeypatch):
