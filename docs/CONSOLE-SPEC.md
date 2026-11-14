@@ -523,7 +523,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `f` | `/fork [approach]` | Start a sibling lane on the same challenge with a different approach or model |
 | `k` | `/kill [park]` | Kill the lane; the challenge goes back to the queue (fresh) or is parked. A re-queue made in the lane's focus view takes the view to the fresh lane |
 | `e` | `/escalate` | Hand a compact state summary to a stronger model |
-| `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Other lanes keep running meanwhile. |
+| `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Taking over closes the lane's sessions (a gdb or a connection it kept running: P82), and the hand-back tells it which. Other lanes keep running meanwhile. |
 | `a`, `1` | `/approve` | Approve the pending action (submit, more budget, live-box access); on a board that cannot check flags, "accepted" |
 | `A` | `/approve all` | Approve every flag that waits for a plain yes, in one action (Approving several flags at once, below) |
 | `x` | `/dismiss` | Dismiss the lane's most urgent alert about its course (effort, off-hint, wrong way, loop, stall) without intervening: you judge it wrong. It goes, and stays quiet as an answered alert does (Dismissing an alert, below) |

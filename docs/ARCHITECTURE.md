@@ -316,7 +316,7 @@ view, then `BOTH_KEY_HELP` and the rest.
 | Piece | Where | Job |
 |---|---|---|
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | flightdeck's own loop: one asyncio task per lane, one model call per turn. [More](#agent-driver). |
-| Tools | `agent/tools.py` | `shell`, `read_file`, `view_image` (a picture in the workspace, for the model to look at: [More](#lane-images)), `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
+| Tools | `agent/tools.py` | `shell`, `read_file`, `view_image` (a picture in the workspace, for the model to look at: [More](#lane-images)), `python`, `http` (only the challenge's own origins), the session tools (a process kept running across turns: [More](#sessions)), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane, on the host or in a container, and the take-over shell. [More](#workspaces). |
 | Lane network | `agent/egress.py`, `agent/egress_proxy.py` | The fence round a Docker lane's network: its challenge's instance, a coding-agent CLI's API, nothing else. [More](#lane-network). |
 | Lane summary | `core/summary.py` | What a lane did, in at most 3000 characters (plan, the newest steps, files, flags and what became of them, alerts, the player's messages). Escalation and the context refresh hand it to the model, fenced as data, after the L1 results. |
@@ -464,6 +464,43 @@ The fence is as it was: no capability is added and Docker's default seccomp prof
 which gdb traces its own child but cannot switch address randomisation off. `lane.build_command`
 labels the image with the Dockerfile's fingerprint (`lane.LABEL`), and `flightdeck doctor` warns
 of a lane image that carries another, or none (`setup._lane_image_build_checks`).
+
+### Sessions
+
+Where: `agent/sessions.py`, `agent/tools.py`, `agent/workspace.py` (`open_session`), `agent/driver.py` (P82).
+
+The shell tool is a fresh bash for each call, so a debugger or a connection ends with the call.
+`session_start(command)` starts a process that lasts across turns: on the host, bash in the
+workspace in a process group of its own, like every lane command, so the workspace's close kills
+it too; in Docker, a `docker exec -i` of its own in the lane's container, whose first line is the
+process's pid in the container (`SESSION_PID`, taken off the output), with stderr merged into
+stdout inside the container so the order holds. `session_send(session, input, until,
+wait_seconds)` writes a line (or the input as it is, `newline: false`) and reads: until the text
+`until` appears, until the output has been quiet half a second after something came, until the
+process ends, or for at most `wait_seconds` (default 2, at most 60). No input only reads.
+`session_close` kills the process and everything under it: its group on the host, and in Docker
+the process tree in the container (`SIGNAL_TREE`, the script the coding-agent lanes use, since
+`docker exec` passes no signal on) and then the client.
+
+The process gets pipes, not a terminal: no echo and no line editor's escapes in what comes back,
+and a program that looks for a terminal acts as it would in a script: it may print no prompt, or
+hold its output in a buffer (`python3` does both unless started as `python3 -u -i`). A pty was the
+other choice; it would make prompts appear, and would
+bring echo, colour and readline's sequences into the model's context with them.
+
+Limits: at most three sessions open in a lane (`MAX_SESSIONS`); one nobody sends to or reads for
+ten minutes is closed (`IDLE_SECONDS`), and naming it later says why; at most 1 MiB of output
+waits between reads, the oldest dropped first and the count said; 64 KiB per send. Names are s1,
+s2, ... and never reused in a lane. A take-over closes every session before the shell opens (a
+debugger must not run on beside the player), and the hand-back tells the lane which were closed;
+the lane's end closes them before its workspace closes. An escalation or a context refresh keeps
+them, as it keeps the workspace's files.
+
+What a session writes is the challenge's, as any tool output is: it goes through the run's held
+secrets before anything cuts it, then the cut of `shell` (the rest to a file in `.flightdeck/out`).
+A few bytes at the end of a read that could begin a held secret (`Secrets.unfinished`) wait for the
+next read, so a secret written across two reads is found whole. Sessions are a tool of
+flightdeck's own lanes; a coding-agent CLI has its own.
 
 ### Lane network
 

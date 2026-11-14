@@ -3,6 +3,13 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not released
+
+- **Sessions** (P82). flightdeck's own lanes keep a program running across turns (gdb, an
+  interpreter, `nc` to the instance) with `session_start`, `session_send` and `session_close`:
+  at most three per lane, closed after ten minutes unused, and all closed at a take-over and at
+  the lane's end ([ARCHITECTURE.md](ARCHITECTURE.md#sessions)).
+
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
 Eighteen proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P51 to P68),

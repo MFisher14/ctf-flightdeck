@@ -8,8 +8,8 @@ container), session_send writes to its input and reads what it wrote, and sessio
 it and everything it started.
 
 The process gets pipes, not a terminal, so a program that asks whether it has one acts as if
-it were scripted: gdb and python show no prompt unless told to, and output may be buffered
-(python3 -u). That is what keeps its output plain text: no echo of what was sent, no
+it were scripted: it may show no prompt, or hold its output in a buffer (python3 does both
+unless started as python3 -u -i). That is what keeps its output plain text: no echo of what was sent, no
 escape sequences of a line editor.
 
 Limits, so that a lane cannot leave its processes running or fill memory: at most
