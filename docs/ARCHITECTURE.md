@@ -182,6 +182,18 @@ the rows are mounted again while the player reads back. What is mounted is a win
 go, and while the player reads back the rows before and after the window are counted in a
 first and a last row, where `pgup` and `pgdn` move it 300 rows.
 
+**Selecting and copying** (P54). Selection is Textual's: a drag, a double-click (the widget
+under it: one entry) and a triple-click (its scroll container: the transcript) select text in
+any Static that holds Text. `FlightdeckApp.on_text_selected` (a mouse button came up) and
+`on_click` (a click of two or more) copy what is selected, once for each selection; the two
+screens bind `ctrl+c` to the same copy, and take a selection down on `esc` before anything else
+(`key_escape` keeps Textual's own screen from doing it before the binding runs). Every copy
+goes through `FlightdeckApp.copy`: Textual's OSC 52 write, then the app's `copier`, which is
+`clipboard.put` (`clipboard.py`: `copy_text` runs `pbcopy`, or the first of `wl-copy`, `xclip`,
+`xsel` that takes the text, and no tool over SSH; `put` returns what the player must be told
+when no tool took it). `views.lane_copy()` is the text `/copy` copies. The highlight is
+`Screen > .screen--selection` in the app's styles, the palette's `selected_focus`.
+
 **The lane's card** (P54). `views.now_card()` draws what the lane needs from the player. Its
 full form is a Rich panel: the approval's rows first, then every open alert with its
 suggestions as commands. With `calm=True` (details off, and never in the compact layout) it

@@ -290,6 +290,21 @@ full card: every alert with its whole reason, and each answer as the command you
 On a full card too tall for its half of the pane, the approval and its answers stay on top and
 the mouse wheel scrolls to the rest.
 
+**Copying text.** Drag the mouse over the transcript, the needs-you box, the header or the
+status line: what you dragged over is copied when you let go, and the status line says `copied
+212 characters`. A double-click copies a whole entry, also the part the edge cut with `…`; a
+triple-click the whole transcript on screen. `ctrl+c` copies the selection again and `esc`
+takes it down. With no mouse, `/copy` copies the lane's last output with its line breaks,
+`/copy command` the command that printed it, `/copy flag` the lane's flag, and `/copy all` the
+whole transcript. A copy shows a credential's name and never its value, as the screen does.
+
+flightdeck copies through your system's clipboard tool (`pbcopy` on macOS; `wl-copy`, `xclip`
+or `xsel` on Linux) and through the terminal (OSC 52), which is what reaches your machine over
+SSH. If neither can be shown to have worked, the status line says so and what to do: install
+`xclip` or `wl-copy`, or use the terminal's own selection by holding fn (Terminal.app), Option
+(iTerm2) or Shift while you drag. That selection is also the way to copy from the full
+needs-you card, the diff and the lane list, which flightdeck's own selection does not reach.
+
 `t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
 lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
 its HOME is a new folder only you can read, outside the workspace, so nothing the lane wrote runs

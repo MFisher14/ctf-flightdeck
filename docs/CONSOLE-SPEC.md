@@ -157,6 +157,41 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
+- **Selecting and copying**: text selects with the mouse. Drag over the transcript, the calm
+  card, the header or the status line, and what you dragged over is copied when you let go; the
+  status line says `copied 212 characters`. A double-click takes the whole entry, also what the
+  edge cuts with `…`; a triple-click the whole transcript that is drawn. A row of the detailed
+  transcript that wraps over three rows is copied as the one line it is. `ctrl+c` copies the
+  selection again, in the lane list too; with nothing selected it is Textual's hint of the key
+  that quits, as before.
+  `esc` takes a selection down and the view stays (the next `esc` goes back), and so does typing.
+  The chat box keeps the focus through a drag. The highlight is the theme's colour for a selected
+  row (`selected_focus`), and the text on it keeps its own colour.
+
+  A copy goes two ways, both every time: to the terminal's clipboard (OSC 52), and to the
+  operating system's by its tool, which is `pbcopy` on macOS and on Linux `wl-copy`, else
+  `xclip -selection clipboard`, else `xsel --clipboard --input`. Over SSH (`SSH_CONNECTION` or
+  `SSH_TTY` is set) no tool is run: it would fill the clipboard of the machine flightdeck runs
+  on, and OSC 52 carries the text to yours. A terminal never says whether it took OSC 52, so
+  when no tool took the text the status line warns instead of claiming a copy: `sent to the
+  terminal's clipboard (OSC 52). If paste is empty, this terminal does not take it: install
+  xclip or wl-copy, or hold fn (Terminal.app), Option (iTerm2) or Shift while you drag`.
+  Installing a tool is named only on a Linux machine you sit at, and a tool that failed is
+  named first (`xclip failed (exit 1); sent to …`).
+
+  `/copy` copies from the lane with no mouse, in either view. Alone (or `/copy output`): the
+  output of the lane's last tool call that printed something, as its transcript keeps it (of a
+  call of flightdeck's own loop, up to 40 lines), with real newlines. `/copy command`: that
+  call's command, its lines real again and without the `$ ` of a shell call, so it pastes into a
+  shell. `/copy flag`: the flag that waits for your approval, else the newest flag the run knows
+  for the lane's challenge; with none, `L01 has no flag yet`. `/copy all`: every line of the
+  transcript in detail. The status line says what was copied (`copied L01's last output: 38
+  lines`). What is copied is what the console would show: a credential's name without its
+  value, and control characters made visible.
+
+  Not selectable: the full needs-you card (a panel), the diff, the lane list and the board
+  (tables). `/copy` covers what a lane did; for the rest, the terminal's own selection: hold fn
+  (Terminal.app), Option (iTerm2) or Shift while you drag.
 - **A lane that restarts takes the view with it.** `/attach` typed here, and a kill that
   re-queues made here (`/kill`, the Kill prompt's re-queue, the numbered "kill and re-queue fresh"
   answer), end the lane and start a fresh one on its challenge: the view goes to the fresh lane,
@@ -307,6 +342,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 | `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows at most. Typed in the fleet, `/details` says it is that view's |
 |  | `/diff [file]` | Show the files the lane changed |
+| `ctrl+c` | `/copy [output\|command\|flag\|all]` | `ctrl+c` copies the text selected with the mouse (a drag copies it as you let go; `esc` takes the selection down). `/copy` copies from the lane with no mouse: its last output (alone), that call's command, its flag, or all of its transcript (Focus view, Selecting and copying) |
 |  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
 |  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column); alone, the other one. The status line says the config line that keeps it (`layout = "deck"` under `[console]`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
 |  | `/theme [name]` | Alone: the themes there are, the one in use marked. With a name: the console's colours for the rest of this run, and the status line says the config line that keeps it. A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |

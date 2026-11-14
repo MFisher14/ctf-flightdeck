@@ -54,6 +54,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   dead lane). `/attach` names the fresh lane (`L01 restarted as L02`), and the ended lane reads
   `killed: to restart with extra.txt`. In the simple layout the chat box names its lane
   (`message L01 · / commands`).
+- Text in the console selects and copies: drag over a lane's transcript, its needs-you box,
+  the header or the status line and it is copied when you let go (`copied 212 characters`); a
+  double-click copies a whole entry, a triple-click the transcript. `ctrl+c` copies the
+  selection again, `esc` takes it down. `/copy` copies with no mouse: a lane's last output,
+  `/copy command`, `/copy flag`, `/copy all`. It uses `pbcopy`, `wl-copy`, `xclip` or `xsel`
+  and the terminal's clipboard (OSC 52, which works over SSH), and says so when it cannot tell
+  that the copy arrived.
 - The mock opens in your config's layout and theme, and the home screen in its theme.
   `flightdeck doctor` measures your terminal in the layout your config names, and reports each
   plugin you added.
