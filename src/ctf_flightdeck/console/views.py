@@ -1,5 +1,10 @@
-"""Rendering for the console: header, board and lane rows, the fleet's "why" line, and the
-focus view's transcript, "needs you now" card, files and diff.
+"""Rendering for the console: header, board and lane rows, the fleet's "why" line and its peek
+at the selected lane (peek), and the focus view's transcript (every line: transcript_lines;
+calm: entries, entry_text), "needs you now" card, files and diff.
+
+The console has two layouts (config.LAYOUTS): `deck`, the whole dashboard, and `simple`, which
+shows what needs the player and little else. The functions here that draw differently in
+`simple` take `simple=True`; the compact layout (a narrow terminal) wins over both.
 
 Everything that comes from a challenge or a lane (names, descriptions, commands, tool
 output, flags, diffs) is untrusted. It goes through text.untrusted() and is wrapped in
@@ -25,6 +30,7 @@ from rich import box
 from rich.cells import cell_len, set_cell_size
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
@@ -41,6 +47,7 @@ from ..core.model import (
     Actor,
     Alert,
     AlertKind,
+    Call,
     Challenge,
     ChallengeStatus,
     Event,
@@ -53,32 +60,44 @@ from ..core.model import (
 from ..credentials import named_flags, redact
 from ..runrecord import L1 as BY_L1
 from ..runrecord import Credit, EventLine, Solve, accepted
-from ..text import untrusted
+from ..text import NEWLINE, untrusted
 from . import theme
-from .commands import KEY_COMMAND, lane_id
+from .commands import KEY_COMMAND, Ask, goes_to, lane_id
 
 CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 
-STATE_COLOR = {
-    LaneState.RUNNING: theme.GREEN,
-    LaneState.WAITING: theme.PURPLE,
-    LaneState.PAUSED: theme.YELLOW,
-    LaneState.TAKEOVER: theme.CYAN,
-    LaneState.SOLVED: theme.GREEN,
-    LaneState.KILLED: theme.RED,
-    LaneState.STOPPED: theme.MUTED,
-    LaneState.GAVE_UP: theme.MUTED,
+_STATE_ROLE = {  # a lane state's colour, as a role of the palette (themes.ROLES)
+    LaneState.RUNNING: "ok",
+    LaneState.WAITING: "pending",
+    LaneState.PAUSED: "warn",
+    LaneState.TAKEOVER: "info",
+    LaneState.SOLVED: "ok",
+    LaneState.KILLED: "error",
+    LaneState.STOPPED: "muted",
+    LaneState.GAVE_UP: "muted",
 }
 
-BOARD_MARK = {
-    ChallengeStatus.NEW: ("·", theme.MUTED),
-    ChallengeStatus.QUEUED: ("…", theme.MUTED),
-    ChallengeStatus.RUNNING: ("▶", theme.GREEN),
-    ChallengeStatus.SOLVED: ("✓", theme.GREEN),
-    ChallengeStatus.TEAMMATE: ("✓", theme.CYAN),
-    ChallengeStatus.BLOCKED: ("✗", theme.RED),
-    ChallengeStatus.PARKED: ("‖", theme.YELLOW),
+_BOARD_MARK = {  # a challenge status's mark, and its colour as a role of the palette
+    ChallengeStatus.NEW: ("·", "muted"),
+    ChallengeStatus.QUEUED: ("…", "muted"),
+    ChallengeStatus.RUNNING: ("▶", "ok"),
+    ChallengeStatus.SOLVED: ("✓", "ok"),
+    ChallengeStatus.TEAMMATE: ("✓", "info"),
+    ChallengeStatus.BLOCKED: ("✗", "error"),
+    ChallengeStatus.PARKED: ("‖", "warn"),
 }
+
+
+def state_color(state: LaneState) -> str:
+    """The colour of a lane's state, in the palette in use (read when drawn: theme.py)."""
+    return getattr(theme.active(), _STATE_ROLE[state])
+
+
+def board_mark(status: ChallengeStatus) -> tuple[str, str]:
+    """(mark, colour) for a challenge's status on the board, in the palette in use."""
+    mark, role = _BOARD_MARK[status]
+    return mark, getattr(theme.active(), role)
+
 
 PENDING_TAG = {
     PendingKind.SUBMIT: "submit",
@@ -121,7 +140,9 @@ class _Flags:
         for event in events[self.read :]:
             found = named_flags(event.data)
             if found and event.challenge:
-                self.of[event.challenge] = tuple(dict.fromkeys((*self.of.get(event.challenge, ()), *found)))
+                # a flag met again goes to the end: the last is the one the run named last, which /copy flag gives
+                earlier = (flag for flag in self.of.get(event.challenge, ()) if flag not in found)
+                self.of[event.challenge] = tuple(dict.fromkeys((*earlier, *found)))
         self.read = len(events)
 
 
@@ -129,15 +150,21 @@ _FLAGS: WeakKeyDictionary[Deck, _Flags] = WeakKeyDictionary()
 LINE_CHARS = 1000  # a one-line cell (the last action, the why line) shows no more of a text than this: no terminal is that wide
 
 
-def lane_text(deck: Deck, lane: Lane, text: str) -> str:
-    """`text` from what `lane` did, as the console shows it: the value of anything shaped like
-    a credential taken out (credentials.py), but the flags the run knows for its challenge.
-    The deck keeps the text as it was, for the lane's model, which has read it already."""
+def known_flags(deck: Deck, challenge_id: str) -> tuple[str, ...]:
+    """The flags the run knows for a challenge, each once, in the order it last met them: the
+    last is the one a lane proposed, the player submitted or an L1 engine reported most lately."""
     flags = _FLAGS.get(deck)
     if flags is None:
         flags = _FLAGS[deck] = _Flags()
     flags.update(deck.events)
-    return _redacted(text, flags.of.get(lane.challenge_id, ()))
+    return flags.of.get(challenge_id, ())
+
+
+def lane_text(deck: Deck, lane: Lane, text: str) -> str:
+    """`text` from what `lane` did, as the console shows it: the value of anything shaped like
+    a credential taken out (credentials.py), but the flags the run knows for its challenge.
+    The deck keeps the text as it was, for the lane's model, which has read it already."""
+    return _redacted(text, known_flags(deck, lane.challenge_id))
 
 
 @lru_cache(maxsize=256)
@@ -338,21 +365,49 @@ HEADER_WORDS = {  # the pieces that can drop, as doctor names them (console/room
     "event": "the event's name", "mock": "the mock tag", "runtime": "the runtime (docker or host)",
     "tokens": "tokens", "dollars": "dollars", "clock": "the event clock",
     "flightdeck": "the flightdeck name", "mode": "solo or team",  # these two give way in the compact layout only
+    "team": "the team tag", "host": "the host tag", "queue": "the queue",  # the simple layout's own pieces
 }
 COMPACT_HEADER_OMITS = ("tokens", "clock", "event", "mock", "runtime")  # never in the compact header, in their usual drop order
 
 
-def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
+def plain(text: str, colour: str = "") -> tuple[str, str, str, bool]:
+    """A header piece drawn as text on the page, not as a block: the simple layout's for what
+    is not "look here" (P66). `colour` is the text's (the palette's text by default); each pair
+    it makes with the page is one a theme is checked for (themes.CONTRAST)."""
+    return (text, colour or theme.TEXT, theme.PAGE, False)
+
+
+def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = False) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
     """(name, drop rank, segment) for each piece, in order. Rank 0 never drops; on a narrow
     terminal the highest rank drops first, the later piece first on a tie (D16). The compact
     layout's header has what needs the player and the dollars, which never drop, the lanes and
-    the queue in short, and the flightdeck name and solo/team, which give way in that order."""
+    the queue in short, and the flightdeck name and solo/team, which give way in that order.
+
+    The simple layout's header (`simple`; the compact one wins over it) says only what is not
+    the usual: team mode, lanes on the host, a queue that is not empty, autopilot, who needs
+    the player, a held queue. Those last three and the dollars never drop. It has no solo,
+    docker, lane count, "all clear", tokens or clock. Only "look here" has a background in it
+    (P66): flightdeck, host, AUTOPILOT, the need-you count and a held queue. The event's name,
+    team, the queue and the dollars are text on the page (plain()), and the mock tag muted."""
     if compact:
         out = [
             ("flightdeck", 2, ("flightdeck", theme.WHITE, theme.BLUE, True)),
             ("mode", 1, ("team" if facts.team else "solo", theme.CYAN if facts.team else theme.TEXT, theme.SEGMENT, True)),
             ("lanes", 0, (f"{facts.lanes}/{lanes_text(facts.max_lanes)} · q{facts.queue}", theme.TEXT, theme.SEGMENT, False)),
         ]
+    elif simple:
+        out = [
+            ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
+            ("event", 3, plain(untrusted(facts.event, one_line=True))),
+        ]
+        if facts.mock:
+            out.append(("mock", 2, plain(facts.mock, theme.MUTED)))
+        if facts.team:
+            out.append(("team", 1, plain("team", theme.CYAN)))
+        if not facts.containerized:
+            out.append(("host", 1, ("host", theme.INK, theme.YELLOW, True)))
+        if facts.queue:
+            out.append(("queue", 1, plain(f"queue {facts.queue}")))
     else:
         out = [
             ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
@@ -369,13 +424,13 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
         out.append(("autopilot", 0, (AUTOPILOT_SHORT if compact else AUTOPILOT, theme.INK, theme.GREEN, True)))
     if facts.need:
         out.append(("need", 0, (f"▲ {facts.need} need you", theme.WHITE, theme.RED, True)))
-    elif not facts.held:  # a held queue is not all clear: nothing starts until the player lifts it
+    elif not facts.held and (compact or not simple):  # a held queue is not all clear: nothing starts until the player lifts it
         out.append(("need", 0, ("all clear", theme.MUTED, theme.SEGMENT, False)))
     if facts.held:
         out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
     dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
-    if compact:
-        out.append(("dollars", 0, (dollars, theme.TEXT, theme.SEGMENT, False)))
+    if compact or simple:
+        out.append(("dollars", 0, plain(dollars) if simple and not compact else (dollars, theme.TEXT, theme.SEGMENT, False)))
         return out
     out += [
         ("tokens", 4, (f"tok {fmt.tokens(facts.tokens)}", theme.TEXT, theme.SEGMENT, False)),
@@ -385,13 +440,15 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
     return out
 
 
-def fit_header(facts: HeaderFacts, width: int, *, compact: bool = False) -> tuple[Text, list[str]]:
+def fit_header(facts: HeaderFacts, width: int, *, compact: bool = False, simple: bool = False) -> tuple[Text, list[str]]:
     """The header in `width` cells, and the names of the pieces it leaves out, in the order
     they drop. While the queue is held, why follows "queue held": the event's name, the clock,
     tokens and dollars give way to it (in their usual order), and it is cut to the room left.
     The compact layout's header (header_pieces) never has tokens, the clock, the event's name,
-    the mock tag or the runtime: they come first in what it leaves out."""
-    pieces = header_pieces(facts, compact=compact)
+    the mock tag or the runtime: they come first in what it leaves out. The simple layout's
+    header leaves out only what a narrow terminal makes it drop: what it never shows is not
+    missing from it."""
+    pieces = header_pieces(facts, compact=compact, simple=simple)
     left_out: list[str] = [name for name in COMPACT_HEADER_OMITS if name != "mock" or facts.mock] if compact else []
     text = theme.segments([part for _, _, part in pieces])
 
@@ -422,10 +479,10 @@ def _cut(text: str, cells: int) -> str:
     return text if cell_len(text) <= cells else set_cell_size(text, cells - 1) + "…"
 
 
-def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200, compact: bool = False) -> Text:
+def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200, compact: bool = False, simple: bool = False) -> Text:
     """The slanted header. Low-priority pieces drop out first when the terminal is narrow.
     While the queue is held it says so, never "all clear", and why, as room allows."""
-    text, _ = fit_header(header_facts(deck, mock), width, compact=compact)
+    text, _ = fit_header(header_facts(deck, mock), width, compact=compact, simple=simple)
     if note and text.cell_len + len(note) + 2 <= width:
         text.append("  " + note, theme.MUTED)
     return text
@@ -515,7 +572,11 @@ def owner(deck: Deck, ch: Challenge) -> tuple[str, str]:
     return "", ""
 
 
-OWNER_STYLE = {"mate": theme.CYAN, "me": "bold", "lane": "", "l1": theme.GREEN, "": ""}
+def owner_style(kind: str) -> str:
+    """The style of the board's owner cell, for a kind owner() gives."""
+    return {"mate": theme.CYAN, "me": "bold", "lane": "", "l1": theme.GREEN, "": ""}[kind]
+
+
 GUESSED = "?"  # after a light model's guess at a category the board does not name
 
 
@@ -540,7 +601,7 @@ def route_text(ch: Challenge) -> str:
 
 
 def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
-    mark, mark_color = BOARD_MARK[ch.status]
+    mark, mark_color = board_mark(ch.status)
     dim = theme.MUTED if ch.status in (ChallengeStatus.SOLVED, ChallengeStatus.TEAMMATE, ChallengeStatus.BLOCKED) else ""
     own, kind = owner(deck, ch)
     if ch.claimed_by == ME and kind == "lane":
@@ -551,7 +612,7 @@ def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
         "pts": safe(ch.points, dim, justify="right"),
         "solv": safe(ch.solves, theme.MUTED, justify="right"),
         "mark": Text(mark, style=mark_color),
-        "own": safe(own, OWNER_STYLE[kind]),
+        "own": safe(own, owner_style(kind)),
     }
 
 
@@ -596,6 +657,19 @@ COMPACT_LANE_COLUMNS = (
     ("chall", "chall", 0, 0),
 )
 COMPACT_CHALL_MIN = 8
+# The simple layout's lane row: what needs you, the lane, its challenge, state and cost, and what
+# it did last. Its model, turns and idle time are in the lane's own view (focus_title). Only the
+# last action can go, and only once the challenge's name has narrowed (simple_lane_columns): what
+# a lane has spent is in the list at every width, as in the compact layout.
+SIMPLE_LANE_COLUMNS = (
+    ("bar", "", 1, 0),
+    ("!", "!", 12, 0),
+    ("lane", "lane", 4, 0),
+    ("chall", "chall", 20, 0),
+    ("state", "state", 8, 0),
+    ("cost", "cost", 8, 0),
+    ("last", "last action", 0, 1),
+)
 COMPACT_ALERT_TAG = {
     AlertKind.FLAG: "flag", AlertKind.BUDGET: "budg", AlertKind.LOOP: "loop", AlertKind.EFFORT: "efrt",
     AlertKind.HINT: "hint", AlertKind.DIRECTION: "wway", AlertKind.STALL: "stal", AlertKind.TEAMMATE: "mate",
@@ -618,28 +692,59 @@ def fit_columns(
     available: int,
     padding: int,
     shrink: dict[str, int] | None = None,
+    *,
+    shrink_first: bool = False,
 ) -> list[tuple[str, str, int]]:
     """Drop columns by rank (highest first) until they fit `available` cells; the
     `stretch` column takes what is left. If the columns that never drop still do not
-    fit, the `shrink` columns narrow, each down to its floor."""
+    fit, the `shrink` columns narrow, each down to its floor.
+
+    `shrink_first`: the `shrink` columns narrow before any column drops, and a column drops
+    only when that was not enough. If the `stretch` column is the one that went, the columns
+    that narrowed take the room back, each up to its own width."""
     kept = [list(column) for column in columns]
+    full = {key: width for key, _, width, _ in columns}
 
     def needed() -> int:
         fixed = sum(width if key != stretch else stretch_min for key, _, width, _ in kept)
         return fixed + 2 * padding * len(kept)
 
-    while needed() > available and any(rank for *_, rank in kept):
-        worst = max(range(len(kept)), key=lambda i: (kept[i][3], i))
-        kept.pop(worst)
-    for key, floor in (shrink or {}).items():
-        over = needed() - available
-        for column in kept:
-            if over > 0 and column[0] == key and column[2] > floor:
-                cut = min(over, column[2] - floor)
-                column[2] -= cut
-                over -= cut
+    def drop() -> None:
+        while needed() > available and any(rank for *_, rank in kept):
+            worst = max(range(len(kept)), key=lambda i: (kept[i][3], i))
+            kept.pop(worst)
+
+    def narrow() -> None:
+        for key, floor in (shrink or {}).items():
+            over = needed() - available
+            for column in kept:
+                if over > 0 and column[0] == key and column[2] > floor:
+                    cut = min(over, column[2] - floor)
+                    column[2] -= cut
+                    over -= cut
+
+    if shrink_first:
+        narrow()
+        drop()
+        if all(column[0] != stretch for column in kept):
+            spare = available - needed()
+            for column in kept:
+                if spare > 0 and column[0] in (shrink or {}):
+                    back = min(spare, full[column[0]] - column[2])
+                    column[2] += back
+                    spare -= back
+    else:
+        drop()
+        narrow()
     spare = available - needed()
     return [(key, label, width if key != stretch else stretch_min + max(0, spare)) for key, label, width, _ in kept]
+
+
+def simple_lane_columns(available: int, padding: int) -> list[tuple[str, str, int]]:
+    """The simple layout's lane columns (SIMPLE_LANE_COLUMNS) for a lane list with `available`
+    cells: the challenge's name narrows first (LANE_SHRINK), then the last action goes and the
+    name is whole again. The cost never goes."""
+    return fit_columns(SIMPLE_LANE_COLUMNS, "last", LAST_MIN, available, padding, LANE_SHRINK, shrink_first=True)
 
 
 SENDING = "sending"  # the attention cell while a flag of the lane is on its way to the platform
@@ -665,7 +770,7 @@ def attention_cell(lane: Lane, sending: bool = False, *, compact: bool = False) 
         return cell
     if lane.pending is not None:
         tags = COMPACT_PENDING_TAG if compact else PENDING_TAG
-        return theme.chip(tags[lane.pending.kind], *theme.PENDING_COLORS)
+        return theme.chip(tags[lane.pending.kind], *theme.pending_colors())
     if sending:
         return theme.chip(COMPACT_SENDING, theme.WHITE, theme.BLUE) if compact else sending_chip()
     if lane.alerts:
@@ -688,20 +793,45 @@ def lane_dollars(lane: Lane, *, short: bool = False) -> str:
     return cost + LATER if lane.dollars_later else cost
 
 
-def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool = False) -> dict[str, Text]:
+STARTING = "starting"  # the simple layout's state for a lane that has done nothing yet (starting())
+
+
+def starting(lane: Lane) -> bool:
+    """`lane` has started and done nothing yet: running, no turn and no step of its own, and
+    nothing spent, nor a turn under way whose cost is still to come. The simple layout's row
+    says `starting` for it, in muted text, with a blank cost (P66): `run` and `$.00` would
+    say it works and has spent nothing, before it has begun."""
+    return (
+        lane.state is LaneState.RUNNING
+        and lane.turns == 0
+        and not any(action.kind is ActionKind.STEP for action in lane.actions)
+        and lane.tokens == 0
+        and lane.dollars == 0
+        and not lane.known_dollars
+        and not lane.unpriced
+        and not lane.dollars_later
+    )
+
+
+def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool = False, simple: bool = False) -> dict[str, Text]:
     """A lane's row, by column. `compact`: the attention chip and the state in short
-    (COMPACT_LANE_COLUMNS has no room for more)."""
+    (COMPACT_LANE_COLUMNS has no room for more). `simple`: a lane that has done nothing yet
+    (starting()) says `starting`, muted, and has a blank cost (the compact layout wins)."""
     ch = deck.challenges[lane.challenge_id]
     dim = theme.MUTED if lane.finished else ""
     idle = lane.idle(deck.now)
     cost = lane_dollars(lane, short=True)
+    if simple and not compact and starting(lane):
+        state, cost = Text(STARTING, style=theme.MUTED), ""
+    else:
+        state = Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=state_color(lane.state))
     return {
         "bar": Text("▌", style=theme.ACCENT) if selected else Text(" "),
         "!": attention_cell(lane, bool(deck.sending(lane.id)), compact=compact),
         "lane": Text(lane.id, style=theme.MUTED if lane.finished else "bold"),
         "chall": safe(ch.name, dim),
         "model": safe(lane.model, dim or theme.CYAN),
-        "state": Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=STATE_COLOR[lane.state]),
+        "state": state,
         "turns": Text(str(lane.turns), style=dim, justify="right"),
         "cost": Text(cost, style=dim or theme.MUTED, justify="right"),
         "idle": Text("-" if lane.finished else fmt.duration(idle), style=dim or (theme.ACCENT if idle >= 600 else ""), justify="right"),
@@ -792,28 +922,48 @@ def quit_summary(deck: Deck, run_dir: str = "") -> Text:
     return out
 
 
-def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
+def lane_matches(deck: Deck, lane: Lane, query: str, *, simple: bool = False) -> bool:
+    """`lane` has every word of `query` in what its row and its challenge say. `simple`: the
+    simple layout's list is drawn (the compact one not winning over it), whose row says
+    `starting` of a lane that has done nothing yet, in place of `run`; elsewhere the row says
+    `run`. The filter reads the state the row shows (lane_cells)."""
     if not query:
         return True
     ch = deck.challenges[lane.challenge_id]
     hay = " ".join(
-        [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model, lane.state.value, lane.last_action, lane.plan]
+        [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model,
+         STARTING if simple and starting(lane) else lane.state.value,  # the state as its row says it (lane_cells)
+         lane.last_action, lane.plan]
         + [a.kind.tag for a in lane.alerts]
         + ([PENDING_TAG[lane.pending.kind]] if lane.pending else [])
     ).lower()
     return all(word in hay for word in query.lower().split())
 
 
-def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = False, compact: bool = False) -> Text:
-    text = Text("fleet ", "bold")
-    text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
-    text.append(f" · sort {sort.value}", theme.MUTED)
-    if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
-        text.append(" · board hidden: narrow terminal", theme.MUTED)
+def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = False, compact: bool = False, simple: bool = False) -> Text:
+    """The lane list's title. In the simple layout (`simple`; the compact one wins over it) it
+    carries what the board and the header would: the challenges that wait for a lane and the
+    ones solved, each only when there are any, and the sort only when it is not by attention."""
+    if simple and not compact:
+        text = Text("lanes ", "bold")
+        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        if deck.queue:
+            text.append(f" · {len(deck.queue)} waiting", theme.MUTED)
+        solved = sum(ch.status is ChallengeStatus.SOLVED for ch in deck.challenges.values())
+        if solved:
+            text.append(f" · ✓ {solved} solved", theme.GREEN)
+        if sort is not SortMode.ATTENTION:
+            text.append(f" · sort {sort.value}", theme.MUTED)
+    else:
+        text = Text("fleet ", "bold")
+        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        text.append(f" · sort {sort.value}", theme.MUTED)
+        if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
+            text.append(" · board hidden: narrow terminal", theme.MUTED)
     if query:
         text.append(" · filter ", theme.MUTED)
         text.append(untrusted(query, one_line=True), f"bold {theme.YELLOW}")
-        hidden = sum(1 for lane in deck.needing() if not lane_matches(deck, lane, query))
+        hidden = sum(1 for lane in deck.needing() if not lane_matches(deck, lane, query, simple=simple and not compact))
         if hidden:
             text.append(f" · {hidden} needing you hidden", f"bold {theme.RED}")
     return text
@@ -835,13 +985,17 @@ def _answers(lane: Lane, alert: Alert | None) -> Text:
     return out
 
 
-def lane_why(deck: Deck, lane: Lane) -> Text:
-    """Two lines under the lane list: why the selected lane is flagged, and the answers."""
+def lane_why(deck: Deck, lane: Lane, *, simple: bool = False) -> Text:
+    """Two lines under the lane list: why the selected lane is flagged, and the answers. In the
+    simple layout (`simple`) they are blank for a lane with no alert and no approval waiting:
+    its row says what it is doing, and enter opens the rest."""
+    if simple and not lane.alerts and lane.pending is None:
+        return Text("")
     out = Text(no_wrap=True, overflow="ellipsis")
     out.append("▌", theme.ACCENT)
     out.append(f"{lane.id} ", "bold")
     if lane.finished:
-        out.append(f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}")
+        out.append(f"{lane.state.value}: ", f"bold {state_color(lane.state)}")
         out.append(lane_line(deck, lane, lane.result))
         out.append("\n  enter opens its transcript", theme.MUTED)
         return out
@@ -915,7 +1069,7 @@ def compact_why(deck: Deck, lane: Lane, width: int) -> Text:
     last = ["enter open"]
     top = top_answerable(lane)
     if lane.finished:
-        head.append(f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}")
+        head.append(f"{lane.state.value}: ", f"bold {state_color(lane.state)}")
         head.append(lane_line(deck, lane, lane.result))
         last = ["enter opens its transcript"]
     elif top is not None:
@@ -959,7 +1113,7 @@ def compact_why(deck: Deck, lane: Lane, width: int) -> Text:
 
 def challenge_why(deck: Deck, ch: Challenge) -> Text:
     out = Text(no_wrap=True, overflow="ellipsis")
-    mark, color = BOARD_MARK[ch.status]
+    mark, color = board_mark(ch.status)
     out.append(untrusted(ch.name, one_line=True), "bold")
     out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · {ch.solves} solves · ", theme.MUTED)
     out.append(f"{mark} {ch.status.value}", color)
@@ -988,7 +1142,7 @@ def focus_title(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
     out = Text()
     if compact:
         out.append(f"{lane.id} ", "bold")
-        out.append(lane.state.value, STATE_COLOR[lane.state])
+        out.append(lane.state.value, state_color(lane.state))
         out.append(f" {lane_dollars(lane)}", theme.MUTED)
         out.append(" · ")
         out.append(untrusted(ch.name, one_line=True), "bold")
@@ -998,11 +1152,58 @@ def focus_title(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
     out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · ", theme.MUTED)
     out.append(untrusted(lane.model, one_line=True), theme.CYAN)
     out.append(" · ")
-    out.append(lane.state.value, STATE_COLOR[lane.state])
+    out.append(lane.state.value, state_color(lane.state))
     spent = lane_dollars(lane) + (" (this turn's cost comes when it ends)" if lane.dollars_later else "")
     out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · {spent}", theme.MUTED)
     if not lane.finished:
         out.append(f" · idle {fmt.duration(lane.idle(deck.now))}", theme.MUTED)
+    return out
+
+
+BAR_RUN = "the run"  # the bar's title while a command that takes no lane is typed
+BAR_NO_LANE = "no lane"  # and while what is typed has no lane to go to
+
+
+def lane_refuses(lane: Lane, ask: Ask) -> str:
+    """Why `lane` would refuse what is typed (commands.Ask), in the bar's words; "" when it
+    takes it. The deck's own rules (Deck._apply), and the console's for a bare /fork: a lane
+    that has ended takes only what reads it, and a fork with its approach unless it solved
+    its challenge; a lane that gave up and is open only for its flag's answer
+    (gave_up_later) takes anything but what it would read on a next turn."""
+    if lane.finished:
+        if ask is Ask.READ or (ask is Ask.FORK and lane.state is not LaneState.SOLVED):
+            return ""
+        return f"{lane.id} has finished"
+    if lane.gave_up_later and ask is Ask.TURN:
+        return f"{lane.id} takes no more turns"
+    return ""
+
+
+def bar_title(deck: Deck, typed: str, lane: Lane | None) -> Text:
+    """The title on the command bar's border: who what is typed in it goes to (P64).
+    `to L04 · Ticket Desk` for `lane`, the lane the bar acts on (the selected one in the lane
+    list, the open one in a lane's view), or for the lane a command names (`/kill L07`);
+    `no lane` when there is none (`no lane L07` when the one named is not there); `L04 has
+    finished` or `L04 takes no more turns` when the lane would refuse what is typed
+    (lane_refuses); `the run` while a command that takes no lane is typed. commands.goes_to
+    reads what is typed as enter would. The challenge's name is challenge text: made safe,
+    and never markup."""
+    aim = goes_to(typed)
+    if aim.run:
+        return Text(BAR_RUN, theme.MUTED)
+    if aim.lane is not None:
+        lane = deck.lanes.get(aim.lane)
+        if lane is None:
+            return Text(f"{BAR_NO_LANE} {aim.lane}", theme.MUTED)
+    if lane is None:
+        return Text(BAR_NO_LANE, theme.MUTED)
+    refused = lane_refuses(lane, aim.ask)
+    if refused:
+        return Text(refused, theme.MUTED)
+    out = Text("to ", theme.MUTED)
+    out.append(lane.id, f"bold {theme.TEXT}")
+    out.append(" · ", theme.MUTED)
+    out.append(untrusted(deck.challenges[lane.challenge_id].name, one_line=True), theme.TEXT)
     return out
 
 
@@ -1038,6 +1239,234 @@ def transcript_lines(deck: Deck, lane: Lane, action: Action) -> list[Text]:
     return [Text.assemble(("· flightdeck  ", f"bold {theme.BLUE}"), (text, theme.MUTED))]
 
 
+# ---------------------------------------------------------------------- the calm transcript (details off)
+
+SAYS = "says: "  # how a step that is the model's own words starts (agent/driver.py: _step, agent/external.py: report_text)
+_ENTRY_KIND = {
+    ActionKind.MESSAGE: "message",
+    ActionKind.PLAYER: "player",
+    ActionKind.NOTE: "note",
+    ActionKind.ALERT: "alert",
+    ActionKind.APPROVAL: "approval",
+}
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One entry of the calm transcript: one action of the lane's log, or a run of tool calls."""
+
+    first: int  # the index of its first action in the lane's log: its key, which stays as a run grows
+    kind: str  # calls | says | message | player | note | alert | approval
+    actions: tuple[Action, ...]
+
+
+def _is_call(action: Action) -> bool:
+    """A tool call: a step that is not the model's own words."""
+    return action.kind is ActionKind.STEP and not action.text.startswith(SAYS)
+
+
+def calls_of(action: Action) -> tuple[Call, ...]:
+    """The tool calls of a step: every call of its turn (flightdeck's own loop keeps them), or
+    the step itself as one call (a coding-agent CLI's lane reports each call as a step)."""
+    return action.calls or (Call(action.text, action.output),)
+
+
+def entries(actions: Sequence[Action]) -> list[Entry]:
+    """A lane's log as the entries the calm transcript shows, in order. Consecutive tool calls
+    are one entry (a run); anything else (the model's words, a note, an alert, an approval,
+    the player's message or intervention) is an entry of its own and ends the run."""
+    out: list[Entry] = []
+    i = 0
+    while i < len(actions):
+        action = actions[i]
+        if not _is_call(action):
+            kind = "says" if action.kind is ActionKind.STEP else _ENTRY_KIND[action.kind]
+            out.append(Entry(i, kind, (action,)))
+            i += 1
+            continue
+        end = i
+        while end < len(actions) and _is_call(actions[end]):
+            end += 1
+        out.append(Entry(i, "calls", tuple(actions[i:end])))
+        i = end
+    return out
+
+
+def _first_line(text: str) -> tuple[str, int]:
+    """The first line of a text folded to one (untrusted(one_line=True), by this console or by
+    the lane's runtime before it), and how many lines it has after that one. Blank lines at
+    either end are not lines of it."""
+    lines = [line.strip() for line in text.split(NEWLINE.strip())]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return (lines[0][:LINE_CHARS], len(lines) - 1) if lines else ("", 0)
+
+
+def _more_lines(count: int) -> str:
+    return f" …+{count} line{'' if count == 1 else 's'}"
+
+
+def _call_row(deck: Deck, lane: Lane, call: Call, out: Text) -> None:
+    """One tool call on one row: the first line of the call, then of its output, each with
+    how many lines more it has."""
+    first, more = _first_line(untrusted(lane_text(deck, lane, call.text), one_line=True))
+    out.append(first, "bold")
+    if more:
+        out.append(_more_lines(more), theme.MUTED)
+    first, more = _first_line(untrusted(lane_text(deck, lane, call.output), one_line=True))
+    if first:
+        out.append(f" → {first}", theme.MUTED)
+        if more:
+            out.append(_more_lines(more), theme.MUTED)
+
+
+def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
+    """One entry of the calm transcript, its text as the lane's transcript keeps it (lane_text).
+    Each line of it is one row, which the view cuts at its edge: a run of tool calls is two
+    (how many, and the last one, which is what the lane is doing now), anything else is one,
+    with how many lines more it has. The model's words are the exception: the view wraps them."""
+    action = entry.actions[0]
+    out = Text()
+    if entry.kind == "calls":
+        calls = [call for step in entry.actions for call in calls_of(step)]
+        out.append("⏺ ", theme.GREEN)
+        if len(calls) > 1:
+            out.append(f"{len(calls)} tool calls", "bold")
+            out.append("\n  ⎿ ", theme.MUTED)
+        _call_row(deck, lane, calls[-1], out)
+        return out
+    if entry.kind == "message":
+        return transcript_lines(deck, lane, action)[0]
+    if entry.kind == "player":
+        out = transcript_lines(deck, lane, action)[0]
+        more = len(action.output.splitlines())
+        if more:
+            out.append(_more_lines(more), theme.MUTED)
+        return out
+    text = untrusted(lane_text(deck, lane, action.text), one_line=True)
+    if entry.kind == "says":
+        return out.append("⏺ ", theme.TEXT).append(text.removeprefix(SAYS), theme.TEXT)
+    if entry.kind == "approval":
+        return out.append(f"◆ asked you · turn {action.turn}: {text}", theme.MUTED)
+    first, more = _first_line(text)
+    if entry.kind == "alert":
+        style = alert_style(action.alert)
+        return out.append("▲ ", style).append(first, style).append(f" alert · turn {action.turn}", theme.MUTED)
+    out.append("· ", f"bold {theme.BLUE}").append(first, theme.MUTED)  # flightdeck's note
+    if more:
+        out.append(_more_lines(more), theme.MUTED)
+    return out
+
+
+# ---------------------------------------------------------------------- the peek under the lane list (space)
+
+PEEK_ROWS = 6  # the rows of a lane's log the peek shows at most; a short terminal has fewer (fleet.peek_rows)
+PEEK_EMPTY = "nothing yet: the lane has taken no step"
+PEEK_NO_LANE = "the peek shows the lane the keys act on: there is none here"
+
+
+def peek_lines(deck: Deck, lane: Lane, rows: int) -> list[Text]:
+    """The last `rows` rows of `lane`'s log, oldest first, each one row that the peek cuts at
+    its edge. They are the calm transcript's rows (entry_text) with a run of tool calls
+    opened: every call has its own row (its first line, then its output's), since the last
+    few steps are what the player reads a peek for, where the lane's own view counts them."""
+    out: list[Text] = []
+    for index in range(len(lane.actions) - 1, -1, -1):
+        if len(out) >= rows:
+            break
+        action = lane.actions[index]
+        if _is_call(action):
+            for call in reversed(calls_of(action)):
+                row = Text("⏺ ", theme.GREEN)
+                _call_row(deck, lane, call, row)
+                out.append(row)
+        else:
+            kind = "says" if action.kind is ActionKind.STEP else _ENTRY_KIND[action.kind]
+            out.append(entry_text(deck, lane, Entry(index, kind, (action,))))
+    return out[:rows][::-1]
+
+
+def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:
+    """The peek: a rule that names the lane and its challenge (a message typed in the bar goes
+    to that lane), then the last `rows` rows of its log (peek_lines), each cut at the edge.
+    With no lane to show (no lane yet, the filter hides the selected one, or the board has the
+    focus on a challenge that no lane or several work), it says so."""
+    title = Text(no_wrap=True, overflow="ellipsis")
+    if lane is None:
+        title.append("no lane", theme.MUTED)
+        lines = [Text(PEEK_NO_LANE, theme.MUTED)]
+    else:
+        title.append(lane.id, "bold")
+        title.append(" · ", theme.MUTED)
+        title.append(untrusted(deck.challenges[lane.challenge_id].name, one_line=True), "bold")
+        lines = peek_lines(deck, lane, rows) or [Text(PEEK_EMPTY, theme.MUTED)]
+    body = Text(no_wrap=True, overflow="ellipsis")
+    for i, line in enumerate(lines):
+        body.append("\n" if i else "")
+        body.append(" ")
+        body.append_text(line)
+    return Group(Rule(title, align="left", style=theme.BORDER), body)
+
+
+# ---------------------------------------------------------------------- /copy: a lane's text for the clipboard
+
+COPY_WHAT = ("output", "command", "flag", "all")  # what /copy takes; alone it is `output`
+SHELL_MARK = "$ "  # how every runtime starts the line of a shell call
+
+
+class NothingToCopy(Exception):
+    """The lane has nothing of what /copy was asked for; the message says so."""
+
+
+def _lines(text: str) -> str:
+    return _count(len(text.splitlines()), "line", "lines")
+
+
+def lane_copy(deck: Deck, lane: Lane, what: str) -> tuple[str, str]:
+    """What /copy puts on the clipboard for `lane`, and what the status line calls it
+    ("L01's last output: 38 lines"; a flag by its text). NothingToCopy when the lane has none of it.
+
+    `output`: the output of the lane's last tool call that printed something, as its
+    transcript keeps it (the longer excerpt of a call of flightdeck's own loop, else the
+    step's output), with real newlines. `command`: that call's line (when no call has printed
+    anything, the last call's), its folded newlines real again and without the mark of a shell
+    call, so it can be pasted into a shell. `flag`: the flag that waits for the player's
+    approval, else the flag the run named last for the lane's challenge (known_flags). `all`:
+    every line of the transcript in detail (transcript_lines).
+
+    Each is as the console shows the lane's text: no value of anything shaped like a
+    credential (lane_text; the flags the run knows stay), control and invisible characters
+    made visible (text.untrusted), so nothing reaches a paste that the screen did not show."""
+    if what == "all":
+        text = "\n".join(line.plain for action in lane.actions for line in transcript_lines(deck, lane, action))
+        if not text:
+            raise NothingToCopy(f"{lane.id} has nothing in its transcript yet")
+        return text, f"{lane.id}'s transcript: {_lines(text)}"
+    if what == "flag":
+        waiting = lane.pending.flag if lane.pending is not None else None
+        flag = waiting or next(iter(reversed(known_flags(deck, lane.challenge_id))), "")
+        if not flag:
+            raise NothingToCopy(f"{lane.id} has no flag yet")
+        return untrusted(flag), f"{lane.id}'s flag: {untrusted(flag, one_line=True)}"  # named: the newest need not be the one the player has in mind
+    # (the call, whether it is the step itself: a coding-agent CLI's lane, whose runtime folded the newlines of its output)
+    calls = [(call, not step.calls) for step in lane.actions if _is_call(step) for call in calls_of(step)]
+    printed = [(call, folded) for call, folded in calls if call.output.strip()]
+    if what == "output":
+        if not printed:
+            raise NothingToCopy(f"{lane.id} has no output yet")
+        call, folded = printed[-1]
+        text = lane_text(deck, lane, call.output)
+        text = untrusted(text.replace(NEWLINE, "\n") if folded else text)
+        return text, f"{lane.id}'s last output: {_lines(text)}"
+    if not calls:
+        raise NothingToCopy(f"{lane.id} has made no tool call yet")
+    call, _ = (printed or calls)[-1]
+    text = untrusted(lane_text(deck, lane, call.text).replace(NEWLINE, "\n").removeprefix(SHELL_MARK))
+    return text, f"{lane.id}'s last command: {_lines(text)}"
+
+
 def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lane: bool = True) -> str | None:
     """The command an alert's suggested key stands for, e.g. /redirect <text>. The lane id
     is left out when `show_lane` is False, unless the text starts with a word that would
@@ -1050,33 +1479,64 @@ def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lan
     return " ".join([f"/{name}"] + ([named] if named else []) + ([text] if text else []))
 
 
-def now_card(deck: Deck, lane: Lane, *, compact: bool = False) -> RenderableType:
-    """What the lane needs from the player right now, with the answers as commands. In the
-    compact layout each answer is one row, its number first and its command cut at the edge:
-    the reasons wrap, and every answer's number stays on the card."""
+def card_border(lane: Lane) -> str:
+    """The colour of the border of `lane`'s "needs you now" card: the most urgent alert's that
+    wants an answer, else an approval's, else the plain one (a message not read yet, an alert
+    that needs no answer). "" when the lane has no card: it has ended, or nothing is open on it."""
+    if lane.finished or not (lane.alerts or lane.pending is not None or lane.hints):
+        return ""
+    top = top_answerable(lane)
+    if top is not None:
+        return theme.alert_colors(top.kind)[1]
+    return theme.PURPLE if lane.pending is not None else theme.BORDER
+
+
+def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False, calm: bool = False,
+             width: int | None = None) -> RenderableType:
+    """What the lane needs from the player right now, with the answers as commands: the
+    approval it waits for first, then every open alert with its reason and its suggestions,
+    then the messages it has not read yet. In the compact layout each answer is one row, its
+    number first and its command cut at the edge: the reasons wrap, and every answer's number
+    stays on the card. In the simple layout (`simple`) a lane that needs nothing has no card:
+    an empty Text, and a lane that has ended says esc goes back to the lanes (that layout's
+    word for the fleet). `calm`: the rows of calm_card, as Text; the view draws their border
+    (card_border), and `width` is the cells a row has in it."""
     one_row = {"no_wrap": True, "overflow": "ellipsis"} if compact else {}
     if lane.finished:
         return Text.assemble(
-            (f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}"),
+            (f"{lane.state.value}: ", f"bold {state_color(lane.state)}"),
             (untrusted(lane_text(deck, lane, lane.result), one_line=True), theme.TEXT),
-            ("   this lane has ended; esc goes back to the fleet", theme.MUTED),
+            (f"   this lane has ended; esc goes back to the {'lanes' if simple else 'fleet'}", theme.MUTED),
         )
+    border = card_border(lane)
+    if not border:
+        if simple:
+            return Text("")
+        return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
+    if calm:
+        return calm_card(deck, lane, width)
     rows: list[RenderableType] = []
-    border = ""
     numbered = {(answer.key, answer.text): answer.number for answer in quick_answers(lane)}
     top = top_answerable(lane)
+    if lane.pending is not None:  # first: its numbers are the ones a digit answers, and the first rows are never the ones cut
+        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane_text(deck, lane, lane.pending.detail), one_line=True), theme.TEXT)))
+        indent = " " if compact else "   "
+        rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
+        rows.append(Text.assemble((indent, ""), _number("0"), ("/decline", f"bold {theme.ACCENT}"), (f"   {no}", theme.MUTED), **one_row))
+        for later in lane.waiting:
+            rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(lane_text(deck, lane, later.detail), one_line=True), theme.MUTED)))
     for alert in sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind]):
         label = Text.assemble(("▲ ", alert_style(alert.kind)), (alert.kind.label, alert_style(alert.kind)), ("  ", ""))
         if alert.kind in INFORMATIONAL_ALERTS:
             label.append(untrusted(lane_text(deck, lane, alert.reason), one_line=True), theme.MUTED)
             rows.append(label)
             continue
-        border = border or theme.alert_colors(alert.kind)[1]
         label.append(untrusted(lane_text(deck, lane, alert.reason), one_line=True), theme.TEXT)
         rows.append(label)
         for s in alert.suggestions:
             if s.key in ("a", "d") and lane.pending is not None:
-                continue  # the approval lines below say it
+                continue  # the approval's rows above say it
             command = suggestion_command(s.key, lane_text(deck, lane, s.text), lane.id, show_lane=False)
             number = numbered.get((s.key, s.text)) if alert is top else None
             line = Text(" " if compact else "   ", **one_row)
@@ -1091,23 +1551,162 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False) -> RenderableType
         if alert is top and alert.kind in COURSE_ALERTS:  # what /dismiss would take down
             rows.append(Text.assemble(("     " if compact else "       ", ""), ("/dismiss", f"bold {theme.ACCENT}"),
                                       ("   not a problem: take the alert down, the lane carries on", theme.MUTED), **one_row))
-    if lane.pending is not None:
-        border = border or theme.PURPLE
-        yes, no = PENDING_ANSWERS[lane.pending.kind]
-        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane.pending.detail, one_line=True), theme.TEXT)))
-        indent = " " if compact else "   "
-        rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
-        rows.append(Text.assemble((indent, ""), _number("0"), ("/decline", f"bold {theme.ACCENT}"), (f"   {no}", theme.MUTED), **one_row))
-        for later in lane.waiting:
-            rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
     for hint in lane.hints:
         rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(lane_text(deck, lane, hint), one_line=True), theme.ACCENT)))
-    if not rows:
-        return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
-    if border:
+    if top is not None or lane.pending is not None:
         rows.append(Text("a number answers (chat box empty)" if compact else
                          "press a number to answer (chat box empty), / to pick a command, or write a message", theme.MUTED))
-    return Panel(Group(*rows), box=box.ROUNDED, border_style=border or theme.BORDER, padding=(0, 1), title=Text("needs you now", "bold"), title_align="left")
+    return Panel(Group(*rows), box=box.ROUNDED, border_style=border, padding=(0, 1), title=Text("needs you now", "bold"), title_align="left")
+
+
+# ---------------------------------------------------------------------- the calm card (details off)
+
+ALSO_WORDS = {  # an alert that is open beside the card's question, in a word or two
+    AlertKind.LOOP: "looping",
+    AlertKind.EFFORT: "past its effort budget",
+    AlertKind.HINT: "ignores the hint",
+    AlertKind.DIRECTION: "wrong direction",
+    AlertKind.STALL: "stalled",
+    AlertKind.BUDGET: "near its cap",
+    AlertKind.FLAG: "a flag to check",
+    AlertKind.TEAMMATE: "teammate",
+}
+_ASKED_BY = {  # the alert an approval is about: the approval is the question, so the alert is not named beside it
+    PendingKind.BUDGET: AlertKind.BUDGET,
+    PendingKind.SUBMIT: AlertKind.FLAG,
+    PendingKind.CONFIRM: AlertKind.FLAG,
+}
+CALM_ANSWERS = 3  # the numbered answers the calm card shows; the rest are counted
+CALM_QUOTE = 48  # characters of the text an answer sends that the calm card quotes
+CALM_QUOTE_MIN = 12  # in a card too narrow for that, the quotes shorten to this; then there are none
+CALM_QUESTION_ROWS = 4  # the rows an approval's question folds onto in a narrow card; what is past them is cut, with "…"
+SENDS_TEXT = ("h", "r", "f")  # the answers that send their suggested text at once (FlightdeckApp.answer)
+
+
+def _count(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _packed(pieces: Sequence[Text], width: int | None) -> list[Text]:
+    """`pieces` (answers, each with its number) in as few rows of `width` cells as hold them
+    whole, in their order: a row is indented by two, and three spaces part two pieces. One row
+    when no width is known. A piece wider than a row has one to itself."""
+    rows: list[Text] = []
+    for piece in pieces:
+        if rows and (width is None or rows[-1].cell_len + 3 + piece.cell_len <= width):
+            rows[-1].append("   ")
+        else:
+            rows.append(Text("  "))
+        rows[-1].append_text(piece)
+    return rows
+
+
+def _shows_all(row: Text, width: int | None) -> list[Text]:
+    """`row`, which leaves something out, with the key that shows the full card: after it, or
+    on a row of its own where `width` cells do not hold both."""
+    key = Text.assemble(("ctrl+o", f"bold {theme.ACCENT}"), (" shows all", theme.MUTED))
+    if width is not None and row.cell_len + 3 + key.cell_len > width:
+        return [row, Text("  ").append_text(key)]
+    return [row.append("   ").append_text(key)]
+
+
+def _also(open_too: Sequence[str], width: int | None) -> list[Text]:
+    """The row that names what else is open on the lane, and the key that shows it: every
+    name where `width` cells hold them, else the first that fit and a count of the rest."""
+    rows: list[Text] = []
+    for named in range(len(open_too), -1, -1):
+        rest = len(open_too) - named
+        names = [*open_too[:named], *([f"+{rest} more"] if rest else [])]
+        rows = _shows_all(Text(f"  also: {' · '.join(names)}", theme.MUTED), width)
+        if len(rows) == 1:
+            break
+    return rows
+
+
+def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
+    """The "needs you now" card with details off: three rows where the card is wide enough,
+    and never a list of commands (the full card has them: ctrl+o).
+
+    Row 1 is the question: the approval the lane waits for, else its most urgent alert that
+    wants an answer, with its reason. Row 2 is its numbered answers, in the order and with the
+    numbers of quick_answers, so a digit answers what row 1 asks; an answer that sends a text
+    at once quotes the start of it. Row 3, only when something else is open, names it: the
+    other alerts in a word or two each, further approvals, messages the lane has not read yet.
+
+    `width`: the cells a row has. The view cuts a row at the card's edge, so what a player
+    must read before a digit answers is fitted to the width here, and takes further rows in a
+    card too narrow for it:
+    - an approval's question folds onto CALM_QUESTION_ROWS rows at most: `1` submits the flag
+      it names, and the flag is whole on the card. An alert's reason stays the edge's to cut
+      (the full card has it whole).
+    - the quotes of the answers shorten until the answers fit a row, and go when
+      CALM_QUOTE_MIN characters of each do not fit either; answers that still do not fit take
+      further rows (_packed), so no number and no /dismiss is cut away.
+    - what else is open keeps the names that fit and counts the rest (`+2 more`), and the key
+      that shows them all is on the card at any width (_also).
+
+    With no question (no approval, no alert that wants an answer): an alert that needs no
+    answer as the full card shows it, and the message not read yet, or how many there are.
+    Empty when nothing is open on the lane.
+
+    Every text of the lane's on it (the approval's detail too, which a lane words itself) is as
+    the lane's transcript keeps it: lane_line."""
+    pending, top = lane.pending, top_answerable(lane)
+    alerts = sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind])
+    rows: list[Text] = []
+    if pending is None and top is None:
+        for alert in alerts:
+            rows.append(Text.assemble((f"▲ {alert.kind.label}  ", alert_style(alert.kind)), (lane_line(deck, lane, alert.reason), theme.MUTED)))
+        if len(lane.hints) == 1:
+            rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (lane_line(deck, lane, lane.hints[0]), theme.ACCENT)))
+        elif lane.hints:
+            rows.extend(_shows_all(Text(f"› {len(lane.hints)} messages sent, not read yet", theme.MUTED), width))
+        return Text("\n").join(rows)
+    if pending is not None:
+        asked = _ASKED_BY.get(pending.kind)
+        question = Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (lane_line(deck, lane, pending.detail), theme.TEXT))
+        folded = [question] if width is None or question.cell_len <= width else _rows(question, width, CALM_QUESTION_ROWS)
+        for row in folded:
+            row.rstrip()  # the space a fold fell on
+        rows.extend(folded)
+        # in the approval's own words: a flag's answer in quick_answers is the detail, which row 1 has
+        rows.extend(_packed([Text.assemble((answer.number, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED))
+                             for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind])], width))
+    else:
+        asked = top.kind
+        rows.append(Text.assemble((f"▲ {top.kind.label}: ", alert_style(top.kind)), (lane_line(deck, lane, top.reason), theme.TEXT)))
+        numbered = quick_answers(lane)
+        quotes = {answer.number: lane_line(deck, lane, answer.text)  # cut after the credentials are out: no part of one is left
+                  for answer in numbered[:CALM_ANSWERS] if answer.text and answer.key in SENDS_TEXT}
+
+        def answers(quoted: int) -> list[Text]:
+            pieces = []
+            for answer in numbered[:CALM_ANSWERS]:
+                piece = Text.assemble((answer.number, f"bold {theme.ACCENT}"), (f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED))
+                quote = quotes.get(answer.number, "")
+                if quote and quoted:
+                    piece.append(f' "{quote[:quoted]}{"…" if len(quote) > quoted else ""}"', theme.TEXT)
+                pieces.append(piece)
+            if len(numbered) > CALM_ANSWERS:
+                pieces.append(Text(f"+{len(numbered) - CALM_ANSWERS} more", theme.MUTED))
+            if top.kind in COURSE_ALERTS:  # what /dismiss would take down
+                pieces.append(Text.assemble(("/dismiss", f"bold {theme.ACCENT}"), (" not a problem", theme.MUTED)))
+            return _packed(pieces, width)
+
+        quoted = CALM_QUOTE
+        fitted = answers(quoted)
+        while quotes and quoted and len(fitted) > 1:  # one row while the quotes can pay for it
+            quoted = quoted - 1 if quoted > CALM_QUOTE_MIN else 0
+            fitted = answers(quoted)
+        rows.extend(fitted)
+    also = [ALSO_WORDS[kind] for kind in dict.fromkeys(alert.kind for alert in alerts) if kind is not asked]
+    if pending is not None and lane.waiting:
+        also.append(f"{_count(len(lane.waiting), 'more approval', 'more approvals')} after this one")
+    if lane.hints:
+        also.append(f"{_count(len(lane.hints), 'message', 'messages')} it has not read yet")
+    if also:
+        rows.extend(_also(also, width))
+    return Text("\n").join(rows)
 
 
 def _number(number: str | None) -> Text:
@@ -1131,7 +1730,7 @@ def file_label(change: FileChange) -> Text:
 
 def diff_view(deck: Deck, lane: Lane, change: FileChange) -> RenderableType:
     """The diff of a file `lane` changed, as its transcript keeps it (lane_text)."""
-    return Syntax(untrusted(lane_text(deck, lane, change.diff)), "diff", theme="monokai", background_color=theme.PAGE, word_wrap=False)
+    return Syntax(untrusted(lane_text(deck, lane, change.diff)), "diff", theme=theme.active().syntax, background_color=theme.PAGE, word_wrap=False)
 
 
 def needing(deck: Deck, exclude: str | None = None) -> list[Lane]:
@@ -1144,18 +1743,21 @@ def _need_chip(lane: Lane) -> Text:
         fg, bg = theme.alert_colors(top.kind)
         tag = top.kind.tag
     else:
-        fg, bg = theme.PENDING_COLORS
+        fg, bg = theme.pending_colors()
         tag = PENDING_TAG[lane.pending.kind] if lane.pending else "?"
     chip = theme.chip(f"{lane.id} {tag}", fg, bg)
     chip.stylize(Style(meta={"@click": f"app.open_lane('{lane.id}')"}))
     return chip
 
 
-def others_strip(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
+def others_strip(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False) -> Text:
+    """The other lanes that need the player, each a chip that opens it. With none: a line that
+    says so, or in the simple layout (`simple`) nothing."""
     others = needing(deck, exclude=lane.id)
     out = Text(no_wrap=True, overflow="ellipsis")
     if not others:
-        out.append("No other lane needs you.", theme.MUTED)
+        if not simple:
+            out.append("No other lane needs you.", theme.MUTED)
         return out
     if compact:  # the key first: the chips are what the edge cuts
         out.append(f"{len(others)} more need{'' if len(others) > 1 else 's'} you (ctrl+n): ", theme.MUTED)

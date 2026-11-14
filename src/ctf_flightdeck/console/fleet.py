@@ -5,6 +5,27 @@ command bar. A line under the lane list says why the selected lane is flagged an
 to do about it. The command bar acts on the same lane the keys do. Under 100 columns the
 board hides so the lane list keeps its columns. The key line at the bottom always shows
 `? help` and `q quit`; on a narrow terminal the keys needed least are left out of it first.
+The status line is one row, and while what it says is longer than the terminal is wide it
+takes a second or a third from the lane list: an answer's last words (the config file to
+change, why something was refused) are often the ones the player needs.
+
+While the board has no challenge, the page says so where the tables would be, and what to do
+about it (EMPTY_BY_HAND, EMPTY_PLATFORM): it stays until there is one, unlike a status line.
+
+In the simple layout (FlightdeckApp.layout; `deck` is the view as described above) there is no
+board: one list of lanes with fewer columns (views.SIMPLE_LANE_COLUMNS: under 74 columns the
+last action is left out, never the cost), a why line only for a
+lane that needs something, and a key line of the keys that apply to the selected lane now
+(context_keys). Every key still acts, and `?` lists them all, starting with the ones of that
+key line, each with its sentence (help_now, P65). The compact layout wins over both.
+
+`space` peeks at the selected lane: a panel between the lane list and the why line with the
+last rows of the lane's log (views.peek), so a hint or a redirect can be chosen without
+leaving the list. It follows the selection, stays open until `space` or `esc` closes it, and
+takes its rows from the lane list, which keeps PEEK_LANE_ROWS and scrolls (peek_rows). It is
+sized for the rows the lanes panel has as laid out (LanesPane): the command menu and a status
+line of more than one row take theirs from the panel, and the peek gives them up, oldest row
+first, before the list gives up one of its own. In every layout; closed, the view is as it was.
 
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: each lane's
 row has what needs you, the lane, its challenge, state and cost; the why line has six rows,
@@ -18,6 +39,7 @@ from typing import TYPE_CHECKING
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
+from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -25,10 +47,10 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from ..core.attention import SortMode, sort_lanes
-from ..core.model import Lane
+from ..core.model import COURSE_ALERTS, Lane
 from . import theme, views
 from .commands import CommandError, needs_lane, parse
-from .widgets import CommandBar
+from .widgets import BAR, CommandBar
 
 if TYPE_CHECKING:
     from .app import FlightdeckApp
@@ -46,16 +68,46 @@ KEY_RANK = {
 }
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 SCROLLBAR = 2  # cells the lane list's scrollbar takes once it has more rows than room
+LANE_LIST_EDGES = 6  # cells of the terminal's width that are not the lane list's, with no board: the panel's margin, frame and padding
+LANE_PADDING = 1  # cells each side of a cell of the lane list (DataTable.cell_padding)
 # The rows that are not lane rows: the header and the gap under it, the lane list's border and
 # column labels, the why line and the gap over it, the status line, the command bar, the key line.
 FLEET_ROWS = 13
 # The compact layout: no gap under the header or over the why line, and a why line of six rows.
 COMPACT_FLEET_ROWS = FLEET_ROWS - 2 - views.WHY_ROWS + views.COMPACT_WHY_ROWS
+# Of those, the rows inside the lanes panel's border: the lane list's column labels, the why
+# line and the gap over it (the compact layout has no gap). The rest of the panel's rows are
+# the lane rows and the peek's.
+PANEL_ROWS = 1 + 1 + views.WHY_ROWS
+COMPACT_PANEL_ROWS = 1 + views.COMPACT_WHY_ROWS
 # The compact layout's key line: (binding key or "" for no binding, key as shown, label).
 COMPACT_KEYS = (
     ("a", "a", "yes"), ("d", "d", "no"), ("", "1-9", "answer"), ("slash", "/", "cmd"),
     ("question_mark", "?", "help"), ("q", "q", "quit"),
 )
+# The simple layout's key line: (what a click does: a binding's key, an action, or "" for
+# nothing; the key as shown; its label). Which of them a lane gets: context_keys().
+NEW_KEY = ("app.new", "/new", "add a challenge")
+APPROVE_KEY, DECLINE_KEY = ("a", "a", "approve"), ("d", "d", "decline")
+ANSWER_KEY, DISMISS_KEY = ("", "1-9", "answer"), ("x", "x", "dismiss")
+OPEN_KEY, COMMANDS_KEY = ("o", "enter", "open"), ("slash", "/", "commands")
+HELP_KEY, QUIT_KEY = ("question_mark", "?", "help"), ("q", "q", "quit")
+# What the page says while the board has no challenge: on a board the player fills (/new works
+# there), and on one that comes from a platform or a script.
+EMPTY_BY_HAND = "No challenges yet. Type /new to hand one over (its text, files, a screenshot)."
+EMPTY_PLATFORM = "Waiting for the board: challenges appear here when the event releases them."
+# The command bar's placeholder: widgets.BAR with challenges on the board (the bar's title names
+# the lane a message goes to), and these on an empty board the player fills and on one that
+# fills by itself.
+BAR_EMPTY_BY_HAND = "/new to add a challenge · / for commands"
+BAR_EMPTY_PLATFORM = "/ for commands"
+# The peek (space): the lane rows the list keeps while it is open, and what the lanes panel's
+# bottom border says about it (closed, open, and open on a terminal too short to show it).
+PEEK_LANE_ROWS = 3
+PEEK_TITLE_ROWS = 1  # the rule over the peek's rows, which names the lane
+PEEK_HINT = "space peek"
+PEEK_OPEN_HINT = "space closes the peek"
+PEEK_NO_ROOM_HINT = "no room for the peek"
 
 
 def lane_rows(lines: int, *, compact: bool = False) -> int:
@@ -63,20 +115,76 @@ def lane_rows(lines: int, *, compact: bool = False) -> int:
     return max(0, lines - (COMPACT_FLEET_ROWS if compact else FLEET_ROWS))
 
 
+def peek_rows_in(room: int) -> int:
+    """How many rows of a lane's log the peek shows where the lane list and the peek have
+    `room` rows between them: views.PEEK_ROWS where there is room, fewer where the lane list
+    would be left under PEEK_LANE_ROWS rows (it keeps them and scrolls), and 0 where not one
+    row fits under them and the peek's rule."""
+    return max(0, min(views.PEEK_ROWS, room - PEEK_LANE_ROWS - PEEK_TITLE_ROWS))
+
+
+def peek_rows(lines: int, *, compact: bool = False) -> int:
+    """How many rows of a lane's log the peek shows on a terminal `lines` tall, while the
+    status line is one row and the command menu is closed (each row of theirs is one fewer for
+    the list and the peek: FleetScreen.peek_room)."""
+    return peek_rows_in(lane_rows(lines, compact=compact))
+
+
+def peek_lines_needed(*, compact: bool = False) -> int:
+    """The shortest terminal, in lines, on which the peek shows one row of a lane's log."""
+    return (COMPACT_FLEET_ROWS if compact else FLEET_ROWS) + PEEK_LANE_ROWS + PEEK_TITLE_ROWS + 1
+
+
+class FittedTable(DataTable):
+    """One of the fleet view's tables: its columns are fitted again whenever its own width
+    changes. A change of layout (/layout, the board coming or going) gives the lane list its
+    new width only once the screen is laid out again, and that can be after anything the
+    fleet view asked to run "after the refresh": fitted then, the columns would keep the old
+    width until the terminal is resized. The table's own resize cannot come too early.
+
+    While the peek is open the lane list keeps the row under the cursor in view when its own
+    height changes: the peek takes its rows from the list, and the lane it shows is that row's."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        screen = self.screen
+        if event.size.width and isinstance(screen, FleetScreen) and screen._ready:  # no width: it is not shown
+            screen._set_columns()
+            if screen.peek and self.id == "lanes" and self.row_count:
+                self.move_cursor(row=self.cursor_row, animate=False, scroll=True)
+
+
+class LanesPane(Vertical):
+    """The lanes panel: the lane list, the peek and the why line. When its own height changes
+    the peek is sized again for the rows the panel has now. The terminal's height does not say
+    how many those are: the command menu, and a status line that wraps, take rows from the
+    panel, and a peek sized without them would leave the list its column labels and lose its
+    own newest rows off the panel's bottom edge. The panel's height does not depend on the
+    peek's, so sizing the peek here does not come round again."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        screen = self.screen
+        if isinstance(screen, FleetScreen) and screen._ready:
+            screen._render_peek()
+
+
 class FleetScreen(Screen, inherit_bindings=False):
     DEFAULT_CSS = """
     FleetScreen { layout: vertical; }
     FleetScreen #header { height: 1; margin: 0 1; }
     FleetScreen #main { height: 1fr; margin-top: 1; }
+    FleetScreen #empty { height: 1fr; margin: 1 1 0 1; padding: 1 2; border: round $fd-border; display: none; }
     FleetScreen #board-pane { width: 30%; min-width: 30; max-width: 52; }
     FleetScreen #lanes-pane { width: 1fr; }
     FleetScreen #board, FleetScreen #lanes { height: 1fr; }
     FleetScreen #lanes, FleetScreen #board { overflow-x: hidden; }
+    FleetScreen #peek { height: auto; display: none; }
     FleetScreen #why { height: 2; margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
-    FleetScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    FleetScreen #status { height: auto; min-height: 1; max-height: 3; margin: 0 2; }
     FleetScreen #keys { height: 1; margin: 0 1; link-style: none; link-style-hover: underline; }
     FleetScreen.-compact #main { margin-top: 0; width: 100%; }
+    FleetScreen.-compact #empty { margin: 0; padding: 0 1; }
     FleetScreen.-compact #why { height: 6; margin-top: 0; }
+    FleetScreen.-simple #main { width: 100%; }
     """
     BINDINGS = [
         Binding("o", "open_lane", "open"),
@@ -99,7 +207,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("shift+tab", "app.focus_previous", "focus back", show=False),
         Binding("q", "app.quit", "quit"),
         Binding("escape", "escape", "back", show=False),
-        Binding("space", "app.toggle_clock", "freeze clock", show=False),
+        Binding("ctrl+c,super+c", "copy", "copy the selection", show=False),
+        Binding("space", "peek", "peek", show=False),
+        Binding("comma", "app.toggle_clock", "freeze clock", show=False),
         Binding("full_stop", "app.step_clock", "step clock", show=False),
         *(Binding(str(n), f"quick('{n}')", f"answer {n}", show=False) for n in range(10)),
     ]
@@ -113,9 +223,12 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.selected_challenge: str | None = None
         self.board_focused = False
         self.compact = False  # the compact layout (views.compact of the terminal's width)
+        self.peek = False  # the peek is open (space): it stays open or closed for the run
+        self._peek_rows = 0  # the rows of a lane's log the peek's panel was last sized for
         self._lane_cursor: str | None = None  # row key under the cursor: a lane or the finished row
         self._lane_columns: list[tuple[str, str, int]] = []
         self._board_columns: list[tuple[str, str, int]] = []
+        self._empty: bool | None = None  # the board has no challenge, so the page says so (None: not drawn yet)
         self._ready = False  # widgets composed; set at the start of on_mount
 
     @property
@@ -126,24 +239,28 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def compose(self) -> ComposeResult:
         yield Static(id="header")
+        yield Static(id="empty")
         with Horizontal(id="main"):
             with Vertical(id="board-pane", classes="panel"):
-                yield DataTable(id="board", cursor_type="row")
-            with Vertical(id="lanes-pane", classes="panel"):
-                yield DataTable(id="lanes", cursor_type="row")
+                yield FittedTable(id="board", cursor_type="row")
+            with LanesPane(id="lanes-pane", classes="panel"):
+                yield FittedTable(id="lanes", cursor_type="row")
+                yield Static(id="peek")
                 yield Static(id="why")
         yield Static(id="status")
-        yield CommandBar("/ for commands · enter opens the selected lane · or type a message to it", id="bar")
+        yield CommandBar(BAR, id="bar", title=self._bar_title)
         yield Static(id="keys")
 
     def on_mount(self) -> None:
         self._ready = True
+        self.query_one("#bar", CommandBar).field.help = self.fd.action_help  # `?` in the empty bar, as with no focus on it
         self._fit_layout(self.size.width)
         self._show_keys(self.size.width)
         self._fit_board(self.size.width)
         self._set_columns()
         self.refresh_view()
-        self.query_one("#lanes", DataTable).focus()
+        if not self._empty:  # on an empty board nothing has the focus: the keys act all the same
+            self.query_one("#lanes", DataTable).focus()
 
     def on_resize(self, event: events.Resize) -> None:
         changed = self._fit_layout(event.size.width)
@@ -158,18 +275,47 @@ class FleetScreen(Screen, inherit_bindings=False):
         compact = views.compact(width)
         changed, self.compact = compact != self.compact, compact
         self.set_class(compact, "-compact")
+        self.set_class(self.simple, "-simple")
         return changed
 
     def _show_keys(self, width: int) -> None:
         self.query_one("#keys", Static).update(self.key_line(width - KEY_MARGIN))
+
+    def repaint(self) -> None:
+        """Draw everything again in the palette now in use (/theme): the key line is only
+        drawn when the width changes, so it is drawn here."""
+        if not self._ready:
+            return
+        self._show_keys(self.size.width)
+        self.refresh_view()
+
+    def relayout(self) -> None:
+        """Draw in the layout now in use (/layout): the board comes or goes, the lane list
+        takes that layout's columns once it has its new width, and the header, the titles,
+        the why line and the key line are drawn again. The selection, the filter, the sort
+        and what is typed in the bar stay."""
+        if not self._ready:
+            return
+        self.set_class(self.simple, "-simple")
+        self._fit_board(self.size.width)
+        self._show_keys(self.size.width)
+        self.call_after_refresh(self._set_columns)
+        self.refresh_view()
+
+    @property
+    def simple(self) -> bool:
+        """The simple layout is drawn: the app's layout, unless the terminal is narrow enough
+        for the compact one."""
+        return self.fd.layout == "simple" and not self.compact
 
     @property
     def board_hidden(self) -> bool:
         return not self.query_one("#board-pane").display
 
     def _fit_board(self, width: int) -> None:
-        """Hide the board on a narrow terminal (the lane list needs the room)."""
-        show = width >= BOARD_MIN_WIDTH
+        """Hide the board on a narrow terminal (the lane list needs the room), and in the
+        simple layout, which has none."""
+        show = width >= BOARD_MIN_WIDTH and self.fd.layout == "deck"
         pane = self.query_one("#board-pane")
         if pane.display == show:
             return
@@ -180,6 +326,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def on_screen_resume(self) -> None:
         self.refresh_view()
+        self.fd.open_first_lane()  # back from the /new form: the lane it started may be there already
 
     def _set_columns(self) -> None:
         """Fit both tables to their panes: low-value columns drop first, one column stretches."""
@@ -191,6 +338,8 @@ class FleetScreen(Screen, inherit_bindings=False):
                 views.COMPACT_LANE_COLUMNS, "chall", views.COMPACT_CHALL_MIN,
                 max(30, self.query_one("#lanes-pane").size.width - 1 - SCROLLBAR), lanes.cell_padding,
             )  # the pane's width less the scrollbar's, whether it shows yet or not: the columns do not move when it comes
+        elif self.simple:
+            lane_cols = views.simple_lane_columns(max(30, lanes.size.width - 1), lanes.cell_padding)
         else:
             lane_cols = views.fit_columns(
                 views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
@@ -216,10 +365,35 @@ class FleetScreen(Screen, inherit_bindings=False):
         with self.app.batch_update():
             header = self.query_one("#header", Static)
             header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2), compact=self.compact))
+            self._render_empty()
             self._render_board()
             self._render_lanes()
             self._render_why()
             self.query_one("#status", Static).update(self.fd.status_text())
+
+    def _render_empty(self) -> None:
+        """While the board has no challenge, say so in the page, in place of the tables: what
+        to do on a board the player fills, or that it fills by itself. A status line would
+        expire; this stays until a challenge is there. The command bar's placeholder follows."""
+        empty = not self.fd.deck.challenges
+        by_hand = self.fd.adder is not None
+        page = self.query_one("#empty", Static)
+        bar = self.query_one("#bar", CommandBar)
+        if empty:  # each time: /theme changes its colours, and Textual gives a screen it comes back to a focus
+            page.update(empty_text(by_hand))
+            if self.focused is not None and self.focused.id in ("board", "lanes"):
+                self.set_focus(None)  # a table that is not shown takes no keys: the screen's own keys act all the same
+            self.board_focused = False  # nor is the player on a board that is not shown: see on_descendant_focus
+        if empty == self._empty:
+            return
+        self._empty = empty
+        page.display = empty
+        self.query_one("#main").display = not empty
+        bar.set_placeholder((BAR_EMPTY_BY_HAND if by_hand else BAR_EMPTY_PLATFORM) if empty else BAR)
+        if not empty:  # the tables are back: they take their columns once they have a size, and the lane list the focus
+            self.call_after_refresh(self._set_columns)
+            if not bar.field.has_focus:  # a player typing in the bar goes on typing
+                self.query_one("#lanes", DataTable).focus()
 
     def _render_board(self, rebuild: bool = False) -> None:
         deck = self.fd.deck
@@ -251,15 +425,15 @@ class FleetScreen(Screen, inherit_bindings=False):
         lanes = [
             lane
             for lane in sort_lanes(deck.lanes.values(), self.sort, deck.now)
-            if views.lane_matches(deck, lane, self.filter_text)
+            if views.lane_matches(deck, lane, self.filter_text, simple=self.simple)
         ]
         active = [lane for lane in lanes if not lane.finished]
         done = [lane for lane in lanes if lane.finished]
-        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in active]
+        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in active]
         if done:
             rows.append((views.FINISHED_ROW, views.finished_cells(done, self.show_finished)))
             if self.show_finished:
-                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in done]
+                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in done]
         return rows
 
     def _render_lanes(self, rebuild: bool = False) -> None:
@@ -299,26 +473,51 @@ class FleetScreen(Screen, inherit_bindings=False):
                 self.selected_lane = self._lane_cursor  # first lanes on screen: select the top one
                 self._render_lanes()
         self.query_one("#lanes-pane").border_title = views.lanes_title(
-            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact
+            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact, simple=self.simple
         )
 
+    def peek_room(self) -> int:
+        """The rows the lane list and the peek have between them now: the lanes panel's, as it
+        is laid out, less its column labels and the why line. It is lane_rows() of the terminal
+        less every row the command menu and a status line of more than one row take."""
+        panel = self.query_one("#lanes-pane").size.height
+        return max(0, panel - (COMPACT_PANEL_ROWS if self.compact else PANEL_ROWS))
+
+    def _render_peek(self) -> None:
+        """The peek, while it is open: the lane the keys and the command bar act on (bar_lane),
+        in the rows the lanes panel has for it now (peek_room, peek_rows_in): the newest of the
+        lane's log, so a panel made shorter loses the oldest. The lanes panel's bottom border
+        says how to open it or close it, or that there is no room to show it."""
+        rows = peek_rows_in(self.peek_room()) if self.peek else 0
+        self.query_one("#lanes-pane").border_subtitle = PEEK_HINT if not self.peek else PEEK_OPEN_HINT if rows else PEEK_NO_ROOM_HINT
+        panel = self.query_one("#peek", Static)
+        if panel.display != bool(rows):
+            panel.display = bool(rows)
+        if rows:
+            if rows != self._peek_rows:  # the same height for every lane: the list does not move as the cursor does
+                self._peek_rows, panel.styles.height = rows, rows + PEEK_TITLE_ROWS
+            panel.update(views.peek(self.fd.deck, self.bar_lane(), rows))
+
     def _render_why(self) -> None:
+        self._render_peek()  # it follows the selection as the why line does
         deck = self.fd.deck
         why = self.query_one("#why", Static)
         lane = self.bar_lane()
-        self.query_one("#bar", CommandBar).set_suggestions(
-            self.fd.command_suggestions(lane.id if lane else None, with_lane=True)
-        )
+        bar = self.query_one("#bar", CommandBar)
+        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None)
+        bar.show_title()  # the lane the bar acts on follows the selection
         if self.board_focused and self.selected_challenge in deck.challenges:
             why.update(views.challenge_why(deck, deck.challenges[self.selected_challenge]))
             return
         lane = deck.lanes.get(self.selected_lane or "")
         if lane is None:
-            why.update(Text(" No lane yet: lanes start when challenges are released.", theme.MUTED))
+            why.update(Text(" No lanes yet.", theme.MUTED))
         elif self.compact:
             why.update(views.compact_why(deck, lane, why.size.width or self.size.width - 2))
         else:
-            why.update(views.lane_why(deck, lane))
+            why.update(views.lane_why(deck, lane, simple=self.simple))
+        if self.simple:  # its key line is the selected lane's: drawn again when the selection or the lane changes
+            self._show_keys(self.size.width)
 
     # ------------------------------------------------------------------ selection
 
@@ -368,9 +567,15 @@ class FleetScreen(Screen, inherit_bindings=False):
             self.fd.open_challenge(cid)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """The player is on the board while it has the focus, and only a board that is shown:
+        on an empty board, or in a layout with none, Textual may still hand the board's table
+        the focus as the screen opens. Counted, it would stay "on the board" after the focus
+        went, and the bar, the why line and the keys would act on the board's first challenge
+        instead of the lane selected in the lane list."""
         if event.widget.id == "board":
-            self.board_focused = True
-            self.selected_challenge = self.selected_challenge or _cursor_key(event.widget)
+            self.board_focused = bool(self.fd.deck.challenges) and not self.board_hidden
+            if self.board_focused:
+                self.selected_challenge = self.selected_challenge or _cursor_key(event.widget)
         elif event.widget.id == "lanes":
             self.board_focused = False
         self._render_why()
@@ -381,7 +586,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = deck.lanes[lane_id]
         if lane.finished:
             self.show_finished = True
-        if not views.lane_matches(deck, lane, self.filter_text):
+        if not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             self.filter_text = ""
         self.selected_lane = self._lane_cursor = lane_id
         self.board_focused = False
@@ -400,6 +605,10 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.board_focused = True
         self._render_why()
 
+    def _bar_title(self, typed: str) -> Text:
+        """The command bar's title for what is typed: the lane the keys point at, by name."""
+        return views.bar_title(self.fd.deck, typed, self.bar_lane())
+
     def bar_lane(self) -> Lane | None:
         """The lane keys and the command bar act on, if there is one (no warnings)."""
         deck = self.fd.deck
@@ -407,9 +616,19 @@ class FleetScreen(Screen, inherit_bindings=False):
             lanes = deck.lanes_on(self.selected_challenge)
             return lanes[0] if len(lanes) == 1 else None
         lane = deck.lanes.get(self.selected_lane or "")
-        if lane is None or not views.lane_matches(deck, lane, self.filter_text):
+        if lane is None or not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             return None
         return lane
+
+    def help_now(self) -> tuple[Lane | None, tuple[str, ...]]:
+        """What help opens on from this view (P65): the lane the keys act on, and the keys the
+        simple layout's key line has for it now (context_keys), as that line shows them. In
+        every layout: the deck's line has every key and the compact one's is fixed, and help's
+        first rows are the ones that apply to this lane. The lane is the one the keys act on
+        (bar_lane): the selected one, or on the board (the deck layout) its challenge's only
+        lane; none while the filter hides the selected lane, since every key refuses it then."""
+        lane = self.bar_lane()
+        return lane, tuple(shown for _, shown, _ in context_keys(lane, by_hand=self.fd.adder is not None))
 
     def target_lane(self) -> Lane | None:
         """The lane a key acts on: the selected lane, or the board challenge's only lane.
@@ -428,7 +647,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = deck.lanes.get(self.selected_lane or "")
         if lane is None:
             self.fd.warn("Select a lane first")
-        elif not views.lane_matches(deck, lane, self.filter_text):
+        elif not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             self.fd.warn(f"{lane.id} is hidden by the filter; esc clears it")
             return None
         return lane
@@ -474,18 +693,38 @@ class FleetScreen(Screen, inherit_bindings=False):
             return
         self.fd.claim_toggle(cid)
 
+    def action_peek(self) -> None:
+        """space: open the peek at the selected lane, or close it. Where there is nothing to
+        show it for, or the terminal is too short for one row of it, it stays closed and the
+        status line says why. On a terminal tall enough, where a status line of several rows
+        has the room for now, it opens hidden: the panel's border says so (_render_peek), what
+        the status line says stays to be read, and the peek shows once there is room."""
+        if not self.peek:
+            lines, needed = self.size.height, peek_lines_needed(compact=self.compact)
+            if self._empty:
+                self.fd.warn("No lane to peek at yet")
+                return
+            if lines < needed:
+                self.fd.warn(f"No room for the peek: the terminal is {lines} lines tall and it needs {needed}; enter opens the lane")
+                return
+        self.peek = not self.peek
+        self._render_peek()
+        table = self.query_one("#lanes", DataTable)
+        if self.peek and table.row_count:  # the lane it is opened at is a row on the screen, also where it opens hidden
+            table.move_cursor(row=table.cursor_row, animate=False, scroll=True)
+
     def action_command(self) -> None:
         self.start_command("/")
 
     def start_command(self, text: str) -> None:
         bar = self.query_one("#bar", CommandBar)
         lane = self.bar_lane()
-        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True))
+        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None)
         bar.start(text)
 
     @on(CommandBar.Submitted, "#bar")
     def _command(self, event: CommandBar.Submitted) -> None:
-        """Run what was typed on the lane the keys point at (the bar's placeholder says so)."""
+        """Run what was typed on the lane the keys point at (the bar's title names it)."""
         self._leave_bar()
         if not event.value:
             self.action_open_lane()  # enter on an empty bar opens the selected lane
@@ -522,12 +761,30 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.query_one(table, DataTable).focus()
 
     def action_escape(self) -> None:
+        selected = self.get_selected_text()
+        self.clear_selection()
+        if selected:  # text selected with the mouse: esc takes the selection down, and no more
+            return
         bar = self.query_one("#bar", CommandBar)
         if bar.field.has_focus or bar.field.value:
             bar.clear()
             self._leave_bar()
+        elif self.peek:  # before the filter: closing a panel loses nothing the player typed
+            self.peek = False
+            self._render_peek()
         elif self.filter_text:
             self.set_filter("")
+
+    def key_escape(self) -> None:
+        """esc reaches a screen as a key before its binding runs, and Textual's own screen takes
+        the selection down there. This one leaves it to the binding (action_escape), which then knows
+        there was one."""
+
+    def action_copy(self) -> None:
+        """ctrl+c: copy the selected text. With none selected the key goes on, to Textual's
+        own hint that ctrl+q quits."""
+        if not self.fd.copy_selection():
+            raise SkipAction()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "claim":
@@ -543,6 +800,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         Footer fills in after a later refresh, which made screenshots and tests flaky)."""
         if self.compact:
             return compact_keys_text()
+        if self.simple:
+            lane = self.fd.deck.lanes.get(self.selected_lane or "")  # the lane the why line is about
+            return keys_text(context_keys(lane, by_hand=self.fd.adder is not None))
         shown = [b for b in self.BINDINGS if b.show and self._allowed(b.action)]
         return self._keys_text(fit_keys(shown, width)[0])
 
@@ -562,6 +822,14 @@ class FleetScreen(Screen, inherit_bindings=False):
         return "." in name or bool(self.check_action(name, ()))
 
 
+def empty_text(by_hand: bool) -> Text:
+    """What the page says while the board has no challenge (EMPTY_BY_HAND, EMPTY_PLATFORM)."""
+    if not by_hand:
+        return Text(EMPTY_PLATFORM, theme.MUTED)
+    before, command, after = EMPTY_BY_HAND.partition("/new")
+    return Text.assemble((before, theme.TEXT), (command, f"bold {theme.ACCENT}"), (after, theme.TEXT))
+
+
 def fit_keys(bindings: list[Binding], width: int | None) -> tuple[list[Binding], list[Binding]]:
     """The keys a key line `width` cells wide shows, and the keys it leaves out in the order
     they go: the highest KEY_RANK first (the later key, on a tie); help and quit always stay."""
@@ -574,16 +842,77 @@ def fit_keys(bindings: list[Binding], width: int | None) -> tuple[list[Binding],
 def compact_keys_text() -> Text:
     """The compact layout's key line (COMPACT_KEYS): the answers, the commands, help and quit,
     each clickable as on the full line; cut at the edge of a terminal too narrow for it."""
+    return keys_text(COMPACT_KEYS)
+
+
+def keys_text(keys: tuple[tuple[str, str, str], ...]) -> Text:
+    """A key line of (what a click does, the key as shown, its label): a binding's key clicks
+    as that binding, an action ("app.new") as itself, and "" does nothing."""
     by_key = {b.key: b for b in FleetScreen.BINDINGS}
     out = Text(no_wrap=True, overflow="ellipsis")
-    for i, (key, shown, label) in enumerate(COMPACT_KEYS):
+    for i, (key, shown, label) in enumerate(keys):
         binding = by_key.get(key)
-        action = "" if binding is None else binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
+        if binding is None:
+            action = key if "." in key else ""
+        else:
+            action = binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
         click = {"@click": action} if action else {}
         out.append("  " if i else "")
         out.append(shown, Style(color=theme.ACCENT, bold=True, meta=click))
         out.append(f" {label}", Style(color=theme.MUTED, meta=click))
     return out
+
+
+def context_keys(lane: Lane | None, *, by_hand: bool) -> tuple[tuple[str, str, str], ...]:
+    """The simple layout's key line for the selected lane: only the keys that apply to it now.
+    Every other key still acts, and help lists them all. With no lane: how to add a challenge
+    (on a board the player fills), help and quit. With one: what answers it (approve and
+    decline while it waits for the player; else the numbers of its alert's answers, and dismiss
+    for an alert about its course), then open, the commands, help and quit."""
+    if lane is None:
+        return ((NEW_KEY,) if by_hand else ()) + (HELP_KEY, QUIT_KEY)
+    answers: tuple[tuple[str, str, str], ...] = ()
+    if lane.finished:
+        pass
+    elif lane.pending is not None:
+        answers = (APPROVE_KEY, DECLINE_KEY)
+    else:
+        top = views.top_answerable(lane)
+        if views.quick_answers(lane):
+            answers += (ANSWER_KEY,)
+        if top is not None and top.kind in COURSE_ALERTS:
+            answers += (DISMISS_KEY,)
+    return answers + (OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+
+
+# The longest key line the simple layout draws: a lane with numbered answers and an alert to dismiss.
+SIMPLE_LONGEST = (ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+# Every key a lane's line can have, each once, in the order of a line.
+SIMPLE_KEYS = (APPROVE_KEY, DECLINE_KEY, ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+
+
+def simple_key_room(columns: int) -> tuple[list[str], int]:
+    """The keys the simple layout's key line does not show whole on a terminal `columns` wide,
+    and the columns its longest line (SIMPLE_LONGEST) needs. From the compact layout's width
+    down, the line is the compact one: it leaves out the keys it does not have, then any of
+    its own that the terminal's edge cuts."""
+    needed = keys_text(SIMPLE_LONGEST).cell_len + KEY_MARGIN
+    if views.compact(columns):
+        kept = {shown for _, shown, _ in COMPACT_KEYS}
+        left = [f"{shown} {label}" for _, shown, label in SIMPLE_KEYS if shown not in kept]
+        return left + cut_keys([(shown, label) for _, shown, label in COMPACT_KEYS], columns - KEY_MARGIN), needed
+    return cut_keys([(shown, label) for _, shown, label in SIMPLE_LONGEST], columns - KEY_MARGIN), needed
+
+
+def simple_lane_room(columns: int) -> tuple[bool, int]:
+    """Whether the simple layout's lane list has each lane's last action on a terminal
+    `columns` wide, and the columns it needs for it. Fitted as the list fits itself
+    (_set_columns)."""
+    def has_last(width: int) -> bool:
+        return any(key == "last" for key, _, _ in views.simple_lane_columns(max(30, width - LANE_LIST_EDGES - 1), LANE_PADDING))
+
+    needed = next(width for width in range(views.COMPACT_MAX_WIDTH + 1, 400) if has_last(width))
+    return has_last(columns), needed
 
 
 def key_room(columns: int, *, team: bool) -> tuple[list[str], int]:

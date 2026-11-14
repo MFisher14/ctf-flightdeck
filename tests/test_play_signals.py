@@ -6,7 +6,8 @@ window runs it (flightdeck is the session leader: closing the pty's master side 
 window, and the system sends it SIGHUP). Lanes ask the fake model server on 127.0.0.1, which
 answers with one quiet shell command that would run for minutes. The docker test runs only when
 docker answers and debian:bookworm-slim is already on this machine (tests never pull, and use
-no other image); otherwise it reports as not run. Whatever a test starts is removed at the end,
+no other image); otherwise it reports as not run. It holds the Docker-run turn (turns.py), as
+every test that starts a real run in Docker does: no two of them run at once. Whatever a test starts is removed at the end,
 even when it fails.
 
 The console's terminal driver is tested on its own too: once its output thread has died on a
@@ -44,6 +45,7 @@ from ctf_flightdeck.mock.world import FakeWorld
 
 from fake_model import FakeModelServer, tool_call_reply
 from l1_kit import docker_not_run
+from turns import in_docker_run
 
 IMAGE = "debian:bookworm-slim"
 QUIET = "echo $$ > lane-pid.txt; sleep 240"  # the lane's command: prints nothing for minutes
@@ -130,6 +132,12 @@ def make_board(tmp_path: Path) -> Path:
 
 
 def make_config(tmp_path: Path, base_url: str, runtime: str = "host") -> Path:
+    """The config of a run the test starts for real. One with lanes in Docker is written only
+    for a test that holds the Docker-run turn (turns.py): its lane's container has the name
+    any other run started in the same second would ask for."""
+    if runtime == "docker" and not in_docker_run():
+        raise AssertionError("a test that starts a real run in Docker takes the fixture one_docker_run_at_a_time "
+                             "(conftest.py): two such runs started in the same second ask for the same container name")
     path = tmp_path / "config.toml"
     path.write_text(
         f'[api]\nbase_url = "{base_url}"\nkey_env = ""\n'
@@ -224,7 +232,7 @@ def container_exists(name: str) -> bool:
 
 
 @pytest.mark.parametrize("how", ["sigterm", "hangup"])
-def test_a_sigterm_or_closing_the_terminal_removes_a_docker_lanes_container(tmp_path, how):
+def test_a_sigterm_or_closing_the_terminal_removes_a_docker_lanes_container(tmp_path, how, one_docker_run_at_a_time):
     missing = _docker_missing()
     if missing:
         docker_not_run(f"not run: needs docker and {IMAGE}: {missing}")

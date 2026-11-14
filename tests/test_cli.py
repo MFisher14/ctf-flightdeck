@@ -34,14 +34,15 @@ from ctf_flightdeck.core.model import COURSE_ALERTS
 from ctf_flightdeck.mock import scenarios, screenshots
 from ctf_flightdeck.mock.scenarios import ReleaseAt
 from fake_ctfd import FLAG_FORMAT, TOKEN, FakeCTFd, sample
+from words_kit import bare_words
 
 ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
 
 # The default scenario's moments, in the order they are shot. "alert" is alert-<tag>.
 MOMENTS = (
-    "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
-    "approve-pending", "approve-submit", "team-stop", "attention-sort", "narrow-120x36",
+    "open", "simple-open", "wave-drop", "alert", "simple-alert", "command-menu", "focus-lane", "simple-focus", "chat",
+    "focus-after", "diff", "approve-pending", "approve-submit", "team-stop", "attention-sort", "theme-light", "narrow-120x36",
     "compact-56x40", "compact-focus-56x40", "fork-prompt", "kill-prompt", "take-over", "challenge-card", "help",
 )
 COURSE_TAGS = {kind.tag: kind for kind in COURSE_ALERTS}
@@ -128,7 +129,11 @@ class Opened:
 
 
 @pytest.fixture
-def opened(monkeypatch) -> list[Opened]:
+def opened(monkeypatch, tmp_path_factory) -> list[Opened]:
+    """What the CLI opened, in place of a live console. The home directory is the test's own
+    and has no config: `mock` reads the console's look from the player's config when there is one."""
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
     calls: list[Opened] = []
 
     def run(self: FlightdeckApp, *args, **kwargs) -> None:
@@ -335,8 +340,9 @@ def test_play_help_shows_the_event_and_team_options():
     assert "--team --solo Team or solo mode (default: the event profile's, else solo)." in out
     assert "Usage: flightdeck play [OPTIONS] [BOARD]" in out
     assert "--submit <confirm|auto> confirm: you approve each flag; auto: a flag a lane claims goes at once; the rest wait for you" in out
-    assert "Spends tokens: on the API in your config, or with --agent on that CLI's own key or subscription." in out
-    assert "--agent <claude|codex> Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config)" in out
+    assert "Spends model tokens: on the model API in your config, or with --agent on that CLI's own API key or subscription." in out
+    assert ("--agent <claude|codex> Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] "
+            "in your config)") in out
 
 
 def _commands(command, path=("flightdeck",)):
@@ -364,7 +370,11 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
         ("add", "folder"): "FOLDER",
         ("vpn add", "folder"): "FOLDER", ("vpn add", "file"): "FILE",
         ("vpn up", "target"): "FOLDER", ("vpn status", "target"): "FOLDER", ("vpn down", "target"): "FOLDER",
+        ("plugin new", "name"): "NAME", ("plugin add", "folder"): "FOLDER",
+        ("plugin pull", "event"): "EVENT.toml", ("plugin pull", "folder"): "FOLDER",
+        ("http check", "event"): "EVENT.toml", ("http pull", "event"): "EVENT.toml", ("http pull", "folder"): "FOLDER",
         ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR", ("share", "run_dir"): "RUN_DIR",
+        ("records", "run_dir"): "RUN_DIR",
         ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
         ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
         ("gm list", "url"): "URL", ("gm pull", "url"): "URL", ("gm pull", "dest"): "DEST",
@@ -385,7 +395,7 @@ def test_the_help_of_each_command_says_what_it_does_today():
 
     assert "Open the console on fake, scripted data: no models, no network, nothing spent." in shown("mock")
     assert "M0" not in shown("mock")
-    assert ("Check your setup (Python, the config and its keys, a local model server, the light model, Docker and the lane "
+    assert ("Check your setup (Python, the config and its API keys, a local model server, the light model, Docker and the lane "
             "image, your terminal) and say how to fix each problem; and list what a killed flightdeck left running.") in shown("doctor")
     assert ("--tag <str> Image name and tag (default: ctf-flightdeck-lane:1, the [lanes] image init writes; another tag needs "
             "[lanes] image set to it).") in shown("image", "build")
@@ -641,6 +651,34 @@ def test_only_the_narrow_and_the_compact_shots_are_narrow(default_run):
     assert set(widths.values()) == {screenshots.SIZE[0]}
 
 
+def test_the_simple_shots_show_the_same_moments_in_the_simple_layout(default_run):
+    _, out = default_run
+    deck, simple = screen_text(shot(out, "open")), screen_text(shot(out, "simple-open"))
+    was, now = header(shot(out, "open")), header(shot(out, "simple-open"))
+    assert "board " in deck and "fleet " in deck and "docker" in was and any(part.startswith("tok ") for part in was)
+    assert "board " not in simple and re.search(r"╭─ lanes \d+/\d+", simple)  # one list, and no board
+    assert "docker" not in now and not any(part.startswith(("tok ", "lanes ", "T+")) for part in now)
+    assert [part for part in was if part.startswith("▲ ")] == [part for part in now if part.startswith("▲ ")] != []
+    assert "last action" in simple and "turns" not in simple and "idle" not in simple
+    alert, simple_alert = screen_text(shot(out, ALERT_SHOT)), screen_text(shot(out, "simple-alert"))
+    selected = re.search(r"▌(L\d\d) ▲ ", alert).group(1)
+    assert f"▌{selected} ▲ " in simple_alert  # the same lane, and why it is flagged
+    assert simple_alert.rstrip().splitlines()[-1].strip() == "1-9 answer  x dismiss  enter open  / commands  ? help  q quit"
+    lane = screen_text(shot(out, "simple-focus"))
+    assert f"─ {selected} · " in lane and "needs you now" in lane and "No other lane needs you" not in lane
+    assert lane.rstrip().splitlines()[-1].strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"
+    assert "o open  ? help" in screen_text(shot(out, "command-menu"))  # the shots after a simple one are the deck's again
+
+
+def test_the_light_theme_shot_is_drawn_in_the_light_theme_and_the_next_in_the_default(default_run):
+    _, out = default_run
+    light = shot(out, "theme-light").read_text(encoding="utf-8").lower()
+    assert "#fafafa" in light and "#121212" not in light  # the light page, and nothing of the default one
+    after = shot(out, "narrow-120x36").read_text(encoding="utf-8").lower()
+    assert "#121212" in after and "#fafafa" not in after
+    assert screen_text(shot(out, "theme-light")) == screen_text(shot(out, "attention-sort"))  # the same screen, other colours
+
+
 def test_the_compact_shots_show_what_needs_you_the_answers_and_each_lanes_state_and_cost(default_run):
     _, out = default_run
     fleet, lane = screen_text(shot(out, "compact-56x40")), screen_text(shot(out, "compact-focus-56x40"))
@@ -665,7 +703,7 @@ def test_the_compact_shots_show_what_needs_you_the_answers_and_each_lanes_state_
         ("take-over", "Take over L"),
         ("challenge-card", "about"),
         ("help", "/redirect"),
-        ("help", "Keys (fleet)"),
+        ("help", "Keys in the lane list"),
     ],
 )
 def test_each_prompt_shot_shows_its_prompt(default_run, moment, shows):
@@ -712,7 +750,7 @@ def test_the_flag_scenario_reports_the_moments_it_does_not_have(flag_runs):
     assert result.exit_code == 0, result.output
     skipped = result.stderr.splitlines()
     assert any(line.startswith("skipped wave-drop: ") for line in skipped), skipped
-    assert any(line.startswith("skipped alert, command-menu, focus-lane, chat, focus-after, diff: ") for line in skipped), skipped
+    assert any(line.startswith("skipped alert, simple-alert, command-menu, focus-lane, simple-focus, chat, focus-after, diff: ") for line in skipped), skipped
     names = [p.name for p in out.iterdir()]
     assert not [name for name in names if "wave-drop" in name or "-alert-" in name]
     assert any(name.endswith("-approve-submit.svg") for name in names)  # it did play
@@ -745,6 +783,7 @@ MOUNTED = {
     ("eval-local",): "",
     ("gaps",): "L1",
     ("share",): "flight card",
+    ("records",): "solve record",
 }
 
 
@@ -757,9 +796,9 @@ def test_every_component_command_is_mounted_and_explains_itself(command):
 
 def test_the_root_help_groups_the_commands():
     out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
-    for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run"):
+    for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run", "Measure a model"):
         assert panel in out
-    for name in ("preflight", "ctfd", "gm", "team", "l1", "report", "writeups", "score", "eval-local", "gaps"):
+    for name in ("preflight", "ctfd", "gm", "team", "plugin", "l1", "report", "writeups", "score", "eval-local", "gaps"):
         assert f" {name} " in out
 
 
@@ -774,13 +813,65 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
         elif title and line.startswith("│ ") and line[2] != " ":
             panels[title].append(line[2:].split()[0])
     panels.pop("Options")
-    assert panels == {
-        "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
-        "Play": ["mock", "play", "practice", "start"],
-        "Before and during an event": ["add", "preflight", "ctfd", "gm", "team", "vpn"],
-        "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
-        "Solvers (L1)": ["l1", "pack", "build"],
-    }
+    assert list(panels.items()) == [
+        ("Set up", ["init", "doctor", "config", "models", "image"]),  # what a new player sets up, and nothing to measure with
+        ("Play", ["mock", "play", "practice", "start"]),
+        ("Before and during an event", ["add", "preflight", "ctfd", "gm", "team", "vpn", "http", "plugin"]),
+        ("After a run", ["report", "writeups", "score", "gaps", "share", "records"]),  # gaps reads a run folder, like the three before it
+        ("Solvers (L1)", ["l1", "pack", "build"]),
+        ("Measure a model", ["eval-local"]),  # for the light model, an optional feature: last
+    ]
+
+
+def test_the_root_help_says_where_a_new_player_starts_above_the_commands_and_names_commands_it_has():
+    """Help is read top down: "New here?" comes before the first panel of commands, once, and
+    every command it names is one flightdeck has. `flightdeck` alone is the first thing it
+    says to run, since that opens the home screen, which sets a new player up."""
+    import typer
+
+    out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
+    assert out.count("New here?") == 1
+    assert out.index("where you run the loop.") < out.index("New here?") < out.index("╭─ Options") < out.index("╭─ Set up")
+    said = flat(out[out.index("New here?"):out.index("╭─ Options")])
+    assert said.startswith("New here? Run flightdeck on its own: its home screen sets you up (your model API and its API key) "
+                           "and then offers the practice set.")
+    named = re.findall(r"flightdeck ([a-z][a-z-]*)(?=[,.:]| \()", said)
+    assert named == ["init", "doctor", "practice", "start", "mock"], said
+    mock = "No setup at all: flightdeck mock (fake data, nothing spent)."  # the sentence `flightdeck` alone prints, here too
+    assert said.endswith(mock) and mock in cli._next_steps()
+    assert set(named) <= set(typer.main.get_command(cli.app).commands)
+    assert "New here?" not in CliRunner().invoke(cli.app, ["play", "--help"], terminal_width=200).output  # the root's own line
+
+
+# ---------------------------------------------------------------------- one word, one meaning
+
+# What help may call a key or a token, and what it may not: tests/words_kit.py.
+
+
+def test_a_bare_key_or_token_is_found_and_one_that_says_its_kind_is_not():
+    assert bare_words("The environment variable that will hold your key.") == ["nvironment variable that will hold your key."]
+    assert bare_words("asks for its name, site and token, makes its folder") == ["asks for its name, site and token, makes its folder"]
+    assert len(bare_words("Spends tokens like play. Keep the token safe.")) == 2  # "the token", with no token named before it
+    assert len(bare_words("its own key or token and models")) == 2
+    for fine in (
+        "Never prints the API key.", "it goes to your keys file", "--key-env VAR", "claude api-key or oauth-token",
+        "--token-env NAME The environment variable that holds your CTFd access token (its name, not the token).",
+        "holds your Game Master token (its name, not the token)", "Spends model tokens like play.",
+        "--budget-tokens TOKENS The whole run's budget in model tokens", "Dollars per million tokens",
+        "The tests get no API keys or access tokens from flightdeck's environment.", "give its budget in tokens (`--budget-tokens`)",
+    ):
+        assert bare_words(fine) == [], fine
+
+
+def test_every_help_page_says_which_key_and_which_token_it_means():
+    import typer
+
+    wrong = []
+    for path, _ in _commands(typer.main.get_command(cli.app)):
+        shown = flat(CliRunner().invoke(cli.app, [*path[1:], "--help"], terminal_width=200).output)
+        wrong += [f"{' '.join(path)} --help: ...{place}..." for place in bare_words(shown)]
+    assert not wrong, ("help says key or token without saying which (an API key, an access token, model tokens; a key you "
+                       "press is named, like Ctrl-C):\n" + "\n".join(wrong))
 
 
 # ---------------------------------------------------------------------- the first command a new player types
@@ -798,6 +889,62 @@ def test_flightdeck_alone_says_what_it_is_and_the_next_step(tmp_path, monkeypatc
     again = invoke()
     assert again.exit_code == 0 and f"Your config: {tmp_path / 'config.toml'}" in again.output
     assert "flightdeck init" not in again.output
+
+
+def home_ends_with(monkeypatch, *choices) -> list:
+    """`flightdeck` alone is at a terminal, and its home screen ends with each of `choices` in
+    turn, then with the player quitting it. Returns what it was opened with each time:
+    (menu, status, ready)."""
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    monkeypatch.setattr(cli, "_at_terminal_out", lambda: True)
+    shown, left = [], list(choices)
+
+    def stand_in(menu, status, *, palette=None, ready=None):
+        shown.append((menu, status, ready))
+        return left.pop(0) if left else None
+
+    monkeypatch.setattr(cli, "_home_choice", stand_in)
+    return shown
+
+
+def test_the_demo_from_the_home_screen_comes_back_to_it_and_quitting_there_leaves(opened, monkeypatch):
+    shown = home_ends_with(monkeypatch, ("mock",), ("mock",))
+    result = invoke()
+    assert result.exit_code == 0, result.output
+    assert len(opened) == 2 and len(shown) == 3  # the demo twice: the home screen before, between and after
+    for menu, status, ready in shown:  # no config here: setup first, starting an event one below, and nothing of a run to say
+        assert [item.title for item in menu] == ["Get started", "Start a new CTF", "See a demo"] and (status, ready) == ("", None)
+
+
+def test_a_run_from_the_home_screen_ends_with_its_exit_lines_and_the_home_screen_again_its_event_first(tmp_path, monkeypatch, opened, model_api):
+    from ctf_flightdeck import events, start
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(f'[api]\nbase_url = "{model_api}"\nkey_env = ""\n[models]\nladder = ["fake/small"]\n'
+                   f'[lanes]\nmax_lanes = 2\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n')
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(cfg))
+    folders = []
+    for name, when in (("Older CTF", 1_000_000_000.0), ("Newer CTF", 1_500_000_000.0)):
+        folder = tmp_path / "events" / name.split()[0].lower()
+        start.write(folder, start.EventAnswers(name=name, platform="manual"))  # a by-hand event: its empty board plays
+        events.remember(folder, now=when)
+        folders.append(folder.resolve())
+    shown = home_ends_with(monkeypatch, ("resume", folders[0]))  # the older one; then the player quits the home screen
+    result = invoke()
+    assert result.exit_code == 0, result.output
+    assert len(opened) == 1 and "run log: " in result.stdout  # `play` itself: its console once, then its exit lines
+    (before, first_status, _), (after, status, _) = shown
+    assert [item.title for item in before[:2]] == ["Resume Newer CTF", "Resume Older CTF"]
+    assert [item.title for item in after[:2]] == ["Resume Older CTF", "Resume Newer CTF"]  # the one just played is first
+    assert status.startswith("Back from your run.") and not first_status.startswith("Back")
+
+
+def test_init_has_no_option_that_takes_the_key_itself():
+    """The key is pasted at init's hidden prompt, or put in the keys file or the environment:
+    a command line is kept in the shell's history and shown in the process list."""
+    shown = flat(CliRunner().invoke(cli.app, ["init", "--help"], terminal_width=200).output)
+    options = set(re.findall(r"--[a-z][a-z-]*", shown))
+    assert "--key-env" in options and {option for option in options if "key" in option or "token" in option} == {"--key-env"}
 
 
 def test_a_path_under_a_user_that_does_not_exist_is_a_message_not_a_traceback():

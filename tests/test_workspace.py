@@ -39,6 +39,7 @@ from ctf_flightdeck.agent.workspace import (
     WorkspaceError,
     changed_files,
     docker_unavailable,
+    docker_unavailable_stoppable,
     open_inside,
     remove_shell_home,
     take_snapshot,
@@ -672,6 +673,61 @@ def test_docker_unavailable_names_a_daemon_that_is_not_running(monkeypatch, tmp_
     assert reason is not None and reason.startswith("docker daemon not running")
 
 
+def stand_in_docker(tmp_path, monkeypatch, version: str) -> Path:
+    """A stand-in `docker`, the only one on PATH, whose `docker version` is the shell lines
+    `version`; it writes its process id to `pid` in its folder, which is returned. Never the
+    real docker, and it runs nothing."""
+    folder = tmp_path / f"stand-in-{uuid.uuid4().hex[:8]}"
+    folder.mkdir()
+    exe = folder / "docker"
+    exe.write_text(f'#!/bin/sh\n[ "$1" = "version" ] || exit 64\necho $$ > "{folder}/pid"\n{version}\n')
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(folder))
+    return folder
+
+
+NEVER_ANSWERS = "n=0\nwhile [ $n -lt 100 ]; do /bin/sleep 0.1; n=$((n+1)); done\nexit 1"  # 10 s, then it ends by itself
+
+
+def test_the_stoppable_docker_check_gives_the_reasons_the_plain_one_gives(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))  # an empty directory: no docker on it
+    assert run(docker_unavailable_stoppable()) == docker_unavailable() == "docker not found on PATH"
+    stand_in_docker(tmp_path, monkeypatch, "echo 27.0.0; exit 0")
+    assert run(docker_unavailable_stoppable()) is None and docker_unavailable() is None
+    stand_in_docker(tmp_path, monkeypatch, "echo 'Cannot connect to the Docker daemon' >&2; exit 1")
+    assert run(docker_unavailable_stoppable()) == docker_unavailable() == "docker daemon not running (Cannot connect to the Docker daemon)"
+    stand_in_docker(tmp_path, monkeypatch, "exit 0")  # it ran and named no server: no daemon answered
+    assert run(docker_unavailable_stoppable()) == docker_unavailable() == "docker daemon not running"
+
+
+def test_cancelling_the_stoppable_docker_check_kills_docker_at_once_and_waits_for_nothing(monkeypatch, tmp_path):
+    folder = stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
+
+    async def asked_then_cancelled() -> tuple[int, float]:
+        check = asyncio.ensure_future(docker_unavailable_stoppable())
+        while not ((folder / "pid").exists() and (folder / "pid").read_text().strip()):
+            await asyncio.sleep(0.02)
+        began = time.monotonic()
+        check.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await check
+        return int((folder / "pid").read_text()), time.monotonic() - began
+
+    began = time.monotonic()
+    pid, took = run(asked_then_cancelled())
+    assert took < 3 and time.monotonic() - began < 5  # neither the cancel nor the loop's end waits the stand-in's 10 s out
+    assert_dies(pid, within=1.0)
+
+
+def test_the_stoppable_docker_check_gives_up_on_a_daemon_that_does_not_answer_and_kills_docker(monkeypatch, tmp_path):
+    folder = stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
+    monkeypatch.setattr(workspace_module, "DOCKER_VERSION_TIMEOUT", 0.5)
+    began = time.monotonic()
+    assert run(docker_unavailable_stoppable()) == "docker daemon not answering (docker version took over 20 s)"
+    assert time.monotonic() - began < 5
+    assert_dies(int((folder / "pid").read_text()), within=1.0)
+
+
 def test_a_docker_lane_without_docker_fails_loudly_and_writes_nothing(monkeypatch, tmp_path, handout):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name="flightdeck-test-no-docker")
@@ -737,8 +793,13 @@ case "$1" in
   rm) exit 0 ;;
   exec)
     if [ "$2" = "-i" ]; then echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300; fi
+    printf '%s\n' "$2 $3 $4 ... $last" >> "$(dirname "$0")/exec.log"  # the container, the program, and the last word
     case "$last" in
       "command -v "*) echo "/usr/bin/${last#command -v }" ;;
+      flightdeck-tools)  # the lane's question (workspace._TOOLS): tools.txt is what this image has, tools.fail a docker that fails
+        if [ -f "$(dirname "$0")/tools.fail" ]; then echo "Error response from daemon: no" >&2; exit 126; fi
+        if [ -f "$(dirname "$0")/tools.hang" ]; then exec sleep 300; fi  # an image whose r2 never answers
+        cat "$(dirname "$0")/tools.txt" 2>/dev/null ;;
       *) exit 1 ;;
     esac ;;
   *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;
@@ -788,6 +849,58 @@ def test_an_image_with_python3_leaves_the_python_tool_on(fake_docker, tmp_path, 
     assert ws.python_missing is None
     log = (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()
     assert log[0].startswith("copied 5 files") and not any(line.startswith("python3 is not") for line in log)
+
+
+def test_a_lanes_container_is_asked_which_analysis_programs_its_image_has(fake_docker, tmp_path, handout):
+    (fake_docker / "tools.txt").write_text("pdg\nr2\nstrings\ngdb\n")  # in any order, with a word that is not one of them
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker", probe_tools=True)
+    assert ws.shell_tools == ()  # nothing is known before the container is
+    run(ws.prepare())
+    run(ws.close())
+    assert ws.shell_tools == ("gdb", "r2", "pdg")  # only the names flightdeck asks about, in its own order
+    asked = [line for line in (fake_docker / "exec.log").read_text().splitlines() if line.endswith(" flightdeck-tools")]
+    assert asked == ["flightdeck-test-fake-docker bash -c ... flightdeck-tools"]  # asked once, of this container's bash
+    script = workspace_module._TOOLS
+    assert "cd / ||" in script and "r2 -N -q -c Lc -- </dev/null" in script  # from /, no file, no settings: nothing of the challenge
+    assert workspace_module.SHELL_TOOLS == ("gdb", "gdb-multiarch", "r2", "pdg")
+
+
+def test_a_container_that_is_not_a_lanes_is_not_asked_for_its_analysis_programs(fake_docker, tmp_path, handout):
+    """An L1 engine's container (l1/container.py) is a DockerWorkspace too, one per engine run:
+    it pays for no question whose answer only a lane's brief uses."""
+    (fake_docker / "tools.txt").write_text("gdb\nr2\npdg\n")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+    run(ws.prepare())
+    run(ws.close())
+    assert ws.shell_tools == ()
+    assert "flightdeck-tools" not in (fake_docker / "exec.log").read_text()
+
+
+def test_an_image_that_does_not_say_what_it_has_gets_no_programs_named_and_a_line_in_prepare_log(fake_docker, tmp_path, handout):
+    (fake_docker / "tools.txt").write_text("gdb\n")
+    (fake_docker / "tools.fail").write_text("")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker", probe_tools=True)
+    run(ws.prepare())  # the lane still starts
+    run(ws.close())
+    assert ws.shell_tools == ()
+    assert (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1] == (
+        f"image {FAKE_IMAGE} did not say which analysis programs it has (docker exec exited 126): this lane's brief names none"
+    )
+
+
+def test_an_image_that_never_says_what_it_has_still_gets_its_lane_started(fake_docker, tmp_path, handout, monkeypatch):
+    """The question is optional: a container that does not answer it in time (a slow docker, an
+    r2 that hangs loading a plugin) is a lane whose brief names no program, not a lane that ends."""
+    monkeypatch.setattr(workspace_module, "TOOLS_PROBE_TIMEOUT", 1.0)
+    (fake_docker / "tools.hang").write_text("")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker", probe_tools=True)
+    run(ws.prepare())  # the lane still starts
+    run(ws.close())
+    assert ws.shell_tools == ()
+    assert (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1] == (
+        f"image {FAKE_IMAGE} did not say which analysis programs it has (docker exec did not finish within 1 s): "
+        "this lane's brief names none"
+    )
 
 
 @pytest.mark.parametrize(
@@ -946,6 +1059,18 @@ def test_an_image_without_python3_is_noted_for_the_python_tool_and_in_prepare_lo
         "(`flightdeck image build` builds the lane image, which has it)"
     )
     assert run(box.run("echo the shell works", timeout=30)) == RunResult(0, b"the shell works\n")
+
+
+def test_a_real_image_with_no_debugger_and_no_decompiler_says_so(docker_ready, container_name, tmp_path, handout):
+    """The question itself, in a real container: debian:bookworm-slim has none of the programs,
+    so the script must end well and name nothing (tests/test_l1_lane_image.py asks the lane image)."""
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name, probe_tools=True)
+    try:
+        run(ws.prepare())
+        assert ws.shell_tools == ()
+        assert not any("did not say" in line for line in (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines())
+    finally:
+        run(ws.close())
 
 
 def test_the_docker_take_over_shell_is_docker_exec_in_work(box):

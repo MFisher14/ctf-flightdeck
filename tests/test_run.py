@@ -21,7 +21,7 @@ from ctf_flightdeck import cli
 from ctf_flightdeck.agent.egress import CLI_API
 from ctf_flightdeck.agent.workspace import DockerWorkspace, docker_unavailable
 from ctf_flightdeck.core.model import ChallengeStatus, EventKind, LaneState
-from ctf_flightdeck.lane import IMAGE, build_command, dockerfile
+from ctf_flightdeck.lane import IMAGE, build_command, built_from, dockerfile, fingerprint
 from ctf_flightdeck.pricing import Price
 from ctf_flightdeck.run import RunError, RunOptions, lane_reach, prepare_run
 
@@ -567,11 +567,78 @@ def test_a_docker_run_with_a_missing_image_names_the_command_that_builds_it(tmp_
 
 def test_the_lane_image_has_the_tools_a_lane_needs_and_builds_from_the_shipped_dockerfile():
     text = dockerfile()
-    assert text.startswith("# The lane image") and "FROM debian:bookworm-slim" in text
-    for tool in ("python3", "file", "xxd", "binutils", "unzip", "curl", "libimage-exiftool-perl"):
-        assert tool in text, tool
+    assert text.startswith("# The lane image") and "FROM debian:trixie-slim" in text
+    for tool in ("python3", "file", "xxd", "binutils", "unzip", "curl", "libimage-exiftool-perl", "gdb", "gdb-multiarch"):
+        assert re.search(rf"(?m)^ +(?:\S+ )*{re.escape(tool)}(?: \S+)* \\$", text), tool  # a package of the apt-get line
     argv = build_command(docker="docker")
-    assert argv == ["docker", "build", "--tag", IMAGE, "--file", "Dockerfile", "."]
+    mark = hashlib.sha256(text.encode()).hexdigest()[:16]  # the Dockerfile's own fingerprint goes on the image
+    assert fingerprint() == mark
+    assert argv == ["docker", "build", "--tag", IMAGE, "--label", f"org.ctf-flightdeck.lane.dockerfile={mark}", "--file", "Dockerfile", "."]
+
+
+def label_docker(tmp_path: Path, monkeypatch, images: dict) -> Path:
+    """A stand-in `docker`, the only one on PATH: it knows `images` ({name: its labels, or None
+    for an image with none}), answers `docker version` and `docker image inspect` (with or
+    without --format), and fails on anything else. Returns its folder (images.json there can
+    be rewritten)."""
+    folder = tmp_path / "label-docker"
+    folder.mkdir()
+    (folder / "images.json").write_text(json.dumps(images))
+    (folder / "docker").write_text(
+        f"#!{sys.executable} -I\n"
+        "import json, sys\n"
+        f"images = json.load(open({str(folder / 'images.json')!r}))\n"
+        "args = sys.argv[1:]\n"
+        "if args[:1] == ['version']:\n"
+        "    print('99.0.0-fake'); sys.exit(0)\n"
+        "if args[:2] != ['image', 'inspect'] or args[-1] not in images:\n"
+        "    sys.stderr.write('Error response from daemon: No such image\\n'); sys.exit(1)\n"
+        "print(json.dumps(images[args[-1]]) if '--format' in args else '[{}]')\n"
+    )
+    (folder / "docker").chmod(0o755)
+    monkeypatch.setenv("PATH", str(folder))
+    return folder
+
+
+def test_an_image_says_which_dockerfile_it_was_built_from_by_its_label(tmp_path, monkeypatch):
+    mark = fingerprint()
+    folder = label_docker(tmp_path, monkeypatch, {
+        IMAGE: {"org.ctf-flightdeck.lane.dockerfile": mark, "other": "x"},
+        "old:1": None,  # built before the label: docker says its labels are null
+        "hand:1": {"maintainer": "someone"},
+        "odd:1": {"org.ctf-flightdeck.lane.dockerfile": 7},
+    })
+    assert built_from() == built_from(IMAGE) == mark
+    assert built_from("old:1") == built_from("hand:1") == built_from("odd:1") == ""  # no fingerprint: not today's
+    assert built_from("absent:1") is None  # not on this machine: nothing is known, and nothing is pulled
+    (folder / "images.json").write_text("{not json")  # a docker that answers nonsense
+    assert built_from(IMAGE) is None
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert built_from(IMAGE) is None  # no docker
+
+
+def test_the_lane_images_decompiler_is_downloaded_only_as_the_archives_its_dockerfile_pins():
+    """radare2 and r2ghidra are not Debian packages: the Dockerfile fetches four release archives
+    (two per architecture), and each must be checked against a SHA-256 written in the file
+    before it is used, the build stopping on a mismatch and on an architecture with no release."""
+    text = dockerfile()
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    fetched = re.findall(r"curl -fsSL -o (\S+) \"(https://\S+)\"", code)
+    assert fetched == [
+        ("radare2.deb", "https://github.com/radareorg/radare2/releases/download/6.2.4/radare2_6.2.4_${arch}.deb"),
+        ("r2ghidra.zip", "https://github.com/radareorg/r2ghidra/releases/download/6.2.4/r2ghidra-6.2.4-linux-${plugin}.zip"),
+    ]
+    assert code.count("curl -") == 2 and "wget" not in code and "http://" not in code  # nothing else is fetched; https only
+    assert re.search(r"(?m)^RUN set -eu; \\$", code)  # any failing step stops the build
+    for name, sha in (("radare2.deb", "r2_sha"), ("r2ghidra.zip", "plugin_sha")):
+        check = f'echo "${sha}  {name}" | sha256sum -c -;'
+        assert code.index(f"curl -fsSL -o {name} ") < code.index(check) < code.index("dpkg -i radare2.deb" if name == "radare2.deb" else "unzip -q r2ghidra.zip")
+    pins = dict(re.findall(r"(amd64|arm64)\) r2_sha=([0-9a-f]{64});", code))
+    plugins = dict(re.findall(r"plugin=(x86-64|arm-64); plugin_sha=([0-9a-f]{64}) ;;", code))
+    assert sorted(pins) == ["amd64", "arm64"] and sorted(plugins) == ["arm-64", "x86-64"]
+    assert len({*pins.values(), *plugins.values()}) == 4  # four archives, four different hashes
+    assert re.search(r"\*\) echo \"[^\"]*not for \$arch\" >&2; exit 1 ;;", code)  # another architecture: a named stop
+    assert code.rstrip().splitlines()[-3].strip() == "r2 -q -c 'Lc' -- | grep -q ghidra"  # the build fails unless r2 loads the plugin
 
 
 def test_image_build_without_docker_fails_with_the_reason(monkeypatch, tmp_path):
@@ -911,7 +978,9 @@ def test_the_console_credits_a_flag_an_l1_engine_found_to_that_engine_as_the_sco
     pack = tmp_path / "pack"
     python_engine(pack, "reader", READER, route='keywords = ["note"]')
     with FakeModelServer() as server:
-        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), pack=pack))
+        path = config(tmp_path, server.base_url)
+        path.write_text(path.read_text() + '[console]\nlayout = "deck"\n')  # the layout with the board: its owner column is read here
+        run = prepare_run(RunOptions(board=board(tmp_path), config=path, pack=pack))
         app = run.app(refresh_seconds=None)
 
         async def main():
@@ -1369,6 +1438,7 @@ def test_a_coding_agent_lane_in_docker_reaches_its_clis_api_and_its_instance_and
             run.close()
         workspace = run.driver.workspaces(type("L", (), {"id": "L01"})(), run.board.challenges[0].challenge)
         assert isinstance(workspace, DockerWorkspace)
+        assert workspace.probe_tools  # a lane's own container is asked what its image has, for the brief (an L1 engine's is not)
         args = workspace.run_args()
         assert "bridge" not in args
         return workspace, args[args.index("--network") + 1], args[args.index("--name") + 1]

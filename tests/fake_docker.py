@@ -30,7 +30,9 @@ proxy with its configuration and runs nothing, `docker logs` says such a proxy i
 How it runs: tests/test_external.py writes bin/docker, a small Python script that sets
 FAKE_DOCKER_STATE (its folder) and execs `python -I fake_docker.py <docker's arguments>`.
 Every call is appended to calls.jsonl there (its arguments: no secret's value is ever one).
-clis.json there names the image's CLIs ({"claude": path, ...}).
+clis.json there names the image's CLIs ({"claude": path, ...}). tools.txt there, when a test
+writes one, is what the image answers a lane's question about its analysis programs
+(workspace._TOOLS); without it the image has none, whatever this machine has.
 """
 
 from __future__ import annotations
@@ -236,6 +238,13 @@ def execute(args: list[str]) -> None:
         fail(f"Error response from daemon: No such container: {name}")
     if command[:2] == ["bash", "-c"] and command[2].startswith("command -v "):
         print("/usr/bin/" + command[2].removeprefix("command -v "))  # the image has bash, timeout, python3
+        return
+    if command[:2] == ["bash", "-c"] and command[3:] == ["flightdeck-tools"]:  # workspace._TOOLS: never run on this machine
+        try:
+            with open(os.path.join(STATE, "tools.txt"), encoding="utf-8") as f:
+                sys.stdout.write(f.read())
+        except OSError:
+            pass
         return
     if command[:2] == ["sh", "-c"] and command[2] == 'command -v "$1"':
         cli = command[4]

@@ -1,8 +1,12 @@
 """First-run help: `flightdeck init` writes a config, `flightdeck doctor` checks a setup.
 
 Both exist so a new player gets from install to a running console without reading the
-architecture (the v0.1.0 requirement). Neither ever asks for, reads out or stores the API
-key itself: the config names the environment variable that holds it.
+architecture (the v0.1.0 requirement). The config names the environment variable that holds
+the API key, never the key. At a terminal init asks for a key that is not set yet at a hidden
+prompt and puts it in the player's keys file (keys.save); neither init nor doctor ever reads
+a key out, and no message or config holds one. The home screen's setup form (console/home.py)
+asks the same questions and writes the same config: both go through the *_answer functions,
+answers_for and write_setup here.
 
 init checks each answer as it is given (the *_answer functions: a bad one is asked again
 at a terminal, and named by its option away from one), then checks the whole config in
@@ -99,11 +103,22 @@ LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # 
 LIGHT_MEASURED = "measured (`flightdeck models` gives each result): Qwen3.5 9B or Gemma 4 12B with thinking off"
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
-# What init suggests for a server on this machine: the default at its prompt, named in its
-# message away from a terminal, never written without the player choosing it. From a benchmark
-# of open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11: docs/MODELS.md), not a guarantee.
+# What init suggests where it has no ladder of its own to write: the default at its prompt and in
+# the home screen's setup form, named in its message away from a terminal, never written without
+# the player choosing it. For a model API: OpenRouter's names for the Claude ladder ("Lanes on an
+# API" in docs/MODELS.md), and for OpenAI's own API two models its documentation lists with
+# function calling on Chat Completions (the API flightdeck speaks) and no reasoning to switch off
+# first; flightdeck has measured neither, and docs/MODELS.md says so. For a server on this
+# machine: from a benchmark of open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11:
+# docs/MODELS.md), not a guarantee.
 BENCHMARK = "in flightdeck's benchmark (docs/MODELS.md)"
 SUGGESTED_LADDERS = {
+    "openrouter": (",".join(OPENROUTER_NAMES[model] for model in ANTHROPIC_LADDER),
+                   "OpenRouter's names for Claude Haiku, Sonnet and Opus 5.5, the ladder flightdeck would start with on an "
+                   "API (docs/MODELS.md)"),
+    "openai": ("gpt-5.4-mini,gpt-5.4",
+               "a small model and a larger one that take tool calls on OpenAI's Chat Completions API; flightdeck has not "
+               "measured them (docs/MODELS.md)"),
     "local": ("gpt-oss:20b", f"the local model that solved the most practice challenges as served (2 of 4), {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
             f"it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 tokens, {BENCHMARK}"),
@@ -384,16 +399,23 @@ def provider_answer(text: str) -> str:
     return name
 
 
+# The provider menu, in parts: init prints it whole at its prompt (PROVIDER_MENU), and the home
+# screen's setup form lists the same choices in the same words (provider_menu()).
+PROVIDER_QUESTION = "Which model API do the lanes use?"
+PROVIDER_LINES = (  # in PROVIDER_CHOICES' order; the local provider is shown as ollama
+    ("openrouter", "one key for many vendors' models (OPENROUTER_API_KEY)"),
+    ("anthropic", "Claude models on Anthropic's API (ANTHROPIC_API_KEY)"),
+    ("openai", "OpenAI's API (OPENAI_API_KEY)"),
+    ("ollama", "open-weight models on this machine, free"),
+    ("mlx", "an MLX server on this Mac, free"),
+    ("custom", "any other OpenAI-compatible server"),
+)
+AGENT_NOTE = ("A coding-agent CLI (Claude Code, Codex) is not chosen here: it needs no setup, `flightdeck play --agent "
+              "claude` uses it.")
 PROVIDER_MENU = (
-    "Which model API do the lanes use?\n"
-    "  1  openrouter   one key for many vendors' models (OPENROUTER_API_KEY)\n"
-    "  2  anthropic    Claude models on Anthropic's API (ANTHROPIC_API_KEY)\n"
-    "  3  openai       OpenAI's API (OPENAI_API_KEY)\n"
-    "  4  ollama       open-weight models on this machine, free\n"
-    "  5  mlx          an MLX server on this Mac, free\n"
-    "  6  custom       any other OpenAI-compatible server\n"
-    "Choose one, by number or name. A coding-agent CLI (Claude Code, Codex) is not chosen here: it needs\n"
-    "no setup, `flightdeck play --agent claude` uses it. Your choice"
+    PROVIDER_QUESTION + "\n"
+    + "".join(f"  {number}  {name:<13}{what}\n" for number, (name, what) in enumerate(PROVIDER_LINES, 1))
+    + "Choose one, by number or name. " + AGENT_NOTE.replace("it needs no setup", "it needs\nno setup") + " Your choice"
 )
 _AGENT_WORDS = ("agent", "codex", "cli", "claudecode", "claude-code")
 _CHOOSE = "choose a number from 1 to 6, or one of openrouter, anthropic, openai, ollama (or local), mlx or custom"
@@ -420,6 +442,21 @@ def providers_answer(text: str) -> tuple[str, ...]:
     if not chosen:
         raise AnswerError(_CHOOSE)
     return tuple(chosen)
+
+
+def provider_menu() -> tuple[tuple[str, str], ...]:
+    """The menu's choices as (provider, "name: what it is"), in its order: what the home
+    screen's setup form lists."""
+    return tuple((provider_answer(name), f"{name}: {what}") for name, what in PROVIDER_LINES)
+
+
+def default_models(provider: str) -> tuple[str, str]:
+    """The models offered for `provider` before the player types any, as the models question
+    takes them (weakest first, comma-separated), and why those: Anthropic's ladder, else what
+    SUGGESTED_LADDERS holds. ("", "") for custom, whose models only its server can name."""
+    if provider == "anthropic":
+        return ",".join(ANTHROPIC_LADDER), "Claude Haiku, Sonnet and Opus 5.5, written with Anthropic's list prices"
+    return SUGGESTED_LADDERS.get(provider, ("", ""))
 
 
 def models_answer(text: str) -> tuple[str, ...]:
@@ -537,19 +574,126 @@ def _lane_image() -> str:
     return IMAGE
 
 
-def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
-    """Check the config in memory, then write it. Refuses to overwrite unless force.
+def provider_api(provider: str) -> tuple[str | None, str | None]:
+    """A provider's address and the variable that holds its key ("" for a server that needs
+    none); (None, None) for custom, which has neither of its own."""
+    if provider == "anthropic":
+        return ANTHROPIC
+    return PROVIDERS.get(provider, (None, None))
 
-    A ConfigError names `path` and what is wrong; nothing is written before the check, so
-    a key typed in the wrong place never reaches a file."""
+
+def answers_for(provider: str, ladder: Sequence[str], runtime: str, *, base_url: str | None = None,
+                key_env: str | None = None, max_lanes: int = 4, fallback: FallbackAnswers | None = None,
+                light: LightAnswers | None = None) -> Answers:
+    """The config for a provider (one of PROVIDER_CHOICES), a ladder and a runtime, as
+    `flightdeck init` and the home screen's setup form both write it: the provider's address
+    and key variable unless others are given (custom has neither of its own, so both must
+    be: ValueError), Anthropic's prices for an Anthropic ladder, no dollar cap for a server
+    that costs nothing (a cap would only stop every lane once to ask about a cost nobody
+    reports), and for an OpenAI-compatible server on this machine the longer timeout and the
+    reply cap, since a local model can take minutes for one reply."""
+    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
+    from .light import on_this_machine
+
+    dialect = "anthropic" if provider == "anthropic" else "openai"
+    url, env = provider_api(provider)
+    base_url = base_url or url
+    key_env = env if key_env is None else key_env
+    if base_url is None or key_env is None:
+        raise ValueError(f"the {provider} provider has no address or key variable of its own: give both ('' for no key)")
+    here = dialect == "openai" and on_this_machine(base_url)
+    return Answers(
+        base_url, key_env, tuple(ladder), runtime, max_lanes,
+        dollar_cap=None if provider in LOCAL_PROVIDERS else 2.0,
+        provider=dialect, prices=anthropic_prices(ladder) if dialect == "anthropic" else {},  # the refusal fallback's models too
+        fallback=fallback, light=light,
+        timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None,
+    )
+
+
+def server_lines(answers: Answers, provider: str) -> list[str]:
+    """What a player is told about a model server on this machine once its config is written:
+    how long a lane's call may take and how long its reply may be, what Ollama does with a
+    lane's context, and the command that starts the MLX server. Nothing for a remote API."""
+    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
+
+    lines = []
+    if answers.timeout is not None:
+        lines.append(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
+                     "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
+                     f"12B's replies {BENCHMARK}); change timeout and max_tokens under [api]")
+    if answers.provider == "openai" and is_ollama(answers.base_url):
+        lines.append(f"context: {OLLAMA_CONTEXT_NOTE}")
+    if provider == "mlx":
+        lines.append(f"next: start the MLX server: {mlx_server_command(answers.models[0], answers.base_url)}   (thinking off, "
+                     "and a reply cap of 8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice "
+                     f"challenges on MLX {BENCHMARK})")
+    return lines
+
+
+def lane_image_missing(answers: Answers) -> bool:
+    """Whether the config's lanes need the lane image built first: Docker lanes, and the image
+    init names (flightdeck's own) is not on this machine."""
+    return answers.runtime == "docker" and not image_present(_lane_image())
+
+
+def check_config(answers: Answers, path: Path, *, force: bool = False) -> str:
+    """The config's text for `answers`, checked in memory as load_config() would check the
+    file: a ConfigError names `path` and what is wrong. FileExistsError when `path` is there
+    and `force` is not given. Nothing is written."""
     from .config import parse_config
 
     text = render(answers)
     parse_config(text, path)
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; use --force to replace it")
+    return text
+
+
+def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
+    """Check the config in memory, then write it. Refuses to overwrite unless force.
+
+    A ConfigError names `path` and what is wrong; nothing is written before the check, so
+    a key typed in the wrong place never reaches a file."""
+    text = check_config(answers, path, force=force)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    return path
+
+
+def write_setup(answers: Answers, path: Path, *, keys: Mapping[str, str] | None = None, force: bool = False) -> Path:
+    """Write the config and keep the keys the player gave for it: each of `keys` ({variable:
+    key}) goes to the keys file (keys.save: the owner's only, never shown, never in the
+    config). Only a variable the config names is taken (its API's, its fallback's:
+    ValueError otherwise). The config is checked first (check_config) and written before the
+    keys are kept, so a config that would be refused, or cannot be written (OSError), keeps no
+    key; and a key that cannot be kept (keys.KeysError) takes the config back out (the one it
+    replaced, with `force`, goes back), so none is left that names a key nobody has."""
+    from . import keys as keys_file
+
+    check_config(answers, path, force=force)
+    named = {answers.key_env, answers.fallback.key_env if answers.fallback is not None else ""} - {""}
+    if any(variable not in named for variable in keys or {}):
+        raise ValueError("a key was given for a variable the config does not name")
+    from .config_edit import replace_file
+
+    try:
+        before: bytes | None = path.read_bytes()  # only with force: check_config refuses one that is there
+    except FileNotFoundError:
+        before = None
+    except OSError as exc:  # said by the callers as "cannot write <path>: <strerror>"
+        raise OSError(exc.errno, f"the config there cannot be read ({exc.strerror or type(exc).__name__}), so it is not "
+                                 "replaced: it could not be put back if the key cannot be kept") from None
+    write_config(answers, path, force=force)
+    try:
+        for variable, value in (keys or {}).items():
+            keys_file.save(variable, value)
+    except BaseException:
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            replace_file(path, before)  # byte for byte, in one step, with the file's mode
+        raise
     return path
 
 
@@ -628,6 +772,15 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     elif config is not None:
         checks.append(Check("l1 pack", True, "none, so each lane starts on its model (optional: `flightdeck pack install` adds "
                             "flightdeck's solver pack, some 800 no-model solvers that run first)"))
+    if config is not None and config.plugins:
+        from .plugins import manifest as plugins
+
+        for name, ref in config.plugins.items():  # read, never run: a plugin that cannot be used stops only its own events
+            try:
+                checks.append(Check(f"plugin {name}", True, plugins.doctor_line(plugins.load(ref)), essential=False))
+            except plugins.PluginError as exc:
+                checks.append(Check(f"plugin {name}", False, str(exc),
+                                    f"fix the plugin's plugin.toml, or take [plugins.{name}] out of {path}", essential=False))
     found = False
     if agent is not None:
         agent_checks = _agent_checks(agent, config, environ)
@@ -730,19 +883,23 @@ ROOM_LANES = 16  # the terminal check looks at room for at most this many lanes 
 
 def _terminal_check(columns: int, lines: int, config) -> Check:
     """What a terminal this size leaves out of the console on a busy run with your lanes and
-    runtime, and from which size none of it (console/room.py measures it with the console's
-    own code: the header's pieces drop in the order CONSOLE-SPEC "Narrow terminals" and D16 set)."""
-    from .config import LaneConfig
+    runtime, in the layout your config opens it in, and from which size none of it
+    (console/room.py measures it with the console's own code: the header's pieces drop in the
+    order CONSOLE-SPEC "Narrow terminals" and D16 set)."""
+    from .config import ConsoleConfig, LaneConfig
     from .console.room import room
 
     lanes = config.lanes if config is not None else LaneConfig()
-    fit = room(columns, lines, max_lanes=min(lanes.max_lanes, ROOM_LANES), containerized=lanes.runtime == "docker")
+    layout = (config.console if config is not None else ConsoleConfig()).layout  # the layout the console opens in
+    fit = room(columns, lines, max_lanes=min(lanes.max_lanes, ROOM_LANES), containerized=lanes.runtime == "docker", layout=layout)
     size = f"{columns}x{lines}"
     team = f"; team mode's key line, with c claim, needs {fit.team_columns} columns" if fit.team_columns > fit.columns else ""
     missing = fit.left_out()
     if not missing:
         rows = f"each of your {lanes.max_lanes} lanes" if lanes.max_lanes > 1 else "your lane"
-        return Check("terminal", True, f"{size}: on a busy run the console shows the whole header, the board, every key "
+        # the simple layout has no board, and its key line shows the keys that apply to the selected lane
+        shows = "the whole header, its key line" if layout == "simple" else "the whole header, the board, every key"
+        return Check("terminal", True, f"{size}: on a busy run the console shows {shows} "
                                        f"and a row for {rows}" + (team if columns < fit.team_columns else ""))
     layout = ""
     if fit.compact:
@@ -1171,11 +1328,34 @@ def _docker_checks(config) -> list[Check]:
         found = image_present(image)
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
         out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
+        if found:
+            out += _lane_image_build_checks(image)
         if config.l1.pack is not None and config.l1.image:
             there = image_present(config.l1.image)
             out.append(Check("l1 image", there, f"{config.l1.image} is {'present' if there else 'not on this machine'}",
                              "run `flightdeck pack image`, or remove [l1] image to run engines in the lane image"))
     return out
+
+
+def _lane_image_build_checks(image: str) -> list[Check]:
+    """A lane image that is on this machine but was not built from the Dockerfile this
+    flightdeck ships: nothing else asks for a rebuild, and what its lanes' shells have may
+    differ (the image of flightdeck 0.4.0 has no debugger and no decompiler: P59). Told by the
+    label `image build` writes (lane.built_from), so no container is started. A warning:
+    lanes run in the old image all the same, and each lane's brief names only what its own
+    container has. No line for an image built from today's Dockerfile, for one that cannot be
+    asked, or for a player's own image that carries no such label: what that holds is theirs."""
+    from . import lane
+
+    label = lane.built_from(image)
+    if label is None or label == lane.fingerprint() or (not label and image != lane.IMAGE):
+        return []
+    return [Check(
+        "lane image build", False,
+        f"{image} was not built from the Dockerfile this flightdeck ships (another flightdeck built it, or it was built by "
+        "hand), so its lanes' shells may lack programs this one's have",
+        "run `flightdeck image build` to build it again (lanes run in the old one all the same)", essential=False,
+    )]
 
 
 def image_present(image: str) -> bool:
@@ -1193,14 +1373,30 @@ def image_present(image: str) -> bool:
 def report(checks: Sequence[Check], *, agent: str | None = None) -> tuple[str, int]:
     """The checks as lines for the terminal, and the exit status (1 if an essential check
     failed). `agent`: what was checked was for that coding-agent CLI's lanes, so the next
-    step is practice with it."""
+    step is practice with it.
+
+    The last line is the one a player acts on: how many things there are to fix (the FAIL
+    lines, which stop a run) and what to run then, or that the setup is ready and the next
+    command. Warnings are counted on it too, as what they are: nothing a run waits for."""
     lines = []
     for check in checks:
         mark = "ok  " if check.ok else ("FAIL" if check.essential else "warn")
         lines.append(f"{mark} {check.name}: {check.detail}")
         if not check.ok and check.fix:
             lines.append(f"     fix: {check.fix}")
-    failed = any(not c.ok and c.essential for c in checks)
+    failed = sum(1 for c in checks if not c.ok and c.essential)
+    warned = sum(1 for c in checks if not c.ok and not c.essential)
+    warnings = f"{warned} warning{'' if warned == 1 else 's'}"
+    again = "flightdeck doctor" + (f" --agent {agent}" if agent else "")
     practice = "flightdeck practice" + (f" --agent {agent}" if agent else "")
-    lines.append("" if failed else f"Ready. Try `{practice}`.")
-    return "\n".join(lines).rstrip() + "\n", 1 if failed else 0
+    if failed:
+        last = (f"{failed} thing{'' if failed == 1 else 's'} to fix before a run: the FAIL line{'' if failed == 1 else 's'} above. "
+                f"Then run `{again}` again.")
+        if warned:
+            last += f" ({warnings} besides: a run does not wait for {'it' if warned == 1 else 'them'}.)"
+    elif warned:
+        last = f"Ready, with {warnings} above that a run does not wait for. Try `{practice}`."
+    else:
+        last = f"Ready. Try `{practice}`."
+    lines.append(last)
+    return "\n".join(lines) + "\n", 1 if failed else 0

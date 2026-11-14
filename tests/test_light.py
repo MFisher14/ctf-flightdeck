@@ -168,7 +168,7 @@ def test_a_model_that_thinks_first_still_answers():
 
 def test_a_model_that_hangs_times_out_without_holding_the_loop():
     def slow(record):
-        time.sleep(1.5)
+        server.think(1.5)
         return text_reply("sstv")
 
     async def go(engine):

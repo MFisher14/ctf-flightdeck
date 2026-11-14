@@ -26,7 +26,7 @@ import pytest
 
 from ctf_flightdeck import light as L
 from ctf_flightdeck import postflight
-from ctf_flightdeck.agent import external, owntext
+from ctf_flightdeck.agent import external, owntext, prompts
 from ctf_flightdeck.agent import workspace as agent_workspace
 from ctf_flightdeck.agent.client import ModelClient
 from ctf_flightdeck.agent.egress import CLI_API
@@ -157,7 +157,10 @@ class Fake:
     def records(self, kind: str | None = None) -> list[dict]:
         if not self.record.exists():
             return []
-        out = [json.loads(line) for line in self.record.read_text().splitlines() if line.strip()]
+        # The fake CLI appends while a test polls: a last line with no newline yet is still being
+        # written, so only whole lines are read.
+        whole = self.record.read_text().rpartition("\n")[0]
+        out = [json.loads(line) for line in whole.splitlines() if line.strip()]
         return [r for r in out if kind is None or r["rec"] == kind]
 
     def starts(self) -> list[dict]:
@@ -244,7 +247,8 @@ class Lab:
                 return HostWorkspace(root, self.handouts[ch.id])
             # as a run builds it (run.lane_reach): fenced onto the CLI's API and the challenge's instance
             reach, later = lane_reach((urls or {}).get(ch.id, ()), instance, api=CLI_API[kind])
-            return DockerWorkspace(root, self.handouts[ch.id], image=LANE_IMAGE, name=self.container(lane), reach=reach, later=later)
+            return DockerWorkspace(root, self.handouts[ch.id], image=LANE_IMAGE, name=self.container(lane), reach=reach, later=later,
+                                   probe_tools=True)
 
         if docker is not None:
             docker.image_has(self.fake)
@@ -3255,6 +3259,29 @@ def test_a_docker_coding_agent_lane_is_fenced_onto_its_clis_api_and_its_instance
         finally:
             await lab.finish()
         assert json.loads(nets.read_text()) == {}  # removed with the lane, after its container and its proxies
+
+    run(main())
+
+
+@pytest.mark.parametrize(("has", "named"), [("gdb\ngdb-multiarch\nr2\npdg\n", True), (None, False)])
+def test_a_docker_cli_lanes_brief_names_the_debugger_and_decompiler_only_when_its_image_has_them(tmp_path, monkeypatch, has, named):
+    """The CLI's opening brief is written after the lane's container answered what its image
+    has: an image with gdb and radare2's Ghidra decompiler gets them named, with how to run
+    them without a terminal; an image built before it had them gets no such line."""
+    docker = FakeDocker(tmp_path, monkeypatch)
+    if has is not None:
+        (docker.state / "tools.txt").write_text(has)
+    said = prompts.shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"))
+
+    async def main():
+        lab = Lab(tmp_path, {"turns": [{"calls": [{"tools": [bash("echo one")]}, {"think": 30.0}]}]}, docker=docker)
+        try:
+            lab.release()
+            await until(lambda: lab.fake.messages(), "the CLI's first message")
+            first = lab.fake.messages()[0]
+            assert (said in first.splitlines()) is named and ("Your shell has" in first) is named, first
+        finally:
+            await lab.finish()
 
     run(main())
 

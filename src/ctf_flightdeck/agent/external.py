@@ -1449,6 +1449,7 @@ class _Run:
             lane.approach if lane is not None else "", flag_format=self.driver.deck.config.flag_format, recon=self.recon,
             instance=self.driver.instance, shell_hosts=getattr(self.workspace, "shell_hosts", None),
             toolkit=self.driver.l1.toolkit if self.driver.l1 is not None else "",
+            tools=getattr(self.workspace, "shell_tools", ()),
         )
         if self.handover:
             text += "\n\n" + self.handover

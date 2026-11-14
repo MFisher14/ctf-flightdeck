@@ -2,6 +2,9 @@
 (route C, chosen at the M0 review). One-key interventions in the fleet; a chat box and
 slash commands in both.
 
+It draws in one of two layouts (config.LAYOUTS): `deck`, the whole dashboard, or `simple`,
+one list of lanes with what needs the player. /layout switches for the rest of the run.
+
 The console only reads the Deck and sends it interventions, so the same app runs on the
 M0 mock and, in M1, on real lanes. It redraws on its own timer and whenever the deck
 emits an event, whether or not a mock clock is ticking.
@@ -9,14 +12,22 @@ emits an event, whether or not a mock clock is ticking.
 In a real run, a hang-up (the terminal window closed) or a SIGTERM stops the run the way
 quitting does: every lane stops and every workspace closes before the console exits, and
 `stopped_by` names the signal (terminal.py has why a dead terminal cannot stop that).
+
+Text on the screen selects with the mouse, and what is selected is copied when the button comes
+up (a drag, a double-click for a whole entry, a triple-click for everything in its box), or
+with ctrl+c; /copy copies from a lane with no mouse. Every copy goes two ways (copy): to the
+terminal's clipboard (OSC 52) and to the operating system's, by its tool (clipboard.py).
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import time
-from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Awaitable, Callable, Iterable
+from pathlib import Path
 
 from rich.text import Text
 from textual import events
@@ -25,38 +36,47 @@ from textual.driver import Driver
 from textual.drivers.linux_driver import LinuxDriver
 from textual.screen import Screen
 
+from .. import clipboard, themes
+from ..config import LAYOUTS
 from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
 from ..core.driver import TakeoverRefused
-from ..core.model import ME, UNLIMITED_LANES, Event, EventKind, Lane, LaneState, lanes_text
+from ..core.model import ME, UNLIMITED_LANES, ChallengeStatus, Event, EventKind, Lane, LaneState, lanes_text
 from ..text import untrusted
 from . import theme, views
-from .commands import CommandError, needs_lane, parse
+from .commands import CommandError, State, Word, needs_lane, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
-from .terminal import STOP_SIGNALS, TerminalDriver
+from .terminal import STOP_SIGNALS, Beacon, TerminalDriver
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
+# A terminal that has no bracketed paste sends a dropped file as its path, typed: every character
+# at once. Keys that start like a path and come closer together than nobody types are held until
+# they stop coming (take_keys), and are a drop only when all of them together are paths that exist.
+BURST_GAP = 0.02  # seconds: a key this soon after the last one is part of the same burst (50 a second: no typing is)
+BURST_MIN = 4  # characters: fewer are keys, whatever they spell ("/" alone is a path that exists)
+PATH_STARTS = "/~'\""  # what a dropped path starts with, quoted or not: only such a key starts a burst
 
 
 class FlightdeckApp(App[None]):
     TITLE = "flightdeck"
     ENABLE_COMMAND_PALETTE = False
-    CSS = f"""
-    FleetScreen, FocusScreen {{ background: {theme.PAGE}; }}
-    .panel {{
-        border: round {theme.BORDER}; border-title-color: $text; border-subtitle-color: {theme.MUTED};
+    CSS = """
+    FleetScreen, FocusScreen { background: $fd-page; }
+    .panel {
+        border: round $fd-border; border-title-color: $text; border-subtitle-color: $fd-muted;
         padding: 0 1; margin: 0 1;
-    }}
-    .panel:focus-within {{ border: round {theme.ACCENT}; }}
-    .-compact .panel {{ margin: 0; padding: 0; }}
-    DataTable {{ background: transparent; }}
-    DataTable > .datatable--header {{ background: transparent; color: {theme.MUTED}; text-style: bold; }}
-    DataTable > .datatable--cursor {{ background: {theme.SELECTED}; text-style: bold; }}
-    DataTable:focus > .datatable--cursor {{ background: #22324a; }}
+    }
+    .panel:focus-within { border: round $fd-accent; }
+    .-compact .panel { margin: 0; padding: 0; }
+    DataTable { background: transparent; }
+    DataTable > .datatable--header { background: transparent; color: $fd-muted; text-style: bold; }
+    DataTable > .datatable--cursor { background: $fd-selected; text-style: bold; }
+    DataTable:focus > .datatable--cursor { background: $fd-selected-focus; }
+    Screen > .screen--selection { background: $fd-selected-focus; }
     """
 
     def __init__(
@@ -74,13 +94,49 @@ class FlightdeckApp(App[None]):
         adder: Callable[[object], Awaitable[tuple[bool, str]]] | None = None,
         paster: Callable[[], object] | None = None,
         attacher: Callable[[str, list], Awaitable[tuple[bool, str]]] | None = None,
+        stager: Callable[[list], list] | None = None,
+        unstager: Callable[[list], None] | None = None,
         welcome: bool = False,
+        palette: themes.Palette | None = None,
+        themes_folder: Path | None = None,
+        layout: str = "deck",
+        mouse: bool = True,
+        copier: Callable[[str], str] | None = None,
+        terminal_title: bool = True,
+        terminal_bell: bool = True,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
         (a real run stops its lanes and closes their workspaces), also on SIGHUP or SIGTERM.
-        `run_dir` is where the run's log goes (the quit prompt says it stays there)."""
+        `run_dir` is where the run's log goes (the quit prompt says it stays there).
+        `palette` is the theme the console opens in (None: the default); `themes_folder` is
+        where /theme looks for the player's own themes (None: only the built-in ones).
+        `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's).
+        `mouse`: False never asks the terminal to report the mouse (TerminalDriver), which
+        leaves the terminal its own text selection; the console is driven by keys.
+        `copier` puts a text on the operating system's clipboard and returns what the player
+        must be told when it could not, "" when it did (None: clipboard.put).
+        `terminal_title`: the terminal's title says how many lanes need the player, and is put
+        back when the console leaves; `terminal_bell`: the terminal's bell rings once each time
+        that count goes up (terminal.Beacon; a run passes the config's [console] title and bell)."""
+        if layout not in LAYOUTS:
+            raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
+        self.layout = layout
+        self.mouse = mouse
+        self._beacon = Beacon(self._to_terminal, title=terminal_title, bell=terminal_bell)
+        self._open_first = False  # the first lane a /new starts is still to open in the focus view (simple layout)
+        # (challenge, the lane that ended to start afresh, the lanes there were then): the focus view on that lane
+        # goes to the fresh one (follow_restart); None: nothing to follow
+        self._follow: tuple[str, str, frozenset[str]] | None = None
+        self.copier = copier or clipboard.put
+        # the copier runs here, off the event loop the lanes share: a clipboard tool that hangs
+        # holds up only the copies after it, one at a time so the last copy is the one that stays
+        self._clipboard_thread: ThreadPoolExecutor | None = None
+        self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
+        theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
+        self._use_textual_theme()
+        self.themes_folder = themes_folder
         self.deck = deck
         self.mock = mock
         self._on_start = on_start
@@ -92,6 +148,13 @@ class FlightdeckApp(App[None]):
         # a worker, like the adder: each makes its copy in a thread, so neither holds the keys up
         self.attacher = attacher
         self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
+        # A drop: `stager` copies its files into the run's folder and returns the copies, which are what is attached
+        # (the file behind a drop may be gone before the key that attaches it); `unstager` removes copies that will
+        # not be. Both work on files, so each is called in a thread (stage, unstage). None: a dropped file is
+        # attached from where it is (a console with no run folder).
+        self.stager = stager
+        self.unstager = unstager
+        self._staging = asyncio.Lock()  # one drop is copied at a time, in the order they came
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
@@ -105,9 +168,39 @@ class FlightdeckApp(App[None]):
         self._status: tuple[str, str, float] | None = None  # (text, severity, when)
         self._redraw_queued = False
         self._unsubscribe = deck.subscribe(self._on_deck_event)
+        # Whether typed keys are watched for a dropped path (take_keys). None: with a real terminal, and not
+        # headless, where every key of a script comes at once
+        self.key_drops: bool | None = None
+        self._burst: list[events.Key] = []  # the keys held: a burst that may be a dropped path
+        self._burst_at = 0.0  # when the last of them came
+        self._key_at = 0.0  # when the last key came, held or not
+        self._to_type: list[events.Key] = []  # held keys that were no drop, still to be typed (_type)
+        self._typing: events.Key | None = None  # the one of them that is in the message queue now
 
     def get_default_screen(self) -> Screen:
         return self._fleet
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return theme.css_variables()
+
+    def _use_textual_theme(self) -> None:
+        """Give Textual the palette in use as its theme, so its own styles and the console's
+        drawn colours are one palette. Set here, so $TEXTUAL_THEME does not colour half of it."""
+        textual_theme = theme.textual()
+        again = self.theme == textual_theme.name  # the same name with other colours: a theme file edited since
+        self.register_theme(textual_theme)
+        self.theme = textual_theme.name
+        if again:
+            self.mutate_reactive(App.theme)
+
+    def set_palette(self, palette: themes.Palette) -> None:
+        """Draw in `palette` from now on (/theme): the styles, and everything already on
+        screen, a transcript's lines included."""
+        theme.use(palette)
+        self._use_textual_theme()
+        for screen in self.screen_stack:
+            if isinstance(screen, (FleetScreen, FocusScreen)):
+                screen.repaint()
 
     def get_driver_class(self) -> type[Driver]:
         driver = super().get_driver_class()
@@ -122,6 +215,12 @@ class FlightdeckApp(App[None]):
         return next((s for s in reversed(self.screen_stack) if isinstance(s, FocusScreen)), None)
 
     def on_mount(self) -> None:
+        self._beacon.open()
+        self._tell_terminal()
+        # A shell that takes the terminal (take over) gets the title the console found, and the console writes
+        # its own again when it is back. At once: the driver lets the terminal go right after the signal
+        self.app_suspend_signal.subscribe(self, lambda _: self._beacon.close(), immediate=True)
+        self.app_resume_signal.subscribe(self, lambda _: self._back_on_terminal(), immediate=True)
         if self._ticker is not None and self._tick_seconds:
             self.set_interval(self._tick_seconds, self._on_tick)
         if self._refresh_seconds:
@@ -130,8 +229,6 @@ class FlightdeckApp(App[None]):
             self._catch_signals()  # before any lane starts
         if self._on_start is not None:
             self._on_start()
-        if self.adder is not None and not self.deck.challenges:
-            self.say("The board is empty. Type /new to add a challenge: its name, then its text, files and screenshots.")
         if self.welcome:
             from .screens import WelcomeScreen
 
@@ -141,7 +238,8 @@ class FlightdeckApp(App[None]):
                 if go and empty:
                     self.new_challenge()
 
-            self.push_screen(WelcomeScreen(mock=self._ticker is not None, empty=empty, lanes=min(self.deck.config.max_lanes, 99)), done)
+            self.push_screen(WelcomeScreen(mock=self._ticker is not None, empty=empty, lanes=min(self.deck.config.max_lanes, 99),
+                                           simple=self.layout == "simple"), done)
 
     async def action_quit(self) -> None:
         """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
@@ -198,29 +296,52 @@ class FlightdeckApp(App[None]):
             self.call_later(self._quit_now, f"{signal.Signals(sig).name}: ")
 
     def on_unmount(self) -> None:
+        self._beacon.close()  # the driver's output is still open: it closes after this
         self._unsubscribe()
         loop = asyncio.get_running_loop()
         for sig in self._signals:
             loop.remove_signal_handler(sig)
         self._signals.clear()
+        if self._clipboard_thread is not None:
+            self._clipboard_thread.shutdown(wait=False)
+            self._clipboard_thread = None
 
     # ------------------------------------------------------------------ drawing
 
     def refresh_view(self) -> None:
+        self._tell_terminal()
         for screen in self.screen_stack:
             if isinstance(screen, (FleetScreen, FocusScreen)):
                 screen.refresh_view()
 
+    def _tell_terminal(self) -> None:
+        """The terminal's title and bell follow what the header counts: the lanes that need
+        the player, and whether the queue is held (terminal.Beacon)."""
+        self._beacon.show(len(self.deck.needing()), bool(self.deck.held))
+
+    def _back_on_terminal(self) -> None:
+        self._beacon.open()
+        self._tell_terminal()
+
+    def _to_terminal(self, data: str) -> None:
+        """Write `data` to the terminal as it is, through the driver: behind what is being
+        drawn, and dropped once the terminal has hung up (TerminalDriver). Not App.bell(),
+        which writes nothing on a headless driver, where a test must see what was written."""
+        driver = self._driver
+        if driver is not None:
+            driver.write(data)
+
     def header_text(self, width: int, *, clock_keys: bool = True, compact: bool = False) -> Text:
-        """The header; `clock_keys` says how to freeze the mock clock (only where space does).
-        `compact`: the compact layout's header (views.header_pieces)."""
+        """The header; `clock_keys` says how to freeze the mock clock (only where `,` does).
+        `compact`: the compact layout's header (views.header_pieces); otherwise the header of
+        the layout in use."""
         note = ""
         if self._ticker is not None:
             if clock_keys:
-                note = "⏸ frozen: space resumes, . steps" if self.frozen else "▶ live: space freezes"
+                note = "⏸ frozen: , resumes · . steps" if self.frozen else "▶ live: , freezes"
             else:
                 note = "⏸ frozen" if self.frozen else "▶ live"
-        return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact)
+        return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact, simple=self.layout == "simple")
 
     def status_text(self) -> Text:
         if self._status is None:
@@ -243,13 +364,242 @@ class FlightdeckApp(App[None]):
     def warn(self, text: str) -> None:
         self.say(text, "warning")
 
-    async def on_event(self, event: events.Event) -> None:
-        """Files dropped on the terminal arrive as pasted paths. Wherever the focus is, they
-        go where files belong (take_drop) instead of into whatever widget had the focus;
-        any other paste goes on as usual."""
-        if isinstance(event, events.Paste) and not event.is_forwarded and self.take_drop(event.text):
+    # ------------------------------------------------------------------ copying
+
+    def copy(self, text: str, said: str) -> None:
+        """Put `text` on the clipboard and say `said`. It goes two ways, always both: to the
+        terminal's clipboard (OSC 52, Textual's own copy), which reaches the machine the player
+        sits at but never says whether the terminal took it, and to the operating system's, by
+        its tool (the copier). When no tool took it, the status line warns instead, with what
+        to do if the paste is empty: a copy is never a quiet nothing.
+        The tool runs in a thread of its own: it can take seconds (clipboard.TIMEOUT a tool),
+        and the event loop it would hold up runs every lane. The line comes when it is done."""
+        super().copy_to_clipboard(text)
+        if not self.is_running:
+            self._copied_by_tool(self.copier(text), said)
             return
+        if self._clipboard_thread is None:
+            self._clipboard_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipboard")
+        self.run_worker(self._copy_by_tool(text, said), group="clipboard")
+
+    async def _copy_by_tool(self, text: str, said: str) -> None:
+        problem = await asyncio.get_running_loop().run_in_executor(self._clipboard_thread, self.copier, text)
+        self._copied_by_tool(problem, said)
+
+    def _copied_by_tool(self, problem: str, said: str) -> None:
+        if problem:
+            self.warn(problem)
+        else:
+            self.say(said)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Textual's copy (ctrl+c in a text field, a prompt's own ctrl+c) and the console's
+        copy of a selection: both ways, as every copy (copy)."""
+        self.copy(text, f"copied {len(text)} character{'' if len(text) == 1 else 's'}")
+
+    def copy_selection(self) -> bool:
+        """Copy the text selected on the screen in front. False when none is."""
+        text = self.screen.get_selected_text()
+        if not text:
+            return False
+        self._copied = self.screen.selections
+        self.copy_to_clipboard(text)
+        return True
+
+    def on_text_selected(self, event: events.TextSelected) -> None:
+        """A mouse button came up (Textual says so after every one, selection or not): what
+        the drag selected is copied. A selection already copied is not copied again by a
+        button that comes up over something else (a scroll bar dragged, a key clicked)."""
+        self._copy_once()
+
+    def _copy_once(self) -> None:
+        """Copy the selection the mouse made, unless it is the one last copied."""
+        if self.screen.selections is not self._copied:
+            self.copy_selection()
+
+    def copy_from(self, lane: Lane, what: str) -> None:
+        """/copy [output|command|flag|all]: a text of the lane's to the clipboard, with no
+        mouse (views.lane_copy has what each is). Alone it is the last output."""
+        word = what.strip().lower() or views.COPY_WHAT[0]
+        if word not in views.COPY_WHAT:  # not shown: it is not one of them
+            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(views.COPY_WHAT)}")
+            return
+        try:
+            text, name = views.lane_copy(self.deck, lane, word)
+        except views.NothingToCopy as exc:
+            self.warn(str(exc))
+            return
+        self.copy(text, f"copied {name}")
+
+    def on_click(self, event: events.Click) -> None:
+        """A double-click selects the whole entry under it and a triple-click everything in
+        its box (Textual's own), both after the button came up: copied here. Once: the news
+        that the button came up can get here after the selection is made, and has copied it then."""
+        if event.chain >= 2:
+            self._copy_once()
+
+    async def on_event(self, event: events.Event) -> None:
+        """Files dropped on the terminal arrive as pasted paths, or, from a terminal with no
+        bracketed paste, as the same text typed all at once (take_keys). Wherever the focus
+        is, they go where files belong (take_drop) instead of into whatever widget had the
+        focus; any other paste, and any other key, goes on as usual. A paste that reads as
+        dropped files, one of which is not on this machine, also gets a line that says why
+        (say_not_there), and a paste of nothing is the terminal's paste key pressed on a
+        clipboard that holds no text (empty_paste)."""
+        if isinstance(event, events.Paste) and not event.is_forwarded:
+            if self.empty_paste() if event.text == "" else self.take_drop(event.text):
+                return
+            self.say_not_there(event.text)  # and the text goes on, as any paste
+        if isinstance(event, events.Key) and not event.is_forwarded:  # (forwarded: one a widget passed back up)
+            if event is self._typing:  # a key that was held, back to be typed: the next one once this one has acted
+                self._typing = None
+                await super().on_event(event)
+                if self._to_type:
+                    self._settled(self._type_next)
+                return
+            if self.take_keys(event):
+                return
         await super().on_event(event)
+
+    def take_keys(self, event: events.Key) -> bool:
+        """Whether `event` is held as part of a burst of typed text that may be a dropped
+        path. A burst starts at a key a path starts with (PATH_STARTS) that no key came just
+        before (a path in the middle of text that arrives all at once is text), and takes
+        every key of text that comes within BURST_GAP of the one before. When no more come
+        it is a drop only if all of it together is paths of files that exist
+        (addchallenge.dropped) and it is at least BURST_MIN characters. A burst that reads
+        as dropped files of which one is not there is said (say_not_there) and is a paste of
+        that text: no key of it acts. Any other burst is typed, in order, as if it had never
+        been held (at most BURST_GAP late). A key that is not text (Enter, an arrow) ends a
+        burst as typing. Nothing a player types is read for paths: no one types a path that
+        exists at 50 keys a second."""
+        from ..addchallenge import MAX_DROP
+
+        if not (self.key_drops if self.key_drops is not None else not self.is_headless):
+            return False
+        now = time.monotonic()
+        quiet, self._key_at = now - self._key_at >= BURST_GAP, now
+        if self._typing is not None or self._to_type:  # held keys are still being typed: this one goes behind them
+            self._to_type.append(event)
+            return True
+        text = event.character if event.is_printable else None
+        if self._burst:
+            if text and len(self._burst) < MAX_DROP:
+                self._burst.append(event)
+                self._burst_at = now
+                return True
+            keys, self._burst = self._burst, []
+            self._type([*keys, event])
+            return True
+        if not text or text not in PATH_STARTS or not quiet:
+            return False
+        self._burst = [event]
+        self._burst_at = now
+        self.set_timer(BURST_GAP, self._burst_due)
+        return True
+
+    def _type(self, keys: list[events.Key]) -> None:
+        """Type keys that were held, in order and one at a time: each goes through the message
+        queue as a key from the terminal does, and the next only when it has acted (a key may
+        move the focus, which the next one must find moved). A key that comes meanwhile goes
+        behind them (take_keys)."""
+        self._to_type.extend(keys)
+        if self._typing is None:
+            self._type_next()
+
+    def _type_next(self) -> None:
+        if self._typing is None and self._to_type:
+            key = self._to_type.pop(0)
+            self._typing = events.Key(key.key, key.character)
+            self.post_message(self._typing)
+
+    def _settled(self, then: Callable[[], None], rounds: int = 3) -> None:
+        """Call `then` once what the last key set off has run. A key acts in steps, each in
+        another part's message queue (the widget with the focus, the screen whose binding it
+        is, the console for the focus it moves), so every queue on the screen is let run dry
+        `rounds` times: a step that queues the next is followed that far."""
+        left = 0
+
+        def done() -> None:
+            nonlocal left
+            left -= 1
+            if left == 0:
+                if rounds > 1:
+                    self._settled(then, rounds - 1)
+                else:
+                    self.call_later(then)
+
+        for node in list(self.screen.walk_children(with_self=True)):
+            if node.call_later(done):
+                left += 1
+        if not left:
+            self.call_later(then)
+
+    def _burst_due(self) -> None:
+        """The timer of a burst. It asks through the message queue, behind every key that is
+        already there: keys that waited while the console was busy are still one burst."""
+        self.call_later(self._end_burst)
+
+    async def _end_burst(self) -> None:
+        """The burst is over (unless a key came since): a drop when it is nothing but paths
+        of files that exist, else the keys it was."""
+        from ..addchallenge import dropped
+
+        if not self._burst:
+            return
+        wait = BURST_GAP - (time.monotonic() - self._burst_at)
+        if wait > 0:  # a key came since the timer was set: wait for the next gap
+            self.set_timer(wait, self._burst_due)
+            return
+        keys, self._burst = self._burst, []
+        text = "".join(key.character or "" for key in keys)
+        if len(text) >= BURST_MIN and dropped(text):
+            if not self.take_drop(text):  # not taken (take_drop said why): text for a field that has the focus, as a paste is
+                await super().on_event(events.Paste(text))
+            return
+        if len(text) >= BURST_MIN and self.say_not_there(text):
+            # a dropped file that is not there (said): text for a field that has the focus, and none of its keys acts
+            await super().on_event(events.Paste(text))
+            return
+        self._type(keys)
+
+    def empty_paste(self) -> bool:
+        """Whether a paste of nothing was taken. A terminal that sends one (Windows Terminal
+        and Alacritty do) is saying its paste key was pressed and the clipboard holds no
+        text: nearly always an image. In the /new form that is ctrl+v, so the image is read
+        from the clipboard with the system's own tool; anywhere else on a board that takes
+        files, a line says where an image goes. It is never taken for anything on a board
+        that takes none."""
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        if isinstance(self.screen, NewChallengePrompt):
+            self.screen.action_paste_image()
+        else:
+            self.say("nothing to paste: the clipboard holds no text. A screenshot on it: /new, then ctrl+v in the form; "
+                     "a file: drag it onto this window")
+        return True
+
+    def say_not_there(self, text: str) -> bool:
+        """Whether `text` reads as dropped files of which one is not on this machine, on a
+        board that takes files: the console then says why, and what works instead
+        (addchallenge.not_there_line), in the /new form when it is open. The text itself is
+        left to go on as the paste it is."""
+        from ..addchallenge import not_there_line
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        form = self.screen if isinstance(self.screen, NewChallengePrompt) else None
+        line = not_there_line(text, choose="press ctrl+o to choose it" if form else "type /attach with no file to choose it")
+        if not line:
+            return False
+        if form is not None:
+            form.problem(line)
+        else:
+            self.warn(line)
+        return True
 
     def take_drop(self, text: str) -> bool:
         """Whether `text` was files dropped (or pasted) on the console, now taken. Only a
@@ -259,18 +609,28 @@ class FlightdeckApp(App[None]):
         when that loses nothing: the bar is empty (the /attach then names the challenge Enter
         attaches to: the one selected) or already holds an /attach. What the player typed
         there is never replaced: the paste then goes on as text. A file that cannot be
-        attached is not taken, and the console says why."""
-        from ..addchallenge import dropped, quote, refusal
+        attached is not taken, and the console says why.
+
+        A drop that is taken is copied into the run's folder at once, off the UI thread
+        (stage), and the copy is what the form attaches or the /attach names: the file
+        behind a drop may be a temporary one (a screenshot's thumbnail), gone by the time
+        the player presses the key that attaches it."""
+        from textual.widgets import Input, TextArea
+
+        from ..addchallenge import dropped, refusal, size_text
         from .screens import NewChallengePrompt
 
-        if self.adder is None:
-            return False
         files = dropped(text)
         if not files:
             return False
         screen = self.screen
+        if self.adder is None:
+            if not isinstance(screen.focused, (Input, TextArea)):  # in a field it is text; anywhere else it would vanish unsaid
+                self.warn("not attached: files are attached on a board you fill yourself; this board "
+                          + ("comes from the platform" if self._ticker is None else "is the mock's"))
+            return False
         if isinstance(screen, NewChallengePrompt):
-            return screen.add_files(files)
+            return screen.add_dropped(files)
         bar = screen.query("#bar-input")
         if not bar:
             return False
@@ -282,25 +642,92 @@ class FlightdeckApp(App[None]):
         if not files:
             return False
         field = bar.first()
+        if not self._bar_takes(field):
+            if screen.focused is not field:  # the paste goes to whatever has the focus, which shows nothing: say what to do
+                self.warn(self._bar_full(files))
+            return False
+        if self.stager is None:
+            self._onto_bar(screen, files)
+        else:
+            self.say("copying " + ", ".join(f"{file.name} ({size_text(file)})" for file in files) + "...")
+            self.run_worker(self._drop_onto_bar(screen, files), exclusive=False)
+        return True
+
+    @staticmethod
+    def _bar_takes(field) -> str:
+        """How the command bar would take dropped files now: "more" (it holds an /attach,
+        and they are added to it), "new" (nothing is typed, or the start of that very
+        command: nothing is lost), or "" (it holds what the player typed)."""
         typed = field.value.strip()
-        count = f"{len(files)} file{'' if len(files) == 1 else 's'}"
-        quoted = " ".join(quote(file) for file in files)
         if typed.split(maxsplit=1)[:1] == ["/attach"]:
-            field.value = f"{typed} {quoted} "
-            self.say(f"{count} added to the /attach in the command bar: Enter attaches")
-        elif "/attach".startswith(typed):  # nothing typed, or the start of this very command: nothing is lost
+            return "more"
+        return "new" if "/attach".startswith(typed) else ""
+
+    @staticmethod
+    def _bar_full(files: list) -> str:
+        return (f"{len(files)} file{'' if len(files) == 1 else 's'} not taken: the command bar holds what you typed. "
+                f"Send or clear it, then drop the file{'' if len(files) == 1 else 's'} again")
+
+    def _onto_bar(self, screen: Screen, files: list) -> bool:
+        """Put dropped files onto `screen`'s command bar as an /attach, and say so; False
+        when the bar holds what the player typed (_bar_takes)."""
+        from ..addchallenge import quote, size_text
+
+        field = screen.query("#bar-input").first()
+        how = self._bar_takes(field)
+        if not how:
+            return False
+        got = ", ".join(f"{file.name} ({size_text(file)})" for file in files)  # the drop landed: which files, how big
+        quoted = " ".join(quote(file) for file in files)
+        if how == "more":
+            field.value = f"{field.value.strip()} {quoted} "
+            self.say(f"got {got}: added to the /attach in the command bar, Enter attaches")
+        else:
             target = self._selected_challenge(getattr(screen, "lane_id", None) or getattr(screen, "selected_lane", None))
             field.value = f"/attach {target} {quoted} " if target else f"/attach {quoted} "
-            self.say(f"{count} ready: press Enter to attach to {target} (or change the name in the command bar)" if target
-                     else f"{count} ready: type the challenge's name after /attach, then Enter")
-        else:
-            if screen.focused is not field:  # the paste goes to whatever has the focus, which shows nothing: say what to do
-                self.warn(f"{count} not taken: the command bar holds what you typed. Send or clear it, then drop the "
-                          f"file{'' if len(files) == 1 else 's'} again")
-            return False
+            self.say(f"got {got}: press Enter to attach to {target} (or change the name in the command bar)" if target
+                     else f"got {got}: type the challenge's name after /attach, then Enter")
         field.focus()
         field.cursor_position = len(field.value)
         return True
+
+    async def _drop_onto_bar(self, screen: Screen, files: list) -> None:
+        """A drop outside the /new form, in a worker: copy its files into the run's folder,
+        then put the copies onto the command bar (_onto_bar). A copy that fails is said with
+        its reason. The player may have typed, or opened something, while it was made: what
+        they typed is still never replaced, and the copies are removed again."""
+        from ..addchallenge import AddError
+
+        try:
+            copies = await self.stage(files)
+        except AddError as exc:  # a file that could not be copied, and why
+            self.warn(f"not attached: {exc}")
+            return
+        except Exception as exc:  # a bug: said, and the console goes on
+            self.warn(f"not attached: {type(exc).__name__}: {exc}")
+            return
+        if self.screen is screen and self._onto_bar(screen, copies):
+            return
+        self.unstage(copies)
+        self.warn(self._bar_full(files) if self.screen is screen else
+                  f"{len(files)} file{'' if len(files) == 1 else 's'} not taken: the screen changed while "
+                  f"{'it was' if len(files) == 1 else 'they were'} copied. Drop {'it' if len(files) == 1 else 'them'} again")
+
+    async def stage(self, files: list) -> list:
+        """Copies of dropped files in the run's folder (the stager, in a thread: a file may
+        be big), which are what is attached; without a stager, the files themselves. One
+        drop is copied at a time, in the order they came (a terminal may send three files as
+        three pastes). AddError names a file that cannot be copied."""
+        if self.stager is None:
+            return files
+        async with self._staging:
+            return await asyncio.to_thread(self.stager, files)
+
+    def unstage(self, files: list) -> None:
+        """Remove copies `stage` made that will not be attached, in a thread (a folder may be big)."""
+        if self.unstager is not None and files:
+            unstager, copies = self.unstager, list(files)
+            self.run_worker(lambda: unstager(copies), thread=True, exclusive=False)
 
     async def pick_files(self, *, many: bool = True, warn: Callable[[str], None] | None = None) -> list:
         """The operating system's file window (filepick.choose), in a thread so lanes go on
@@ -315,20 +742,25 @@ class FlightdeckApp(App[None]):
             (warn or self.warn)(str(exc))
             return []
 
-    async def _attach(self, cid: str, files: list) -> None:
+    async def _attach(self, cid: str, files: list, lane_id: str | None = None) -> None:
         """/attach's work, in a worker: the file window when no file was named, then the copy
-        (the attacher makes it in a thread), with a line that says it is going on."""
+        (the attacher makes it in a thread), with a line that says it is going on. `lane_id`:
+        the lane the command was typed on; a focus view still on it once the files are there
+        goes to the fresh lane (follow)."""
         if not files:
             files = await self.pick_files()
             if not files:
                 return
         self.say(f"copying {len(files)} file{'' if len(files) == 1 else 's'} into {cid}...")
+        known = set(self.deck.lanes)
         try:
             ok, message = await self.attacher(cid, files)
         except Exception as exc:  # a bug: said, and the console goes on
             ok, message = False, f"could not attach to {cid}: {type(exc).__name__}: {exc}"
         self.say(message, "information" if ok else "warning")
         self.refresh_view()
+        if ok and lane_id is not None:
+            self.follow(cid, lane_id, known)
 
     def attach(self, arg: str, lane_id: str | None = None) -> None:
         """/attach [challenge] <files>: the files named (dragged onto the command bar) go into
@@ -346,23 +778,104 @@ class FlightdeckApp(App[None]):
             return
         cid = self._challenge_arg(rest, lane_id)
         if cid is not None:
-            self.run_worker(self._attach(cid, files), exclusive=False)
+            self.run_worker(self._attach(cid, files, lane_id), exclusive=False)
 
     def new_challenge(self, name: str = "") -> None:
         """/new: ask for a challenge (NewChallengePrompt), which puts it on the board (the
-        adder) and closes once it is there; a lane takes it."""
+        adder) and closes once it is there; a lane takes it. In the simple layout, the first
+        lane of the run that a /new starts opens in the focus view (open_first_lane)."""
         if self.adder is None:
             self.warn("/new adds a challenge to a board you fill yourself; this board comes from the platform" if self._ticker is None
                       else "/new adds a challenge to a real board; the mock's board is scripted")
             return
         from .screens import NewChallengePrompt
 
+        adder = self.adder
+        first = not self.deck.lanes  # asked before the challenge is added: its lane may start while the adder runs
+
+        async def add(new: object) -> tuple[bool, str]:
+            ok, message = await adder(new)
+            if ok and first and self.layout == "simple":
+                self._open_first = True  # its lane may be there now, or only once its images are read
+            return ok, message
+
         def done(said: str | None) -> None:
             if said:
                 self.say(said)
                 self.refresh_view()
 
-        self.push_screen(NewChallengePrompt(name, paster=self.paster, adder=self.adder), done)
+        self.push_screen(NewChallengePrompt(name, paster=self.paster, adder=add), done)
+
+    def action_new(self) -> None:
+        """A click on `/new` in the key line."""
+        self.new_challenge()
+
+    def open_first_lane(self) -> None:
+        """Open the first lane of the run in the focus view, once: the lane the player's /new
+        started on a board that had none (simple layout). A player who hands over a challenge
+        wants to watch it, and one lane makes a list of one. Looked at when the deck says
+        something (_redraw) and when the lane list comes back from under the /new form
+        (FleetScreen.on_screen_resume), and left for the next look while the lane is not there
+        yet (its images are being read) or the form is still open. Then only if the player is
+        in the lane list, with nothing typed in its command bar, and that lane is the only
+        one: nobody is moved from what they turned to meanwhile, and what they are typing
+        never lands in the lane's chat box as a message to it."""
+        from .screens import NewChallengePrompt
+
+        if not self._open_first or not self.deck.lanes or isinstance(self.screen, NewChallengePrompt):
+            return
+        self._open_first = False
+        fleet = self._fleet
+        if self.layout != "simple" or self.screen is not fleet or len(self.deck.lanes) != 1:
+            return
+        field = fleet.query_one("#bar-input")
+        if not field.has_focus and not field.value:
+            self.open_lane(next(iter(self.deck.lanes)))
+
+    def follow(self, challenge_id: str, old: str, known: Iterable[str]) -> None:
+        """The lane `old` ended so that its challenge starts afresh (/attach, a kill that
+        re-queues): a focus view that shows it goes to the fresh lane, now or when that lane
+        starts (follow_restart). `known`: the lanes there were before, so the fresh one is
+        told from them. Nothing to follow when the view is not on `old`, when `old` is not a
+        lane of that challenge, or when it still runs (the deck did not restart it)."""
+        focus, lane = self.focus_screen, self.deck.lanes.get(old)
+        if focus is None or focus.lane_id != old or lane is None or lane.challenge_id != challenge_id or not lane.finished:
+            return
+        self._follow = (challenge_id, old, frozenset(known))
+        self.follow_restart()
+
+    def follow_restart(self) -> None:
+        """Move the focus view from a lane that ended to start afresh to the fresh lane, once
+        (follow), with what is typed in its chat box: a message written for the ended lane is
+        for the fresh one. Looked at when the follow is set, when the deck says something
+        (_redraw) and when the view comes back from under a prompt
+        (FocusScreen.on_screen_resume); left for the next look while the fresh lane has not
+        started (the queue is held, no lane is free) or a prompt is over the view. Nobody is
+        moved from what they turned to meanwhile: a player back in the lane list, or on
+        another lane, stays there. Dropped too once no lane is on its way (the challenge was
+        parked or solved): a lane started on it later moves nobody. The fresh lane is the
+        first one on the challenge that was not there before, is no fork and has not ended:
+        the view is never taken to a lane that has ended, such as one that started while
+        /attach copied and was ended with the files, or a fresh lane that was ended in its
+        turn under a prompt. The one that runs in its place is the fresh lane, when it
+        starts."""
+        if self._follow is None:
+            return
+        challenge_id, old, known = self._follow
+        focus = self.focus_screen
+        if focus is None or focus.lane_id != old:
+            self._follow = None
+            return
+        if self.screen is not focus:
+            return
+        fresh = next((lane for lane in self.deck.lanes.values()
+                      if lane.id not in known and lane.challenge_id == challenge_id and lane.parent is None
+                      and not lane.finished), None)
+        if fresh is None and self.deck.queued(challenge_id):
+            return
+        self._follow = None
+        if fresh is not None:
+            focus.show_lane(fresh.id, carry=True)
 
     def inform(self, text: str) -> None:
         self.say(text)
@@ -406,6 +919,8 @@ class FlightdeckApp(App[None]):
     def _redraw(self) -> None:
         self._redraw_queued = False
         self.refresh_view()
+        self.open_first_lane()
+        self.follow_restart()
 
     # ------------------------------------------------------------------ navigation
 
@@ -449,14 +964,27 @@ class FlightdeckApp(App[None]):
         self.push_screen(ChallengeCard(ch, [lane.id for lane in lanes], own, deck.config.team), done)
 
     def action_help(self) -> None:
-        self.push_screen(HelpScreen(mock=self._ticker is not None))
+        """Help for where the player is (`?`, /help; P65): opened from a lane's view it starts
+        with that lane and that view's keys, from the lane list with the selected lane and the
+        list's keys (each view's help_now). The lane's challenge name is challenge text: made
+        safe here, and the dialog draws it as text, never as markup."""
+        where = self.screen if isinstance(self.screen, (FleetScreen, FocusScreen)) else self._fleet
+        lane, keys = where.help_now()
+        name = None if lane is None else f"{lane.id} · {untrusted(self.deck.challenges[lane.challenge_id].name, one_line=True)}"
+        self.push_screen(HelpScreen(mock=self._ticker is not None, view="lane" if isinstance(where, FocusScreen) else "list",
+                                    lane=name, now=keys))
 
     # ------------------------------------------------------------------ interventions
 
     def apply(self, intervention: iv.Intervention) -> iv.Outcome:
+        """Apply the player's intervention and say its outcome. A kill that re-queues, made on
+        the lane the focus view shows, takes the view to the fresh lane (follow)."""
+        known = set(self.deck.lanes)
         outcome = self.deck.apply(intervention)
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
+        if outcome.ok and isinstance(intervention, iv.Kill) and intervention.requeue:
+            self.follow(self.deck.lanes[intervention.lane].challenge_id, intervention.lane, known)
         return outcome
 
     def suggested(self, lane: Lane, key: str) -> str:
@@ -488,6 +1016,26 @@ class FlightdeckApp(App[None]):
                 if command and all(command != c for c, _ in out):
                     out.append((command, alert.kind.label.lower()))
         return tuple(out)
+
+    def command_state(self) -> State:
+        """What the command bar's menu offers after a command's name, as things stand: every
+        lane with its challenge and state (/open), the parked and new challenges (/queue), the
+        themes there are (/theme) and the layout in use (/layout). The bar asks while such a
+        menu is open; names are challenge text, which the bar draws through text.untrusted()."""
+        deck = self.deck
+
+        def named(challenge_id: str) -> str:
+            challenge = deck.challenges.get(challenge_id)
+            return challenge.name if challenge is not None else challenge_id
+
+        lanes = tuple(Word(lane.id, f"{named(lane.challenge_id)} · {lane.state.value}", named(lane.challenge_id)) for lane in deck.lanes.values())
+        queueable = tuple(Word(challenge.id, f"{challenge.name} · {challenge.status.value}", challenge.name)
+                          for challenge in deck.challenges.values() if challenge.status in (ChallengeStatus.PARKED, ChallengeStatus.NEW))
+        built_in, own = themes.names(self.themes_folder)
+        in_use = theme.active().name
+        listed = tuple(Word(name, kind + (", in use" if name == in_use else ""))
+                       for kind, names in (("built in", built_in), ("yours", own)) for name in names)
+        return State(lanes=lanes, queueable=queueable, themes=listed, layout=self.layout)
 
     def lane_verb(self, lane: Lane, verb: str) -> None:
         if verb == "pause":
@@ -728,40 +1276,220 @@ class FlightdeckApp(App[None]):
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
 
+    def set_layout(self, name: str) -> None:
+        """Draw in the layout `name` from now on (config.LAYOUTS): both views, as they are now,
+        with the selection, the filter and anything typed where they were."""
+        if name not in LAYOUTS:
+            raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {name!r}")
+        self.layout = name
+        for screen in self.screen_stack:
+            if isinstance(screen, (FleetScreen, FocusScreen)):
+                screen.relayout()
+
+    def switch_layout(self, arg: str) -> None:
+        """/layout simple|deck: the console's layout for the rest of this run (the config file
+        keeps its own); /layout alone: the picker (layout_picker). Any other word is a warning,
+        and the layout stays."""
+        word = arg.strip().lower()
+        if not word:
+            self.layout_picker()
+            return
+        if word not in LAYOUTS:  # not shown: it is not a layout
+            self.warn(f"/layout takes {' or '.join(LAYOUTS)}")
+            return
+        self.set_layout(word)
+        self.keep_look(layout=word)
+
+    def layout_picker(self) -> None:
+        """/layout alone: the two layouts in a list (screens.Picker). The console is drawn in
+        the one the cursor is on; Enter keeps it for this run, s keeps and saves it, and esc
+        puts back the layout there was."""
+        from .commands import LAYOUT_HELP
+        from .screens import Choice, Picker
+
+        before = self.layout
+
+        def show(name: str) -> None:
+            if name != self.layout:  # the same layout: nothing to lay out again
+                self.set_layout(name)
+
+        def done(answer: tuple[str, bool] | None) -> None:
+            if answer is None:
+                show(before)
+                return
+            name, save = answer
+            show(name)
+            self.keep_look(save=save, layout=name)
+
+        narrow = "This terminal is narrow, so the compact layout shows in both." if views.compact(self.size.width) else ""
+        self.push_screen(Picker("layout", [Choice(name, LAYOUT_HELP[name]) for name in LAYOUTS], in_use=before, preview=show,
+                                save_to=self.config_path, note=narrow), done)
+
+    def keep_look(self, *, save: bool = False, theme: str | None = None, layout: str | None = None) -> None:
+        """Say that the console is in the theme or the layout just chosen, and for how long
+        (look_said)."""
+        text, ok = self.look_said(save=save, theme=theme, layout=layout)
+        self.say(text, "information" if ok else "warning")
+
+    def look_said(self, *, save: bool = False, hint: bool = True, theme: str | None = None, layout: str | None = None) -> tuple[str, bool]:
+        """What to say once the console is in the theme or the layout just chosen (or both),
+        and whether it went well. `save`: write it under [console] in the player's config
+        first (config_edit.save_console, which leaves the file as it was when it cannot); the
+        run keeps the look whether that worked or not, and a save that failed is said with the
+        reason and is not well. `hint`: say how to keep a look that was not saved."""
+        from ..config_edit import CONSOLE_KEYS, EditError, save_console
+
+        chosen = {"theme": theme, "layout": layout}
+        said = " and ".join(f"{key} {chosen[key]}" for key in CONSOLE_KEYS if chosen[key] is not None)
+        narrow = "; this terminal is narrow, so the compact layout shows" if layout is not None and views.compact(self.size.width) else ""
+        if not self.config_path:
+            return f"{said} for this run (this console has no config file){narrow}", True
+        if not save:
+            command = " or ".join(f"/{key}" for key in CONSOLE_KEYS if chosen[key] is not None)
+            return f"{said} for this run{f'. To keep it: {command}, then s' if hint else ''}{narrow}", True
+        try:
+            save_console(Path(self.config_path), theme=theme, layout=layout)
+        except EditError as exc:
+            return f"{said} for this run; it was not saved: {exc}", False
+        return f"{said}, saved in your config file: {self.config_path}{narrow}", True
+
+    def switch_details(self) -> None:
+        """/details: the lane view's details switch, as ctrl+o there (FocusScreen.action_details).
+        Typed anywhere else it is a warning: the switch is that view's."""
+        focus = self.focus_screen
+        if focus is None or self.screen is not focus:
+            self.warn("/details is for a lane's view (every line of its transcript, or the calm one): open a lane first")
+            return
+        focus.action_details()
+
+    def set_theme(self, arg: str) -> None:
+        """/theme alone: the picker (theme_picker); /theme NAME: the console's colours for the
+        rest of this run (the config file keeps its own). A name that is no theme, or a theme
+        file that cannot be used, is a warning, and the theme in use stays."""
+        name = arg.strip()
+        if not name:
+            self.theme_picker()
+            return
+        if themes.NAME.fullmatch(name) is None:  # not shown: it is not a name
+            self.warn("/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them")
+            return
+        try:
+            palette = themes.load(name, self.themes_folder)
+        except themes.NoSuchTheme as exc:  # "names no theme: ...", which does not repeat the name
+            self.warn(f"/theme {exc}")
+            return
+        except themes.ThemeError as exc:  # its text names the theme file
+            self.warn(str(exc))
+            return
+        self.set_palette(palette)
+        self.keep_look(theme=name)
+
+    def themes_listed(self) -> tuple[dict[str, themes.Palette], dict[str, str], list[tuple[str, str]]]:
+        """The themes a list offers, each read now: (the palettes that load by name, why each
+        of the others cannot be used, every (name, "built in" or "yours") in the list's
+        order). This reads every theme file of the player's folder whose name is a theme's
+        (themes.names), which only a list the player asked for does: /theme alone and /config."""
+        palettes: dict[str, themes.Palette] = {}
+        problems: dict[str, str] = {}
+        built_in, own = themes.names(self.themes_folder)
+        listed = [(name, kind) for kind, names in (("built in", built_in), ("yours", own)) for name in names]
+        for name, _ in listed:
+            try:
+                palettes[name] = themes.load(name, self.themes_folder)
+            except themes.ThemeError as exc:  # its text names the theme file and shows no value from it
+                problems[name] = str(exc).removeprefix(f"{self.themes_folder}{os.sep}")  # the file's name: the folder is said once
+        return palettes, problems, listed
+
+    def theme_picker(self) -> None:
+        """/theme alone: the themes in a list (screens.Picker), the built-in ones and the
+        player's own. The console is drawn in the one the cursor is on, a transcript's lines
+        included; Enter keeps it for this run, s keeps and saves it, and esc puts back the
+        palette there was. A theme file that cannot be used is listed with its reason and
+        cannot be chosen."""
+        from .screens import Choice, Picker
+
+        before = theme.active()
+        palettes, problems, listed = self.themes_listed()
+
+        def show(palette: themes.Palette) -> None:
+            if palette != theme.active():  # the same colours: nothing to draw again
+                self.set_palette(palette)
+
+        def done(answer: tuple[str, bool] | None) -> None:
+            if answer is None:
+                show(before)
+                return
+            name, save = answer
+            show(palettes[name])
+            self.keep_look(save=save, theme=name)
+
+        choices = [Choice(name, kind, problems.get(name, "")) for name, kind in listed]
+        own = f"Your own themes are NAME.toml files in {self.themes_folder}" if self.themes_folder is not None else ""
+        self.push_screen(Picker("theme", choices, in_use=before.name, preview=lambda name: show(palettes[name]),
+                                save_to=self.config_path, note=own), done)
+
     def config_dialog(self) -> None:
-        """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the
-        same deck calls as /config lanes and /config submit, so the event's rules hold."""
-        from .screens import ConfigPrompt
+        """/config alone: the settings dialog (ConfigPrompt). What it changes for the run goes
+        through the same deck calls as /config lanes and /config submit, so the event's rules
+        hold, and through set_layout and set_palette as /layout and /theme; asked to, it
+        saves the layout and the theme as the list's s does (look_said). Everything asked for
+        is checked before anything changes: lanes that are no number, or a theme that cannot
+        be used, is a warning and nothing was changed."""
+        from .screens import ConfigPrompt, Settings
 
         deck, cfg = self.deck, self.deck.config
-        before = ("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit)
+        before = Settings("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit, self.layout, theme.active().name)
 
-        def done(answer: tuple[str, str] | None) -> None:
+        def done(answer: Settings | None) -> None:
             if answer is None or answer == before:
                 return
-            lanes, submit = answer
-            said, ok = [], True
-            if lanes.lower() != before[0]:
-                value = lanes.lower()
-                if value in ("unlimited", "max", "∞"):
-                    outcome = deck.set_max_lanes(UNLIMITED_LANES)
-                elif value.isascii() and value.isdigit():
-                    outcome = deck.set_max_lanes(int(value))
-                else:
-                    self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+            lanes, palette = answer.lanes.lower(), None
+            if lanes == before.lanes:
+                most = None
+            elif lanes in ("unlimited", "max", "∞"):
+                most = UNLIMITED_LANES
+            elif lanes.isascii() and lanes.isdigit():
+                most = int(lanes)
+            else:
+                self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+                return
+            if answer.theme != before.theme:
+                try:
+                    palette = themes.load(answer.theme, self.themes_folder)
+                except themes.ThemeError as exc:  # its text names the theme file, or says the name is no theme
+                    why = f"theme {answer.theme} {exc}" if isinstance(exc, themes.NoSuchTheme) else str(exc)
+                    self.warn(f"{why}; nothing was changed")
                     return
+            said, ok = [], True
+            if most is not None:
+                outcome = deck.set_max_lanes(most)
                 said.append(outcome.message)
                 ok = ok and outcome.ok
-            if submit != before[1]:
-                outcome = deck.set_submit(submit)
+            if answer.submit != before.submit:
+                outcome = deck.set_submit(answer.submit)
                 said.append(outcome.message)
                 ok = ok and outcome.ok
-            self.say(" ".join(said), "information" if ok else "warning")
+            if palette is not None:
+                self.set_palette(palette)
+            if answer.layout != before.layout:
+                self.set_layout(answer.layout)
+            if answer.save:  # both, as the dialog shows them: what the console is in is what the config then says
+                look = {"layout": answer.layout, "theme": answer.theme}
+            else:
+                look = {key: getattr(answer, key) for key in ("layout", "theme") if getattr(answer, key) != getattr(before, key)}
+            if look:
+                text, fine = self.look_said(save=answer.save, hint=False, **look)
+                said.append(text[0].upper() + text[1:])
+                ok = ok and fine
+            if said:  # (lanes typed another way, "04" for 4, change nothing and say so; "UNLIMITED" for unlimited says nothing)
+                self.say(". ".join(said), "information" if ok else "warning")
             self.refresh_view()
 
         lanes_note = f"the event's rules allow {cfg.lanes_ceiling} at most" if cfg.lanes_ceiling is not None else ""
         submit_note = "the event's rules do not let flightdeck submit, so auto is refused" if cfg.submit_ceiling != "auto" else ""
-        self.push_screen(ConfigPrompt(*before, lanes_note=lanes_note, submit_note=submit_note, config_path=self.config_path), done)
+        built_in, own = themes.names(self.themes_folder)
+        self.push_screen(ConfigPrompt(before, themes=(*built_in, *own), lanes_note=lanes_note, submit_note=submit_note,
+                                      config_path=self.config_path), done)
 
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""
@@ -812,6 +1540,12 @@ class FlightdeckApp(App[None]):
             self.refresh_view()
         elif name == "config":
             self.configure(arg)
+        elif name == "theme":
+            self.set_theme(arg)
+        elif name == "layout":
+            self.switch_layout(arg)
+        elif name == "details":
+            self.switch_details()
         elif name == "new":
             self.new_challenge(arg)
         elif name == "attach":
@@ -876,6 +1610,8 @@ class FlightdeckApp(App[None]):
                 self.warn(f"No files pane under {views.COMPACT_MAX_WIDTH + 1} columns (diffs need it)")
                 return
             self.open_lane(lane.id, file=arg)
+        elif name == "copy":
+            self.copy_from(lane, arg)
         elif name == "open":
             self.open_lane(lane.id)
         else:

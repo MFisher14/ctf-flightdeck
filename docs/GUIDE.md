@@ -1,45 +1,104 @@
 # The player's guide
 
-Everything a player needs after the [README](../README.md)'s quickstart: where lanes run, models
-and keys, the console, boards, your own solvers, events and teams, coding-agent lanes, and what a
-run leaves behind. Deeper pages: [Model APIs](MODEL-APIS.md), [Models](MODELS.md),
-[Boards](BOARDS.md), [Solvers](SOLVERS.md) and the [console spec](CONSOLE-SPEC.md).
+Everything a player needs after the [README](../README.md)'s quickstart: the words flightdeck uses,
+where lanes run, models and API keys, the console, boards, your own solvers, events and teams,
+coding-agent lanes, and what a run leaves behind. Deeper pages: [Model APIs](MODEL-APIS.md),
+[Models](MODELS.md), [Boards](BOARDS.md), [Solvers](SOLVERS.md), [Plugins](PLUGINS.md) and the
+[console spec](CONSOLE-SPEC.md).
 
 ## Install and first run
 
-Needs Python 3.12+ on macOS or Linux (Windows through WSL), and Docker for the safest setup.
+macOS or Linux (Windows through WSL). Install with
+[uv](https://docs.astral.sh/uv/getting-started/installation/): it brings the Python flightdeck needs
+(3.12 or newer), so you install none yourself.
+[Docker](https://docs.docker.com/get-started/get-docker/), running, gives the safest setup ([Docker
+or host](#docker-or-host)).
 
 ```sh
-pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
-flightdeck init               # a few questions (provider, models, Docker or host); writes your config
-# put your key in ~/.config/ctf-flightdeck/keys.env (chmod 600): init names the variable
-flightdeck image build        # once, for Docker lanes: pulls Debian and common tools (about 700 MB)
-flightdeck doctor             # checks your setup and says how to fix each problem
-flightdeck practice           # 14 small practice challenges: spends tokens on your model API
+uv tool install ctf-flightdeck   # installs the flightdeck command
+flightdeck                       # the home screen: choose "Get started", then "Practice"
+```
+
+If your shell does not find `flightdeck` after that, `uv tool update-shell` puts uv's tool folder on
+your `PATH`; open a new terminal then. Without uv, `pipx install ctf-flightdeck` does the same with
+a Python 3.12 or newer of your own, and everything below is the same from there. From a clone of the
+repository: `uv tool install .`. Debian and Ubuntu have a `.deb`
+([below](#install-with-homebrew-or-apt)).
+
+"Get started" sets flightdeck up in a form on the home screen (your model API, its API key, the
+models, Docker or host), and the home screen then offers the practice set: 14 small challenges, on
+your model. The paragraphs below say what each step asks and does. The words this guide uses from
+here on (lane, ladder, board, lane image) are in [Words used here](#words-used-here), the next
+section.
+
+The setup form came after 0.4.0 (`flightdeck --version` says which you have). On 0.4.0, "Get
+started" asks the same at the prompt and goes on to set up an event: for the practice set there,
+run the commands under "The same by command" below, which that release has too.
+
+**The first run.** With no config yet the home screen sets flightdeck up itself. "Get started", its
+first choice, is a form: your model API, its API key (typed out of sight; it goes to your keys
+file), the models (every API has some to offer) and Docker or host, where Docker is offered when it
+runs on your machine and host when it does not. Docker can take a while to answer (up to 20 s when
+its daemon hangs): until it does the form offers neither and saves none, so wait for it or choose
+one yourself, and a choice you made meanwhile stands. Leaving the form stops the question. `ctrl+s`
+saves it; what is wrong with an answer is said in the form. The home screen then says what it wrote
+and offers the practice set first, with starting an event one below; when your lanes run in Docker
+and the lane image is not built yet, building it comes first (`flightdeck image build`, run for you
+in the terminal). "Start a new CTF" with no config asks the same setup first and then offers the
+event's form first. The form sets up one model API with the rules as the light model; for an
+OpenRouter fallback or a light model, use `flightdeck init` (below).
+
+**Every run after it.** Once it is set up, `flightdeck` on its own, at a terminal, opens the home
+screen on what you can play: resume an event (the ones you set up or played, most recent first;
+Enter takes the first), start a new CTF, the practice set, a demo, or install the solver pack when
+you have none. Arrow keys move, Enter chooses, `q` quits. "Start a new CTF" is a form on that screen
+with the questions `flightdeck start` asks; `ctrl+s` sets the event up and opens its console. What
+would stop that (a folder that cannot be made, a VPN file that is not there, an access token that
+cannot be kept) is said in the form, with your answers still in it, and under the flag format the
+form says what it made of what you typed. Steps that need your password (connecting a VPN,
+installing its tool or the solver pack) are asked in the plain terminal before the console opens.
+When a run you started there ends (you quit its console), flightdeck comes back to the home screen
+with that event first in the list; what the run spent, its run folder and the commands that read it
+are in the terminal under the home screen, and `q` shows them. The practice set and the demo come
+back to it too. `q` on the home screen leaves, and a run that stops with an error leaves with its
+reason showing.
+
+**The same by command.** Each step has a command of its own, for a script, or when you would rather
+answer at the prompt:
+
+```sh
+flightdeck init          # the setup questions (model API, models, Docker or host, your API key); writes your config
+flightdeck image build   # once, for Docker lanes: pulls Debian and common tools (about 830 MB)
+flightdeck doctor        # checks your setup and says how to fix each problem
+flightdeck practice      # 14 small practice challenges: spends tokens on your model API
 ```
 
 `init` shows a numbered list of model APIs: answer with a number or a name. Lanes use one API;
-"anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing.
-A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
-uses it. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
+"anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing. A
+coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude` uses it.
+Every API has models to offer, and Enter takes them (which, and why:
+[Models](MODELS.md#what-we-would-start-with)). Last, `init` asks for your API key: nothing shows as
+you paste, and it goes to your keys file (`~/.config/ctf-flightdeck/keys.env`, yours only), never
+into the config. Enter alone skips it; an API key already in your environment or in that file is not
+asked for, and away from a terminal `init` asks nothing and says where the API key goes. For an
+event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
 
-`flightdeck` on its own, at a terminal, opens the home screen: resume an event (the ones you
-set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
-a demo, or install the solver pack when you have none. Arrow keys move, Enter chooses, `q` quits.
-"Start a new CTF" is a form on that screen with the questions `flightdeck start` asks; `ctrl+s`
-sets the event up and opens its console. What would stop that (a folder that cannot be made, a
-VPN file that is not there, a token that cannot be kept) is said in the form, with your answers
-still in it, and under the flag format the form says what it made of what you typed. Steps that need your password (connecting a VPN,
-installing its tool or the solver pack) are asked in the plain terminal before the console
-opens. With no config yet the home screen offers "Get started", which asks about your model API
-in the terminal and then your first event. In a script or a pipe it asks nothing and prints the commands
-instead. The first console you open, and the mock, start on a welcome screen: what the board,
-the lanes and the command bar are, and the keys you need; Enter goes on (on an empty board, to
-adding your first challenge). `flightdeck doctor` checks Python,
-the config, the key variables, a local model server and its models, the light model, Docker, the
-lane image and your terminal's size. Before the console opens, `play` and `practice` ask the model
-API whether it takes your key and serves every model in your ladder, and stop with what to fix if
-not. `ctfdeck` and `ctf-flightdeck` are other names for the `flightdeck` command.
+In a script or a pipe `flightdeck` alone asks nothing and prints these commands instead.
+
+**Your first console.** The first console you open, and the mock, start on a welcome screen: what
+the board, the lanes and the command bar are, and the keys you need; Enter goes on (on an empty
+board, to adding your first challenge). With challenges on the board it names three keys to begin
+with: Enter to open a lane to watch it and talk to it, `a` to approve a flag an agent found, and `?`
+for every key, any time ([The console](#the-console)).
+
+**When something is missing.** `flightdeck doctor` checks Python, the config, the variables that
+hold your API keys, a local model server and its models, the light model, Docker, the lane image and
+your terminal's size. Each problem has a line of its own with its fix under it, and the last line is
+the one to act on: how many things there are to fix before a run (the `FAIL` lines; a `warn` line is
+something a run does not wait for), or `Ready` with the next command. Before the console opens,
+`play` and `practice` ask the model API whether it takes your API key and serves every model in your
+ladder, and stop with what to fix if not. `ctfdeck` and `ctf-flightdeck` are other names for the
+`flightdeck` command.
 
 ### Upgrade
 
@@ -51,6 +110,8 @@ flightdeck --version               # which release you have now
 Your config, keys file, event folders and run folders are not touched. From a clone, pull and
 install it over the old one: `git pull`, then `uv tool install --force .`. If you use the solver
 pack, run `flightdeck pack install` again after an upgrade so the pack matches the release.
+With Docker lanes, `flightdeck doctor` says when the lane image on this machine is one an older
+release built: `flightdeck image build` builds it again.
 
 ### Install with Homebrew or apt
 
@@ -69,8 +130,61 @@ repository yet, so `apt upgrade` does not find a new release: install the next `
 old one. It does not install Docker.
 
 **Homebrew:** not yet. flightdeck's tap does not exist yet, so
-`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `pipx` or `uv`
+`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `uv` or `pipx`
 as above.
+
+## Words used here
+
+Four words that are easy to mix up. A **key** is one you press. An **API key** is what a model
+API gives you to use it, and the keys file is where flightdeck keeps yours. An **access token**
+is what a CTF platform gives you; **tokens** alone are what a model counts its work in, and what
+a model API charges for. A **setting** is a line of your config.
+
+- **Board**: the event's challenges. To flightdeck it is a folder of challenge folders, each with
+  a `challenge.json` and its handout files ([Boards](BOARDS.md)). With CTFd, flightdeck pulls
+  one into a folder.
+- **Wave**: challenges an event releases together, sometimes dozens at once, when it opens or
+  while it runs. flightdeck pulls each new wave into the board, starts lanes on as many of its
+  challenges as `max_lanes` allows and queues the rest.
+- **Live instance** (the console calls it a **live box**): a server the event runs for one
+  challenge, such as a web site or a service you reach with `nc host port`. A lane reaches it
+  only as the event's rules allow ([Docker or host](#docker-or-host)).
+- **Lane**: one agent working one challenge: a model conversation with its own shell, in a
+  container (or on this machine with `--host`). `max_lanes` run at once (4 by default); the rest
+  queue.
+- **Brief**: what a lane's model is told about its challenge when it starts: the challenge's
+  name, text, files and live instance (handed over as data, never as instructions) and the flag
+  format.
+- **Command bar**: the line at the bottom of the console. `/` opens it for a command (`/new`,
+  `/theme`) and lists the commands as you type ([The command bar](#the-command-bar)); plain
+  text typed in it is a message to the selected lane, which reads it on its next turn. The
+  bar's border names that lane.
+- **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
+  **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
+- **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
+  yours; exit it to hand the lane back.
+- **Park**: set a challenge aside. A parked challenge is not queued and no lane works it, but it
+  can still be solved: `/queue` puts it back in the queue. `/kill park` parks a lane's challenge
+  when it kills the lane, and Autopilot parks one it gave up on for now.
+- **Caps**: per lane, `token_cap` and `dollar_cap` under `[lanes]`. An alert comes at 80%, and at
+  100% the lane waits for you.
+- **L1**: your own no-model solvers, which run before a lane's model does anything. They come as a
+  **pack** of **engines**, each with a **manifest** saying which challenges it fits
+  ([Solvers](SOLVERS.md)).
+- **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
+  default.
+- **Lane image**: the Docker image lanes run in, `ctf-flightdeck-lane:1`.
+  `flightdeck image build` builds it once, and again after an upgrade that changed it.
+- **Event profile** (`event.toml`): what an event's rules allow, and a **policy** for each stage:
+  `auto`, `confirm`, `manual` or `off`.
+- **Run folder**: where a run's event log, transcripts and reports go
+  (`~/.local/share/ctf-flightdeck/runs/`).
+- **Layout**: how the console is laid out: `simple` (the default: one list of lanes and what
+  needs you) or `deck` (the whole dashboard, with the board). **Theme**: its colours
+  ([The console](#the-console)).
+- **Plugin**: a small program of your own that lets flightdeck play an event on a platform it
+  does not know ([Plugins](PLUGINS.md)). Not a pack: a pack solves challenges, a plugin talks
+  to the platform.
 
 ## What a run costs
 
@@ -92,7 +206,7 @@ flightdeck mock --screenshot DIR     # headless: SVGs of the key moments
 ```
 
 The mock uses no model and no network. Every challenge, teammate and flag in it is invented.
-`space` freezes its clock and `.` steps it; the other keys are the real console's
+`,` freezes its clock and `.` steps it; the other keys are the real console's
 ([The console](#the-console)).
 
 ## Docker or host
@@ -103,7 +217,8 @@ own, and the question is where that shell is.
 **Docker** is the default (`runtime = "docker"` under `[lanes]`). Each lane runs in its own
 container of the lane image, with only that lane's copy of the challenge in it, and your L1
 solvers run in containers too. `flightdeck image build` builds the image once, and
-`flightdeck image dockerfile` prints what it builds. A lane of flightdeck's own loop gets no
+`flightdeck image dockerfile` prints what it builds ([what a lane's shell
+has](#what-a-lanes-shell-has) lists it). A lane of flightdeck's own loop gets no
 network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
 `nc host port` (`tcp://host:port` in the challenge's `urls`). Under an event whose instance policy
 is `confirm`, the lane asks you first.
@@ -147,9 +262,9 @@ What that fence does not do:
 your files, your keys file and flightdeck's own environment, and send what it reads to its model's
 API, which nothing can take back. flightdeck says so before every host run. A lane's commands get
 an environment built from an allowlist, with no keys in it. The value of each key flightdeck holds
-(every entry of your keys file, the `[api]` and `[fallback]` keys, the CTFd token) is replaced by
-its name, like `[OPENROUTER_API_KEY]`, in what a lane's tool calls return, before its model sees
-it; so the run log, the console, transcripts, reports and writeup drafts show a key's name but not
+(every entry of your keys file, the `[api]` and `[fallback]` keys, the event's platform token) is
+replaced by its name, like `[OPENROUTER_API_KEY]`, in what a lane's tool calls return, before its
+model sees it; so the run log, the console, transcripts, reports and writeup drafts show a key's name but not
 its value. That is cleanup, not a fence (a lane that can read a key can also use it, or print it
 encoded): use Docker, a disposable VM, or a separate key with a low limit.
 
@@ -157,37 +272,44 @@ A coding-agent CLI holds its own credential, and the commands it runs can read i
 give it a key you can revoke, with a low spending limit. Practise in Docker: on the host, a lane
 can read the practice set's reference solutions in a clone of this repository.
 
-## Words used here
+### What a lane's shell has
 
-- **Board**: a folder of challenge folders, each with a `challenge.json` and its handout files
-  ([Boards](BOARDS.md)). With CTFd,
-  flightdeck pulls one into a folder.
-- **Lane**: one agent working one challenge: a model conversation with its own shell, in a
-  container (or on this machine with `--host`). `max_lanes` run at once (4 by default); the rest
-  queue.
-- **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
-  **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
-- **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
-  yours; exit it to hand the lane back.
-- **Caps**: per lane, `token_cap` and `dollar_cap` under `[lanes]`. An alert comes at 80%, and at
-  100% the lane waits for you.
-- **L1**: your own no-model solvers, which run before a lane's model does anything. They come as a
-  **pack** of **engines**, each with a **manifest** saying which challenges it fits
-  ([Solvers](SOLVERS.md)).
-- **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
-  default.
-- **Lane image**: the Docker image lanes run in, `ctf-flightdeck-lane:1`.
-  `flightdeck image build` builds it once.
-- **Event profile** (`event.toml`): what an event's rules allow, and a **policy** for each stage:
-  `auto`, `confirm`, `manual` or `off`.
-- **Run folder**: where a run's event log, transcripts and reports go
-  (`~/.local/share/ctf-flightdeck/runs/`).
+The lane image is Debian 13 with Python 3.13 (requests, pycryptodome as `Cryptodome`, Pillow,
+numpy, sympy), `file`, `xxd`, binutils (`objdump`, `strings`, `readelf`), the archive tools,
+`curl`, `nc`, `jq`, `git`, `sqlite3` and `exiftool`, and for binaries:
+
+- **A debugger:** `gdb`, and `gdb-multiarch`, which reads a binary of any architecture.
+- **A decompiler:** radare2 (`r2`) with the Ghidra decompiler as its `pdg` command, for the
+  processors Ghidra knows. No Java is involved.
+
+A lane's commands get no terminal, so the brief of a challenge that has files shows the model
+the form that works: `gdb -q -batch -ex 'break main' -ex run -ex bt --args FILE ARGUMENTS`, and
+`r2 -q -e scr.color=0 -c 'aaa; afl; pdg @ main' FILE`. The brief names only what the lane's own
+container has: flightdeck asks each lane's container once, before the model's first turn, and
+an image without them (your own, or one an older flightdeck built) gets a brief that does not
+mention them. Three limits:
+
+- **gdb runs only binaries of the image's own architecture.** On an Apple Silicon Mac the image
+  is arm64: gdb there cannot run an x86-64 binary, which `gdb-multiarch` and `r2` still read.
+  The image has no emulator.
+- **Address randomisation stays on under gdb.** Docker's default rules refuse the call gdb
+  makes to switch it off; gdb says so in a warning and carries on, and addresses differ from
+  run to run.
+- **An image you built earlier has neither.** `flightdeck image build` builds today's, and
+  `flightdeck doctor` warns (`lane image build`) while the image on this machine is one that
+  another flightdeck's Dockerfile built. Lanes run in the old one all the same.
+
+The build fetches radare2 and its decompiler plugin from their projects' releases on
+github.com, for amd64 and arm64, and refuses an archive whose SHA-256 is not the one in the
+Dockerfile. On the host runtime a lane's shell has whatever your machine has, and its brief
+names nothing.
 
 ## Models and keys
 
 Your config names the environment variable that holds each key, never the key; flightdeck reads
 it from your environment, else from the keys file, `~/.config/ctf-flightdeck/keys.env`, which
-must be readable by you only:
+must be readable by you only. `flightdeck init` and the home screen's setup form put the key you
+paste there for you (hidden as you paste, never shown again). To make or change the file by hand:
 
 ```sh
 mkdir -p ~/.config/ctf-flightdeck && touch ~/.config/ctf-flightdeck/keys.env && chmod 600 ~/.config/ctf-flightdeck/keys.env
@@ -247,21 +369,76 @@ at each job: [Models](MODELS.md).
 
 ## The console
 
-The console raises an alert when a lane spends big on a low-value challenge, ignores what the
+The console opens on one list of your lanes (the simple layout; [Layouts](#layouts) has the
+other one). It raises an alert when a lane spends big on a low-value challenge, ignores what the
 description hints at, heads the wrong way on web, loops or stalls. Lanes that need you sort
 first, and the line under the list says why and numbers the answers: one key answers.
 
-![A wave of 43 challenges: 16 lanes run and 33 wait in the queue. The selected lane ignores the description's hint of slow-scan TV, and the line under the list offers 1 to redirect it to the hinted technique and 2 to send a hint](screenshots/alert-hint.png)
+![A wave of 43 challenges in the simple layout: 16 lanes run and 33 challenges wait. The selected lane ignores the description's hint of slow-scan TV, and the line under the list offers 1 to redirect it to the hinted technique, 2 to send a hint and x to dismiss the alert](screenshots/simple-alert.png)
 
 *An alert with its quick answers, from `flightdeck mock` (invented challenges).*
 
+**Space** peeks at the selected lane without leaving the list: a panel opens under the list
+with the lane's last six steps, each on one row cut at the edge (a command and the first line
+of its output, the model's own words, your messages, an alert, the question it waits on). The
+line that says why the lane is flagged, and its numbered answers, stay under it. Move through
+the list and the peek follows; what you type in the command bar still goes to the lane the
+peek names, so you can read what a lane did, then hint or redirect it, and never open it.
+`space` or `esc` closes the peek, and it stays open or closed for the rest of the run. Its
+rows come from the list, which keeps at least three lanes and scrolls; on a terminal too short
+for one row of it (under 18 lines, or 20 on a phone) it says so. The `/` menu and a long
+status message need rows too, and the peek gives them its oldest: on a 24-line terminal the
+whole menu hides it (the panel's border says `no room for the peek`), and it is back as you
+type the command's name or close the menu.
+
 **Enter** opens a lane full screen: its transcript, the files it changed with diffs, and a chat
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
-commands; `esc` goes back).
+commands; `esc` goes back). `?` on the empty chat box opens help for that lane; with text in
+the box it is a question mark.
 
-![One lane full screen: its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](screenshots/lane.png)
+![One lane full screen: the two other lanes that need you; its transcript in five rows, two runs of tool calls with the last call of each and the alert between them; a needs-you box with two numbered answers; the files it changed and the diff of one of them; and the chat box](screenshots/simple-lane.png)
 
 *A lane full screen, from `flightdeck mock` (invented challenges).*
+
+A lane's view is calm: each thing the lane did is one row, cut at the edge of the pane. A run
+of tool calls is two rows, how many and the last one (`⏺ 12 tool calls`, then what it is doing
+now); a long command, output or note from flightdeck (your L1 engines' intake too) shows its
+first line and ` …+6 lines`; an alert is its name and turn (`▲ Loop alert · turn 11`), and why
+it fired is in the box below; the model's own words are the one thing that wraps. `ctrl+o` (or
+`/details`) shows every line of every command and output, and again hides them; it works while
+you are typing, and what you typed stays. `pgup` and `pgdn` scroll, and the view stays where
+you are reading until you are back at the end. Of a very long transcript the newest 300
+entries are drawn, and the first row says how many came before: `pgup` there shows 300 more.
+
+The box under the transcript, **needs you now**, is as short: three rows. The first is
+what the lane asks: the approval it waits for (`◆ waiting for you: raise the cap by 50%`), or
+its most urgent alert and why it fired. The second is the answers, each with its number: `1
+more budget   0 stop the lane`, or for an alert `1 hint "You are repeating …"   2 kill and
+re-queue fresh   /dismiss not a problem`, where the words in quotes are the start of the message
+that `1` sends. Press the number while the chat box is empty. The third row is there only when
+something else is open on the lane, and names it (`also: looping · stalled`). `ctrl+o` shows the
+full card: every alert with its whole reason, and each answer as the command you could type.
+Beside the files pane on a small terminal the box is narrow, and it takes a row or two more
+so that nothing a number answers is cut: the flag that `1` submits is whole, the answers
+go on a second row, and the last row counts what it cannot name (`also: +3 more   ctrl+o shows
+all`).
+On a full card too tall for its half of the pane, the approval and its answers stay on top and
+the mouse wheel scrolls to the rest.
+
+**Copying text.** Drag the mouse over the transcript, the needs-you box, the header or the
+status line: what you dragged over is copied when you let go, and the status line says `copied
+212 characters`. A double-click copies a whole entry, also the part the edge cut with `…`; a
+triple-click the whole transcript on screen. `ctrl+c` copies the selection again and `esc`
+takes it down. With no mouse, `/copy` copies the lane's last output with its line breaks,
+`/copy command` the command that printed it, `/copy flag` the lane's flag, and `/copy all` the
+whole transcript. A copy shows a credential's name and never its value, as the screen does.
+
+flightdeck copies through your system's clipboard tool (`pbcopy` on macOS; `wl-copy`, `xclip`
+or `xsel` on Linux) and through the terminal (OSC 52), which is what reaches your machine over
+SSH. If neither can be shown to have worked, the status line says so and what to do: install
+`xclip` or `wl-copy`, or use the terminal's own selection by holding fn (Terminal.app), Option
+(iTerm2) or Shift while you drag. That selection is also the way to copy from the full
+needs-you card, the diff and the lane list, which flightdeck's own selection does not reach.
 
 `t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
 lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
@@ -294,16 +471,280 @@ On a phone (flightdeck in tmux, attached over SSH) the console has a compact lay
 columns down: the header keeps what needs you and the run's dollars; each lane's row has its
 alert, state and cost; the line under the list wraps the reason and puts one answer on a row, so
 `a`, `d` and the number keys work as on a wide terminal. A lane opens with what it needs above its
-transcript; the files pane and diffs need 65 columns. `flightdeck doctor` says when your terminal
-gets this layout and what it leaves out.
+transcript, every line of it (`ctrl+o` gives the calm transcript there too; the needs-you box
+keeps every answer on a row of its own); the files pane and diffs need 65 columns.
+`flightdeck doctor` says when your terminal gets this layout and what it leaves out. When a
+lane starts to need you, the terminal's bell marks the tmux window
+([The terminal's title and bell](#the-terminals-title-and-bell)).
 
 `q` asks first while lanes are open, and a run cannot be resumed.
 
-The fleet's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
+The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
-`c` claim (team), `/` commands, `s` sort, `?` help (every key and command), `q` quit; `A`
-approves every waiting flag; **Enter** opens the lane full screen. The whole design is in the
+`c` claim (team), `/` commands, `s` sort, `?` help, `q` quit; `A`
+approves every waiting flag; **Space** peeks at the lane and **Enter** opens it full screen. They act in both layouts; the
+simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
+
+**Help.** `?` opens help for where you are: in the lane list, and in a lane while its chat box
+is empty (with text in the box, `?` is a question mark; `/help` works with either). Its first
+rows are about the lane in front of you now, `The selected lane, now: L02 · Beta` in the list
+and `This lane, now: L02 · Beta` in a lane: the keys the key line has for it, each with what it
+does. Then come the keys of the view you are in, the other view's, the keys both have, and every
+command, alert and mark. `?`, `esc` or `q` closes it, and what you had typed is still there.
+
+### The command bar
+
+The bar's border says who you are talking to. In the lane list it follows the selected lane:
+`to L04 · Ticket Desk` means a message you type goes to L04, and it changes as you move through
+the list. In a lane's view it names that lane. It reads `no lane` when there is none to take a
+message (no lane has started, or the board is on a challenge that no lane or several lanes
+work), and `the run` while you type a command that is not about one lane, such as `/note` or
+`/config`. A command that names a lane shows that lane while you type it: `/kill L07` reads
+`to L07 · …`, whichever lane is selected. Check the border before you press Enter: the
+lane named there is the one that reads your message on its next turn.
+
+A lane that would refuse what you type is not named. Once a lane has ended (solved, killed,
+stopped, gave up) the border reads `L04 has finished`: a message to it would go nowhere.
+It names the lane again while you type something an ended lane still takes: `/open`,
+`/diff`, `/copy`, and `/fork` with an approach when the lane ended without the flag. A lane
+that gave up while its flag still waits reads `L04 takes no more turns`: it is open for
+that answer only, so `/approve` and `/decline` name it and a message does not.
+
+`/` opens a menu of the commands, and typing narrows it. You do not need a command's exact
+name to find it:
+
+- A few letters from the start of the name, or of the second word in it: `/over` finds
+  `/takeover`, `/hold` finds `/unhold`, `/pilot` finds `/autopilot`.
+- An alias: `/q` and `/exit` are `/quit`, `/settings` is `/config`, `/lanes` is `/back`. The
+  menu shows them beside the name.
+- After the name and a space, the menu lists what the command takes: the lanes with their
+  challenge and state after `/open` (type `l2`, or part of the challenge's name), the parked
+  and new challenges after `/queue`, your themes after `/theme`, `simple` and `deck` after
+  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`.
+- When nothing matches, the menu says `No commands match "/x"` and stays open, so you can
+  correct what you typed.
+
+**Tab** puts the highlighted row into the bar (the first row when none is highlighted), and the
+arrow keys move through the rows. **Enter** does the same while the name is not finished, or
+once you moved to a row with the arrow keys; otherwise it sends what you typed.
+
+The menu never runs anything for you. A command runs only when its whole name or alias is in
+the bar and you press Enter: `/over` sent as it is gets `Unknown command /over`, and
+`/approve 2` is refused instead of approving lane 2 (write `/approve L02`). `/approve` has no
+short form, because approving a flag can spend one of a challenge's tries.
+
+### Layouts
+
+The console has two layouts.
+
+**simple** (the default) shows what needs you and little else:
+
+- a short header: the event, `team` in team mode, `host` when lanes run on this machine, the
+  queue when challenges wait, `AUTOPILOT` while it is engaged, `▲ N need you`, a held queue and
+  why, and the run's dollars. Only what asks you to look has a coloured block: flightdeck,
+  `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event, `team`, the queue and the
+  dollars are plain text, and the mock's tag is dimmed;
+- one list of lanes: what each needs from you, the lane, its challenge, state, cost and last
+  action (under 86 columns the challenge's name narrows, and under 74 the last action is left
+  out; the cost never is). A lane that has started and done nothing yet reads `starting`,
+  dimmed, with no cost, until its first step or its first spend. Its title counts the lanes,
+  the challenges that wait and the ones solved;
+- under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
+  that needs nothing;
+- a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while
+  it waits for you, `1-9 answer` and `x dismiss` for an alert, then `enter open`, `/ commands`,
+  `? help` and `q quit`. Every other key still acts, and `?` lists them all.
+
+A lane's own view shows a part only when it has something in it: the files pane once the lane
+has changed a file, the strip of other lanes while one of them needs you. Its title has the
+lane's model, turns, tokens and idle time, which the list leaves out. Its transcript is the
+calm one, a row for each thing the lane did, and its needs-you box is three rows, a few more
+where it is narrow; `ctrl+o` shows every line and the full box.
+
+**deck** is the whole dashboard: the board of every challenge beside the lanes, each lane's
+model, turns and idle time in its row, tokens and the event clock in the header, and every key
+on the key line. A lane's view shows every line of its transcript there and the full needs-you
+box, and `ctrl+o` gives the calm ones.
+
+![The deck layout: the board of eight challenges on the left and six lanes on the right with their model, turns, cost and idle time](screenshots/fleet.png)
+
+*The deck layout, from `flightdeck mock` (invented challenges).*
+
+Choose one in your config, or switch in a running console:
+
+```toml
+[console]
+layout = "deck"     # "simple" (the default) or "deck"
+```
+
+`/layout deck` and `/layout simple` switch for the rest of the run; the selection, the filter
+and anything you were typing stay. `/layout` alone opens a list of the two: the console behind
+it is laid out as the row the cursor is on, Enter keeps that layout for this run, `esc` puts
+back the one you had, and `s` keeps it and saves it in your config
+([Trying and saving a look](#trying-and-saving-a-look)). At 64 columns or fewer the compact
+layout (below) shows, whichever you chose. `flightdeck mock` opens in your config's layout too,
+and `flightdeck doctor` measures your terminal in it.
+
+In both layouts an empty board says what to do in the page itself: `No challenges yet. Type
+/new to hand one over (its text, files, a screenshot).` on a board you fill, or that the
+challenges appear when the event releases them. In the simple layout, on a board you fill, the
+first lane your `/new` starts opens full screen, so you watch the challenge you just handed
+over; later ones start in the list.
+
+### Themes
+
+A theme is the console's colours; the layout, the chips and the marks stay as they are.
+
+```toml
+[console]
+theme = "nord"      # flightdeck (the default), light, nord, gruvbox, dracula, or your own
+```
+
+`/theme nord` in a running console repaints everything for the rest of the run. `/theme` alone
+opens a list of the themes, the built-in ones and your own, with the one in use marked: the
+console behind it is drawn in the theme the cursor is on, Enter keeps it for this run, `esc`
+puts back the one you had, and `s` keeps it and saves it in your config
+([Trying and saving a look](#trying-and-saving-a-look)). `flightdeck mock` and the home screen
+open in your config's theme.
+
+![The deck layout in the light theme](screenshots/theme-light.png)
+
+*`theme = "light"`, from `flightdeck mock` (invented challenges).*
+
+**Your own theme** is a file `NAME.toml` in a `themes` folder beside your config
+(`~/.config/ctf-flightdeck/themes/dusk.toml` for `theme = "dusk"`). The name is lower-case
+letters, digits, `-` and `_`, and not a built-in's. The smallest one starts from a built-in and
+changes one colour:
+
+```toml
+base = "flightdeck"
+
+[colors]
+accent = "#ff5fd7"
+```
+
+Every key:
+
+```toml
+base = "flightdeck"     # optional: a built-in theme; the colours you leave out come from it
+dark = true             # is the page dark? Required when there is no base
+syntax = "monokai"      # the Pygments style of the diff view. Required when there is no base
+
+[colors]                # each written "#rrggbb"; all 17 are required when there is no base
+page = "#1a1b26"            # behind everything
+surface = "#24283b"         # dialogs, the command menu
+border = "#414868"
+text = "#c0caf5"
+muted = "#7f88b0"           # labels, hints, finished lanes
+accent = "#ff9e64"          # keys, the focused border, your own messages
+selected = "#283457"        # the selected row
+selected_focus = "#33467c"  # the selected row of the list that has the focus
+brand = "#3d6fd9"           # the flightdeck segment, "sending", flightdeck's own lines
+segment = "#2f334d"         # header segments
+ok = "#9ece6a"              # running, solved, a flag
+error = "#e0566f"           # killed, blocked, alerts about a lane's course, "need you"
+warn = "#e0af68"            # paused, parked, a held queue, problems
+info = "#7dcfff"            # teammates, model names, take-over
+pending = "#9d7cd8"         # what waits for you
+ink = "#15161e"             # the text on ok, warn, accent and info chips
+ink_light = "#ffffff"       # the text on brand, error and pending chips
+```
+
+A theme you could not read the console in is refused. flightdeck checks 19 pairs of colours
+that you must be able to tell apart (the text of each chip on its chip, the text on the page
+and on a selected row, each state's colour on the page), and each needs a contrast of at least
+3.0, the WCAG floor for large text. The error names the pair and what it shows:
+
+```
+/home/you/.config/ctf-flightdeck/themes/dusk.toml: colors.ink_light on colors.error has contrast 2.1, under 3.0: "▲ N need you" could not be read
+```
+
+Other mistakes are named the same way, with the file and the setting and never a value from the
+file: an unknown setting (`unknown key colors.acent`, with the known ones), a colour that is not
+`#` and six hex digits, colours missing when there is no `base`, a `base` that is not a
+built-in, a `syntax` that names no Pygments style, a file over 64 KiB. A theme that cannot be
+used stops the command that loads your config (`play`, `doctor`, `mock`, the home screen)
+with that error; flightdeck never falls back to the default without telling you. In a running
+console, `/theme NAME` with a broken or unknown theme is a warning, and the theme in use stays.
+`/theme NAME` reads the file again each time, so you can edit a theme and try it without
+leaving the run. The list `/theme` opens reads every theme file in the folder when it opens:
+one that cannot be used is listed with its reason under its name, and neither the cursor nor a
+click goes to it.
+
+### Trying and saving a look
+
+`/theme` and `/layout` alone each open a small list at the right edge of the console, which
+stays as bright as it was behind it:
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` | Move to a row. The console is drawn in it at once: every lane, the header, an open lane's transcript. |
+| `enter` | Keep it for this run. Your config file is not touched. |
+| `s` | Keep it, and save it: `theme = "NAME"` or `layout = "NAME"` under `[console]` in your config file, so the next console opens in it. |
+| `esc` | Close the list and put back what you had. |
+
+Saving changes that one line and leaves every other line of your config as it was, comments
+included. Where the line goes: over the `theme` or `layout` line that is there; else under a
+commented example of it (`# theme = "flightdeck"`); else at the end of the `[console]` table;
+and when the file has no `[console]` table, in a new one at its end. Before anything is
+written flightdeck checks that the new text reads as your config with that one setting changed
+and nothing else, and afterwards it loads the file as a console would. When either check
+fails, or the file cannot be written, the status line says why, the file is as it was, and the
+run keeps the look you chose: nothing is lost, you write the line yourself. That happens with
+a config flightdeck cannot edit line by line, such as one that sets `console.theme = "..."`
+outside a `[console]` table.
+
+`/config` shows the layout and the theme beside the run's other settings, and a third list
+under them says whether they last `for this run` or are also `saved in your config file`.
+There the themes are listed by name only; one that cannot be used is refused when you apply,
+with its reason, and nothing is changed.
+
+With no config file there is nothing to save in: `flightdeck mock` before `flightdeck init`
+has none. The list then has no `s` row and says that a choice lasts for the run.
+
+### The terminal's title and bell
+
+The console tells you that a lane needs you when you are looking at another window or tab.
+
+- **The title.** Your terminal's title (the tab's, where the terminal has tabs) says how many
+  lanes need you: `▲ 2 need you · flightdeck`. While the queue is held it says so
+  (`queue held · flightdeck`, or `▲ 2 need you · queue held · flightdeck`), and when nothing
+  waits it is `flightdeck`. It is the header's count and fixed words: never a challenge's name,
+  a reason, or anything a lane wrote.
+- **The bell.** The terminal's bell rings once each time that count goes up. It does not ring
+  for what already waits when the console opens, while the count stays, when it falls, or when
+  the queue is held. What a bell does is your terminal's own setting: a sound, a mark on the
+  tab, a badge, or nothing.
+
+When the console leaves, the title you had comes back: flightdeck asks the terminal to save its
+title before it writes one, and to take it back at the end. The same happens while you are in a
+lane's shell (`t`): the shell has the title you had, nothing rings, and the count is in the
+title again when you are back. A terminal that
+cannot save a title is left with its own default title, never with a count. If flightdeck is
+killed outright (SIGKILL) nothing puts the title back; your shell's next prompt usually does.
+
+Inside tmux the bell is the one that reaches you with nothing set up: tmux marks the window in
+its status line and passes the bell on to your terminal, which is what you have on a phone over
+SSH. The title becomes the tmux pane's title, and the terminal outside shows it only once tmux
+is told to pass titles on:
+
+```
+set -g set-titles on
+```
+
+Either can be turned off under `[console]` in your config:
+
+```toml
+[console]
+title = false   # leave the terminal's title alone
+bell = false    # never ring the bell
+```
+
+This is tested by reading what a pseudo-terminal is sent, byte for byte. It has not yet been
+looked at in each terminal program, or inside tmux: what tmux does is read from its source
+(its defaults are `set-titles` off, `monitor-bell` on and `bell-action any`). Away from the
+terminal altogether, a webhook can tell you the same ([Notifications](#notifications)).
 
 ## Play a board
 
@@ -348,7 +789,8 @@ it cannot check: submit the flag on the platform yourself, then press `a` if it 
 `off`, you submit it and answer `a` or `d`).
 
 To turn auto approve on while a run is going, type `/config submit auto` in the console
-(`/config submit confirm` turns it off, and `/config` alone shows the run's settings). To start
+(`/config submit confirm` turns it off, and `/config` alone opens the settings: these two, and
+the console's layout and theme, [which it can save](#trying-and-saving-a-look)). To start
 with it on, pass `--submit auto` or set `submit = "auto"` under `[lanes]` in your config.
 `/config lanes 8` changes how many lanes run at once, and `/config lanes unlimited` lifts the
 limit (`max_lanes = "unlimited"` in the config does the same from the start).
@@ -566,8 +1008,11 @@ flightdeck start
 ```
 
 It asks, in order: the event's name; a folder for it (`~/ctf/<name>` unless you say otherwise,
-made for you); whether the rules allow AI tools (flightdeck does not play an event that forbids
-them); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
+made for you); whether the rules allow AI agents to work on the challenges, with each
+challenge's text and files given to a model (a lane does both, and flightdeck does not play an
+event that forbids either: a rule that allows asking a model about a concept and forbids
+giving it the challenge is a no); the label your team declared to the event for its AI use, if
+the event asks for one (Enter for none); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
 and submits flags; **by hand**: any other site); the site's address; what a flag looks like
 (`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
 (on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
@@ -623,20 +1068,89 @@ challenge's files, for a terminal where a drop does not arrive; `/attach <challe
 file opens the same window. Files dropped on the console are taken wherever the focus is: into
 the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
 challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
-exist; any other paste is text, and text you typed on the command bar is never replaced. In the
-form, the line under the box says what is attached (each file's name and size) and the target
-it found, so you see a drop land before you add the challenge; `ctrl+r` takes the last file off
-again. A file or a folder can be attached. A device, your home folder itself, and anything that
+exist; any other paste is text, and text you typed on the command bar is never replaced. A
+terminal that types a dropped file's path instead of pasting it works too: keys that arrive
+all at once (faster than anyone types) and are nothing but the paths of files that exist are a
+drop; what you type is never read for paths. Every drop that lands says so: the form says
+`attached NAME (SIZE)`, the command bar `got NAME (SIZE): press Enter to attach`, and a file
+that cannot be attached says why. In the form, the line under the box says what is attached
+(each file's name and size) and the target it found; `ctrl+r` takes the last file off again.
+
+Each terminal writes a dropped file's path its own way (in quotes, with a backslash before a
+space, or bare), and flightdeck reads every one of them in every terminal, whatever is in the
+name: a quote, a bracket, or the narrow space macOS puts before AM or PM in a screenshot's
+name. A dropped file is copied into the run's folder the moment it lands, and the copy is
+what gets attached: the file behind a drop can be a temporary one, so it may be gone by the
+time you press `ctrl+s` or Enter, and the challenge has it all the same. That is why the
+`/attach` on the command bar names a path under `dropped/` in the run's folder. The copy is
+removed once the challenge has the file.
+
+On macOS, drag the saved screenshot (from the Desktop or a Finder window), not the thumbnail
+that floats in the corner right after you take it: the thumbnail's file may be gone before
+the terminal has sent its path, and then there is nothing to copy (kitty from 0.49 keeps
+such a file for ten minutes). When what arrives reads as a dropped file but no such file is
+on this machine, the console says so and pastes it as the text it is. The line starts with
+`no such file:` or `not on this machine:` and says the likely reason for where you are:
+
+- **A temporary file that is gone.** Drag the saved file, or choose it: `ctrl+o` in the
+  form, `/attach` with no file elsewhere.
+- **Over SSH.** A file you drop is on the machine your terminal runs on, not the one
+  flightdeck runs on. Copy it over first (`scp`), then `/attach` its path.
+- **Windows Terminal with WSL.** A path that starts `C:\` is a Windows path. A WSL profile
+  that Windows Terminal made for you translates it to `/mnt/c/...`; in one you wrote yourself,
+  set `"pathTranslationStyle": "wsl"`, or `/attach` the `/mnt/c/...` path.
+- **VS Code's terminal.** It takes `` ` $ | & > ~ # ! ^ * ; < `` out of a dropped file's
+  name, so a file with one of those in its name arrives as a path that names nothing. Choose
+  that file instead: `ctrl+o` in the form, `/attach` with no file elsewhere.
+
+If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
+drop to itself; flightdeck was sent nothing. Choose the file instead: `ctrl+o` in the `/new`
+form; anywhere else, `/attach <challenge>` with no file opens the file window. (`ctrl+o` is
+only the form's file window: in a lane's view it turns details on or off.) A terminal may hold drops back while a program has the mouse, as the console does
+by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
+you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
+console, and every key works as before.
+
+A file or a folder can be attached. A device, your home folder itself, and anything that
 holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
 screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
-terminal's own way (cmd+v).
+terminal's own way (cmd+v). In Windows Terminal and Alacritty the terminal's own paste key
+works for a screenshot too: with no text on the clipboard they send an empty paste, and in the
+form that does what `ctrl+v` does (in Windows Terminal `ctrl+v` is that key, so it is the only
+way the key arrives). Other terminals send nothing for an image, or have not been tried: use
+`ctrl+v` there.
 flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
 once for each image's text and puts it in the description; the image is in the handout too. A
 model that takes no images is said, and the challenge is added without that text.
 
+A lane can also look at a picture itself. flightdeck's own lanes have a `view_image` tool: it
+shows the model a PNG, JPEG, GIF or WebP file from the lane's workspace, one that came with the
+challenge or one the lane made (a frame it cut out, a plot it drew), and you see it in the lane
+as `view pic.png`, a step like any other. The file is sent as it is. One over 3.75 MiB is refused,
+not scaled down, and so is a path outside the workspace and a file that is no image by its first
+bytes, whatever it is called. The picture stays in the lane's conversation, so each later call
+pays for its tokens until the conversation is refreshed, and one conversation carries at most 20
+pictures and 15 MiB of them: after that the tool says there is no room. When your model's API will
+not take a picture (a model that reads no images, a damaged file, one with too many pixels), the
+lane is told why in place of the picture and carries on with its shell, and a note on the lane
+tells you the same; the lane does not end. The same happens to every picture of a conversation
+that moves to your `[fallback]` API when the model there takes none. An API that is overloaded
+or rate-limited while a picture is on its way is not the picture's doing, and is handled like
+any other failed call; after a plain server error (500 or 501) the lane is told that the
+picture may not be what failed. A server that accepts a picture and ignores it cannot
+be told from one that looked: with a local model that reads no images, expect what the lane says
+about a picture to be made up. Coding-agent lanes (`--agent`) use their CLI's own tools instead.
+
 A challenge added with no file and no target says so, and its lane is told to say what is
 missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
-challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file.
+challenge's name, and drag the file onto the command bar (or press Enter with no file, and
+choose it in the file window). Its lane starts afresh with the file,
+and the status line names the fresh lane (`attached extra.txt to doll; L01 restarted as L02`);
+the lane that ended reads `killed: to restart with extra.txt; re-queued fresh`.
+Typed in the lane's own view, `/attach` needs no name, and the view goes to the fresh lane with
+whatever you were typing; `/kill` there does the same. If no lane can start yet (the queue is
+held, every lane is busy) the status line says `L01 ended, a fresh lane starts when one is free`,
+and the view moves when one does, unless you have gone elsewhere meanwhile.
 
 **A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
 `.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by
@@ -682,8 +1196,34 @@ export CTFD_TOKEN=...                             # the variable event.toml name
 flightdeck play ~/ctf/event-board --event event.toml
 ```
 
-flightdeck talks to CTFd and to a Game Master. For any other platform, make a folder board (`platform = "manual"` in
-`event.toml`) and submit flags by hand.
+flightdeck talks to CTFd and to a Game Master. For any other platform there are three ways. By
+hand: a folder board (`platform = "manual"` in `event.toml`), and you submit the flags on the
+site. By a table of routes, when the platform's own web page talks JSON to the site:
+`platform = "http"` and an `[http]` table in `event.toml`, with rCTF as a ready preset
+([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code runs, and `flightdeck
+preflight` shows every request and where your token goes:
+
+```sh
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit
+flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list; submits nothing
+flightdeck play --event ~/ctf/quals/event.toml
+```
+
+Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
+board, submit the flags you approve and read the solved list:
+
+```sh
+flightdeck plugin new myctf                        # writes ./myctf/: plugin.toml, adapter.py, event.example.toml
+flightdeck plugin add ./myctf                      # shows what it runs and what it gets, and asks before your config allows it
+flightdeck plugin pull ~/ctf/quals/event.toml      # tries it: pulls the board, submits nothing
+flightdeck play --event ~/ctf/quals/event.toml     # event.toml says platform = "myctf"
+```
+
+A plugin is code you choose to run: it runs on this machine as you, is given the event's
+address and token and none of your other keys, and is not sandboxed. Only `flightdeck plugin
+add` allows one, in your own config; an event profile someone sends you can select a plugin you
+added, never add one. flightdeck never downloads or installs a plugin. How to write one, what
+it is sent and what each answer means: [Plugins](PLUGINS.md).
 
 With a CTFd event, flightdeck pulls the board into that folder (and, with `pull = "auto"`, adds
 new waves as they appear), submits the flags you approve through CTFd and follows your team's
@@ -709,7 +1249,7 @@ Each stage (pull, L1, agents, submit, live instance) has a policy in the event p
 never looser than the rules. With agents `manual` or `off`, `play` does not start. Under `confirm`
 for live instances, a lane asks before it may reach its challenge's instance and has no network
 until you allow it; then, and under `auto` from its start, a Docker lane's network reaches that
-instance and nothing else ([Docker or host](#docker-or-host)). The profile, key by key:
+instance and nothing else ([Docker or host](#docker-or-host)). The profile, setting by setting:
 [Boards](BOARDS.md#the-event-profile-eventtoml).
 
 Team mode shares claims, live-box holds and solves through a folder your teammates sync (a network
@@ -833,6 +1373,7 @@ flightdeck gaps RUN_DIR        # the challenges your L1 solvers did not solve, a
 flightdeck build gap CHALLENGE_DIR --pack ~/ctf/solvers   # a new engine stub with a test that must pass
 flightdeck build check ~/ctf/solvers                       # run the pack's tests: which engines pass
 flightdeck share RUN_DIR       # the run's flight card, to post: no flags, no challenge names
+flightdeck records RUN_DIR     # a record of each solve for the event's organisers: transcripts, your interventions, who let each flag go
 ```
 
 In place of RUN_DIR, the word `latest` means your newest run (the newest by start time under
@@ -873,17 +1414,64 @@ keeps it), and you post it if you want to:
 The setup lines come from `setup.json`, which a run writes in its folder when it starts; a run
 from before 0.3.0 has none, and its card says so.
 
+When the event profile has a `declared_label` (the label your team declared to the event for
+its AI use: [BOARDS.md](BOARDS.md#what-your-team-declared)), the card shows it under the mode,
+with the words that flightdeck does not check it. The mode is worked out from what you did;
+the label is your word.
+
+### A record of each solve
+
+Some events ask a team to show how it solved a challenge: what the agents did, what the people
+did, who submitted. `flightdeck records RUN_DIR` writes one Markdown file per challenge the run
+solved with a flag, in `RUN_DIR/records/`:
+
+- the challenge, when it was solved, the flag, and who the solve is credited to (a lane and
+  its model, a no-model solver, or you);
+- how the flag went to the platform: you approved it; it went out on its own under submit
+  `auto`; or you submitted it by hand and told flightdeck it was accepted;
+- the label your team declared, if the event profile has one;
+- every flag sent for the challenge, right or wrong, each with who let it go;
+- every intervention of yours on the challenge and its lanes (and autopilot's, apart), with
+  its time, its words (a hint's text) and what came of it, the refused ones too;
+- every lane that worked the challenge and its whole transcript: each turn with all of its
+  tool calls and what the transcript kept of their output, flightdeck's notes, the alerts, the
+  files changed and who changed them. The lane the accepted flag was sent on comes first.
+
+`--challenge ID` writes one challenge's record (give it again for more).
+
+A record is the run's log and nothing else. No model is called, nothing is picked or
+reworded, and running the command again writes each record again from the log, over any edit.
+Where the log does not say something, the record says that: a run played with an older
+flightdeck did not note whether you approved a flag, and its records say "the log does not
+say", never a guess.
+
+A record is not for posting. It holds the challenge's own text, the lanes' commands and
+outputs and the flag: hand it to the event's organisers, and read it first. The value of
+anything shaped like a credential is taken out, as in a writeup draft. Nothing is sent
+anywhere.
+
 ## Configuration and files
 
 `flightdeck init` writes `~/.config/ctf-flightdeck/config.toml` (or the file `$FLIGHTDECK_CONFIG`
-names). `flightdeck config` checks it, and `flightdeck config --example` prints every key with
-its default. Keys come from your environment, else from `~/.config/ctf-flightdeck/keys.env` (or
-the file `$FLIGHTDECK_KEYS` names). Each run writes a folder under
+names). `flightdeck config` checks it, and `flightdeck config --example` prints every setting with
+its default. API keys and access tokens come from your environment, else from
+`~/.config/ctf-flightdeck/keys.env` (or the file `$FLIGHTDECK_KEYS` names). Each run writes a
+folder under
 `~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
 own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests
 into `FOLDER/.flightdeck/generated/`.
 
-To remove flightdeck: `pipx uninstall ctf-flightdeck` (or `uv tool uninstall ctf-flightdeck`),
+Two optional parts of the config are about the console and about platforms. `[console]` has
+`layout` and `theme` ([Layouts](#layouts), [Themes](#themes)), `mouse` (`false` leaves the
+mouse to your terminal: its own text selection; the console is driven by keys) and `title` and
+`bell` (`false` turns off the count in the terminal's title, or the bell:
+[The terminal's title and bell](#the-terminals-title-and-bell)); your own
+themes are `NAME.toml` files in a `themes` folder beside the config file, read only when the config or `/theme` names
+one, or when you open the list of themes. The console writes `theme` and `layout` there when you
+save one ([Trying and saving a look](#trying-and-saving-a-look)). `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
+`flightdeck plugin add` ([Plugins](PLUGINS.md)); to stop allowing a plugin, take its table out.
+
+To remove flightdeck: `uv tool uninstall ctf-flightdeck` (or `pipx uninstall ctf-flightdeck`),
 `docker image rm ctf-flightdeck-lane:1`, and delete those folders.
 
 ### The host governor

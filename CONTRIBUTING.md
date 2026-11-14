@@ -47,21 +47,41 @@ git clone https://github.com/MFisher14/ctf-flightdeck
 cd ctf-flightdeck
 uv sync                               # the dependencies, and pytest
 git config core.hooksPath .githooks   # the commit guard: secrets and big files stay out
-uv run pytest
+uv run pytest                         # every test, one after the other: about ten minutes
+uv run pytest -n auto                 # the same tests on every core: a minute and a half on eight
 ```
+
+`-n` is [pytest-xdist](https://pytest-xdist.readthedocs.io/), which `uv sync` installs; `-n 4` (any
+number) leaves cores for other work, and one file alone is as quick without it. Most of the
+ten minutes is waiting (for a timeout to run out, for the console to settle), so the tests share
+a machine well. They can run at once because each has its own temporary folder, its own state
+folder and its own ports: keep a new test that way (`tmp_path`, a server on port 0, nothing in a
+fixed place), and do not make it depend on the test before it. One thing the tests do share is
+Docker: a lane's container is named after the second its run started, so a test that starts a
+real run in Docker (`play` with `runtime = "docker"`) takes the fixture
+`one_docker_run_at_a_time`, and those few tests take turns (`tests/turns.py`). A test that
+fails only with `-n` either shares something with another test (give it its own, or a turn) or
+has a wait too short for a busy machine (wait for what must happen, not for a time): both are
+bugs in the test, so fix them rather than run it alone.
 
 `uv run flightdeck mock` opens the console on scripted data. No test needs a key: the tests use
 local fakes (a fake model server, a fake CTFd, fake agent CLIs). The Docker tests run only when
 Docker answers and `debian:bookworm-slim` is already on your machine
-(`docker pull debian:bookworm-slim`); otherwise they report as not run. One more test runs a
-Python L1 engine in the real lane image, and only when `flightdeck image build` has built it.
-No test pulls or builds an image.
+(`docker pull debian:bookworm-slim`); otherwise they report as not run. A few more use the
+real lane image (a Python L1 engine in it, gdb and the decompiler in a lane's container), and
+only when `flightdeck image build` has built it from the Dockerfile in your checkout: after a
+change to `lane/Dockerfile` they report as not run until you build it again. One test runs the
+solver pack's decompile engine in the pack's image, when `flightdeck pack image` has built
+today's (no CI job builds that image, so only your machine runs it;
+`FLIGHTDECK_REQUIRE_PACK_IMAGE=1` makes it fail instead of reporting as not run). No test
+pulls or builds an image.
 
-CI runs the tests and the secret scan on Linux and macOS for every push and pull request. Its
+CI runs the tests (with `-n auto`) and the secret scan on Linux and macOS for every push and
+pull request; the release workflow runs them one after the other before it publishes. CI's
 Linux job pulls `debian:bookworm-slim` first and sets `FLIGHTDECK_REQUIRE_DOCKER=1`: with that
 variable at 1, a Docker test that cannot run fails instead of being skipped, so the job never
-passes with those tests left out. A second job builds the lane image and runs its test with
-`FLIGHTDECK_REQUIRE_LANE_IMAGE=1`, which does the same for that test. Set either on your own
+passes with those tests left out. A second job builds the lane image and runs its tests with
+`FLIGHTDECK_REQUIRE_LANE_IMAGE=1`, which does the same for those tests. Set either on your own
 machine to be sure nothing was skipped:
 
 ```sh
@@ -147,6 +167,31 @@ builds and tests the `.deb`s too, and publishes neither them nor the formula.
   repository, with yourself as required reviewer, as for `pypi`. Without the secret the
   `homebrew-tap` job says so and passes, and the tap is not touched. The token is never in this
   repository.
+
+### The README's demo
+
+The recording at the top of the README is `docs/screenshots/demo.gif`, and `scripts/demo.py`
+writes it. The script plays `flightdeck mock` with no terminal, key by key, and each step says
+what must be true once it is done (the flag is submitted, the lane has its new plan, the wave is
+on the board).
+
+```sh
+uv run python scripts/demo.py --check                     # play it and say how it went; writes nothing
+uv run python scripts/demo.py docs/screenshots/demo.gif   # play it and write the GIF
+uv run python scripts/demo.py --frames DIR                # the frames alone, as SVGs
+```
+
+The tests play it on every push (`tests/test_demo.py`). A change to the console or to the
+mock's default scenario that breaks a step fails there with the step's name: change `DEMO` in
+the script so the demo shows the console as it now is, then write the GIF again. A test holds
+the GIF's frames and seconds against the script's, so a changed `DEMO` with the old GIF fails
+too. Also write it again when the console looks different: no test sees that.
+
+Writing the GIF needs `rsvg-convert` (librsvg) and `ffmpeg` on your PATH; without one the
+script names it and writes nothing, and the test that writes a GIF reports as not run. The
+letters are drawn in your machine's monospace font (Fira Code when it is installed), so two
+machines write slightly different pictures of the same frames. Keep the file under 2 MB, where
+the commit guard starts to warn: `--width` makes it smaller.
 
 ### Adding a practice challenge
 

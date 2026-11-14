@@ -1,25 +1,29 @@
-"""Modal screens: fork, kill, approve-all and quit prompts, the take-over placeholder, a challenge card and
-help."""
+"""Modal screens: fork, kill, approve-all and quit prompts, the take-over placeholder, a challenge card,
+the settings dialog, the theme and layout picker, and help."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rich.console import Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
+from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
+from textual.widgets.option_list import Option
 
 from ..core.model import AlertKind, Challenge, ChallengeStatus
 from ..text import untrusted
 from . import theme
-from .commands import COMMANDS
+from .commands import COMMANDS, also
 from .views import HELD, LATER, sending_chip
 
 if TYPE_CHECKING:
@@ -33,12 +37,31 @@ MODAL_CSS = """
 }}
 {name} .muted {{ color: $text-muted; }}
 {name} .keys {{ color: $text-muted; margin-top: 1; }}
-{name} Input {{ margin-top: 1; border: round #3c4146; }}
+{name} Input {{ margin-top: 1; border: round $fd-border; }}
 {name} Input:focus {{ border: round $accent; }}
 {name} Select {{ margin-top: 1; }}
 {name} Horizontal {{ height: auto; margin-top: 1; }}
 {name} Button {{ margin-right: 2; }}
 """
+
+
+class FittedModal(ModalScreen):
+    """A dialog that must show its last rows (the keys, a refusal) on a short terminal too.
+    Those rows are docked at the dialog's bottom and what is over them is a scrolling part,
+    so a dialog too tall for the terminal scrolls that part and never cuts the rows under it.
+    While the terminal has fewer rows than SHORT_UNDER the screen also has the class -short,
+    and its styles then give the dialog the terminal's whole height and no blank rows."""
+
+    SHORT_UNDER = 0  # rows: a terminal with fewer has the short styles
+
+    def on_mount(self) -> None:
+        self._fit(self.app.size.height)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._fit(event.size.height)
+
+    def _fit(self, rows: int) -> None:
+        self.set_class(rows < self.SHORT_UNDER, "-short")
 
 
 def _keys(*pairs: tuple[str, str]) -> Text:
@@ -49,6 +72,48 @@ def _keys(*pairs: tuple[str, str]) -> Text:
         text.append_text(theme.key_chip(key))
         text.append(f" {label}")
     return text
+
+
+MEANING_WORD = 6  # cells: the longest word a row of _meanings() starts with ("bottom")
+
+
+def _meanings(*rows: tuple[str, str]) -> Table:
+    """Rows of a word and what it means. The meanings start in one column whatever the word's
+    length, in every block of a dialog, and one too long for the dialog wraps under itself,
+    never under the word."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(no_wrap=True, width=2 + MEANING_WORD)  # indented by two
+    grid.add_column()
+    for word, meaning in rows:
+        grid.add_row(Text(f"  {word}"), Text(meaning))
+    return grid
+
+
+MEANING_ROOM = 40  # cells: with fewer beside the widest label, a meaning goes under its label (Described)
+
+
+class Described:
+    """Rows of a label and what it means, drawn to the width they get: two columns while the
+    meanings have MEANING_ROOM cells beside the widest label, and else each meaning under its
+    label, set in by two. Beside a label of 56 cells (/config's usage), an 80-column terminal
+    leaves a meaning 14 cells a row. Decided as it is drawn, so a resize changes it."""
+
+    def __init__(self, rows: list[tuple[Text, Text]], style: str = "") -> None:
+        self.rows, self.style = rows, style
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        widest = max((label.cell_len for label, _ in self.rows), default=0)
+        if options.max_width - widest - 2 >= MEANING_ROOM:
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style=self.style, no_wrap=True)
+            grid.add_column()
+            for label, meaning in self.rows:
+                grid.add_row(label, meaning)
+            yield grid
+            return
+        for label, meaning in self.rows:
+            yield Text.assemble(label, style=self.style)
+            yield Padding(meaning, (0, 0, 0, 2))
 
 
 class ForkPrompt(ModalScreen[tuple[str, str] | None]):
@@ -86,26 +151,42 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
         self.dismiss(None)
 
 
-class NewChallengePrompt(ModalScreen["str | None"]):
+class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     """/new: a challenge the player hands over. A name (any characters), one box for its
     description as the site shows it, and its files. The box is text and stays text: nothing
     in it is taken for a file (addchallenge.parse reads only the instance's address, on a line
     of its own). Files are attached by handing them over: ctrl+o (the file window), ctrl+v
-    (the clipboard's image), or a drop, which arrives as a paste that is only paths
-    (FlightdeckApp.take_drop); the line under the box shows each one.
+    (the clipboard's image), or a drop, which arrives as a paste that is only paths, or as
+    the same text typed all at once (FlightdeckApp.take_drop, take_keys); the line under the
+    box shows each one. A dropped file is copied into the run's folder at once, and the copy
+    is what is attached (add_dropped). A terminal may keep a drop to itself: the form says
+    ctrl+o for that.
 
     ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
     thread. The form closes once the challenge is added, with what to tell the player (None:
-    cancelled); a refusal leaves it open, everything typed still there, and says why."""
+    cancelled); a refusal leaves it open, everything typed still there, and says why.
+
+    The line a refusal is said on and the keys (ctrl+s is the only way to add the challenge,
+    and it is said nowhere else) are always on screen: the fields over them are one scrolling
+    part, which on a short terminal gives the description box fewer rows and, shorter still,
+    scrolls to the field that has the focus (FittedModal)."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="NewChallengePrompt") + """
     NewChallengePrompt > Vertical { width: 124; }
-    NewChallengePrompt TextArea { height: 12; margin-top: 1; border: round #3c4146; }
+    NewChallengePrompt #new-body { height: auto; max-height: 1fr; }
+    NewChallengePrompt #new-foot { dock: bottom; height: auto; }
+    NewChallengePrompt TextArea { height: 10; margin-top: 1; border: round $fd-border; }
     NewChallengePrompt TextArea:focus { border: round $accent; }
-    NewChallengePrompt .short { width: 40; }
+    NewChallengePrompt .short { width: 1fr; max-width: 40; }
     NewChallengePrompt #new-problem { color: $warning; }
-    NewChallengePrompt TextArea { height: 10; }
+    NewChallengePrompt.-short > Vertical { height: 100%; max-height: 100%; padding: 0 2; }
+    NewChallengePrompt.-short #new-body { height: 1fr; max-height: 100%; }
+    NewChallengePrompt.-short TextArea { height: 1fr; min-height: 5; margin-top: 0; }
+    NewChallengePrompt.-short Input, NewChallengePrompt.-short Horizontal, NewChallengePrompt.-short .keys { margin-top: 0; }
     """
+    # The form as it is drawn on a tall terminal needs 35 rows of the 90% a dialog gets. With
+    # fewer the description box gives up its rows (down to three), then the fields scroll
+    SHORT_UNDER = 40
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True),
                 Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True),
                 Binding("ctrl+o", "choose_files", "choose files", priority=True),
@@ -118,27 +199,50 @@ class NewChallengePrompt(ModalScreen["str | None"]):
         self.adder = adder  # async: puts the challenge on the board; (whether it was taken, what to tell the player)
         self.files: list[Path] = []  # what is attached, in the order it was handed over
         self.adding = self.choosing = self.pasting = False  # what is going on off the UI thread
+        self.dropped: dict[Path, Path] = {}  # an attached copy of a dropped file in the run's folder: the file it was dropped as
+        self.copying: list[Path] = []  # dropped files whose copy is being made (add_dropped)
 
     def _say(self, text: str, style: str = "") -> None:
         """The line over the keys: a problem (in the warning colour), or with a style, what is going on."""
         self.query_one("#new-problem", Static).update(Text(text, style=style) if style else Text(text))
 
-    def add_files(self, files, *, said: str = "") -> bool:
-        """Attach files the player handed over (a drop, the file window, the clipboard's
-        image). One that cannot be attached is not, and the form says why (addchallenge.refusal).
-        False when nothing in `files` was taken."""
+    def _still_adding(self) -> bool:
+        """Whether the challenge is being added: the adder has the files the form had at
+        ctrl+s, so none is attached or removed now (a file attached would not be added, and
+        a dropped copy removed would be taken from under the adder). Said when so."""
+        if self.adding:
+            self._say("still adding it: the files cannot change until it is added", "bold")
+        return self.adding
+
+    def problem(self, text: str) -> None:
+        """Say `text` on the form's own line, as a problem (the console's status line is under the form)."""
+        self._say(text)
+
+    def _refused(self, file: Path, beside: list[Path]) -> str | None:
+        """Why `file` cannot be attached to this challenge beside the files in `beside`, or None."""
         from ..addchallenge import CHALLENGE_FILE, refusal
 
+        why = refusal(file)
+        if why is None and file.name == CHALLENGE_FILE:
+            why = f"{file}: a handout file cannot be named {CHALLENGE_FILE}; rename it"
+        if why is None and any(other.name == file.name for other in beside):
+            why = f"{file}: a file named {file.name} is already attached; rename one"
+        return why
+
+    def add_files(self, files, *, said: str = "") -> bool:
+        """Attach files the player handed over (the file window, the clipboard's image, a
+        drop's copies). One that cannot be attached is not, and the form says why
+        (addchallenge.refusal). False when nothing in `files` was taken."""
+        from ..addchallenge import size_text
+
+        if self._still_adding():
+            return False
         taken, known, problems = [], 0, []
         for file in files:
             if file in self.files:
                 known += 1
                 continue
-            why = refusal(file)
-            if why is None and file.name == CHALLENGE_FILE:
-                why = f"{file}: a handout file cannot be named {CHALLENGE_FILE}; rename it"
-            if why is None and any(other.name == file.name for other in self.files):
-                why = f"{file}: a file named {file.name} is already attached; rename one"
+            why = self._refused(file, self.files)
             if why is not None:
                 problems.append(why)
                 continue
@@ -148,22 +252,97 @@ class NewChallengePrompt(ModalScreen["str | None"]):
         if problems:
             self._say("not attached: " + "; ".join(problems))
         elif taken:
-            self._say(said or f"attached {', '.join(file.name for file in taken)} (ctrl+r removes the last file)", "green")
+            names = ", ".join(f"{file.name} ({size_text(file)})" for file in taken)
+            self._say(said or f"attached {names} · ctrl+r removes the last file", theme.GREEN)
         elif known:
-            self._say("already attached", "green")
+            self._say("already attached", theme.GREEN)
         return bool(taken or known)
 
+    def add_dropped(self, files) -> bool:
+        """Attach files dropped on the form (FlightdeckApp.take_drop). Each is checked as any
+        file handed over is; those that may be attached are copied into the run's folder at
+        once, off the UI thread (FlightdeckApp.stage), and the copies are what is attached:
+        a file that is gone before ctrl+s (a screenshot's thumbnail, a terminal's temporary
+        file) is still added. The line under the box names them once they are copied. False
+        when nothing in `files` was taken."""
+        from ..addchallenge import size_text
+
+        app = self.app
+        if self._still_adding():
+            return True  # said: not text for the box either
+        if app.stager is None:  # no run folder to keep a copy in: attached from where they are
+            return self.add_files(files)
+        taking, known, problems = [], 0, []
+        for file in files:
+            if file in self.files or file in self.copying or any(self.dropped.get(copy) == file for copy in self.files):
+                known += 1
+                continue
+            why = self._refused(file, [*self.files, *self.copying, *taking])
+            if why is not None:
+                problems.append(why)
+                continue
+            taking.append(file)
+        if problems:
+            self._say("not attached: " + "; ".join(problems))
+        elif taking:
+            self._say("copying " + ", ".join(f"{file.name} ({size_text(file)})" for file in taking) + "...", "bold")
+        elif known:
+            self._say("already attached", theme.GREEN)
+        if taking:
+            self.copying.extend(taking)
+            app.run_worker(self._keep(taking, problems, app), exclusive=False)  # the app's worker: it ends when the copy has
+        return bool(taking or known)
+
+    async def _keep(self, files: list[Path], problems: list[str], app) -> None:
+        """Copy dropped files into the run's folder and attach the copies. A copy that fails
+        is said with its reason; copies made for a form that has closed are removed again."""
+        from ..addchallenge import AddError
+
+        failed, copies = "", []
+        try:
+            copies = await app.stage(files)
+        except AddError as exc:  # a file that could not be copied, and why
+            failed = str(exc)
+        except Exception as exc:  # a bug: said, and the console goes on
+            failed = f"{type(exc).__name__}: {exc}"
+        finally:
+            for file in files:
+                self.copying.remove(file)
+        if self not in app.screen_stack:  # the form was closed while they were copied
+            app.unstage(copies)
+            return
+        if failed:
+            problems = [*problems, failed]
+        else:
+            self.dropped.update(zip(copies, files, strict=True))
+            self.add_files(copies)
+            unused = [copy for copy in copies if copy not in self.files]  # refused now: a file of that name came meanwhile
+            for copy in unused:
+                del self.dropped[copy]
+            app.unstage(unused)
+            if unused:
+                return  # add_files said why
+        if problems:
+            self._say("not attached: " + "; ".join(problems))
+
     def action_remove_file(self) -> None:
-        """ctrl+r: take the last attached file off again."""
+        """ctrl+r: take the last attached file off again (and remove the copy of a dropped one)."""
+        if self._still_adding():
+            return
         if not self.files:
             self._say("no file is attached")
             return
-        self._say(f"removed {self.files.pop().name}", "green")
+        file = self.files.pop()
+        if self.dropped.pop(file, None) is not None:
+            self.app.unstage([file])
+        self._say(f"removed {file.name}", theme.GREEN)
         self._show_attached()
 
     def action_choose_files(self) -> None:
         """ctrl+o: the operating system's file window, for a terminal where a drop does not
         arrive. It is waited for in a worker, so the keys go on working while it is open."""
+        if self._still_adding():
+            return
         if self.choosing:
             self._say("the file window is already open: it may be behind this window")
             return
@@ -186,11 +365,13 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
     def action_paste_image(self) -> None:
         """ctrl+v: the image on the clipboard becomes a file, and is attached. The clipboard
-        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)"""
+        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)
+        Also what a paste of nothing does (FlightdeckApp.empty_paste): where ctrl+v is the
+        terminal's own paste key, that is all of the key that arrives."""
         if self.paster is None:
             self._say("pasting an image is not available here; drag the file in")
             return
-        if self.pasting:
+        if self.pasting or self._still_adding():
             return
         self.pasting = True
         self._say("reading the clipboard...", "bold")
@@ -210,23 +391,26 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(Text("New challenge", style="bold"))
-            yield Static(Text("Name, as the site shows it:"), classes="muted")
-            yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
-            yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
-                              "text). Files: ctrl+o, or drag them in; the line under the box says what is attached. Put the "
-                              "target's address (https://... or nc host port) on a line of its own:"), classes="muted")
-            yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
-            yield Static(Text("no file attached", style="bold"), id="new-attached")
-            with Horizontal():
-                yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
-                yield Input(placeholder="points (optional)", id="new-points", classes="short")
-            yield Static(Text(""), id="new-problem")
-            # ctrl+r is said when a file is attached (add_files): one more key here would wrap the line
-            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste a screenshot"),
-                               ("tab", "next field"), ("esc", "cancel")), classes="keys")
+            with VerticalScroll(id="new-body", can_focus=False):  # tab goes through the fields only
+                yield Static(Text("New challenge", style="bold"))
+                yield Static(Text("Name, as the site shows it:"), classes="muted")
+                yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
+                yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
+                                  "text). Files: ctrl+o, or drag them in (if none lands, use ctrl+o); the line under the box names "
+                                  "them. Put the target's address (https://... or nc host port) on a line of its own:"), classes="muted")
+                yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
+                yield Static(Text("no file attached", style="bold"), id="new-attached")
+                with Horizontal():
+                    yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
+                    yield Input(placeholder="points (optional)", id="new-points", classes="short")
+            with Container(id="new-foot"):  # docked under the fields: these two rows are never scrolled or cut off
+                yield Static(Text(""), id="new-problem")
+                # ctrl+r is said when a file is attached (add_files): one more key here would wrap the line
+                yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste an image"),
+                                   ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
     def on_mount(self) -> None:
+        super().on_mount()
         field = self.query_one("#new-name", Input)
         field.cursor_blink = False
         (self.query_one("#new-text", TextArea) if self.given_name else field).focus()
@@ -238,7 +422,7 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
         _, urls = parse(self.query_one("#new-text", TextArea).text)
         self.query_one("#new-attached", Static).update(
-            Text(attached_text(self.files, urls), style="bold green" if self.files else "bold"))
+            Text(attached_text(self.files, urls), style=f"bold {theme.GREEN}" if self.files else "bold"))
 
     @on(Input.Submitted, "#new-name")
     def _named(self) -> None:
@@ -254,6 +438,9 @@ class NewChallengePrompt(ModalScreen["str | None"]):
             return
         if self.adder is None:
             self._say("a challenge cannot be added from here")
+            return
+        if self.copying:
+            self._say("still copying the files you dropped: press ctrl+s again once the line under the box names them", "bold")
             return
         name = " ".join(self.query_one("#new-name", Input).value.split())
         points_text = self.query_one("#new-points", Input).value.strip()
@@ -282,7 +469,10 @@ class NewChallengePrompt(ModalScreen["str | None"]):
             ok, message = False, f"could not add {new.name!r}: {type(exc).__name__}: {exc}"
         finally:
             self.adding = False
-        if self not in app.screen_stack:  # the form was closed while the files were copied
+        closed = self not in app.screen_stack  # the form was closed while the files were copied
+        if closed or ok:  # nothing attaches the other copies of dropped files now (the run removes those it added)
+            app.unstage([copy for copy in self.dropped if not ok or copy not in new.files])
+        if closed:
             app.say(message, "information" if ok else "warning")
             app.refresh_view()
         elif ok:
@@ -293,42 +483,56 @@ class NewChallengePrompt(ModalScreen["str | None"]):
     def action_cancel(self) -> None:
         if self.adding:
             self.app.say("still adding the challenge: this line says when it is on the board")
+        else:  # nothing will attach the copies of dropped files now (while it is being added, the adder still reads them)
+            self.app.unstage(list(self.dropped))
         self.dismiss(None)
 
 
-class WelcomeScreen(ModalScreen[bool]):
+class WelcomeScreen(FittedModal, ModalScreen[bool]):
     """What a player sees before the dashboard, the first time: what the screen is, and the
-    one thing to do next. Enter does that thing (True); esc just closes it (False)."""
+    one thing to do next. Enter does that thing (True); esc just closes it (False). `simple`:
+    the console opens in the simple layout, which has no board to describe.
+
+    Its last row, the keys, says that one thing, and is always on screen: on a short terminal
+    the dialog loses its blank rows, and the text over the keys scrolls if it still does not
+    fit (FittedModal)."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="WelcomeScreen") + """
     WelcomeScreen { background: $background 85%; }
-    WelcomeScreen > Vertical { width: 86; padding: 2 4; }
+    WelcomeScreen > Vertical { width: 90; padding: 2 4; }
+    WelcomeScreen #welcome-body { height: auto; max-height: 1fr; }
+    WelcomeScreen .keys { dock: bottom; }
     WelcomeScreen .gap { margin-top: 1; }
+    WelcomeScreen.-short > Vertical { max-height: 100%; padding: 0 2; }
     """
+    SHORT_UNDER = 30  # rows: its text at 80 columns, the blank rows around it and the dialog's 90% need 27
     BINDINGS = [Binding("enter", "go", "go"), Binding("escape", "close", "close"), Binding("q", "close", "close")]
 
-    def __init__(self, *, mock: bool, empty: bool, lanes: int) -> None:
+    def __init__(self, *, mock: bool, empty: bool, lanes: int, simple: bool = False) -> None:
         super().__init__()
-        self.is_mock, self.empty, self.lanes = mock, empty, lanes
+        self.is_mock, self.empty, self.lanes, self.simple = mock, empty, lanes, simple
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(Text("Welcome to flightdeck", style="bold"))
-            if self.is_mock:
-                first = "This is a demo on fake data: no model, no network, nothing spent. Look around; you cannot break anything."
-            elif self.empty:
-                first = "Your board is empty. Give flightdeck a challenge and an AI agent starts working on it."
-            else:
-                first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
-            yield Static(Text(first), classes="gap")
-            yield Static(Text("What you are about to see:", style="bold"), classes="gap")
-            yield Static(Text("  left    the board: every challenge\n"
-                              "  right   the lanes: one AI agent per challenge, the one that needs you on top\n"
-                              "  bottom  the command bar: type / to see everything you can do"))
-            yield Static(Text("You only need three things:", style="bold"), classes="gap")
-            third = "/new     hand over a challenge: its text, files, a screenshot" if self.empty and not self.is_mock \
-                else "a       approve a flag an agent found (d declines it)"
-            yield Static(Text(f"  enter   open a lane to watch it and talk to it\n  {third}\n  ?       every key, any time"))
+            with VerticalScroll(id="welcome-body"):
+                yield Static(Text("Welcome to flightdeck", style="bold"))
+                if self.is_mock:
+                    first = "This is a demo on fake data: no model, no network, nothing spent. Look around; you cannot break anything."
+                elif self.empty:
+                    first = "Your board is empty. Give flightdeck a challenge and an AI agent starts working on it."
+                else:
+                    first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
+                yield Static(Text(first), classes="gap")
+                yield Static(Text("What you are about to see:", style="bold"), classes="gap")
+                lanes = "the lanes: one AI agent per challenge, the one that needs you on top"
+                yield Static(_meanings(
+                    *((("middle", lanes),) if self.simple else (("left", "the board: every challenge"), ("right", lanes))),
+                    ("bottom", "the command bar: type / to see everything you can do"),
+                ))
+                yield Static(Text("You only need three things:", style="bold"), classes="gap")
+                third = ("/new", "hand over a challenge: its text, files, a screenshot") if self.empty and not self.is_mock \
+                    else ("a", "approve a flag an agent found (d declines it)")
+                yield Static(_meanings(("enter", "open a lane to watch it and talk to it"), third, ("?", "every key, any time")))
             go = "add your first challenge" if self.empty and not self.is_mock else "open the console"
             yield Static(_keys(("enter", go), ("esc", "just show me the console")), classes="keys")
 
@@ -339,34 +543,87 @@ class WelcomeScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
-    """/config: this run's settings in one place. Lanes at once and what happens to a flag a
-    lane finds; Enter applies both. The answer is (lanes as typed, submit), or None."""
+@dataclass(frozen=True)
+class Settings:
+    """What /config's dialog shows and answers: lanes at once as typed, what happens to a flag
+    (`submit`), the console's layout and theme, and whether the last two are also saved."""
 
-    DEFAULT_CSS = MODAL_CSS.format(name="ConfigPrompt") + "ConfigPrompt > Vertical { width: 110; }"
+    lanes: str
+    submit: str
+    layout: str
+    theme: str
+    save: bool = False
+
+
+class ConfigPrompt(FittedModal, ModalScreen["Settings | None"]):
+    """/config: the settings in one place. Lanes at once and what happens to a flag a lane
+    finds, which last for this run; and the console's layout and theme, which last for this
+    run unless the list under them says to save them: then they go in the config file too.
+    The answer is a Settings, or None; nothing changes before the answer.
+
+    `themes`: the names the theme list offers (the one in use is added when it is not among
+    them). `config_path`: the player's config file ("": none, and nothing to save in).
+
+    Enter in the lanes field applies, and ctrl+s applies from any field: Enter on a list opens
+    it. The keys are always on screen: the fields over them are one scrolling part, which
+    gives up its blank rows on a short terminal (FittedModal)."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="ConfigPrompt") + """
+    ConfigPrompt > Vertical { width: 110; }
+    ConfigPrompt #config-body { height: auto; max-height: 1fr; }
+    ConfigPrompt #config-foot { dock: bottom; height: auto; }
+    ConfigPrompt .group { margin-top: 1; }
+    ConfigPrompt SelectCurrent { margin-top: 0; }  /* a list's own row is a Horizontal, which a dialog sets down by one */
+    ConfigPrompt SelectCurrent Static#label { text-wrap: nowrap; text-overflow: ellipsis; }  /* cut, not a list one row taller */
+    ConfigPrompt #config-look Select { width: 1fr; margin-top: 0; }
+    ConfigPrompt.-short > Vertical { max-height: 100%; padding: 0 2; }
+    ConfigPrompt.-short Input, ConfigPrompt.-short Select, ConfigPrompt.-short Horizontal, ConfigPrompt.-short .group,
+    ConfigPrompt.-short .keys { margin-top: 0; }
+    """
+    SHORT_UNDER = 36  # rows: the dialog is 32 with a config file, and gets 90% of the terminal
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "apply", "apply", priority=True)]
 
-    def __init__(self, lanes: str, submit: str, *, lanes_note: str = "", submit_note: str = "", config_path: str = "") -> None:
+    def __init__(self, now: Settings, *, themes: tuple[str, ...] = (), lanes_note: str = "", submit_note: str = "",
+                 config_path: str = "") -> None:
         super().__init__()
-        self.lanes, self.submit = lanes, submit
+        self.now = now
+        self.themes = themes if now.theme in themes else (*themes, now.theme)
         self.lanes_note, self.submit_note, self.config_path = lanes_note, submit_note, config_path
 
     def compose(self) -> ComposeResult:
+        from ..config import LAYOUTS
+        from .commands import LAYOUT_HELP
+
+        now = self.now
         with Vertical():
-            yield Static(Text("Settings for this run", style="bold"))
-            yield Static(Text("Lanes at once: a number, or unlimited" + (f" ({self.lanes_note})" if self.lanes_note else "") + ":"),
-                         classes="muted")
-            yield Input(value=self.lanes, id="config-lanes")
-            yield Static(Text("When a lane finds a flag" + (f" ({self.submit_note})" if self.submit_note else "") + ":"), classes="muted")
-            yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
-                          (Text("auto: it is sent at once (auto approve)"), "auto")],
-                         value=self.submit, allow_blank=False, id="config-submit")
-            where = f"These last for this run. Your config file keeps the defaults: {self.config_path}" if self.config_path \
-                else "These last for this run."
-            yield Static(Text(where), classes="muted")
-            yield Static(_keys(("enter", "apply"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
+            with VerticalScroll(id="config-body", can_focus=False):  # tab goes through the fields only
+                yield Static(Text("Settings", style="bold"))
+                yield Static(Text("Lanes at once: a number, or unlimited" + (f" ({self.lanes_note})" if self.lanes_note else "") + ":"),
+                             classes="muted")
+                yield Input(value=now.lanes, id="config-lanes")
+                yield Static(Text("When a lane finds a flag" + (f" ({self.submit_note})" if self.submit_note else "") + ":"),
+                             classes="muted")
+                yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
+                              (Text("auto: it is sent at once (auto approve)"), "auto")],
+                             value=now.submit, allow_blank=False, id="config-submit")
+                yield Static(Text("Console: its layout and its colours (/layout and /theme try each one first):"), classes="muted group")
+                with Horizontal(id="config-look"):
+                    yield Select([(Text(f"{name}: {LAYOUT_HELP[name]}"), name) for name in LAYOUTS], value=now.layout, allow_blank=False,
+                                 id="config-layout")
+                    yield Select([(Text(name), name) for name in self.themes], value=now.theme, allow_blank=False, id="config-theme")
+                if self.config_path:
+                    yield Static(Text("Keep that layout and those colours:"), classes="muted group")
+                    yield Select([(Text("for this run"), False), (Text("for this run, and saved in your config file"), True)],
+                                 value=now.save, allow_blank=False, id="config-save")
+            with Container(id="config-foot"):
+                where = (f"Lanes and flags last for this run. Your config file keeps their defaults: {self.config_path}" if self.config_path
+                         else "These last for this run: this console has no config file.")
+                yield Static(Text(where), classes="muted group")
+                yield Static(_keys(("enter", "apply"), ("ctrl+s", "apply from any field"), ("tab", "next field"), ("esc", "cancel")),
+                             classes="keys")
 
     def on_mount(self) -> None:
+        super().on_mount()
         field = self.query_one(Input)
         field.cursor_blink = False
         field.focus()
@@ -376,10 +633,165 @@ class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
         self.action_apply()
 
     def action_apply(self) -> None:
-        self.dismiss((self.query_one(Input).value.strip(), str(self.query_one(Select).value)))
+        save = self.query("#config-save")
+        self.dismiss(Settings(
+            lanes=self.query_one(Input).value.strip(), submit=str(self.query_one("#config-submit", Select).value),
+            layout=str(self.query_one("#config-layout", Select).value), theme=str(self.query_one("#config-theme", Select).value),
+            save=bool(save) and save.first(Select).value is True))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+@dataclass(frozen=True)
+class Choice:
+    """A row of a Picker: its name, what it is in a few words, and why it cannot be chosen
+    ("": it can). A problem is flightdeck's own sentence about a file (themes.ThemeError)."""
+
+    name: str
+    note: str = ""
+    problem: str = ""
+
+
+class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
+    """/theme and /layout alone: the choices as a list, tried as the cursor moves.
+
+    The row the cursor is on is handed to `preview`, which draws the console in it; the dialog
+    sits at the right edge over a console that is not dimmed, so what is tried can be seen.
+    Enter keeps the row for this run and `s` keeps it and has it saved: the answer is
+    (name, save). esc is None, and whoever opened the dialog puts back what was there. A row
+    with a problem says it under its name and cannot be reached by the cursor or by a click.
+
+    `save_to` is the config file a choice is saved in. With none ("": the mock with no
+    config) the dialog has no `s` row, and `s` says why instead of doing nothing.
+
+    The keys are always on screen: the title and the rows under the list are docked, and the
+    list between them scrolls when the terminal is too short for it (FittedModal).
+
+    It answers once (`answered`), and from then on tries nothing and answers nothing: a key
+    typed ahead reaches the dialog after the one that closed it. A cursor key's row is told to
+    the dialog in a message queued behind an esc that was acted on at once, and would be drawn
+    over what the opener put back; a second Enter would close the screen under the dialog."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="Picker") + """
+    Picker { align: right middle; background: $background 0%; }
+    Picker > Vertical { width: 54; margin: 0 2; }
+    Picker #picker-title { dock: top; height: 2; }
+    Picker #picker-foot { dock: bottom; height: auto; }
+    Picker OptionList { height: auto; max-height: 1fr; border: none; padding: 0; background: $surface; }
+    Picker OptionList:focus { border: none; background-tint: $foreground 0%; }
+    Picker OptionList > .option-list--option-highlighted, Picker OptionList:focus > .option-list--option-highlighted {
+        color: $foreground; background: $fd-selected-focus; text-style: bold;
+    }
+    Picker OptionList > .option-list--option-disabled { color: $text-muted; }
+    Picker OptionList > .option-list--option-hover { background: $fd-selected; }
+    Picker #picker-note { margin-top: 1; }
+    Picker #picker-said { margin-top: 1; }
+    Picker.-short > Vertical { max-height: 100%; padding: 0 2; margin: 0; }
+    Picker.-short #picker-title { height: 1; }
+    Picker.-short #picker-note { display: none; }
+    """
+    SHORT_UNDER = 24  # rows: with fewer the dialog gives up its blank rows and the note, and the list keeps what is left
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("s", "save", "keep and save")]
+
+    def __init__(self, what: str, choices: list[Choice], *, in_use: str, preview: Callable[[str], None], save_to: str = "",
+                 note: str = "") -> None:
+        """`what`: the thing chosen, as a word ("theme"). `in_use`: the choice the console is
+        drawn in now, where the cursor starts. `note`: one muted line under the list."""
+        super().__init__()
+        self.what, self.choices, self.in_use, self.preview, self.save_to, self.note = what, choices, in_use, preview, save_to, note
+        self.answered = False
+
+    def _row(self, choice: Choice) -> Text:
+        text = Text()
+        text.append(choice.name, style="" if choice.problem else "bold")
+        note = ", ".join(part for part in (choice.note, "in use" if choice.name == self.in_use else "") if part)
+        if note:
+            text.append(f"  {note}", style=theme.MUTED)
+        if choice.problem:
+            text.append(f"\n  cannot be used: {untrusted(choice.problem, one_line=True)}", style=theme.YELLOW)
+        return text
+
+    def _key_rows(self) -> Table:
+        grid = Table.grid(padding=(0, 1))
+        grid.add_column(no_wrap=True)
+        grid.add_column()
+        grid.add_row(theme.key_chip("↑↓"), Text(f"try a {self.what} on the console behind this"))
+        grid.add_row(theme.key_chip("enter"), Text("keep it for this run"))
+        if self.save_to:
+            grid.add_row(theme.key_chip("s"), Text("keep it, and save it in your config"))
+        grid.add_row(theme.key_chip("esc"), Text("back to what it was"))
+        return grid
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text(self.what.capitalize(), style="bold"), id="picker-title")
+            yield OptionList(*(Option(self._row(choice), id=choice.name, disabled=bool(choice.problem)) for choice in self.choices),
+                             id="picker-list")
+            with Container(id="picker-foot"):
+                notes = [self.note] if self.note else []
+                if not self.save_to:
+                    notes.append(f"This console has no config file, so a {self.what} lasts for this run.")
+                if notes:
+                    yield Static(Text("\n".join(notes)), classes="muted", id="picker-note")
+                yield Static(Text(""), id="picker-said")
+                yield Static(self._key_rows(), classes="keys", id="picker-keys")
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        choices = self.query_one(OptionList)
+        at = next((n for n, choice in enumerate(self.choices) if choice.name == self.in_use and not choice.problem), None)
+        choices.highlighted = at  # None: what is in use is not in the list, or cannot be used now; the first arrow key goes to a row
+        choices.focus()
+        self._say("")
+
+    def repaint(self) -> None:
+        """Draw the dialog's own colours again, in the palette now in use (a theme being tried)."""
+        choices = self.query_one(OptionList)
+        for choice in self.choices:
+            choices.replace_option_prompt(choice.name, self._row(choice))
+        self.query_one("#picker-keys", Static).update(self._key_rows())
+
+    def _say(self, text: str) -> None:
+        """A line over the keys: why a key did nothing ("": none, and no row for it)."""
+        said = self.query_one("#picker-said", Static)
+        said.update(Text(text, style=theme.YELLOW))  # the colour of the status line's warnings, in the palette on screen now
+        said.display = bool(text)
+
+    @on(OptionList.OptionHighlighted)
+    def _tried(self, event: OptionList.OptionHighlighted) -> None:
+        if self.answered or not self.query(OptionList) or event.option is not event.option_list.highlighted_option:
+            # the dialog has answered or is closing, or the cursor has moved on since: the list starts on its first
+            # row, before on_mount puts it where it belongs
+            return
+        self._say("")
+        self.preview(str(event.option.id))
+        self.repaint()
+
+    @on(OptionList.OptionSelected)
+    def _kept(self, event: OptionList.OptionSelected) -> None:
+        self._answer((str(event.option.id), False))
+
+    def _answer(self, answer: tuple[str, bool] | None) -> None:
+        """Close with `answer`, the first time only: dismissing a dialog that is closed already
+        closes the screen under it (and with none under that, stops the console)."""
+        if not self.answered:
+            self.answered = True
+            self.dismiss(answer)
+
+    def action_save(self) -> None:
+        if self.answered:
+            return
+        option = self.query_one(OptionList).highlighted_option
+        if not self.save_to:
+            self._say(f"Nothing to save it in: this console has no config file. Enter keeps the {self.what} for this run.")
+        elif option is None:
+            self._say(f"No {self.what} is chosen yet: move to one with ↑ or ↓.")
+        else:
+            self._answer((str(option.id), True))
+
+    def action_cancel(self) -> None:
+        self._answer(None)
 
 
 class KillPrompt(ModalScreen[str | None]):
@@ -563,10 +975,10 @@ class ChallengeCard(ModalScreen[str | None]):
         self.card_challenge, self.card_lanes, self.card_owner, self.card_team = challenge, lanes, owner, team
 
     def compose(self) -> ComposeResult:
-        from .views import BOARD_MARK, route_text
+        from .views import board_mark, route_text
 
         ch = self.card_challenge
-        mark, color = BOARD_MARK[ch.status]
+        mark, color = board_mark(ch.status)
         title = Text()
         title.append(untrusted(ch.name, one_line=True), "bold")
         title.append(f"   {untrusted(ch.category, one_line=True)} · {ch.points} pts · {ch.solves} solves · ", "dim")
@@ -611,8 +1023,11 @@ class ChallengeCard(ModalScreen[str | None]):
             self.dismiss(f"open:{self.card_lanes[number - 1]}")
 
 
+# The keys, by the view they act in (P65): help opens on the view it was opened from.
+# The lane list's keys.
 KEY_HELP = (
     ("enter / o", "Open the selected lane full screen (its transcript, files and a chat box)"),
+    ("space", "Peek: the selected lane's last steps under the lane list, without leaving it; it follows the selection (space or esc closes it)"),
     ("p", "Pause or resume the selected lane"),
     ("h", "Hint: a message the lane reads on its next turn (opens /hint in the bar)"),
     ("r", "Redirect: replace the lane's plan (opens /redirect, with the suggestion)"),
@@ -622,16 +1037,34 @@ KEY_HELP = (
     ("t", "Take over: a shell in the lane's workspace (its container in Docker); exit it to hand back, and the lane hears what you changed"),
     ("a", "Approve what the lane waits for: submit, more budget, live-box access"),
     ("d", "Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; refusing more budget stops the lane"),
-    ("1-9, 0", "Quick answers, no enter: the numbers in the why line and the needs-you card (0 says no)"),
+    ("1-9, 0", "Quick answers, no enter: the numbers in the why line under the list (0 says no)"),
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
     ("s", "Change the lane sort: attention, idle, cost, turns, lane"),
     ("tab", "Move focus: board, lanes, command bar (the board hides under 100 columns)"),
     ("enter on ▸", "Expand or collapse finished lanes"),
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
-    ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
-    ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
+    ("esc", "Leave the command bar, close the peek, or clear the filter"),
+    ("?", "This help, for where you are; in the command bar, only while it is empty"),
     ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
+)
+# A lane's own view: its keys.
+LANE_KEY_HELP = (
+    ("esc", "Back to the lane list"),
+    ("typing", "Goes to the chat box from any pane: enter sends it"),
+    ("/", "Commands on this lane, with completion; plain text is a message the lane reads on its next turn"),
+    ("1-9, 0", "Quick answers, no enter, while the chat box is empty: the numbers on the needs-you card (0 says no)"),
+    ("?", "This help, while the chat box is empty; with text in the box it is a question mark"),
+    ("ctrl+n", "The next lane that needs you, in attention order, round to the first"),
+    ("ctrl+o", "Details on or off. Off: a row for each entry, and the needs-you card in three"),
+    ("tab", "Move focus: chat box, files, diff"),
+    ("pgup pgdn", "Scroll the transcript; pgup at the top of a long one shows 300 more entries"),
+)
+# Keys that act the same in the lane list and in a lane.
+BOTH_KEY_HELP = (
+    ("mouse drag", "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"),
+    ("ctrl+c", "Copy the selected text again; esc takes the selection down. /copy copies with no mouse"),
+    ("ctrl+q", "Quit, as q does in the lane list"),
 )
 # Approving several flags and dismissing an alert (kept apart from KEY_HELP's rows).
 BATCH_KEY_HELP = (
@@ -641,7 +1074,7 @@ BATCH_KEY_HELP = (
           "it wrong. The lane is not touched; the alert stays quiet as an answered one does"),
 )
 MOCK_KEYS = (
-    ("space", "Freeze or restart the mock clock"),
+    (",", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
 )
 MOCK_KEY_HELP = {
@@ -675,10 +1108,42 @@ BOARD_HELP = (
 )
 
 
+_LIST_KEYS, _LANE_KEYS = dict(KEY_HELP + BATCH_KEY_HELP), dict(LANE_KEY_HELP)
+# Help's first rows, "now" (P65): what each key of the simple layout's key line does, in the
+# sentence its view's list of keys has for it. By view, then by the key as the line shows it
+# (fleet.context_keys in the lane list, focus.SIMPLE_KEY_LABELS in a lane): a key either line
+# gains needs a sentence here, and help without one fails.
+NOW_HELP = {
+    "list": {
+        "/new": "Hand a challenge to a lane: a form for its name, its text, its files or a screenshot",
+        "a": _LIST_KEYS["a"], "d": _LIST_KEYS["d"],
+        "1-9": "Answer the lane's alert with one key, no enter: the numbers in the why line under the list",
+        "x": _LIST_KEYS["x"], "enter": _LIST_KEYS["enter / o"], "/": _LIST_KEYS["/"], "?": _LIST_KEYS["?"], "q": _LIST_KEYS["q"],
+    },
+    "lane": {
+        "1-9": _LANE_KEYS["1-9, 0"], "esc": _LANE_KEYS["esc"], "/": _LANE_KEYS["/"], "?": _LANE_KEYS["?"], "ctrl+o": _LANE_KEYS["ctrl+o"],
+    },
+}
+HELP_VIEWS = ("list", "lane")  # where help was opened from: the lane list, a lane's own view
+KEYS_HEADING = {"list": "Keys in the lane list", "lane": "Keys in a lane"}
+BOTH_HEADING = "Keys in both"
+NOW_HEADING = {"list": "The selected lane, now", "lane": "This lane, now"}
+NOW_NO_LANE = "Now, with no lane selected"
+HELP_KEY_WIDTH = max(len(key) for key, _ in KEY_HELP + BATCH_KEY_HELP + LANE_KEY_HELP + BOTH_KEY_HELP)  # one column of keys down the dialog
+
+
 class HelpScreen(ModalScreen[None]):
+    """Help for where the player is (P65). It opens on "now": the keys the simple layout's key
+    line has for the lane the keys act on (`now`, as that line shows them; `lane`, its id and
+    challenge, already safe to draw), each with its sentence. Then the keys of the view it was
+    opened from (`view`: HELP_VIEWS), the other view's, the keys both have, and the rest: the
+    commands, the alerts, the marks. Every row is there from either view; only the order follows
+    the view."""
+
     DEFAULT_CSS = MODAL_CSS.format(name="HelpScreen") + """
     HelpScreen > Vertical { width: 112; }
     HelpScreen #help-body { height: auto; max-height: 1fr; }
+    HelpScreen .keys { dock: bottom; }
     """
     BINDINGS = [
         Binding("escape", "close", "close"),
@@ -686,27 +1151,42 @@ class HelpScreen(ModalScreen[None]):
         Binding("q", "close", "close"),
     ]
 
-    def __init__(self, mock: bool) -> None:
+    def __init__(self, mock: bool, view: str = "list", lane: str | None = None, now: tuple[str, ...] = ()) -> None:
         super().__init__()
+        if view not in HELP_VIEWS:
+            raise ValueError(f"help is opened from one of {HELP_VIEWS}, not {view!r}")
         self.show_mock_keys = mock
+        self.view, self.now_lane, self.now_keys = view, lane, now
+
+    def _key_rows(self, rows: Iterable[tuple[str, str]], *, of_list: bool = False) -> Table:
+        """Rows of a key and its sentence, the keys in one column down the dialog. `of_list`:
+        keys of the lane list, which in the mock get the mock's own sentence where it has one
+        (take over, quit)."""
+        keys = Table.grid(padding=(0, 2))
+        keys.add_column(style="bold", no_wrap=True, width=HELP_KEY_WIDTH)
+        keys.add_column()
+        for key, text in rows:
+            keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if of_list and self.show_mock_keys else text))
+        return keys
 
     def compose(self) -> ComposeResult:
-        keys = Table.grid(padding=(0, 2))
-        keys.add_column(style="bold", no_wrap=True)
-        keys.add_column()
-        for key, text in KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
-            keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
-        commands = Table.grid(padding=(0, 2))
-        commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
-        commands.add_column()
-        for command in COMMANDS:
-            commands.add_row(Text(f"/{command.name} {command.args}".rstrip()), Text(command.help))
+        by_view = {
+            "list": self._key_rows(KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()), of_list=True),
+            "lane": self._key_rows(LANE_KEY_HELP),
+        }
+        other = next(view for view in HELP_VIEWS if view != self.view)
+        sentences = NOW_HELP[self.view]  # a key with no sentence is a KeyError: help never leaves a row out
+        now = self._key_rows(((key, sentences[key]) for key in self.now_keys), of_list=self.view == "list")
+        heading = Text(f"{NOW_HEADING[self.view]}: {self.now_lane}" if self.now_lane else NOW_NO_LANE, "bold underline")
+        commands = Described([(Text(f"/{command.name} {command.args}".rstrip()),
+                               Text(command.help + (f" (also {also(command)})" if command.aliases else ""))) for command in COMMANDS],
+                             style=f"bold {theme.ACCENT}")
         alerts = Table.grid(padding=(0, 2))
         alerts.add_column(no_wrap=True)
         alerts.add_column()
         for kind, text in ALERT_HELP:
             alerts.add_row(theme.chip(kind.tag, *theme.alert_colors(kind)), Text(f"{kind.label}: {text}"))
-        alerts.add_row(theme.chip("submit", *theme.PENDING_COLORS), Text("Waiting for your approval (press a, or /approve)"))
+        alerts.add_row(theme.chip("submit", *theme.pending_colors()), Text("Waiting for your approval (press a, or /approve)"))
         alerts.add_row(sending_chip(), Text(SENDING_HELP))
         marks = Table.grid(padding=(0, 2))
         marks.add_column(no_wrap=True)
@@ -719,7 +1199,10 @@ class HelpScreen(ModalScreen[None]):
             board.append(f"{mark} ", "bold")
             board.append(f"{meaning}   ")
         body = Group(
-            Text("Keys (fleet)", "bold underline"), keys, Text(""),
+            heading, now, Text(""),
+            Text(KEYS_HEADING[self.view], "bold underline"), by_view[self.view], Text(""),
+            Text(KEYS_HEADING[other], "bold underline"), by_view[other], Text(""),
+            Text(BOTH_HEADING, "bold underline"), self._key_rows(BOTH_KEY_HELP), Text(""),
             Text("Commands (the bar at the bottom; plain text is a message to the lane)", "bold underline"), commands, Text(""),
             Text("Alerts (lanes that need you come first, most urgent first)", "bold underline"), alerts, Text(""),
             Text("Header and cost (the marks after dollars, on a lane and in the header)", "bold underline"), marks, Text(""),

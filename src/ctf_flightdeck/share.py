@@ -9,6 +9,12 @@ RUN_DIR/setup.json, which names models and settings only. Model ids are the play
 config; every string still goes through text.untrusted, since a lane on the host can write in
 the run folder.
 
+One line is the team's own word: the label it declared to the event for its AI use (the event
+profile's rules.declared_label, recorded in setup.json), beside the mode, which is worked out.
+It is shown only as a label can be written (preflight.is_label: a few words in letters,
+digits, spaces and hyphens), so it carries no address, path or markup; flightdeck never
+checked it against anything, and the line says so.
+
 Nothing is sent anywhere: the card is printed (D22).
 
 The mode is one of three words, worked out from the run's interventions (docs/LEADERBOARD.md):
@@ -25,6 +31,7 @@ from statistics import median
 from . import fmt
 from .platform.manual import CATEGORY_CODES, category_code
 from .postflight import STEP_NAMES, VERDICTS, Flight, analyse
+from .preflight import is_label
 from .runrecord import LANE, RunRecord
 from .text import untrusted
 
@@ -132,6 +139,21 @@ def _setup_lines(setup: Mapping[str, object] | None) -> list[str]:
     return out
 
 
+NOT_CHECKED = "the team's word to the event; flightdeck does not check it"
+
+
+def declared_label(setup: Mapping[str, object] | None) -> str | None:
+    """The label the run recorded as declared to the event, as a line's value; None when it
+    recorded none. What setup.json holds there is shown only when it is shaped like a label:
+    anything else is said to be there and not shown."""
+    value = setup.get("label") if setup is not None else None
+    if value is None or value == "":
+        return None
+    if not is_label(value):
+        return "not shown (what the run folder holds for it is not a label)"
+    return f"{value} ({NOT_CHECKED})"
+
+
 def _board_line(flight: Flight, setup: Mapping[str, object] | None) -> str:
     count = _plural(len(flight.challenges), "challenge")
     kind = _text(setup.get("board")) if setup is not None else ""
@@ -219,6 +241,8 @@ def card(record: RunRecord, setup: Mapping[str, object] | None, *, version: str 
     out.append("you approved or declined: " + (", ".join(f"{said[name]} {SAID[name]}" for name in sorted(said)) or "nothing"))
     out.append("you steered: " + (", ".join(f"{steer[name]} {name}" for name in sorted(steer)) or "nothing"))
     out.append(f"mode: {which} ({MODES[which]})")
+    if (declared := declared_label(setup)) is not None:
+        out.append(f"declared label: {declared}")
     if flight.pilot or flight.by_rule:  # autopilot's own steps: never among the player's above, nor in the mode
         done = sum(1 for step in flight.by_rule if step.ok is not False)
         out.append(f"autopilot: engaged, {_plural(done, 'intervention')} by rule")

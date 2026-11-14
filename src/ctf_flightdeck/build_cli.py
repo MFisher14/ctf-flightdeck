@@ -106,7 +106,7 @@ def check_command(
     ] = None,
 ) -> None:
     """Run the pack's case tests, with pytest, and list the engines passing and failing.
-    The tests get no API keys or tokens from flightdeck's environment."""
+    The tests get no API keys or access tokens from flightdeck's environment."""
     from .build import BuildError, check
 
     try:

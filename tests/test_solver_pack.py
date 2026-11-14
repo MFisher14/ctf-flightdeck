@@ -33,6 +33,73 @@ def adapter():
     return module
 
 
+def test_the_packs_image_gets_the_same_debugger_and_decompiler_as_the_lane_image():
+    """Lanes run in the pack's image under [l1] lane_tools, so it must not have less than the
+    lane image: gdb from Debian, and radare2 with r2ghidra as the very archives the lane image
+    pins (the same releases, the same SHA-256 for each architecture, checked the same way).
+    `binary.decompile_intake` calls r2, so the pack lists it for `flightdeck doctor`."""
+    from ctf_flightdeck.lane import dockerfile
+
+    def steps(text: str) -> tuple[str, str]:
+        code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        start = code.index("RUN set -eu; \\\n    arch=$(dpkg --print-architecture)")
+        return code, code[start:code.index("\nWORKDIR /work", start)].rstrip()
+
+    lane_code, lane_steps = steps(dockerfile())
+    pack_code, pack_steps = steps((PACK / "flightdeck" / "Dockerfile").read_text(encoding="utf-8"))
+    assert pack_steps == lane_steps.replace("the lane image: radare2", "the pack image: radare2") != lane_steps
+    assert "sha256sum -c -" in pack_steps and pack_steps.endswith("r2 -q -c 'Lc' -- | grep -q ghidra")
+    assert "apt-get install -y --no-install-recommends gdb gdb-multiarch" in pack_code
+    assert "r2" in packs.read(PACK).tools and "gdb" not in packs.read(PACK).tools  # no engine calls gdb: it is the lane's
+
+
+PACK_IMAGE = packs.read(PACK).image.tag if (PACK / "pack.toml").is_file() else ""  # ctf-flightdeck-pack:1
+
+
+def test_in_the_packs_image_a_lane_can_run_the_packs_decompile_engine(tmp_path):
+    """Under [l1] lane_tools a lane runs in the pack's image with the pack mounted read-only, and
+    its model calls `solvers run ENGINE`. The pack's other engine images need `docker run`,
+    which a lane's container has no way to do (no client, no socket: the fence), so the
+    decompiler is in this image: `binary.decompile_intake`, which was `blocked` here for want
+    of one, prints the entry function of a native binary as C. The binary is the image's own
+    /usr/bin/true, read and never run; the container is a lane's, with no network.
+
+    Needs Docker and the pack's image as today's Dockerfile builds it (`flightdeck pack image`):
+    reports as not run otherwise (it fails instead under FLIGHTDECK_REQUIRE_PACK_IMAGE=1), and
+    no test builds or pulls it."""
+    import asyncio
+
+    from ctf_flightdeck.agent.workspace import DockerWorkspace
+    from l1_kit import REQUIRE_PACK_IMAGE, docker_not_run, docker_skip_reason
+
+    reason = docker_skip_reason(PACK_IMAGE)
+    if reason:
+        docker_not_run(f"not run: {reason} (`flightdeck pack image` builds it)", require=REQUIRE_PACK_IMAGE)
+    if packs.missing_in_image(PACK_IMAGE, ["r2"]):
+        docker_not_run(f"not run: {PACK_IMAGE} on this machine was built before the pack's image had r2 (`flightdeck pack image` "
+                       "builds today's)", require=REQUIRE_PACK_IMAGE)
+    handout = challenge_dir(tmp_path / "board", "demo", {"note.txt": "a native binary\n"}, id="demo", category="rev")
+    box = DockerWorkspace(tmp_path / "lane", handout, image=PACK_IMAGE, name=f"flightdeck-test-pack-{os.getpid()}",
+                          mounts=[(PACK, str(PACK))], probe_tools=True)
+
+    async def scenario():
+        await box.prepare()
+        try:
+            return await box.run(f"cp /usr/bin/true sample && {PACK}/flightdeck/solvers -f '{FORMAT}' run binary.decompile_intake . 2>&1",
+                                 timeout=300)
+        finally:
+            await box.close()
+
+    done = asyncio.run(scenario())
+    assert done.exit_code == 0, done.output.decode()
+    result = json.loads(done.output.decode().strip().splitlines()[-1])
+    assert result["status"] != "blocked" and result["engine"] == "binary.decompile_intake", result
+    assert {"kind": "decompile", "detail": "r2ghidra decompiled entry0 of sample", "path": "recon/decompile/sample/entry0.c",
+            "offset": None} in result["evidence"]
+    assert "__libc_start_main" in (box.root / "recon" / "decompile" / "sample" / "entry0.c").read_text()
+    assert box.shell_tools == ("gdb", "gdb-multiarch", "r2", "pdg")  # and the lane's brief names them here too
+
+
 REQUIRE_PACK = "FLIGHTDECK_REQUIRE_PACK"  # =1: a test that needs the pack's environment fails where there is none (CI)
 
 

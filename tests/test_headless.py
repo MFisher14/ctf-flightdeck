@@ -334,7 +334,7 @@ def test_under_nohup_a_hang_up_is_ignored_and_sigterm_still_stops_the_run(tmp_pa
                 os.killpg(pgid, signal.SIGKILL)
 
 
-def test_sigterm_removes_a_headless_runs_docker_lanes_container(tmp_path):
+def test_sigterm_removes_a_headless_runs_docker_lanes_container(tmp_path, one_docker_run_at_a_time):
     missing = _docker_missing()
     if missing:
         docker_not_run(f"not run: needs docker and {IMAGE}: {missing}")

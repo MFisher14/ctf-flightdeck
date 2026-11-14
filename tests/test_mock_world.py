@@ -801,9 +801,9 @@ def test_the_autopilot_scenario_shows_the_chip_a_rule_firing_and_a_disengage(tmp
 
     result = screenshots.capture("autopilot", tmp_path)
     names = [path.name for path in result.saved]
-    assert names[:3] == ["01-open.svg", "02-autopilot-rule.svg", "03-autopilot-disengaged.svg"]
+    assert names[:4] == ["01-open.svg", "02-simple-open.svg", "03-autopilot-rule.svg", "04-autopilot-disengaged.svg"]
     assert not [line for line in result.skipped if line.startswith("autopilot")]
-    rule, off = (tmp_path / names[1]).read_text(encoding="utf-8"), (tmp_path / names[2]).read_text(encoding="utf-8")
+    rule, off = (tmp_path / names[2]).read_text(encoding="utf-8"), (tmp_path / names[3]).read_text(encoding="utf-8")
     assert "AUTOPILOT" in rule.replace("&#160;", " ") and "autopilot&#160;disengaged" in off
 
 

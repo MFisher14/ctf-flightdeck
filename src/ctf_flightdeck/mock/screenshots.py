@@ -4,6 +4,10 @@ of its key moments.
 Moments are found by watching the deck, so any scenario works; a moment the scenario
 does not have (no teammates in solo mode, no wave) is reported as skipped, never faked.
 The clock is advanced without redrawing between ticks, so a run takes seconds.
+
+The moments are shot in the deck layout and the default theme, whatever the player's config
+says. The `simple-` moments show the same screen in the simple layout, and `theme-light` the
+fleet in the light theme: each is switched to for its shot and back after it.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import themes
 from ..console.app import FlightdeckApp
 from ..console.focus import FocusScreen
 from ..core.attention import SortMode, sort_lanes
@@ -31,8 +36,9 @@ PREFERRED = (AlertKind.HINT, AlertKind.DIRECTION, AlertKind.EFFORT, AlertKind.LO
 # Every moment, in order. Each run saves a moment (as NN-<moment>[-detail].svg) or reports it
 # in CaptureResult.skipped as "<moment>[, <moment>...]: why".
 MOMENTS = (
-    "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
-    "approve-pending", "approve-submit", "team-stop", "attention-sort", f"narrow-{NARROW[0]}x{NARROW[1]}",
+    "open", "simple-open", "wave-drop", "alert", "simple-alert", "command-menu", "focus-lane", "simple-focus", "chat",
+    "focus-after", "diff", "approve-pending", "approve-submit", "team-stop", "attention-sort", "theme-light",
+    f"narrow-{NARROW[0]}x{NARROW[1]}",
     f"compact-{COMPACT[0]}x{COMPACT[1]}", f"compact-focus-{COMPACT[0]}x{COMPACT[1]}", "fork-prompt",
     "kill-prompt", "take-over", "challenge-card", "help",
 )
@@ -90,11 +96,21 @@ class _Run:
         self.app.show_fleet(select=select)
         await self.pilot.pause()
 
+    async def simple_shot(self, name: str) -> None:
+        """The screen as it is, in the simple layout; then the deck layout again."""
+        self.app.set_layout("simple")
+        await self.pilot.pause()  # the lane list takes its columns once it has its new width
+        await self.shot(name)
+        self.app.set_layout("deck")
+        await self.pilot.pause()
+
 
 async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> CaptureResult:
     deck = world.deck
     result = CaptureResult()
-    app = FlightdeckApp(deck, ticker=world.tick, mock=f"MOCK · {world.scenario.name}", refresh_seconds=None)
+    # the default theme and the deck layout, whatever the player's config says: these are the pictures the docs show
+    app = FlightdeckApp(deck, ticker=world.tick, mock=f"MOCK · {world.scenario.name}", refresh_seconds=None, palette=themes.DEFAULT,
+                        layout="deck")
     async with app.run_test(size=size) as pilot:
         run = _Run(app, world, pilot, out_dir, result)
 
@@ -110,6 +126,7 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             return None
 
         await run.shot("open")
+        await run.simple_shot("simple-open")
 
         # Autopilot (the autopilot scenario only): a rule firing with the chip up, then the disengage.
         if world.pilot is not None:
@@ -141,12 +158,14 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
             lane, kind = course_lane()  # type: ignore[misc]
             app.fleet.select_lane(lane.id)
             await run.shot(f"alert-{kind.tag}")
+            await run.simple_shot("simple-alert")  # the why line and the keys that apply to this lane
             await run.press("slash")
             await run.shot("command-menu")
             await run.press("escape", "escape")
             app.open_lane(lane.id)
             await pilot.pause()
             await run.shot("focus-lane")
+            await run.simple_shot("simple-focus")
             suggestion = next((s for s in lane.alert(kind).suggestions if s.key in ("r", "h", "e")), None)
             text = {"r": "/redirect ", "h": "", "e": "/escalate"}.get(suggestion.key, "") + suggestion.text if suggestion else ""
             chat = app.screen.query_one("#chat")
@@ -163,7 +182,7 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
                 result.skipped.append(f"diff: {lane.id} changed no files")
         else:
             result.skipped.append(
-                "alert, command-menu, focus-lane, chat, focus-after, diff: "
+                "alert, simple-alert, command-menu, focus-lane, simple-focus, chat, focus-after, diff: "
                 "no lane raised a course alert (off-hint, wrong way, effort, loop, stall)"
             )
 
@@ -207,6 +226,11 @@ async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> Ca
         if top is not None:
             app.fleet.select_lane(top.id)
         await run.shot("attention-sort")
+        app.set_palette(themes.BUILTIN["light"])
+        await pilot.pause()
+        await run.shot("theme-light")
+        app.set_palette(themes.DEFAULT)
+        await pilot.pause()
         await pilot.resize_terminal(*NARROW)
         await pilot.pause()
         await run.shot(f"narrow-{NARROW[0]}x{NARROW[1]}")

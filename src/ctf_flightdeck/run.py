@@ -65,6 +65,21 @@ A Game Master event (platform "gamemaster") plays the board `flightdeck gm pull`
 run pulls nothing and starts no attempt. When its submit policy uses the platform, answers go
 to the Game Master through the deck's submitter and its solved list is read back, at the
 start and every solves_seconds (platform/gamemaster_run.py: GameMasterLink).
+
+An event on a plugin's platform (any other platform name, which the player's config must
+allow under [plugins]: preflight.check) plays a board flightdeck writes from the plugin's
+pull. Under the pull policy auto or confirm (after the player's yes) the board is pulled
+through the plugin before the console starts, and under auto again every five minutes; under
+manual or off the run pulls nothing and plays the folder `flightdeck plugin pull` wrote. When
+the submit policy uses the platform, flags go to the plugin through the deck's submitter; its
+solved list is read at the start and every solves_seconds (platform/plugin_run.py:
+PluginLink). The plugin's program gets the event's token and none of the player's other keys
+(plugins/call.py). A profile that uses the plugin for nothing plays as a by-hand board.
+
+An event on the http platform (platform "http", with the routes of the platform's JSON API in
+the profile's [http] table: platform/http.py) plays the same way through the same link, with
+flightdeck making the three calls itself: no program of the player's runs, and the token goes
+only to event.url. Outside a run its board is pulled by `flightdeck http pull`.
 While autopilot guards the run the model client sends no server-side refusal fallback.
 
 The host governor (governor.py, `[governor]` in the config): unless it is turned off, the
@@ -100,6 +115,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from .agent.client import ChatClient
 from .agent.driver import COMPACT_AT, AgentDriver
@@ -123,7 +139,15 @@ from .platform.gamemaster import GameMasterClient, GameMasterError
 from .platform.gamemaster import check_site as check_gm_site
 from .platform.gamemaster import load_ids as load_gm_ids
 from .platform.gamemaster_run import GameMasterLink, listed_solved
+from .platform.link import PlatformLink
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, challenge_folders, load_board, load_challenge
+from .platform.plugin_run import PULL_SECONDS as PLUGIN_PULL_SECONDS
+from .platform import http as http_platform
+from .platform.plugin_run import PluginLink
+from .plugins import manifest as plugin_manifest
+from .plugins.board import load_refs as load_plugin_refs
+from .plugins.board import pull_into
+from .plugins.call import PLUGIN_PULL, CallFailed, Caller, PlatformCaller, plugin_label
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
@@ -134,6 +158,7 @@ from .preflight import (
     check,
     deck_submit,
     instances_off,
+    label_line,
     load_profile,
     looser,
     no_agents,
@@ -256,6 +281,7 @@ class Run:
     ctfd: CTFdLink | None = None
     verifier: CTFdVerifier | None = None  # what submits a CTFd board's flags, when submit uses the platform
     gm: GameMasterLink | None = None  # a Game Master board's submitter and solved list, when submit uses the platform
+    plug: PluginLink | None = None  # a plugin's platform, or the http platform: its pulls, its solved list, and its submitter when submit uses it
     team: TeamChannel | None = None
     _notes: list[str] = field(default_factory=list, repr=False)
     _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
@@ -305,6 +331,12 @@ class Run:
         return out
 
     @property
+    def links(self) -> list[PlatformLink]:
+        """The run's links to a platform that answers through the deck's submitter (a Game
+        Master's, a plugin's): none, or the one of the event's platform."""
+        return [link for link in (self.gm, self.plug) if link is not None]
+
+    @property
     def errors(self) -> list[str]:
         """Problems to show when the run has ended: the lanes' cleanup, the team folder's, the
         flags still on their way to CTFd, and the run's process record's."""
@@ -342,8 +374,8 @@ class Run:
             state = self._watcher.poll()  # its marks wait until the board is on the deck
         if self._submits is not None:  # before any lane starts: it sends their flags to CTFd
             self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
-        if self.gm is not None:  # the Game Master's submits and its solved list
-            self._tasks += self.gm.tasks()
+        for link in self.links:  # the platform's submits and its solved list (a plugin's pulls too)
+            self._tasks += link.tasks()
         if self.engage and self.autopilot is not None:  # before any lane starts: its guardrails hold from the first turn
             outcome = self.autopilot.engage()
             if not outcome.ok:  # prepare_run checked the budget and the runtime: something changed since
@@ -368,8 +400,8 @@ class Run:
             if self.ctfd.waves:
                 self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
             self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
-        if self.gm is not None:
-            self.gm.apply_solved(before_run=True)  # what the Game Master listed as solved before the run started
+        for link in self.links:
+            link.apply_solved(before_run=True)  # what the platform listed as solved before the run started
         if self._watcher is not None:
             self._team_stop = asyncio.Event()
             watching = self._watcher.run(interval=self.options.team_seconds, stop=self._team_stop)
@@ -408,8 +440,8 @@ class Run:
         if self.instances is not None:  # after the lanes: nothing works an instance any more
             self._errors += [f"instances: {line}" for line in await self.instances.close()]
             self.instances.client.close()
-        if self.gm is not None:
-            self._errors += self.gm.unsent()
+        for link in self.links:
+            self._errors += link.unsent()
         if self.team is not None:
             try:
                 self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
@@ -423,8 +455,8 @@ class Run:
             await self.lights.aclose()  # the light models, each once
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
-        if self.gm is not None:
-            await self.gm.aclose()
+        for link in self.links:
+            await link.aclose()
         if self.notifier is not None:  # last: what the shutdown itself had to say is sent too
             await self.notifier.aclose()
 
@@ -442,6 +474,8 @@ class Run:
         self.log.close()
         if self.processes is not None:
             self.processes.finish()
+        # copies of dropped files that were never attached (a form closed, an /attach not sent): nothing reads them now
+        shutil.rmtree(self._drops, ignore_errors=True)
 
     def scorecard(self) -> str | None:
         """After close(): the run scored against the board's answers (practice mode), or None
@@ -462,9 +496,17 @@ class Run:
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
             config_path=str(self.config.source) if self.config.source is not None else "",
             welcome=welcome,
-            adder=self.add_challenge if self.watches_folder else None,
-            paster=self.paste_image if self.watches_folder else None,
-            attacher=self.attach_files if self.watches_folder else None,
+            palette=self.config.console.palette,
+            layout=self.config.console.layout,
+            mouse=self.config.console.mouse,
+            terminal_title=self.config.console.title,
+            terminal_bell=self.config.console.bell,
+            themes_folder=self.config.source.parent / "themes" if self.config.source is not None else None,
+            adder=self.add_challenge if self.by_hand else None,
+            paster=self.paste_image if self.by_hand else None,
+            attacher=self.attach_files if self.by_hand else None,
+            stager=self.stage_files if self.by_hand else None,
+            unstager=self.unstage_files if self.by_hand else None,
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -493,8 +535,8 @@ class Run:
         held = set(self.ctfd.solved_board_ids()) if self.ctfd is not None else set()
         if self.ctfd is not None:
             held |= {cid for cid, left in self.ctfd.tries.items() if left == 0}
-        if self.gm is not None:
-            held |= self.gm.held()  # solved on the Game Master
+        for link in self.links:
+            held |= link.held()  # solved on the Game Master, or on a plugin's platform
         state = self._watcher.latest if self._watcher is not None else None
         if state is not None and self.team is not None:
             held |= set(state.solves)
@@ -622,12 +664,20 @@ class Run:
         self._apply_tries(result.tries, asked=asked)
 
     @property
+    def by_hand(self) -> bool:
+        """Whether the player fills the board themself during the run (the console's /new and
+        /attach, `flightdeck add`, a folder they make): a folder board that no platform fills,
+        without an answers file (a practice set is whole from the start). So is the board of
+        an event on a plugin's platform whose policies use the plugin for nothing."""
+        return self.ctfd is None and self.gm is None and self.plug is None and self.options.board is not None \
+            and not self.board.answers and (self.profile is None or self.profile.platform == "manual" or self.profile.adapter)
+
+    @property
     def watches_folder(self) -> bool:
-        """Whether challenges added to the board's folder during the run are played: a folder
-        board (one flightdeck does not pull from a platform), without an answers file (a
-        practice set is whole from the start)."""
-        return self.ctfd is None and self.gm is None and self.options.board is not None and not self.board.answers \
-            and (self.profile is None or self.profile.platform == "manual")
+        """Whether challenge folders that appear on the board during the run are played: a
+        board the player fills (by_hand), and a plugin's, where flightdeck writes the folders
+        of each later pull."""
+        return self.by_hand or self.plug is not None
 
     async def _folder(self) -> None:
         while True:
@@ -639,7 +689,9 @@ class Run:
 
     def scan_board(self) -> list[str]:
         """Release the challenges whose folders appeared on the board since the last look
-        (the console's /new, `flightdeck add`, or a folder the player made); the ids released.
+        (the console's /new, `flightdeck add`, a folder the player made, or on a plugin's
+        board a later pull: this run's, or `flightdeck plugin pull`); the ids released. One the
+        platform lists as solved, or a teammate holds, is released but not queued.
         A folder that cannot be read is a warning, once for each state of its challenge.json:
         a corrected file is read again. One whose id the board already has is left out and said."""
         if not self.watches_folder or self.deck.closing:
@@ -662,8 +714,10 @@ class Run:
                 continue  # the same folder, its challenge.json touched: the run keeps what it read at first
             new.append(item)
         if new:
+            if self.plug is not None:  # their refs: the pull that wrote the folders wrote them into the board's plugin.json
+                self.plug.reload()
             self._add(new)
-            self.deck.release([b.challenge for b in new], self.entries(new), "Added")
+            self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), "Added")
         return [b.challenge.id for b in new]
 
     async def add_challenge(self, new) -> tuple[bool, str]:
@@ -677,7 +731,7 @@ class Run:
         from .addchallenge import AddError, check
         from .imageread import MAX_IMAGES, is_image
 
-        if not self.watches_folder:
+        if not self.by_hand:
             return False, "this board comes from the platform: challenges are added there, not here"
         try:
             check(self.options.board, new)
@@ -695,33 +749,47 @@ class Run:
         """The console's /attach: copy files into a challenge's folder on the board (in a
         thread), and start its lanes afresh so each works in a copy that has them (a lane's
         workspace is a copy made when it starts). (whether they were attached, what to tell
-        the player: which lanes restarted, or, when the challenge has none to restart and the
-        deck starts none, why not)."""
+        the player: which lanes restarted and as which fresh lanes, or, when the challenge has
+        none to restart and the deck starts none, why not). A restarted lane's result says what
+        it was restarted with (Kill.why), not who killed it."""
         from .addchallenge import AddError, attach
         from .core import interventions as iv
 
         handout = self._handouts.get(challenge_id)
-        if not self.watches_folder or handout is None:
+        if not self.by_hand or handout is None:
             return False, "files are attached to a challenge on a board you fill yourself"
         try:
             names = await asyncio.to_thread(attach, handout, files)
             item = load_challenge(handout)
         except (AddError, BoardError) as exc:
             return False, str(exc)
+        self._attached(files)
         self._folders[handout.name] = _mtime(handout)
         self.driver.files[challenge_id] = item.challenge.files
         self.deck.challenges[challenge_id].files = item.challenge.files
         what = f"attached {', '.join(names)} to {challenge_id}"
+        before = set(self.deck.lanes)
         active = [lane.id for lane in self.deck.lanes_on(challenge_id) if lane in self.deck.active_lanes()]
-        restarted, refused = [], ""
+        # what each ended lane's result says: the files it was restarted with (the first few of many), not who killed it
+        why = "to restart with " + ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        restarted, refused, killed = [], "", ""
         for lane_id in active:
-            outcome = self.deck.apply(iv.Kill(lane_id, requeue=True))
+            outcome = self.deck.apply(iv.Kill(lane_id, requeue=True, why=why))
             if outcome.ok:
                 restarted.append(lane_id)
+                killed = outcome.message
             else:
                 refused = outcome.message
         if restarted:
-            return True, what + f"; {', '.join(restarted)} restarted as a fresh lane with it"
+            # the lanes the deck started on it since, by name: the console shows the player the fresh one
+            fresh = [lane.id for lane in self.deck.lanes.values() if lane.id not in before and lane.challenge_id == challenge_id]
+            ended, more, queued = ", ".join(restarted), len(restarted) - len(fresh), self.deck.queued(challenge_id)
+            if fresh:
+                later = f", and {more} more start{'s' if more == 1 else ''} when a lane is free" if more > 0 and queued else ""
+                return True, what + f"; {ended} restarted as {', '.join(fresh)}{later}"
+            if queued:
+                return True, what + f"; {ended} ended, a fresh lane starts when one is free"
+            return True, what + f"; no fresh lane started: {killed}"  # the deck could not start one: its own words for why
         if active:
             return True, what + f"; its lane was not restarted: {refused}"
         if not self.deck.queued(challenge_id):
@@ -738,6 +806,39 @@ class Run:
 
         return clipboard_image(self.dir / "pasted")
 
+    @property
+    def _drops(self) -> Path:
+        """Where the copies of dropped files are kept: in the run folder, by its full path
+        even when the run folder was given as a relative one (--run-dir runs). The console
+        writes a copy's path on the command bar, and /attach reads only a full path as a file."""
+        return (self.dir / "dropped").resolve()
+
+    def stage_files(self, files: Sequence[Path]) -> list[Path]:
+        """A drop the console took: copies of its files in the run folder (addchallenge.stage;
+        AddError when one cannot be copied), which are what is attached, each named by its
+        full path. The file behind a drop may be gone before the player presses the key that
+        attaches it. It copies, so the console calls it in a thread."""
+        from .addchallenge import stage
+
+        return stage(self._drops, files)
+
+    def unstage_files(self, files: Sequence[Path]) -> None:
+        """Remove the copies among `files` that stage_files made: they are attached, or the
+        player took them back. A file that is no such copy is left alone (addchallenge.unstage)."""
+        from .addchallenge import unstage
+
+        unstage(self._drops, files)
+
+    def _attached(self, files: Sequence[Path]) -> None:
+        """The board has `files` now: the copies of a drop among them go from the run folder.
+        In a thread that nothing waits for (a folder may be big, and what the player is told
+        must not wait for it); with no such copy, nothing is started."""
+        from .addchallenge import staged
+
+        copies = staged(self._drops, files)
+        if copies:
+            asyncio.get_running_loop().run_in_executor(None, self.unstage_files, copies)
+
     async def _add_now(self, new) -> tuple[bool, str]:
         from .addchallenge import AddError, create
 
@@ -748,6 +849,7 @@ class Run:
         # the folder watch may have released it while this waited for the loop: on the board either way
         if folder.name not in self.scan_board() and self._handouts.get(folder.name) != folder:
             return False, f"{_show(folder)} was written but could not be added: the warning above says why"
+        self._attached(new.files)
         files = len(self.driver.files.get(folder.name, ()))
         if not files and not new.urls:  # the lane has the description and nothing else: said, so it is no surprise
             return True, (f"added {folder.name} with NO file and no target: its lane has only the description. "
@@ -867,6 +969,17 @@ class _Plan:
         """A Game Master event whose submit policy uses the platform."""
         return self.profile is not None and self.profile.platform == "gamemaster" and self.platform
 
+    @property
+    def plug_pulls(self) -> bool:
+        """An event on a plugin's platform, or the http platform, whose pull policy uses the platform."""
+        return self.profile is not None and self.profile.adapter and self.policies is not None \
+            and self.policies.pull in USES_PLATFORM
+
+    @property
+    def plug(self) -> bool:
+        """An event on a plugin's platform, or the http platform, whose pull or submit uses the platform."""
+        return self.plug_pulls or (self.profile is not None and self.profile.adapter and self.platform)
+
 
 def prepare_run(options: RunOptions) -> Run:
     """Everything a run needs, checked up front. Raises RunError with the reason."""
@@ -882,7 +995,9 @@ def prepare_run(options: RunOptions) -> Run:
     options = plan.options
     engage, budget = _autopilot_asked(options, config, runtime)
     # a by-hand event's board may be empty: the player adds challenges as they go (/new, `flightdeck add`)
-    board = None if plan.ctfd else _load_board(options, empty_ok=plan.profile is not None and plan.profile.platform == "manual")
+    filled_by_hand = plan.profile is not None and (plan.profile.platform == "manual" or plan.profile.adapter) and not plan.plug
+    # a CTFd board, and a plugin's, is read once the platform has been asked (the first pull, or the board's plugin.json)
+    board = None if plan.ctfd or plan.plug else _load_board(options, empty_ok=filled_by_hand)
     if board is not None and not board.challenges:
         plan.notes.append("the board is empty: in the console, /new adds a challenge (its name, then its text and files); "
                           "`flightdeck add` does the same from another terminal")
@@ -952,6 +1067,10 @@ def prepare_run(options: RunOptions) -> Run:
     if plan.gm:
         assert profile is not None
         token, gm_ids = _gm_token(profile, options.board)
+    adapter = plug_first = None
+    if plan.plug:
+        assert profile is not None
+        adapter = _adapter(profile, config)
     if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
         _check_apis(config, key, spare_key, plan.notes)
     if engage and profile is not None:  # every check is done: wait for the event's start before anything is pulled
@@ -963,6 +1082,9 @@ def prepare_run(options: RunOptions) -> Run:
     if gm_ids is not None:  # the Game Master's solved list, read once before the run starts
         assert profile is not None and token is not None
         gm_solved = _gm_solved(profile, token)
+    if adapter is not None:  # the adapter's pull (or the board an earlier pull wrote), then its solved list, read once
+        plug_first = _plugin_first(options, plan, adapter)
+        board = plug_first.board
     assert board is not None
     runs = (options.run_dir or config.run_dir).expanduser()
     plan.notes += sweep(runs, docker=True if runtime == "docker" else None, clean=True).lines  # what killed runs left
@@ -1023,9 +1145,10 @@ def prepare_run(options: RunOptions) -> Run:
             engine_image=config.l1.image if runtime == "docker" else None, toolkit=toolkit,
             labels=marks, record=processes, urls=urls,
         )
-    write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
+    write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`, and the solve records
         config, options, deck_config, ladder, agent=options.agent, ctfd=bool(plan.ctfd),
         engines=len(manifests) if manifests is not None else 0,
+        label=profile.declared_label if profile is not None else None,
     ))
     try:
         client = build_client(config, key, spare_key) if agent is None else None
@@ -1058,12 +1181,26 @@ def prepare_run(options: RunOptions) -> Run:
             f"answers go to the Game Master at {_show(profile.url)}; this run pulls nothing and starts no attempt "
             "(`flightdeck gm pull` does)"
         )
+    plug = None
+    if plug_first is not None:
+        assert profile is not None and profile.url is not None and plan.policies is not None and adapter is not None
+        plug = PluginLink(
+            adapter.caller(),  # a caller of its own: the first pull's ran on another loop
+            adapter.name, options.board, plug_first.refs, solved=plug_first.solved,
+            pulls=plan.policies.pull is Policy.AUTO, solves_seconds=options.solves_seconds,
+        )
+        plug.reported = set(plug_first.reported)
+        if plan.platform:
+            plan.notes.append(f"flags go to {_show(profile.url)} through {adapter.label}")
+    plug_submits = plug if plug is not None and plan.platform else None  # the deck's submitter only when submit uses the platform
     if verifier is not None:
         assert link is not None
         submits = _Submits(verifier, link)
         verify = _never_verify  # flags go to CTFd through the submitter, never through verify()
     elif gm is not None:
         verify = _never_verify  # answers go to the Game Master through its link, never through verify()
+    elif plug_submits is not None:
+        verify = _never_verify  # flags go to the plugin through its link, never through verify()
     elif plan.platform and board.answers:
         verify = AnswerVerifier(board.answers)
     else:
@@ -1082,12 +1219,13 @@ def prepare_run(options: RunOptions) -> Run:
                 later=later,
                 labels=marks,
                 mounts=lane_mounts,
+                probe_tools=True,
             )
         return HostWorkspace(root, handouts[challenge.id], record=processes)
 
     files = {b.challenge.id: b.challenge.files for b in board.challenges}
     # each shown as [NAME] wherever a lane's tool call or its CLI writes it (agent/held.py)
-    held = _held_secrets(config, profile, token)
+    held = _held_secrets(config, profile, token, adapter.secrets if adapter is not None else None)
     if agent is not None:
         from .agent.external import ExternalDriver
 
@@ -1107,11 +1245,13 @@ def prepare_run(options: RunOptions) -> Run:
             instance=instance,
             secrets=held,
         )
-    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits or gm)
+    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits or gm or plug_submits)
     if submits is not None:
         submits.deck = deck
     if gm is not None:
         gm.deck = deck
+    if plug is not None:
+        plug.deck = deck
     log.attach(deck)
     status = StatusFile(run_dir / STATUS_NAME, deck, run=run_dir.name, held=held)  # after the log: its warning is logged
     status.attach()
@@ -1143,7 +1283,8 @@ def prepare_run(options: RunOptions) -> Run:
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
-    idle = _flagcheck_idle(deck_config.submit, submits is not None or gm is not None or isinstance(verify, AnswerVerifier))
+    to_platform = submits is not None or gm is not None or plug_submits is not None
+    idle = _flagcheck_idle(deck_config.submit, to_platform or isinstance(verify, AnswerVerifier))
     lights = _lights(config, plan.notes, idle={"flagcheck": idle} if idle else None)
     driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
@@ -1155,7 +1296,8 @@ def prepare_run(options: RunOptions) -> Run:
     if engage:
         plan.notes += start_notes(
             plan.policies, submit=deck_config.submit, spends_tries=deck_config.spends_tries, instance=instance, budget=budget,
-            waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
+            waves=(link is not None and link.waves) or (plug is not None and plug.pulls),
+            refusal_fallback=has_fallback, agent=options.agent,
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
             second_after=config.autopilot.second_after, third_after=config.autopilot.third_after,
         )
@@ -1163,7 +1305,7 @@ def prepare_run(options: RunOptions) -> Run:
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         shared=shared,
-        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, gm=gm, team=team,
+        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, gm=gm, plug=plug, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
         instances=instances,
@@ -1174,6 +1316,9 @@ def prepare_run(options: RunOptions) -> Run:
         submits.unjudged = run._flag_unjudged
     if gm is not None:
         gm.needs_human = autopilot.platform  # an answer the Game Master did not judge, or its list failing: autopilot disengages
+    if plug is not None:
+        plug.needs_human = autopilot.platform  # a flag the plugin did not judge, or its reads failing: autopilot disengages
+        plug.added = run.scan_board  # the folders a later pull wrote are released as any folder that appears on the board
     return run
 
 
@@ -1291,14 +1436,17 @@ def _flag_format_note(effective: str, profile: EventProfile | None, board: Board
     return f"flag format: {_show(effective)}, from {where}"
 
 
-def _held_secrets(config: Config, profile: EventProfile | None, token: str | None) -> dict[str, str]:
+def _held_secrets(config: Config, profile: EventProfile | None, token: str | None,
+                  adapter: Mapping[str, str] | None = None) -> dict[str, str]:
     """Every secret this run holds, as name -> value, for a lane's redaction (agent/held.py:
     flightdeck's own lanes show each value as [NAME] wherever a tool call gives it, before the
     model or the deck has it; agent/external.py's wherever the CLI writes it, before anything
     is shown, logged or put in a transcript): each value in the keys file, the [api] and
     [fallback] keys (a coding-agent run uses neither, but a host lane can read them), the
-    notification webhook's URL ([notify] webhook_env: it often holds a token), and the CTFd token. A variable set in the environment wins over the keys file, as it does
-    everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
+    notification webhook's URL ([notify] webhook_env: it often holds a token), the CTFd or Game
+    Master token, and the token of a plugin's or the http platform's event (`adapter`: each form
+    _adapter read it in, the environment's value too). A variable set in the environment wins
+    over the keys file, as it does everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
     [NAME_IN_KEYS_FILE]. A key that is not set is no secret to hide, and no error here."""
     from .keys import KeysError, load_keys
 
@@ -1315,6 +1463,7 @@ def _held_secrets(config: Config, profile: EventProfile | None, token: str | Non
     }
     if profile is not None and profile.token_env and token:
         held[profile.token_env] = token
+    held.update(adapter or {})
     for name, value in filed.items():
         if value and value != held.get(name):
             held[f"{name}_IN_KEYS_FILE"] = value
@@ -1417,6 +1566,8 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
     if policies.agents in (Policy.MANUAL, Policy.OFF):
         raise RunError(no_agents(profile, policies))
     notes: list[str] = []
+    if profile.declared_label is not None:  # said first, before every run: what the team told the event
+        notes.append(f"declared label: {label_line(profile.declared_label)}")
     lanes = options.max_lanes
     if lanes is None:
         lanes = config.lanes.max_lanes
@@ -1448,6 +1599,12 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
             raise RunError("--answers checks flags against a file, and a CTFd event checks them on CTFd: drop --answers")
     elif board is None:
         board = profile.board  # check() refused a manual profile without one
+        if board is None and profile.adapter:
+            whose = "the http platform" if profile.platform == "http" else "a plugin's platform"
+            raise RunError(
+                f"an event on {whose} needs the board folder its challenges are pulled into: `flightdeck play "
+                "FOLDER --event EVENT.toml`, or board = that folder in the profile's [event]"
+            )
         if board is None:  # a Game Master profile may leave it to the command line
             raise RunError(
                 "a Game Master event needs the board folder `flightdeck gm pull` wrote: `flightdeck play FOLDER --event "
@@ -1458,6 +1615,10 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
     submit = _event_submit(options, policies)
     if profile.platform == "gamemaster" and submit.platform and options.answers is not None:
         raise RunError("--answers checks flags against a file, and this event checks them on the Game Master: drop --answers")
+    if profile.adapter and submit.platform and options.answers is not None:
+        through = http_platform.LABEL if profile.platform == "http" else plugin_label(profile.platform)
+        raise RunError(f"--answers checks flags against a file, and this event checks them on its platform, through {through}: "
+                       "drop --answers")
     if not submit.platform:
         notes.append(
             f'submit is "{policies.submit}" in the event profile: flightdeck never submits a flag. It shows each one; '
@@ -1791,6 +1952,144 @@ def _gm_solved(profile: EventProfile, token: str) -> set[str]:
         return _sync(listed_solved(profile.url, token))
     except GameMasterError as exc:
         raise RunError(f"could not read the Game Master's list: {exc}") from None
+
+
+@dataclass(frozen=True)
+class _Adapter:
+    """What makes the three calls for an event (plugins.call.PlatformCaller): a plugin of the
+    player's, whose program is run for each, or the http platform, which makes them itself."""
+
+    name: str  # the name on the board's record (plugin.json): the plugin's, or "http"
+    caller: Callable[[], PlatformCaller]  # a new caller each time: the first pull runs on another loop than the run's
+    label: str  # how messages name it: "the acme plugin", "the http adapter"
+    command: str  # what pulls its board outside a run: "flightdeck plugin pull", "flightdeck http pull"
+    secrets: Mapping[str, str] = field(default_factory=dict)  # the event's token in each form it was read in, for _held_secrets
+
+
+def _adapter(profile: EventProfile, config: Config) -> _Adapter:
+    """The adapter of an event on a plugin's platform or on the http platform, with the
+    event's token read. RunError when the plugin, the table or the token cannot be used."""
+    assert profile.url is not None  # check() refuses the profile without one
+    url, event = profile.url, profile.name
+    if profile.platform != "http":
+        plugin, token = _plugin_token(profile, config)
+        held = {profile.token_env: token} if profile.token_env and token else {}
+        return _Adapter(plugin.name, lambda: Caller(plugin, url, event, token), plugin_label(plugin.name), PLUGIN_PULL, held)
+    table, name = profile.http, profile.token_env
+    assert table is not None and name is not None  # check() refuses an http profile without either
+    from .keys import KeysError, environment
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
+    if not value:
+        raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
+                       "keys file or export it, then start play again")
+    try:
+        read = http_platform.HttpCaller(table, url, value)
+    except ValueError as exc:  # a token no header can carry; the message never shows it
+        raise RunError(f"{exc} ({name})") from None
+    # the variable's value, and with auth.link_param the token taken out of the link, as it is and as a link writes it
+    held = {name: value, f"{name}_DECODED": read.token, f"{name}_ENCODED": quote(read.token, safe="")}
+    return _Adapter(http_platform.NAME, lambda: http_platform.HttpCaller(table, url, value), http_platform.LABEL,
+                    http_platform.PULL_COMMAND, {key: secret for key, secret in held.items() if key == name or secret != value})
+
+
+def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifest.Plugin, str | None]:
+    """The plugin the player's config allows for the profile's platform, and the event's token
+    for it, from the variable event.token_env names (the environment, else the keys file;
+    never shown). None for a plugin that takes no token."""
+    ref = config.plugins.get(profile.platform)
+    assert ref is not None  # check() refuses a platform the player's config has no plugin for
+    try:
+        plugin = plugin_manifest.load(ref)
+    except plugin_manifest.PluginError as exc:  # changed since check() read it
+        raise RunError(str(exc)) from None
+    if not plugin.token:
+        return plugin, None
+    name = profile.token_env
+    assert name is not None  # check() refuses the profile without one when the plugin takes a token
+    from .keys import KeysError, environment
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
+    if not value:
+        raise RunError(
+            f"the {plugin.name} token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
+            "keys file or export it, then start play again"
+        )
+    return plugin, value
+
+
+@dataclass(frozen=True)
+class _PluginFirst:
+    board: Board
+    refs: Mapping[str, str]  # board id -> the platform's own id for the challenge (the board's plugin.json)
+    solved: frozenset[str]  # the refs the plugin lists as solved
+    reported: tuple[str, ...] = ()  # what the first pull left out or noted, as the link would warn of it: said in the notes
+
+
+def _plugin_first(options: RunOptions, plan: _Plan, adapter: _Adapter) -> _PluginFirst:
+    """The board of an event on a plugin's platform (or the http platform) before the console
+    starts: pulled through the adapter under the pull policy auto or confirm (confirm: once
+    the player says yes), else the board an earlier pull wrote, which must be this adapter's
+    from this address when its flags go to the platform; then the solved list, read once.
+    RunError when any of it fails: a run never starts blind to the platform."""
+    profile, policies = plan.profile, plan.policies
+    assert profile is not None and policies is not None and profile.url is not None and options.board is not None
+    folder, name, label, command = options.board, adapter.name, adapter.label, adapter.command
+    url, where = _show(profile.url), _show(folder)
+    caller = adapter.caller()
+    reported: list[str] = []
+    if policies.pull in USES_PLATFORM:
+        if policies.pull is Policy.CONFIRM:
+            if options.confirm is None:
+                raise RunError(
+                    'the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board, and it cannot ask '
+                    'here (not at a terminal, or a headless run): start play at a terminal without --headless, or set '
+                    'pull = "auto" in the profile\'s [policies]'
+                )
+            if not options.confirm(f"Pull the board from {url} through {label} into {where}?"):
+                raise RunError("you said no to the pull, so nothing was pulled and the run did not start")
+        try:
+            written = _sync(pull_into(caller, folder, plugin=name, url=profile.url))
+        except CallFailed as exc:
+            raise RunError(f"{label} could not pull the board: {exc}; nothing was started") from None
+        except plugin_manifest.PluginError as exc:
+            raise RunError(str(exc)) from None
+        reported = [f"{name}: not added: {problem}" for problem in written.problems] + [f"{name}: {note}" for note in written.notes]
+        plan.notes += reported
+    try:
+        refs = load_plugin_refs(folder, plugin=name, url=profile.url, label=label, command=command)
+    except plugin_manifest.PluginError as exc:
+        raise RunError(str(exc)) from None
+    board = _load_board(options, empty_ok=True)  # the platform may list nothing yet
+    try:
+        solved = _sync(caller.solved())
+    except CallFailed as exc:
+        raise RunError(f"could not read the solved list from {label}: {exc}; nothing was started") from None
+    total = len(board.challenges)
+    count = f"{total} challenge{'' if total == 1 else 's'}"
+    if policies.pull is Policy.AUTO:
+        plan.notes.append(f"board: {count} from {url} through {label} in {where} ({len(written.added)} new); "
+                          f"flightdeck pulls again every {PLUGIN_PULL_SECONDS:g} s")
+    elif policies.pull is Policy.CONFIRM:
+        plan.notes.append(f"board: {count} from {url} through {label} in {where} ({len(written.added)} new)")
+        plan.notes.append(
+            'pull is "confirm" in the event profile: flightdeck pulled the board once, after you said yes, and pulls no '
+            f"more; start play again, or `{command}` in another terminal, to add new challenges"
+        )
+    else:
+        plan.notes.append(
+            f'board: {count} in {where}, as `{command}` wrote it; pull is "{policies.pull}" in the event '
+            f"profile, so this run pulls nothing (`{command}` in another terminal adds new challenges)"
+        )
+    if not plan.platform:
+        plan.notes.append(f"{label} reads the solved list from {url}; no flag goes through it")
+    return _PluginFirst(board, refs, frozenset(solved), tuple(reported))
 
 
 @dataclass(frozen=True)
@@ -2157,11 +2456,13 @@ def api_kind(base_url: str) -> str:
 
 def _setup(
     config: Config, options: RunOptions, deck_config: DeckConfig, ladder: Sequence[str], *,
-    agent: str | None, ctfd: bool, engines: int,
+    agent: str | None, ctfd: bool, engines: int, label: str | None = None,
 ) -> dict[str, object]:
     """How this run is set up, for RUN_DIR/setup.json and the flight card. It names models
     and settings only: no path, no key or its variable, no address, no event and no
-    challenge."""
+    challenge. `label` is the event profile's rules.declared_label (None: none, or no
+    profile): a few plain words the team declared to the event, which the card and the solve
+    records show."""
     from .config import light_specs
     from .practice_set import practice_dir
 
@@ -2188,6 +2489,7 @@ def _setup(
         "board": board,
         "token_cap": config.lanes.token_cap,
         "dollar_cap": config.lanes.dollar_cap,
+        "label": label or "",
     }  # autopilot is not here: the flight card reads it from the run log, which says whether it was engaged
 
 

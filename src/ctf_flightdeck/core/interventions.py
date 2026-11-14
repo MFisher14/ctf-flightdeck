@@ -46,10 +46,13 @@ class Fork:
 
 @dataclass(frozen=True)
 class Kill:
-    """End the lane. The challenge goes back to the front of the queue, or is parked."""
+    """End the lane. The challenge goes back to the front of the queue, or is parked.
+    `why`: what a re-queued lane's result says in place of who killed it (/attach: "to
+    restart with extra.txt"); "" for a kill the player or autopilot simply made."""
 
     lane: str
     requeue: bool = True
+    why: str = ""
 
 
 @dataclass(frozen=True)

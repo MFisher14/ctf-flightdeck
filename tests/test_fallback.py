@@ -181,6 +181,36 @@ def test_closing_the_pair_closes_both_clients():
     asyncio.run(run())
 
 
+class TextOnly:
+    """A model client with chat() and aclose() and nothing that says it can carry an image."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def chat(self, *args, **kwargs):
+        return await self.inner.chat(*args, **kwargs)
+
+    async def aclose(self) -> None:
+        await self.inner.aclose()
+
+
+def test_whether_a_session_can_carry_an_image_is_asked_of_the_api_it_is_on_now():
+    async def run():
+        primary = AnthropicClient(claude.base_url, KEY, max_retries=1, backoff=0.001)
+        spare = TextOnly(ModelClient(router.base_url, SPARE_KEY, max_retries=0))
+        client = FallbackClient(primary, spare, LADDER, primary_name="Anthropic", fallback_name="OpenRouter")
+        assert client.image_problem("claude-haiku-5-5", "s") is None  # on Anthropic, which takes one
+        await client.chat("claude-haiku-5-5", list(MESSAGES), [], session_id="s")  # 529 twice: the session moves
+        assert client.moved("s") == "anthropic/claude-haiku-5.5"
+        assert client.image_problem("claude-haiku-5-5", "s") == (
+            "flightdeck's client for OpenRouter (TextOnly) has no way to send an image")
+        assert client.image_problem("claude-haiku-5-5", "another lane") is None  # that one is still on Anthropic
+        await client.aclose()
+
+    with FakeAnthropicServer([OVERLOADED, OVERLOADED]) as claude, FakeModelServer([text_reply("ok")]) as router:
+        asyncio.run(run())
+
+
 def test_apis_are_named_for_the_player():
     assert api_name("anthropic", "https://api.anthropic.com") == "Anthropic"
     assert api_name("openai", "https://openrouter.ai/api/v1") == "OpenRouter"
@@ -201,6 +231,27 @@ def test_the_lanes_client_follows_the_config(tmp_path, monkeypatch):
     assert isinstance(client_for("openai", "https://openrouter.ai/api/v1", None), ModelClient)
     for client in (alone, both):
         asyncio.run(client.aclose())
+
+
+
+def test_a_session_that_moved_is_unanswered_until_the_fallback_replies_to_it():
+    async def run():
+        async with pair(claude.base_url, router.base_url) as client:
+            messages = list(MESSAGES)
+            assert client.unanswered("s") is None  # on the primary
+            with pytest.raises(ModelError):
+                await client.chat("claude-haiku-5-5", messages, [], session_id="s")  # 529 twice, then the fallback's 400
+            # it moved, and the fallback has taken nothing of its context yet
+            assert client.moved("s") == client.unanswered("s") == "anthropic/claude-haiku-5.5"
+            assert client.unanswered("another lane") is None
+            reply = await client.chat("claude-haiku-5-5", messages, [], session_id="s")
+            assert reply.content == "ok" and reply.notice.startswith("moved to OpenRouter")  # the move is still said, once
+            assert client.moved("s") == "anthropic/claude-haiku-5.5" and client.unanswered("s") is None
+            assert sent_to(claude) == 2 and sent_to(router) == 2  # the call made again went to the fallback only
+
+    with FakeAnthropicServer([OVERLOADED, OVERLOADED]) as claude, \
+            FakeModelServer([error_reply(400, "no image input"), text_reply("ok")]) as router:
+        asyncio.run(run())
 
 
 # ---------------------------------------------------------------------- lanes under the driver

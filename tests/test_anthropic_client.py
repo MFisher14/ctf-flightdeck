@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import socket
 import time
 
 import anthropic
@@ -25,12 +24,13 @@ from ctf_flightdeck.agent.anthropic_client import (
     AnthropicClient,
     to_anthropic,
 )
-from ctf_flightdeck.agent.client import ModelError, Reply, ToolCall, Usage, call_dollars
+from ctf_flightdeck.agent.client import IMAGE_KEY, ModelError, Reply, ToolCall, Usage, call_dollars
 from ctf_flightdeck.agent.tools import TOOLS
 from ctf_flightdeck.config import ANTHROPIC_BASE_URL
 from ctf_flightdeck.pricing import Price
 from fake_anthropic import FakeAnthropicServer, attempt, error, message, refusal, text_message, thinking, tool_message
-from fake_model import FakeReply
+from fake_model import FakeReply, held_until_retried
+from serving import closed_port
 
 KEY = "test-anthropic-key-4Rq9-not-real"  # synthetic; the shape of no real provider's key
 SESSION = "flightdeck-run1-L01"
@@ -58,12 +58,6 @@ def fails(base_url: str, **kwargs) -> ModelError:
     with pytest.raises(ModelError) as info:
         chat(base_url, **kwargs)
     return info.value
-
-
-def closed_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def turn(server: FakeAnthropicServer, messages: list[dict], **kwargs) -> Reply:
@@ -154,6 +148,49 @@ def test_a_tool_round_goes_back_as_tool_use_then_one_user_turn_of_its_tool_resul
         {"type": "tool_result", "tool_use_id": "toolu_b", "content": "the flag is t{x}"},
         {"type": "text", "text": "Message from the player: check the date"},
     ]
+
+
+def test_an_image_a_tool_result_carries_goes_out_as_an_image_block_inside_that_tool_result():
+    two_calls = message(
+        [thinking("sig-a"),
+         {"type": "tool_use", "id": "toolu_a", "name": "view_image", "input": {"path": "pic.png"}},
+         {"type": "tool_use", "id": "toolu_b", "name": "shell", "input": {"command": "ls"}}],
+        stop_reason="tool_use",
+    )
+    with FakeAnthropicServer([two_calls, text_message("a cat"), text_message("still a cat")]) as server:
+        history = list(MESSAGES)
+        reply = turn(server, history)
+        seen = {"role": "tool", "tool_call_id": reply.tool_calls[0].id, "content": "pic.png: image/png, 70 bytes.",
+                IMAGE_KEY: {"media_type": "image/png", "data": "UE5HIGRhdGE="}}
+        history += [seen, {"role": "tool", "tool_call_id": reply.tool_calls[1].id, "content": "exit 0\npic.png"},
+                    {"role": "user", "content": "Message from the player: what is on it?"}]
+        turn(server, history)
+        chat(server.base_url, history + [{"role": "user", "content": "sure?"}])
+        second, third = (r["json"]["messages"] for r in server.requests[1:])
+    assert [m["role"] for m in second] == ["user", "assistant", "user"]  # the fake refuses a request the API would
+    assert second[2]["content"] == [
+        {"type": "tool_result", "tool_use_id": "toolu_a", "content": [
+            {"type": "text", "text": "pic.png: image/png, 70 bytes."},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "UE5HIGRhdGE="}},
+        ]},
+        {"type": "tool_result", "tool_use_id": "toolu_b", "content": "exit 0\npic.png"},  # a result without one stays text
+        {"type": "text", "text": "Message from the player: what is on it?"},
+    ]
+    assert third[:3] == second  # the image goes with every later request, in the same place
+    assert f'"{IMAGE_KEY}"' not in json.dumps(second)  # the private key itself is never sent
+    assert seen[IMAGE_KEY] == {"media_type": "image/png", "data": "UE5HIGRhdGE="}  # the history keeps it
+
+
+def test_the_anthropic_client_says_it_can_carry_an_image_and_refuses_anything_else_under_the_key():
+    async def run() -> None:
+        async with AnthropicClient("http://127.0.0.1:9", KEY) as client:
+            assert client.image_problem("claude-haiku-5-5", SESSION) is None
+
+    asyncio.run(run())
+    bad = [{"role": "user", "content": "x"},
+           {"role": "tool", "tool_call_id": "toolu_a", "content": "pic", IMAGE_KEY: {"media_type": "application/pdf", "data": "JVBERg=="}}]
+    with pytest.raises(ValueError, match="message 1: _image is not an image of a kind the model APIs take"):
+        to_anthropic(bad)
 
 
 def test_consecutive_user_messages_become_one_turn_so_the_request_alternates():
@@ -427,16 +464,11 @@ def test_a_refused_connection_is_tried_again_then_fails_as_retryable_with_no_sta
 
 
 def test_a_try_that_takes_too_long_is_given_up_on_and_tried_again():
-    count = {"n": 0}
-
-    def slow_first(record: dict) -> dict:
-        count["n"] += 1
-        if count["n"] == 1:
-            time.sleep(0.6)
-        return text_message("on the second try")
-
-    with FakeAnthropicServer(responder=slow_first) as server:
-        reply = chat(server.base_url, timeout=0.3, max_retries=1)
+    # which try is slow is the server's count, not a sleep: the first answer is held until the
+    # retry has arrived, and the retry has 2 s to be answered in (0.3 s is lost on a loaded machine)
+    first_slow = held_until_retried(text_message("too late"), text_message("on the second try"))
+    with FakeAnthropicServer(responder=first_slow) as server:
+        reply = chat(server.base_url, timeout=2.0, max_retries=1)
         assert len(server.requests) == 2
     assert reply.content == "on the second try"
 

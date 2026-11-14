@@ -9,7 +9,8 @@ problem: report it privately, never in a public issue.
 ## What counts
 
 - **Challenge or platform text that steers flightdeck.** Text from a challenge, a platform (CTFd's
-  challenge data and its answers) or a teammate's synced folder that changes a setting, reaches a
+  challenge data and its answers, and what a plugin says the platform said) or a teammate's
+  synced folder that changes a setting, reaches a
   system prompt, reaches the model as anything but fenced data, is read by a coding-agent CLI as
   its own configuration, or reaches your terminal as an escape sequence.
 - **A lane out of its fence.** A lane or an L1 engine getting out of its Docker container onto
@@ -23,6 +24,29 @@ problem: report it privately, never in a public issue.
 - **A key or token where it should not be**: in the run log (`events.jsonl`), a transcript, a
   report, a writeup draft, the console, or a lane (its commands' environment, its model's
   context). That is every model API key, the CTFd token and everything in your keys file.
+- **A plugin run, or given more, than you allowed** ([docs/PLUGINS.md](docs/PLUGINS.md)). A
+  plugin's program running when your config has no `[plugins.NAME]` table for it, or because an
+  event profile, a board or a challenge named it; flightdeck fetching, installing or updating
+  one; a model API key, or anything of your environment outside the short list that page gives,
+  in the program's environment; an event's token given to a plugin other than the one its
+  profile selects, or a variable handed to a plugin that is not named for it (`ACME_...` for
+  `acme`) or that your config names for a secret of its own; a profile sending a pull's files
+  to a folder outside its own; a plugin's
+  output steering flightdeck (a file written outside the board's challenge folders, a path that
+  leaves the staging folder, a link followed, a reply that is taken as a verdict when it is not
+  one of the five words); the token's value shown or logged from something a plugin printed.
+- **An `[http]` table that makes flightdeck do more than a table may**
+  ([docs/BOARDS.md](docs/BOARDS.md#what-a-table-can-and-cannot-make-flightdeck-do)). An event
+  profile may be a teammate's, and its table of routes is taken from it without asking your
+  config, so these count: your token or the session token sent anywhere but the event's own
+  address (a request to another host, a redirect followed with it, a file fetched from another
+  host with it); the token of a login link in your variable sent to another site than the
+  link's; a token variable taken that is not named for the platform (`HTTP_TOKEN`,
+  `HTTP_TOKEN_...`, or the preset's `RCTF_...`), such as `HTTP_PROXY`, or that your config
+  names for a secret of its own; anything of a
+  challenge but its id and the flag put into a request; a header of the table's choosing; a
+  flag sent twice by flightdeck itself, or recorded as wrong when no rule of the table says so;
+  a web page read as an answer; a file written outside the board's challenge folders.
 - **A flag sent without your approval when it should have waited.** Every flag waits under
   `submit = "confirm"`, and nothing reaches the platform while an event's submit stage is
   `manual` or `off`. Under auto submit a flag still waits when the platform counts the challenge's
@@ -51,6 +75,13 @@ problem: report it privately, never in a public issue.
 - **A coding-agent CLI's own credential.** The commands `--agent claude` or `--agent codex` runs
   can read that CLI's credential, in Docker too. Give it a key you can revoke, with a low
   spending limit.
+- **What a plugin you added does.** A plugin is a program you chose to run: `flightdeck plugin
+  add` shows what it runs and what it gets, says that it is not sandboxed, and asks. It runs on
+  your machine as you, so it can read your files and use the network, and what it does with the
+  event's token and the flags it is handed is its own work. flightdeck keeps your keys out of
+  its environment; that is not a fence around a program that runs as you. Read a plugin before
+  you add it. A report that a plugin you enabled read or sent something of yours is not a
+  vulnerability report; a plugin that ran without your yes is (above).
 - **What a lane was allowed to reach.** A Docker lane that may reach its challenge's instance
   reaches the hosts and ports in the challenge's `urls`, and a coding-agent lane its CLI's API
   as well. What it does there is its work, and so is what those hosts do with what it sends: an

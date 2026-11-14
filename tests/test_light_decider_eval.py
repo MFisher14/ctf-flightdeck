@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import socket
 
 import pytest
 import typer
@@ -18,16 +17,11 @@ from ctf_flightdeck import light as L
 from ctf_flightdeck import localmodel as lm
 from ctf_flightdeck import localmodel_cli
 from fake_decider import FakeDeciderServer, detail, picks
+from serving import closed_port
 
 URL = "http://127.0.0.1:8000"
 DESC = "A numbers station. There is a picture in it if you scan it slowly enough."
 runner = CliRunner()
-
-
-def closed_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def mount() -> typer.Typer:

@@ -56,7 +56,7 @@ def writeups(
         str | None,
         typer.Option(
             "--polish", metavar="MODEL",
-            help="Have MODEL tidy the prose, through the API in your config (spends tokens). It never sees "
+            help="Have MODEL tidy the prose, through the model API in your config (spends model tokens). It never sees "
             "the run's flags, commands or outputs.",
         ),
     ] = None,
@@ -206,8 +206,9 @@ async def _polished(record, ids, model, client_config, board, redact) -> tuple[d
 # ---------------------------------------------------------------------- writing
 
 
-def _folder(folder: Path) -> None:
-    """RUN_DIR/writeups as a real directory: made if missing, never a symlink."""
+def _folder(folder: Path, what: str = "drafts") -> None:
+    """RUN_DIR/writeups as a real directory: made if missing, never a symlink. `what`: the
+    files that go in it, for the refusal (`flightdeck records` writes its folder the same way)."""
     try:
         info = os.lstat(folder)
     except FileNotFoundError:
@@ -219,18 +220,18 @@ def _folder(folder: Path) -> None:
     except OSError as exc:
         raise _Refused(f"cannot look at {_show(folder)}: {exc.strerror or exc}") from None
     if stat.S_ISLNK(info.st_mode):
-        raise _Refused(f"{_show(folder)} is a symlink; flightdeck does not write drafts through symlinks")
+        raise _Refused(f"{_show(folder)} is a symlink; flightdeck does not write {what} through symlinks")
     if not stat.S_ISDIR(info.st_mode):
         raise _Refused(f"{_show(folder)} is not a directory")
 
 
-def _write(target: Path, markdown: str) -> None:
+def _write(target: Path, markdown: str, what: str = "draft") -> None:
     """Write a new file in the same folder (O_EXCL: never one that is there, a symlink
     included), then rename it over the target, so a symlink at the target is replaced, never
     followed, and a crash leaves no half-written draft. Text UTF-8 cannot hold (a lone
     surrogate) is refused like a full disk: the temporary file goes, the other drafts are
-    still written."""
-    temp = target.parent / f".draft-{secrets.token_hex(8)}.md"
+    still written. `what`: the file's kind, for the refusal and the temporary file's name."""
+    temp = target.parent / f".{what}-{secrets.token_hex(8)}.md"
     try:
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
     except OSError as exc:
@@ -241,7 +242,7 @@ def _write(target: Path, markdown: str) -> None:
         os.replace(temp, target)
     except (OSError, UnicodeError) as exc:
         temp.unlink(missing_ok=True)
-        why = (exc.strerror or exc) if isinstance(exc, OSError) else "the draft holds text that is not valid Unicode"
+        why = (exc.strerror or exc) if isinstance(exc, OSError) else f"the {what} holds text that is not valid Unicode"
         raise _Refused(f"cannot write {_show(target)}: {why}") from None
     except BaseException:
         temp.unlink(missing_ok=True)

@@ -27,7 +27,9 @@ from ctf_flightdeck.core.interventions import Approve
 from ctf_flightdeck.core.model import Challenge, DeckConfig, LaneState, PendingKind
 from ctf_flightdeck.platform.manual import cannot_check
 from ctf_flightdeck.preflight import (
+    MAX_LABEL,
     MAX_PROFILE_BYTES,
+    NO_MATERIAL_TO_MODELS,
     STAGES,
     EventProfile,
     Policies,
@@ -40,6 +42,7 @@ from ctf_flightdeck.preflight import (
     defaults,
     describe,
     example_profile,
+    instances_off,
     lane_network,
     load_profile,
     looser,
@@ -70,6 +73,7 @@ EVENT_CTFD = {
     "team": "true",
 }
 RULES_OPEN = {"ai_allowed": "true", "platform_automation": "true", "live_targets": '"allowed"'}
+INSTANCES = '\n[instances]\nplugin = "docker_per_team"\n'  # a CTFd container plugin's table, as a profile writes it
 
 
 def toml(event=None, rules=None, policies=None, extra: str = "") -> str:
@@ -639,9 +643,9 @@ def test_plain_http_to_another_machine_warns_that_the_token_would_travel_in_clea
 
 def test_keys_for_the_other_platform_are_reported_as_unused(tmp_path):
     problems = check(manual(tmp_path, url="https://ctf.example.org"), policies(), max_lanes=4, environ={})
-    assert problems == [Problem(False, 'event.url is only for platform "ctfd" or "gamemaster", so this manual profile does not use it')]
+    assert problems == [Problem(False, 'event.url is only for platform "ctfd", "gamemaster" or "http", so this manual profile does not use it')]
     problems = check(profile(board=tmp_path), policies(), max_lanes=4, environ=TOKEN_SET)
-    assert problems == [Problem(False, 'event.board is only for platform "manual" or "gamemaster", so this ctfd profile does not use it')]
+    assert problems == [Problem(False, 'event.board is only for platform "manual", "gamemaster" or "http", so this ctfd profile does not use it')]
 
 
 def test_a_missing_flag_format_is_a_warning():
@@ -690,8 +694,13 @@ def test_an_unknown_key_is_an_error_naming_it(tmp_path, table, key, named):
 
 
 BAD_VALUES = [
-    ("event", "platform", '"ctfe"', 'event.platform must be "ctfd", "manual" or "gamemaster" (got a string)'),
-    ("event", "platform", "1", 'event.platform must be "ctfd", "manual" or "gamemaster" (got 1)'),
+    ("event", "platform", '"CTFd"', 'event.platform must be "ctfd", "manual", "gamemaster", "http" or the name of a plugin you added '
+                                    "(lower-case letters, digits, - and _)"),
+    ("event", "platform", '"my ctf"', 'event.platform must be "ctfd", "manual", "gamemaster", "http" or the name of a plugin you added'),
+    ("event", "platform", f'"{CTFD_SHAPED[:21]}"', 'event.platform must be "ctfd", "manual", "gamemaster", "http" or the name of a plugin you added'),
+    ("event", "platform", f'"{"a" + HEX_SHAPED[1:32]}"', 'event.platform must be "ctfd", "manual", "gamemaster", "http" or the name of a plugin you added'),
+    ("event", "platform", "1", 'event.platform must be "ctfd", "manual", "gamemaster", "http" or the name of a plugin you added '
+                               "(lower-case letters, digits, - and _) (got 1)"),
     ("rules", "live_targets", '"maybe"', 'rules.live_targets must be "allowed", "confirm" or "off"'),
     ("policies", "submit", '"sometimes"', 'policies.submit must be "auto", "confirm", "manual" or "off" (got a string)'),
     ("policies", "pull", "true", 'policies.pull must be "auto", "confirm", "manual" or "off" (got true)'),
@@ -736,6 +745,49 @@ def test_a_bad_value_is_an_error_naming_the_key(tmp_path, table, key, value, exp
     tables[table][key] = value
     message = load_error(write(tmp_path, toml(**tables)))
     assert message.startswith(f"{tmp_path / 'event.toml'}: {expected}"), message
+
+
+def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_is_never_played_as_a_folder_board(tmp_path):
+    """The profile only selects a plugin by name, and only the player's config allows one.
+    With no config to say so, check() refuses the run: the profile is never played as a
+    manual board, and its word for the platform is not shown (tests/test_plugin_platform.py
+    has the checks with a config)."""
+    board = tmp_path / "board"
+    board.mkdir()
+    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"',
+             "board": '"board"'}
+    loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
+    assert (loaded.platform, loaded.plugin) == ("harbourctf", True)
+    assert not profile().plugin and not manual(tmp_path).plugin
+    refusal = ("event.platform names a plugin's platform, and your config could not be read, so flightdeck cannot tell "
+               "whether you added it")
+    for config in (None, ConfigError("no config file")):
+        problems = check(loaded, chosen, max_lanes=4, environ={}, model_config=config)
+        assert [p.message for p in problems if p.refuse] == [refusal]
+        shown = "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}, config=config))
+        assert "harbourctf" not in shown and "manual" not in shown and "a plugin's platform (not in your config)" in shown
+    with pytest.raises(ValueError, match="platform must be"):
+        profile(platform="Harbour CTF")
+
+
+def test_an_instances_table_on_a_plugins_platform_is_said_to_do_nothing_without_the_profiles_word_for_it(tmp_path):
+    """check() tells every profile with an [instances] table why it starts no instance. For a
+    plugin's platform that reason must not quote event.platform: the profile may be a
+    teammate's, and only the player's config makes the word a plugin's name."""
+    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"'}
+    loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN, extra=INSTANCES)))
+    assert loaded.plugin and loaded.instances is not None
+    why = "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
+    assert instances_off(loaded, chosen) == why
+    problems = check(loaded, chosen, max_lanes=4, environ={})
+    assert [p.message for p in problems if not p.refuse and "[instances]" in p.message] == [
+        f"the [instances] table does nothing in this run: {why}, so flightdeck starts no instance "
+        "(start one on the site yourself; a lane then works from the files)"
+    ]
+    assert "harbourctf" not in "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}))
+    # a platform flightdeck has built in is its own word, and is still named
+    by_hand, policies = load_profile(write(tmp_path, toml({"name": '"Practice"', "platform": '"manual"'}, RULES_OPEN, extra=INSTANCES)))
+    assert instances_off(by_hand, policies) == 'the platform is "manual", and only CTFd has a container plugin flightdeck knows'
 
 
 def test_a_board_under_a_home_that_does_not_exist_is_an_error(tmp_path):
@@ -786,7 +838,18 @@ def test_error_messages_never_show_a_string_from_the_profile(tmp_path, pasted):
     for table, key in [("event", "token_env"), ("event", "platform"), ("event", "url"), ("rules", "live_targets"), ("policies", "agents"), ("rules", "ai_allowed")]:
         tables = {"event": dict(EVENT_CTFD), "rules": dict(RULES_OPEN), "policies": {}}
         tables[table][key] = f'"{pasted}"'
-        message = load_error(write(tmp_path, toml(**tables)))
+        path = write(tmp_path, toml(**tables))
+        if key == "platform" and pasted.startswith("pasted"):
+            # shaped like a plugin's name, so it loads: only the player's config makes it one, and nothing shows it,
+            # with an [instances] table (whose warning names a built-in platform) or without one
+            for extra in ("", INSTANCES):
+                loaded, chosen = load_profile(write(tmp_path, toml(**tables, extra=extra)))
+                shown = [p.message for p in check(loaded, chosen, max_lanes=4, environ={})] + describe(loaded, chosen, environ={})
+                assert loaded.plugin and (loaded.instances is not None) == bool(extra)
+                assert any("[instances]" in line for line in shown) == bool(extra)
+                assert pasted not in "\n".join(shown), extra
+            continue
+        message = load_error(path)
         assert pasted not in message, (table, key)
         assert f"{table}.{key}" in message
 
@@ -894,7 +957,7 @@ def test_a_bad_flag_format_is_shown_safely(tmp_path, env, char, code, shown):
 
 def test_profile_fields_are_checked_when_built_in_code():
     with pytest.raises(ValueError, match="platform"):
-        profile(platform="ctfe")
+        profile(platform="CTFe")
     with pytest.raises(ValueError, match="live_targets"):
         profile(live_targets="sometimes")
     with pytest.raises(ValueError, match="stages that do not exist"):
@@ -1359,3 +1422,126 @@ def test_describe_shows_the_schedule(tmp_path):
     loaded, stages = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
     lines = describe(loaded, stages, environ=TOKEN_SET)
     assert "schedule  starts 2026-11-14T09:00:00+00:00 (autopilot waits for the start and stops at the end)" in lines
+
+
+# ---------------------------------------------------------------------- 2026 rules: challenge material, a declared label
+
+NO_MATERIAL = {**RULES_OPEN, "material_to_models": "false"}
+STOPS_PLAY = ": `flightdeck play` plays with agent lanes, so it does not start. Play by hand; `flightdeck l1 run` runs your no-model solvers"
+
+
+def test_a_profile_that_says_neither_new_rule_allows_what_it_allowed_before(tmp_path):
+    loaded, stages = load_profile(write(tmp_path, toml(EVENT_CTFD, RULES_OPEN)))
+    assert loaded.material_to_models is True and loaded.declared_label is None
+    assert stages.agents is AUTO
+    lines = describe(loaded, stages, environ=TOKEN_SET)
+    assert lines[1] == "rules     AI allowed · platform automation allowed · live targets allowed"
+    assert not [line for line in lines if line.startswith("label")]
+
+
+def test_no_challenge_material_to_a_model_turns_agents_off_though_ai_is_allowed(tmp_path):
+    loaded, stages = load_profile(write(tmp_path, toml(EVENT_CTFD, NO_MATERIAL)))
+    assert loaded.ai_allowed is True and loaded.material_to_models is False
+    assert as_tuple(allowed(loaded)) == ("auto", "auto", "off", "auto", "auto")
+    assert stages.agents is OFF  # a profile with no [policies] gets the loosest its rules allow
+    assert as_tuple(allowed(profile(material_to_models=True))) == ("auto", "auto", "auto", "auto", "auto")
+
+
+def test_the_challenge_material_rule_has_a_refusal_of_its_own_that_names_it(tmp_path):
+    event = profile(material_to_models=False)
+    said = refusals(check(event, defaults(event), max_lanes=4, environ=TOKEN_SET))
+    assert said == [NO_MATERIAL_TO_MODELS + STOPS_PLAY]
+    assert "rules.material_to_models = false" in said[0] and "challenge material" in said[0]
+    assert "rules.ai_allowed" not in said[0]  # AI help is allowed here: this is not the no-AI refusal
+    no_ai = profile(ai_allowed=False, material_to_models=False)  # no AI at all is the wider rule, and is the one named
+    assert refusals(check(no_ai, defaults(no_ai), max_lanes=4, environ=TOKEN_SET)) == [
+        "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off" + STOPS_PLAY]
+
+
+@pytest.mark.parametrize("policy", [AUTO, CONFIRM, MANUAL])
+def test_an_agents_policy_looser_than_the_challenge_material_rule_is_refused_naming_that_rule(policy):
+    event = profile(material_to_models=False)
+    said = refusals(check(event, policies(agents=policy), max_lanes=4, environ=TOKEN_SET))
+    assert said[0] == f'the agents policy "{policy}" is looser than the rules allow (rules.material_to_models = false): it must be "off"'
+    assert check(profile(), policies(agents=policy), max_lanes=4, environ=TOKEN_SET) == ([] if policy is not MANUAL else no_lanes(profile(), policies(agents=policy)))
+
+
+def test_describe_names_the_challenge_material_rule_among_the_rules():
+    event = profile(material_to_models=False)
+    lines = describe(event, defaults(event), environ=TOKEN_SET)
+    assert lines[1] == "rules     AI allowed · platform automation allowed · live targets allowed · no challenge material to a model"
+    assert "agents    off      no model-driven lanes: `flightdeck play` does not start" in lines
+
+
+def test_preflight_refuses_a_profile_that_forbids_challenge_material_to_a_model(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, NO_MATERIAL))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 2
+    assert "lanes     none (agents off)" in result.stdout
+    assert f"refuse: {NO_MATERIAL_TO_MODELS}{STOPS_PLAY}" in result.stdout
+    assert result.stdout.splitlines()[-1] == "preflight: refused (1 refusal): a run with this profile must not start"
+    allowed_again = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "material_to_models": "true"}), "open.toml")
+    assert invoke(str(allowed_again), "--config", str(config_file(tmp_path))).exit_code == 0
+
+
+def test_material_to_models_must_be_true_or_false(tmp_path):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "material_to_models": '"no"'}))
+    assert load_error(path) == f"{path}: rules.material_to_models must be true or false (got a string)"
+
+
+@pytest.mark.parametrize("written, label", [
+    ('"Human-Led AI"', "Human-Led AI"),
+    ('"No AI"', "No AI"),
+    ('"Low-LLM"', "Low-LLM"),
+    ('"  Old Fashioned "', "Old Fashioned"),  # the space around it is not part of the label
+    ('"Catégorie 2"', "Catégorie 2"),
+])
+def test_a_declared_label_loads_as_the_events_own_words(tmp_path, written, label):
+    loaded, stages = load_profile(write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "declared_label": written})))
+    assert loaded.declared_label == label
+    assert stages == load_profile(write(tmp_path, toml(EVENT_CTFD, RULES_OPEN), "plain.toml"))[1]  # a label changes no policy
+
+
+def test_describe_shows_the_declared_label_and_that_nothing_is_checked_by_it(tmp_path):
+    event = profile(declared_label="Human-Led AI")
+    lines = describe(event, policies(submit=AUTO), environ=TOKEN_SET)
+    assert lines[2] == ("label     Human-Led AI (what your team declared to the event: rules.declared_label; flightdeck shows it "
+                        "and records it with the run, and checks nothing by it)")
+    assert check(event, policies(submit=AUTO), max_lanes=4, environ=TOKEN_SET) == []  # whatever it says, it refuses nothing
+
+
+@pytest.mark.parametrize("written", [
+    '"https://example.org/label"',  # an address
+    '"Human-Led\\nAI"',  # two lines (TOML's own escape)
+    '"<b>No AI</b>"',  # markup
+    '"../../etc"',  # a path
+    '"-- --"',  # no letter or digit
+    '"' + "A" * (MAX_LABEL + 1) + '"',
+    '"\\u202eIA oN"',  # a character that reorders the line (TOML's own escape)
+])
+def test_a_declared_label_that_is_not_a_few_plain_words_is_refused_without_being_shown(tmp_path, written):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "declared_label": written}))
+    assert load_error(path) == (f"{path}: rules.declared_label must be a few words as the event writes them (letters, digits, "
+                                f"spaces and hyphens, at most {MAX_LABEL} characters)")
+
+
+@pytest.mark.parametrize("written, problem", [("7", "must be a string (got 7)"), ('""', "must not be empty"), ("true", "must be a string (got true)")])
+def test_a_declared_label_must_be_a_string_with_something_in_it(tmp_path, written, problem):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "declared_label": written}))
+    assert load_error(path) == f"{path}: rules.declared_label {problem}"
+
+
+def test_a_profile_built_in_code_takes_no_label_a_file_would_not():
+    assert profile(declared_label="A" * MAX_LABEL).declared_label == "A" * MAX_LABEL
+    for bad in ("", " Low AI", "Low AI\n", "a/b", "A" * (MAX_LABEL + 1)):
+        with pytest.raises(ValueError, match="declared_label must be a few words"):
+            profile(declared_label=bad)
+
+
+def test_the_example_profile_names_both_rules_and_still_loads(tmp_path):
+    text = example_profile()
+    assert "# material_to_models = false" in text and '# declared_label = "Human-Led AI"' in text
+    path = write(tmp_path, text.replace("# material_to_models = false", "material_to_models = false")
+                 .replace('# declared_label = "Human-Led AI"', 'declared_label = "Human-Led AI"'))
+    loaded, stages = load_profile(path)
+    assert (loaded.material_to_models, loaded.declared_label, stages.agents) == (False, "Human-Led AI", OFF)

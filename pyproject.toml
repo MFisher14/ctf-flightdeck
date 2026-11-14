@@ -1,6 +1,6 @@
 [project]
 name = "ctf-flightdeck"
-version = "0.4.0"
+version = "0.5.0"
 description = "A terminal harness for playing CTFs with AI agents, where the player runs the loop."
 readme = "README.md"
 license = "MIT"
@@ -59,6 +59,7 @@ addopts = "-ra"
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
+    "pytest-xdist>=3.8.0",  # `uv run pytest -n auto`: the suite on every core (CONTRIBUTING.md)
 ]
 
 [tool.uv]

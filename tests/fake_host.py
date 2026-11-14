@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ctf_flightdeck import hardware
 from ctf_flightdeck.hardware import ProbeError, Refused
+from serving import Serving
 
 GIB = 1024**3
 
@@ -122,18 +123,18 @@ class ListServer:
         self._lock = threading.Lock()
         self._httpd = _Server(self)
         self.port = self._httpd.server_address[1]
-        self._thread = threading.Thread(target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        self._serving: Serving | None = None
 
     def url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
 
     def __enter__(self) -> ListServer:
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-list-server")
         return self
 
     def __exit__(self, *exc: object) -> None:
-        self._httpd.shutdown()
-        self._thread.join()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.server_close()
 
 

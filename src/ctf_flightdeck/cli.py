@@ -18,7 +18,15 @@ SCENARIO_LIST = "Scenarios:\n\n" + "\n".join(
 )
 
 PLAY, SETUP, EVENT, AFTER, SOLVERS = "Play", "Set up", "Before and during an event", "After a run", "Solvers (L1)"
-PANELS = (SETUP, PLAY, EVENT, AFTER, SOLVERS)  # the order `flightdeck --help` shows them in
+MEASURE = "Measure a model"  # eval-local: it scores a model for the light-model jobs, which are off by default; setting up needs none of it
+PANELS = (SETUP, PLAY, EVENT, AFTER, SOLVERS, MEASURE)  # the order `flightdeck --help` shows them in
+
+WHAT = "A terminal harness for playing CTFs with AI agents, where you run the loop."
+NO_SETUP = "No setup at all: `flightdeck mock` (fake data, nothing spent)."  # in --help, and what `flightdeck` alone prints in a pipe
+# What a new player reads first in `flightdeck --help`: above the commands, since help is read top down.
+NEW_HERE = ("New here? Run `flightdeck` on its own: its home screen sets you up (your model API and its API key) and "
+            "then offers the practice set. The same without the home screen: `flightdeck init`, then `flightdeck doctor`, "
+            f"then `flightdeck practice`. An event: `flightdeck start`. {NO_SETUP}")
 
 
 class _ByPanel(typer.core.TyperGroup):
@@ -39,9 +47,8 @@ app = typer.Typer(
     cls=_ByPanel,
     add_completion=False,
     rich_markup_mode="markdown",
-    help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
-    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. An event: `flightdeck start`. "
-    "No setup at all: `flightdeck mock`.",
+    help=f"{WHAT}\n\n{NEW_HERE}",
+    epilog="Every command has its own help: `flightdeck play --help`.",
 )
 
 
@@ -58,7 +65,7 @@ def root(
         bool, typer.Option("--version", callback=_version, is_eager=True, metavar="", help="Show the version and exit.")
     ] = False,
 ) -> None:
-    """A terminal harness for playing CTFs with AI agents, where you run the loop."""
+    # no docstring: what `flightdeck --help` says of flightdeck is the app's own help (WHAT, NEW_HERE)
     if ctx.invoked_subcommand is None:
         if _at_terminal() and _at_terminal_out():
             _home()
@@ -69,47 +76,132 @@ def root(
 MAX_RESUME = 6  # events offered on the opening menu, most recently played first
 
 
+BACK_FROM_A_RUN = ("Back from your run. What it spent, its run folder and the commands that read it are in the terminal, "
+                   "under this screen: q shows them.")
+
+
 def _home() -> None:
     """`flightdeck` alone, at a terminal: the home screen (console/home.py), then what the
-    player chose there."""
+    player chose there, then the home screen again. A run started from it comes back to it
+    when the player quits the console, with the event just played first in the list; first-time
+    setup comes back to what was set up and what next (the practice set first). Quitting the
+    home screen leaves, and so does a step that stops with an error (typer.Exit goes
+    through), so its reason is the last thing in the terminal and no screen covers it."""
     from . import events, start_cli
     from .config import ConfigError, default_config_path, load_config
     from .console import home
 
-    try:
-        path = default_config_path()
-        have = path.exists()
-        loaded = load_config(path) if have else None
-    except ConfigError as exc:
-        typer.echo(f"flightdeck: {exc}", err=True)
-        raise typer.Exit(2) from None
-    status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
-    menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
-                      pack_installed=loaded is not None and loaded.l1.pack is not None)
-    choice = _home_choice(menu, status)
-    if choice is None:
-        return
-    kind = choice[0]
-    if kind == "resume":
-        play(board=choice[1])
-    elif kind == "new":
-        _start_new(choice[1])
-    elif kind == "practice":
-        practice()
-    elif kind == "mock":
-        mock()
-    elif kind == "pack":
-        from . import pack_cli
+    ready = None  # after setup: what the home screen opens on (home.Ready)
+    back = ""  # after a run: where its exit lines are
+    while True:
+        try:
+            path = default_config_path()
+            have = path.exists()
+            loaded = load_config(path) if have else None
+        except ConfigError as exc:
+            typer.echo(f"flightdeck: {exc}", err=True)
+            raise typer.Exit(2) from None
+        status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
+        if back:
+            status = back + (f"\n{status}" if status else "")
+        menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
+                          pack_installed=loaded is not None and loaded.l1.pack is not None)
+        choice = _home_choice(menu, status, palette=loaded.console.palette if loaded is not None else None, ready=ready)
+        ready, back = None, ""
+        if choice is None:
+            return
+        kind = choice[0]
+        if kind == "setup":
+            ready = _set_up(choice[1])
+        elif kind == "image":  # the lane image, built in the plain terminal; then what setup offered again
+            image_build(tag="")
+            ready = home.Ready(("The lane image is built: Docker lanes can start.",), first=choice[1])
+        elif kind == "pack":
+            from . import pack_cli
 
-        pack_cli.install()
-    elif kind == "setup":
-        start_cli.start()
+            pack_cli.install()
+            return  # what it installed, and what it says to do next, stay on the terminal
+        elif kind == "mock":
+            mock()
+        else:  # a run: its exit lines are printed to the terminal, and the home screen opens over them
+            if kind == "resume":
+                play(board=choice[1])
+                events.remember(choice[1])  # played until now: first in the list
+            elif kind == "new":
+                _start_new(choice[1])
+                events.remember(choice[1].folder)
+            elif kind == "practice":
+                practice()
+            back = BACK_FROM_A_RUN
 
 
-def _home_choice(menu, status: str):
+def _home_choice(menu, status: str, *, palette=None, ready=None):
     from .console.home import HomeApp
 
-    return HomeApp(menu, status).run()
+    return HomeApp(menu, status, palette, ready).run()
+
+
+def _set_up(done):
+    """Write what the home screen's setup form ended with (console/home.py Setup): the config,
+    then the key to the keys file (setup.write_setup: both, or neither). What was done is said in the terminal too, for after the home screen,
+    and is what the home screen opens on next (home.Ready): with building the lane image
+    first when Docker lanes need it and Docker can build it. Docker is asked only for Docker
+    lanes, with the wait said first (the home screen is closed: a silent terminal looks
+    hung), and for the image only once it has answered. The key is never shown."""
+    from . import keys
+    from . import setup as setups
+    from .agent.workspace import docker_unavailable
+    from .config import ConfigError, default_config_path
+    from .console import home
+
+    def fail(text: str) -> NoReturn:
+        typer.echo(f"flightdeck: {text}", err=True)
+        raise typer.Exit(2)
+
+    answers = done.answers
+    variable = answers.key_env
+    try:
+        path = default_config_path()
+        written = setups.write_setup(answers, path, keys={variable: done.key} if done.key else None)
+    except FileExistsError:
+        fail(f"{path} was written meanwhile, so nothing was set up: run `flightdeck` again to use it")
+    except (ConfigError, keys.KeysError) as exc:
+        fail(f"{exc}. Nothing was set up: fix that, then run `flightdeck` again")
+    except OSError as exc:
+        fail(f"cannot write {path}: {exc.strerror or type(exc).__name__}. Nothing was set up")
+    notes = [f"Your config: {written}"]
+    if variable:
+        try:
+            where = keys.source(variable)
+            keys_file = keys.keys_path()
+        except keys.KeysError as exc:
+            fail(str(exc))
+        if done.key:
+            notes.append(f"Your key: kept in {keys_file} as {variable}, which only you can read (never shown, never in the config)"
+                         + (f". {variable} is also set in your environment, and the environment's is the one a run uses"
+                            if where == "environment" else ""))
+        else:
+            notes.append(f"Your key: {variable}, as set in your {where}")
+    if answers.runtime == "host":
+        from .run import host_warning
+
+        notes.append(host_warning())
+    notes += setups.server_lines(answers, done.provider)
+    build = False
+    if answers.runtime == "docker":
+        # Docker first, with the wait said before it: a daemon that does not answer is waited for once, and not again for its image
+        typer.echo("flightdeck: asking Docker whether it can run lanes and has the lane image (up to 20 s when Docker does not "
+                   "answer)…", err=True)
+        reason = docker_unavailable()
+        if reason is not None:
+            notes.append(f"Docker lanes cannot start: Docker cannot run them now ({reason}). Start Docker; `flightdeck doctor` "
+                         "then says whether the lane image is still to build (`flightdeck image build`).")
+        elif setups.lane_image_missing(answers):
+            build = True
+            notes.append("Docker lanes run in the lane image, which is not built yet: the first choice here builds it.")
+    for note in notes:
+        typer.echo(f"flightdeck: {note}", err=True)
+    return home.Ready(tuple(notes), build=build, first=done.then)
 
 
 def _start_new(new) -> None:
@@ -158,7 +250,7 @@ def _next_steps() -> str:
     """What `flightdeck` alone says: what it is, and the next step on this machine."""
     from .config import ConfigError, default_config_path
 
-    head = f"flightdeck {__version__}: a terminal harness for playing CTFs with AI agents, where you run the loop.\n\n"
+    head = f"flightdeck {__version__}: {WHAT[0].lower()}{WHAT[1:]}\n\n"
     try:
         path = default_config_path()
         have = path.exists()
@@ -170,12 +262,12 @@ def _next_steps() -> str:
             ("flightdeck init", "a few questions; writes your config"),
             ("flightdeck doctor", "checks your setup and says how to fix what is missing"),
             ("flightdeck practice", "plays 14 small practice challenges (spends tokens on your model API)"),
-            ("flightdeck start", "sets up an event and plays it: asks for its name, site and token, makes its folder"),
+            ("flightdeck start", "sets up an event and plays it: asks for its name, site and access token, makes its folder"),
         ]
         text = head + "No config yet. Start here:\n"
     else:
         steps = [
-            ("flightdeck start", "play an event: asks for its name, site and token, makes its folder, launches"),
+            ("flightdeck start", "play an event: asks for its name, site and access token, makes its folder, launches"),
             ("flightdeck play FOLDER", "play an event you set up before, or any folder of challenges"),
             ("flightdeck practice", "the practice set (14 small challenges)"),
             ("flightdeck doctor", "checks your setup"),
@@ -190,7 +282,7 @@ def _next_steps() -> str:
             pack = f"\n{exc}\n"
     width = max(len(command) for command, _ in steps)
     text += "".join(f"  {command:<{width}}  {what}\n" for command, what in steps)
-    return text + pack + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
+    return text + pack + f"\n{NO_SETUP.replace('`', '')} Every command: flightdeck --help\n"
 
 
 def _path(path: Path) -> Path:
@@ -223,7 +315,7 @@ def mock(
         Path | None,
         typer.Option(
             "--screenshot", metavar="DIR", file_okay=False, dir_okay=True,
-            help="Run headless and save SVG screenshots of the key moments to DIR, then exit.",
+            help="Run headless and save SVG screenshots of the main moments to DIR, then exit.",
         ),
     ] = None,
     speed: Annotated[
@@ -251,8 +343,37 @@ def mock(
     from .console.app import FlightdeckApp
     from .mock.world import FakeWorld
 
+    look, config_file = _console_look()  # before the world is built: a theme that cannot be used stops here
     world = FakeWorld(scenarios.get(scenario.value), max_lanes=max_lanes, team=team, containerized=containerized)
-    FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True).run()
+    FlightdeckApp(
+        world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True,
+        palette=look.palette,
+        layout=look.layout,
+        mouse=look.mouse,
+        terminal_title=look.title,
+        terminal_bell=look.bell,
+        config_path=str(config_file) if config_file is not None else "",
+        themes_folder=config_file.parent / "themes" if config_file is not None else None,
+    ).run()
+
+
+def _console_look():
+    """How the player's config says the console looks ([console]), for a console that needs
+    no config (the mock), and the config file it is from (None: there is none, so the
+    defaults). A [console] table or a theme that cannot be used is said, and nothing opens:
+    the default look is never shown in its place."""
+    from .config import ConfigError, default_config_path, load_console
+
+    try:
+        look = load_console()
+    except ConfigError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
+    try:
+        path = default_config_path()
+    except ConfigError:  # no home directory: no config file, and load_console gave the defaults
+        return look, None
+    return look, path if path.exists() else None
 
 
 class Submit(StrEnum):
@@ -265,7 +386,8 @@ class Agent(StrEnum):
     codex = "codex"
 
 
-AGENT_HELP = "Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config) instead of flightdeck's own loop."
+AGENT_HELP = ("Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] in your config) instead of "
+              "flightdeck's own loop.")
 HEADLESS_HELP = (
     "No console: the run writes status.json in its run folder, approvals wait (nothing is approved), and SIGTERM or "
     "Ctrl-C stops it as quitting does."
@@ -273,7 +395,7 @@ HEADLESS_HELP = (
 AUTOPILOT_HELP = ("Engage autopilot: the run goes on by rule while you are away, never looser than the event's rules; "
                   "needs a run budget and Docker (default: the config's [autopilot] engage).")
 BUDGET_DOLLARS_HELP = "The whole run's budget in dollars, for autopilot (default: the config's [autopilot] budget_dollars)."
-BUDGET_TOKENS_HELP = "The whole run's budget in tokens, for autopilot (default: the config's [autopilot] budget_tokens)."
+BUDGET_TOKENS_HELP = "The whole run's budget in model tokens, for autopilot (default: the config's [autopilot] budget_tokens)."
 AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
 
 
@@ -334,8 +456,9 @@ def play(
     budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
-    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
-    on the API in your config, or with --agent on that CLI's own key or subscription."""
+    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends model
+    tokens: on the model API in your config, or with --agent on that CLI's own API key or
+    subscription."""
     from .run import RunError, RunOptions, host_warning, prepare_run
     from .start import is_event_folder, resolve
 
@@ -585,7 +708,7 @@ def practice(
     budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
-    checked by hash). Spends tokens like `play`."""
+    checked by hash). Spends model tokens like `play`."""
     from .practice_set import practice_dir
 
     try:
@@ -609,7 +732,7 @@ app.add_typer(image_app, name="image", rich_help_panel=SETUP)
 def image_build(
     tag: Annotated[str, typer.Option("--tag", show_default=False, help="Image name and tag (default: ctf-flightdeck-lane:1, the [lanes] image init writes; another tag needs [lanes] image set to it).")] = "",
 ) -> None:
-    """Build the lane image with Docker (pulls the Debian base image and packages)."""
+    """Build the lane image with Docker (pulls the Debian base image, its packages and radare2's release archives)."""
     import subprocess
 
     from .agent.workspace import docker_unavailable
@@ -640,7 +763,7 @@ def image_dockerfile() -> None:
 def init(
     provider: Annotated[str | None, typer.Option("--provider", help="openrouter, anthropic, openai, ollama (or local), mlx (an MLX server) or custom.")] = None,
     base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
-    key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
+    key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your API key.")] = None,
     models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
     host: Annotated[bool | None, typer.Option("--host/--docker", metavar="", help="Run lanes on this machine, or in Docker.")] = None,
     runtime: Annotated[str | None, typer.Option("--runtime", metavar="docker|host", help="The same as --docker or --host.")] = None,
@@ -648,7 +771,7 @@ def init(
     fallback: Annotated[bool | None, typer.Option(
         "--fallback/--no-fallback", metavar="",
         help="With --provider anthropic: OpenRouter (OPENROUTER_API_KEY) for a lane whose calls to Anthropic keep failing. "
-             "At a terminal you are asked when that key is set.")] = None,
+             "At a terminal you are asked when that API key is set.")] = None,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
     force: Annotated[bool, typer.Option("--force", metavar="", help="Replace an existing config.")] = False,
     light: Annotated[str, typer.Option("--light", help="The light model for small jobs: rules (none, the default); ollama or "
@@ -670,30 +793,27 @@ def init(
         raise typer.Exit(2) from None
     from .agent.workspace import docker_unavailable
     from .config import ConfigError, default_config_path
-    from .keys import KeysError, keys_path, source
+    from .keys import KeysError, keys_path, load_keys, source, value_problem
     from .setup import (
         ANTHROPIC,
         ANTHROPIC_LADDER,
-        BENCHMARK,
-        LOCAL_PROVIDERS,
         PROVIDERS,
         RUNTIME_QUESTION,
         SUGGESTED_LADDERS,
         AnswerError,
-        Answers,
+        answers_for,
         anthropic_fallback,
-        anthropic_prices,
         base_url_answer,
         image_present,
         key_env_answer,
         light_model_answer,
-        mlx_server_command,
         models_answer,
         PROVIDER_MENU,
         provider_answer,
         providers_answer,
         runtime_answer,
-        write_config,
+        server_lines,
+        write_setup,
     )
 
     from .lane import IMAGE as LANE_IMAGE
@@ -728,6 +848,29 @@ def init(
             return source(variable) is not None
         except KeysError:
             return False  # doctor reports the keys file
+
+    def ask_key(variable: str) -> str:
+        """The key for `variable`, pasted at a hidden prompt ("" when the player skips it, or
+        when the keys file could not take it: said, and never asked for then). It is checked
+        as it is given and kept only once the config is (write_setup)."""
+        try:
+            load_keys()
+        except KeysError as exc:
+            typer.echo(f"note: {exc}; so {variable} is not asked for here")
+            return ""
+
+        def proc(typed: str) -> str:
+            if not typed.strip():
+                return ""
+            problem = value_problem(typed)
+            if problem is not None:
+                typer.echo(f"That key {problem}.")  # said here: a hidden prompt's own error gives no reason
+                raise typer.BadParameter(f"the key {problem}")
+            return typed.strip()
+
+        return typer.prompt(f"Paste your key for {variable} (nothing shows as you paste; it goes to your keys file, never "
+                            "into the config; Enter alone skips it for now)",
+                            default="", hide_input=True, show_default=False, value_proc=proc)
 
     target = _path(path or default_config_path())
     if target.exists() and not force:  # said before any question, so no answer is lost
@@ -799,7 +942,6 @@ def init(
         if suggested is not None:
             typer.echo(f"Suggested: {suggested}, {why}. Press Enter to take it, or give your own.")
         ladder = ask(question, models_answer, suggested)
-    prices = anthropic_prices(ladder) if dialect == "anthropic" else {}  # the refusal fallback's models too
     spare, offer = None, ""
     if dialect == "anthropic":
         candidate = anthropic_fallback(ladder)
@@ -826,25 +968,31 @@ def init(
         suggested, why = SUGGESTED_LIGHT[light_choice]
         typer.echo(f"Suggested light model: {suggested}, {why}. Press Enter to take it, or give your own.")
         light_table = light_answers(light_choice, ask("Light model, as your server names it", light_model_answer, suggested))
-    # A local model costs nothing and reports no cost: a dollar cap would only make every lane
-    # stop once to ask whether to carry on without it.
-    dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
-    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
     from .light import on_this_machine
 
-    here = dialect == "openai" and on_this_machine(base_url)  # a server on this machine: its replies can take minutes
     mlx_here = provider == "mlx" and on_this_machine(base_url)  # the lanes' MLX server, at whatever port it was given
     if light_table is not None and light_choice == "mlx" and mlx_here and light_table.model == ladder[0]:
         from dataclasses import replace
 
         light_table = replace(light_table, base_url=base_url)  # the one server the player starts serves both
-    answers = Answers(base_url, key_env or "", ladder, lanes_at, max_lanes, dollar_cap=dollar_cap,
-                      provider=dialect, prices=prices, fallback=spare, light=light_table,
-                      timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None)
+    answers = answers_for(provider, ladder, lanes_at, base_url=base_url, key_env=key_env or "", max_lanes=max_lanes,
+                          fallback=spare, light=light_table)
+    # The keys the config names that are not set yet (the API's, and the fallback's): asked for
+    # at a terminal, last, so that nothing typed after a key can be taken for one.
+    pasted: dict[str, str] = {}
+    if interactive:
+        for variable in dict.fromkeys(name for name in (answers.key_env, spare.key_env if spare is not None else "") if name):
+            if not known(variable):
+                key = ask_key(variable)
+                if key:
+                    pasted[variable] = key
     try:
-        written = write_config(answers, target, force=force)
+        written = write_setup(answers, target, keys=pasted, force=force)
     except (ConfigError, FileExistsError) as exc:
         fail(str(exc))
+    except KeysError as exc:
+        fail(f"{exc}. No config was written: fix that and run `flightdeck init` again, or skip the key there (Enter) and "
+             "export it instead")
     except OSError as exc:
         fail(f"cannot write {target}: {exc.strerror or type(exc).__name__}")
     typer.echo(f"wrote {written}")
@@ -854,18 +1002,8 @@ def init(
         typer.echo(f"warning: {host_warning()}")
     if spare is not None:
         typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
-    if here:
-        typer.echo(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
-                   "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
-                   f"12B's replies {BENCHMARK}); change timeout and max_tokens under [api]")
-    from .setup import OLLAMA_CONTEXT_NOTE, is_ollama
-
-    if dialect == "openai" and is_ollama(base_url):
-        typer.echo(f"context: {OLLAMA_CONTEXT_NOTE}")
-    if provider == "mlx":
-        typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
-                   "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX "
-                   f"{BENCHMARK})")
+    for line in server_lines(answers, provider):  # a server on this machine: its lane calls, Ollama's context, the MLX command
+        typer.echo(line)
     if light_table is not None and light_choice == "mlx":
         import shlex
         from urllib.parse import urlsplit
@@ -890,19 +1028,21 @@ def init(
             where = source(variable)
         except KeysError:
             where = None  # a keys file flightdeck refuses to read: doctor says why
-        if where is not None:
+        if variable in pasted:
+            typer.echo(f"key: {variable} is saved in {keys_file}, which only you can read (never shown, never in the config)")
+        elif where is not None:
             shown = keys_file if where == "keys file" else "your environment"
             typer.echo(f"key: {variable} is set in {shown} (its value is never shown or stored)")
         else:
             typer.echo(f"next: put {variable}=<your key> in {keys_file} (chmod 600), or export {variable}=<your key>  "
-                       "(flightdeck never stores it)")
+                       "(the config never holds it)")
     if offer:
         typer.echo(offer)
     if lanes_at == "docker" and not image_present(LANE_IMAGE):  # the image init wrote; a built one needs no step
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo(light_line(light_table))
     typer.echo("then: flightdeck doctor, and flightdeck practice")
-    typer.echo("for an event: flightdeck start   (asks for the event's name, site and token, makes its folder, launches)")
+    typer.echo("for an event: flightdeck start   (asks for the event's name, site and access token, makes its folder, launches)")
     typer.echo("optional: flightdeck pack install   (flightdeck's solver pack: some 800 no-model solvers that run first)")
 
 
@@ -915,7 +1055,7 @@ def doctor(
         typer.Option("--clean", metavar="", help="Remove what runs left running when flightdeck itself was killed (play and practice do this when they start)."),
     ] = False,
 ) -> None:
-    """Check your setup (Python, the config and its keys, a local model server, the light model,
+    """Check your setup (Python, the config and its API keys, a local model server, the light model,
     Docker and the lane image, your terminal) and say how to fix each problem; and list what a
     killed flightdeck left running."""
     from .setup import doctor as run_checks
@@ -975,7 +1115,7 @@ def _mount() -> None:
     from . import (
         build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, start_cli, team_cli, vpn_cli, writeup_cli,
     )
-    from . import models_cli
+    from . import http_cli, models_cli, plugin_cli, records_cli
     from .l1 import cli as l1_cli
     from .platform import ctfd_cli, gamemaster_cli
 
@@ -985,6 +1125,8 @@ def _mount() -> None:
     app.add_typer(gamemaster_cli.app, name="gm", rich_help_panel=EVENT)
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
     app.add_typer(vpn_cli.app, name="vpn", rich_help_panel=EVENT)
+    app.add_typer(http_cli.app, name="http", rich_help_panel=EVENT)
+    app.add_typer(plugin_cli.app, name="plugin", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
     app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
     app.command("start", rich_help_panel=PLAY)(start_cli.start)
@@ -994,9 +1136,10 @@ def _mount() -> None:
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
     app.command("gaps", rich_help_panel=AFTER)(gaps_cli.gaps_command)
     app.command("share", rich_help_panel=AFTER)(share_cli.share_command)
+    app.command("records", rich_help_panel=AFTER)(records_cli.records_command)
     app.add_typer(build_cli.app, name="build", rich_help_panel=SOLVERS,
                   help="Build mode: turn a gap into a new L1 engine, with a test that proves a raw handout reaches it.")
-    app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)
+    app.command("eval-local", rich_help_panel=MEASURE)(localmodel_cli.eval_local)
     app.command("models", rich_help_panel=SETUP)(models_cli.models_command)
 
 

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 
 from ..core.model import Challenge
+from ..imageread import MEDIA
 from ..text import untrusted
 
 FENCE_OPEN = "<<<challenge-text"
@@ -129,8 +131,40 @@ NOTHING_GIVEN = (
 )
 
 
+# Said after the fence to a lane that has the view_image tool (agent/tools.py), and only when a
+# file of the challenge is an image by its name: the one line that tells it the tool is worth a call.
+VIEW_IMAGE = "Some of the files are images: view_image shows you one."
+
+
+def shell_tools(found: Sequence[str]) -> str:
+    """What a lane whose shell has a debugger or a decompiler is told about them, in flightdeck's
+    own words: `found` are the names its container's image answered (workspace.SHELL_TOOLS:
+    gdb, gdb-multiarch, r2, and pdg for r2's Ghidra decompiler), and a name that is not one of
+    those adds nothing. "" when there is neither gdb nor r2. It names the program and the one
+    thing a model cannot guess: a command gets no terminal, so each is driven from its command
+    line. No technique, no advice on when to use them."""
+    has = set(found)
+    said: list[str] = []
+    if "gdb" in has:
+        said.append(
+            "gdb, a debugger (`gdb -q -batch -ex 'break main' -ex run -ex bt --args FILE ARGUMENTS`"
+            + ("; gdb-multiarch reads a binary of another architecture" if "gdb-multiarch" in has else "") + ")"
+        )
+    if "r2" in has and "pdg" in has:
+        said.append("radare2 with the Ghidra decompiler (`r2 -q -e scr.color=0 -c 'aaa; afl; pdg @ main' FILE`: afl lists "
+                    "the functions, pdg prints one as C)")
+    elif "r2" in has:
+        said.append("radare2, a disassembler (`r2 -q -e scr.color=0 -c 'aaa; afl; pdf @ main' FILE`: afl lists the "
+                    "functions, pdf prints one)")
+    if not said:
+        return ""
+    return ("Your shell has " + " and ".join(said) + ". A command gets no terminal, so give each program its commands "
+            "on the command line, as shown.")
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
-          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "") -> str:
+          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "",
+          view_image: bool = False, tools: Sequence[str] = ()) -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -147,7 +181,12 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     the lane is kept off the instance. `toolkit` is the player's solver pack's own note
     (pack.lane_note: [l1] lane_tools), after the challenge's fence and outside it: the pack is
     the player's code, never the challenge's. A challenge whose flag rotates (Challenge.rotates)
-    gets rotates() after the fence: how to submit such a flag."""
+    gets rotates() after the fence: how to submit such a flag. `view_image` says the lane has
+    the view_image tool and a model that can be sent images: then, and only when one of `files`
+    is an image by its name (imageread.MEDIA), VIEW_IMAGE follows the fence. `tools` are the
+    analysis programs the lane's shell has (a Docker lane's: DockerWorkspace.shell_tools):
+    shell_tools() follows the fence when the challenge has a file, since there is nothing to
+    debug or decompile without one."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -175,6 +214,10 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         lines.append(shell_names(shell_hosts))
     if challenge.rotates:
         lines.append(rotates(challenge.rotates))
+    if view_image and any(PurePosixPath(name).suffix.lower() in MEDIA for name in files):
+        lines.append(VIEW_IMAGE)
+    if files and (has := shell_tools(tools)):
+        lines.append(has)
     if toolkit.strip():
         lines += [TOOLKIT, _MARKER.sub(MARKER_REMOVED, toolkit.strip())]
     if recon.strip():

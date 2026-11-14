@@ -116,6 +116,30 @@ def test_the_card_holds_no_flag_no_challenge_name_or_id_no_event_and_no_path(pla
     assert "decode the base64" not in text  # a hint's own words
 
 
+def test_the_card_shows_the_label_the_team_declared_beside_the_mode_and_says_it_was_not_checked(played):
+    _, record = played
+    text = card(record, dict(SETUP, label="Human-Led AI"))
+    said = text.splitlines()
+    at = said.index("mode: hands-on (you steered lanes during the run)")
+    assert said[at + 1] == "declared label: Human-Led AI (the team's word to the event; flightdeck does not check it)"
+    for none in (SETUP, dict(SETUP, label=""), dict(SETUP, label=None), None):  # no label declared, or a run from before the field
+        assert "declared label" not in card(record, none)
+
+
+@pytest.mark.parametrize("planted", [
+    "see https://example.org/board", "Test CTF\nmode: hands-off", "<img src=x>", "x" * 41, "../../etc/passwd", 7, ["No AI"], {"a": 1},
+])
+def test_what_the_run_folder_holds_for_the_label_is_shown_only_when_it_is_shaped_like_one(played, planted):
+    """setup.json is in the run folder, where a lane on the host can write: the card is posted
+    in public, so nothing but a few plain words is ever shown as the label."""
+    _, record = played
+    text = card(record, dict(SETUP, label=planted))
+    assert lines(text)["declared label"] == "not shown (what the run folder holds for it is not a label)"
+    assert sum(line.startswith("mode: ") for line in text.splitlines()) == 1
+    if isinstance(planted, str):
+        assert planted not in text and planted.splitlines()[0] not in text
+
+
 def test_a_boards_own_category_name_stays_off_the_card(tmp_path):
     folder = tmp_path / "board"
     folder.mkdir()
@@ -165,6 +189,9 @@ def test_the_setup_names_models_and_settings_and_no_address_key_or_path(tmp_path
     dumped = json.dumps(setup)
     for private in ("corp.internal", "CORP_KEY", "Some Event", str(tmp_path)):
         assert private not in dumped
+    assert setup["label"] == ""  # no event profile, or one that declares none
+    labelled = _setup(cfg, RunOptions(board=tmp_path), deck, cfg.models, agent=None, ctfd=False, engines=0, label="Low AI")
+    assert labelled == {**setup, "label": "Low AI"}
 
 
 def test_the_setup_knows_the_practice_set_a_ctfd_event_a_coding_agent_and_the_light_model(tmp_path):

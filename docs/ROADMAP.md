@@ -3,6 +3,149 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
+
+Eighteen proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P51 to P68),
+and the review fixes made before the release; the lines for players are under 0.5.0 in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 to P68 were built from the list of what comes next (the
+[milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
+
+- **The simple layout** (P51). The console opens on one list of lanes, a short header and the
+  keys that apply to the selected lane now; `/layout deck`, or `layout = "deck"` under
+  `[console]`, is the dashboard as it was. An empty board says what to do and keeps saying it,
+  and the `/` menu scrolls to every command.
+- **Themes** (P52). Every colour comes from one palette: five built in (`flightdeck`, `light`,
+  `nord`, `gruvbox`, `dracula`) and a player's own `themes/NAME.toml`, refused when its colours
+  could not be read. `/theme` switches in a running console.
+- **Plugins** (P53). An event on a platform flightdeck does not know, through an adapter of the
+  player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
+  and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
+- **The first five minutes in words** (P54,
+  [#36](https://github.com/MFisher14/ctf-flightdeck/issues/36)). The README's quickstart is
+  three commands and follows the first run (the mock, `uv tool install`, `flightdeck` and its
+  setup form, practice); `--help` opens with where a new player starts; `flightdeck doctor` ends
+  with what is left to fix or the next command; an API key, an access token and model tokens
+  are each called by name; and the guide's glossary comes second. The README and the guide
+  describe the tree, so this quickstart is true of a release from 0.5.0 on: 0.4.0 has no
+  setup form on its home screen, and both pages say so beside the form, with the commands that
+  do the same on 0.4.0.
+- **A dropped file always attaches** (P55,
+  [#37](https://github.com/MFisher14/ctf-flightdeck/issues/37)). A dropped path is read as
+  each terminal writes it, with only an ordinary space or a tab between two paths (a macOS
+  screenshot's name on a 12-hour clock was not read from iTerm2 or Ghostty); a drop is copied
+  into the run's folder as it lands; a paste that reads as a dropped file that is not on this
+  machine says why; and an empty paste in the `/new` form pastes the clipboard's image. None
+  of it was tried in a real terminal: each format is from that terminal's own source or
+  documentation, and Terminal.app's and tmux's are not known.
+- **The http platform** (P56). An event on a platform with a JSON API, played from a table of
+  routes in the event profile with no code of the player's: `platform = "http"`, an `[http]`
+  table, rCTF as its first preset, and `flightdeck http example`, `check` and `pull`
+  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+- **Two more CTFd container plugins** (P57). `plugin = "ctfd_owl"` and `plugin = "chall_manager"`
+  in `[instances]`, the keys of a plugin's answer by name (`address_key`, `port_key`,
+  `expires_key`), a start that answers without an address followed by a look at the status,
+  and a refusal's reason read from `msg` ([BOARDS.md](BOARDS.md#which-plugin)). The guessed
+  `ctfd_docker` shape is gone.
+- **Rules that match 2026 events** (P58). An event profile can say that no challenge material
+  may go to a model (`material_to_models = false`: `play` refuses, naming the rule) and hold the
+  label the team declared to the event (`declared_label`: said before a run, on the flight
+  card). `flightdeck records` writes a record of each solve for an event's organisers: the
+  lanes' transcripts, the player's interventions, who let each flag go.
+- **A debugger and a decompiler in every Docker lane** (P59). The lane image and the solver
+  pack's image have `gdb` and radare2 with the Ghidra decompiler, and a lane's brief says how to
+  run them without a terminal ([the guide](GUIDE.md#what-a-lanes-shell-has)).
+- **A one-minute demo at the top of the README** (P60,
+  [#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)). `scripts/demo.py` plays the
+  mock key by key with no terminal and writes `docs/screenshots/demo.gif`; the tests play it on
+  every push, so a change to the console that breaks a step fails with that step's name. It is
+  the console's own screenshots joined into a GIF, not a recording of a terminal. Still open
+  from the same issue: what the 14-challenge practice set costs. Nothing prints a figure until
+  one full run has been measured.
+- **The need-you count in the terminal's title, and a bell** (P61,
+  [#38](https://github.com/MFisher14/ctf-flightdeck/issues/38)). The terminal's title says how
+  many lanes need the player and whether the queue is held, in a count and fixed words; the
+  bell rings once each time the count goes up; the title the terminal had comes back when the
+  console leaves. Both are on, each with a switch under `[console]`. Inside tmux the bell
+  marks the window with nothing set up, so it is what reaches a phone over SSH. Tested on a
+  pseudo-terminal; not yet looked at in each terminal program or in tmux.
+- **A `/` that forgives** (P62, [#40](https://github.com/MFisher14/ctf-flightdeck/issues/40)).
+  The command menu finds a command from the second word of its name or from an alias (`/q`,
+  `/exit`, `/settings`, `/lanes`), lists what a command takes after its name (lanes, challenges,
+  themes, layouts, sort modes, `on` and `off`), and says `No commands match "/x"` when nothing
+  does. What Enter runs is as strict as it was. Not built: a lane offered after every lane
+  command, `park` after `/kill`, and a search of the commands' descriptions.
+- **A calm lane view** (P63). In the simple layout a lane's view is one row for each thing
+  the lane did, a run of tool calls on two, and a needs-you card of three rows at most;
+  `ctrl+o` or `/details` shows every line and the full card, which is what the deck layout
+  opens with. Text selects with the mouse and is copied when the button comes up, and `/copy`
+  copies a lane's last output, its command, its flag or its whole transcript with no mouse. A
+  lane restarted by `/attach` or `/kill` from its own view takes the view to the fresh lane.
+  Not built: selecting in the full card, the diff and the tables (the terminal's own selection
+  reaches them), and a calm card in the compact layout.
+- **The command bar names the lane it talks to** (P64,
+  [#39](https://github.com/MFisher14/ctf-flightdeck/issues/39)). The bar's border reads
+  `to L04 · Ticket Desk` and follows the selection in the lane list and the lane in a lane's
+  view; `no lane` when there is none, `the run` while a command that takes no lane is typed,
+  the lane a command names while it is typed, and `L04 has finished` or `L04 takes no more
+  turns` for a lane that would refuse what is typed. The empty bar reads `a message, or / for
+  commands` in both views. Not built: a border colour of its own for each of the three.
+- **`?` opens help for where you are** (P65,
+  [#41](https://github.com/MFisher14/ctf-flightdeck/issues/41)). In a lane, `?` on the empty
+  chat box opens help; with text in the box it is a question mark, and the simple key line
+  there reads `esc lanes  / commands  ? help  ctrl+o details`. Help opens on the lane in front
+  of the player: the keys its key line has, each with its sentence, then the keys of the view
+  it was opened from, the other view's and the ones both have. Not built: `? help` on the
+  deck's and the compact layout's key lines in a lane.
+- **A quiet header and quiet rows in the simple layout** (P66,
+  [#42](https://github.com/MFisher14/ctf-flightdeck/issues/42)). Only what says "look here"
+  keeps a block in the simple header: flightdeck, `host`, `AUTOPILOT`, `▲ N need you` and
+  `queue held`; the event's name, `team`, the queue and the dollars are text, the mock tag
+  muted. A lane that has done nothing yet reads `starting`, muted, with a blank cost. Not
+  built: a header whose pieces the player chooses, and `starting` in the deck and compact
+  layouts.
+- **`/theme` and `/layout` as lists that are tried and can be saved** (P67,
+  [#44](https://github.com/MFisher14/ctf-flightdeck/issues/44)). Alone, each opens a list; the
+  console behind it is drawn in the row the cursor is on; Enter keeps it for the run, `esc`
+  puts back what was there, and `s` saves it under `[console]` in the config. `/config` has
+  both, with a choice to save them. The config is changed in one place (`config_edit.py`),
+  which `pack install` and `plugin add` now use too.
+- **`space` peeks at the selected lane** (P68,
+  [#46](https://github.com/MFisher14/ctf-flightdeck/issues/46)). A panel between the lane list
+  and the why line shows the lane's last six steps, one row each, and follows the selection;
+  the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
+  and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
+  In the mock, `,` freezes the clock.
+
+Not verified yet: rCTF, ctfd-owl and chall-manager have met fakes only, never a real site; the
+need-you count in the terminal's title and the bell, and copying with the mouse, were tested on
+a pseudo-terminal and headless, not looked at in each terminal program or in tmux.
+
+Known limits, each said where it applies:
+
+- The rctf preset has met a stand-in only: it was written from rCTF's public source and tested
+  against a fake that answers in that shape on 127.0.0.1, never a real rCTF.
+- The http platform does not page a listing, download through a route per challenge, send a
+  form-encoded body or a CSRF header, or start an instance; `flightdeck start` and the home
+  screen's form do not offer it.
+- `ctfd_owl` and `chall_manager` were built from the two plugins' public source, against fakes
+  of that source. Neither has met a real site, a fork or an older release of its plugin.
+- gdb runs only binaries of the lane image's own architecture (no emulator in the image), its
+  tracing was run on arm64 only, and no run has yet measured what gdb and radare2 change in
+  solves.
+- No plugin has met a real platform: the plugin path was built against synthetic plugins and a
+  stand-in on 127.0.0.1.
+- A plugin is not sandboxed: it runs as the player, and `plugin add` says so before it asks.
+- A plugin provides a platform and nothing else: no console commands, detectors, notification
+  sinks or instances from one, no settings for it in the profile, no pinning of its files, and
+  `flightdeck start` and the home screen's form do not offer a plugin's platform.
+- Saving a theme or a layout edits the config line by line: a `[console]` written as dotted
+  keys or as an inline table is refused and left as it was, with the line to write by hand.
+  There is no key for the layout switch. The lists were driven by headless tests and once on a
+  pseudo-terminal, not looked at in a terminal program.
+- The five built-in palettes were checked for contrast, not judged by eye on many terminals.
+- The gallery has no picture of the compact layout or of autopilot yet
+  ([SCREENSHOTS.md](SCREENSHOTS.md)).
+
 ## Released: 0.4.0, M6 the solver pack and the first run (2026-11-13)
 
 The author's own solvers and the pipeline he won events with come into flightdeck (D24; P29 to
@@ -44,6 +187,7 @@ Known limits of what was ported, each said where it applies:
 
 - The Game Master adapter and the `ctfd_docker` plugin shape were built against fakes and have
   not met a real service; `docker_per_team` is the plugin shape seen working at an event.
+  (`ctfd_docker` matched no plugin and was dropped after this release: P57.)
 - Instances are started in the queue's order, not highest value first, and a Docker lane whose
   instance came back at another address must be killed and queued again.
 - Rotating-flag windows are counted on this machine's clock, not the platform's.
@@ -161,12 +305,20 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
+- **ctfd-whale instances.** Not built (P57). Read from its source, not run: a start first
+  removes whatever container the account runs, so a careless second start resets a lane's own
+  target; asking about a challenge other than the running one is refused, not answered "none";
+  and the address comes as an `nc` line, a link's HTML, a pwntools snippet or `[ssl] host port`,
+  some of them TLS endpoints that are no web server, for which a lane's instance has no form
+  yet. It wants its own reader, a fake of each form, and a run against a local CTFd with the
+  plugin before anyone relies on it.
 - **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
   layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the
   phone; needs its own sign-in and permission design.
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
-  in terminals that draw them; plain Unicode stays the default.
+  in terminals that draw them; plain Unicode stays the default. Still later: a theme (P52)
+  changes colours only, never a glyph.
 - **Installs beyond PyPI.** Built, and first used by the release after 0.2.0: the release
   workflow builds a `.deb` for amd64 and arm64 that brings its own Python (Debian 12 has 3.11),
   installs each in a clean Debian 12 container and attaches them to the GitHub release, and it

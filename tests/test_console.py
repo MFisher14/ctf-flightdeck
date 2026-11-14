@@ -25,7 +25,7 @@ import rich.console
 from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
-from textual.widgets import DataTable, OptionList, RichLog, Select, Static
+from textual.widgets import DataTable, OptionList, Select, Static
 
 from ctf_flightdeck import credentials, fmt
 from ctf_flightdeck.console import room, theme, views
@@ -36,6 +36,7 @@ from ctf_flightdeck.console.fleet import key_room as fleet_key_room
 from ctf_flightdeck.console.focus import COMPACT_KEY_LABELS as FOCUS_COMPACT_KEYS
 from ctf_flightdeck.console.focus import KEY_LABELS as FOCUS_KEYS
 from ctf_flightdeck.console.focus import FocusScreen
+from ctf_flightdeck.console.lanelog import LaneLog
 from ctf_flightdeck.console.screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
 from ctf_flightdeck.console.widgets import CommandBar
@@ -67,6 +68,55 @@ from deadline import within
 SIZE = (160, 46)
 NARROW = (120, 36)
 WIDE = (190, 46)  # every key of the fleet's key line fits, in team mode too
+
+
+# ---------------------------------------------------------------------- the mouse
+
+
+def test_a_console_told_to_leave_the_mouse_never_asks_the_terminal_for_it():
+    """What the terminal is sent when the console starts: with `mouse` off, none of the modes
+    that make it report clicks, drags and the wheel (so they stay the terminal's own)."""
+    from ctf_flightdeck.console.terminal import TerminalDriver
+
+    asks = ("\x1b[?1000h", "\x1b[?1003h", "\x1b[?1015h", "\x1b[?1006h")
+
+    async def sent(**kw) -> list[str]:
+        app = FlightdeckApp(FakeWorld(scenarios.get("sstv")).deck, **kw)
+        assert app.driver_class is TerminalDriver
+        driver = app.driver_class(app, mouse=True)  # as Textual makes it: App.run() asks for the mouse
+        written: list[str] = []
+        driver.write = written.append
+        driver.flush = lambda: None
+        driver._enable_mouse_support()
+        return written
+
+    assert [code for code in asyncio.run(sent()) if code in asks] == list(asks)  # the default: the console has the mouse
+    assert asyncio.run(sent(mouse=False)) == []
+
+
+@pytest.mark.parametrize("table, mouse", [("", True), ("[console]\nmouse = false\n", False), ("[console]\nmouse = true\n", True)])
+def test_the_mock_and_a_run_leave_the_mouse_when_the_config_says_so(tmp_path, monkeypatch, table, mouse):
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import cli
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.run import Run
+
+    config = tmp_path / "config.toml"
+    config.write_text('[models]\nladder = ["m"]\n' + table)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    opened = []
+    monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: opened.append(self.mouse))
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 0, result.output
+    assert opened == [mouse]
+
+    from types import SimpleNamespace
+
+    # what Run.app reads of a run: its console is made by the code a real run's is
+    of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
+                               release=None, shutdown=None)
+    assert Run.app(of_a_run).mouse is mouse
 
 
 # ---------------------------------------------------------------------- driving the app
@@ -192,6 +242,20 @@ def _runs(app: FlightdeckApp) -> tuple[list[tuple[str, float, int, float, str]],
         for cls, x, width, row, body in SPAN.findall(svg)
     ]
     return runs, dict(FILL.findall(svg))
+
+
+BACKGROUND = re.compile(r'<rect fill="(#[0-9a-fA-F]{6})"')
+SVG_FRAME = frozenset({"#292929", "#c5c8c6"})  # the picture's own window frame, and the text no style colours
+
+
+def screen_colors(app) -> set[str]:
+    """Every color on the screen, lower-case: of the text (the style classes the SVG export
+    uses) and of the backgrounds behind it (its filled rectangles). The export's own window
+    frame is in it too (SVG_FRAME)."""
+    svg = app.export_screenshot()
+    used = set(re.findall(r'class="([^"]*-r\d+)"', svg))
+    text = {color for cls, color in FILL.findall(svg) if cls in used}
+    return {color.lower() for color in text | set(BACKGROUND.findall(svg))}
 
 
 def screen_lines(app: FlightdeckApp) -> list[str]:
@@ -682,7 +746,7 @@ def test_question_mark_opens_help_that_scrolls_and_escape_closes_it():
         await press(pilot, "question_mark")
         help_screen = app.screen
         assert isinstance(help_screen, HelpScreen)
-        assert "Keys (fleet)" in screen_text(app)
+        assert "Keys in the lane list" in screen_text(app)
         body = help_screen.query_one("#help-body")
         assert isinstance(body, ScrollableContainer)
         assert body.max_scroll_y > 0  # longer than the box: it must scroll
@@ -710,6 +774,27 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
         assert ("$0.42… A coding-agent CLI's turn is under way: it reports the turn's cost when the turn ends "
                 "(on the board, … is a queued challenge)") in text
         assert "… queued (after dollars: a cost still to come)" in text
+
+    drive(app, script, size=(160, 170))
+
+
+def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
+    world, app = make("sstv")
+    listed = "/theme [name] the console's colours; alone: try the themes you have, and save one"
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen) and listed in prompt_text(app)
+        await press(pilot, "escape")
+        await press(pilot, "tab")
+        await press(pilot, *"/th")
+        assert bar(app).menu_open and listed in " ".join(region_text(app, "#bar").split())
+        await press(pilot, "tab")
+        assert bar(app).field.value == "/theme "
+        await type_line(pilot, "light")
+        assert theme.active().name == "light" and app.theme == "fd-light"
+        assert "theme light for this run (this console has no config file)" in status_line(app)
+        assert theme.PAGE == "#fafafa" and "#fafafa" in screen_colors(app) and "#121212" not in screen_colors(app)
 
     drive(app, script, size=(160, 120))
 
@@ -960,14 +1045,17 @@ def _log(lane) -> list[str]:
     return [shown[a.kind] + a.text for a in lane.actions if a.kind in shown]
 
 
+def shown_lines(focus: FocusScreen) -> list[str]:
+    """Every line of the transcript's rows, in view or not, whole (LaneLog.texts: a row of
+    two lines is two here)."""
+    return [line.strip() for text in focus.query_one("#transcript", LaneLog).texts() for line in text.split("\n")]
+
+
 def assert_whole_transcript(focus: FocusScreen, lane) -> None:
     """The transcript holds every step and message of `lane`, once and in order, scrolled
-    out of view or not (a long entry wraps: its first line starts it)."""
-    lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
-    got = [line for line in lines if line.startswith(("⏺ ", "› you  "))]
-    want = _log(lane)
-    assert len(got) == len(want), (len(got), len(want))
-    assert all(w.startswith(g) for g, w in zip(got, want)), list(zip(got, want))
+    out of view or not."""
+    got = [line for line in shown_lines(focus) if line.startswith(("⏺ ", "› you  "))]
+    assert got == _log(lane)
 
 
 def test_plain_text_in_the_chat_is_a_hint_and_the_transcript_shows_it():
@@ -1826,8 +1914,7 @@ def test_what_a_lane_did_is_shown_without_its_credentials_and_the_deck_keeps_it_
         assert "▲ Loop: The same output came back twice: OPENROUTER_API_KEY=[redacted]" in region_text(app, "#why")
         focus = await open_focus(pilot, app, lane.id)
         nothing_raw("focus")
-        lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
-        assert [line for line in lines if line.startswith(("⏺", "⎿", "The same"))] == [
+        assert [line for line in shown_lines(focus) if line.startswith(("⏺", "⎿", "The same"))] == [
             f"⏺ submit {flag}",
             "⏺ curl -H 'Authorization: Bearer [redacted]' 127.0.0.1",
             "⎿  OPENROUTER_API_KEY=[redacted]",
@@ -2410,7 +2497,7 @@ def test_reading_back_in_the_transcript_is_not_undone_by_new_steps():
     async def script(pilot):
         lane = max((x for x in deck.active_lanes() if x.state is LaneState.RUNNING), key=lambda x: len(x.actions))
         focus = await open_focus(pilot, app, lane.id)
-        log = focus.query_one("#transcript", RichLog)
+        log = focus.query_one("#transcript", LaneLog)
         await step_until(pilot, app, lambda: log.max_scroll_y > 0, "more transcript than fits")
         assert log.scroll_y == log.max_scroll_y  # it follows the lane at first
         await press(pilot, "pageup")
@@ -2466,10 +2553,10 @@ def test_the_focus_view_has_no_clock_keys_in_its_header_and_tab_goes_to_the_file
     world, app = make("sstv")
 
     async def script(pilot):
-        assert "space freezes" in region_text(app, "#header")  # in the fleet, space does
+        assert "▶ live: , freezes" in region_text(app, "#header")  # in the fleet, `,` does
         focus = await open_focus(pilot, app, "L01")
         header = region_text(app, "#header")
-        assert "▶ live" in header and "space" not in header
+        assert "▶ live" in header and "freezes" not in header
         await press(pilot, "tab")
         assert app.focused is focus.query_one("#files")
 
@@ -2484,7 +2571,7 @@ def test_at_80x24_the_focus_view_keeps_rows_for_the_transcript():
         focus = await open_focus(pilot, app, lane.id)
         talk = focus.query_one("#talk-pane").content_region.height
         assert focus.query_one("#transcript").region.height >= 3
-        assert focus.query_one("#now").region.height <= (talk + 1) // 2
+        assert focus.query_one("#now-scroll").region.height <= (talk + 1) // 2  # the card's box: a taller card scrolls in it
         assert _transcript(app)  # some of it is drawn
 
     drive(app, script, size=(80, 24))
@@ -3147,7 +3234,7 @@ def test_help_and_the_command_menu_list_unhold_and_what_it_does():
         await pilot.pause()
         assert f"/unhold {said[:40]}" in " ".join(region_text(app, "#bar").split())
 
-    drive(app, script, size=(160, 100))  # tall enough for help to show every command without scrolling
+    drive(app, script, size=(160, 130))  # tall enough for help to show every command without scrolling
 
 
 def test_the_header_keeps_need_you_and_queue_held_and_gives_the_reason_only_room_tokens_and_the_clock_leave():
@@ -3205,7 +3292,7 @@ def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_fo
         await press(pilot, "escape", "question_mark")
         assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
 
-    drive(app, script, size=(160, 114))  # tall enough for the whole help: it scrolls on a shorter terminal
+    drive(app, script, size=(160, 170))  # tall enough for the whole help: it scrolls on a shorter terminal
     log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
     log.attach(deck)
     log.close()
@@ -3917,7 +4004,7 @@ def test_help_lists_the_autopilot_command():
         await press(pilot, "question_mark")
         assert "/autopilot [on|off] engage autopilot (it needs a run budget), or take the controls back" in prompt_text(app)
 
-    drive(app, script, size=(160, 100))
+    drive(app, script, size=(160, 130))
 
 
 def test_slash_note_tells_every_lane_from_a_lanes_chat_box_and_is_not_that_lanes_message_alone():

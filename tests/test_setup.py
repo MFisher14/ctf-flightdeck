@@ -18,6 +18,7 @@ from l1_kit import docker_not_run
 
 ANSWERS = Answers("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", ("vendor/small", "vendor/big"), "docker")
 FAKE_PASTED_KEY = "fake_key_0123456789abcdef0123456789abcdef"  # synthetic: a key pasted where its variable's name goes
+CLAUDE_ON_OPENROUTER = "anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,anthropic/claude-opus-5.5"  # init's suggestion there
 
 
 def test_init_writes_a_config_that_loads_with_the_answers(tmp_path):
@@ -96,7 +97,7 @@ def test_init_says_what_the_host_runtime_means_where_it_is_chosen(tmp_path, monk
     monkeypatch.setenv("PATH", str(tmp_path))  # no docker here: host is the default answer
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     target = tmp_path / "config.toml"
-    asked = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input="openrouter\na/b\n\n")
+    asked = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input="openrouter\na/b\n\n\n")  # host, and no key pasted
     assert asked.exit_code == 0, asked.output
     assert load_config(target).lanes.runtime == "host"
     assert ("Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys) "
@@ -124,8 +125,9 @@ def test_init_away_from_a_terminal_names_every_missing_option_at_once(tmp_path, 
     result = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--path", str(tmp_path / "c.toml")])
     assert result.exit_code == 2 and not (tmp_path / "c.toml").exists()
     assert result.output.strip() == (
-        "flightdeck: init is not at a terminal, so it cannot ask: give --models ID,ID (weakest first) and --host or "
-        "--docker (see `flightdeck init --help`)"
+        "flightdeck: init is not at a terminal, so it cannot ask: give --models ID,ID (weakest first; suggested: --models "
+        f"{CLAUDE_ON_OPENROUTER}, OpenRouter's names for Claude Haiku, Sonnet and Opus 5.5, the ladder flightdeck would "
+        "start with on an API (docs/MODELS.md)) and --host or --docker (see `flightdeck init --help`)"
     )
     nothing = CliRunner().invoke(cli.app, ["init", "--path", str(tmp_path / "c.toml")])
     assert nothing.exit_code == 2
@@ -158,7 +160,7 @@ def test_init_at_a_terminal_asks_again_for_a_custom_api_and_never_shows_a_key_ty
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     key = FAKE_PASTED_KEY
     target = tmp_path / "config.toml"
-    answers = f"custom\nftp://models.example.test\nhttp://127.0.0.1:8000/v1\n{key}\nMY_MODEL_KEY\nm1\nhost\n"
+    answers = f"custom\nftp://models.example.test\nhttp://127.0.0.1:8000/v1\n{key}\nMY_MODEL_KEY\nm1\nhost\n\n"  # last: no key pasted
     result = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input=answers)
     assert result.exit_code == 0, result.output
     config = load_config(target)
@@ -261,10 +263,49 @@ def test_docker_problems_fail_the_doctor_only_for_a_docker_runtime(tmp_path, mon
 
 def test_report_marks_each_check_and_says_what_to_do():
     text, status = report([Check("python", True, "3.12"), Check("api key", False, "K is not set", "export K=...")])
-    assert text.splitlines() == ["ok   python: 3.12", "FAIL api key: K is not set", "     fix: export K=..."]
+    assert text.splitlines() == ["ok   python: 3.12", "FAIL api key: K is not set", "     fix: export K=...",
+                                 "1 thing to fix before a run: the FAIL line above. Then run `flightdeck doctor` again."]
     assert status == 1
-    text, status = report([Check("terminal", False, "80x24", "bigger is easier", essential=False)])
-    assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice`.")
+    text, status = report([Check("python", True, "3.12")])
+    assert status == 0 and text.splitlines() == ["ok   python: 3.12", "Ready. Try `flightdeck practice`."]
+
+
+def test_doctors_last_line_is_the_one_to_act_on_the_count_to_fix_or_the_next_command():
+    """A player reads the last line: with something a run needs missing, it counts the FAIL
+    lines and says what to run then (it used to be the last check's own line, whatever that
+    was); with nothing missing it is Ready and the next command. Warnings are counted too,
+    as what a run does not wait for, and never make the status 1."""
+    ok, key, docker = Check("python", True, "3.12"), Check("api key", False, "K is not set", "export K=..."), Check("docker", False, "not running")
+    small = Check("terminal", False, "80x24", "bigger is easier", essential=False)
+    left = Check("leftovers", False, "a container a killed run left", essential=False)
+
+    def last(checks, **more) -> tuple[str, int]:
+        text, status = report(checks, **more)
+        assert text.endswith("\n") and not text.endswith("\n\n")
+        return text.splitlines()[-1], status
+
+    assert last([ok, key, docker, ok]) == (  # the last check passed: the last line is still the count
+        "2 things to fix before a run: the FAIL lines above. Then run `flightdeck doctor` again.", 1)
+    assert last([key, small]) == ("1 thing to fix before a run: the FAIL line above. Then run `flightdeck doctor` again. "
+                                  "(1 warning besides: a run does not wait for it.)", 1)
+    assert last([key, small, left])[0].endswith("(2 warnings besides: a run does not wait for them.)")
+    assert last([ok, small]) == ("Ready, with 1 warning above that a run does not wait for. Try `flightdeck practice`.", 0)
+    assert last([small, left, ok]) == ("Ready, with 2 warnings above that a run does not wait for. Try `flightdeck practice`.", 0)
+    # for a coding-agent CLI's lanes, both the check to repeat and the practice to try are that CLI's
+    assert last([key], agent="codex") == ("1 thing to fix before a run: the FAIL line above. Then run `flightdeck doctor --agent codex` again.", 1)
+    assert last([ok], agent="codex") == ("Ready. Try `flightdeck practice --agent codex`.", 0)
+
+
+def test_doctor_with_no_config_ends_by_saying_one_thing_is_left_and_how_to_check_again(tmp_path, monkeypatch):
+    """The command itself, as a new player first runs it: no config, so `flightdeck init` is
+    the fix under the FAIL line, and the last line counts what stops a run."""
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker to ask
+    result = CliRunner().invoke(cli.app, ["doctor", "--config", str(tmp_path / "none.toml")])
+    lines = result.stdout.splitlines()
+    failed = [line for line in lines if line.startswith("FAIL ")]
+    assert result.exit_code == 1 and failed and f"FAIL config: no config at {tmp_path / 'none.toml'}" in failed
+    count = f"{len(failed)} thing{'' if len(failed) == 1 else 's'} to fix before a run: the FAIL line{'' if len(failed) == 1 else 's'} above."
+    assert lines[-1].startswith(f"{count} Then run `flightdeck doctor` again."), lines[-1]
 
 
 def test_doctor_says_plainly_when_there_is_no_config_and_points_at_a_broken_one(tmp_path):
@@ -362,7 +403,7 @@ def test_init_for_anthropic_writes_the_claude_ladder_with_anthropics_prices(tmp_
 def test_at_a_terminal_init_for_anthropic_offers_openrouter_as_the_fallback_when_its_key_is_known(tmp_path, monkeypatch, answer, wanted):
     from ctf_flightdeck.config import FallbackConfig
 
-    result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, router_key=True, answers=f"\n{answer}\nhost\n")
+    result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, router_key=True, answers=f"\n{answer}\nhost\n\n")
     assert result.exit_code == 0, result.output
     assert "OPENROUTER_API_KEY is set: use OpenRouter for a lane whose calls to Anthropic keep failing?" in result.output
     config = load_config(target)
@@ -382,7 +423,7 @@ def test_an_openrouter_key_in_the_keys_file_is_known_too(tmp_path, monkeypatch):
     keys.write_text(f"OPENROUTER_API_KEY={ROUTER_KEY}\n")
     keys.chmod(0o600)
     monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
-    result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, answers="\ny\nhost\n")
+    result, target = anthropic_init(tmp_path, monkeypatch, terminal=True, answers="\ny\nhost\n\n")
     assert result.exit_code == 0, result.output
     assert load_config(target).fallback.ladder == OPENROUTER_LADDER
 
@@ -536,7 +577,10 @@ def test_doctor_for_agent_lanes_only_warns_about_the_api_key_they_never_use(tmp_
     assert key.detail == ("OPENROUTER_API_KEY is not set (only flightdeck's own lanes use it; claude lanes use claude's "
                           "own credential and models)")
     text, status = report(checks, agent="claude")
-    assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice --agent claude`.")
+    warned = sum(1 for check in checks if not check.ok)  # the unused API key is one of them
+    assert status == 0 and warned >= 1 and text.splitlines()[-1] == (
+        f"Ready, with {warned} warning{'' if warned == 1 else 's'} above that a run does not wait for. "
+        "Try `flightdeck practice --agent claude`.")
     assert "fake-oauth-token-for-doctor-tests" not in text
     own = doctor(cfg, environ=fake_claude_bin)  # flightdeck's own lanes do need the key
     assert {c.name: c for c in own}["api key"].essential and report(own)[1] == 1
@@ -556,6 +600,40 @@ def test_doctor_for_docker_agent_lanes_runs_plays_probe_of_the_lane_image(tmp_pa
     assert image.detail == "the lane image debian:bookworm-slim has no claude CLI, so claude lanes cannot run in Docker"
     assert image.fix.startswith("play with --host (lanes on this machine), or build an image FROM debian:bookworm-slim")
     assert report(checks, agent="claude")[1] == 1  # play --agent claude would refuse this config
+
+
+def test_doctor_warns_of_a_lane_image_that_another_flightdecks_dockerfile_built(tmp_path, monkeypatch):
+    """The image is on this machine, so nothing else asks for a rebuild: the label `image build`
+    writes says whether today's Dockerfile built it. One an older flightdeck built (no label,
+    or another fingerprint) gets a warning that never fails doctor; a player's own image
+    without the label gets none, and no container is started to find out."""
+    from ctf_flightdeck import lane
+    from test_run import label_docker
+
+    label = "org.ctf-flightdeck.lane.dockerfile"
+    docker = label_docker(tmp_path, monkeypatch, {IMAGE: None, "mine:1": {"maintainer": "me"}, "theirs:2": {label: "0123456789abcdef"}})
+
+    def warning(image: str) -> list[Check]:
+        path = tmp_path / f"{image.replace(':', '-')}.toml"
+        path.write_text(f'[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "docker"\nimage = "{image}"\n')
+        checks = doctor(path, environ={})
+        assert {c.name: c for c in checks}["lane image"].ok
+        return [c for c in checks if c.name == "lane image build"]
+
+    (old,) = warning(IMAGE)  # built before the label, by flightdeck 0.4.0 or earlier
+    assert (old.ok, old.essential) == (False, False)
+    assert old.detail == (
+        f"{IMAGE} was not built from the Dockerfile this flightdeck ships (another flightdeck built it, or it was built by "
+        "hand), so its lanes' shells may lack programs this one's have"
+    )
+    assert old.fix == "run `flightdeck image build` to build it again (lanes run in the old one all the same)"
+    text, status = report([old])
+    assert status == 0 and text.startswith("warn lane image build: ")
+    assert warning("mine:1") == []  # the player's own image: what it holds is theirs
+    (other,) = warning("theirs:2")  # flightdeck's image under another tag, from another Dockerfile
+    assert other.detail.startswith("theirs:2 was not built from the Dockerfile this flightdeck ships")
+    (docker / "images.json").write_text('{"%s": {"%s": "%s"}}' % (IMAGE, label, lane.fingerprint()))
+    assert warning(IMAGE) == []  # today's
 
 
 def test_doctor_on_a_host_config_does_not_ask_for_docker_or_its_image_and_names_no_missing_option(tmp_path, monkeypatch):
@@ -622,14 +700,16 @@ def test_doctor_says_how_an_installed_coding_agent_cli_gets_its_credential_not_t
 
 def terminal_check(tmp_path, monkeypatch, size: tuple[int, int], answers: Answers = ANSWERS) -> list[str]:
     """What `flightdeck doctor` says of a terminal of this size (its line, and its fix when it
-    warns), with a config written from `answers`. No docker on PATH and no key set: doctor
-    runs nothing and reads no key."""
+    warns), with a config written from `answers` that opens the console in the deck layout,
+    the one with the most to leave out (the simple layout's line: tests/test_layout.py).
+    No docker on PATH and no key set: doctor runs nothing and reads no key."""
     monkeypatch.setenv("PATH", str(tmp_path))
     if answers.key_env:
         monkeypatch.delenv(answers.key_env, raising=False)
     path = tmp_path / f"{answers.runtime}-{answers.max_lanes}.toml"
     if not path.exists():
         write_config(answers, path)
+        path.write_text(path.read_text() + '\n[console]\nlayout = "deck"\n')
     monkeypatch.setattr(os, "get_terminal_size", lambda *args: os.terminal_size(size))
     result = CliRunner().invoke(cli.app, ["doctor", "--config", str(path)])
     lines = result.stdout.splitlines()
@@ -851,3 +931,241 @@ def test_doctor_reads_the_host_where_the_configs_runs_go_and_puts_the_line_after
     assert asked == [tmp_path / "runs"]
     assert not host.ok and not host.essential and "1.0 GiB of RAM available is under min_free_ram_mb 2048" in host.detail
     assert [c.name for c in doctor(tmp_path / "absent.toml", environ={})].count("host") == 1  # with no config too
+
+
+# ---------------------------------------------------------------------- the API key, at init's hidden prompt
+
+PASTED_KEY = "sk-or-synthetic-" + "0123456789abcdef" * 2  # synthetic: the key a player pastes
+
+
+def key_init(tmp_path, monkeypatch, *args: str, answers: str, terminal: bool = True):
+    """init for OpenRouter at a terminal, with no key set anywhere and a keys file of the test's own."""
+    keys_file = tmp_path / "keys" / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    for variable in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(cli, "_at_terminal", lambda: terminal)
+    target = tmp_path / "config.toml"
+    args = args or ("--provider", "openrouter", "--models", "a/b", "--host")
+    return CliRunner().invoke(cli.app, ["init", *args, "--path", str(target)], input=answers), target, keys_file
+
+
+def test_at_a_terminal_init_asks_for_the_key_out_of_sight_and_keeps_it_in_the_keys_file(tmp_path, monkeypatch):
+    from ctf_flightdeck import keys
+
+    result, target, keys_file = key_init(tmp_path, monkeypatch, answers=f"{PASTED_KEY}\n")
+    assert result.exit_code == 0, result.output
+    assert "Paste your key for OPENROUTER_API_KEY (nothing shows as you paste" in result.output
+    assert keys.load_keys(keys_file) == {"OPENROUTER_API_KEY": PASTED_KEY}  # load_keys refuses a file others can read
+    assert keys_file.stat().st_mode & 0o777 == 0o600
+    assert PASTED_KEY not in result.output and PASTED_KEY not in target.read_text()
+    assert f"key: OPENROUTER_API_KEY is saved in {keys_file}" in result.output
+    assert "put OPENROUTER_API_KEY=<your key>" not in result.output  # the step the player no longer does by hand
+    found = {check.name: check for check in doctor(target, environ={})}
+    assert found["api key"].ok and found["api key"].detail == "OPENROUTER_API_KEY is set (in your keys file)"
+
+
+def test_init_asks_again_for_a_key_the_keys_file_could_not_hold_and_never_repeats_it(tmp_path, monkeypatch):
+    from ctf_flightdeck import keys
+
+    quoted = f'"{PASTED_KEY}"'
+    result, target, keys_file = key_init(tmp_path, monkeypatch, answers=f"{quoted}\n{PASTED_KEY}\n")
+    assert result.exit_code == 0, result.output
+    assert "That key is in quotes: give it without them." in result.output
+    assert result.output.count("Paste your key for OPENROUTER_API_KEY") == 2 and PASTED_KEY not in result.output
+    assert keys.load_keys(keys_file) == {"OPENROUTER_API_KEY": PASTED_KEY}
+
+
+def test_enter_alone_skips_the_key_and_init_says_where_it_goes(tmp_path, monkeypatch):
+    result, target, keys_file = key_init(tmp_path, monkeypatch, answers="\n")
+    assert result.exit_code == 0, result.output
+    assert load_config(target).api.key_env == "OPENROUTER_API_KEY" and not keys_file.exists()
+    assert f"next: put OPENROUTER_API_KEY=<your key> in {keys_file} (chmod 600), or export OPENROUTER_API_KEY=<your key>" in result.output
+
+
+def test_init_asks_for_no_key_that_is_set_or_not_needed_or_away_from_a_terminal(tmp_path, monkeypatch):
+    result, target, keys_file = key_init(tmp_path, monkeypatch, answers="", terminal=False)
+    assert result.exit_code == 0 and "Paste your key" not in result.output and not keys_file.exists()
+    result, target, keys_file = key_init(tmp_path, monkeypatch, "--provider", "local", "--models", "m", "--host", "--force", answers="")
+    assert result.exit_code == 0 and "Paste your key" not in result.output  # a server on this machine needs no key
+    monkeypatch.setenv("OPENROUTER_API_KEY", ROUTER_KEY)  # set in the environment: found, not asked for (no answer is given)
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    result = CliRunner().invoke(cli.app, ["init", "--provider", "openrouter", "--models", "a/b", "--host", "--force", "--path", str(target)])
+    assert result.exit_code == 0, result.output
+    assert "Paste your key" not in result.output and "key: OPENROUTER_API_KEY is set in your environment" in result.output
+    assert not keys_file.exists() and ROUTER_KEY not in result.output
+
+
+def test_init_does_not_ask_for_a_key_a_keys_file_it_cannot_use_would_refuse(tmp_path, monkeypatch):
+    keys_file = tmp_path / "keys" / "keys.env"
+    keys_file.parent.mkdir()
+    keys_file.write_text("OTHER=one\n")
+    keys_file.chmod(0o644)  # readable by others: flightdeck refuses it, so nothing is asked for it
+    result, target, _ = key_init(tmp_path, monkeypatch, answers="")
+    assert result.exit_code == 0, result.output
+    assert "Paste your key" not in result.output and "chmod 600" in result.output
+    assert "so OPENROUTER_API_KEY is not asked for here" in result.output
+    assert load_config(target).models == ("a/b",) and keys_file.read_text() == "OTHER=one\n"
+
+
+def test_init_asks_for_the_fallbacks_key_too_and_keeps_each_under_its_own_variable(tmp_path, monkeypatch):
+    from ctf_flightdeck import keys
+
+    other = "sk-ant-synthetic-" + "f" * 24
+    result, target, keys_file = key_init(tmp_path, monkeypatch, "--provider", "anthropic", "--fallback", "--host",
+                                         answers=f"\n{other}\n{PASTED_KEY}\n")  # the ladder taken, then the two keys
+    assert result.exit_code == 0, result.output
+    assert keys.load_keys(keys_file) == {"ANTHROPIC_API_KEY": other, "OPENROUTER_API_KEY": PASTED_KEY}
+    assert other not in result.output and PASTED_KEY not in result.output
+    assert other not in target.read_text() and PASTED_KEY not in target.read_text()
+
+
+# ---------------------------------------------------------------------- a ladder for every provider
+
+
+def test_every_provider_but_custom_has_models_to_offer_that_make_a_config_that_loads(tmp_path):
+    """No choice of provider dead-ends at the models question: each has a default the answer
+    functions take, and the config written from it loads."""
+    from ctf_flightdeck import setup
+
+    assert [name for name, _ in setup.provider_menu()] == list(setup.PROVIDER_CHOICES)  # the menu's own order
+    for provider in setup.PROVIDER_CHOICES:
+        offered, why = setup.default_models(provider)
+        if provider == "custom":
+            assert (offered, why) == ("", "")  # only its server can name its models
+            continue
+        assert why, provider
+        ladder = setup.models_answer(offered)
+        config = load_config(write_config(setup.answers_for(provider, ladder, "host"), tmp_path / f"{provider}.toml"))
+        assert config.models == ladder and config.api.base_url == setup.provider_api(provider)[0]
+    assert setup.default_models("anthropic")[0] == "claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5"
+    assert setup.default_models("openrouter")[0] == CLAUDE_ON_OPENROUTER  # OpenRouter's names for that same ladder
+    assert setup.default_models("openai")[0] == "gpt-5.4-mini,gpt-5.4"
+    assert setup.default_models("local")[0] == "gpt-oss:20b"
+
+
+@pytest.mark.parametrize("provider, ladder", [
+    ("openrouter", ("anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5")),
+    ("openai", ("gpt-5.4-mini", "gpt-5.4")),
+])
+def test_at_a_terminal_enter_takes_the_ladder_init_offers_for_openrouter_and_openai(tmp_path, monkeypatch, provider, ladder):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    target = tmp_path / "config.toml"
+    result = CliRunner().invoke(cli.app, ["init", "--provider", provider, "--host", "--path", str(target)], input="\n\n")
+    assert result.exit_code == 0, result.output
+    assert f"Suggested: {','.join(ladder)}, " in result.output and "Press Enter to take it, or give your own." in result.output
+    assert load_config(target).models == ladder
+
+
+def test_answers_for_a_provider_are_the_config_init_writes_for_it():
+    from ctf_flightdeck import setup
+
+    local = setup.answers_for("local", ("m",), "docker")
+    assert (local.base_url, local.key_env, local.dollar_cap, local.timeout, local.max_tokens) == ("http://127.0.0.1:11434/v1", "", None, 600, 8192)
+    router = setup.answers_for("openrouter", ("a/b",), "host", max_lanes=2)
+    assert (router.base_url, router.key_env, router.provider) == ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openai")
+    assert (router.dollar_cap, router.timeout, router.max_tokens, router.max_lanes, dict(router.prices)) == (2.0, None, None, 2, {})
+    claude = setup.answers_for("anthropic", ("claude-haiku-5-5", "claude-sonnet-5-5"), "host")
+    assert claude.provider == "anthropic" and list(claude.prices) == ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-sonnet-5"]
+    custom = setup.answers_for("custom", ("m",), "host", base_url="https://models.example.test/v1", key_env="")
+    assert (custom.base_url, custom.key_env, custom.dollar_cap) == ("https://models.example.test/v1", "", 2.0)
+    with pytest.raises(ValueError, match="no address or key variable of its own"):
+        setup.answers_for("custom", ("m",), "host")
+
+
+def test_a_setup_that_cannot_be_written_keeps_no_key_and_a_key_that_cannot_be_kept_leaves_no_config(tmp_path, monkeypatch):
+    from ctf_flightdeck import keys, setup
+
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    target = tmp_path / "config.toml"
+    with pytest.raises(ConfigError):  # an empty ladder: refused in memory, before the key goes anywhere
+        setup.write_setup(Answers("https://x.example/v1", "OPENROUTER_API_KEY", (), "host"), target, keys={"OPENROUTER_API_KEY": PASTED_KEY})
+    assert not keys_file.exists() and not target.exists()
+    with pytest.raises(ValueError, match="does not name"):
+        setup.write_setup(ANSWERS, target, keys={"SOME_OTHER_KEY": PASTED_KEY})
+    assert not keys_file.exists() and not target.exists()
+    keys_file.write_text("OTHER=one\n")
+    keys_file.chmod(0o644)
+    with pytest.raises(keys.KeysError, match="chmod 600") as refused:
+        setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY})
+    assert not target.exists() and PASTED_KEY not in str(refused.value) and keys_file.read_text() == "OTHER=one\n"
+    keys_file.chmod(0o600)
+    assert setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}) == target
+    assert keys.load_keys(keys_file) == {"OTHER": "one", "OPENROUTER_API_KEY": PASTED_KEY} and load_config(target).models == ANSWERS.models
+    with pytest.raises(FileExistsError):  # a config that is there: refused before the key is touched
+        setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": "another-synthetic-key"})
+    assert keys.load_keys(keys_file)["OPENROUTER_API_KEY"] == PASTED_KEY
+
+
+def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the_replaced_config_back(tmp_path, monkeypatch):
+    """The config is written before the key is kept: a write that fails (a full disk, a folder
+    that cannot be written) leaves the keys file as it was, the key already there too; and with
+    --force, a key the keys file refuses puts back the config the new one replaced."""
+    from pathlib import Path
+
+    from ctf_flightdeck import keys, setup
+
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    keys.save("OPENROUTER_API_KEY", "the-old-synthetic-key")
+    target = tmp_path / "config.toml"
+
+    def full(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "write_text", full)
+        with pytest.raises(OSError):
+            setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY})
+    assert not target.exists() and keys.load_keys(keys_file) == {"OPENROUTER_API_KEY": "the-old-synthetic-key"}
+    target.write_text("# the player's old config\n")
+    keys_file.chmod(0o644)
+    with pytest.raises(keys.KeysError):
+        setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
+    assert target.read_text() == "# the player's old config\n"
+
+
+def test_a_replaced_config_goes_back_byte_for_byte_with_its_mode(tmp_path, monkeypatch):
+    """With --force and a key the keys file refuses, the old config goes back as it was: its
+    line endings and bytes that are not UTF-8 too (a text round trip changes both), and its mode."""
+    import os
+
+    from ctf_flightdeck import keys, setup
+
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    keys.save("OPENROUTER_API_KEY", "the-old-synthetic-key")
+    keys_file.chmod(0o644)  # the keys file refuses to keep a key in a file others can read
+    target = tmp_path / "config.toml"
+    old = b"# the player's old config\r\n# caf\xe9\r\n"
+    target.write_bytes(old)
+    target.chmod(0o640)
+    with pytest.raises(keys.KeysError):
+        setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
+    assert target.read_bytes() == old and (os.stat(target).st_mode & 0o777) == 0o640
+    assert [entry.name for entry in tmp_path.iterdir() if entry.name.startswith("config.toml")] == ["config.toml"]
+
+
+def test_a_config_there_that_cannot_be_read_is_not_replaced_and_the_reason_is_said(tmp_path, monkeypatch):
+    """With --force, the config there is read first so it can go back: one that cannot be read
+    stops the setup before anything is written, with why, and no key is kept."""
+    import os
+
+    from ctf_flightdeck import keys, setup
+
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a file's mode does not stop a read")
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    target = tmp_path / "config.toml"
+    target.write_text("# the player's old config\n")
+    target.chmod(0o200)
+    try:
+        with pytest.raises(OSError) as caught:
+            setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
+    finally:
+        target.chmod(0o600)
+    assert caught.value.strerror == ("the config there cannot be read (Permission denied), so it is not replaced: "
+                                     "it could not be put back if the key cannot be kept")
+    assert target.read_text() == "# the player's old config\n" and not keys_file.exists()

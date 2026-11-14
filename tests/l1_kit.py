@@ -115,6 +115,8 @@ FAKE_DOCKER = r"""#!/bin/bash
 # create` fails saying what create.fail holds. The `docker run` of an egress proxy
 # (--entrypoint python3) is written to proxies.log, not runs.log: its arguments up to the
 # script, then its configuration; `docker logs` says the proxy is ready, or what logs.txt holds.
+# A lane's question about its image's analysis programs (workspace._TOOLS) is answered with
+# what tools.txt holds: nothing without one, never this machine's own gdb or r2.
 here="$(dirname "$0")"
 case "$1" in
   version) echo 99.0.0-fake ;;
@@ -147,6 +149,7 @@ case "$1" in
     while [ "${1#-}" != "$1" ]; do case "$1" in -w|-e|-u) shift 2 ;; *) shift ;; esac; done
     shift
     if [ "$1 $2" = "bash -c" ] && [ "${3#command -v }" != "$3" ]; then echo "/usr/bin/${3#command -v }"; exit 0; fi
+    if [ "$1 $2" = "bash -c" ] && [ "$4" = flightdeck-tools ]; then cat "$here/tools.txt" 2>/dev/null; exit 0; fi
     if [ "$1" = bash ]; then shift; exec bash "$@"; fi  # the program lookup, answered from this machine
     exit 0 ;;
   *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;
@@ -168,6 +171,9 @@ def install_fake_docker(tmp_path: Path, monkeypatch) -> Path:
 
 REQUIRE_DOCKER = "FLIGHTDECK_REQUIRE_DOCKER"  # =1: a test that needs Docker and DOCKER_IMAGE fails where it cannot run
 REQUIRE_LANE_IMAGE = "FLIGHTDECK_REQUIRE_LANE_IMAGE"  # =1: the same for the tests that need the lane image
+# =1: the same for the test that needs the solver pack's image as today's Dockerfile builds it. No CI job
+# sets it: none builds that image (some 3 GB, and the pack's 250 pinned libraries).
+REQUIRE_PACK_IMAGE = "FLIGHTDECK_REQUIRE_PACK_IMAGE"
 
 
 def docker_skip_reason(image: str = DOCKER_IMAGE) -> str | None:

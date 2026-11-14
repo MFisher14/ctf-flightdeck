@@ -12,7 +12,6 @@ import asyncio
 import hashlib
 import json
 import re
-import socket
 import stat
 from pathlib import Path
 
@@ -40,6 +39,7 @@ from ctf_flightdeck.platform.gamemaster import (
 )
 from ctf_flightdeck.platform.manual import load_board
 from fake_gm import HANG_UP, TOKEN, FakeAttempt, FakeGM, Reply, sample
+from serving import closed_port
 
 
 def client(fake: FakeGM, *, token: str = TOKEN, **options) -> GameMasterClient:
@@ -181,9 +181,7 @@ def test_a_read_that_keeps_failing_gives_up_and_says_how_often():
 
 
 def test_a_game_master_that_is_not_there_is_an_error_that_hides_the_token():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+    port = closed_port()
 
     async def run():
         async with GameMasterClient(f"http://127.0.0.1:{port}", TOKEN, backoff=0.001, max_retries=1) as c:

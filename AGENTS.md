@@ -3,8 +3,9 @@
 ctf-flightdeck is an open-source terminal harness for playing CTFs with AI agents. The player is the
 operator: the harness pulls and triages challenges, runs no-model (L1) solvers, spins up agent lanes,
 and submits. The player watches every lane and steps in when something looks wrong.
-**Status: 0.4.0 is released (PyPI, public on GitHub): M6, the solver pack (`packs/solvers`, D24), and the first run
-(`flightdeck start`, `/new`, the home screen: P45 to P50). Next: the Later milestone.**
+**Status: 0.5.0 is released (PyPI, public on GitHub): the simple layout and the calm lane view, themes, plugins,
+the http platform (rCTF), ctfd-owl and chall-manager instances, rules for 2026 events, gdb and radare2 in lanes
+(P51 to P68). Next: P69 onward, being built (`docs/ROADMAP.md`), then the Later milestone.**
 Keep this file short: every agent re-reads it on every turn.
 
 ## Where things are
@@ -23,9 +24,12 @@ Keep this file short: every agent re-reads it on every turn.
   the last release took it).
 - `docs/MODEL-APIS.md`, `docs/MODELS.md`: model APIs, keys, prices; which model for which job.
 - `docs/BOARDS.md`, `docs/SOLVERS.md`: the board folder and event profile; L1 packs.
+- `docs/PLUGINS.md`: a platform flightdeck does not know, through the player's own adapter (P53).
 - `packs/solvers/`: the solver pack (D24): its own `ctf` package, venv and tests
   (`packs/solvers/README.md`). Not in the wheel; nothing in `src/` imports it.
 - `docs/SCREENSHOTS.md`: the console, in pictures.
+- `scripts/demo.py`: plays the README's demo on the mock and writes `docs/screenshots/demo.gif`;
+  the tests play it too (CONTRIBUTING.md, "The README's demo").
 - `CONTRIBUTING.md` (setup, the commit guard) and `SECURITY.md` (what counts, how to report).
 - `private-notes/`: git-ignored local notes; most checkouts have none. Never copy from it into
   tracked files (the commit guard refuses the path).

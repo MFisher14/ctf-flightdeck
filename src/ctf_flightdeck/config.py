@@ -43,6 +43,19 @@ The optional [notify] table turns on the notification webhook (notify.py): webho
 the variable that holds its URL (a secret, read by webhook_url() as a key is; never the URL
 itself), and `on` lists which of NOTIFY_KINDS are sent (all of them when it is left out).
 
+The optional [console] table says how the console looks: `layout` (LAYOUTS), `mouse` (false:
+the console never asks the terminal for the mouse), `title` and `bell` (false: the console
+leaves the terminal's title alone, or never rings its bell: console/terminal.py) and `theme`, a
+built-in palette or the name of a theme file in the `themes` folder beside the config
+(themes.py). The palette is loaded here, so a theme that cannot be used stops the command that
+loads the config; the default is never used in its place. load_console() reads this table
+alone, for the mock, which needs no config. A running console writes `theme` and `layout` here
+when the player saves one (config_edit.save_console).
+
+[plugins.NAME] tables name the plugins the player added (`flightdeck plugin add`): NAME is the
+platform an event profile may then select, `path` the plugin's folder. Only the names and the
+paths are checked here: no file of a plugin is read and none of its code runs.
+
 Nothing that matters has a silent default. A missing file says how to create one, the
 model ladder must be filled in, and an unknown table or key is an error, so a typo
 fails loudly instead of quietly leaving the default in place. Every error names the file
@@ -64,6 +77,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
+from . import themes
 from .core.model import SUBMIT_POLICIES, UNLIMITED_LANES
 from .flagvariants import MAX_VARIANTS
 from .pricing import RATES, Price
@@ -73,7 +87,12 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot", "governor")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot", "governor",
+           "console", "plugins")
+LAYOUTS = ("simple", "deck")  # [console] layout: the lanes and what needs the player | the whole dashboard
+PLUGIN_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")  # a plugin's name, which is the name of the platform it provides
+# The platforms flightdeck has built in (preflight.PLATFORMS; a literal here: preflight imports this module).
+RESERVED_PLATFORMS = ("ctfd", "manual", "gamemaster", "http")
 NOTIFY_KINDS = ("flag", "needs-you", "disengaged")  # what [notify] on may list, and its default: all three
 _API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
@@ -216,6 +235,26 @@ class AutopilotConfig:
     third_after: int = 0  # seconds its first lane runs before a third lane, on a third model; 0: never
 
 
+@dataclass(frozen=True)
+class ConsoleConfig:
+    """[console]: how the console looks. `palette` is the theme `theme` names, loaded."""
+
+    layout: str = "simple"  # simple | deck (LAYOUTS)
+    theme: str = "flightdeck"  # a built-in theme, or NAME for themes/NAME.toml beside the config
+    palette: themes.Palette = themes.DEFAULT  # that theme's colours
+    mouse: bool = True  # false: the terminal keeps the mouse (its own text selection; every key still works)
+    title: bool = True  # false: the terminal's title is left alone (true: it says how many lanes need the player)
+    bell: bool = True  # false: the terminal's bell never rings (true: once each time more lanes need the player)
+
+
+@dataclass(frozen=True)
+class PluginRef:
+    """[plugins.NAME]: a plugin the player added. Nothing of it has been read."""
+
+    name: str  # the platform's name: what an event profile's `platform` selects
+    path: Path  # the plugin's folder, expanded (~)
+
+
 MAX_GOVERNOR_LOAD = 1000.0  # the largest [governor] max_load_per_cpu accepted
 MAX_GOVERNOR_MB = 1024 * 1024 * 1024  # the largest [governor] min_free_ram_mb or min_free_disk_mb accepted (1 PiB)
 
@@ -249,6 +288,8 @@ class Config:
     notify: NotifyConfig = NotifyConfig()  # [notify]; no webhook when the config has none
     autopilot: AutopilotConfig = AutopilotConfig()  # [autopilot]; off, with no budget, when the config has none
     governor: GovernorConfig = GovernorConfig()  # [governor]; on, with its defaults, when the config has none
+    console: ConsoleConfig = ConsoleConfig()  # [console]; the simple layout and the flightdeck theme when the config has none
+    plugins: dict[str, PluginRef] = field(default_factory=dict)  # [plugins.NAME]: the plugins the player added, by name
 
 
 @dataclass(frozen=True)
@@ -314,7 +355,35 @@ def _config(path: Path, doc: dict) -> Config:
         light_jobs=jobs,
         light_tables=tables,
         notify=_notify(path, _table(path, doc, "notify")),
+        console=_console(path, _table(path, doc, "console")),
+        plugins=_plugins(path, _table(path, doc, "plugins")),
     )
+
+
+def load_console(path: Path | None = None) -> ConsoleConfig:
+    """The [console] table of the config (default: default_config_path()), for a command that
+    needs no config (the mock). The defaults only when no file was named and the usual one is
+    not there. A file the caller or $FLIGHTDECK_CONFIG names must be there: a named file that
+    is missing is a ConfigError, never the defaults in its place. A file must be TOML with a
+    valid [console] table, or it is a ConfigError as in load_config(); its other tables are not
+    looked at, so a config that is not finished still gives the console its look."""
+    named = "the file asked for"
+    if path is None:
+        named = f"the file ${CONFIG_ENV} names" if os.environ.get(CONFIG_ENV) else ""
+        try:
+            path = default_config_path()
+        except ConfigError:
+            if named:  # the player named a file, and it cannot be found
+                raise
+            return ConsoleConfig()  # no home directory: no config file
+    else:
+        path = expand(Path(path))
+    if not path.exists():
+        if named:
+            raise ConfigError(f"{path}: no such file ({named}), so the console's layout and theme cannot be read from it")
+        if not path.is_symlink():  # (a link to nowhere is a config that is there and broken: _parse says so)
+            return ConsoleConfig()  # the usual config is not there: a player who has not set one up
+    return _console(path, _table(path, _parse(path), "console"))
 
 
 def api_key(config: Config) -> str | None:
@@ -589,6 +658,29 @@ variant_tries = 0               # when the platform calls a flag wrong, flightde
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
+
+# [console]
+# How the console looks. layout: "simple" (the default) shows one list of lanes, a short header and
+# only the keys that apply now; "deck" is the whole dashboard, with the board and every column.
+# In the console, /layout deck changes it for the rest of the run; /layout alone lists both, and
+# s there saves the one you chose in this file.
+# layout = "simple"
+# theme: the console's colours. Built in: "flightdeck" (the default), "light", "nord", "gruvbox"
+# and "dracula". Your own: NAME for the file themes/NAME.toml in this file's folder (docs/GUIDE.md,
+# "Themes", gives its keys). A theme that cannot be used is an error, never the default in its
+# place. In the console, /theme NAME tries one for the rest of the run; /theme alone lists them,
+# and s there saves the one you chose in this file.
+# theme = "flightdeck"
+# mouse: false leaves the mouse to your terminal, so you select and copy text the terminal's own
+# way; clicks and the wheel then do nothing in the console, and every key works as before.
+# mouse = true
+# title and bell: what tells you a lane needs you while you look at another window. title puts
+# the count in the terminal's title ("▲ 2 need you · flightdeck"; the title you had comes back
+# when the console leaves). bell rings the terminal's bell once each time the count goes up.
+# Inside tmux the bell marks the window with nothing set up; the title reaches the terminal
+# outside only with `set -g set-titles on`. false turns either off.
+# title = true
+# bell = true
 
 [agents]
 # Coding-agent CLIs as lanes (`flightdeck play --agent claude`): each CLI's own model ladder,
@@ -1329,6 +1421,55 @@ def _governor(path: Path, table: dict) -> GovernorConfig:
                          f"starts (0: no limit){_got(value)}")
         floors[name] = value
     return GovernorConfig(enabled=enabled, max_load_per_cpu=float(load), **floors)
+
+
+def _console(path: Path, table: dict) -> ConsoleConfig:
+    _known(path, ("console",), table, ("bell", "layout", "mouse", "theme", "title"))
+    layout = _choice(path, table, ("console", "layout"), ConsoleConfig().layout, LAYOUTS)
+    switches = {}
+    for key in ("mouse", "title", "bell"):
+        switches[key] = table.get(key, getattr(ConsoleConfig(), key))
+        if not isinstance(switches[key], bool):
+            raise _error(path, ("console", key), f"must be true or false{_got(switches[key])}")
+    if "theme" not in table:
+        return ConsoleConfig(layout=layout, **switches)  # no theme named: no theme file is looked for
+    name = table["theme"]
+    if not isinstance(name, str) or themes.NAME.fullmatch(name) is None:  # never shown: it is not a name
+        got = "" if isinstance(name, str) else _got(name)
+        raise _error(path, ("console", "theme"), f"must be a theme's name (lower-case letters, digits, - and _){got}")
+    try:
+        palette = themes.load(name, path.parent / "themes")
+    except themes.NoSuchTheme as exc:  # "names no theme: ...", which does not repeat the name
+        raise _error(path, ("console", "theme"), str(exc)) from None
+    except themes.ThemeError as exc:  # its text names the theme file
+        raise ConfigError(str(exc)) from None
+    return ConsoleConfig(layout=layout, theme=name, palette=palette, **switches)
+
+
+def _plugins(path: Path, table: dict) -> dict[str, PluginRef]:
+    """[plugins.NAME] path: the names and the folders only. No file is read and no code runs."""
+    plugins = {}
+    for name, entry in table.items():
+        if PLUGIN_NAME.fullmatch(name) is None:  # never shown: it is not a name
+            raise ConfigError(f"{path}: plugins: a plugin's name is lower-case letters, digits, - and _, starting with a "
+                              "letter, at most 32 characters")
+        if name in RESERVED_PLATFORMS:
+            raise ConfigError(f"{path}: plugins.{name}: {name} is a platform flightdeck has built in: a plugin cannot take its name")
+        where = ("plugins", name)
+        if not isinstance(entry, dict):
+            raise _error(path, where, f"must be a table ([plugins.{name}]) with a path{_got(entry)}")
+        _known(path, where, entry, ("path",))
+        if "path" not in entry:
+            raise _error(path, (*where, "path"), "is missing: the plugin's folder, as an absolute path or one that starts with ~")
+        raw = _string(path, entry, (*where, "path"), "", empty=True)
+        try:
+            folder = Path(raw).expanduser()
+        except RuntimeError:
+            raise _error(path, (*where, "path"), "starts with ~ for a home directory that cannot be found") from None
+        if not raw or not folder.is_absolute():
+            raise _error(path, (*where, "path"), "must be an absolute path or start with ~")
+        plugins[name] = PluginRef(name=name, path=folder)
+    return plugins
 
 
 def _run_dir(path: Path, table: dict) -> Path:

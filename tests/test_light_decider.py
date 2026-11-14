@@ -18,7 +18,6 @@ import asyncio
 import json
 import math
 import re
-import socket
 import time
 
 import httpx
@@ -35,6 +34,7 @@ from ctf_flightdeck.detect.hints import lexicon
 from ctf_flightdeck.detect.judge import HintJudge, from_config
 from ctf_flightdeck.detect.watch import Watch
 from fake_decider import MODEL, FakeDeciderServer, Reply, answer, detail, picks
+from serving import closed_port
 
 SSTV = lexicon().get("sstv")
 CHOICES = L.technique_choices(lexicon())
@@ -104,12 +104,6 @@ def prompt_bytes(request: dict) -> int:
     text = (f"<state>\n{content}\n</state>\n" + f'<question type="choice">\nSelect exactly one option.\n'
             f'{asked["instructions"]}\n<options>\n' + "\n".join(lines) + "\n</options>\n</question>\n<answer>")
     return len(text.encode("utf-8"))
-
-
-def closed_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 # ---------------------------------------------------------------------- the request
