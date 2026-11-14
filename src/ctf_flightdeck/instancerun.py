@@ -40,6 +40,10 @@ status is asked every RETRY_FULL seconds for that long and the instance stopped 
 turns up; close() looks once more. After CLAIM_FOR seconds, or after a start the platform
 refused in words, an instance that turns up is a teammate's as before.
 
+A start whose answer names an address flightdeck will not use (InstanceError.up) was done
+all the same: no lane gets the address, the challenge waits, and the instance is this run's
+(`unusable`), stopped once nobody works the challenge and by close().
+
 A plugin that keeps one container per account (ctfd-owl: InstancesConfig.single) has a
 `max_running` of 1, so the queue's on-demand challenges take turns. A teammate's container
 of another challenge is not seen by a status; the start is then refused in the plugin's
@@ -148,6 +152,7 @@ class InstanceRunner:
         self.running: dict[str, Instance] = {}  # challenge id -> its instance, as last known
         self.adopted: set[str] = set()  # running, but not started by this run: never stopped here
         self.unanswered: dict[str, float] = {}  # challenge id -> when a start of this run got no clear answer (CLAIM_FOR)
+        self.unusable: set[str] = set()  # this run started it, and the platform names it at an address flightdeck will not use
         self.retry_at: dict[str, float] = {}  # challenge id -> not before this clock time
         self.failures: dict[str, int] = {}
         self._said: set[tuple[str, str]] = set()  # (challenge id, message) warned of already
@@ -208,16 +213,17 @@ class InstanceRunner:
             except InstanceError as exc:
                 left.append(f"the instance of {self._name(cid)} may still run on the platform: {exc}")
             self.running.pop(cid, None)
-        for cid in [c for c in self._claims() if c not in self.running]:  # a start with no clear answer: is it up now?
+        for cid in [c for c in self._unconfirmed() if c not in self.running]:  # a start with no clear answer: is it up now?
             try:
-                if await asyncio.to_thread(self.client.status, cid) is None:
+                if await self._up(cid):
+                    await asyncio.to_thread(self.client.stop, cid)
+                elif cid in self.unanswered:
                     left.append(f"the start of {self._name(cid)}'s instance got no answer, and the platform names no instance of it "
                                 "yet: if one comes up, it runs until the platform ends it or you stop it on the site")
-                else:
-                    await asyncio.to_thread(self.client.stop, cid)
             except InstanceError as exc:
                 left.append(f"the instance of {self._name(cid)} may still run on the platform: {exc}")
         self.unanswered.clear()
+        self.unusable.clear()
         return left
 
     # ------------------------------------------------------------------ the deck, read
@@ -245,6 +251,8 @@ class InstanceRunner:
             there = await asyncio.to_thread(self.client.status, cid)
             got = there if there is not None else await self._send_start(cid)
         except InstanceError as exc:
+            if exc.up and (exc.maybe_done or cid in self.unusable or cid in self._claims()):
+                self.unusable.add(cid)  # this run's, at an address it will not use: stopped when nobody works it, and by close()
             if exc.maybe_done:  # only a start is marked so: the platform may have started it all the same
                 self.unanswered[cid] = self.clock()
             if not isinstance(exc, InstanceRefused):
@@ -265,8 +273,9 @@ class InstanceRunner:
         self._full_said = False
         self.failures.pop(cid, None)
         self.retry_at.pop(cid, None)
-        claimed = there is not None and not mine and cid in self._claims()  # it came up after this run's own start
+        claimed = there is not None and not mine and (cid in self._claims() or cid in self.unusable)  # it came up after this run's own start
         self.unanswered.pop(cid, None)
+        self.unusable.discard(cid)
         adopted = there is not None and not mine and not claimed
         if adopted:
             self.adopted.add(cid)
@@ -320,27 +329,49 @@ class InstanceRunner:
             del self.unanswered[cid]
         return list(self.unanswered)
 
+    def _unconfirmed(self) -> list[str]:
+        """This run's starts whose instance it does not run as its own: the claims, and the
+        instances at an address it will not use."""
+        return list(dict.fromkeys([*self._claims(), *self.unusable]))
+
+    async def _up(self, cid: str) -> bool:
+        """Whether the platform names an instance of the challenge, at any address."""
+        try:
+            return await asyncio.to_thread(self.client.status, cid) is not None
+        except InstanceError as exc:
+            if exc.up:
+                return True
+            raise
+
     async def _unanswered(self, wanted: set[str]) -> None:
         """A start with no clear answer whose challenge nobody works any more (solved or
         parked meanwhile): no lane will ask for its instance, so the status is asked here,
-        every RETRY_FULL seconds, and the instance is stopped when it turns up."""
-        for cid in self._claims():
+        every RETRY_FULL seconds, and the instance is stopped when it turns up. The same for
+        an instance of this run at an address flightdeck will not use: it is stopped once
+        nobody works its challenge, and forgotten once the platform names it no more."""
+        for cid in self._unconfirmed():
             if cid in wanted or cid in self.running or self.clock() < self.retry_at.get(cid, 0.0):
                 continue
+            claim = cid in self.unanswered
             try:
-                if await asyncio.to_thread(self.client.status, cid) is None:
-                    self.retry_at[cid] = self.clock() + RETRY_FULL
+                if not await self._up(cid):
+                    if claim:
+                        self.retry_at[cid] = self.clock() + RETRY_FULL
+                    else:
+                        self.unusable.discard(cid)  # it ended
                     continue
                 await asyncio.to_thread(self.client.stop, cid)
             except InstanceError as exc:
                 self.retry_at[cid] = self.clock() + RETRY_FULL
-                self._warn(cid, f"instances: the start of {self._name(cid)}'s instance got no answer, and flightdeck could not tell "
+                what = "got no answer" if claim else "was done, at an address flightdeck will not use"
+                self._warn(cid, f"instances: the start of {self._name(cid)}'s instance {what}, and flightdeck could not tell "
                                 f"whether it runs, or stop it: {exc}; it asks again for a while")
                 continue
-            del self.unanswered[cid]
+            self.unanswered.pop(cid, None)
+            self.unusable.discard(cid)
             self.retry_at.pop(cid, None)
-            self._warn(cid, f"instances: the instance of {self._name(cid)} came up after a start that got no answer, and nobody works "
-                            "it now: flightdeck stopped it")
+            what = "came up after a start that got no answer" if claim else "runs at an address flightdeck will not use"
+            self._warn(cid, f"instances: the instance of {self._name(cid)} {what}, and nobody works it now: flightdeck stopped it")
 
     def _gone(self, cid: str) -> None:
         self.running.pop(cid, None)

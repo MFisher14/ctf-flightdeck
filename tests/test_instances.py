@@ -174,6 +174,16 @@ def test_an_answer_that_is_no_instance_is_an_error_never_an_instance(reply, mess
             client(fake).start("boxed")
 
 
+def test_a_start_whose_own_answer_names_an_address_flightdeck_will_not_use_may_have_been_done():
+    """The platform started the container: the run must take it for its own, and stop it."""
+    with FakeCTFd(board()) as fake:
+        fake.script("POST", REQUEST, Reply(200, {"hostname": "chal_web.ctf.test", "port": 4000}))
+        with pytest.raises(InstanceError, match="names no usable address") as caught:
+            client(fake).start("boxed")
+        assert caught.value.maybe_done and caught.value.up and not isinstance(caught.value, InstanceRefused)
+        assert len(fake.to(REQUEST)) == 1 and fake.to(STATUS) == []
+
+
 def test_a_start_that_answers_no_address_asks_the_status_and_is_sent_once():
     with FakeCTFd(board()) as fake:
         fake.script("POST", REQUEST, Reply(200, {"success": True}))
@@ -268,7 +278,7 @@ def test_no_answer_in_time_says_so_and_that_it_may_have_been_done():
     (Reply(400, {"error": "image build failed"}), None, False),  # the plugin said no
     (Reply(200, {"success": False, "msg": "You have boot Second before."}), None, False),
     (Reply(302, "<html>log in</html>"), None, False),  # sent to the login page: the plugin was never asked
-    (Reply(200, {"hostname": "h.example.test", "port": 70000}), None, False),  # it runs, at an address flightdeck will not use
+    (Reply(200, {"hostname": "h.example.test", "port": 70000}), None, True),  # started, at an address flightdeck will not use
 ])
 def test_a_failed_start_says_whether_the_platform_may_have_done_it(start, status, maybe):
     with FakeCTFd(board()) as fake:

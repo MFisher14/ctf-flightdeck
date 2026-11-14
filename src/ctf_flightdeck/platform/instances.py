@@ -101,14 +101,18 @@ class InstanceError(Exception):
 
     `maybe_done`: the request that changes something went out and the platform may have done
     it all the same: no answer came in time, the line dropped, the answer was not the
-    plugin's, or a start was taken and its status then gave no address. False when the
-    platform said no, when nothing was sent, and for an instance that runs at an address
-    flightdeck will not use. A run reads it after a start (instancerun.py): an instance of
-    that challenge that turns up next is then its own, not a teammate's."""
+    plugin's, a start was taken and its status then gave no address, or a start's own answer
+    names an address flightdeck will not use. False when the platform said no and when
+    nothing was sent. A run reads it after a start (instancerun.py): an instance of that
+    challenge that turns up next is then its own, not a teammate's.
 
-    def __init__(self, message: str, *, maybe_done: bool = False) -> None:
+    `up`: the answer names an instance of the challenge, at an address flightdeck will not
+    use. It runs all the same, and holds a slot until it is stopped."""
+
+    def __init__(self, message: str, *, maybe_done: bool = False, up: bool = False) -> None:
         super().__init__(message)
         self.maybe_done = maybe_done
+        self.up = up
 
 
 class InstanceRefused(InstanceError):
@@ -348,9 +352,9 @@ class InstanceClient:
         answers the same, one refuses, one replaces it): ask status() first, as a run does."""
         doc = self._ask("start", challenge_id)
         assert doc is not None
-        if self._names_address(doc):
-            return self._instance(challenge_id, doc)
         try:
+            if self._names_address(doc):
+                return self._instance(challenge_id, doc)
             for asked in range(STATUS_TRIES):
                 if asked:
                     self._sleep(STATUS_GAP)
@@ -358,7 +362,7 @@ class InstanceClient:
                 if found is not None:
                     return found
         except InstanceError as exc:
-            exc.maybe_done = True  # the start was taken: whatever the status said, an instance may run
+            exc.maybe_done = True  # the start was taken: whatever its answer or the status said, an instance may run
             raise
         said = _dig(doc, ERROR_KEYS)
         words = f" ({self._site.short(str(said))})" if said is not None else ""
@@ -385,9 +389,17 @@ class InstanceClient:
         """Stop the challenge's instance and free its slot. On a plugin that keeps one
         container per account (config.single) the stop route takes whatever runs, so the
         status is asked first: when this challenge's instance is not the one running, nothing
-        is stopped (a teammate's container of another challenge stays up)."""
-        if self.config.single and self.status(challenge_id) is None:
-            return
+        is stopped (a teammate's container of another challenge stays up). One the status
+        names at an address flightdeck will not use is this challenge's all the same."""
+        if self.config.single:
+            try:
+                there = self.status(challenge_id) is not None
+            except InstanceError as exc:
+                if not exc.up:
+                    raise
+                there = True
+            if not there:
+                return
         self._ask("stop", challenge_id)
 
     # ------------------------------------------------------------------ the wire
@@ -466,7 +478,7 @@ class InstanceClient:
         if scheme is None and answers.web is not None and _dig(doc, (answers.web[0],)) == answers.web[1]:
             scheme = "http"  # the plugin says it is a web server: its address is one whatever the challenge's category
         if host is None or (port is not None and not 1 <= port <= 65535) or (port is None and scheme is None):
-            raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no usable address ({self._site.short(raw)})")
+            raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no usable address ({self._site.short(raw)})", up=True)
         return Instance(challenge_id, host, port, scheme, _ends(_dig(doc, answers.expires), self._clock()), self._site.short(raw))
 
 

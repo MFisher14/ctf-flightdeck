@@ -628,7 +628,13 @@ max_running = 3                 # the most kept running at once: the site's cap 
   start is sent again, the status is always asked. This is a guess in one case: a teammate
   who starts the same challenge's instance in those ten minutes has it taken for
   flightdeck's. After a start the site refused in words, or after the ten minutes, an
-  instance that turns up is a teammate's, as above.
+  instance that turns up is a teammate's, as above. While such a challenge is wanted, it
+  keeps its place first in line, so on a plugin with one container no other challenge is
+  given the slot its container may hold. A start the site answered with an address
+  flightdeck will not use (a host name with an underscore, a port past 65535) was done:
+  no lane gets that address, and flightdeck stops the instance once nobody works the
+  challenge, and when the run ends. A start still out when the run ends is waited for, and
+  its instance stopped too.
 - **What it needs.** `platform = "ctfd"`, `platform_automation = true`, and the `instance` policy
   at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. Otherwise
   flightdeck starts none, and `preflight` and the start of a run say why; start it on the site

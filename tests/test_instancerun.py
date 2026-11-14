@@ -11,7 +11,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, DeckConfig
-from ctf_flightdeck.instancerun import CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, WAITS, InstanceRunner, Need, on_demand, plan
+from ctf_flightdeck.instancerun import CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, RETRY_MOST, WAITS, InstanceRunner, Need, on_demand, plan
 from ctf_flightdeck.platform.instances import Instance, InstanceError, InstanceRefused
 
 from test_deck import FLAG_FORMAT, MODELS, Clock, RecordingDriver, RecordingVerifier
@@ -411,6 +411,44 @@ def test_a_start_the_runs_end_cuts_off_is_waited_for_and_its_instance_stopped_by
 
     assert asyncio.run(scenario()) == []
     assert platform.calls == [("status", "c0"), ("start", "c0"), ("stop", "c0")] and platform.up == {}
+
+
+class Unusable(Platform):
+    """A platform that starts the instance and names it at an address flightdeck will not use."""
+
+    def _instance(self, cid):
+        raise InstanceError(f"the platform's answer for {cid} names no usable address (chal_web.ctf.test)", up=True)
+
+    def start(self, cid):
+        try:
+            return super().start(cid)
+        except InstanceError as exc:
+            exc.maybe_done = True  # as the client marks a start's own answer
+            raise
+
+
+def test_an_instance_this_run_started_at_an_address_it_will_not_use_is_stopped_when_nobody_works_it():
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Unusable(clock=clock.now)
+    step(runner)
+    assert platform.up == {"c0": 31000} and runner.running == {} and "c0" in deck.waits
+    clock.t += 31
+    step(runner)
+    assert [c for c in platform.calls if c[0] == "start"] == [("start", "c0")]  # never sent again
+    clock.t += CLAIM_FOR  # long past the time a start with no answer is remembered
+    step(runner)
+    deck.platform_solved("c0", "your team")
+    clock.t += RETRY_MOST  # past the wait before its next try
+    step(runner)
+    assert platform.calls[-1] == ("stop", "c0") and platform.up == {}
+    assert any("the instance of Chall 0 runs at an address flightdeck will not use, and nobody works it now: flightdeck stopped it"
+               in text for text in said(deck))
+
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Unusable(clock=clock.now)
+    step(runner)
+    clock.t += CLAIM_FOR + 1
+    assert asyncio.run(runner.close()) == [] and platform.calls[-1] == ("stop", "c0") and platform.up == {}
 
 
 def test_an_adopted_instance_that_ended_and_is_started_again_by_this_run_is_this_runs():
