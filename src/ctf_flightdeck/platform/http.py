@@ -774,7 +774,10 @@ class HttpCaller:
                     if found["ref"] not in on_board:
                         if self.config.detail is not None:
                             answer = await self._read(http, self.config.detail.request, {"ref": found["ref"]})
-                            found.update(self._read_fields("detail", self.config.detail.fields, answer.doc))
+                            detail = self._read_fields("detail", self.config.detail.fields, answer.doc)
+                            if "file_urls" in detail and "file_names" not in detail:  # the list's names are of the list's files
+                                found.pop("file_names", None)
+                            found.update(detail)
                         urls, names = found.pop("file_urls", []), found.pop("file_names", None)
                         found["files"] = await self._download(http, bare, Path(files_dir), f"{n:04d}", urls, names)
                     else:  # on the board already: its files were fetched when it was added

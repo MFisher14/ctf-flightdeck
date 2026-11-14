@@ -565,6 +565,31 @@ def test_a_detail_route_is_asked_once_for_each_new_challenge_and_its_fields_win(
                                 {"ref": "8", "name": "Eight", "points": 500, "description": "the text of 8", "files": []})
 
 
+@pytest.mark.parametrize("detail_urls, saved", [
+    (["/f/one.bin", "/f/two.bin", "/f/three.bin"], ["one.bin", "two.bin", "three.bin"]),  # more than the list's 2 names
+    (["/f/two.bin"], ["two.bin"]),  # fewer: never saved under another file's name
+])
+def test_file_urls_from_the_detail_route_are_not_named_by_the_lists_file_names(tmp_path, detail_urls, saved):
+    """The list's names are of the list's files: when the detail gives the addresses and no
+    names, each file is named from its own address."""
+    def site(request):
+        if request.route == "/api/tasks":
+            return Reply(200, {"tasks": [{"id": 7, "title": "Seven", "files": [{"url": "/f/x", "name": "listed.txt"},
+                                                                               {"url": "/f/y", "name": "other.txt"}]}]})
+        if request.route == "/api/tasks/7":
+            return Reply(200, {"urls": detail_urls})
+        return Reply(200, b"synthetic " + request.route.encode())
+
+    config = {**table(**{"list.file_urls": "$.files[*].url", "list.file_names": "$.files[*].name"}),
+              "detail": {"request": ["GET", "/api/tasks/{ref}"], "file_urls": "$.urls[*]"}}
+    with FakeSite(site) as fake:
+        reply = run(caller(fake, config).pull(tmp_path))
+    assert reply.problems == ()
+    assert reply.challenges[0]["files"] == [f"0000/{name}" for name in saved]
+    assert sorted(path.name for path in (tmp_path / "0000").iterdir()) == sorted(saved)
+    assert (tmp_path / "0000" / saved[0]).read_bytes() == b"synthetic " + detail_urls[0].encode()
+
+
 def test_the_platform_going_quiet_in_the_middle_of_a_pull_stops_it_and_says_how_many_were_not_read(tmp_path):
     """Each further challenge would wait as long: what was read lands, and the next pull asks again."""
     def site(request):
