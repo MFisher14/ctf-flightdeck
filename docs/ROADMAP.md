@@ -3,7 +3,7 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not yet released: M6, the solver pack (2026-11-13)
+## Released: 0.4.0, M6 the solver pack and the first run (2026-11-13)
 
 The author's own solvers and the pipeline he won events with come into flightdeck (D24; P29 to
 P44 in [DECISIONS.md](DECISIONS.md); [SOLVERS.md](SOLVERS.md) says how to use the pack).

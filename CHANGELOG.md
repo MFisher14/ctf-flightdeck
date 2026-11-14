@@ -2,7 +2,10 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.4.0 (2026-11-13)
+
+The solver pack (M6), and a first run that needs no reading: `flightdeck` alone opens a home
+screen, `flightdeck start` sets an event up, and `/new` hands a challenge to a lane.
 
 - `ctrl+o` in `/new`, and `/attach` with no file, open your system's file window to choose
   files. Files dropped on the console are taken wherever the focus is.
