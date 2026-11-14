@@ -197,8 +197,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   taller than that scrolls in its half (the mouse wheel), from its first rows: the approval and
   its two answers are the ones in view.
 
-  With details off the card is calm: three rows at most, each cut at the card's edge with `…`,
-  and never a list of commands. Not in the compact layout, whose card keeps its own form.
+  With details off the card is calm: three rows where the card is wide enough for them, and
+  never a list of commands. Not in the compact layout, whose card keeps its own form.
 
   | Row | Drawn as, with details off |
   |---|---|
@@ -206,11 +206,22 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   | 2, its answers | `  1 more budget   0 stop the lane` for an approval (a flag: `  1 submit it   0 do not submit`). For an alert, `  1 hint "You are repeating python3 solve.py: it gives the…"   2 kill and re-queue fresh   /dismiss not a problem`: the numbers a digit answers, each with its label; an answer that sends its text at once (a hint, a new plan, a fork's approach) quotes the first 48 characters of it; three answers, then `+2 more`; `/dismiss not a problem` for an alert about the lane's course |
   | 3, only when something else is open | `  also: looping · past its effort budget · stalled   ctrl+o shows all`: each other alert in a word or two (`looping`, `past its effort budget`, `ignores the hint`, `wrong direction`, `stalled`, `near its cap`, `a flag to check`, `teammate`), then `1 more approval after this one` and `2 messages it has not read yet`. The alert an approval is about (its budget, its flag) is not named beside it |
 
-  In a card too narrow for row 2, the quotes shorten together until the row fits, down to 12
-  characters, and then there are none: the edge never cuts a numbered answer away to keep a
-  quote. With no question (no approval, no alert that wants an answer) the card is the message
+  A narrow card (beside the files pane on an 80-column terminal its rows have 38 cells) takes
+  more rows before the edge cuts what a digit answers:
+
+  - An approval's question folds onto further rows, four at most, so the flag that `1` submits
+    is whole on the card. An alert's reason is cut at the edge with `…`: the full card has it.
+  - The quotes of row 2 shorten together until the row fits, down to 12 characters, and then
+    there are none. Answers that still do not fit take further rows, each starting with its
+    number, and `/dismiss not a problem` a row of its own if it must.
+  - Row 3 keeps the names that fit and counts the rest: `  also: looping · +2 more   ctrl+o
+    shows all`, then `  also: +3 more   ctrl+o shows all`. Where even that does not fit,
+    `ctrl+o shows all` is on the next row.
+
+  With no question (no approval, no alert that wants an answer) the card is the message
   the lane has not read yet (`› sent, not read yet: TEXT`), or how many (`› 2 messages sent,
-  not read yet   ctrl+o shows all`), under the row of an alert that needs no answer. The
+  not read yet   ctrl+o shows all`, the key on the next row in a narrow card), under the row of
+  an alert that needs no answer. The
   border and its title are as on the full card: the colour of the most urgent alert that wants
   an answer, else the approval's. A suggestion with no key (advice only) is on the full card.
 
@@ -334,6 +345,37 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   (67 columns with the answers; narrower, the edge cuts `ctrl+o details` first, and `/help`
   still lists it). The empty chat box names the lane a message goes to (`message L01 · /
   commands`), and a lane that has ended says `esc goes back to the lanes`.
+
+  A lane that waits for more budget with its Loop, Effort and Stall alerts open, after an L1
+  intake note of 15 lines and 15 tool calls, most of several lines: 13 rows of transcript and a
+  card of three. With details on (`ctrl+o`) the same lane is 40 lines, the long ones wrapped,
+  and a card of 15 rows or more.
+
+  ```
+   flightdeck ╱ practice ╱ ▲ 1 need you ╱ $0.00
+  ╭─ L01 · Baby RSA  cry 0 · glm · wait · turn 15 · 424k tok · $0.00 · idle 0s ──────────────────────╮
+  │ · L1 intake: unsure (handout: 3 file(s), 41 unpacked member(s) (17 ELF, 9 text, 6 zip, 5 png,…   │
+  │ ⏺ $ unzip -o handout.zip -d work \ …+1 line → Archive:  handout.zip …+2 lines                    │
+  │ ▲ Effort vs value alert · turn 1                                                                 │
+  │ ⏺ 9 tool calls                                                                                   │
+  │   ⎿ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                  │
+  │ ▲ Stall alert · turn 10                                                                          │
+  │ ⏺ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                    │
+  │ ▲ Loop alert · turn 11                                                                           │
+  │ ⏺ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                    │
+  │ ▲ Budget alert · turn 12                                                                         │
+  │ ⏺ 3 tool calls                                                                                   │
+  │   ⎿ $ cd /work && python3 - <<'PY' …+5 lines → exit 1 …+3 lines                                  │
+  │ ◆ asked you · turn 15: raise the cap by 50% (now 424k of 400k tokens)                            │
+  │ ╭─ needs you now ──────────────────────────────────────────────────────────────────────────────╮ │
+  │ │ ◆ waiting for you: raise the cap by 50% (now 424k of 400k tokens)                            │ │
+  │ │   1 more budget   0 stop the lane                                                            │ │
+  │ │   also: looping · past its effort budget · stalled   ctrl+o shows all                        │ │
+  │ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
+  ╰───────────────────────────────────────────────────────────────────────────────────────── plan - ─╯
+  ╭ message L01 · / commands ────────────────────────────────────────────────────────────────────────╮
+   1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details
+  ```
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
   list with nothing typed in the command bar, and only while it is the one lane. Later lanes
@@ -450,7 +492,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `1`-`9` | | Quick answers: the numbers in the why line and the needs-you card; one key, no enter (focus view: only while the chat box is empty) |
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back`, also typed `/lanes`, returns) |
-| `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows at most. Typed in the fleet, `/details` says it is that view's |
+| `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows (more only where it is too narrow for them). Typed in the fleet, `/details` says it is that view's |
 |  | `/diff [file]` | Show the files the lane changed |
 | `ctrl+c` | `/copy [output\|command\|flag\|all]` | `ctrl+c` copies the text selected with the mouse (a drag copies it as you let go; `esc` takes the selection down). `/copy` copies from the lane with no mouse: its last output (alone), that call's command, its flag, or all of its transcript (Focus view, Selecting and copying) |
 |  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` (also `/settings`) | Alone: a dialog with this run's settings (lanes at once, what happens to a flag) and the console's layout and theme, which it can save (Choosing a look); Enter in the lanes field or `ctrl+s` applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run; only the layout and the theme can be saved, and only when the dialog is told to. |
@@ -458,7 +500,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/theme [name]` | Alone: the list that tries the themes and can save one (Choosing a look). With a name: the console's colours for the rest of this run, and the status line says how to keep it (`/theme, then s`). A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
 |  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. A dropped file is copied into the run's folder as it lands, so one that is gone before `ctrl+s` is still added. `ctrl+v` pastes a screenshot from the clipboard (so does an empty paste, which is what a terminal's own paste key sends in Windows Terminal and Alacritty), and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
-|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar, or give no file and choose them in the file window. A drop that lands is said with each file's name and size, and the `/attach` names the run's own copy of each file (`dropped/` in the run's folder), made as it landed. A paste that reads as a dropped file that is not on this machine is said with the likely reason, and is pasted as text. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |
+|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar, or give no file and choose them in the file window. A drop that lands is said with each file's name and size, and the `/attach` names the run's own copy of each file (`dropped/` in the run's folder), made as it landed. A paste that reads as a dropped file that is not on this machine is said with the likely reason, and is pasted as text. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started; `L01, L02 restarted as L03, and 1 more starts when a lane is free` when only some have; `no fresh lane started: …` and the reason when none can). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |

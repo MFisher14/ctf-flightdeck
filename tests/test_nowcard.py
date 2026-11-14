@@ -274,9 +274,10 @@ def test_an_answer_that_only_opens_a_prompt_quotes_nothing_and_more_than_three_a
     ]
 
 
-def test_in_a_narrow_card_the_quotes_shorten_until_every_answer_fits_and_go_before_a_number_is_cut():
+def test_in_a_narrow_card_the_quotes_shorten_until_every_answer_fits_and_go_before_the_answers_take_a_second_row():
     """The view cuts a row at the card's edge. A row of answers that is too long would lose
-    the answers after the first quote, numbers and all: the quotes give way first."""
+    the answers after the first quote, numbers and all: the quotes give way first, and then
+    the answers take further rows."""
     deck, _, lane = one_lane()
     raise_alerts(deck, alert(AlertKind.HINT, "The description hints at slow-scan TV.", ("r", "Redirect with the hinted technique", "Decode it as SSTV and read the picture"),
                              ("h", "Hint", "Think slow-scan TV, not stereo tricks")))
@@ -293,10 +294,15 @@ def test_in_a_narrow_card_the_quotes_shorten_until_every_answer_fits_and_go_befo
     assert answers(len(least)) == least and views.CALM_QUOTE_MIN == 12
     bare = "  1 redirect with the hinted technique   2 hint   /dismiss not a problem"
     assert answers(len(least) - 1) == bare  # less of a quote says nothing: none
-    assert answers(len(bare)) == bare and answers(20) == bare  # the rest is the edge's to cut
+    assert answers(len(bare)) == bare
     assert views.now_card(deck, lane, simple=True, calm=True, width=len(least)).plain.split("\n")[1] == least
-    rows = views.calm_card(deck, lane, 20).plain.split("\n")
-    assert rows[0] == "▲ Ignores the hint: The description hints at slow-scan TV." and len(rows) == 2  # only the answers are fitted
+    assert views.calm_card(deck, lane, len(bare) - 1).plain.split("\n") == [
+        "▲ Ignores the hint: The description hints at slow-scan TV.",  # an alert's reason is not fitted: the edge cuts it
+        "  1 redirect with the hinted technique   2 hint",
+        "  /dismiss not a problem",
+    ]
+    assert views.calm_card(deck, lane, 20).plain.split("\n")[1:] == [  # an answer wider than the card has a row to itself, its number first
+        "  1 redirect with the hinted technique", "  2 hint", "  /dismiss not a problem"]
 
 
 def test_with_no_question_the_card_is_the_message_not_read_yet_or_how_many_or_what_flightdeck_did():
@@ -580,8 +586,8 @@ def test_the_calm_cards_answers_are_fitted_to_the_card_as_it_is_drawn_and_again_
         app.refresh_view()  # one redraw, as the console's timer does: the box is first laid out after it
         await pilot.pause()
         assert box.display and box.region.width < len(HINTED_WHOLE)  # beside the files pane the card is narrower than its answers
-        row = inside(app)[1]  # both numbers in view: the quotes gave way, and the edge cuts what is left
-        assert row.startswith("  1 redirect with the hinted technique   2 hint   /dismiss") and row.endswith("…") and HINTED_BARE.startswith(row[:-1])
+        assert box.region.width - 4 < len(HINTED_BARE)  # nor has it room for them with no quote
+        assert inside(app)[1:] == ["  1 redirect with the hinted technique   2 hint", "  /dismiss not a problem"]  # the quotes gave way, then a row
         await pilot.resize_terminal(300, 40)
         await pilot.pause()
         assert inside(app)[1] == HINTED_WHOLE  # room for them: no redraw was asked for
@@ -616,7 +622,7 @@ def test_another_lanes_card_starts_at_its_first_row_and_the_calm_card_takes_the_
         assert inside(app) == [
             "◆ waiting for you: connect to the live instance",
             "  1 use the live box   0 stay off it",
-            "  also: looping · past its effort budget · ignores the hin…",  # cut at the card's edge
+            "  also: looping · +4 more   ctrl+o shows all",  # the names that fit beside the key, the rest counted
         ]
         row = view.query_one("#now").region.y
         before = color_of(app, "needs you now", row)
@@ -643,3 +649,131 @@ def test_on_a_narrow_terminal_the_card_keeps_its_compact_form_with_details_off()
         assert not view.details and card(app) == before and not view.query_one("#now", Static).has_class("-calm")
 
     drive(app, script, PHONE)
+
+
+# ---------------------------------------------------------------------- a card too narrow for its rows
+
+SMALL = (80, 24)  # beside the files pane the card's rows have 38 cells here
+LONG_FLAG = "flag{3f9a1c0e7b2d4a6f8c1e0b3d5a7f9c2e4b6d8a0c}"  # synthetic, 46 characters
+A_FILE = (FileChange("solve.py", "+++ b/solve.py\n+print(1)\n", status="added"),)
+
+
+def rows_at(deck: Deck, lane: Lane, width: int) -> list[str]:
+    """The calm card's rows in a card whose rows have `width` cells; none is longer."""
+    rows = views.calm_card(deck, lane, width).plain.split("\n")
+    assert all(len(row) <= width for row in rows), rows  # nothing is left for the edge to cut
+    return rows
+
+
+def test_an_approvals_question_folds_onto_further_rows_in_a_narrow_card_and_the_flag_is_whole():
+    """`1` submits the flag: the card that asks shows all of it, however narrow."""
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action=f"submit_flag {LONG_FLAG}", flag=LONG_FLAG))
+    assert lane.pending is not None and lane.pending.detail == f"submit {LONG_FLAG}"
+    answers = "  1 submit it   0 do not submit"
+    assert rows_at(deck, lane, 80) == [f"◆ waiting for you: submit {LONG_FLAG}", answers]  # room: one row
+    assert rows_at(deck, lane, 62) == ["◆ waiting for you: submit", LONG_FLAG, answers]  # folded between words
+    assert rows_at(deck, lane, 38) == ["◆ waiting for you: submit", LONG_FLAG[:38], LONG_FLAG[38:], answers]  # no row holds it
+    text = views.calm_card(deck, lane, 38)
+    assert text.plain.replace("\n", "").count(LONG_FLAG) == 1
+    assert color_at(text, "◆ waiting") == theme.PURPLE.lower() and color_at(text, LONG_FLAG[38:]) == theme.TEXT.lower()  # folded, in its colours
+
+    deck, _, lane = four_at_once()
+    assert rows_at(deck, lane, 38)[:3] == ["◆ waiting for you: raise the cap by", "50% (now 424k of 400k tokens)", "  1 more budget   0 stop the lane"]
+
+
+def color_at(text, part: str) -> str:
+    """The colour `part` of a card's text is drawn in."""
+    at = text.plain.index(part)
+    return text.get_style_at_offset(rich.console.Console(), at).color.name.lower()
+
+
+def test_a_question_longer_than_four_rows_ends_in_a_mark_and_its_answers_stay_under_it():
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, "connect and then " + "probe the next port " * 40)))
+    rows = rows_at(deck, lane, 38)
+    assert views.CALM_QUESTION_ROWS == 4 and len(rows) == 5
+    assert rows[0] == "◆ waiting for you: connect and then" and rows[3].endswith("…") and rows[4] == "  1 use the live box   0 stay off it"
+
+
+def test_answers_too_long_for_a_narrow_card_take_further_rows_and_none_is_cut():
+    deck, _, lane = one_lane()
+    raise_alerts(deck, alert(AlertKind.LOOP, *LOOP))
+    whole = '  1 hint "You are repeating python3 solve.py."   2 kill and re-queue fresh   /dismiss not a problem'
+    bare = "  1 hint   2 kill and re-queue fresh   /dismiss not a problem"
+    assert views.calm_card(deck, lane, len(whole)).plain.split("\n")[1:] == [whole]
+    assert views.calm_card(deck, lane, len(bare)).plain.split("\n")[1:] == [bare]  # the quote gives way first, as before
+    assert views.calm_card(deck, lane, len(bare) - 1).plain.split("\n")[1:] == ["  1 hint   2 kill and re-queue fresh", "  /dismiss not a problem"]
+    assert views.calm_card(deck, lane, 38).plain.split("\n")[1:] == ["  1 hint   2 kill and re-queue fresh", "  /dismiss not a problem"]
+    assert views.calm_card(deck, lane, 30).plain.split("\n")[1:] == ["  1 hint", "  2 kill and re-queue fresh", "  /dismiss not a problem"]
+    text = views.calm_card(deck, lane, 38)
+    assert color_at(text, "/dismiss") == theme.ACCENT.lower() and color_at(text, "2 kill") == theme.ACCENT.lower()
+
+    deck, _, lane = four_at_once()  # an approval's two answers too
+    assert rows_at(deck, lane, 32)[2:4] == ["  1 more budget", "  0 stop the lane"]
+
+    deck, _, lane = one_lane()  # and the count of the answers the card does not number
+    raise_alerts(deck, alert(AlertKind.BUDGET, "At 85% of its cap.", ("a", "Approve 50% more budget now"), ("e", "Escalate to a stronger model"),
+                             ("k", "Kill the lane", "not sent: k opens its prompt"), ("p", "Pause it"), ("f", "Fork it"), ("", "Or wait")))
+    assert rows_at(deck, lane, 50) == ["▲ Budget: At 85% of its cap.", "  1 approve 50% more budget now",
+                                       "  2 escalate to a stronger model   3 kill the lane", "  +2 more"]
+
+
+def test_what_else_is_open_names_what_fits_counts_the_rest_and_always_names_ctrl_o():
+    deck, _, lane = four_at_once()
+    whole = FOUR_CALM[2]
+    assert len(whole) == 69 and rows_at(deck, lane, 69)[-1] == whole
+    assert rows_at(deck, lane, 68)[-1] == "  also: looping · +2 more   ctrl+o shows all"  # "+1 more" is no shorter than "stalled"
+    assert rows_at(deck, lane, 44)[-1] == "  also: looping · +2 more   ctrl+o shows all"
+    assert rows_at(deck, lane, 43)[-1] == "  also: +3 more   ctrl+o shows all"
+    assert rows_at(deck, lane, 34)[-1] == "  also: +3 more   ctrl+o shows all"
+    assert rows_at(deck, lane, 33)[-2:] == ["  also: +3 more", "  ctrl+o shows all"]  # the key has a row of its own
+    text = views.calm_card(deck, lane, 33)
+    assert color_at(text, "ctrl+o") == theme.ACCENT.lower()
+
+    deck, _, lane = one_lane()  # with no question: how many messages, and the key
+    assert deck.apply(iv.Hint("L01", "try the header")).ok and deck.apply(iv.Hint("L01", "then the footer")).ok
+    whole = "› 2 messages sent, not read yet   ctrl+o shows all"
+    assert rows_at(deck, lane, len(whole)) == [whole]
+    assert rows_at(deck, lane, len(whole) - 1) == ["› 2 messages sent, not read yet", "  ctrl+o shows all"]
+
+
+def test_at_80_columns_beside_the_files_pane_the_card_shows_the_whole_flag_it_asks_about():
+    deck, app, lane = one_lane("simple")
+    deck.report("L01", TurnReport(action="$ python3 solve.py", output=LONG_FLAG, tokens=10, files=A_FILE))
+    deck.report("L01", TurnReport(action=f"submit_flag {LONG_FLAG}", flag=LONG_FLAG))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert view.query_one("#files-pane").display and not view.details
+        assert inside(app) == ["◆ waiting for you: submit", LONG_FLAG[:38], LONG_FLAG[38:], "  1 submit it   0 do not submit"]
+        assert view.query_one("#now-scroll").max_scroll_y == 0  # all of it in view
+
+    drive(app, script, SMALL)
+
+
+def test_at_80_columns_beside_the_files_pane_no_answer_is_cut_and_the_card_names_ctrl_o():
+    """The lane of the report with a file changed: the card's rows have 38 cells."""
+    deck, app, lane = four_at_once("simple")
+    deck.report(lane.id, TurnReport(turn=False, action="says: wrote solve.py", files=A_FILE))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        assert view.query_one("#files-pane").display
+        assert inside(app) == [
+            "◆ waiting for you: raise the cap by",
+            "50% (now 424k of 400k tokens)",
+            "  1 more budget   0 stop the lane",
+            "  also: +3 more   ctrl+o shows all",
+        ]
+        await press(pilot, "1")  # the loop is the question
+        rows = inside(app)
+        assert rows[0].startswith("▲ Loop: The same command ran 6 times") and rows[0].endswith("…")  # an alert's reason is the edge's to cut
+        assert rows[1:] == ["  1 hint   2 kill and re-queue fresh", "  /dismiss not a problem", "  also: +2 more   ctrl+o shows all"]
+        assert view.query_one("#now-scroll").max_scroll_y == 0  # all of it in view
+        await press(pilot, "ctrl+o")  # the full card: what "+2 more" counts is on it by name
+        assert view.details and one_line(card(app)).startswith("╭─ needs you now ──────────────────────╮ ▲ Loop The same command ran 6 times in the last 6 turns")
+        named = "\n".join(full(deck, lane, simple=True))
+        assert "▲ Effort vs value" in named and "▲ Stall" in named
+
+    drive(app, script, SMALL)

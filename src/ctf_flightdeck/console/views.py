@@ -1492,6 +1492,7 @@ _ASKED_BY = {  # the alert an approval is about: the approval is the question, s
 CALM_ANSWERS = 3  # the numbered answers the calm card shows; the rest are counted
 CALM_QUOTE = 48  # characters of the text an answer sends that the calm card quotes
 CALM_QUOTE_MIN = 12  # in a card too narrow for that, the quotes shorten to this; then there are none
+CALM_QUESTION_ROWS = 4  # the rows an approval's question folds onto in a narrow card; what is past them is cut, with "…"
 SENDS_TEXT = ("h", "r", "f")  # the answers that send their suggested text at once (FlightdeckApp.answer)
 
 
@@ -1499,16 +1500,45 @@ def _count(count: int, one: str, many: str) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
-def _shows_all(out: Text) -> None:
-    """After a row that leaves something out: the key that shows the full card."""
-    out.append("   ")
-    out.append("ctrl+o", f"bold {theme.ACCENT}")
-    out.append(" shows all", theme.MUTED)
+def _packed(pieces: Sequence[Text], width: int | None) -> list[Text]:
+    """`pieces` (answers, each with its number) in as few rows of `width` cells as hold them
+    whole, in their order: a row is indented by two, and three spaces part two pieces. One row
+    when no width is known. A piece wider than a row has one to itself."""
+    rows: list[Text] = []
+    for piece in pieces:
+        if rows and (width is None or rows[-1].cell_len + 3 + piece.cell_len <= width):
+            rows[-1].append("   ")
+        else:
+            rows.append(Text("  "))
+        rows[-1].append_text(piece)
+    return rows
+
+
+def _shows_all(row: Text, width: int | None) -> list[Text]:
+    """`row`, which leaves something out, with the key that shows the full card: after it, or
+    on a row of its own where `width` cells do not hold both."""
+    key = Text.assemble(("ctrl+o", f"bold {theme.ACCENT}"), (" shows all", theme.MUTED))
+    if width is not None and row.cell_len + 3 + key.cell_len > width:
+        return [row, Text("  ").append_text(key)]
+    return [row.append("   ").append_text(key)]
+
+
+def _also(open_too: Sequence[str], width: int | None) -> list[Text]:
+    """The row that names what else is open on the lane, and the key that shows it: every
+    name where `width` cells hold them, else the first that fit and a count of the rest."""
+    rows: list[Text] = []
+    for named in range(len(open_too), -1, -1):
+        rest = len(open_too) - named
+        names = [*open_too[:named], *([f"+{rest} more"] if rest else [])]
+        rows = _shows_all(Text(f"  also: {' · '.join(names)}", theme.MUTED), width)
+        if len(rows) == 1:
+            break
+    return rows
 
 
 def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
-    """The "needs you now" card with details off: three rows at most, each cut at the edge by
-    the view, and never a list of commands (the full card has them: ctrl+o).
+    """The "needs you now" card with details off: three rows where the card is wide enough,
+    and never a list of commands (the full card has them: ctrl+o).
 
     Row 1 is the question: the approval the lane waits for, else its most urgent alert that
     wants an answer, with its reason. Row 2 is its numbered answers, in the order and with the
@@ -1516,9 +1546,17 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
     at once quotes the start of it. Row 3, only when something else is open, names it: the
     other alerts in a word or two each, further approvals, messages the lane has not read yet.
 
-    `width`: the cells a row has. The quotes of row 2 shorten until the row fits, and go when
-    CALM_QUOTE_MIN characters of each do not fit either: the edge would cut the answers after
-    the first quote, and their numbers with them.
+    `width`: the cells a row has. The view cuts a row at the card's edge, so what a player
+    must read before a digit answers is fitted to the width here, and takes further rows in a
+    card too narrow for it:
+    - an approval's question folds onto CALM_QUESTION_ROWS rows at most: `1` submits the flag
+      it names, and the flag is whole on the card. An alert's reason stays the edge's to cut
+      (the full card has it whole).
+    - the quotes of the answers shorten until the answers fit a row, and go when
+      CALM_QUOTE_MIN characters of each do not fit either; answers that still do not fit take
+      further rows (_packed), so no number and no /dismiss is cut away.
+    - what else is open keeps the names that fit and counts the rest (`+2 more`), and the key
+      that shows them all is on the card at any width (_also).
 
     With no question (no approval, no alert that wants an answer): an alert that needs no
     answer as the full card shows it, and the message not read yet, or how many there are.
@@ -1535,19 +1573,18 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
         if len(lane.hints) == 1:
             rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (lane_line(deck, lane, lane.hints[0]), theme.ACCENT)))
         elif lane.hints:
-            unread = Text(f"› {len(lane.hints)} messages sent, not read yet", theme.MUTED)
-            _shows_all(unread)
-            rows.append(unread)
+            rows.extend(_shows_all(Text(f"› {len(lane.hints)} messages sent, not read yet", theme.MUTED), width))
         return Text("\n").join(rows)
-    answers = Text()
     if pending is not None:
         asked = _ASKED_BY.get(pending.kind)
-        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (lane_line(deck, lane, pending.detail), theme.TEXT)))
+        question = Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (lane_line(deck, lane, pending.detail), theme.TEXT))
+        folded = [question] if width is None or question.cell_len <= width else _rows(question, width, CALM_QUESTION_ROWS)
+        for row in folded:
+            row.rstrip()  # the space a fold fell on
+        rows.extend(folded)
         # in the approval's own words: a flag's answer in quick_answers is the detail, which row 1 has
-        for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind]):
-            answers.append("   " if answers else "  ")
-            answers.append(answer.number, f"bold {theme.ACCENT}")
-            answers.append(f" {label}", theme.MUTED)
+        rows.extend(_packed([Text.assemble((answer.number, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED))
+                             for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind])], width))
     else:
         asked = top.kind
         rows.append(Text.assemble((f"▲ {top.kind.label}: ", alert_style(top.kind)), (lane_line(deck, lane, top.reason), theme.TEXT)))
@@ -1555,39 +1592,33 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
         quotes = {answer.number: lane_line(deck, lane, answer.text)  # cut after the credentials are out: no part of one is left
                   for answer in numbered[:CALM_ANSWERS] if answer.text and answer.key in SENDS_TEXT}
 
-        def row(quoted: int) -> Text:
-            out = Text()
+        def answers(quoted: int) -> list[Text]:
+            pieces = []
             for answer in numbered[:CALM_ANSWERS]:
-                out.append("   " if out else "  ")
-                out.append(answer.number, f"bold {theme.ACCENT}")
-                out.append(f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED)
+                piece = Text.assemble((answer.number, f"bold {theme.ACCENT}"), (f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED))
                 quote = quotes.get(answer.number, "")
                 if quote and quoted:
-                    out.append(f' "{quote[:quoted]}{"…" if len(quote) > quoted else ""}"', theme.TEXT)
+                    piece.append(f' "{quote[:quoted]}{"…" if len(quote) > quoted else ""}"', theme.TEXT)
+                pieces.append(piece)
             if len(numbered) > CALM_ANSWERS:
-                out.append(f"   +{len(numbered) - CALM_ANSWERS} more", theme.MUTED)
+                pieces.append(Text(f"+{len(numbered) - CALM_ANSWERS} more", theme.MUTED))
             if top.kind in COURSE_ALERTS:  # what /dismiss would take down
-                out.append("   " if out else "  ")
-                out.append("/dismiss", f"bold {theme.ACCENT}")
-                out.append(" not a problem", theme.MUTED)
-            return out
+                pieces.append(Text.assemble(("/dismiss", f"bold {theme.ACCENT}"), (" not a problem", theme.MUTED)))
+            return _packed(pieces, width)
 
         quoted = CALM_QUOTE
-        answers = row(quoted)
-        while width is not None and quotes and quoted and answers.cell_len > width:
+        fitted = answers(quoted)
+        while quotes and quoted and len(fitted) > 1:  # one row while the quotes can pay for it
             quoted = quoted - 1 if quoted > CALM_QUOTE_MIN else 0
-            answers = row(quoted)
-    if answers:
-        rows.append(answers)
+            fitted = answers(quoted)
+        rows.extend(fitted)
     also = [ALSO_WORDS[kind] for kind in dict.fromkeys(alert.kind for alert in alerts) if kind is not asked]
     if pending is not None and lane.waiting:
         also.append(f"{_count(len(lane.waiting), 'more approval', 'more approvals')} after this one")
     if lane.hints:
         also.append(f"{_count(len(lane.hints), 'message', 'messages')} it has not read yet")
     if also:
-        last = Text(f"  also: {' · '.join(also)}", theme.MUTED)
-        _shows_all(last)
-        rows.append(last)
+        rows.extend(_also(also, width))
     return Text("\n").join(rows)
 
 

@@ -123,7 +123,7 @@ class CardScroll(VerticalScroll, can_focus=False):
 
     def on_resize(self, event: events.Resize) -> None:
         if isinstance(self.screen, FocusScreen):
-            self.screen.card_resized()  # the calm card's answers are fitted to its width
+            self.screen.card_resized()  # the calm card's rows are fitted to its width
 
 
 class FocusScreen(Screen, inherit_bindings=False):

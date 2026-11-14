@@ -81,6 +81,9 @@ A lane heading the wrong way on a web challenge.
 ![A lane full screen: its transcript, the files it changed with a diff, and a card for what needs you](screenshots/lane.png)
 
 `enter` opens a lane: every step it took, the files it changed, and what it needs from you.
+The deck layout shows a lane in detail: every line of each command and its output, and the
+full card, each alert with its reason and its answers as commands. `ctrl+o` switches to the
+calm view the simple layout opens in (above), and back; `/details` does the same.
 
 ![Chatting with a lane from its full-screen view](screenshots/chat.png)
 
@@ -149,7 +152,9 @@ picture of it here yet: make your own with that command.
 
 ![The help screen listing every key and command](screenshots/help.png)
 
-`?` shows every key and command.
+`?` shows every key and command (in a lane, where the chat box takes what you type, `/help`
+does): `ctrl+o` for a lane's details, `pgup` and `pgdn`, the mouse drag that copies and
+`ctrl+c` are in the list.
 
 ## Themes
 

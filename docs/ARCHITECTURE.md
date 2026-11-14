@@ -205,12 +205,27 @@ full form is a Rich panel: the approval's rows first, then every open alert with
 suggestions as commands. With `calm=True` (details off, and never in the compact layout) it
 returns the rows of `views.calm_card()` as Text: the question, its numbered answers in the
 order of `views.quick_answers()`, and what else is open (`ALSO_WORDS`). `calm_card` takes the
-width a row has and shortens the quotes of the answers row to it, so the edge cuts no numbered
-answer away. `FocusScreen._show_card()` puts the card in a Static (`#now`), which for the calm
+width a row has and fits to it what a digit answers, since the view cuts a row at the card's
+edge: an approval's question folds onto further rows, the quotes of the answers shorten and
+then the answers take further rows, and the last row counts the names it has no room for and
+keeps `ctrl+o shows all`. `FocusScreen._show_card()` puts the card in a Static (`#now`), which for the calm
 card has a border in `views.card_border()`'s colour, the title "needs you now" and rows that
 never wrap; the Static is inside `CardScroll` (`#now-scroll`), which carries the card's share
 of the pane and scrolls a card taller than that. The box tells the view when its width changes
 (`card_resized()`), and the calm card is drawn again for it.
+
+**A view that follows a restart** (P63). A lane that is ended so that its challenge starts
+afresh is a `Kill(requeue=True)`: the deck ends it and starts a fresh lane from the queue.
+`Run.attach_files()` gives each such kill a `why` ("to restart with extra.txt"), which the
+ended lane's result has in place of who killed it, and names the fresh lanes in what it tells
+the player: the lanes on the challenge that were not there before. `FlightdeckApp.follow()`
+notes the lane the focus view shows when it was ended that way (`/attach` typed there, or a
+kill that re-queues applied there), with the lanes there were then. `follow_restart()` moves
+the view, once, to the first lane on that challenge that is new, is no fork and has not ended
+(`FocusScreen.show_lane(carry=True)`: the chat box keeps what is typed). It is looked at when
+the follow is set, on every redraw and when the view comes back from under a prompt; it waits
+while the challenge is still queued and no such lane has started, and is dropped when the
+view is on another lane or gone, or when nothing is queued any more.
 
 **Themes** (P52). `themes.py` is pure (no rich, no textual), so the config can load a palette
 without a console: `Palette` (17 colours by role, `dark`, the diff view's `syntax` style),
