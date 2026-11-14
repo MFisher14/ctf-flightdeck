@@ -584,24 +584,32 @@ same for a folder already set up. Every question has an option (`flightdeck star
 a script.
 
 By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
-`/new` to hand a challenge over. The form asks for its name and has one box for everything you
-have: paste the description as the site shows it, drag in its files and screenshots (your
-terminal pastes each as a path, one to a line), and put the instance's address (`https://...`
-or `nc host port`) on a line of its own. `ctrl+s` adds it: flightdeck makes the challenge's
-folder under `board/`, copies the files in, and a lane starts on it at once. Category and
-points are optional. From another terminal, `flightdeck add ~/ctf/example-ctf --name "Crab
-Walk" --text - --file postcard.txt` does the same, and a run that is playing picks it up within
-seconds; so does a challenge folder you make yourself. flightdeck shows each flag; you submit it
-on the site and press `a` if it was accepted or `d` if not.
+`/new` to hand a challenge over. The form asks for its name and has a box for its description:
+paste it as the site shows it, and put the instance's address (`https://...` or `nc host port`)
+on a line of its own. The description is kept exactly as you give it: a path in it is only
+text, and never attaches a file. Attach its files and screenshots by dragging them onto the
+terminal, or with `ctrl+o`. `ctrl+s` adds it: flightdeck makes the challenge's folder under
+`board/`, copies the files in, and a lane starts on it at once. Big files are copied in the
+background: the form says so, and the console goes on. A challenge that cannot be added leaves
+the form open with everything you typed, and says why. Category and points are optional. From
+another terminal, `flightdeck add ~/ctf/example-ctf --name "Crab Walk" --text - --file
+postcard.txt` does the same (only `--file` attaches a file, and each one attached is printed
+with its size), and a run that is playing picks it up within seconds; so does a challenge
+folder you make yourself. flightdeck shows each flag; you submit it on the site and press `a`
+if it was accepted or `d` if not.
 
 `ctrl+o` in the form opens your system's file window (Finder's on macOS) to choose the
 challenge's files, for a terminal where a drop does not arrive; `/attach <challenge>` with no
 file opens the same window. Files dropped on the console are taken wherever the focus is: into
-the form when it is open, otherwise onto the command bar as an `/attach` to finish with Enter.
-In the form, the line under the box says what is attached (each file's name and size) and the
-target it found, so you see a drop land before you add the challenge. A file dropped anywhere
-is taken: in the middle of a line, or on the name. `ctrl+v` pastes a screenshot from the
-clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the terminal's own way (cmd+v).
+the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
+challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
+exist; any other paste is text, and text you typed on the command bar is never replaced. In the
+form, the line under the box says what is attached (each file's name and size) and the target
+it found, so you see a drop land before you add the challenge; `ctrl+r` takes the last file off
+again. A file or a folder can be attached. A device, your home folder itself, and anything that
+holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
+screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
+terminal's own way (cmd+v).
 flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
 once for each image's text and puts it in the description; the image is in the handout too. A
 model that takes no images is said, and the challenge is added without that text.
