@@ -856,9 +856,9 @@ removed once the challenge has the file.
 On macOS, drag the saved screenshot (from the Desktop or a Finder window), not the thumbnail
 that floats in the corner right after you take it: the thumbnail's file may be gone before
 the terminal has sent its path, and then there is nothing to copy (kitty from 0.49 keeps
-such a file for ten minutes). When what arrives reads as a dropped file but no such file is on this machine, the
-console says so and pastes it as the text it is. The line starts with `no such file:` or
-`not on this machine:` and says the likely reason for where you are:
+such a file for ten minutes). When what arrives reads as a dropped file but no such file is
+on this machine, the console says so and pastes it as the text it is. The line starts with
+`no such file:` or `not on this machine:` and says the likely reason for where you are:
 
 - **A temporary file that is gone.** Drag the saved file, or choose it: `ctrl+o` in the
   form, `/attach` with no file elsewhere.
