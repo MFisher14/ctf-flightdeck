@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eighteen proposals, P51 to P68 (2026-11-14)
+## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
-Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P51 to P68); the lines for players are under Unreleased in
+Eighteen proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P51 to P68),
+and the review fixes made before the release; the lines for players are under 0.5.0 in
 [CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 to P68 were built from the list of what comes next (the
 [milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
@@ -26,7 +26,7 @@ Proposals built and waiting for a release, in the order of their numbers in
   setup form, practice); `--help` opens with where a new player starts; `flightdeck doctor` ends
   with what is left to fix or the next command; an API key, an access token and model tokens
   are each called by name; and the guide's glossary comes second. The README and the guide
-  describe the tree, so this quickstart is true of a release from the next one on: 0.4.0 has no
+  describe the tree, so this quickstart is true of a release from 0.5.0 on: 0.4.0 has no
   setup form on its home screen, and both pages say so beside the form, with the commands that
   do the same on 0.4.0.
 - **A dropped file always attaches** (P55,
@@ -115,6 +115,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+
+Not verified yet: rCTF, ctfd-owl and chall-manager have met fakes only, never a real site; the
+need-you count in the terminal's title and the bell, and copying with the mouse, were tested on
+a pseudo-terminal and headless, not looked at in each terminal program or in tmux.
 
 Known limits, each said where it applies:
 
