@@ -491,6 +491,24 @@ def test_an_instance_at_an_address_it_will_not_use_keeps_its_one_slot_past_the_c
     assert list(platform.up) == ["c1"]  # c1 has its turn
 
 
+def test_a_start_that_finished_just_before_the_runs_end_cut_it_off_is_stopped_by_close():
+    """The start's answer comes and the cancel arrives before the task resumes: the started
+    instance is in neither `running` nor waiting to be read, unless close() still has it."""
+    deck, runner, platform, urls, clock = lab(n=1)
+
+    async def scenario():
+        task = asyncio.create_task(runner._send_start("c0"))
+        await asyncio.sleep(0)  # the start is out, in its worker thread
+        # the cancel comes in the same turn of the loop as the answer: after the start is done, before this task resumes
+        runner._starting["c0"].add_done_callback(lambda _: task.cancel())
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return await runner.close()
+
+    assert asyncio.run(scenario()) == []
+    assert platform.calls == [("start", "c0"), ("stop", "c0")] and platform.up == {}
+
+
 def test_an_adopted_instance_that_ended_and_is_started_again_by_this_run_is_this_runs():
     deck, runner, platform, urls, clock = lab(n=1, seconds=600)
     platform.up["c0"] = 40000  # a teammate's

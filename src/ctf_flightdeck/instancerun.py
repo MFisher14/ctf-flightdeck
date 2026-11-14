@@ -313,10 +313,14 @@ class InstanceRunner:
         task = asyncio.ensure_future(asyncio.to_thread(self.client.start, cid))
         self._starting[cid] = task
         try:
-            return await asyncio.shield(task)
-        finally:
-            if task.done():
-                self._starting.pop(cid, None)
+            got = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            raise  # left in `_starting` even if it is done: its answer may have come just before the cancel, and close() reads it
+        except BaseException:
+            self._starting.pop(cid, None)
+            raise
+        self._starting.pop(cid, None)
+        return got
 
     async def _stop(self, cid: str) -> None:
         try:
