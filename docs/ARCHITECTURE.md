@@ -157,7 +157,7 @@ Where: `console/`, `themes.py`, `config.py` (`[console]`).
 **Layouts** (P51). `FlightdeckApp.layout` is `simple` or `deck` (`config.LAYOUTS`). There is no
 layout class: the functions of `console/views.py` that draw differently take `simple=True`
 beside the `compact=True` they already took (`header_pieces`, `fit_header`, `lanes_title`,
-`lane_why`, `now_card`, `others_strip`; `SIMPLE_LANE_COLUMNS`), and each screen draws `simple`
+`lane_why`, `now_card`, `others_strip`, `lane_cells`; `SIMPLE_LANE_COLUMNS`), and each screen draws `simple`
 when the app's layout is `simple` and the terminal is not narrow enough for the compact layout,
 which wins over both. `fleet.context_keys()` gives the simple key line for the selected lane;
 `FocusScreen` hides a part that has nothing in it. `FlightdeckApp.set_layout()` (`/layout`)
@@ -167,7 +167,10 @@ again whenever their own width changes (`fleet.FittedTable`). A console built wi
 otherwise. `FlightdeckApp.open_first_lane()` opens the first lane a `/new` starts, looked at on
 each redraw and when the lane list comes back from under the form. While the board has no
 challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY_BY_HAND`,
-`EMPTY_PLATFORM`). `console/room.py` measures a terminal in the layout it is given
+`EMPTY_PLATFORM`). In the simple header a piece that is not "look here" is `views.plain()`: text
+on the page, which `theme.segments` draws as text because its background is the page's (P66);
+`views.starting()` is the lane the simple list says `starting` of, with a blank cost.
+`console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
 
 **The lane's transcript** (P63). `FocusScreen.details` is the view's one switch: as the player
