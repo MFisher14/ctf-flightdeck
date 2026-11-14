@@ -115,11 +115,17 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **A noCTF preset for the http platform** (P74). `preset = "noctf"` plays an event on noCTF,
+  DownUnderCTF's platform, with the session token the site keeps, and `flightdeck http example
+  --preset noctf` prints a profile for it
+  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)). No change to the engine
+  was needed: every route fits the `[http]` table as it was.
 
 Known limits, each said where it applies:
 
 - The rctf preset has met a stand-in only: it was written from rCTF's public source and tested
-  against a fake that answers in that shape on 127.0.0.1, never a real rCTF.
+  against a fake that answers in that shape on 127.0.0.1, never a real rCTF. The same is true
+  of the noctf preset and noCTF.
 - The http platform does not page a listing, download through a route per challenge, send a
   form-encoded body or a CSRF header, or start an instance; `flightdeck start` and the home
   screen's form do not offer it.

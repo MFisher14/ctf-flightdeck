@@ -4,6 +4,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- noCTF, DownUnderCTF's platform, ships as a preset of the http platform: `preset = "noctf"`
+  under `[http]`, the API's address as `event.url`, and the session token the site keeps once
+  you sign in in a variable named `NOCTF_...`. `flightdeck http example --preset noctf` prints
+  a profile for it. A flag noCTF queues for the organisers to judge comes back to you, never
+  marked wrong. It was written from noCTF's source and tried against a stand-in only, not a
+  real noCTF yet: run `flightdeck http check` first
+  ([Boards](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

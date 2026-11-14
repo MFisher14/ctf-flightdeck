@@ -276,10 +276,10 @@ platform checks the flags.
 Many platforms have no adapter in flightdeck, but their own web page talks JSON to the site.
 For those, the event profile can say how that API is asked, and flightdeck does the talking
 itself: `platform = "http"` and an `[http]` table. No program of yours runs and there is no
-plugin to trust. rCTF ships as a preset.
+plugin to trust. rCTF and noCTF ship as presets.
 
 ```sh
-flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--routes: every route written out)
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--preset noctf for noCTF; --routes: every route written out)
 export RCTF_TOKEN='https://ctf.example.org/login?token=...'   # rCTF: your team's login link, whole (or the token alone)
 flightdeck preflight ~/ctf/quals/event.toml         # every request a run would make, and where your token goes
 flightdeck http check ~/ctf/quals/event.toml        # signs in, lists, reads the solved list; submits nothing
@@ -319,10 +319,46 @@ stand-in that answers in rCTF's shape; nobody has played a real rCTF event throu
 run `http check` first. flightdeck does not start
 an rCTF instance (start it on the site), and counts no tries there: rCTF has none.
 
+`preset = "noctf"` covers noCTF, the platform DownUnderCTF wrote and runs, as its own source
+has it: the challenge list, then one more request for each new challenge's text and files,
+submit, and the team's solves.
+
+```sh
+flightdeck http example --preset noctf > ~/ctf/ductf/event.toml
+export NOCTF_TOKEN='...'   # the session token the site keeps once you sign in
+```
+
+- **`event.url` is the address of noCTF's API**, which is often not the address of its web
+  page: the page is built to talk to an API at an address of its own. Open the challenges page
+  with the browser's network tab open; the host its requests to `/challenges` go to is the one.
+  Every route is at the root of that address.
+- **Your token is the session token** the web page keeps after you sign in: in the browser's
+  storage for the site (the developer tools' Application or Storage tab, Local Storage), the
+  value of `noctf-session-token`. It goes as `Authorization: Bearer`, to `event.url` only. A
+  session lasts a week; when the site stops taking it, `http check` says HTTP 401, and you sign
+  in again and copy the new one. The variable's name starts with `NOCTF_`.
+- **Files** are fetched without your token: noCTF lists a file as a signed path under the API's
+  address, or as a whole URL on the host it keeps files on.
+- **What counts as a verdict.** noCTF answers a flag with a status: `correct` and `incorrect`
+  are verdicts. `queued` (a challenge the organisers judge by hand) and `invalid` are not, so
+  the flag comes back to you. noCTF limits submits (8 a minute for a team, 2 in 30 seconds for
+  one challenge) and answers 429 with a wait, after which flightdeck sends the flag again. It
+  answers 409 both for a challenge your team has solved and for one whose last flag is still
+  queued, so 409 is no verdict either: the solved list, read each minute, says what is solved.
+  Add `[http.submit.status]` with `409 = "already_solved"` if your event has no hand-judged
+  challenges.
+- **A challenge in two categories** reads `crypto,rev`, as noCTF writes it. Its points are the
+  scoreboard's value for it, and a challenge the scoreboard has no value for yet has none.
+
+The preset was written from noCTF's source and tested against a stand-in that answers in that
+shape, on this machine; nobody has played a real noCTF event through it yet, so run `http
+check` first. noCTF counts no tries, and flightdeck starts no instance there.
+
 ### The `[http]` table
 
 For another platform, write the routes yourself: its browser's network tab shows them.
-`flightdeck http example --routes` prints rCTF's table to edit. A request is `[METHOD, PATH]`;
+`flightdeck http example --routes` prints rCTF's table to edit (`--preset noctf --routes`,
+noCTF's). A request is `[METHOD, PATH]`;
 a path into an answer is `$` followed by `.name`, `['name']`, `[n]`, `[*]` or `.*`.
 
 ```toml
@@ -400,9 +436,9 @@ request with where the token goes before anything runs:
   with them.
 - **A token variable named for the platform.** `token_env` must be `HTTP_TOKEN`, a name that
   starts with `HTTP_TOKEN_` (`HTTP_TOKEN_QUALS`) or, with a preset, a name that starts with the
-  preset's (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`). `HTTP_` alone is not enough: other programs name
-  their own settings that way, and `HTTP_PROXY` holds a proxy's address, often with its
-  password. A profile cannot name your CTFd token, a model key, a proxy setting, a variable
+  preset's (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`, `NOCTF_TOKEN`). `HTTP_` alone is not enough:
+  other programs name their own settings that way, and `HTTP_PROXY` holds a proxy's address,
+  often with its password. A profile cannot name your CTFd token, a model key, a proxy setting, a variable
   your config names for a secret, or anything else. The profile still names the address, so
   read `preflight`'s `token` line before you play a profile you did not write.
 - **A token out of a link, for the link's own site.** `auth.link_param` only says which part of
@@ -483,8 +519,8 @@ to the Game Master and reads its solved list; under `manual` or `off` it contact
 not at all. Set `flag_format` in the profile only to override the board's.
 
 An event on a platform with a JSON API says `platform = "http"`, with the platform's `url`, a
-`token_env` named `HTTP_TOKEN` or `HTTP_TOKEN_...` (or, with a preset, `RCTF_...`), the `board` folder
-and an `[http]` table: a preset, or the platform's routes
+`token_env` named `HTTP_TOKEN` or `HTTP_TOKEN_...` (or, with a preset, `RCTF_...` or
+`NOCTF_...`), the `board` folder and an `[http]` table: a preset, or the platform's routes
 ([A board from a platform with a JSON API](#a-board-from-a-platform-with-a-json-api)).
 
 An event on any other platform says `platform = "NAME"`, the name of a plugin you added with
