@@ -427,6 +427,56 @@ def test_a_second_pull_adds_only_what_is_new(tmp_path):
     assert len(load_board(board).challenges) == 4
 
 
+def test_a_pull_that_lands_while_another_was_pulling_keeps_its_refs_and_is_not_added_twice(tmp_path):
+    """A run's pull and `flightdeck plugin pull` in another terminal may overlap: the one that
+    lands second reads plugin.json again, so it neither adds the other's challenges a second
+    time (warm-up-2) nor writes over the other's refs."""
+    board = tmp_path / "board"
+    listed = [challenge("17", "Warm Up"), challenge("23", "Web Thing")]
+    other = Caller(manifest.read(make_plugin(tmp_path / "other", {"pull": {"answer": {"challenges": listed[:1]}}})), URL, "Quals", TOKEN)
+    acme = Caller(manifest.read(make_plugin(tmp_path / "acme", {"pull": {"answer": {"challenges": listed}}})), URL, "Quals", TOKEN)
+    real = acme.pull
+
+    async def slow_pull(files_dir, known=()):
+        landed = await boards.pull_into(other, board, plugin="acme", url=URL)  # lands while this pull is still going
+        assert landed.added == ["warm-up"]
+        return await real(files_dir, known)
+
+    acme.pull = slow_pull
+    written = run(boards.pull_into(acme, board, plugin="acme", url=URL))
+    assert (written.added, written.problems) == (["web-thing"], [])
+    assert boards.load_refs(board, plugin="acme", url=URL) == {"warm-up": "17", "web-thing": "23"}
+    assert sorted(entry.name for entry in board.iterdir()) == ["plugin.json", "warm-up", "web-thing"]
+
+
+def test_a_pull_lands_only_once_the_board_lock_is_free(tmp_path):
+    """The lock is flock on the board folder: another process that holds it (a pull landing)
+    keeps this one's challenges out of the board until it lets go."""
+    import fcntl
+    import threading
+
+    board = tmp_path / "board"
+    board.mkdir()
+    plugin = manifest.read(make_plugin(tmp_path / "acme", {"pull": {"answer": {"challenges": [challenge("17", "Warm Up")]}}}))
+    held = os.open(board, os.O_RDONLY | os.O_DIRECTORY)
+    fcntl.flock(held, fcntl.LOCK_EX)
+    result: list = []
+    worker = threading.Thread(target=lambda: result.append(
+        run(boards.pull_into(Caller(plugin, URL, "Quals", TOKEN), board, plugin="acme", url=URL))))
+    try:
+        worker.start()
+        deadline = time.monotonic() + 20
+        while not calls(tmp_path / "acme") and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert calls(tmp_path / "acme"), "the plugin was never asked"
+        worker.join(0.5)
+        assert worker.is_alive() and list(board.iterdir()) == []  # it waits for the lock: nothing landed
+    finally:
+        os.close(held)
+    worker.join(20)
+    assert result[0].added == ["warm-up"] and boards.load_refs(board, plugin="acme", url=URL) == {"warm-up": "17"}
+
+
 def test_a_folder_that_is_another_board_is_refused_before_the_plugin_is_asked(tmp_path):
     board = tmp_path / "board"
     listed = {"pull": {"answer": {"challenges": [challenge("17", "Warm Up")]}}}
