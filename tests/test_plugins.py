@@ -16,6 +16,8 @@ import pytest
 
 from ctf_flightdeck import __version__
 from ctf_flightdeck.config import PluginRef
+from ctf_flightdeck.platform.manual import load_board
+from ctf_flightdeck.plugins import board as boards
 from ctf_flightdeck.plugins import call, manifest
 from ctf_flightdeck.plugins.call import CallFailed, Caller, Verdict, child_env
 from ctf_flightdeck.plugins.manifest import PluginError
@@ -280,3 +282,162 @@ def test_a_program_that_cannot_be_started_fails_the_call(tmp_path):
     shutil.rmtree(tmp_path / "acme")  # the folder went away after the manifest was read
     with pytest.raises(CallFailed, match="^it could not be started "):
         run(acme.solved())
+
+
+# ---------------------------------------------------------------------- the board a pull writes
+
+
+def pull(folder: Path, board: Path, replies: dict, *, name: str = "acme", url: str = URL) -> boards.Written:
+    plugin = manifest.read(make_plugin(folder, replies, name=name))
+    return run(boards.pull_into(Caller(plugin, url, "Quals", TOKEN), board, plugin=name, url=url))
+
+
+def test_a_pull_writes_a_board_the_folder_board_loader_reads(tmp_path):
+    board = tmp_path / "quals" / "board"
+    written = pull(tmp_path / "acme", board, {"pull": {
+        "write": {"17/chal.zip": "zip bytes", "23/notes/readme.txt": "read me"},
+        "answer": {"notes": ["2 challenges are locked"], "challenges": [
+            challenge("17", "Warm Up", files=["17/chal.zip"], solves=3, max_attempts=5),
+            challenge("23", "Web Thing", category="Web Exploitation", points=250, files=["23/notes/readme.txt"],
+                      urls=["https://chal.example.test:8443"]),
+            {"ref": "31", "name": "Bare"},
+        ]},
+    }})
+    assert (written.added, written.problems, written.notes) == (["warm-up", "web-thing", "bare"], [], ["2 challenges are locked"])
+    loaded = load_board(board)
+    by_id = {item.challenge.id: item for item in loaded.challenges}
+    assert sorted(by_id) == ["bare", "warm-up", "web-thing"]
+    warm = by_id["warm-up"].challenge
+    assert (warm.name, warm.category, warm.points, warm.solves, warm.max_attempts, warm.files) == ("Warm Up", "misc", 100, 3, 5, ("chal.zip",))
+    assert (board / "warm-up" / "chal.zip").read_text() == "zip bytes"
+    web = by_id["web-thing"]
+    assert (web.challenge.category, web.challenge.points, web.urls) == ("web", 250, ("https://chal.example.test:8443",))
+    assert (board / "web-thing" / "readme.txt").read_text() == "read me"
+    assert (by_id["bare"].challenge.category, by_id["bare"].challenge.points) == ("misc", 0)  # what the plugin left out
+    assert json.loads((board / "plugin.json").read_text()) == {
+        "format": 1, "plugin": "acme", "url": URL, "refs": {"bare": "31", "warm-up": "17", "web-thing": "23"}}
+    assert boards.load_refs(board, plugin="acme", url=URL + "/") == {"bare": "31", "warm-up": "17", "web-thing": "23"}
+    # the plugin was handed a staging folder beside the board, and nothing of it is left
+    files = Path(calls(tmp_path / "acme")[0]["request"]["files"])
+    assert files.parent.parent == board.parent.resolve() and not files.parent.exists()
+    assert sorted(entry.name for entry in board.parent.iterdir()) == ["board"]
+
+
+def test_a_challenge_that_does_not_pass_is_left_out_and_named_while_the_others_land(tmp_path):
+    board = tmp_path / "board"
+    (tmp_path / "secret.txt").write_text("the player's own file")
+    written = pull(tmp_path / "acme", board, {"pull": {
+        "write": {"ok.txt": "fine", "one/twin.txt": "1", "two/twin.txt": "2"},
+        "answer": {"challenges": [
+            challenge("1", "Climbs Out", files=["../secret.txt"]),
+            challenge("2", "Absolute", files=[str(tmp_path / "secret.txt")]),
+            challenge("3", "Not There", files=["missing.bin"]),
+            challenge("4", "Extra Key", flag="flag{leaked}"),
+            challenge("5", "Bad Points", points="many"),
+            challenge("6", "Bad \x1b[31mUrl", urls=["https://chal.example.test/path"]),
+            challenge("", "No Ref"),
+            {"ref": "8"},
+            challenge("9", "Twins", files=["one/twin.txt", "two/twin.txt"]),
+            challenge("10", "Fine", files=["ok.txt"]),
+            challenge("10", "Fine Again"),
+        ]},
+    }})
+    assert written.added == ["fine"]
+    assert written.problems == [
+        'Climbs Out: "files"[0] must be a relative path inside the files folder the pull was given, with no ..',
+        'Absolute: "files"[0] must be a relative path inside the files folder the pull was given, with no ..',
+        'Not There: "files"[0] names a file the plugin did not put in the files folder',
+        "Extra Key: unknown key flag (known: ref, name, category, points, description, files, urls, solves, max_attempts)",
+        'Bad Points: "points" must be a whole number, 0 or more',
+        'Bad ^[[31mUrl: "urls"[0] must be an http:// or https:// origin, scheme://host[:port], or a TCP service, tcp://host:port '
+        "(what `nc host port` reaches): in printable ASCII with no spaces, and with no path, query or user name; a host that ends "
+        "in a number must be an IPv4 address, four numbers from 0 to 255",
+        'No Ref: "ref" must be a string of 1 to 128 printable characters: the platform\'s own id for the challenge',
+        '8: "name" must be a non-empty string',
+        'Twins: "files"[1] has the name of another file of the challenge',
+        "Fine Again: its ref is another challenge's in the same pull",
+    ]
+    assert [item.challenge.id for item in load_board(board).challenges] == ["fine"]
+    assert sorted(entry.name for entry in board.iterdir()) == ["fine", "plugin.json"]
+    assert (tmp_path / "secret.txt").read_text() == "the player's own file"
+    assert boards.load_refs(board, plugin="acme", url=URL) == {"fine": "10"}  # the ones left out are asked for again
+
+
+def test_a_link_the_plugin_left_in_the_files_folder_is_never_followed(tmp_path):
+    board = tmp_path / "board"
+    secret = tmp_path / "secret.txt"
+    secret.write_text("the player's own file")
+    folder = make_plugin(tmp_path / "acme")
+    # a plugin that links to a file of the player's instead of downloading one
+    (folder / "adapter.py").write_text(
+        "import json, os, sys\n"
+        "req = json.load(sys.stdin)\n"
+        f"os.symlink({str(secret)!r}, os.path.join(req['files'], 'handout.txt'))\n"
+        "json.dump({'challenges': [{'ref': '1', 'name': 'Linked', 'files': ['handout.txt']}]}, sys.stdout)\n")
+    written = run(boards.pull_into(Caller(manifest.read(folder), URL, "Quals", TOKEN), board, plugin="acme", url=URL))
+    assert written.added == [] and written.problems == ['Linked: "files"[0] is a link or inside one; flightdeck does not follow links']
+    assert load_board(board, empty_ok=True).challenges == ()
+
+
+def test_a_name_with_no_ascii_letters_gets_its_id_from_the_ref_and_a_taken_id_is_numbered(tmp_path):
+    board = tmp_path / "board"
+    written = pull(tmp_path / "acme", board, {"pull": {"answer": {"challenges": [
+        challenge("17", "\u6311\u6218"), challenge("x/9", "\u2603"), challenge("40", "Same Name"), challenge("41", "Same Name"),
+        challenge("42", "same-name"), challenge("\u2603", "\u2603\u2603"),
+    ]}}})
+    assert written.problems == []
+    assert written.added == ["c-17", "c-x-9", "same-name", "same-name-2", "same-name-3", "c"]
+    assert boards.load_refs(board, plugin="acme", url=URL) == {
+        "c-17": "17", "c-x-9": "x/9", "same-name": "40", "same-name-2": "41", "same-name-3": "42", "c": "\u2603"}
+    assert load_board(board).challenges[1].challenge.name == "\u6311\u6218"
+
+
+def test_a_second_pull_adds_only_what_is_new(tmp_path):
+    board = tmp_path / "board"
+    first = [challenge("17", "Warm Up", files=["a.txt"]), challenge("23", "Web Thing")]
+    assert pull(tmp_path / "acme", board, {"pull": {"write": {"a.txt": "one"}, "answer": {"challenges": first}}}).added == ["warm-up", "web-thing"]
+    (board / "warm-up" / "notes.md").write_text("the player's notes")
+    later = [*first, challenge("31", "Late One"), challenge("32", "Warm Up")]  # another challenge of a name that is taken
+    again = pull(tmp_path / "acme", board, {"pull": {"write": {"a.txt": "changed"}, "answer": {"challenges": later}}})
+    assert (again.added, again.problems) == (["late-one", "warm-up-2"], [])
+    assert calls(tmp_path / "acme")[-1]["request"]["known"] == ["17", "23"]
+    assert sorted(entry.name for entry in board.iterdir()) == ["late-one", "plugin.json", "warm-up", "warm-up-2", "web-thing"]
+    assert (board / "warm-up" / "a.txt").read_text() == "one" and (board / "warm-up" / "notes.md").exists()
+    assert pull(tmp_path / "acme", board, {"pull": {"answer": {"challenges": later}}}).added == []
+    assert len(load_board(board).challenges) == 4
+
+
+def test_a_folder_that_is_another_board_is_refused_before_the_plugin_is_asked(tmp_path):
+    board = tmp_path / "board"
+    listed = {"pull": {"answer": {"challenges": [challenge("17", "Warm Up")]}}}
+    pull(tmp_path / "acme", board, listed)
+    other = f"{board.resolve()} holds a board pulled by another plugin or from another address: use a new folder"
+    with pytest.raises(PluginError) as caught:
+        pull(tmp_path / "rival", board, listed, name="rival")
+    assert str(caught.value) == other and calls(tmp_path / "rival") == []
+    with pytest.raises(PluginError) as caught:
+        pull(tmp_path / "acme", board, listed, url="https://elsewhere.example.test")
+    assert str(caught.value) == other and len(calls(tmp_path / "acme")) == 1
+    with pytest.raises(PluginError) as caught:
+        boards.load_refs(board, plugin="rival", url=URL)
+    assert str(caught.value) == other
+    by_hand = tmp_path / "by-hand"
+    (by_hand / "mine").mkdir(parents=True)
+    with pytest.raises(PluginError) as caught:
+        pull(tmp_path / "acme", by_hand, listed)
+    assert str(caught.value) == (f"{by_hand.resolve()} is not empty and holds no plugin.json, so it is not a board the acme plugin "
+                                 "pulled: use a new folder")
+    with pytest.raises(PluginError) as caught:
+        boards.load_refs(by_hand, plugin="acme", url=URL)
+    assert str(caught.value) == (f"{by_hand} was not pulled by the acme plugin, so flightdeck has nowhere to send its flags: "
+                                 "`flightdeck plugin pull EVENT.toml` first, or set policies.pull to auto or confirm")
+    (board / "plugin.json").write_text('{"format": 1, "plugin": "acme", "url": "' + URL + '", "refs": {"warm-up": 17}}')
+    with pytest.raises(PluginError, match="is not a plugin.json flightdeck wrote"):
+        boards.load_refs(board, plugin="acme", url=URL)
+
+
+def test_a_pull_that_fails_adds_nothing_and_leaves_no_staging_folder(tmp_path):
+    board = tmp_path / "board"
+    with pytest.raises(CallFailed, match="^it exited with status 1: the platform is down$"):
+        pull(tmp_path / "acme", board, {"pull": {"exit": 1, "stderr": "the platform is down\n"}})
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["acme", "board"] and list(board.iterdir()) == []
