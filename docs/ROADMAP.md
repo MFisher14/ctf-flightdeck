@@ -24,6 +24,12 @@ Proposals built and waiting for a release, in the order of their numbers in
 - **The same call in a row is one row with a count** (P72). A lane's calm view and the peek
   fold the same tool call made several times in a row into one row, `×7` first, so a lane
   that loops shows it at a glance; details and `/copy` still have every call.
+- **A lane notices a server that drops its oldest messages** (P73,
+  [#10](https://github.com/MFisher14/ctf-flightdeck/issues/10)). A run on Ollama 0.34.2 showed
+  that past its window it leaves out a chat's oldest messages with no error and holds the
+  prompt count under the window, so a lane with no `[api] context` never refreshed. The
+  driver now sees a context that grew while the count did not, says so on the lane, refreshes
+  it at once, and refreshes later contexts on that model at the count where the drop was seen.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

@@ -1314,7 +1314,10 @@ When the config's lanes use Ollama on this machine, it and `flightdeck doctor` (
 warning) say what context Ollama gives the ladder's model (its `/api/ps` for a loaded one, else an
 estimate from `OLLAMA_CONTEXT_LENGTH` or the GPU memory: 4,096 under 23 GiB, 32,768 from 23, 262,144
 from 47) against what a lane needs, and the fix; `[api] context` makes a lane's refresh point follow
-the server's context (`config.lane_refresh_at`).
+the server's context (`config.lane_refresh_at`). Where none is set and the server drops messages
+anyway, the driver sees it in a lane (`AgentDriver._dropped`: the context only grew since the call
+before, the same model answered, and the count did not grow), says so on the lane, refreshes it at
+once, and keeps that count as the model's refresh point for the run (`AgentDriver.fits`).
 
 It recommends and never writes a config. `flightdeck doctor` shows the machine in one line that is
 never essential.

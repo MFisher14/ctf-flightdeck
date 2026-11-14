@@ -129,6 +129,9 @@ WorkspaceFactory = Callable[[Lane, Challenge], Workspace]
 MAX_SESSION = 256  # OpenRouter's limit for session_id
 MAX_FILES_PER_TURN = 50  # an unpacked archive can change thousands; the console shows the first 50
 COMPACT_AT = 50_000  # prompt tokens: past this, a lane continues in a fresh context with a summary
+# Prompt tokens under which a server's count is not judged for dropped messages (_dropped): a
+# lane's first request alone is more (its tools and system prompt are about 1,000 tokens).
+DROPS_JUDGED_FROM = 1024
 HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (its HISTFILE)
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
@@ -281,6 +284,9 @@ class _Run:
     handover: dict | None = None  # what other lanes tried and its series, as of its first model call: after the brief in every fresh context
     opened: bool = False  # the lane's first model call is made (or about to be): nothing more goes into its brief
     viewed: list[int] = field(default_factory=list)  # bytes of each picture the turn being run has looked at (view_image)
+    # the last answered call: (its context, how many messages it sent, the model asked, the one
+    # that answered, the prompt tokens the server counted), for _dropped; None before the first
+    counted: tuple[list[dict], int, str, str, int] | None = None
 
 
 @dataclass
@@ -397,6 +403,7 @@ class AgentDriver:
         self.prices = dict(prices or {})
         self.max_tokens = max_tokens
         self.compact_at = compact_at  # None: never refresh a lane's context
+        self.fits: dict[str, int] = {}  # model -> the smallest count of a call just before its server dropped messages (_dropped)
         self.l1 = l1  # the player's no-model solvers, run before a lane's first model call; None: none
         if instance not in INSTANCE_POLICIES:
             raise ValueError(f"instance must be one of {', '.join(INSTANCE_POLICIES)}, got {instance!r}")
@@ -587,6 +594,7 @@ class AgentDriver:
                 run.messages.append({"role": "user", "content": self.redact(prompts.player_message(hints, notes))})
                 run.idle_turns = 0
             generation, model, messages = run.generation, run.model, run.messages
+            sent = len(messages)  # the turn appends to the same list: what this call carried is its first `sent`
             try:
                 reply = await self._ask(run, model, messages, generation)
             except _Overtaken:
@@ -619,7 +627,8 @@ class AgentDriver:
                 await self._until_over(run)  # it gave up: no more model calls, though a flag of it may still wait
                 return
             if run.messages is messages:  # not escalated during the turn
-                self._refresh_if_long(run, reply.usage.prompt_tokens)
+                dropped = self._dropped(run, model, messages, sent, reply)
+                self._refresh_if_long(run, reply.usage.prompt_tokens, model, now=dropped)
 
     async def _ask(self, run: _Run, model: str, messages: list[dict], generation: int) -> Reply:
         """The lane's next model call. When it fails for good and the request was the first to
@@ -671,6 +680,7 @@ class AgentDriver:
         for message in new:
             del message[IMAGE_KEY]
             message["content"] = self.redact(told)
+        run.counted = None  # the context shrank by flightdeck's hand: the next count is not judged against the last (_dropped)
         count, them = ("a picture", "it") if len(new) == 1 else (f"{len(new)} pictures", "them")
         unsure = f", a server error that may not be about {them}" if error.status in IMAGE_UNSURE else ""
         self._say(run.lane_id, f"{run.lane_id} view_image: the call to {model} that carried {count} failed ({error}){unsure}; "
@@ -1097,11 +1107,51 @@ class AgentDriver:
         run.said.update(found)
         return found
 
-    def _refresh_if_long(self, run: _Run, prompt_tokens: int) -> None:
+    def _dropped(self, run: _Run, model: str, messages: list[dict], sent: int, reply: Reply) -> bool:
+        """Whether the server dropped messages of the context this call sent: the context only
+        grew since the lane's last answered call (the same list, more messages, the same model
+        asked and answering), yet the server counted no more prompt tokens than it did then.
+        Ollama does this past the context it gives a model (4,096 or 32,768 tokens unless
+        OLLAMA_CONTEXT_LENGTH says more): it leaves out the oldest messages, keeping the system
+        message and the latest, answers as usual and says nothing, so a lane's count stops
+        growing below its refresh point and the lane goes on without its brief (seen on Ollama
+        0.34.2: docs/MODELS.md). Then the lane's later contexts on this model are refreshed at the
+        prompt tokens of the call before, where the drop was seen (`fits`, the smallest such count);
+        that call may itself have been cut, so it is not a count known to fit; the player is told, once a model, what to set. Counts under
+        DROPS_JUDGED_FROM are not judged: no real lane's request is that small."""
+        tokens = reply.usage.prompt_tokens
+        before, run.counted = run.counted, (messages, sent, model, reply.model, tokens)
+        if before is None or tokens < DROPS_JUDGED_FROM:
+            return False
+        context, length, asked, answered, fitted = before
+        if context is not messages or sent <= length or (asked, answered) != (model, reply.model) or tokens > fitted:
+            return False
+        known = self.fits.get(model)
+        self.fits[model] = fitted if known is None else min(known, fitted)
+        lane_id = run.lane_id
+        first = known is None
+        self._say(lane_id, f"{lane_id}: the model server left out messages of this context: it counted {tokens:,} prompt "
+                           f"tokens, no more than the {fitted:,} of the call before, though the context had grown. Its "
+                           f"context for {model} is smaller than the lane's; " + (
+                               f"the lane continues in a fresh context, and lanes on {model} are refreshed from "
+                               f"{self.fits[model]:,} prompt tokens on" if self.compact_at is not None else
+                               "this run never refreshes a lane, so the lane goes on without its oldest messages"))
+        if first:
+            self._say(lane_id, f"{lane_id}: to give lanes their whole context, give the server a longer one (Ollama: "
+                               f"OLLAMA_CONTEXT_LENGTH=65536 where it runs, then restart it) and set context under [api] "
+                               f"to it; `flightdeck doctor` checks it (docs/MODELS.md)")
+        return True
+
+    def _refresh_if_long(self, run: _Run, prompt_tokens: int, model: str = "", *, now: bool = False) -> None:
         """Past compact_at prompt tokens, continue in a fresh context: the same prefix and
-        brief (so the API's cache still hits) plus a summary, instead of the whole history."""
+        brief (so the API's cache still hits) plus a summary, instead of the whole history.
+        Sooner for a model whose server was seen to drop messages (`fits`, _dropped), and at
+        once (`now`) after a call it dropped some of. Never when compact_at is None."""
         lane = self._lane(run)
-        if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
+        if self.compact_at is None or lane is None or lane.finished:
+            return
+        point = min(self.compact_at, self.fits.get(model, self.compact_at))
+        if not now and prompt_tokens < point:
             return
         summary = lane_summary(self.deck, lane)
         run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.refresh(summary, prompt_tokens))}]

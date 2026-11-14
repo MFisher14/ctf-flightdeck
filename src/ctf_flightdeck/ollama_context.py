@@ -6,7 +6,9 @@ GPU counts as none), 32,768 from 23 GiB and 262,144 from 47 GiB, unless OLLAMA_C
 (or the model's own num_ctx) says otherwise, and past that it drops the oldest messages of a chat
 without saying so, keeping the system message and the latest one (Ollama's server/routes.go,
 after "Set default context based on VRAM tier", and server/prompt.go; its
-docs/context-length.mdx rounds the tiers to 24 and 48 GiB). A lane grows to its refresh point
+docs/context-length.mdx rounds the tiers to 24 and 48 GiB; a run on Ollama 0.34.2 showed the
+drop, with the prompt count held under the window: docs/MODEL-APIS.md, and the driver's check for
+it, agent/driver.AgentDriver._dropped). A lane grows to its refresh point
 (config.lane_refresh_at) and needs room for replies past it, so on most machines Ollama's default
 is too small for one; the light role's prompts are a few hundred tokens and fit 4,096.
 

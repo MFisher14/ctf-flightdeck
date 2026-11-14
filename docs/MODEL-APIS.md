@@ -93,6 +93,25 @@ Ollama gives your lanes' model and whether a lane fits: Ollama's own word for a 
 flightdeck runs or from your machine's GPU memory, and the fix when it is too small. The light
 model's prompts are short and fit Ollama's smallest context, 4,096 tokens.
 
+What a lane gets past the window, measured on Ollama 0.34.2 with its 32,768-token default and
+`qwen3.5:0.8b` (a synthetic chat that grew by about 4,700 tokens a turn): every call still
+answered 200, the server's log said nothing was cut, and the prompt count stopped at about 28,300
+however long the chat grew. The first user message, which in a lane is the challenge's brief, was
+gone: asked for a word it held, the model no longer knew it. So a lane with no `context` set never
+reached its 50,000-token refresh and went on without its brief.
+
+flightdeck now notices this in a lane. When a call's context only grew since the call before (the
+same context, more messages, the same model) but the server counted no more prompt tokens, the
+server dropped messages. The lane's transcript says so, names `OLLAMA_CONTEXT_LENGTH` and `[api]
+context` the first time for each model, and the lane goes on at once in a fresh context with a
+summary. For the rest of the run, lanes on that model are refreshed when they reach the count of
+the call before the drop (about 28,300 in the run above), even with no `context` set. That is the
+count where the drop was seen, not one known to fit: that call may already have been cut, and a
+context that jumps past the window in one turn can be cut below it without being noticed.
+One call has already gone without the oldest messages by then, so setting `context` is still the
+fix; the check only stops a lane from going on without its brief. Counts under 1,024 prompt
+tokens are not judged: no lane's request is that small.
+
 ## The Anthropic API
 
 `flightdeck init --provider anthropic` writes the ladder `claude-haiku-5-5`, `claude-sonnet-5-5`,

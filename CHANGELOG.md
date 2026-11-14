@@ -30,6 +30,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   with the count, so the rows above it still show what the lane did before. Calls fold only
   when their text is the same (blanks aside). `ctrl+o` still shows every call, and `/copy all`
   copies every one.
+- A lane notices when its model server drops its oldest messages. Ollama does this past the
+  context it gives a model, with no error, and a lane with no `context` under `[api]` then went
+  on without its brief. Now, when the context grew but the server counted no more prompt
+  tokens than the call before, the lane says so, tells you once to set `OLLAMA_CONTEXT_LENGTH`
+  and `[api] context`, and goes on at once in a fresh context with a summary. For the rest of
+  the run, lanes on that model are refreshed when they reach the count where the drop was seen
+  ([details](docs/MODEL-APIS.md#context-on-a-server-on-your-machine)).
 
 ## 0.5.0 (2026-11-14)
 
