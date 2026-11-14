@@ -55,8 +55,8 @@ def choose(monkeypatch, choice):
     """The home screen ends with `choice`; what it was given is returned for the test to read."""
     given = {}
 
-    def stand_in(menu, status):
-        given.update(menu=menu, status=status)
+    def stand_in(menu, status, *, palette=None):
+        given.update(menu=menu, status=status, palette=palette)
         return choice
 
     monkeypatch.setattr(cli, "_home_choice", stand_in)
@@ -344,7 +344,9 @@ def test_the_first_real_console_is_noted_so_only_it_opens_on_the_welcome():
     assert cli._first_console() is True and cli._first_console() is False
 
 
-def test_the_live_mock_opens_on_a_welcome_that_enter_closes(monkeypatch):
+def test_the_live_mock_opens_on_a_welcome_that_enter_closes(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))  # no config of the player's: the mock reads its look from one
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
     import asyncio
 
     from ctf_flightdeck.console.app import FlightdeckApp

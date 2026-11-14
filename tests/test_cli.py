@@ -128,7 +128,11 @@ class Opened:
 
 
 @pytest.fixture
-def opened(monkeypatch) -> list[Opened]:
+def opened(monkeypatch, tmp_path_factory) -> list[Opened]:
+    """What the CLI opened, in place of a live console. The home directory is the test's own
+    and has no config: `mock` reads the console's look from the player's config when there is one."""
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
     calls: list[Opened] = []
 
     def run(self: FlightdeckApp, *args, **kwargs) -> None:

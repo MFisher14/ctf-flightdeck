@@ -488,3 +488,119 @@ def test_the_home_screen_opens_no_command_palette():
             assert app.theme == "fd-flightdeck"
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------- the command line: flightdeck alone, the mock, a run
+
+
+def test_flightdeck_alone_opens_the_home_screen_in_the_configs_theme(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    config = tmp_path / "config.toml"
+    config.write_text('[models]\nladder = ["m"]\n[console]\ntheme = "gruvbox"\n')
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    monkeypatch.setattr(cli, "_at_terminal_out", lambda: True)
+    opened = []
+    monkeypatch.setattr(HomeApp, "run", lambda self, **kw: opened.append((theme.active(), self.theme)))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 0, result.output
+    assert opened == [(themes.BUILTIN["gruvbox"], "fd-gruvbox")]
+    config.write_text('[models]\nladder = ["m"]\n[console]\ntheme = "solarized"\n')  # no such theme: no home screen in the default's place
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 2 and f"flightdeck: {config}: console.theme names no theme" in result.output
+    assert len(opened) == 1
+
+
+@pytest.fixture
+def mock_opened(monkeypatch, tmp_path):
+    """What `flightdeck mock` opened, in place of a live console; a home with no config."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
+    opened = []
+    monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: opened.append(
+        (theme.active(), self.theme, self.themes_folder, self.config_path)))
+    return opened
+
+
+def test_the_mock_opens_in_the_theme_of_the_players_config(mock_opened, tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    (tmp_path / "themes").mkdir()
+    (tmp_path / "themes" / "dusk.toml").write_text('base = "dracula"\n[colors]\naccent = "#ff5fd7"\n')
+    config.write_text('[api]\nbase_url = 5\n[console]\ntheme = "dusk"\n')  # not a finished config: the mock needs none
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 0, result.output
+    ((palette, textual_theme, folder, config_path),) = mock_opened
+    assert (palette.name, palette.accent, palette.page) == ("dusk", "#ff5fd7", themes.BUILTIN["dracula"].page)
+    assert (textual_theme, folder, config_path) == ("fd-dusk", tmp_path / "themes", str(config))  # where /theme looks, and what it names
+
+
+def test_the_mock_with_no_config_opens_in_the_default_theme(mock_opened):
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 0, result.output
+    assert mock_opened == [(themes.DEFAULT, "fd-flightdeck", None, "")]
+
+
+@pytest.mark.parametrize("case", ["a broken theme file", "no such theme", "a bad table", "a config that is named and not there"])
+def test_the_mock_does_not_open_in_the_default_theme_when_the_configs_cannot_be_used(mock_opened, tmp_path, monkeypatch, case):
+    config = tmp_path / "config.toml"
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    (tmp_path / "themes").mkdir()
+    file = tmp_path / "themes" / "dusk.toml"
+    if case == "a broken theme file":
+        file.write_text('base = "nord"\n[colors]\nacent = "#ff5fd7"\n')
+        config.write_text('[console]\ntheme = "dusk"\n')
+        message = f"flightdeck: {file}: unknown key colors.acent (known in colors: page, surface, "
+    elif case == "no such theme":
+        config.write_text('[console]\ntheme = "solarized"\n')
+        message = f"flightdeck: {config}: console.theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula"
+    elif case == "a bad table":
+        config.write_text('[console]\ncolour = "nord"\n')
+        message = f"flightdeck: {config}: unknown key console.colour"
+    else:
+        message = f"flightdeck: {config}: no such file (the file $FLIGHTDECK_CONFIG names)"
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 2, result.output
+    assert message in " ".join(result.output.split())
+    assert mock_opened == [] and "Traceback" not in result.output
+
+
+def test_the_mocks_screenshots_are_in_the_default_theme_whatever_the_config_says(mock_opened, tmp_path, monkeypatch):
+    """The pictures are the ones the docs show; the player's config is not read for them."""
+    from ctf_flightdeck.mock import screenshots
+
+    config = tmp_path / "config.toml"
+    config.write_text('[console]\ntheme = "no such theme"\n')
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    built = []
+    real = screenshots.FlightdeckApp
+
+    def app(*args, **kw):
+        made = real(*args, **kw)
+        built.append((kw.get("palette"), theme.active(), made.theme))
+        raise KeyboardInterrupt  # built as the screenshots build it: that is all this test needs
+
+    monkeypatch.setattr(screenshots, "FlightdeckApp", app)
+    theme.use(NORD)  # whatever was in use before
+    result = CliRunner().invoke(cli.app, ["mock", "--screenshot", str(tmp_path / "shots")])
+    assert built == [(themes.DEFAULT, themes.DEFAULT, "fd-flightdeck")], result.output
+
+
+def test_a_runs_console_opens_in_the_configs_theme_and_looks_for_themes_beside_the_config(tmp_path):
+    from ctf_flightdeck.run import RunOptions, prepare_run
+    from fake_model import FakeModelServer
+    from test_run import board, config
+
+    with FakeModelServer([]) as server:
+        path = config(tmp_path, server.base_url)
+        path.write_text(path.read_text() + '[console]\ntheme = "dusk"\n')
+        (tmp_path / "themes").mkdir()
+        (tmp_path / "themes" / "dusk.toml").write_text('base = "gruvbox"\n[colors]\nok = "#00ffaa"\n')
+        run = prepare_run(RunOptions(board=board(tmp_path), config=path))
+        try:
+            app = run.app(refresh_seconds=None)
+            assert (theme.active().name, theme.active().ok, theme.active().page) == ("dusk", "#00ffaa", themes.BUILTIN["gruvbox"].page)
+            assert (app.theme, app.themes_folder, app.config_path) == ("fd-dusk", tmp_path / "themes", str(path))
+        finally:
+            run.close()

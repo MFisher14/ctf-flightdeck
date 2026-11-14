@@ -462,6 +462,8 @@ class Run:
             self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
             config_path=str(self.config.source) if self.config.source is not None else "",
             welcome=welcome,
+            palette=self.config.console.palette,
+            themes_folder=self.config.source.parent / "themes" if self.config.source is not None else None,
             adder=self.add_challenge if self.watches_folder else None,
             paster=self.paste_image if self.watches_folder else None,
             attacher=self.attach_files if self.watches_folder else None,

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import themes
 from ..console.app import FlightdeckApp
 from ..console.focus import FocusScreen
 from ..core.attention import SortMode, sort_lanes
@@ -94,7 +95,8 @@ class _Run:
 async def _capture(world: FakeWorld, out_dir: Path, size: tuple[int, int]) -> CaptureResult:
     deck = world.deck
     result = CaptureResult()
-    app = FlightdeckApp(deck, ticker=world.tick, mock=f"MOCK · {world.scenario.name}", refresh_seconds=None)
+    # the default theme, whatever the player's config says: these are the pictures the docs show
+    app = FlightdeckApp(deck, ticker=world.tick, mock=f"MOCK · {world.scenario.name}", refresh_seconds=None, palette=themes.DEFAULT)
     async with app.run_test(size=size) as pilot:
         run = _Run(app, world, pilot, out_dir, result)
 

@@ -86,7 +86,7 @@ def _home() -> None:
     status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
     menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
                       pack_installed=loaded is not None and loaded.l1.pack is not None)
-    choice = _home_choice(menu, status)
+    choice = _home_choice(menu, status, palette=loaded.console.palette if loaded is not None else None)
     if choice is None:
         return
     kind = choice[0]
@@ -106,10 +106,10 @@ def _home() -> None:
         start_cli.start()
 
 
-def _home_choice(menu, status: str):
+def _home_choice(menu, status: str, *, palette=None):
     from .console.home import HomeApp
 
-    return HomeApp(menu, status).run()
+    return HomeApp(menu, status, palette).run()
 
 
 def _start_new(new) -> None:
@@ -251,8 +251,33 @@ def mock(
     from .console.app import FlightdeckApp
     from .mock.world import FakeWorld
 
+    look, config_file = _console_look()  # before the world is built: a theme that cannot be used stops here
     world = FakeWorld(scenarios.get(scenario.value), max_lanes=max_lanes, team=team, containerized=containerized)
-    FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True).run()
+    FlightdeckApp(
+        world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True,
+        palette=look.palette,
+        config_path=str(config_file) if config_file is not None else "",
+        themes_folder=config_file.parent / "themes" if config_file is not None else None,
+    ).run()
+
+
+def _console_look():
+    """How the player's config says the console looks ([console]), for a console that needs
+    no config (the mock), and the config file it is from (None: there is none, so the
+    defaults). A [console] table or a theme that cannot be used is said, and nothing opens:
+    the default look is never shown in its place."""
+    from .config import ConfigError, default_config_path, load_console
+
+    try:
+        look = load_console()
+    except ConfigError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
+    try:
+        path = default_config_path()
+    except ConfigError:  # no home directory: no config file, and load_console gave the defaults
+        return look, None
+    return look, path if path.exists() else None
 
 
 class Submit(StrEnum):
