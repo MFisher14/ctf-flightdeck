@@ -29,7 +29,9 @@ problem: report it privately, never in a public issue.
   event profile, a board or a challenge named it; flightdeck fetching, installing or updating
   one; a model API key, or anything of your environment outside the short list that page gives,
   in the program's environment; an event's token given to a plugin other than the one its
-  profile selects; a plugin's
+  profile selects, or a variable handed to a plugin that is not named for it (`ACME_...` for
+  `acme`) or that your config names for a secret of its own; a profile sending a pull's files
+  to a folder outside its own; a plugin's
   output steering flightdeck (a file written outside the board's challenge folders, a path that
   leaves the staging folder, a link followed, a reply that is taken as a verdict when it is not
   one of the five words); the token's value shown or logged from something a plugin printed.
