@@ -3119,7 +3119,7 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
     from ctf_flightdeck.console import takeover
 
     async def the_shell_ran(app, argv, cwd, env):
-        return None
+        return takeover.ShellExit(0, 30.0)
 
     monkeypatch.setattr(takeover, "run_in_terminal", the_shell_ran)
 
@@ -3148,6 +3148,153 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
         assert lane.state is LaneState.RUNNING
         assert_warning(app, "its workspace could not be checked: cannot snapshot workspace /gone")
         assert "the workspace could not be checked" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+class ShellSession:
+    """A driver's take-over session that records what the console made of it."""
+
+    def __init__(self, begin_fails: Exception | None = None) -> None:
+        self.calls: list[str] = []
+        self.begin_fails = begin_fails
+
+    async def begin(self):
+        self.calls.append("begin")
+        if self.begin_fails is not None:
+            raise self.begin_fails
+        return type("Spec", (), {"argv": ["docker", "exec", "-it", "fd-L01", "bash"], "cwd": None, "env": None})()
+
+    def abandon(self) -> None:
+        self.calls.append("abandon")
+
+    def finish(self) -> str:
+        self.calls.append("finish")
+        return "no files changed"
+
+
+def shell_failure_run(session: ShellSession, *, paused: bool = False):
+    class ShellDriver(QuietDriver):
+        def takeover(self, lane):
+            return session
+
+    deck = Deck(DeckConfig(event="ev", models=("glm",)), ShellDriver(), ManualClock(), wrong_flag)
+    deck.release([Challenge("a", "A", "misc", 50)], [QueueEntry("a", "glm")])
+    (lane,) = deck.lanes_on("a")
+    if paused:
+        assert deck.apply(iv.Pause(lane.id)).ok
+    return deck, lane, FlightdeckApp(deck, refresh_seconds=None)
+
+
+async def until_handed_back(pilot, lane) -> None:
+    for _ in range(100):
+        if lane.state is not LaneState.TAKEOVER:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"{lane.id} is still taken over")
+
+
+def test_a_take_over_whose_shell_program_is_missing_hands_back_with_why_and_the_lane_hears_nothing(monkeypatch):
+    """P69: no docker (or no bash) to run. The lane is running again, the status line names the
+    program, and the shell's session is abandoned, not finished: nothing ran in the workspace."""
+    from ctf_flightdeck.console import takeover
+
+    async def no_docker(app, argv, cwd, env):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    monkeypatch.setattr(takeover, "run_in_terminal", no_docker)
+    session = ShellSession()
+    deck, lane, app = shell_failure_run(session)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING and app.is_running
+        assert session.calls == ["begin", "abandon"]
+        assert_warning(app, "L01: the shell did not start: docker was not found (is it installed and on your PATH?); the lane carries on")
+        assert "handed back by the player: the shell did not start: docker was not found" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+def test_a_take_over_whose_shell_exits_at_once_with_an_error_says_so_and_a_paused_lane_stays_paused(monkeypatch):
+    """docker exec into a container that is gone ends at once with an error, and what docker
+    printed is drawn over when the console comes back: the status line keeps the status."""
+    from ctf_flightdeck.console import takeover
+
+    async def exits_at_once(app, argv, cwd, env):
+        return takeover.ShellExit(1, 0.1)
+
+    monkeypatch.setattr(takeover, "run_in_terminal", exits_at_once)
+    session = ShellSession()
+    deck, lane, app = shell_failure_run(session, paused=True)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.PAUSED  # as the player left it before the take-over
+        assert session.calls == ["begin", "finish"]  # it ran, if only for a moment: what changed is said
+        assert_warning(app, "L01: the shell exited at once with status 1; the lane carries on")
+        assert "the shell exited at once with status 1 (no files changed)" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+def test_a_take_over_whose_shell_the_player_used_and_left_with_an_error_status_is_no_problem(monkeypatch):
+    from ctf_flightdeck.console import takeover
+
+    async def used(app, argv, cwd, env):
+        return takeover.ShellExit(1, 300.0)  # bash exits with the last command's status
+
+    monkeypatch.setattr(takeover, "run_in_terminal", used)
+    deck, lane, app = shell_failure_run(ShellSession())
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING
+        assert lane.actions[-1].text.endswith("handed back by the player: no files changed")
+        await pilot.pause()
+        assert "Handed L01 back" in status_line(app) and "exited" not in status_line(app)
+
+    drive(app, script)
+
+
+def test_a_take_over_whose_session_breaks_hands_back_with_the_error_named(monkeypatch):
+    deck, lane, app = shell_failure_run(ShellSession(begin_fails=RuntimeError("the snapshot thread died")))
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING and app.is_running
+        assert_warning(app, "L01: the take-over failed: RuntimeError: the snapshot thread died")
+
+    drive(app, script)
+
+
+def test_a_take_over_cancelled_while_the_player_has_the_shell_still_hands_the_lane_back(monkeypatch):
+    from ctf_flightdeck.console import takeover
+
+    inside = asyncio.Event()
+
+    async def in_the_shell(app, argv, cwd, env):
+        inside.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(takeover, "run_in_terminal", in_the_shell)
+    session = ShellSession()
+    deck, lane, app = shell_failure_run(session)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await inside.wait()
+        assert lane.state is LaneState.TAKEOVER
+        (worker,) = [w for w in app.workers if w.name == "take over L01"]
+        worker.cancel()
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING
+        assert session.calls == ["begin", "abandon"]
+        assert "the console closed during the take-over" in lane.actions[-1].text
 
     drive(app, script)
 

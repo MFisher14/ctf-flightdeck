@@ -1166,22 +1166,31 @@ class FlightdeckApp(App[None]):
     async def _shell(self, lane_id: str, session) -> None:
         """Open the shell, then always hand the lane back, with what happened: a lane must
         never stay taken over with no way back. A problem shows after the hand-back's own
-        outcome, so it is what the status line says."""
+        outcome, so it is what the status line says. Cancelled (the console is closing), the
+        lane is handed back all the same, and the cancel goes on."""
         try:
             note, problem = await self._open_shell(lane_id, session)
+        except asyncio.CancelledError:
+            self._hand_back(lane_id, "the console closed during the take-over")
+            raise
         except Exception as exc:
-            note = problem = f"the take-over failed: {exc}"
-        lane = self.deck.lanes.get(lane_id)
-        if lane is not None and lane.state is LaneState.TAKEOVER:
-            self.apply(iv.HandBack(lane_id, note))
+            note = problem = f"the take-over failed: {type(exc).__name__}: {exc}"
+        self._hand_back(lane_id, note)
         if problem:
             self.warn(f"{lane_id}: {problem}")
 
+    def _hand_back(self, lane_id: str, note: str) -> None:
+        lane = self.deck.lanes.get(lane_id)
+        if lane is not None and lane.state is LaneState.TAKEOVER:
+            self.apply(iv.HandBack(lane_id, note))
+
     async def _open_shell(self, lane_id: str, session) -> tuple[str, str]:
-        """(the hand-back note, a problem to warn about or "")."""
+        """(the hand-back note, a problem to warn about or ""). A shell that never ran is
+        abandoned (its session's abandon(), when it has one: the lane hears nothing); one that
+        ran is finished, which tells the lane what changed, even when it ended at once."""
         from textual.app import SuspendNotSupported
 
-        from .takeover import run_in_terminal
+        from .takeover import not_started, run_in_terminal
 
         if getattr(session, "busy", False):
             self.inform(f"{lane_id} is finishing a command; your shell opens when it ends")
@@ -1190,15 +1199,25 @@ class FlightdeckApp(App[None]):
         except TakeoverRefused as exc:
             return str(exc), str(exc)
         try:
-            await run_in_terminal(self, shell.argv, shell.cwd, shell.env)
-        except SuspendNotSupported:
-            return "no shell: this console cannot hand over the terminal", "this console cannot hand over the terminal; the lane carries on"
-        except OSError as exc:
-            return f"the shell did not start: {exc}", f"the shell did not start: {exc}"
+            ended = await run_in_terminal(self, shell.argv, shell.cwd, shell.env)
+        except BaseException as exc:
+            abandon = getattr(session, "abandon", None)
+            if abandon is not None:
+                abandon()
+            if isinstance(exc, SuspendNotSupported):
+                return "no shell: this console cannot hand over the terminal", "this console cannot hand over the terminal; the lane carries on"
+            if isinstance(exc, OSError):
+                why = f"the shell did not start: {not_started(exc, shell.argv)}"
+                return why, f"{why}; the lane carries on"
+            raise
+        problem = ended.problem()
         try:
-            return session.finish(), ""
+            note = session.finish()
         except Exception as exc:
             return f"the workspace could not be checked: {exc}", f"handed back, but its workspace could not be checked: {exc}"
+        if problem:
+            return f"{problem} ({note})", f"{problem}; the lane carries on"
+        return note, ""
 
     def autopilot(self, arg: str) -> None:
         """/autopilot on: engage autopilot (refused, with the reason, without a run budget, off
