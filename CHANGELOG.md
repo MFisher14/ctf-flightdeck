@@ -4,6 +4,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `?` opens help for where you are. In a lane, `?` on the empty chat box opens help, from any
+  pane; with text in the box it is a question mark (type a space first, or paste, to start a
+  message with one). The key line in a lane reads `esc lanes  / commands  ? help  ctrl+o
+  details`. Help starts with the lane in front of you: `This lane, now: L03 · Gamma` and the
+  keys that apply to it, each with what it does; then the keys of the view you are in, the
+  other view's, and the ones both have. In the lane list's command bar `?` opens help too while
+  the bar is empty.
 - The command bar names the lane it talks to. Its border reads `to L04 · Ticket Desk` and
   follows the selected lane in the lane list; in a lane's view it names that lane. It reads
   `no lane` when there is none to take a message, `the run` while you type a command that is

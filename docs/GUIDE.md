@@ -380,7 +380,8 @@ first, and the line under the list says why and numbers the answers: one key ans
 
 **Enter** opens a lane full screen: its transcript, the files it changed with diffs, and a chat
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
-commands; `esc` goes back).
+commands; `esc` goes back). `?` on the empty chat box opens help for that lane; with text in
+the box it is a question mark.
 
 ![One lane full screen: the two other lanes that need you; its transcript in five rows, two runs of tool calls with the last call of each and the alert between them; a needs-you box with two numbered answers; the files it changed and the diff of one of them; and the chat box](screenshots/simple-lane.png)
 
@@ -459,10 +460,17 @@ marks the tmux window ([The terminal's title and bell](#the-terminals-title-and-
 
 The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
-`c` claim (team), `/` commands, `s` sort, `?` help (every key and command), `q` quit; `A`
+`c` claim (team), `/` commands, `s` sort, `?` help, `q` quit; `A`
 approves every waiting flag; **Enter** opens the lane full screen. They act in both layouts; the
 simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
+
+**Help.** `?` opens help for where you are: in the lane list, and in a lane while its chat box
+is empty (with text in the box, `?` is a question mark; `/help` works with either). Its first
+rows are about the lane in front of you now, `The selected lane, now: L02 · Beta` in the list
+and `This lane, now: L02 · Beta` in a lane: the keys the key line has for it, each with what it
+does. Then come the keys of the view you are in, the other view's, the keys both have, and every
+command, alert and mark. `?`, `esc` or `q` closes it, and what you had typed is still there.
 
 ### The command bar
 

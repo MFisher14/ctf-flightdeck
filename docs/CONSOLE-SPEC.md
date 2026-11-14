@@ -70,7 +70,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   for a message, `/hint`, `/redirect` and `/escalate`. With nothing typed the title is the
   one a message would get. The challenge's name is challenge text: made safe, never markup,
   cut with `…` at the bar's width. The empty bar reads `a message, or / for commands`.
-  Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
+  Enter on an empty bar opens the selected lane, and `?` in it opens help (Help, below); with
+  anything in the bar, `?` is a question mark. A command that takes no argument refuses a stray
   word (`/approve 2` does not approve the selected lane; name it: `/approve L02`). `/approve all`
   names no lane: it is the fleet's `A` (Interventions, below), in either view.
 - **Status line**: the latest intervention outcome or deck event (no toasts over the lanes); it
@@ -205,6 +206,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   Static Hiss` for the open lane, the lane a command names while it is typed, `the run` while
   a command that takes no lane is typed, and `L01 has finished` or `L01 takes no more turns`
   when the lane would refuse what is typed. Empty, it reads `a message, or / for commands`.
+  `?` on the empty box opens help for this lane (Help, below), from any pane and in every
+  layout; with text in the box it is a question mark. A message cannot start with a lone `?`
+  typed on the empty box: type a space first (what is sent has no blanks at its ends), or paste
+  it.
 - **Selecting and copying**: text selects with the mouse. Drag over the transcript, the calm
   card, the header or the status line, and what you dragged over is copied when you let go; the
   status line says `copied 212 characters`. A double-click takes the whole entry, also what the
@@ -313,10 +318,9 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   needs-you card while this lane does. The title is the same as in `deck` (the lane, its
   challenge, model, state, turns, tokens, cost and idle time). The transcript and the
   needs-you card are calm: details start off (Focus view, above), and `ctrl+o` shows every line
-  and the full card. Key line: `esc lanes  / commands
-  /help all keys  ctrl+o details`, with `1-9 answer` first while the lane has numbered answers
-  (67 columns with the answers; narrower, the edge cuts `ctrl+o details` first, and `/help`
-  still lists it). The chat box names the lane a message goes to on its border, as in every
+  and the full card. Key line: `esc lanes  / commands  ? help  ctrl+o details`, with `1-9
+  answer` first while the lane has numbered answers (59 columns with the answers, so it is
+  whole at every width the layout has; `?` works on the empty chat box). The chat box names the lane a message goes to on its border, as in every
   layout (Chat box, above), and a lane that has ended says `esc goes back to the lanes`.
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
@@ -404,11 +408,32 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
-| `?` | `/help` | Help: every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks |
+| `?` | `/help` | Help for where you are: the keys for the lane now, then every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks (Help, below). In the command bar and in a lane's chat box, only while it is empty |
 | `q`, `ctrl+q` | `/quit` (also `/q`, `/exit`) | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
 takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer.
+
+### Help
+
+`?` (or `/help`) opens help for where you are (P65): in the lane list, and in a lane's view
+while its chat box is empty. It is one dialog with every row from either view; only its order
+follows the view it was opened from.
+
+1. **Now.** The keys the simple layout's key line has for the lane the keys act on, each with
+   its sentence, under `This lane, now: L03 · Gamma` (in a lane) or `The selected lane, now:
+   L02 · Beta` (in the list: the selected lane, or on the board its challenge's only lane).
+   With no lane it reads `Now, with no lane selected` and has the keys that act without one
+   (`/new`, `?`, `q`). These are the same rows in every layout, since they are about the
+   lane's state and not about the key line on screen. The challenge's name is challenge text:
+   made safe, on one row, never markup.
+2. **Keys in a lane** or **Keys in the lane list**: the view it was opened from first, then the
+   other one.
+3. **Keys in both**: selecting and copying, and `ctrl+q`.
+4. The commands, the alerts, the header and cost marks, and the board's marks, as before.
+
+`?`, `esc` or `q` closes it, and the focus is back where it was, with the chat box's draft as it
+was. A `?` that opened help sends nothing to a lane.
 
 ### Approving several flags at once
 
@@ -449,7 +474,8 @@ The lane is not touched: no message, no new plan.
   the interventions judged to have helped.
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
-back to the fleet and `ctrl+n` goes on to the next lane that needs you.
+back to the fleet, `ctrl+n` goes on to the next lane that needs you, and `?` on the empty box opens
+help (Help, above).
 
 ## Quitting and signals
 

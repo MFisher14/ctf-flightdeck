@@ -269,6 +269,17 @@ with `bar_lane()`; `FocusScreen.refresh_view`, with the open lane). A title is s
 only when its words or its colours differ, so a redraw that changes nothing costs nothing.
 `widgets.BAR` is the one placeholder of both views.
 
+**Help for where you are** (P65). `widgets.BarInput` takes `?` on an empty field as it takes a
+digit: the screen that hosts it sets `help` (and `quick` for the digit), and with anything in the
+field both are text. `FocusScreen.on_key` does the same for a `?` typed in another pane, since
+typing there goes to the chat box. `FlightdeckApp.action_help` asks the view it was opened from
+for `help_now()`: the lane the keys act on and the keys the simple key line has for it
+(`fleet.context_keys` in the list, `focus.SIMPLE_KEY_LABELS` with the answers in a lane), and
+passes `screens.HelpScreen` the view, the lane's id and challenge name (through
+`text.untrusted()`) and those keys. The dialog draws "now" from `screens.NOW_HELP` (a key with
+no sentence there is a `KeyError`), then `KEY_HELP` and `LANE_KEY_HELP` in the order of the
+view, then `BOTH_KEY_HELP` and the rest.
+
 ## 4. Lanes
 
 | Piece | Where | Job |
