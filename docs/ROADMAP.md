@@ -3,11 +3,11 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: fifteen proposals, P51 to P65 (2026-11-14)
+## Built, not released: sixteen proposals, P51 to P66 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P51 to P65); the lines for players are under Unreleased in
-[CHANGELOG.md](../CHANGELOG.md). P54 to P62, P64 and P65 were built from the list of what comes next (the
+[DECISIONS.md](DECISIONS.md) (P51 to P66); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 to P66 were built from the list of what comes next (the
 [milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
@@ -96,6 +96,13 @@ Proposals built and waiting for a release, in the order of their numbers in
   of the player: the keys its key line has, each with its sentence, then the keys of the view
   it was opened from, the other view's and the ones both have. Not built: `? help` on the
   deck's and the compact layout's key lines in a lane.
+- **A quiet header and quiet rows in the simple layout** (P66,
+  [#42](https://github.com/MFisher14/ctf-flightdeck/issues/42)). Only what says "look here"
+  keeps a block in the simple header: flightdeck, `host`, `AUTOPILOT`, `▲ N need you` and
+  `queue held`; the event's name, `team`, the queue and the dollars are text, the mock tag
+  muted. A lane that has done nothing yet reads `starting`, muted, with a blank cost. Not
+  built: a header whose pieces the player chooses, and `starting` in the deck and compact
+  layouts.
 
 Known limits, each said where it applies:
 
