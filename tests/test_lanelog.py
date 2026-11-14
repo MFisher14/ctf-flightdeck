@@ -426,6 +426,26 @@ def test_the_transcript_follows_the_layout_until_the_player_sets_details_by_hand
     drive(app, script, (160, 46))
 
 
+def test_on_a_narrow_terminal_details_start_on_and_ctrl_o_turns_the_transcript_only():
+    deck, app, lane = busy_lane("simple")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert view.compact and view.details and lines(app) == details(deck, lane)  # the compact layout, in simple too
+        card = region_text(app, "#now")
+        assert "needs you now" in card and "/kill" in card
+        await press(pilot, "ctrl+o")
+        assert not view.details and lines(app) == calm(deck, lane)
+        assert region_text(app, "#now") == card  # the card keeps its compact form: every number stays on it
+        assert footer_line(app).strip() == "esc fleet  1-9 0 answer  / cmd  ctrl+n next"  # the compact key line, as it was
+        await pilot.resize_terminal(120, 40)  # wide again: the switch stays as the player set it
+        await pilot.pause()
+        await pilot.pause()
+        assert not view.compact and not view.details and lines(app) == calm(deck, lane)
+
+    drive(app, script, (60, 40))
+
+
 def test_the_transcript_follows_the_lane_at_its_end_and_stays_where_the_player_reads():
     deck, app, lane = one_lane("simple")
     says(deck, "the first words")
