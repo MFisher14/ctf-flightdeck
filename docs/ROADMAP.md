@@ -19,6 +19,18 @@ the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
   player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
   and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
 
+Built since, from the list of what comes next (the
+[milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest):
+
+- **The first five minutes in words** (P54,
+  [#36](https://github.com/MFisher14/ctf-flightdeck/issues/36)). The README's quickstart is
+  three commands and follows the first run (the mock, `uv tool install`, `flightdeck` and its
+  setup form, practice); `--help` opens with where a new player starts; `flightdeck doctor` ends
+  with what is left to fix or the next command; an API key, an access token and model tokens
+  are each called by name; and the guide's glossary comes second. The README and the guide
+  describe the tree, so this quickstart is true of a release from the next one on: 0.4.0 has no
+  setup form on its home screen.
+
 Known limits, each said where it applies:
 
 - No plugin has met a real platform: the plugin path was built against synthetic plugins and a
