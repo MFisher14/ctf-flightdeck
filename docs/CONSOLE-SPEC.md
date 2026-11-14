@@ -98,7 +98,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   the lane's model had it so too; anything else shaped like a credential shows as `[redacted]`,
   and the lane's model had that text as it was. It wraps to the pane, and wraps again when the
   terminal's width changes. The newest 300 entries are drawn; with more, the first row says how
-  many earlier ones there are, and `pgup` at the top shows 300 more.
+  many earlier ones there are, and `pgup` at the top shows 300 more. No more than 600 are drawn
+  at once, so a long lane redraws as fast as a short one: read back while the lane goes on, or
+  far back, and the last row says how many later entries there are, and `pgdn` there shows 300
+  more.
 - **Details** (`ctrl+o`, or `/details`): the view's one switch. On, the transcript is as above:
   every line the lane's log keeps. Off, it is calm: one row for each entry, cut at the edge of
   the pane with `…` and never wrapped.

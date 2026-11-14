@@ -177,7 +177,10 @@ when what it draws does, and a function that draws it, called only for a row tha
 last one is drawn again when its run grows, new ones are mounted under it, and anything else
 (another lane, the switch, a theme) mounts the rows again. It mounts the newest 300, follows the
 lane at its end with Textual's anchor, and puts the first entry in view back where it was when
-the rows are mounted again while the player reads back.
+the rows are mounted again while the player reads back. What is mounted is a window of at most
+600 rows, since every mounted row is laid out again with each redraw: at the end the oldest
+go, and while the player reads back the rows before and after the window are counted in a
+first and a last row, where `pgup` and `pgdn` move it 300 rows.
 
 **Themes** (P52). `themes.py` is pure (no rich, no textual), so the config can load a palette
 without a console: `Palette` (17 colours by role, `dark`, the diff view's `syntax` style),
