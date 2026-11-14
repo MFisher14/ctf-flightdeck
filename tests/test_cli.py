@@ -834,6 +834,62 @@ def test_flightdeck_alone_says_what_it_is_and_the_next_step(tmp_path, monkeypatc
     assert "flightdeck init" not in again.output
 
 
+def home_ends_with(monkeypatch, *choices) -> list:
+    """`flightdeck` alone is at a terminal, and its home screen ends with each of `choices` in
+    turn, then with the player quitting it. Returns what it was opened with each time:
+    (menu, status, ready)."""
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    monkeypatch.setattr(cli, "_at_terminal_out", lambda: True)
+    shown, left = [], list(choices)
+
+    def stand_in(menu, status, *, palette=None, ready=None):
+        shown.append((menu, status, ready))
+        return left.pop(0) if left else None
+
+    monkeypatch.setattr(cli, "_home_choice", stand_in)
+    return shown
+
+
+def test_the_demo_from_the_home_screen_comes_back_to_it_and_quitting_there_leaves(opened, monkeypatch):
+    shown = home_ends_with(monkeypatch, ("mock",), ("mock",))
+    result = invoke()
+    assert result.exit_code == 0, result.output
+    assert len(opened) == 2 and len(shown) == 3  # the demo twice: the home screen before, between and after
+    for menu, status, ready in shown:  # no config here: setup first, starting an event one below, and nothing of a run to say
+        assert [item.title for item in menu] == ["Get started", "Start a new CTF", "See a demo"] and (status, ready) == ("", None)
+
+
+def test_a_run_from_the_home_screen_ends_with_its_exit_lines_and_the_home_screen_again_its_event_first(tmp_path, monkeypatch, opened, model_api):
+    from ctf_flightdeck import events, start
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(f'[api]\nbase_url = "{model_api}"\nkey_env = ""\n[models]\nladder = ["fake/small"]\n'
+                   f'[lanes]\nmax_lanes = 2\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n')
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(cfg))
+    folders = []
+    for name, when in (("Older CTF", 1_000_000_000.0), ("Newer CTF", 1_500_000_000.0)):
+        folder = tmp_path / "events" / name.split()[0].lower()
+        start.write(folder, start.EventAnswers(name=name, platform="manual"))  # a by-hand event: its empty board plays
+        events.remember(folder, now=when)
+        folders.append(folder.resolve())
+    shown = home_ends_with(monkeypatch, ("resume", folders[0]))  # the older one; then the player quits the home screen
+    result = invoke()
+    assert result.exit_code == 0, result.output
+    assert len(opened) == 1 and "run log: " in result.stdout  # `play` itself: its console once, then its exit lines
+    (before, first_status, _), (after, status, _) = shown
+    assert [item.title for item in before[:2]] == ["Resume Newer CTF", "Resume Older CTF"]
+    assert [item.title for item in after[:2]] == ["Resume Older CTF", "Resume Newer CTF"]  # the one just played is first
+    assert status.startswith("Back from your run.") and not first_status.startswith("Back")
+
+
+def test_init_has_no_option_that_takes_the_key_itself():
+    """The key is pasted at init's hidden prompt, or put in the keys file or the environment:
+    a command line is kept in the shell's history and shown in the process list."""
+    shown = flat(CliRunner().invoke(cli.app, ["init", "--help"], terminal_width=200).output)
+    options = set(re.findall(r"--[a-z][a-z-]*", shown))
+    assert "--key-env" in options and {option for option in options if "key" in option or "token" in option} == {"--key-env"}
+
+
 def test_a_path_under_a_user_that_does_not_exist_is_a_message_not_a_traceback():
     result = invoke("play", "~no-such-player-5150/board")
     assert result.exit_code == 2, result.output

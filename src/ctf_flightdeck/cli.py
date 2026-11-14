@@ -69,47 +69,126 @@ def root(
 MAX_RESUME = 6  # events offered on the opening menu, most recently played first
 
 
+BACK_FROM_A_RUN = ("Back from your run. What it spent, its run folder and the commands that read it are in the terminal, "
+                   "under this screen: q shows them.")
+
+
 def _home() -> None:
     """`flightdeck` alone, at a terminal: the home screen (console/home.py), then what the
-    player chose there."""
+    player chose there, then the home screen again. A run started from it comes back to it
+    when the player quits the console, with the event just played first in the list; first-time
+    setup comes back to what was set up and what next (the practice set first). Quitting the
+    home screen leaves, and so does a step that stops with an error (typer.Exit goes
+    through), so its reason is the last thing in the terminal and no screen covers it."""
     from . import events, start_cli
     from .config import ConfigError, default_config_path, load_config
     from .console import home
 
-    try:
-        path = default_config_path()
-        have = path.exists()
-        loaded = load_config(path) if have else None
-    except ConfigError as exc:
-        typer.echo(f"flightdeck: {exc}", err=True)
-        raise typer.Exit(2) from None
-    status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
-    menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
-                      pack_installed=loaded is not None and loaded.l1.pack is not None)
-    choice = _home_choice(menu, status, palette=loaded.console.palette if loaded is not None else None)
-    if choice is None:
-        return
-    kind = choice[0]
-    if kind == "resume":
-        play(board=choice[1])
-    elif kind == "new":
-        _start_new(choice[1])
-    elif kind == "practice":
-        practice()
-    elif kind == "mock":
-        mock()
-    elif kind == "pack":
-        from . import pack_cli
+    ready = None  # after setup: what the home screen opens on (home.Ready)
+    back = ""  # after a run: where its exit lines are
+    while True:
+        try:
+            path = default_config_path()
+            have = path.exists()
+            loaded = load_config(path) if have else None
+        except ConfigError as exc:
+            typer.echo(f"flightdeck: {exc}", err=True)
+            raise typer.Exit(2) from None
+        status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
+        if back:
+            status = back + (f"\n{status}" if status else "")
+        menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
+                          pack_installed=loaded is not None and loaded.l1.pack is not None)
+        choice = _home_choice(menu, status, palette=loaded.console.palette if loaded is not None else None, ready=ready)
+        ready, back = None, ""
+        if choice is None:
+            return
+        kind = choice[0]
+        if kind == "setup":
+            ready = _set_up(choice[1])
+        elif kind == "image":  # the lane image, built in the plain terminal; then what setup offered again
+            image_build(tag="")
+            ready = home.Ready(("The lane image is built: Docker lanes can start.",), first=choice[1])
+        elif kind == "pack":
+            from . import pack_cli
 
-        pack_cli.install()
-    elif kind == "setup":
-        start_cli.start()
+            pack_cli.install()
+            return  # what it installed, and what it says to do next, stay on the terminal
+        elif kind == "mock":
+            mock()
+        else:  # a run: its exit lines are printed to the terminal, and the home screen opens over them
+            if kind == "resume":
+                play(board=choice[1])
+                events.remember(choice[1])  # played until now: first in the list
+            elif kind == "new":
+                _start_new(choice[1])
+                events.remember(choice[1].folder)
+            elif kind == "practice":
+                practice()
+            back = BACK_FROM_A_RUN
 
 
-def _home_choice(menu, status: str, *, palette=None):
+def _home_choice(menu, status: str, *, palette=None, ready=None):
     from .console.home import HomeApp
 
-    return HomeApp(menu, status, palette).run()
+    return HomeApp(menu, status, palette, ready).run()
+
+
+def _set_up(done) -> object:
+    """Write what the home screen's setup form ended with (console/home.py Setup): the key to
+    the keys file, then the config (setup.write_setup: both, or neither where that can be
+    told beforehand). What was done is said in the terminal too, for after the home screen,
+    and is what the home screen opens on next (home.Ready): with building the lane image
+    first when Docker lanes need it and Docker can build it. The key is never shown."""
+    from . import keys
+    from . import setup as setups
+    from .agent.workspace import docker_unavailable
+    from .config import ConfigError, default_config_path
+    from .console import home
+
+    def fail(text: str) -> NoReturn:
+        typer.echo(f"flightdeck: {text}", err=True)
+        raise typer.Exit(2)
+
+    answers = done.answers
+    variable = answers.key_env
+    try:
+        path = default_config_path()
+        written = setups.write_setup(answers, path, keys={variable: done.key} if done.key else None)
+    except FileExistsError:
+        fail(f"{path} was written meanwhile, so nothing was set up: run `flightdeck` again to use it")
+    except (ConfigError, keys.KeysError) as exc:
+        fail(f"{exc}. Nothing was set up: fix that, then run `flightdeck` again")
+    except OSError as exc:
+        fail(f"cannot write {path}: {exc.strerror or type(exc).__name__}. Nothing was set up")
+    notes = [f"Your config: {written}"]
+    if variable:
+        try:
+            where = keys.source(variable)
+            keys_file = keys.keys_path()
+        except keys.KeysError as exc:
+            fail(str(exc))
+        if done.key:
+            notes.append(f"Your key: kept in {keys_file} as {variable}, which only you can read (never shown, never in the config)"
+                         + (f". {variable} is also set in your environment, and the environment's is the one a run uses"
+                            if where == "environment" else ""))
+        else:
+            notes.append(f"Your key: {variable}, as set in your {where}")
+    if answers.runtime == "host":
+        from .run import host_warning
+
+        notes.append(host_warning())
+    notes += setups.server_lines(answers, done.provider)
+    build = False
+    if setups.lane_image_missing(answers):
+        reason = docker_unavailable()
+        build = reason is None
+        notes.append("Docker lanes run in the lane image, which is not built yet: the first choice here builds it." if build else
+                     f"Docker lanes run in the lane image, which is not built yet, and Docker cannot build it now ({reason}): "
+                     "start Docker, then `flightdeck image build`.")
+    for note in notes:
+        typer.echo(f"flightdeck: {note}", err=True)
+    return home.Ready(tuple(notes), build=build, first=done.then)
 
 
 def _start_new(new) -> None:
