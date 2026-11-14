@@ -227,6 +227,19 @@ take the palette before Textual reads their styles and register it as their Text
 `FlightdeckApp.set_palette()` (`/theme`) repaints what is on screen: the focus view empties its
 transcript log and writes it again.
 
+**Title and bell** (P61). `console/terminal.py`'s `Beacon` is what the console says outside its
+window: `title_text(need, held)` makes the terminal's title from a count and fixed words (no
+text from a challenge can be in it), `show()` writes it only when the text changes and writes
+one BEL when the count is higher than at the last call, `open()` has the terminal save the
+title it shows (xterm's title stack) and `close()` has it take that title back.
+`FlightdeckApp.refresh_view()` calls `show()` with `len(deck.needing())` and `deck.held`, the
+header's facts; `on_mount` opens it, `on_unmount` closes it (the driver's output closes after),
+and Textual's `app_suspend_signal` and `app_resume_signal` close and open it round a
+take-over. The bytes go through `FlightdeckApp._to_terminal()`, the driver's `write`, so a
+headless console's driver gets them too (`App.bell()` skips a headless driver), which is how
+`tests/test_terminal_title.py` reads them; one test there runs `flightdeck mock` on a pty.
+`Run.app()` and `flightdeck mock` pass `[console] title` and `bell`.
+
 ## 4. Lanes
 
 | Piece | Where | Job |
@@ -1109,6 +1122,8 @@ makes false for a server on this machine when unset and true for any other), and
 ([Layouts and themes](#layouts-and-themes)): the theme's palette is loaded with the config
 (`ConsoleConfig.palette`), from a built-in or from `themes/NAME.toml` beside the config file.
 Its `mouse` (default true) is whether the console's driver asks the terminal to report the mouse.
+Its `title` and `bell` (default true) are whether the console writes the terminal's title and
+rings its bell ([Layouts and themes](#layouts-and-themes), "Title and bell").
 `[plugins.NAME]` tables, each with a `path`, name the plugins the player added
 ([Plugins](#plugins)): only the names and the paths are checked here.
 

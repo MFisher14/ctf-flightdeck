@@ -451,7 +451,8 @@ columns down: the header keeps what needs you and the run's dollars; each lane's
 alert, state and cost; the line under the list wraps the reason and puts one answer on a row, so
 `a`, `d` and the number keys work as on a wide terminal. A lane opens with what it needs above its
 transcript; the files pane and diffs need 65 columns. `flightdeck doctor` says when your terminal
-gets this layout and what it leaves out.
+gets this layout and what it leaves out. When a lane starts to need you, the terminal's bell
+marks the tmux window ([The terminal's title and bell](#the-terminals-title-and-bell)).
 
 `q` asks first while lanes are open, and a run cannot be resumed.
 
@@ -589,6 +590,49 @@ with that error; flightdeck never falls back to the default without telling you.
 console, `/theme NAME` with a broken or unknown theme is a warning, and the theme in use stays.
 `/theme NAME` reads the file again each time, so you can edit a theme and try it without
 leaving the run.
+
+### The terminal's title and bell
+
+The console tells you that a lane needs you when you are looking at another window or tab.
+
+- **The title.** Your terminal's title (the tab's, where the terminal has tabs) says how many
+  lanes need you: `▲ 2 need you · flightdeck`. While the queue is held it says so
+  (`queue held · flightdeck`, or `▲ 2 need you · queue held · flightdeck`), and when nothing
+  waits it is `flightdeck`. It is the header's count and fixed words: never a challenge's name,
+  a reason, or anything a lane wrote.
+- **The bell.** The terminal's bell rings once each time that count goes up. It does not ring
+  for what already waits when the console opens, while the count stays, when it falls, or when
+  the queue is held. What a bell does is your terminal's own setting: a sound, a mark on the
+  tab, a badge, or nothing.
+
+When the console leaves, the title you had comes back: flightdeck asks the terminal to save its
+title before it writes one, and to take it back at the end. The same happens while you are in a
+lane's shell (`t`): the shell has the title you had, nothing rings, and the count is in the
+title again when you are back. A terminal that
+cannot save a title is left with its own default title, never with a count. If flightdeck is
+killed outright (SIGKILL) nothing puts the title back; your shell's next prompt usually does.
+
+Inside tmux the bell is the one that reaches you with nothing set up: tmux marks the window in
+its status line and passes the bell on to your terminal, which is what you have on a phone over
+SSH. The title becomes the tmux pane's title, and the terminal outside shows it only once tmux
+is told to pass titles on:
+
+```
+set -g set-titles on
+```
+
+Either can be turned off under `[console]` in your config:
+
+```toml
+[console]
+title = false   # leave the terminal's title alone
+bell = false    # never ring the bell
+```
+
+This is tested by reading what a pseudo-terminal is sent, byte for byte. It has not yet been
+looked at in each terminal program, or inside tmux: what tmux does is read from its source
+(its defaults are `set-titles` off, `monitor-bell` on and `bell-action any`). Away from the
+terminal altogether, a webhook can tell you the same ([Notifications](#notifications)).
 
 ## Play a board
 
@@ -1302,8 +1346,10 @@ own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import
 into `FOLDER/.flightdeck/generated/`.
 
 Two optional parts of the config are about the console and about platforms. `[console]` has
-`layout` and `theme` ([Layouts](#layouts), [Themes](#themes)) and `mouse` (`false` leaves the
-mouse to your terminal: its own text selection; the console is driven by keys); your own
+`layout` and `theme` ([Layouts](#layouts), [Themes](#themes)), `mouse` (`false` leaves the
+mouse to your terminal: its own text selection; the console is driven by keys) and `title` and
+`bell` (`false` turns off the count in the terminal's title, or the bell:
+[The terminal's title and bell](#the-terminals-title-and-bell)); your own
 themes are `NAME.toml` files in a `themes` folder beside the config file, read only when the config or `/theme` names
 one. `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
 `flightdeck plugin add` ([Plugins](PLUGINS.md)); to stop allowing a plugin, take its table out.

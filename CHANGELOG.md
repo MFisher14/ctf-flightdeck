@@ -4,6 +4,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- The console tells you a lane needs you when you are looking at another window. The
+  terminal's title carries the count (`▲ 2 need you · flightdeck`, `queue held · flightdeck`
+  while the queue is held, `flightdeck` when nothing waits), and the terminal's bell rings once
+  each time the count goes up. The title you had comes back when the console leaves, and while
+  you are in a lane's shell. Inside tmux the bell marks the window with nothing set up; the
+  title reaches the terminal outside only with `set -g set-titles on`. `title = false` or
+  `bell = false` under `[console]` turns either off. Tested by reading what a pseudo-terminal
+  is sent; not yet looked at in each terminal program or inside tmux
+  ([the guide](docs/GUIDE.md#the-terminals-title-and-bell)).
 - A platform with a JSON API, with no code of yours: `platform = "http"` and an `[http]` table
   in `event.toml` say how the platform's API is asked, and flightdeck pulls the board, submits
   the flags you approve and reads the solved list itself. rCTF ships as a preset (`preset =

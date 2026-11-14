@@ -941,6 +941,13 @@ def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_
     assert console("mouse = true") == ConsoleConfig()
     assert console('mouse = false\ntheme = "light"\nlayout = "deck"') == ConsoleConfig(
         layout="deck", theme="light", palette=themes.BUILTIN["light"], mouse=False)
+    # the terminal's title and bell are on unless the config turns one off, each by itself
+    assert (console("").title, console("").bell) == (True, True)
+    assert console("title = false") == ConsoleConfig(title=False)
+    assert console("bell = false") == ConsoleConfig(bell=False)
+    assert console("title = true\nbell = true") == ConsoleConfig()
+    assert console('title = false\nbell = false\ntheme = "light"') == ConsoleConfig(
+        theme="light", palette=themes.BUILTIN["light"], title=False, bell=False)
     for name, palette in themes.BUILTIN.items():
         assert console(f'theme = "{name}"').palette is palette
 
@@ -955,9 +962,13 @@ def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_
     (f'theme = "{"a" * 33}"', "console.theme must be a theme's name (lower-case letters, digits, - and _)"),
     ("theme = 3", "console.theme must be a theme's name (lower-case letters, digits, - and _) (got 3)"),
     ('theme = ["nord"]', "console.theme must be a theme's name (lower-case letters, digits, - and _) (got a list)"),
-    ('colour = "nord"', "unknown key console.colour (known in console: layout, mouse, theme)"),
+    ('colour = "nord"', "unknown key console.colour (known in console: bell, layout, mouse, theme, title)"),
     ('mouse = "off"', "console.mouse must be true or false (got a string)"),
     ("mouse = 0", "console.mouse must be true or false (got 0)"),
+    ('title = "flightdeck"', "console.title must be true or false (got a string)"),
+    ("title = 1", "console.title must be true or false (got 1)"),
+    ('bell = "once"', "console.bell must be true or false (got a string)"),
+    ("bell = 0", "console.bell must be true or false (got 0)"),
 ])
 def test_a_bad_console_table_is_refused_with_its_message(tmp_path, body, problem):
     path, message = console_error(tmp_path, body)

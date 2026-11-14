@@ -498,6 +498,8 @@ class Run:
             palette=self.config.console.palette,
             layout=self.config.console.layout,
             mouse=self.config.console.mouse,
+            terminal_title=self.config.console.title,
+            terminal_bell=self.config.console.bell,
             themes_folder=self.config.source.parent / "themes" if self.config.source is not None else None,
             adder=self.add_challenge if self.by_hand else None,
             paster=self.paste_image if self.by_hand else None,
