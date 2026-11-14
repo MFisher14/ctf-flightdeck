@@ -1106,8 +1106,10 @@ on this machine, the console says so and pastes it as the text it is. The line s
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
 file window. The `/new` form (in a few words) and help (under "Files, in this terminal") say this
-for where flightdeck runs. flightdeck reads `SSH_CONNECTION` and `SSH_TTY`,
-`TMUX` and `TERM_PROGRAM` for it, and nothing else depends on them:
+for where flightdeck runs. It picks that sentence from `SSH_CONNECTION`, `SSH_TTY`, `TMUX`,
+`TERM_PROGRAM` and `XDG_SESSION_TYPE`; the `no such file:` line above picks its reason from
+`SSH_CONNECTION`, `SSH_TTY`, `WSL_DISTRO_NAME`, `WSL_INTEROP` and `TERM_PROGRAM`. Only the
+choice of sentence depends on them, never how a drop is read:
 
 - **Over SSH:** the file you drop stays on your own machine; copy it over first (`scp`), then
   `/attach` its path.
@@ -1123,7 +1125,9 @@ for where flightdeck runs. flightdeck reads `SSH_CONNECTION` and `SSH_TTY`,
 - **Every other terminal** (Terminal.app, Ghostty, kitty, GNOME Terminal, Alacritty, Warp and
   any not known) gets the general sentence: drag the file onto the window, and if nothing
   lands, `ctrl+o`. Nothing in those terminals' own documentation or source gives a reason to
-  say more. A terminal may hold drops back while a program has the mouse, as the console does
+  say more.
+
+A terminal may hold drops back while a program has the mouse, as the console does
 by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
 you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
 console, and every key works as before.

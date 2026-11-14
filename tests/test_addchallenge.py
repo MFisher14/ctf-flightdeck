@@ -258,6 +258,39 @@ def test_the_drop_sentence_inside_tmux_or_over_ssh_wins_over_the_terminal_progra
     assert hint(TERM_PROGRAM="ghostty", XDG_SESSION_TYPE="x11") == GENERIC_DROP
 
 
+class _Recording(dict):
+    """An environment that remembers every name a function asks it for."""
+
+    def __init__(self, **values):
+        super().__init__(values)
+        self.asked: set[str] = set()
+
+    def get(self, name, default=None):
+        self.asked.add(name)
+        return super().get(name, default)
+
+
+def test_the_guide_names_every_variable_the_drop_sentences_are_chosen_by(tmp_path):
+    """docs/GUIDE.md says which variables pick the drop sentence and the not-there line; one
+    the code reads that the guide leaves out fails here."""
+    asked: set[str] = set()
+    for values in ({}, {"TERM_PROGRAM": "WezTerm"}, {"TMUX": "x"}, {"SSH_TTY": "x"}):
+        env = _Recording(**values)
+        addchallenge.drop_terminal(env)
+        asked |= env.asked
+    gone = str(tmp_path / "gone.png")
+    for text, values in ((gone, {}), ("C:\\Users\\a\\b.png", {}), (gone, {"SSH_TTY": "x"})):
+        env = _Recording(**values)
+        addchallenge.not_there_line(text, choose=CHOOSE, env=env)
+        asked |= env.asked
+    assert {"SSH_CONNECTION", "SSH_TTY", "TMUX", "TERM_PROGRAM", "XDG_SESSION_TYPE",
+            "WSL_DISTRO_NAME", "WSL_INTEROP"} <= asked  # the probe reached every branch
+    guide = (Path(__file__).parents[1] / "docs" / "GUIDE.md").read_text()
+    paragraph = guide[guide.index("It picks that sentence from"):guide.index("- **Over SSH:** the file you drop")]
+    assert [name for name in sorted(asked) if f"`{name}`" not in paragraph] == []
+    assert "nothing else depends on them" not in guide
+
+
 @pytest.mark.parametrize(("env", "said"), [
     ({}, "drag them in, or ctrl+o if none lands"),
     ({"TERM_PROGRAM": "Apple_Terminal"}, "drag them in, or ctrl+o if none lands"),
