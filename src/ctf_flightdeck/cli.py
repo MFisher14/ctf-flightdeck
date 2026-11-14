@@ -18,7 +18,15 @@ SCENARIO_LIST = "Scenarios:\n\n" + "\n".join(
 )
 
 PLAY, SETUP, EVENT, AFTER, SOLVERS = "Play", "Set up", "Before and during an event", "After a run", "Solvers (L1)"
-PANELS = (SETUP, PLAY, EVENT, AFTER, SOLVERS)  # the order `flightdeck --help` shows them in
+MEASURE = "Measure a model"  # eval-local: for an optional feature (the light model), so not among what a new player sets up
+PANELS = (SETUP, PLAY, EVENT, AFTER, SOLVERS, MEASURE)  # the order `flightdeck --help` shows them in
+
+WHAT = "A terminal harness for playing CTFs with AI agents, where you run the loop."
+# What a new player reads first in `flightdeck --help`: above the commands, since help is read top down.
+NEW_HERE = ("New here? Run `flightdeck` on its own: its home screen sets you up (your model API and its API key) and "
+            "then offers the practice set. To look first, with nothing set up and nothing spent: `flightdeck mock`. "
+            "The same without the home screen: `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. "
+            "An event: `flightdeck start`.")
 
 
 class _ByPanel(typer.core.TyperGroup):
@@ -39,9 +47,8 @@ app = typer.Typer(
     cls=_ByPanel,
     add_completion=False,
     rich_markup_mode="markdown",
-    help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
-    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. An event: `flightdeck start`. "
-    "No setup at all: `flightdeck mock`.",
+    help=f"{WHAT}\n\n{NEW_HERE}",
+    epilog="Every command has its own help: `flightdeck play --help`.",
 )
 
 
@@ -58,7 +65,7 @@ def root(
         bool, typer.Option("--version", callback=_version, is_eager=True, metavar="", help="Show the version and exit.")
     ] = False,
 ) -> None:
-    """A terminal harness for playing CTFs with AI agents, where you run the loop."""
+    # no docstring: what `flightdeck --help` says of flightdeck is the app's own help (WHAT, NEW_HERE)
     if ctx.invoked_subcommand is None:
         if _at_terminal() and _at_terminal_out():
             _home()
@@ -244,7 +251,7 @@ def _next_steps() -> str:
     """What `flightdeck` alone says: what it is, and the next step on this machine."""
     from .config import ConfigError, default_config_path
 
-    head = f"flightdeck {__version__}: a terminal harness for playing CTFs with AI agents, where you run the loop.\n\n"
+    head = f"flightdeck {__version__}: {WHAT[0].lower()}{WHAT[1:]}\n\n"
     try:
         path = default_config_path()
         have = path.exists()
@@ -256,12 +263,12 @@ def _next_steps() -> str:
             ("flightdeck init", "a few questions; writes your config"),
             ("flightdeck doctor", "checks your setup and says how to fix what is missing"),
             ("flightdeck practice", "plays 14 small practice challenges (spends tokens on your model API)"),
-            ("flightdeck start", "sets up an event and plays it: asks for its name, site and token, makes its folder"),
+            ("flightdeck start", "sets up an event and plays it: asks for its name, site and access token, makes its folder"),
         ]
         text = head + "No config yet. Start here:\n"
     else:
         steps = [
-            ("flightdeck start", "play an event: asks for its name, site and token, makes its folder, launches"),
+            ("flightdeck start", "play an event: asks for its name, site and access token, makes its folder, launches"),
             ("flightdeck play FOLDER", "play an event you set up before, or any folder of challenges"),
             ("flightdeck practice", "the practice set (14 small challenges)"),
             ("flightdeck doctor", "checks your setup"),
@@ -309,7 +316,7 @@ def mock(
         Path | None,
         typer.Option(
             "--screenshot", metavar="DIR", file_okay=False, dir_okay=True,
-            help="Run headless and save SVG screenshots of the key moments to DIR, then exit.",
+            help="Run headless and save SVG screenshots of the main moments to DIR, then exit.",
         ),
     ] = None,
     speed: Annotated[
@@ -378,7 +385,8 @@ class Agent(StrEnum):
     codex = "codex"
 
 
-AGENT_HELP = "Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config) instead of flightdeck's own loop."
+AGENT_HELP = ("Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] in your config) instead of "
+              "flightdeck's own loop.")
 HEADLESS_HELP = (
     "No console: the run writes status.json in its run folder, approvals wait (nothing is approved), and SIGTERM or "
     "Ctrl-C stops it as quitting does."
@@ -386,7 +394,7 @@ HEADLESS_HELP = (
 AUTOPILOT_HELP = ("Engage autopilot: the run goes on by rule while you are away, never looser than the event's rules; "
                   "needs a run budget and Docker (default: the config's [autopilot] engage).")
 BUDGET_DOLLARS_HELP = "The whole run's budget in dollars, for autopilot (default: the config's [autopilot] budget_dollars)."
-BUDGET_TOKENS_HELP = "The whole run's budget in tokens, for autopilot (default: the config's [autopilot] budget_tokens)."
+BUDGET_TOKENS_HELP = "The whole run's budget in model tokens, for autopilot (default: the config's [autopilot] budget_tokens)."
 AGENT_AUTH_HELP = "The CLI's credential: claude api-key or oauth-token; codex api-key or login (default: the one the CLI would use)."
 
 
@@ -447,8 +455,9 @@ def play(
     budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
-    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
-    on the API in your config, or with --agent on that CLI's own key or subscription."""
+    (pulled, new waves, flags submitted, solves followed) and the team folder. Spends model
+    tokens: on the model API in your config, or with --agent on that CLI's own API key or
+    subscription."""
     from .run import RunError, RunOptions, host_warning, prepare_run
     from .start import is_event_folder, resolve
 
@@ -698,7 +707,7 @@ def practice(
     budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
-    checked by hash). Spends tokens like `play`."""
+    checked by hash). Spends model tokens like `play`."""
     from .practice_set import practice_dir
 
     try:
@@ -753,7 +762,7 @@ def image_dockerfile() -> None:
 def init(
     provider: Annotated[str | None, typer.Option("--provider", help="openrouter, anthropic, openai, ollama (or local), mlx (an MLX server) or custom.")] = None,
     base_url: Annotated[str | None, typer.Option("--base-url", help="The API's base URL (custom provider).")] = None,
-    key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your key.")] = None,
+    key_env: Annotated[str | None, typer.Option("--key-env", help="The environment variable that will hold your API key.")] = None,
     models: Annotated[str | None, typer.Option("--models", help="Model ids, weakest first, comma-separated.")] = None,
     host: Annotated[bool | None, typer.Option("--host/--docker", metavar="", help="Run lanes on this machine, or in Docker.")] = None,
     runtime: Annotated[str | None, typer.Option("--runtime", metavar="docker|host", help="The same as --docker or --host.")] = None,
@@ -761,7 +770,7 @@ def init(
     fallback: Annotated[bool | None, typer.Option(
         "--fallback/--no-fallback", metavar="",
         help="With --provider anthropic: OpenRouter (OPENROUTER_API_KEY) for a lane whose calls to Anthropic keep failing. "
-             "At a terminal you are asked when that key is set.")] = None,
+             "At a terminal you are asked when that API key is set.")] = None,
     path: Annotated[Path | None, typer.Option("--path", dir_okay=False, help="Where to write it (default: the usual config path).")] = None,
     force: Annotated[bool, typer.Option("--force", metavar="", help="Replace an existing config.")] = False,
     light: Annotated[str, typer.Option("--light", help="The light model for small jobs: rules (none, the default); ollama or "
@@ -1032,7 +1041,7 @@ def init(
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo(light_line(light_table))
     typer.echo("then: flightdeck doctor, and flightdeck practice")
-    typer.echo("for an event: flightdeck start   (asks for the event's name, site and token, makes its folder, launches)")
+    typer.echo("for an event: flightdeck start   (asks for the event's name, site and access token, makes its folder, launches)")
     typer.echo("optional: flightdeck pack install   (flightdeck's solver pack: some 800 no-model solvers that run first)")
 
 
@@ -1045,7 +1054,7 @@ def doctor(
         typer.Option("--clean", metavar="", help="Remove what runs left running when flightdeck itself was killed (play and practice do this when they start)."),
     ] = False,
 ) -> None:
-    """Check your setup (Python, the config and its keys, a local model server, the light model,
+    """Check your setup (Python, the config and its API keys, a local model server, the light model,
     Docker and the lane image, your terminal) and say how to fix each problem; and list what a
     killed flightdeck left running."""
     from .setup import doctor as run_checks
@@ -1127,7 +1136,7 @@ def _mount() -> None:
     app.command("share", rich_help_panel=AFTER)(share_cli.share_command)
     app.add_typer(build_cli.app, name="build", rich_help_panel=SOLVERS,
                   help="Build mode: turn a gap into a new L1 engine, with a test that proves a raw handout reaches it.")
-    app.command("eval-local", rich_help_panel=SETUP)(localmodel_cli.eval_local)
+    app.command("eval-local", rich_help_panel=MEASURE)(localmodel_cli.eval_local)
     app.command("models", rich_help_panel=SETUP)(models_cli.models_command)
 
 

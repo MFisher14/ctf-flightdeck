@@ -65,7 +65,7 @@ def start(
     launch: Annotated[bool | None, typer.Option("--launch/--no-launch", metavar="", show_default=False, help="Play the event once it is set up (default: asked at a terminal).")] = None,
     config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="Config file (default: your config).")] = None,
 ) -> None:
-    """Set up an event and play it: asks for the event's name, site and token, makes its
+    """Set up an event and play it: asks for the event's name, site and access token, makes its
     folder, says whether the solver pack is installed, and launches."""
     from . import cli, keys, vpn
     from . import start as events

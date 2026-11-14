@@ -34,6 +34,7 @@ from ctf_flightdeck.core.model import COURSE_ALERTS
 from ctf_flightdeck.mock import scenarios, screenshots
 from ctf_flightdeck.mock.scenarios import ReleaseAt
 from fake_ctfd import FLAG_FORMAT, TOKEN, FakeCTFd, sample
+from words_kit import bare_words
 
 ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
@@ -339,8 +340,9 @@ def test_play_help_shows_the_event_and_team_options():
     assert "--team --solo Team or solo mode (default: the event profile's, else solo)." in out
     assert "Usage: flightdeck play [OPTIONS] [BOARD]" in out
     assert "--submit <confirm|auto> confirm: you approve each flag; auto: a flag a lane claims goes at once; the rest wait for you" in out
-    assert "Spends tokens: on the API in your config, or with --agent on that CLI's own key or subscription." in out
-    assert "--agent <claude|codex> Lanes are this coding-agent CLI (its own key or token and models: [agents] in your config)" in out
+    assert "Spends model tokens: on the model API in your config, or with --agent on that CLI's own API key or subscription." in out
+    assert ("--agent <claude|codex> Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] "
+            "in your config)") in out
 
 
 def _commands(command, path=("flightdeck",)):
@@ -391,7 +393,7 @@ def test_the_help_of_each_command_says_what_it_does_today():
 
     assert "Open the console on fake, scripted data: no models, no network, nothing spent." in shown("mock")
     assert "M0" not in shown("mock")
-    assert ("Check your setup (Python, the config and its keys, a local model server, the light model, Docker and the lane "
+    assert ("Check your setup (Python, the config and its API keys, a local model server, the light model, Docker and the lane "
             "image, your terminal) and say how to fix each problem; and list what a killed flightdeck left running.") in shown("doctor")
     assert ("--tag <str> Image name and tag (default: ctf-flightdeck-lane:1, the [lanes] image init writes; another tag needs "
             "[lanes] image set to it).") in shown("image", "build")
@@ -791,7 +793,7 @@ def test_every_component_command_is_mounted_and_explains_itself(command):
 
 def test_the_root_help_groups_the_commands():
     out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
-    for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run"):
+    for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run", "Measure a model"):
         assert panel in out
     for name in ("preflight", "ctfd", "gm", "team", "plugin", "l1", "report", "writeups", "score", "eval-local", "gaps"):
         assert f" {name} " in out
@@ -808,13 +810,63 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
         elif title and line.startswith("│ ") and line[2] != " ":
             panels[title].append(line[2:].split()[0])
     panels.pop("Options")
-    assert panels == {
-        "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
-        "Play": ["mock", "play", "practice", "start"],
-        "Before and during an event": ["add", "preflight", "ctfd", "gm", "team", "vpn", "plugin"],
-        "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
-        "Solvers (L1)": ["l1", "pack", "build"],
-    }
+    assert list(panels.items()) == [
+        ("Set up", ["init", "doctor", "config", "models", "image"]),  # what a new player sets up, and nothing to measure with
+        ("Play", ["mock", "play", "practice", "start"]),
+        ("Before and during an event", ["add", "preflight", "ctfd", "gm", "team", "vpn", "plugin"]),
+        ("After a run", ["report", "writeups", "score", "gaps", "share"]),  # gaps reads a run folder, like the three before it
+        ("Solvers (L1)", ["l1", "pack", "build"]),
+        ("Measure a model", ["eval-local"]),  # for the light model, an optional feature: last
+    ]
+
+
+def test_the_root_help_says_where_a_new_player_starts_above_the_commands_and_names_commands_it_has():
+    """Help is read top down: "New here?" comes before the first panel of commands, once, and
+    every command it names is one flightdeck has. `flightdeck` alone is the first thing it
+    says to run, since that opens the home screen, which sets a new player up."""
+    import typer
+
+    out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
+    assert out.count("New here?") == 1
+    assert out.index("where you run the loop.") < out.index("New here?") < out.index("╭─ Options") < out.index("╭─ Set up")
+    said = flat(out[out.index("New here?"):out.index("╭─ Options")])
+    assert said.startswith("New here? Run flightdeck on its own: its home screen sets you up (your model API and its API key) "
+                           "and then offers the practice set.")
+    named = re.findall(r"flightdeck ([a-z][a-z-]*)(?=[,.:])", said)
+    assert named == ["mock", "init", "doctor", "practice", "start"], said
+    assert set(named) <= set(typer.main.get_command(cli.app).commands)
+    assert "New here?" not in CliRunner().invoke(cli.app, ["play", "--help"], terminal_width=200).output  # the root's own line
+
+
+# ---------------------------------------------------------------------- one word, one meaning
+
+# What help may call a key or a token, and what it may not: tests/words_kit.py.
+
+
+def test_a_bare_key_or_token_is_found_and_one_that_says_its_kind_is_not():
+    assert bare_words("The environment variable that will hold your key.") == ["nvironment variable that will hold your key."]
+    assert bare_words("asks for its name, site and token, makes its folder") == ["asks for its name, site and token, makes its folder"]
+    assert len(bare_words("Spends tokens like play. Keep the token safe.")) == 2  # "the token", with no token named before it
+    assert len(bare_words("its own key or token and models")) == 2
+    for fine in (
+        "Never prints the API key.", "it goes to your keys file", "--key-env VAR", "claude api-key or oauth-token",
+        "--token-env NAME The environment variable that holds your CTFd access token (its name, not the token).",
+        "holds your Game Master token (its name, not the token)", "Spends model tokens like play.",
+        "--budget-tokens TOKENS The whole run's budget in model tokens", "Dollars per million tokens",
+        "The tests get no API keys or access tokens from flightdeck's environment.", "give its budget in tokens (`--budget-tokens`)",
+    ):
+        assert bare_words(fine) == [], fine
+
+
+def test_every_help_page_says_which_key_and_which_token_it_means():
+    import typer
+
+    wrong = []
+    for path, _ in _commands(typer.main.get_command(cli.app)):
+        shown = flat(CliRunner().invoke(cli.app, [*path[1:], "--help"], terminal_width=200).output)
+        wrong += [f"{' '.join(path)} --help: ...{place}..." for place in bare_words(shown)]
+    assert not wrong, ("help says key or token without saying which (an API key, an access token, model tokens; a key you "
+                       "press is named, like Ctrl-C):\n" + "\n".join(wrong))
 
 
 # ---------------------------------------------------------------------- the first command a new player types

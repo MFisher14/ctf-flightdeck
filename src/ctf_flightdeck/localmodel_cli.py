@@ -134,8 +134,8 @@ def eval_local(
     model: Annotated[str | None, typer.Option("--model", help="The model id to evaluate (decider: optional, the model "
                                                                "its server must report serving).")] = None,
     key_env: Annotated[
-        str | None, typer.Option("--key-env", help="The variable holding the key (anthropic: ANTHROPIC_API_KEY by "
-                                                   "default; openai: none unless given). Never the key itself.")
+        str | None, typer.Option("--key-env", help="The environment variable holding the API key (anthropic: ANTHROPIC_API_KEY by "
+                                                   "default; openai: none unless given). Never the API key itself.")
     ] = None,
     price: Annotated[
         str | None, typer.Option("--price", metavar="IN,OUT[,CACHED]",
@@ -159,7 +159,7 @@ def eval_local(
         str | None,
         typer.Option("--cases", metavar="FILE",
                      help="The case set: a JSONL file of your own in the bundled set's format (synthetic only: hosts "
-                          "under .test, no key material), or `bundled` (the default: the set bundled with flightdeck)."),
+                          "under .test, nothing shaped like a credential), or `bundled` (the default: the set bundled with flightdeck)."),
     ] = None,
     repeat: Annotated[
         int, typer.Option("--repeat", metavar="N",
