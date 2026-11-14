@@ -40,6 +40,7 @@ class NewEvent:
     folder: Path
     token: str  # "" for none; never shown, never kept here past the hand-over
     vpn: Path | None
+    notes: tuple[str, ...] = ()  # what the player is told once the form has closed (a token variable that was not used, and why)
 
 
 def items(*, have_config: bool, events=(), pack_installed: bool = False) -> list[Item]:
@@ -127,8 +128,9 @@ class NewEventForm(Screen):
             yield Input(placeholder="https://ctf.example.org", id="url")
             yield ask("Your CTFd access token (CTFd only; the site's Settings, Access Tokens). It is hidden and goes to your keys file:")
             yield Input(password=True, id="token")
-            yield ask("Flag format: what comes before the { in a flag (optional):")
+            yield ask("Flag format: what comes before the { in a flag, or an example flag from the rules (optional):")
             yield Input(placeholder="PP for PP{...}", id="flag")
+            yield Static(Text(""), id="flagread")  # what was made of it, as it is typed: an example flag is read as its prefix
             yield ask("When a lane finds a flag (CTFd only):")
             yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
                           (Text("auto: it is sent at once (auto approve)"), "auto")], value="confirm", allow_blank=False, id="submit")
@@ -152,8 +154,21 @@ class NewEventForm(Screen):
     def _value(self, field: str) -> str:
         return self.query_one(f"#{field}", Input).value.strip()
 
+    @on(Input.Changed, "#flag")
+    def _flag_read(self, event: Input.Changed) -> None:
+        """Say what the flag format was understood as, under the field, while it is typed."""
+        try:
+            pattern, understood = start.flag_format_read(event.value)
+            said = Text(understood if pattern is not None else "", style=theme.MUTED)
+        except start.StartError as exc:
+            said = Text(str(exc), style=theme.YELLOW)
+        self.query_one("#flagread", Static).update(said)
+
     def read(self) -> NewEvent:
-        """The form as a NewEvent; start.StartError (or ValueError) with what to fix."""
+        """The form as a NewEvent; start.StartError (or ValueError) with what to fix. Everything
+        that can stop the event being set up is found here, while the form is open and the
+        answers are still in it: the folder, the VPN file, the token, the keys file."""
+        from .. import keys
         from .. import vpn as vpns
         from ..config import ConfigError, expand
 
@@ -181,10 +196,24 @@ class NewEventForm(Screen):
                 raise start.StartError(f"VPN file: {exc}") from None
         if start.is_event_folder(folder):
             raise start.StartError(f"{folder} is already an event: go back and resume it, or give another folder")
-        token = self.query_one("#token", Input).value.strip() if platform == "ctfd" else ""
-        answers = start.EventAnswers(name=name, platform=platform, url=url, flag_format=flag, submit=submit,
-                                     token_env=start.token_variable(name) if platform == "ctfd" else None)
-        return NewEvent(answers, folder, token, vpn_file)
+        unusable = start.folder_problem(folder)
+        if unusable is not None:
+            raise start.StartError(f"Folder: {unusable}")
+        token, token_env, notes = "", None, ()
+        if platform == "ctfd":
+            token = self.query_one("#token", Input).value.strip()
+            if token and keys.value_problem(token) is not None:
+                raise start.StartError(f"Token: it {keys.value_problem(token)}")
+            try:
+                chosen = start.token_variable_for(name, url)  # this site's variable: never one that is another site's
+            except keys.KeysError as exc:
+                raise start.StartError(f"Token: {exc}") from None
+            token_env = chosen.name
+            notes = tuple(f"{line}, so it is not used for this event" for line in chosen.passed)
+            if notes and not token and chosen.source is None:
+                raise start.StartError(f"Token: {'; '.join(notes)}. Paste this event's token: it is kept as {token_env}")
+        answers = start.EventAnswers(name=name, platform=platform, url=url, flag_format=flag, submit=submit, token_env=token_env)
+        return NewEvent(answers, folder, token, vpn_file, notes)
 
     def action_launch(self) -> None:
         try:
