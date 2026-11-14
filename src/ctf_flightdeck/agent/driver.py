@@ -60,13 +60,19 @@ agent/external.py does for its lanes. It is cleanup, not a fence.
 A picture the lane looks at (the view_image tool, agent/tools.py) goes into its context with the
 tool result that shows it (agent/client.py IMAGE_KEY), and the model client puts it in each
 request from then on, so its tokens are in the usage of the calls that carry it, like any text.
-Nothing takes a picture out of a context again (a model's thinking is tied to the history it was
-made in), so a context carries at most MAX_CONTEXT_IMAGES of them and MAX_CONTEXT_IMAGE_BYTES in
-all: past that view_image answers that there is no room. It answers with a reason too when the
-run's model client has no way to send a picture. What no one can know beforehand is whether the
-model takes the picture: when the request that first carries one fails, the call is made once
-more without it, and the tool's result becomes the API's own words on why (_ask). The lane goes
-on; the player reads the same in the lane's notes.
+A picture the model's API took stays in its context (a model's thinking is tied to the history it
+was made in; a move to the fallback API, below, is the one exception), so a context carries at
+most MAX_CONTEXT_IMAGES of them and MAX_CONTEXT_IMAGE_BYTES in all: past that view_image answers
+that there is no room. It answers with a reason too when the run's model client has no way to send
+a picture. What no one can know beforehand is whether the model takes the picture: when the
+request that first carries one fails, the call is made once more without it, and the tool's result
+becomes the API's own words on why (_ask). The lane goes on; the player reads the same in the
+lane's notes. Not every failure is about the picture: one that means "not now" (IMAGE_BLAMELESS)
+is the call's own, and after a server error that does not say (IMAGE_UNSURE) the lane is told that
+it is not known. A context that moves to the [fallback] API (agent/fallback.py) takes its pictures
+along, to a model that has taken none of them: when its first request there fails, every picture
+of the context is one that request was the first to carry, and all of them come out (the context
+never goes back to the primary, whose model made its replies with them in view).
 
 Escalation and take-over are turn boundaries. Each bumps the lane's generation, and a reply
 asked for in an older generation runs no further tool call. After an escalation none of
@@ -151,10 +157,24 @@ OUTAGE_SECONDS = 300.0
 # of the largest size are 24 MB in base64.
 MAX_CONTEXT_IMAGES = 20
 MAX_CONTEXT_IMAGE_BYTES = 4 * IMAGE_BYTES
-# A model API's failure that a picture in the request did not cause: the key, the account's credits, a rate limit. Any
-# other answer to the request that first carries a picture may be about it (a model that takes none: 400, or 404 on
-# OpenRouter; a damaged file; too many pixels; 413; a local server's 500), so that call is made again without it.
-IMAGE_BLAMELESS = frozenset({401, 402, 403, 429})
+# A model API's failure that a picture in the request did not cause: the key, the account's credits, and what means
+# "not now" whatever the request holds (a timeout, a rate limit, a gateway, an upstream with no room; _image_blameless
+# adds every status past 504, Anthropic's 529 among them). It is the call's failure, as it is with no picture in it.
+IMAGE_BLAMELESS = frozenset({401, 402, 403, 408, 429, 502, 503, 504})
+# A server error that does not say what it was about: an API that is failing answers so to any request, and a local
+# server answers so to a picture its model cannot take. The call is made again without the picture, and the lane is
+# told that it is not known which it was. Any other error answer to the request that first carries a picture may be
+# about it (a model that takes none: 400, or 404 on OpenRouter; a damaged file; too many pixels; 413): that call is
+# made again without it too, and the lane is told the API's words.
+IMAGE_UNSURE = frozenset({500, 501})
+
+
+def _image_blameless(error: ModelError) -> bool:
+    """Whether a failed call's failure cannot be about a picture its request carried: a refusal,
+    no answer at all, an answer that was no error status (a reply that made no sense), or a
+    status of IMAGE_BLAMELESS."""
+    status = error.status
+    return error.declined or status is None or status < 400 or status in IMAGE_BLAMELESS or status > 504
 
 
 def _may_pass(status: int | None) -> bool:
@@ -585,8 +605,9 @@ class AgentDriver:
 
     async def _ask(self, run: _Run, model: str, messages: list[dict], generation: int) -> Reply:
         """The lane's next model call. When it fails for good and the request was the first to
-        carry a picture (_new_images), the call is made once more without it: the lane must not
-        end because it looked at a file its model cannot take. A second failure is the call's."""
+        carry a picture (_first_carried), the call is made once more without it: the lane must
+        not end because it looked at a file its model cannot take, or because its context moved
+        to a [fallback] model that cannot. A second failure is the call's."""
 
         def call():
             return self.client.chat(model, messages, TOOLS, session_id=run.session, max_tokens=self.max_tokens,
@@ -604,27 +625,55 @@ class AgentDriver:
 
     def _images_out(self, run: _Run, messages: list[dict], model: str, error: ModelError) -> bool:
         """Take the pictures the failed request was the first to carry out of the context
-        again, when its failure may be about them (IMAGE_BLAMELESS: not otherwise). Each
+        again, when its failure may be about them (_image_blameless: not otherwise). Each
         view_image result that showed one becomes an error with the API's own words, which is
-        what the model then has of it, and the player reads the same on the lane. True when
-        there was one to take out, so the call is worth making again."""
-        if error.declined or error.status is None or error.status < 400 or error.status in IMAGE_BLAMELESS:
-            return False  # a refusal, no answer at all, or an answer that was no error status (a reply that made no sense)
-        new = _new_images(messages)
+        what the model then has of it, and the player reads the same on the lane. Those words
+        do not say more than is known: after a server error (IMAGE_UNSURE) the picture may
+        have had nothing to do with it. True when there was one to take out, so the call is
+        worth making again."""
+        if _image_blameless(error):
+            return False
+        there = self._moved_unanswered(run)
+        new = self._first_carried(messages, there)
         if not new:
             return False
-        told = (
-            f"error: the picture did not reach the model: {error}. The request that carried it failed, so flightdeck took "
-            f"it out again, and this message is all you have of it. Either {model} cannot be sent pictures, or not this "
-            "one (a damaged file, too many pixels, too much for one request). Work on the file with the shell instead."
-        )
+        lead = "the picture did not reach the model"
+        if there:  # the request went to the fallback's model, which the lane's own name does not say
+            lead, model = f"the picture did not reach {there}, the model this conversation moved to", there
+        if error.status in IMAGE_UNSURE:
+            why = (f"That was a server error, which does not say what it was about: {model} may not take pictures, or not "
+                   "this one, or the API failed for a moment and the picture had nothing to do with it. If view_image has "
+                   "not failed like this before in this conversation, it is worth one more call; if it has, work on the "
+                   "file with the shell instead.")
+        else:
+            why = (f"Either {model} cannot be sent pictures, or not this one (a damaged file, too many pixels, too much for "
+                   "one request). Work on the file with the shell instead.")
+        told = (f"error: {lead}: {error}. The request that carried it failed, so flightdeck took it out again, and this "
+                f"message is all you have of it. {why}")
         for message in new:
             del message[IMAGE_KEY]
             message["content"] = self.redact(told)
         count, them = ("a picture", "it") if len(new) == 1 else (f"{len(new)} pictures", "them")
-        self._say(run.lane_id, f"{run.lane_id} view_image: the call to {model} that carried {count} failed ({error}); "
+        unsure = f", a server error that may not be about {them}" if error.status in IMAGE_UNSURE else ""
+        self._say(run.lane_id, f"{run.lane_id} view_image: the call to {model} that carried {count} failed ({error}){unsure}; "
                                f"the lane was told so in place of {them}, and the call is made again without {them}")
         return True
+
+    def _moved_unanswered(self, run: _Run) -> str | None:
+        """The [fallback] model the lane's context moved to and has had no reply from yet
+        (FallbackClient.unanswered), else None: also for a client that has no fallback."""
+        ask = getattr(self.client, "unanswered", None)
+        return ask(run.session) if ask is not None else None
+
+    @staticmethod
+    def _first_carried(messages: list[dict], there: str | None) -> list[dict]:
+        """The tool messages whose picture (IMAGE_KEY) the request that just failed was the
+        first to carry to its API: the ones since the model's last reply, or, in a context
+        that moved to the fallback (`there`) and has no reply from it yet, every one: the
+        fallback has taken none of them, the primary's old ones included."""
+        if there:
+            return [message for message in messages if IMAGE_KEY in message]
+        return _new_images(messages)
 
     def _no_images(self, run: _Run) -> str | None:
         """Why the run's model client cannot send this lane's model a picture, or None when it

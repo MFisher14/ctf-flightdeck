@@ -6,8 +6,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 - A lane can look at a picture: flightdeck's own lanes have a `view_image` tool that shows the
   model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
-  scaled down). When your model's API will not take a picture, the lane is told why and goes on
-  without it instead of ending.
+  scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane
+  moved to will not, the lane is told why and goes on without it instead of ending.
 - The console opens in a simpler layout: one list of lanes, a short header, and only the keys
   that apply to the selected lane now. Every key still acts, and `?` lists them. `/layout deck`
   brings the full dashboard back for the rest of a run; `layout = "deck"` under `[console]` in

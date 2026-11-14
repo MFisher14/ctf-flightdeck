@@ -253,8 +253,9 @@ becomes the text and an image block). A chat completions tool message is text on
 OpenAI-compatible client sends it as an image part of a user message right after that turn's tool
 messages, under a line of flightdeck's that says it is a file of the challenge. Every later request
 of the context carries it, so its tokens are in those calls' usage and are counted and priced like
-any other. Nothing takes a picture out of a context again (a model's thinking is tied to the history
-it was made in), so one context carries at most 20 pictures (`MAX_CONTEXT_IMAGES`: past 20 in a
+any other. A picture the API took stays in its context (a model's thinking is tied to the history
+it was made in; a move to the `[fallback]` API, below, is the one exception), so one context
+carries at most 20 pictures (`MAX_CONTEXT_IMAGES`: past 20 in a
 request the Anthropic API takes only small ones) and 18 MB of them (`MAX_CONTEXT_IMAGE_BYTES`: four
 of the largest, 24 MB in base64 of a request's 32). Past that `view_image` answers that there is no
 room; an escalation or a context refresh starts without pictures.
@@ -266,8 +267,16 @@ a given picture only its API can say, so when the request that first carries one
 (`AgentDriver._ask`: a model that reads no images, a damaged file, too many pixels, a request too
 large), the call is made once more without it: the tool result becomes an error with the API's own
 words, the lane goes on, and a note on the lane tells the player. A failure a picture cannot have
-caused (401, 402, 403, 429, no answer at all, a refusal) is never blamed on it, and a second failure
-ends the lane as any failed call does. A server that accepts a picture and ignores it looks, from
+caused is never blamed on it (`IMAGE_BLAMELESS`: 401, 402, 403; what means "not now", so 408, 429,
+502, 503, 504 and every status past it, Anthropic's 529 among them; no answer at all; a refusal):
+it ends the lane as it does with no picture in the request. A 500 or a 501 does not say what it was
+about (an API that is failing, or a local server whose model takes no picture), so the call is
+made again without the picture and the words to the lane and the player say that it is not known
+(`IMAGE_UNSURE`). A second failure ends the lane as any failed call does. A context that moves to
+the `[fallback]` API takes its pictures along, to a model that has taken none of them: until the
+fallback has answered once (`FallbackClient.unanswered`), a failure there may be about any picture
+of the context, the ones the primary took long ago included, so all of them come out and the
+results name the fallback's model. A server that accepts a picture and ignores it looks, from
 here, like one that looked. The brief names the tool in one line (`prompts.VIEW_IMAGE`) only when a
 file of the challenge is an image by its name. Coding-agent lanes have their CLI's tools, not this
 one.

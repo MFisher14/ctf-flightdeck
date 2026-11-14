@@ -776,7 +776,11 @@ pays for its tokens until the conversation is refreshed, and one conversation ca
 pictures and 18 MB of them: after that the tool says there is no room. When your model's API will
 not take a picture (a model that reads no images, a damaged file, one with too many pixels), the
 lane is told why in place of the picture and carries on with its shell, and a note on the lane
-tells you the same; the lane does not end. A server that accepts a picture and ignores it cannot
+tells you the same; the lane does not end. The same happens to every picture of a conversation
+that moves to your `[fallback]` API when the model there takes none. An API that is overloaded
+or rate-limited while a picture is on its way is not the picture's doing, and is handled like
+any other failed call; after a plain server error (500 or 501) the lane is told that the
+picture may not be what failed. A server that accepts a picture and ignores it cannot
 be told from one that looked: with a local model that reads no images, expect what the lane says
 about a picture to be made up. Coding-agent lanes (`--agent`) use their CLI's own tools instead.
 
