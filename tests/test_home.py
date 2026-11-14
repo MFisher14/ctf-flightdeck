@@ -844,7 +844,8 @@ def test_after_setup_the_lane_image_is_offered_first_only_when_docker_lanes_need
     given = choose(monkeypatch, ("setup", done))
     assert CliRunner().invoke(cli.app, []).exit_code == 0
     ready = given["calls"][1]["ready"]
-    assert ready.build is False and "Docker cannot build it now (docker daemon not running (down))" in ready.notes[-1]
+    assert ready.build is False and ready.notes[-1].startswith("Docker lanes cannot start: Docker cannot run them now (docker "
+                                                               "daemon not running (down)). Start Docker;")
     fresh.unlink()
     docker_on_path(tmp_path, monkeypatch, running=True, image=True)  # built already: nothing to do, nothing said
     given = choose(monkeypatch, ("setup", done))
@@ -852,6 +853,35 @@ def test_after_setup_the_lane_image_is_offered_first_only_when_docker_lanes_need
     ready = given["calls"][1]["ready"]
     assert ready.build is False and not any("lane image" in note for note in ready.notes)
     assert launched == [("image build", "")]
+
+
+def test_after_setup_the_wait_for_docker_is_said_before_it_and_a_docker_that_is_down_is_not_asked_for_the_image(home, fresh, tmp_path, monkeypatch, capsys):
+    from ctf_flightdeck import setup
+    from ctf_flightdeck.agent import workspace
+    from ctf_flightdeck.console.home import Setup
+
+    real, heard = workspace.docker_unavailable, []
+
+    def asked():  # the real check, noting what the terminal had been told when it began
+        heard.append(capsys.readouterr().err)
+        return real()
+
+    monkeypatch.setattr(workspace, "docker_unavailable", asked)
+    folder = docker_on_path(tmp_path, monkeypatch, running=False)
+    ready = cli._set_up(Setup(setup.answers_for("local", ("m",), "docker"), "local", "", "practice"))
+    assert len(heard) == 1 and "flightdeck: asking Docker whether it can run lanes" in heard[0] and "up to 20 s" in heard[0]
+    assert (folder / "asked").read_text().splitlines() == ["version --format"]  # down: no second question to wait for
+    assert ready.build is False and "(docker daemon not running (down))" in ready.notes[-1]
+    fresh.unlink()
+    folder = docker_on_path(tmp_path, monkeypatch, running=True)
+    ready = cli._set_up(Setup(setup.answers_for("local", ("m",), "docker"), "local", "", "practice"))
+    assert (folder / "asked").read_text().splitlines()[0] == "version --format" and len(heard) == 2  # Docker first, then its image
+    assert "image inspect" in (folder / "asked").read_text() and ready.build is True
+    fresh.unlink()
+    (folder / "asked").unlink()
+    capsys.readouterr()
+    cli._set_up(Setup(setup.answers_for("local", ("m",), "host"), "local", "", "practice"))  # lanes on this machine: Docker is not asked
+    assert len(heard) == 2 and not (folder / "asked").exists() and "asking Docker" not in capsys.readouterr().err
 
 
 def test_a_setup_that_cannot_be_kept_stops_with_nothing_written_and_never_shows_the_key(home, fresh, tmp_path, monkeypatch):

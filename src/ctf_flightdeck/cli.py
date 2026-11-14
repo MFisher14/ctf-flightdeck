@@ -139,7 +139,9 @@ def _set_up(done):
     the keys file, then the config (setup.write_setup: both, or neither where that can be
     told beforehand). What was done is said in the terminal too, for after the home screen,
     and is what the home screen opens on next (home.Ready): with building the lane image
-    first when Docker lanes need it and Docker can build it. The key is never shown."""
+    first when Docker lanes need it and Docker can build it. Docker is asked only for Docker
+    lanes, with the wait said first (the home screen is closed: a silent terminal looks
+    hung), and for the image only once it has answered. The key is never shown."""
     from . import keys
     from . import setup as setups
     from .agent.workspace import docker_unavailable
@@ -180,12 +182,17 @@ def _set_up(done):
         notes.append(host_warning())
     notes += setups.server_lines(answers, done.provider)
     build = False
-    if setups.lane_image_missing(answers):
+    if answers.runtime == "docker":
+        # Docker first, with the wait said before it: a daemon that does not answer is waited for once, and not again for its image
+        typer.echo("flightdeck: asking Docker whether it can run lanes and has the lane image (up to 20 s when Docker does not "
+                   "answer)…", err=True)
         reason = docker_unavailable()
-        build = reason is None
-        notes.append("Docker lanes run in the lane image, which is not built yet: the first choice here builds it." if build else
-                     f"Docker lanes run in the lane image, which is not built yet, and Docker cannot build it now ({reason}): "
-                     "start Docker, then `flightdeck image build`.")
+        if reason is not None:
+            notes.append(f"Docker lanes cannot start: Docker cannot run them now ({reason}). Start Docker; `flightdeck doctor` "
+                         "then says whether the lane image is still to build (`flightdeck image build`).")
+        elif setups.lane_image_missing(answers):
+            build = True
+            notes.append("Docker lanes run in the lane image, which is not built yet: the first choice here builds it.")
     for note in notes:
         typer.echo(f"flightdeck: {note}", err=True)
     return home.Ready(tuple(notes), build=build, first=done.then)

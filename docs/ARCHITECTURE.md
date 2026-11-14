@@ -958,8 +958,11 @@ at a terminal asks for a key that is not set at a hidden prompt and puts it in t
 (`setup.write_setup`, `keys.save`): the config is checked first, the key kept, then the config
 written. The home screen's setup form (`console/home.py` `SetupForm`) asks the same questions,
 is checked by the same answer functions and builds the same config (`setup.answers_for`); it
-writes nothing itself, and `cli._set_up` writes for it. `cli._home` opens the home screen again
-after a run it started ends.
+writes nothing itself, and `cli._set_up` writes for it. The form offers Docker or host by
+whether Docker answers (`workspace.docker_unavailable_stoppable`: `docker version` in a process
+group of its own, killed when the form closes or the app ends), and saves no runtime before it
+has answered or the player has chosen one. `cli._home` opens the home screen again after a run
+it started ends.
 
 ### Credentials
 

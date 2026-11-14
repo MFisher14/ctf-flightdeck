@@ -36,7 +36,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   building the lane image before both when Docker lanes need it. "Start a new CTF" with no
   config asks the same setup first. While the form still looks for Docker it saves no
   runtime (wait, or choose one yourself: your choice stands), and leaving it never waits for
-  a Docker that does not answer.
+  a Docker that does not answer. After a save for Docker lanes the terminal says that it is
+  asking Docker before it waits, and waits once at most.
 - `flightdeck init` asks for your API key at a hidden prompt and keeps it in your keys file,
   so there is no file to make by hand; Enter alone skips it. It asks only at a terminal, and
   only for a key that is not set yet.
