@@ -333,6 +333,8 @@ class _Handler(BaseHTTPRequestHandler):
     def _json(self) -> object:
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b""
+        if len(raw) < length:  # the client hung up mid-body (a killed lane's call): not a request, nothing to answer
+            raise ConnectionError("the request body was cut off")
         try:
             return json.loads(raw) if raw else None
         except ValueError:
