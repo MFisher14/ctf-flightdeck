@@ -695,6 +695,15 @@ def test_a_ref_of_a_dot_or_two_is_never_sent_as_another_route(tmp_path, ref):
         f"Dots: GET /api/tasks/{{ref}}: {{ref}} is {ref}, which would name another route, so flightdeck did not send it",)
 
 
+def test_a_web_page_in_answer_to_the_flag_says_the_flag_may_have_arrived():
+    """A proxy's page (a 524, a block page) can stand in front of a platform that took the
+    flag: timed_out is what makes the run's link warn that it may have arrived."""
+    with FakeSite(lambda request: Reply(524, "<!doctype html><html>A timeout occurred</html>", {"Content-Type": "text/html"})) as fake:
+        error = failure(caller(fake).submit("7", "t{x}"))
+        assert len(fake.requests) == 1
+    assert error.timed_out and str(error).startswith("the flag was sent, and then: POST /api/tasks/{ref}/flag was answered with a web page")
+
+
 def test_a_web_page_where_an_answer_should_be_is_a_stop_for_a_human_never_a_verdict(tmp_path):
     page = Reply(200, "<!doctype html><html><body>Checking your browser...</body></html>")
     config = table(**{"submit.status": {"200": "correct", "403": "incorrect"}})

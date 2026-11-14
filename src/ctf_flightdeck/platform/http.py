@@ -809,7 +809,10 @@ class HttpCaller:
         path = cfg.verdict_path
         async with self._clients() as (http, _):
             answer = await self._send(http, cfg.request, values, body=cfg.body, sends_flag=True)
-            self._refuse_page(answer)
+            try:
+                self._refuse_page(answer)
+            except CallFailed as exc:  # the flag left: a proxy's page may stand in front of a platform that took it
+                raise CallFailed(f"the flag was sent, and then: {exc}", timed_out=True) from None
             word, value = self._word(cfg, path, answer)
             if word is None and cfg.poll is not None and 200 <= answer.status < 300:
                 submission = self._scalar(cfg.poll.id_path, answer.doc)
