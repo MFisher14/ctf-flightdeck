@@ -628,12 +628,13 @@ def test_copy_flag_gives_the_flag_that_waits_else_the_newest_the_run_knows_and_w
         assert clip.texts == []
         deck.record_l1("crackme", "strings_sweep", "candidate", flags=["flag{from_l1}", "flag{second_of_l1}"], lane_id="L01")
         await send(pilot, app, "/copy flag")
-        assert clip.texts == ["flag{second_of_l1}"] and status_line(app).strip() == "● copied L01's flag"
+        assert clip.texts == ["flag{second_of_l1}"] and status_line(app).strip() == "● copied L01's flag: flag{second_of_l1}"
         deck.report("L01", TurnReport(flag="flag{the_lane_found}"))
         assert lane.pending is not None and lane.pending.flag == "flag{the_lane_found}"
         deck.record_l1("crackme", "xor_single", "candidate", flags=["flag{later_but_not_asked}"], lane_id="L01")
         await send(pilot, app, "/copy flag")
         assert clip.texts[-1] == "flag{the_lane_found}"  # the one the lane waits for an answer about
+        assert status_line(app).strip() == "● copied L01's flag: flag{the_lane_found}"  # the status line says which
 
     drive(app, script, BIG)
 
@@ -650,6 +651,7 @@ def test_copy_flag_gives_the_flag_the_lane_proposed_last_when_the_run_knew_it_be
         assert lane.pending is None and "Not submitted: flag{wrong_guess}" in status_line(app)
         await send(pilot, app, "/copy flag")
         assert clip.texts == ["flag{wrong_guess}"]  # the last one the run met, though the player declined it
+        assert status_line(app).strip() == "● copied L01's flag: flag{wrong_guess}"  # so the status line names what a paste will give
         deck.report("L01", TurnReport(flag="flag{right_from_l1}"))  # the lane comes to the flag L1 had reported before its guess
         await send(pilot, app, "/approve")
         assert lane.pending is None and "flag{right_from_l1}" in status_line(app)  # submitted: nothing waits

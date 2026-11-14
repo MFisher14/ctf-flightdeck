@@ -184,9 +184,11 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   call of flightdeck's own loop, up to 40 lines), with real newlines. `/copy command`: that
   call's command, its lines real again and without the `$ ` of a shell call, so it pastes into a
   shell. `/copy flag`: the flag that waits for your approval, else the newest flag the run knows
-  for the lane's challenge; with none, `L01 has no flag yet`. `/copy all`: every line of the
-  transcript in detail. The status line says what was copied (`copied L01's last output: 38
-  lines`). What is copied is what the console would show: a credential's name without its
+  for the lane's challenge, which is the one a lane proposed, you submitted or an L1 engine
+  reported last (also when the run had met it before); with none, `L01 has no flag yet`.
+  `/copy all`: every line of the transcript in detail. The status line says what was copied
+  (`copied L01's last output: 38 lines`), and names the flag (`copied L01's flag: flag{…}`): the
+  newest may be one you declined. What is copied is what the console would show: a credential's name without its
   value, and control characters made visible.
 
   Not selectable: the full needs-you card (a panel), the diff, the lane list and the board

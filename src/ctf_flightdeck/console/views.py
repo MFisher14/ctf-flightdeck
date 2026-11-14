@@ -1288,15 +1288,15 @@ def _lines(text: str) -> str:
 
 def lane_copy(deck: Deck, lane: Lane, what: str) -> tuple[str, str]:
     """What /copy puts on the clipboard for `lane`, and what the status line calls it
-    ("L01's last output: 38 lines"). NothingToCopy when the lane has none of it.
+    ("L01's last output: 38 lines"; a flag by its text). NothingToCopy when the lane has none of it.
 
     `output`: the output of the lane's last tool call that printed something, as its
     transcript keeps it (the longer excerpt of a call of flightdeck's own loop, else the
     step's output), with real newlines. `command`: that call's line (when no call has printed
     anything, the last call's), its folded newlines real again and without the mark of a shell
     call, so it can be pasted into a shell. `flag`: the flag that waits for the player's
-    approval, else the newest flag the run knows for the lane's challenge. `all`: every line of
-    the transcript in detail (transcript_lines).
+    approval, else the flag the run named last for the lane's challenge (known_flags). `all`:
+    every line of the transcript in detail (transcript_lines).
 
     Each is as the console shows the lane's text: no value of anything shaped like a
     credential (lane_text; the flags the run knows stay), control and invisible characters
@@ -1311,7 +1311,7 @@ def lane_copy(deck: Deck, lane: Lane, what: str) -> tuple[str, str]:
         flag = waiting or next(iter(reversed(known_flags(deck, lane.challenge_id))), "")
         if not flag:
             raise NothingToCopy(f"{lane.id} has no flag yet")
-        return untrusted(flag), f"{lane.id}'s flag"
+        return untrusted(flag), f"{lane.id}'s flag: {untrusted(flag, one_line=True)}"  # named: the newest need not be the one the player has in mind
     # (the call, whether it is the step itself: a coding-agent CLI's lane, whose runtime folded the newlines of its output)
     calls = [(call, not step.calls) for step in lane.actions if _is_call(step) for call in calls_of(step)]
     printed = [(call, folded) for call, folded in calls if call.output.strip()]
