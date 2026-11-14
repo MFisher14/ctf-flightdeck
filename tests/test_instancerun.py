@@ -11,8 +11,10 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, DeckConfig
-from ctf_flightdeck.instancerun import CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, RETRY_MOST, WAITS, InstanceRunner, Need, on_demand, plan
-from ctf_flightdeck.platform.instances import Instance, InstanceError, InstanceRefused
+from ctf_flightdeck.instancerun import (
+    CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, RETRY_MOST, RETRY_PENDING, WAITS, InstanceRunner, Need, on_demand, plan,
+)
+from ctf_flightdeck.platform.instances import Instance, InstanceError, InstancePending, InstanceRefused
 
 from test_deck import FLAG_FORMAT, MODELS, Clock, RecordingDriver, RecordingVerifier
 
@@ -235,6 +237,85 @@ def test_close_stops_what_this_run_started_and_says_what_it_could_not():
 
 def said(deck) -> list[str]:
     return [e.text for e in deck.events if e.data.get("source") == "instances"]
+
+
+class Starting(Platform):
+    """A platform whose instances are on their way up for a while (rCTF v2's "starting"):
+    the status says so for `pending` more looks, and a start answers before they are up."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.pending: dict[str, int] = {}  # challenge -> looks that still answer "starting"
+
+    def status(self, cid):
+        self.calls.append(("status", cid))
+        if self.pending.get(cid, 0) > 0:
+            self.pending[cid] -= 1
+            raise InstancePending(f"the instance of {cid} is on its way up or down on the platform (starting)")
+        return self._instance(cid) if cid in self.up else None
+
+    def start(self, cid):
+        self.calls.append(("start", cid))
+        self.up[cid] = self.port
+        self.pending[cid] = 2
+        raise InstancePending(f"the platform took the start for {cid} and is still starting its instance", maybe_done=True)
+
+
+def test_an_instance_on_its_way_up_gets_no_start_and_is_looked_at_again_soon():
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Starting(clock=clock.now)
+    platform.up["c0"], platform.pending["c0"] = 40000, 1  # a teammate's, still starting
+    step(runner)
+    assert platform.calls == [("status", "c0")] and "c0" in deck.waits and runner.running == {}
+    assert "is on its way up or down on the platform; its lanes wait, and flightdeck asks again every 10 s" in said(deck)[0]
+    step(runner)
+    assert platform.calls == [("status", "c0")]  # not before RETRY_PENDING
+    clock.t += RETRY_PENDING
+    step(runner)
+    assert platform.calls == [("status", "c0"), ("status", "c0")] and runner.adopted == {"c0"} and deck.waits == {}
+    assert urls["c0"] == ("http://box.example.test:40000",) and len(said(deck)) == 2  # the wait said once, then the address
+
+
+def test_a_start_that_is_still_starting_is_this_runs_once_it_is_up_and_is_stopped_by_close():
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Starting(clock=clock.now)
+    step(runner)
+    assert platform.calls == [("status", "c0"), ("start", "c0")] and "c0" in runner.unanswered
+    for _ in range(3):
+        clock.t += RETRY_PENDING
+        step(runner)
+    assert [c for c in platform.calls if c[0] == "start"] == [("start", "c0")]  # sent once
+    assert list(runner.running) == ["c0"] and runner.adopted == set() and deck.waits == {}
+    assert asyncio.run(runner.close()) == [] and ("stop", "c0") in platform.calls
+
+
+def test_a_start_that_wants_a_person_is_not_sent_again_and_the_instance_the_player_starts_is_used():
+    deck, runner, platform, urls, clock = lab(n=1)
+    platform.fail["start"] = InstanceRefused("the platform refused instance start for challenge pwn: The captcha verification "
+                                             "failed.", human=True)
+    step(runner)
+    assert "sends no start for it again, and looks every 30 s for the one you start" in said(deck)[0] and "c0" in deck.waits
+    clock.t += RETRY_FULL
+    step(runner)
+    assert platform.calls == [("status", "c0"), ("start", "c0"), ("status", "c0")]  # the status only
+    platform.up["c0"] = 40000  # the player started it on the site
+    clock.t += RETRY_FULL
+    step(runner)
+    assert runner.adopted == {"c0"} and urls["c0"] == ("http://box.example.test:40000",) and deck.waits == {}
+    assert [c for c in platform.calls if c[0] == "start"] == [("start", "c0")]
+    assert asyncio.run(runner.close()) == [] and platform.up == {"c0": 40000}  # the player's: never stopped here
+
+
+def test_every_address_of_an_instance_goes_to_its_lanes_and_one_left_out_is_said():
+    deck, runner, platform, urls, clock = lab(n=1)
+    platform._instance = lambda cid: Instance(cid, "web.example.test", 443, "https", more=(("tcp", "api.example.test", 1337),),
+                                             left_out=("tls.example.test:443 (tcp-ssl: a kind flightdeck cannot hand a lane yet)",))
+    step(runner)
+    assert urls["c0"] == ("https://web.example.test:443", "tcp://api.example.test:1337") == runner.urls[1]["c0"]
+    started = [e for e in deck.events if e.data.get("url")][0]
+    assert "started: https://web.example.test:443, tcp://api.example.test:1337. Left out, as no lane can be given it: " \
+           "tls.example.test:443 (tcp-ssl" in started.text
+    assert started.data["urls"] == ["https://web.example.test:443", "tcp://api.example.test:1337"]
 
 
 def test_a_start_that_got_no_answer_and_turns_up_in_the_status_is_this_runs_and_is_stopped():

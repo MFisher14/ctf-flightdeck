@@ -504,6 +504,44 @@ def test_a_flag_rctf_rate_limits_is_sent_again_after_the_wait_its_429_names(tmp_
     assert http_warnings(run) == []
 
 
+def test_a_run_on_rctf_v2_starts_a_challenges_instance_with_the_sign_ins_session_and_stops_it_on_the_solve(tmp_path, token):
+    """The rctf2 preset marks the challenge with an instancer on-demand; [instances] plugin =
+    "rctf" starts it before its lane works it, by its string id and with the same session as
+    the pull's, hands the lane its address, and stops it once it is solved."""
+    from fake_http import Instancer
+
+    tasks = [RTask("box-7f3a", "Boxed", category="pwn", flag="t{boxed}", instancer=Instancer(slow=1)),
+             RTask("plain-19c2", "Plain", flag="t{plain}")]
+    model = Model({"Boxed": [submit("t{boxed}")], "Plain": [submit("t{plain}")]})
+    with FakeRCTF(tasks, v2=True) as fake, FakeModelServer(responder=model) as server:
+        event = event_file(tmp_path, fake.url, http='preset = "rctf2"', board=str(tmp_path / "board"), pull="auto", submit="auto",
+                           extra='\n[instances]\nplugin = "rctf"\n')
+        run = prepare_run(RunOptions(event=event, config=config(tmp_path, server.base_url, max_lanes=2)))
+        run.instances.every = 0.05
+        assert json.loads((tmp_path / "board" / "boxed" / "challenge.json").read_text())["instance"] == "on-demand"
+        assert any(note.startswith("instances: flightdeck starts a challenge's instance on the platform before a lane works it (1 on")
+                   for note in run.notes())
+
+        async def body(run):
+            await wait_for(lambda: run.deck.challenges["boxed"].status is ChallengeStatus.SOLVED, "the boxed challenge solved")
+            await wait_for(lambda: fake.tasks["box-7f3a"].instancer.status == "stopped" and fake.of("instance")[-1].method == "DELETE",
+                           "its instance stopped after the solve")
+
+        play(run, body)
+        asked = [(r.method, r.path) for r in fake.of("instance")]
+        assert {path for _, path in asked} == {"/api/v2/integrations/challs/box-7f3a/instance"}  # only the on-demand one, by its own id
+        assert [m for m, _ in asked if m != "GET"] == ["PUT", "DELETE"]  # one start, one stop
+        # the first pull's caller signed in once; the run's own signs in once, and its instancer and its flags share that session
+        assert fake.kinds().count("login") == 2 and fake.kinds().index("instance") > fake.kinds().index("login", 1)
+        assert {r.headers["authorization"] for r in fake.of("instance") + fake.of("submit")} == {f"Bearer {AUTH_TOKEN}"}
+    briefs = {r["json"]["messages"][1]["content"].split("Challenge: ", 1)[1].split(" (", 1)[0]: r["json"]["messages"][1]["content"]
+              for r in server.chats()}
+    assert "\nLive instance: tcp://pwn-1.chal.example.test:31337" in briefs["Boxed"]
+    assert "\nLive instance: none\n" in briefs["Plain"]
+    everything = run.log.path.read_text() + "\n".join(run.notes())
+    assert TEAM_TOKEN not in everything and AUTH_TOKEN not in everything
+
+
 def test_a_kind_the_table_has_no_rule_for_gives_the_flag_back_to_the_player_and_is_never_wrong(tmp_path, token):
     with FakeRCTF(sample()[:1]) as fake, FakeModelServer(responder=Model({"Warm Up": [submit("t{warm}")]})) as server:
         run = rctf_run(tmp_path, fake, server)
