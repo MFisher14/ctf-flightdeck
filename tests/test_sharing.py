@@ -209,9 +209,12 @@ def test_a_fresh_lane_after_a_kill_takes_the_first_look_already_made_and_the_lig
                 await kit.until(lambda: first.turns >= 1, "the first lane's turn")
                 assert lab.deck.apply(iv.Kill(first.id, requeue=True)).ok
                 again = next(x for x in lab.deck.lanes.values() if x.id != first.id)
-                await kit.until(lambda: any(c["json"]["session_id"].endswith(again.id) for c in lanes.chats()), "the fresh lane's call")
-                ours = next(c for c in lanes.chats() if c["json"]["session_id"].endswith(again.id))
-                assert first_look_of(brief_of(ours)) == first_look_of(brief_of(lanes.chats()[0])) == (
+                def whole():  # the killed lane's call can be cut off mid-body: the fake records it with no JSON
+                    return [c for c in lanes.chats() if c["json"] is not None]
+
+                await kit.until(lambda: any(c["json"]["session_id"].endswith(again.id) for c in whole()), "the fresh lane's call")
+                ours = next(c for c in whole() if c["json"]["session_id"].endswith(again.id))
+                assert first_look_of(brief_of(ours)) == first_look_of(brief_of(whole()[0])) == (
                     "Specialist it suits: audio-signal (" + first_look_of(brief_of(ours)).split("(", 1)[1])
                 assert "Files: a WAV." in first_look_of(brief_of(ours))
                 assert sorted(light.asked()) == ["family", "recon"]  # one computation for the two lanes
