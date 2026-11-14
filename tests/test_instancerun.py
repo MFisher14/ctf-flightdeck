@@ -356,6 +356,28 @@ def test_close_stops_an_instance_whose_start_got_no_answer_and_says_when_it_cann
     assert "the instance of Chall 0 may still run on the platform: no answer from the platform" in left
 
 
+def test_a_wanted_start_that_got_no_answer_keeps_the_one_slot_ahead_of_a_challenge_put_before_it():
+    """One slot (ctfd-owl). c0's start was done with no answer, then c1 is put ahead of it in
+    line. Given c1's turn, c1 would be refused as full every 30 s and c0's own container
+    would never be looked for again: every on-demand challenge stalls for its hour."""
+    needs = [Need("a", wanted=True, running=False, place=0, claimed=True), Need("b", wanted=True, running=False, place=-1)]
+    assert plan(needs, 1).start == ("a",) and plan(needs, 1).waiting == ("b",)
+
+    deck, runner, platform, urls, clock = lab(n=2, cap=1)
+    platform.unanswered.add("c0")
+    step(runner)
+    assert platform.up == {"c0": 31000} and runner.running == {}
+    deck.queue.sort(key=lambda entry: entry.challenge != "c1")  # the player puts c1 first
+    clock.t += 31
+    step(runner)
+    assert ("start", "c1") not in platform.calls  # it is not given the slot c0's container holds
+    assert list(runner.running) == ["c0"] and runner.adopted == set() and urls["c0"] == ("http://box.example.test:31000",)
+    deck.platform_solved("c0", "your team")
+    step(runner)
+    assert ("stop", "c0") in platform.calls and list(platform.up) == ["c1"]  # c0 was this run's, stopped, and c1 has its turn
+    assert not any(e.data.get("full") for e in deck.events)
+
+
 def test_an_adopted_instance_that_ended_and_is_started_again_by_this_run_is_this_runs():
     deck, runner, platform, urls, clock = lab(n=1, seconds=600)
     platform.up["c0"] = 40000  # a teammate's

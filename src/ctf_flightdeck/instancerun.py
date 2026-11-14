@@ -11,6 +11,8 @@ with no model, which ones are:
   once; start instances for the challenges that are wanted (queued, or with an open lane) and
   have none, in the deck's own queue order, up to the slots left under `max_running`. A
   running instance of a wanted challenge is never stopped to make room: it is being worked.
+  A wanted challenge whose start got no clear answer goes first in line (see below): its
+  instance may be up and hold a slot, so the slot stays its own until its status is asked.
 - `InstanceRunner` applies it every few seconds from a task on the console's loop
   (`work()`), asking the platform in a worker thread (platform/instances.InstanceClient).
 
@@ -95,6 +97,7 @@ class Need:
     running: bool  # its instance is up, as far as this run knows
     ours: bool = True  # this run started it (False: adopted, never stopped here)
     place: int = 0  # its place in line: open lanes first, then the deck's queue order
+    claimed: bool = False  # a start of this run got no clear answer (CLAIM_FOR): its instance may be up and hold a slot
 
 
 @dataclass(frozen=True)
@@ -111,7 +114,9 @@ def plan(needs: Sequence[Need], max_running: int) -> Plan:
         raise ValueError(f"max_running must be at least 1, got {max_running}")
     stop = tuple(n.challenge for n in needs if n.running and not n.wanted and n.ours)
     kept = sum(1 for n in needs if n.running and (n.wanted or not n.ours))
-    want = sorted((n for n in needs if n.wanted and not n.running), key=lambda n: (n.place, n.challenge))
+    # a wanted challenge whose start got no clear answer goes first: its instance may hold a slot already, and only its
+    # own next try (a status) finds it
+    want = sorted((n for n in needs if n.wanted and not n.running), key=lambda n: (not n.claimed, n.place, n.challenge))
     free = max(0, max_running - kept)
     return Plan(stop, tuple(n.challenge for n in want[:free]), tuple(n.challenge for n in want[free:]))
 
@@ -205,6 +210,7 @@ class InstanceRunner:
     def needs(self) -> list[Need]:
         deck = self.deck
         order = {entry.challenge: i for i, entry in reversed(list(enumerate(deck.queue)))}
+        claims = set(self._claims())
         out = []
         for ch in deck.challenges.values():
             if not ch.on_demand:
@@ -212,7 +218,7 @@ class InstanceRunner:
             lanes = any(not lane.finished for lane in deck.lanes_on(ch.id))
             wanted = not ch.closed and ch.status is not ChallengeStatus.BLOCKED and (lanes or ch.id in order)
             place = -1 if lanes else order.get(ch.id, len(order))
-            out.append(Need(ch.id, wanted, ch.id in self.running, ch.id not in self.adopted, place))
+            out.append(Need(ch.id, wanted, ch.id in self.running, ch.id not in self.adopted, place, ch.id in claims))
         return out
 
     # ------------------------------------------------------------------ the platform, asked
