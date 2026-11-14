@@ -638,14 +638,16 @@ COMPACT_LANE_COLUMNS = (
 )
 COMPACT_CHALL_MIN = 8
 # The simple layout's lane row: what needs you, the lane, its challenge, state and cost, and what
-# it did last. Its model, turns and idle time are in the lane's own view (focus_title).
+# it did last. Its model, turns and idle time are in the lane's own view (focus_title). Only the
+# last action can go, and only once the challenge's name has narrowed (simple_lane_columns): what
+# a lane has spent is in the list at every width, as in the compact layout.
 SIMPLE_LANE_COLUMNS = (
     ("bar", "", 1, 0),
     ("!", "!", 12, 0),
     ("lane", "lane", 4, 0),
     ("chall", "chall", 20, 0),
     ("state", "state", 8, 0),
-    ("cost", "cost", 8, 2),
+    ("cost", "cost", 8, 0),
     ("last", "last action", 0, 1),
 )
 COMPACT_ALERT_TAG = {
@@ -670,28 +672,59 @@ def fit_columns(
     available: int,
     padding: int,
     shrink: dict[str, int] | None = None,
+    *,
+    shrink_first: bool = False,
 ) -> list[tuple[str, str, int]]:
     """Drop columns by rank (highest first) until they fit `available` cells; the
     `stretch` column takes what is left. If the columns that never drop still do not
-    fit, the `shrink` columns narrow, each down to its floor."""
+    fit, the `shrink` columns narrow, each down to its floor.
+
+    `shrink_first`: the `shrink` columns narrow before any column drops, and a column drops
+    only when that was not enough. If the `stretch` column is the one that went, the columns
+    that narrowed take the room back, each up to its own width."""
     kept = [list(column) for column in columns]
+    full = {key: width for key, _, width, _ in columns}
 
     def needed() -> int:
         fixed = sum(width if key != stretch else stretch_min for key, _, width, _ in kept)
         return fixed + 2 * padding * len(kept)
 
-    while needed() > available and any(rank for *_, rank in kept):
-        worst = max(range(len(kept)), key=lambda i: (kept[i][3], i))
-        kept.pop(worst)
-    for key, floor in (shrink or {}).items():
-        over = needed() - available
-        for column in kept:
-            if over > 0 and column[0] == key and column[2] > floor:
-                cut = min(over, column[2] - floor)
-                column[2] -= cut
-                over -= cut
+    def drop() -> None:
+        while needed() > available and any(rank for *_, rank in kept):
+            worst = max(range(len(kept)), key=lambda i: (kept[i][3], i))
+            kept.pop(worst)
+
+    def narrow() -> None:
+        for key, floor in (shrink or {}).items():
+            over = needed() - available
+            for column in kept:
+                if over > 0 and column[0] == key and column[2] > floor:
+                    cut = min(over, column[2] - floor)
+                    column[2] -= cut
+                    over -= cut
+
+    if shrink_first:
+        narrow()
+        drop()
+        if all(column[0] != stretch for column in kept):
+            spare = available - needed()
+            for column in kept:
+                if spare > 0 and column[0] in (shrink or {}):
+                    back = min(spare, full[column[0]] - column[2])
+                    column[2] += back
+                    spare -= back
+    else:
+        drop()
+        narrow()
     spare = available - needed()
     return [(key, label, width if key != stretch else stretch_min + max(0, spare)) for key, label, width, _ in kept]
+
+
+def simple_lane_columns(available: int, padding: int) -> list[tuple[str, str, int]]:
+    """The simple layout's lane columns (SIMPLE_LANE_COLUMNS) for a lane list with `available`
+    cells: the challenge's name narrows first (LANE_SHRINK), then the last action goes and the
+    name is whole again. The cost never goes."""
+    return fit_columns(SIMPLE_LANE_COLUMNS, "last", LAST_MIN, available, padding, LANE_SHRINK, shrink_first=True)
 
 
 SENDING = "sending"  # the attention cell while a flag of the lane is on its way to the platform

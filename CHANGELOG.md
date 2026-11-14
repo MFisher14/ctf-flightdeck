@@ -27,6 +27,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   their last rows on screen: the keys (`ctrl+s` adds the challenge) and the line a refusal is
   said on. The form's description box gives up rows first, then its fields scroll to the one
   you are in. Help lists what a command does under it when there is no room beside it.
+- The simple layout's lane list shows what each lane has spent at every width: on an
+  80-column terminal the challenge's name narrows to make room, and under 74 columns the last
+  action is left out (`flightdeck doctor` says so), never the cost.
 - A status line too long for the terminal goes on in a second row instead of being cut, so
   what `/layout` and `/theme` answer (the config line that keeps the choice, and its file) is
   read whole at 80 columns.

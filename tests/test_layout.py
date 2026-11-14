@@ -49,6 +49,7 @@ from test_console import (
     screen_text,
     status_line,
     step_until,
+    table,
     type_line,
 )
 
@@ -568,6 +569,46 @@ def test_the_simple_layout_is_one_list_of_lanes_with_what_the_board_would_say_in
         assert title_of(app, "#lanes-pane") == "lanes 4/4 · 2 waiting · ✓ 1 solved · filter alpha · 1 needing you hidden"
 
     drive(app, script, SIZE)
+
+
+def simple_fit(available: int) -> dict[str, int]:
+    return {key: width for key, _, width in views.simple_lane_columns(available, 1)}
+
+
+def test_the_simple_lane_list_narrows_the_challenge_then_gives_up_the_last_action_and_never_the_cost():
+    """Seven columns and their padding need 79 cells. With fewer the challenge's name narrows
+    (to 8 at least); when that is not enough the last action goes, and the name takes its
+    room back. What a lane has spent is in the list at every width that is not compact."""
+    full = {"bar": 1, "!": 12, "lane": 4, "chall": 20, "state": 8, "cost": 8, "last": 12}
+    assert simple_fit(79) == full and simple_fit(90) == full | {"last": 23}  # the last action takes the room there is
+    assert simple_fit(78) == full | {"chall": 19} and simple_fit(67) == full | {"chall": 8}
+    gone = {key: width for key, width in full.items() if key != "last"}
+    assert simple_fit(66) == gone and simple_fit(65) == gone  # no room for a last action of 12: the name is whole again
+    assert simple_fit(64) == gone | {"chall": 19} and simple_fit(58) == gone | {"chall": 13}  # 65 columns: the narrowest simple
+    for available in range(53, 120):
+        fit = simple_fit(available)
+        assert "cost" in fit and sum(fit.values()) + 2 * len(fit) <= available, available  # never dropped, never over the edge
+    # the deck layout's columns are fitted as they were: columns drop first, then the name narrows
+    assert [key for key, *_ in views.fit_columns(views.LANE_COLUMNS, "last", views.LAST_MIN, 73, 1, views.LANE_SHRINK)] == [
+        "bar", "!", "lane", "chall", "state", "idle", "last"]
+
+
+@pytest.mark.parametrize("width", [65, 66, 73, 74, 80, 84, 85, 86, 100])
+def test_the_simple_layout_shows_what_a_lane_has_spent_at_every_width(width):
+    deck, app = three_lanes("simple")
+    deck.lanes["L02"].dollars = deck.lanes["L02"].known_dollars = 1.25
+
+    async def script(pilot):
+        shown = columns(app, "lanes")
+        assert shown == [key for key in SIMPLE_COLUMNS if key != "last" or width >= 74], shown
+        lines = region_text(app, "#lanes").splitlines()
+        assert "cost" in lines[0] and ("last action" in lines[0]) is (width >= 74)
+        row = next(line for line in lines if "L02" in line)
+        assert "$1.25" in row and "Beta" in row, row  # on screen, not past the list's edge
+        last = table(app, "lanes").columns["chall"].width
+        assert last == (20 if width >= 86 or 72 <= width < 74 else {65: 13, 66: 14, 74: 8, 80: 14, 84: 18, 85: 19}[width])
+
+    drive(app, script, (width, 24))
 
 
 def test_layout_switches_the_view_and_back_and_keeps_the_cursor_the_filter_and_a_draft():
@@ -1094,7 +1135,8 @@ def test_the_simple_layout_never_has_the_board_left_out(width):
     assert room.room(width, 30, max_lanes=4, containerized=True).board is (width < 100)  # the deck layout: under 100 columns
 
 
-@pytest.mark.parametrize("size", [(50, 24), (64, 30), (65, 30), (72, 17), (80, 24), (85, 18), (86, 17), (86, 18), (120, 40)])
+@pytest.mark.parametrize("size", [(50, 24), (64, 30), (65, 30), (72, 17), (73, 30), (74, 30), (75, 17), (76, 17), (80, 24), (85, 18),
+                                  (86, 17), (86, 18), (120, 40)])
 def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leaves_out(size, monkeypatch):
     """room.room(layout="simple") against the console in that layout, on the busy run doctor
     measures with: the header's pieces in both views, the lane rows, and the key lines at their
@@ -1125,6 +1167,9 @@ def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leave
                 assert app.fleet.board_hidden and app.fleet.compact is fit.compact
                 rows = [line for line in region_text(app, "#lanes").splitlines()[1:] if line.strip()]
                 assert len(rows) == min(fit.rows, fit.needed)
+                if not fit.compact:  # the list's columns: the cost always, the last action unless doctor says it is left out
+                    assert "cost" in columns(app, "lanes") and ("last" not in columns(app, "lanes")) is fit.no_last_action
+                    assert any("last action in the lane list" in part for part in fit.left_out()) is fit.no_last_action
                 if fit.compact:  # the compact line, which has its own short labels: the keys it has not got
                     has = {pair.split(" ")[0] for pair in keys}
                     assert [f"{shown} {label}" for _, shown, label in fleet.SIMPLE_KEYS if shown not in has] == list(fit.fleet_keys), keys
@@ -1143,6 +1188,7 @@ def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leave
 
     drive(app, script, size=size)
     assert (fit.columns, fit.lines) == (86, 18)  # an event name of 20 characters, four lanes
+    assert fit.no_last_action is (not fit.compact and columns_ < 74) and fit.last_action_columns == (0 if fit.compact else 74)
 
 
 def test_doctor_measures_the_terminal_in_the_layout_the_config_opens(tmp_path, monkeypatch):

@@ -139,7 +139,10 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   the event's name goes first, then the mock tag, the queue, `host` and `team`; flightdeck,
   `AUTOPILOT`, the need-you count, a held queue and the dollars never drop.
 - **Lane list.** One panel, no board. Columns: the attention cell (`!`), lane, challenge, state,
-  cost, last action. The model, turns and idle time are in the focus view's title. The panel's
+  cost, last action. Under 86 columns the challenge's name narrows (to 8 cells at least); under
+  74 the last action is left out and the name is whole again; the cost is never left out, and
+  `flightdeck doctor` says when the last action is. The model, turns and idle time are in the
+  focus view's title. The panel's
   title is `lanes n/m`, then ` · N waiting` when the queue is not empty, ` · ✓ N solved` when
   any are, ` · sort X` only when the sort is not by attention, and the filter as in `deck`.
 - **Why line.** Why the selected lane is flagged and its answers, as in `deck`, for a lane with

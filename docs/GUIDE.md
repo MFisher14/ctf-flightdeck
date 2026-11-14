@@ -324,7 +324,9 @@ The console has two layouts.
   queue when challenges wait, `AUTOPILOT` while it is engaged, `▲ N need you`, a held queue and
   why, and the run's dollars;
 - one list of lanes: what each needs from you, the lane, its challenge, state, cost and last
-  action. Its title counts the lanes, the challenges that wait and the ones solved;
+  action (under 86 columns the challenge's name narrows, and under 74 the last action is left
+  out; the cost never is). Its title counts the lanes, the challenges that wait and the ones
+  solved;
 - under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
   that needs nothing;
 - a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while

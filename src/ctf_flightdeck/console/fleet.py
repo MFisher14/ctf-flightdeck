@@ -13,7 +13,8 @@ While the board has no challenge, the page says so where the tables would be, an
 about it (EMPTY_BY_HAND, EMPTY_PLATFORM): it stays until there is one, unlike a status line.
 
 In the simple layout (FlightdeckApp.layout; `deck` is the view as described above) there is no
-board: one list of lanes with fewer columns (views.SIMPLE_LANE_COLUMNS), a why line only for a
+board: one list of lanes with fewer columns (views.SIMPLE_LANE_COLUMNS: under 74 columns the
+last action is left out, never the cost), a why line only for a
 lane that needs something, and a key line of the keys that apply to the selected lane now
 (context_keys). Every key still acts, and `?` lists them all. The compact layout wins over both.
 
@@ -57,6 +58,8 @@ KEY_RANK = {
 }
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 SCROLLBAR = 2  # cells the lane list's scrollbar takes once it has more rows than room
+LANE_LIST_EDGES = 6  # cells of the terminal's width that are not the lane list's, with no board: the panel's margin, frame and padding
+LANE_PADDING = 1  # cells each side of a cell of the lane list (DataTable.cell_padding)
 # The rows that are not lane rows: the header and the gap under it, the lane list's border and
 # column labels, the why line and the gap over it, the status line, the command bar, the key line.
 FLEET_ROWS = 13
@@ -268,9 +271,7 @@ class FleetScreen(Screen, inherit_bindings=False):
                 max(30, self.query_one("#lanes-pane").size.width - 1 - SCROLLBAR), lanes.cell_padding,
             )  # the pane's width less the scrollbar's, whether it shows yet or not: the columns do not move when it comes
         elif self.simple:
-            lane_cols = views.fit_columns(
-                views.SIMPLE_LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
-            )
+            lane_cols = views.simple_lane_columns(max(30, lanes.size.width - 1), lanes.cell_padding)
         else:
             lane_cols = views.fit_columns(
                 views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
@@ -758,6 +759,17 @@ def simple_key_room(columns: int) -> tuple[list[str], int]:
         left = [f"{shown} {label}" for _, shown, label in SIMPLE_KEYS if shown not in kept]
         return left + cut_keys([(shown, label) for _, shown, label in COMPACT_KEYS], columns - KEY_MARGIN), needed
     return cut_keys([(shown, label) for _, shown, label in SIMPLE_LONGEST], columns - KEY_MARGIN), needed
+
+
+def simple_lane_room(columns: int) -> tuple[bool, int]:
+    """Whether the simple layout's lane list has each lane's last action on a terminal
+    `columns` wide, and the columns it needs for it. Fitted as the list fits itself
+    (_set_columns)."""
+    def has_last(width: int) -> bool:
+        return any(key == "last" for key, _, _ in views.simple_lane_columns(max(30, width - LANE_LIST_EDGES - 1), LANE_PADDING))
+
+    needed = next(width for width in range(views.COMPACT_MAX_WIDTH + 1, 400) if has_last(width))
+    return has_last(columns), needed
 
 
 def key_room(columns: int, *, team: bool) -> tuple[list[str], int]:
