@@ -390,7 +390,7 @@ def test_a_challenge_that_does_not_pass_is_left_out_and_named_while_the_others_l
         'Climbs Out: "files"[0] must be a relative path inside the files folder the pull was given, with no ..',
         'Absolute: "files"[0] must be a relative path inside the files folder the pull was given, with no ..',
         'Not There: "files"[0] names a file the plugin did not put in the files folder',
-        "Extra Key: unknown key flag (known: ref, name, category, points, description, files, urls, solves, max_attempts)",
+        "Extra Key: unknown key flag (known: ref, name, category, points, description, files, urls, solves, max_attempts, instance)",
         'Bad Points: "points" must be a whole number, 0 or more',
         'Bad ^[[31mUrl: "urls"[0] must be an http:// or https:// origin, scheme://host[:port], or a TCP service, tcp://host:port '
         "(what `nc host port` reaches): in printable ASCII with no spaces, and with no path, query or user name; a host that ends "

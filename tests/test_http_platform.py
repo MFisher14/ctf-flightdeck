@@ -153,7 +153,7 @@ def test_a_checked_table_can_be_hashed_and_compared_as_the_rest_of_a_profile_is(
 
 def test_a_preset_flightdeck_does_not_have_is_refused_and_its_name_is_not_shown():
     said = refused({"preset": "s3cr3t-pasted-here"})
-    assert said.startswith("http.preset is not a preset flightdeck has (known: rctf)") and "s3cr3t" not in said
+    assert said.startswith("http.preset is not a preset flightdeck has (known: rctf, rctf2)") and "s3cr3t" not in said
 
 
 @pytest.mark.parametrize("config, said", [

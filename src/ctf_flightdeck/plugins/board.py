@@ -53,7 +53,7 @@ STATE_FILE = "plugin.json"
 """In the board folder: the plugin that pulled it, the address, and each board id's ref."""
 FORMAT = 1
 MAX_STATE_BYTES = 1_000_000  # a plugin.json bigger than this is refused
-REPLY_KEYS = ("ref", "name", "category", "points", "description", "files", "urls", "solves", "max_attempts")
+REPLY_KEYS = ("ref", "name", "category", "points", "description", "files", "urls", "solves", "max_attempts", "instance")
 """What a plugin may say of a challenge. All but `ref` are the folder board's own keys
 (manual.CHALLENGE_KEYS), and are checked by its loader."""
 _COPIED = tuple(key for key in REPLY_KEYS if key not in ("ref", "files"))

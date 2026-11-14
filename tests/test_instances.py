@@ -74,7 +74,7 @@ def test_a_plugin_with_one_container_per_account_keeps_one_running():
 
 @pytest.mark.parametrize(("table", "message"), [
     ({}, "needs plugin .* or all four routes; missing: start, stop, renew, status"),
-    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager\\)"),
+    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager, rctf\\)"),
     ({"plugin": ["ctfd_owl"]}, "is not a plugin flightdeck knows .*; give the four routes instead"),
     ({"plugin": "ctfd_whale"}, "instances.plugin ctfd_whale is not a plugin flightdeck knows .*; ctfd-whale has no shape yet: its start "
                                "removes whatever container the account runs.* Start its instances on the site yourself"),
