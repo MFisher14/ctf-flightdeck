@@ -32,9 +32,11 @@ from ctf_flightdeck.agent.client import (
     retry_delay,
 )
 from fake_model import (
+    HELD,
     FakeModelServer,
     FakeReply,
     error_reply,
+    held_until_retried,
     text_reply,
     tool_call_reply,
     tool_calls_reply,
@@ -631,7 +633,7 @@ def test_when_every_try_fails_the_error_is_retryable_and_names_the_last_status()
 
 def test_when_the_last_try_gets_no_answer_the_error_has_no_status_though_an_earlier_one_did():
     def too_slow(request: dict) -> dict:
-        time.sleep(0.6)  # past the client's timeout
+        server.leaving.wait(HELD)  # no answer while the test runs: past any client's timeout
         return text_reply("too late")
 
     with FakeModelServer([error_reply(502, "bad gateway")], responder=too_slow) as server:
@@ -698,22 +700,21 @@ def test_the_waits_between_tries_double_from_the_backoff_and_none_follows_the_la
 
 
 def test_a_try_that_times_out_is_tried_again():
-    count = itertools.count()
-
-    def slow_first(request: dict) -> dict:
-        if next(count) == 0:
-            time.sleep(0.5)
-        return text_reply("on the second try")
-
-    with FakeModelServer(responder=slow_first) as server:
-        reply = call(server.base_url, timeout=0.2, max_retries=1)
+    # the server decides which try is slow by count, never by a sleep: the first answer is held
+    # until the retry has arrived, and the retry has 2 s to be answered in (it was 0.2 s, which a
+    # loaded machine lost: "timed out after 0.2 s; gave up after 2 tries")
+    first_slow = held_until_retried(text_reply("too late"), text_reply("on the second try"))
+    with FakeModelServer(responder=first_slow) as server:
+        reply = call(server.base_url, timeout=2.0, max_retries=1)
         assert len(server.requests) == 2
     assert reply.content == "on the second try"
 
 
 def test_an_answer_that_trickles_in_is_given_up_on_when_the_try_runs_out_of_time():
     # httpx's own timeouts bound each wait for bytes, and every byte here comes in 50 ms;
-    # only a deadline on the whole try stops the first answer, which would take over 10 s
+    # only a deadline on the whole try stops the first answer, which would take over 10 s.
+    # The retry is answered at once and has a whole second to arrive in (0.3 s is lost on a
+    # loaded machine); with the first try's second, well under 5 s in all
     def first_trickles(conn: socket.socket, number: int) -> None:
         head, data = http_200(text_reply("too late" if number == 0 else "on the second try"))
         conn.sendall(head)
@@ -722,13 +723,14 @@ def test_an_answer_that_trickles_in_is_given_up_on_when_the_try_runs_out_of_time
         else:
             conn.sendall(data)
 
+    assert len(http_200(text_reply("too late"))[1]) * 0.05 > 10.0  # what the trickle would take
     with RawServer(first_trickles) as server:
         start = time.monotonic()
-        reply = call(server.base_url, timeout=0.3, max_retries=1)
+        reply = call(server.base_url, timeout=1.0, max_retries=1)
         elapsed = time.monotonic() - start
     assert reply.content == "on the second try"
     assert server.connections == 2
-    assert elapsed < 2.0
+    assert elapsed < 5.0
 
 
 def test_when_the_last_try_runs_out_of_time_the_error_says_so_and_is_retryable():
@@ -739,12 +741,14 @@ def test_when_the_last_try_runs_out_of_time_the_error_says_so_and_is_retryable()
 
     with RawServer(trickles) as server:
         start = time.monotonic()
-        err = fails(server.base_url, key=KEY, timeout=0.25, max_retries=0)
+        err = fails(server.base_url, key=KEY, timeout=1.0, max_retries=0)
         elapsed = time.monotonic() - start
     assert err.status is None and err.retryable is True
-    assert "timed out after 0.25 s" in str(err) and KEY not in str(err)
+    assert "timed out after 1 s" in str(err) and KEY not in str(err)
     assert err.__cause__ is None and err.__context__ is None
-    assert 0.25 <= elapsed < 0.45  # the deadline is the timeout itself, not a multiple of it
+    # the deadline is the timeout itself, not a multiple of it: under twice it, with 0.8 s for
+    # the machine to lose (at a 0.25 s timeout the bound left 0.2 s)
+    assert 1.0 <= elapsed < 1.8
 
 
 def test_a_refused_connection_is_tried_again_after_the_same_waits_then_fails_as_retryable():
