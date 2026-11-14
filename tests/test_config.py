@@ -17,15 +17,20 @@ from ctf_flightdeck.config import (
     ApiConfig,
     Config,
     ConfigError,
+    ConsoleConfig,
     FallbackConfig,
     LaneConfig,
+    PluginRef,
     api_key,
     default_config_path,
     example_config,
     expand,
     fallback_key,
     load_config,
+    load_console,
+    parse_config,
 )
+from ctf_flightdeck import themes
 from ctf_flightdeck.pricing import Price
 
 LADDER = '[models]\nladder = ["vendor/small", "vendor/big"]\n'
@@ -65,6 +70,9 @@ def test_a_config_with_only_the_ladder_has_the_documented_defaults(tmp_path):
     assert config.prices == {}
     assert config.run_dir == tmp_path / "home" / ".local/share/ctf-flightdeck/runs"
     assert config.source == path
+    assert (config.console.layout, config.console.theme) == ("simple", "flightdeck")
+    assert config.console.palette is themes.BUILTIN["flightdeck"]
+    assert config.plugins == {}
 
 
 def test_every_key_is_read(tmp_path):
@@ -97,9 +105,24 @@ submit = "auto"
 
 [run]
 dir = "/srv/flightdeck runs"
+
+[console]
+layout = "deck"
+theme = "nord"
+
+[plugins.myctf]
+path = "~/ctf/myctf-plugin"
+
+[plugins.lab-2]
+path = "/opt/plugins/lab"
 """,
     )
     config = load_config(path)
+    assert config.console == ConsoleConfig(layout="deck", theme="nord", palette=themes.BUILTIN["nord"])
+    assert config.plugins == {
+        "myctf": PluginRef(name="myctf", path=tmp_path / "home" / "ctf/myctf-plugin"),
+        "lab-2": PluginRef(name="lab-2", path=Path("/opt/plugins/lab")),
+    }
     assert config.api == ApiConfig(base_url="http://127.0.0.1:11434/v1/", key_env="")
     assert config.models == ("local/tiny", "local/mid", "local/large")
     assert config.prices == {
@@ -350,8 +373,12 @@ def test_a_directory_is_not_a_config_file(tmp_path):
         (LADDER + '[prices."vendor/small"]\ninput = 1\noutput = 2\ninptu = 3\n', 'prices."vendor/small".inptu'),
         (LADDER + '[run]\npath = "/tmp/runs"\n', "run.path"),
         (LADDER + '[fallback]\nladder = ["a", "b"]\nmodels = ["a", "b"]\n', "fallback.models"),
+        (LADDER + '[console]\nthem = "nord"\n', "console.them"),
+        (LADDER + '[plugins.acme]\npath = "/opt/acme"\nsha = "0451"\n', "plugins.acme.sha"),
+        (LADDER + '[plugin.acme]\npath = "/opt/acme"\n', "[plugin]"),
     ],
-    ids=["table", "top-level key", "lanes key", "api key", "models key", "price key", "run key", "fallback key"],
+    ids=["table", "top-level key", "lanes key", "api key", "models key", "price key", "run key", "fallback key",
+         "console key", "plugin key", "plugin for plugins"],
 )
 def test_an_unknown_table_or_key_is_an_error_naming_the_file_and_key(tmp_path, text, key):
     path = write(tmp_path, text)
@@ -440,6 +467,23 @@ BAD_VALUES = {
     "fallback anthropic without a key": (
         LADDER + '[fallback]\nprovider = "anthropic"\nkey_env = ""\nladder = ["a/1", "a/2"]\n', "fallback.key_env"),
     "fallback not a table": ("fallback = 1\n" + LADDER, "fallback"),
+    "layout not known": (LADDER + '[console]\nlayout = "full"\n', "console.layout"),
+    "layout in capitals": (LADDER + '[console]\nlayout = "Deck"\n', "console.layout"),
+    "layout not a string": (LADDER + "[console]\nlayout = 2\n", "console.layout"),
+    "theme not a name": (LADDER + '[console]\ntheme = "Nord Dark"\n', "console.theme"),
+    "theme a path": (LADDER + '[console]\ntheme = "../nord"\n', "console.theme"),
+    "theme a file name": (LADDER + '[console]\ntheme = "nord.toml"\n', "console.theme"),
+    "theme empty": (LADDER + '[console]\ntheme = ""\n', "console.theme"),
+    "theme not a string": (LADDER + "[console]\ntheme = true\n", "console.theme"),
+    "theme that is no theme": (LADDER + '[console]\ntheme = "solarized"\n', "console.theme"),
+    "console not a table": ('console = "deck"\n' + LADDER, "console"),
+    "plugins not a table": ('plugins = ["acme"]\n' + LADDER, "plugins"),
+    "plugin not a table": (LADDER + '[plugins]\nacme = "/opt/acme"\n', "plugins.acme"),
+    "plugin without a path": (LADDER + "[plugins.acme]\n", "plugins.acme.path"),
+    "plugin path relative": (LADDER + '[plugins.acme]\npath = "plugins/acme"\n', "plugins.acme.path"),
+    "plugin path empty": (LADDER + '[plugins.acme]\npath = ""\n', "plugins.acme.path"),
+    "plugin path not a string": (LADDER + "[plugins.acme]\npath = 7\n", "plugins.acme.path"),
+    "plugin with a built-in platform's name": (LADDER + '[plugins.manual]\npath = "/opt/acme"\n', "plugins.manual"),
 }
 
 
@@ -476,6 +520,11 @@ STRING_VALUES = {
     "fallback key_env holding a key": (LADDER + f'[fallback]\nkey_env = "sk-{SENTINEL}"\nladder = ["a", "b"]\n', "fallback.key_env"),
     "fallback ladder entry": (LADDER + f'[fallback]\nladder = ["a", " {SENTINEL}"]\n', "fallback.ladder[1]"),
     "fallback base_url": (LADDER + f'[fallback]\nbase_url = "{SENTINEL}"\nladder = ["a", "b"]\n', "fallback.base_url"),
+    "console layout": (LADDER + f'[console]\nlayout = "{SENTINEL}"\n', "console.layout"),
+    "console theme": (LADDER + f'[console]\ntheme = "{SENTINEL}"\n', "console.theme"),
+    "plugin path": (LADDER + f'[plugins.acme]\npath = "{SENTINEL}"\n', "plugins.acme.path"),
+    "plugin not a table": (LADDER + f'[plugins]\nacme = "{SENTINEL}"\n', "plugins.acme"),
+    "plugin name": (LADDER + f'[plugins.{SENTINEL}]\npath = "/opt/acme"\n', "plugins"),
 }
 
 
@@ -861,3 +910,260 @@ def test_the_example_shows_the_governor_table_with_the_defaults_it_has():
         assert tomllib.loads(f"value = {shown.group(1)}")["value"] == getattr(defaults, key), key  # the example shows the default
     said = " ".join(line.lstrip("# ") for line in text.splitlines())
     assert "no NEW lane starts" in said and "it never stops or pauses one" in said and "one lane always starts" in said
+
+
+# ---------------------------------------------------------------------- [console]
+
+
+def console_error(tmp_path, body: str) -> tuple[Path, str]:
+    path = write(tmp_path, LADDER + f"[console]\n{body}\n")
+    return path, error(path)
+
+
+def own_theme(tmp_path, text: str, name: str = "dusk") -> Path:
+    """A theme file of the player's own, in the themes folder beside the config in tmp_path."""
+    (tmp_path / "themes").mkdir(exist_ok=True)
+    file = tmp_path / "themes" / f"{name}.toml"
+    file.write_text(text, encoding="utf-8")
+    return file
+
+
+def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_it_leaves_out(tmp_path):
+    def console(body):
+        return load_config(write(tmp_path, LADDER + f"[console]\n{body}\n")).console
+
+    assert console('layout = "deck"') == ConsoleConfig(layout="deck")
+    assert console('layout = "simple"') == ConsoleConfig()
+    assert console("") == ConsoleConfig()
+    assert console('theme = "light"') == ConsoleConfig(theme="light", palette=themes.BUILTIN["light"])
+    for name, palette in themes.BUILTIN.items():
+        assert console(f'theme = "{name}"').palette is palette
+
+
+@pytest.mark.parametrize("body, problem", [
+    ('layout = "full"', 'console.layout must be "simple" or "deck" (got a string)'),
+    ('layout = ""', 'console.layout must be "simple" or "deck" (got a string)'),
+    ("layout = 1", 'console.layout must be "simple" or "deck" (got 1)'),
+    ('theme = "Nord"', "console.theme must be a theme's name (lower-case letters, digits, - and _)"),
+    ('theme = "../dusk"', "console.theme must be a theme's name (lower-case letters, digits, - and _)"),
+    ('theme = "dusk.toml"', "console.theme must be a theme's name (lower-case letters, digits, - and _)"),
+    (f'theme = "{"a" * 33}"', "console.theme must be a theme's name (lower-case letters, digits, - and _)"),
+    ("theme = 3", "console.theme must be a theme's name (lower-case letters, digits, - and _) (got 3)"),
+    ('theme = ["nord"]', "console.theme must be a theme's name (lower-case letters, digits, - and _) (got a list)"),
+    ('colour = "nord"', "unknown key console.colour (known in console: layout, theme)"),
+])
+def test_a_bad_console_table_is_refused_with_its_message(tmp_path, body, problem):
+    path, message = console_error(tmp_path, body)
+    assert message == f"{path}: {problem}"
+
+
+def test_a_theme_name_that_is_no_theme_says_what_there_is_and_where_the_players_own_go(tmp_path):
+    own_theme(tmp_path, 'base = "flightdeck"\n')  # dusk.toml is there; the config names another
+    path, message = console_error(tmp_path, 'theme = "zqsentinel4471"')  # a name's shape: it could be a key all the same
+    assert message == (f"{path}: console.theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula; "
+                       f"your own is NAME.toml in {tmp_path / 'themes'}")
+    assert "zqsentinel4471" not in message
+
+
+def test_a_theme_of_the_players_own_is_read_from_the_themes_folder_beside_the_config(tmp_path):
+    own_theme(tmp_path, 'base = "flightdeck"\n[colors]\naccent = "#ff5fd7"\n')
+    console = load_config(write(tmp_path, LADDER + '[console]\ntheme = "dusk"\n')).console
+    assert (console.layout, console.theme, console.palette.name) == ("simple", "dusk", "dusk")
+    assert console.palette.accent == "#ff5fd7" and console.palette.page == themes.DEFAULT.page
+    other = tmp_path / "elsewhere"  # a config in another folder has another themes folder: dusk is not there
+    other.mkdir()
+    assert "console.theme names no theme" in error(write(other, LADDER + '[console]\ntheme = "dusk"\n'))
+
+
+def test_a_theme_file_is_read_only_when_the_config_names_it(tmp_path):
+    own_theme(tmp_path, "this is not a theme [")
+    own_theme(tmp_path, "nor is this [", "flightdeck")  # a built-in's name, too
+    assert load_config(write(tmp_path, LADDER)).console == ConsoleConfig()
+    assert load_config(write(tmp_path, LADDER + '[console]\nlayout = "deck"\n')).console == ConsoleConfig(layout="deck")
+    assert load_config(write(tmp_path, LADDER + '[console]\ntheme = "nord"\n')).console.palette is themes.BUILTIN["nord"]
+
+
+@pytest.mark.parametrize("name, text, problem", [
+    ("dusk", 'base = "flightdeck"\n[colors]\nacent = "#ff5fd7"\n', ": unknown key colors.acent (known in colors: page, surface, "),
+    ("dusk", 'base = "flightdeck"\n[colors]\naccent = "pink"\n',
+     ': colors.accent must be a colour written as # and six hex digits, like "#ffa62b"'),
+    ("dusk", 'base = "solarized"\n', ': base must be "flightdeck", "light", "nord", "gruvbox" or "dracula"'),
+    ("dusk", 'base = "flightdeck"\n[colors]\nerror = "#ff8a9a"\n',
+     ': colors.ink_light on colors.error has contrast 2.2, under 3.0: "▲ N need you" could not be read'),
+    ("dusk", "base = [", ": Invalid value (at end of document)"),
+    ("light", 'base = "flightdeck"\n', " has a built-in theme's name: rename the file"),
+])
+def test_a_broken_theme_stops_the_config_with_the_theme_files_own_error(tmp_path, name, text, problem):
+    """Never the default in its place: the command that loads the config stops."""
+    file = own_theme(tmp_path, text, name)
+    message = error(write(tmp_path, LADDER + f'[console]\ntheme = "{name}"\n'))
+    assert message.startswith(f"{file}{problem}")
+
+
+def test_a_theme_files_error_shows_no_value_from_the_file(tmp_path):
+    for body in (f'base = "{SENTINEL}"\n', f'base = "flightdeck"\nsyntax = "{SENTINEL}"\n',
+                 f'base = "flightdeck"\n[colors]\nok = "{SENTINEL}"\n'):
+        file = own_theme(tmp_path, body)
+        message = error(write(tmp_path, LADDER + '[console]\ntheme = "dusk"\n'))
+        assert message.startswith(str(file)) and SENTINEL not in message
+
+
+def test_parse_config_looks_for_a_theme_beside_the_file_the_text_is_for(tmp_path):
+    own_theme(tmp_path, 'base = "light"\n', "paper")
+    config = parse_config(LADDER + '[console]\ntheme = "paper"\n', tmp_path / "config.toml")  # the config is not written
+    assert config.console.palette.name == "paper" and config.console.palette.page == themes.BUILTIN["light"].page
+
+
+def test_the_example_shows_the_console_table_with_the_defaults_it_has(tmp_path):
+    text = example_config()
+    assert "\n# [console]\n" in text
+    defaults = ConsoleConfig()
+    for key in ("layout", "theme"):
+        shown = re.search(rf"^# {key} = (\S+)$", text, flags=re.M)
+        assert shown, key
+        assert tomllib.loads(f"value = {shown.group(1)}")["value"] == getattr(defaults, key), key
+    said = " ".join(line.lstrip("# ") for line in text.splitlines())
+    for name in themes.BUILTIN:
+        assert f'"{name}"' in said, name
+    assert '"deck" is the whole dashboard' in said and "themes/NAME.toml in this file's folder" in said
+    uncommented, n = re.subn(r"^# (\[console\]|layout = .*|theme = .*)$", r"\1", filled(text), flags=re.M)
+    assert n == 3
+    assert load_config(write(tmp_path, uncommented)).console == defaults  # the block loads once uncommented
+    assert "[plugins" not in text  # `flightdeck plugin add` writes that table, not the player
+
+
+# ---------------------------------------------------------------------- load_console: [console] alone, for the mock
+
+
+def test_load_console_without_a_config_file_gives_the_defaults(tmp_path, monkeypatch):
+    assert load_console(tmp_path / "absent.toml") == ConsoleConfig()
+    assert load_console() == ConsoleConfig()  # the usual path, in a home that has no config
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "named-and-absent.toml"))
+    assert load_console() == ConsoleConfig()
+
+
+def test_load_console_reads_the_table_of_the_file_it_is_given_or_the_usual_one(tmp_path, monkeypatch):
+    own_theme(tmp_path, 'base = "nord"\n', "frost")
+    path = write(tmp_path, '[console]\nlayout = "deck"\ntheme = "frost"\n')
+    console = load_console(path)
+    assert (console.layout, console.theme, console.palette.name) == ("deck", "frost", "frost")
+    assert console.palette.page == themes.BUILTIN["nord"].page
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(path))
+    assert load_console() == console
+    assert load_console(write(tmp_path, LADDER, "plain.toml")) == ConsoleConfig()  # a config with no [console]
+
+
+def test_load_console_does_not_look_at_the_other_tables(tmp_path):
+    """The mock needs no config, so a config that is not finished must not stop it."""
+    broken = '[api]\nbase_url = 5\nnot_a_key = true\n[models]\nladder = []\n[no_such_table]\nx = 1\n'
+    path = write(tmp_path, broken + '[console]\nlayout = "deck"\ntheme = "gruvbox"\n')
+    with pytest.raises(ConfigError):
+        load_config(path)
+    assert load_console(path) == ConsoleConfig(layout="deck", theme="gruvbox", palette=themes.BUILTIN["gruvbox"])
+
+
+def test_load_console_refuses_a_bad_console_table_and_a_file_that_is_not_toml(tmp_path):
+    def refused(text):
+        path = write(tmp_path, text)
+        with pytest.raises(ConfigError) as caught:
+            load_console(path)
+        return path, str(caught.value)
+
+    path, message = refused('[console]\nlayout = "wide"\n')
+    assert message == f'{path}: console.layout must be "simple" or "deck" (got a string)'
+    path, message = refused('[console]\ntheme = "solarized"\n')
+    assert message.startswith(f"{path}: console.theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula")
+    path, message = refused('console = "deck"\n')
+    assert message == f"{path}: console must be a table ([console]) (got a string)"
+    path, message = refused("[console\n")
+    assert message.startswith(f"{path}: is not valid TOML: ")
+    file = own_theme(tmp_path, 'base = "flightdeck"\n[colors]\ntext = "#121212"\n')
+    path, message = refused('[console]\ntheme = "dusk"\n')
+    assert message.startswith(f"{file}: colors.text on colors.page has contrast 1.0, under 3.0")
+
+
+def test_load_console_says_so_when_the_file_FLIGHTDECK_CONFIG_names_cannot_be_found(monkeypatch):
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", "~no-such-user-zq4471/config.toml")
+    with pytest.raises(ConfigError, match="starts with ~ for a user that does not exist"):
+        load_console()
+
+
+def test_load_console_with_no_home_directory_and_no_file_named_has_no_config_to_read(monkeypatch):
+    def no_home():
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(Path, "home", staticmethod(no_home))
+    with pytest.raises(ConfigError, match="there is no home directory"):
+        default_config_path()
+    assert load_console() == ConsoleConfig()
+
+
+# ---------------------------------------------------------------------- [plugins]
+
+
+def plugins_error(tmp_path, body: str) -> tuple[Path, str]:
+    path = write(tmp_path, LADDER + body)
+    return path, error(path)
+
+
+@pytest.mark.parametrize("name", ["a", "myctf", "lab-2", "my_ctf", "x" * 32])
+def test_a_plugin_table_gives_the_plugins_name_and_folder(tmp_path, name):
+    config = load_config(write(tmp_path, LADDER + f'[plugins.{name}]\npath = "/opt/plugins/one"\n'))
+    assert config.plugins == {name: PluginRef(name=name, path=Path("/opt/plugins/one"))}
+
+
+def test_a_plugins_folder_is_never_read_when_the_config_loads(tmp_path):
+    """Only the name and the path are checked: the folder need not exist, and a file in it is not opened."""
+    folder = tmp_path / "plugin"
+    config = load_config(write(tmp_path, LADDER + f'[plugins.acme]\npath = "{folder}"\n'))
+    assert config.plugins["acme"].path == folder and not folder.exists()
+    folder.mkdir()
+    (folder / "plugin.toml").write_text("this is not a manifest [")
+    assert load_config(write(tmp_path, LADDER + f'[plugins.acme]\npath = "{folder}"\n')).plugins["acme"].path == folder
+
+
+@pytest.mark.parametrize("name", ["ctfd", "manual", "gamemaster"])
+def test_a_plugin_cannot_take_the_name_of_a_platform_flightdeck_has_built_in(tmp_path, name):
+    path, message = plugins_error(tmp_path, f'[plugins.{name}]\npath = "/opt/plugins/one"\n')
+    assert message == f"{path}: plugins.{name}: {name} is a platform flightdeck has built in: a plugin cannot take its name"
+
+
+@pytest.mark.parametrize("name", ['"My CTF"', "CTFd", "2ctf", "-ctf", "_ctf", '"a.b"', '"../acme"', '""', "x" * 33])
+def test_a_plugin_name_that_is_not_a_name_is_refused_and_not_shown(tmp_path, name):
+    path, message = plugins_error(tmp_path, f'[plugins.{name}]\npath = "/opt/plugins/one"\n')
+    assert message == (f"{path}: plugins: a plugin's name is lower-case letters, digits, - and _, starting with a letter, "
+                       "at most 32 characters")
+
+
+@pytest.mark.parametrize("body, problem", [
+    ('[plugins.acme]\npath = "plugins/acme"\n', "plugins.acme.path must be an absolute path or start with ~"),
+    ('[plugins.acme]\npath = "./acme"\n', "plugins.acme.path must be an absolute path or start with ~"),
+    ('[plugins.acme]\npath = ""\n', "plugins.acme.path must be an absolute path or start with ~"),
+    ('[plugins.acme]\npath = " "\n', "plugins.acme.path must be an absolute path or start with ~"),
+    ("[plugins.acme]\npath = 7\n", "plugins.acme.path must be a string (got 7)"),
+    ('[plugins.acme]\npath = ["/opt/acme"]\n', "plugins.acme.path must be a string (got a list)"),
+    ("[plugins.acme]\n", "plugins.acme.path is missing: the plugin's folder, as an absolute path or one that starts with ~"),
+    ('[plugins.acme]\npath = "/opt/acme"\nsha = "0451"\n', "unknown key plugins.acme.sha (known in plugins.acme: path)"),
+    ('[plugins]\nacme = "/opt/acme"\n', "plugins.acme must be a table ([plugins.acme]) with a path (got a string)"),
+    ("[plugins]\nacme = true\n", "plugins.acme must be a table ([plugins.acme]) with a path (got true)"),
+    ('plugins = ["acme"]\n', "plugins must be a table ([plugins]) (got a list)"),
+])
+def test_a_bad_plugins_table_is_refused_with_its_message(tmp_path, body, problem):
+    if body.startswith("plugins ="):  # a top-level key goes before the first table
+        path = write(tmp_path, body + LADDER)
+        message = error(path)
+    else:
+        path, message = plugins_error(tmp_path, body)
+    assert message == f"{path}: {problem}"
+
+
+def test_a_plugin_path_for_a_user_that_does_not_exist_is_a_config_error(tmp_path):
+    path, message = plugins_error(tmp_path, '[plugins.acme]\npath = "~no-such-user-zq4471/acme"\n')
+    assert message == f"{path}: plugins.acme.path starts with ~ for a home directory that cannot be found"
+
+
+def test_the_reserved_platform_names_are_the_three_flightdeck_has_built_in():
+    from ctf_flightdeck import config, preflight
+
+    assert set(config.RESERVED_PLATFORMS) == set(preflight.PLATFORMS)
+    assert all(config.PLUGIN_NAME.fullmatch(name) for name in config.RESERVED_PLATFORMS)  # so the name check must say no itself

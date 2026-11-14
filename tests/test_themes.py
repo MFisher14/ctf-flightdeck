@@ -7,6 +7,8 @@ Every theme file is a real file a test writes under tmp_path; the colours are ma
 from __future__ import annotations
 
 import dataclasses
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -136,6 +138,15 @@ def test_contrast_is_the_wcag_ratio():
     assert contrast("#ffffff", "#e0475b") == pytest.approx(4.022, abs=0.001)
     assert contrast("#e0475b", "#ffffff") == contrast("#ffffff", "#e0475b")  # either way round
     assert contrast("#FFA62B", "#0b0b0b") == contrast("#ffa62b", "#0b0b0b")
+
+
+def test_the_palettes_load_without_a_console():
+    """themes.py is pure: the config loads a palette where no console ever opens (doctor, a
+    headless run), so importing it, and the config, brings in no rich and no textual."""
+    code = ("import sys; import ctf_flightdeck.themes, ctf_flightdeck.config; "
+            "print(sorted({name.split('.')[0] for name in sys.modules} & {'rich', 'textual', 'pygments'}))")
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert (done.returncode, done.stdout.strip(), done.stderr) == (0, "[]", "")
 
 
 # ---------------------------------------------------------------------- loading by name
