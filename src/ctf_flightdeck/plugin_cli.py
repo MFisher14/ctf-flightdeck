@@ -111,7 +111,7 @@ def pull(
     from .plugins import manifest
     from .plugins.board import load_refs, pull_into
     from .plugins.call import CallFailed, Caller
-    from .preflight import PLATFORMS, ProfileError, load_profile
+    from .preflight import NO_CONFIG_FOR_PLUGIN, PLATFORMS, ProfileError, load_profile, no_such_plugin
 
     try:
         profile, _ = load_profile(event)  # it expands ~ itself, and says so when it cannot
@@ -123,13 +123,10 @@ def pull(
     try:
         config = load_config()
     except ConfigError as exc:
-        _fail(f"event.platform names a plugin's platform, and your config could not be read, so flightdeck cannot tell "
-              f"whether you added it: {exc}")
+        _fail(f"{NO_CONFIG_FOR_PLUGIN}: {exc}")
     ref = config.plugins.get(profile.platform)
     if ref is None:  # the value is not shown: it is the profile's word, and only the player's config makes it a name
-        has = f"your config has: {', '.join(config.plugins)}" if config.plugins else "your config has no [plugins] table"
-        _fail(f'event.platform is not "ctfd", "manual" or "gamemaster", and names no plugin in your config ({has}). '
-              "`flightdeck plugin add FOLDER` adds one, after showing you what it runs")
+        _fail(no_such_plugin(config))
     try:
         plugin = manifest.load(ref)
     except manifest.PluginError as exc:
@@ -190,18 +187,13 @@ def _token(name: str | None, plugin, config) -> str:
     keys file). Never shown. A variable that holds another service's key is refused, as a run
     refuses it (preflight): its value would be handed to the plugin."""
     from .keys import KeysError, environment
-    from .preflight import _other_service
+    from .preflight import plugin_token_env
 
     if name is None:
         _fail(f'event.token_env is required for platform "{plugin.name}": the name of the environment variable that holds your token')
-    own = plugin.name.upper().replace("-", "_")
-    api_env = config.api.key_env == name
-    fallback_env = config.fallback is not None and config.fallback.key_env == name
-    what = "a variable for another service's key" if api_env or fallback_env else _other_service(name, own=own)
-    if what is not None:
-        where = " (api.key_env in your config)" if api_env else (" (fallback.key_env in your config)" if fallback_env else "")
-        _fail(f"event.token_env names {name}{where}, {what}, not a token for this platform: flightdeck would hand its value "
-              f"to the {plugin.name} plugin. Name the variable that holds your token for it, like {own}_TOKEN")
+    wrong = plugin_token_env(name, plugin.name, config)
+    if wrong is not None:
+        _fail(wrong)
     try:
         value = environment().get(name, "").strip()
     except KeysError as exc:

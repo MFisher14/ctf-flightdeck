@@ -36,6 +36,12 @@ and starts no attempt (`flightdeck gm pull` does both, before the run: its pull 
 whatever the pull policy), so only its submit policy uses the platform: auto or confirm send
 answers to the Game Master and read its solved list.
 
+Any other platform name selects a plugin (plugins/): a program the player added with
+`flightdeck plugin add`, which pulls, submits and reads the solved list for a platform
+flightdeck does not know. The profile only selects it: check() refuses the run unless the
+player's own config has a [plugins] table of that name, and never plays such a profile as a
+folder board. Nothing shows event.platform until the config has made it a plugin's name.
+
 check() lists the problems: refusals (a run must not start: a policy looser than the rules
 allow, a platform setting missing, more lanes than the rules allow...) and warnings (worth
 knowing before the event: a token variable that is not set...).
@@ -74,6 +80,7 @@ from .config import PLUGIN_NAME, Config, ConfigError
 from .flagformat import problem as flag_format_problem
 from .platform.instances import InstancesConfig
 from .platform.instances import parse_config as parse_instances
+from .plugins import manifest as plugin_manifest
 from .text import untrusted
 
 
@@ -339,8 +346,7 @@ def check(
     elif profile.platform == "manual":
         _check_manual(profile, refuse)
     else:  # a plugin's platform is never played as a folder board
-        refuse.append("event.platform names a plugin's platform, and a run does not play one: `flightdeck plugin pull "
-                      "EVENT.toml` pulls its board and submits nothing")
+        _check_plugin(profile, requested, env, model_config, refuse, warn)
     if profile.instances is not None:
         why = instances_off(profile, requested)
         if why:
@@ -480,6 +486,89 @@ def _check_gamemaster(
         _check_manual(profile, refuse)
 
 
+NO_CONFIG_FOR_PLUGIN = ("event.platform names a plugin's platform, and your config could not be read, so flightdeck cannot "
+                        "tell whether you added it")
+
+
+def no_such_plugin(config: Config) -> str:
+    """Why a profile whose platform is not built in and not a plugin of the player's config is
+    refused. event.platform is not shown: it is the profile's word, which may be a teammate's
+    or a value pasted by mistake, and only the player's own config makes it a plugin's name."""
+    has = f"your config has: {', '.join(config.plugins)}" if config.plugins else "your config has no [plugins] table"
+    return (f'event.platform is not {_or(PLATFORMS)}, and names no plugin in your config ({has}). '
+            "`flightdeck plugin add FOLDER` adds one, after showing you what it runs")
+
+
+def plugin_token_env(name: str, plugin: str, config: Config) -> str | None:
+    """Why event.token_env = `name` cannot be the token variable of an event on the `plugin`
+    plugin's platform, or None when it can: a variable that holds a model key of the config,
+    or is named as other services' keys are, would have its value handed to the plugin."""
+    own = plugin.upper().replace("-", "_")
+    api_env = config.api.key_env == name
+    fallback_env = config.fallback is not None and config.fallback.key_env == name
+    what = "a variable for another service's key" if api_env or fallback_env else _other_service(name, own=own)
+    if what is None:
+        return None
+    where = " (api.key_env in your config)" if api_env else (" (fallback.key_env in your config)" if fallback_env else "")
+    return (f"event.token_env names {name}{where}, {what}, not a token for this platform: flightdeck would hand its value "
+            f"to the {plugin} plugin. Name the variable that holds your token for it, like {own}_TOKEN")
+
+
+def _check_plugin(
+    profile: EventProfile,
+    requested: Policies,
+    env: Mapping[str, str],
+    model_config: Config | ConfigError | None,
+    refuse: list[str],
+    warn: list[str],
+) -> None:
+    """A profile on a plugin's platform. Only the player's config allows a plugin: without a
+    config that was read (`model_config` a ConfigError, or None) or without a [plugins] table
+    of the platform's name the run is refused, and event.platform is not shown. With one, the
+    plugin's plugin.toml must be usable (nothing of the plugin is run here), the profile must
+    name the url, and the token variable when the plugin takes a token, which must not be
+    another service's. A board folder may be absent (a pull makes it), but not a file."""
+    if not isinstance(model_config, Config):
+        refuse.append(NO_CONFIG_FOR_PLUGIN)
+        return
+    ref = model_config.plugins.get(profile.platform)
+    if ref is None:
+        refuse.append(no_such_plugin(model_config))
+        return
+    try:
+        plugin = plugin_manifest.load(ref)
+    except plugin_manifest.PluginError as exc:
+        refuse.append(str(exc))
+        return
+    name = plugin.name  # the config's own word from here on
+    uses = requested.pull in USES_PLATFORM or requested.submit in USES_PLATFORM
+    if profile.url is None:
+        refuse.append("event.url is required for a plugin's platform: the address its adapter talks to")
+    variable = profile.token_env
+    if plugin.token:
+        if variable is None:
+            refuse.append(f'event.token_env is required for platform "{name}": the name of the environment variable that '
+                          "holds your token")
+        elif (wrong := plugin_token_env(variable, name, model_config)) is not None:
+            refuse.append(wrong)
+        elif uses and not _is_set(env, variable):
+            warn.append(f"the {name} token variable {variable} (event.token_env) is not set or is empty: export your token in it")
+        url = _split_url(profile.url) if profile.url else None
+        if url is not None and url.scheme == "http" and not _loopback(url.hostname or ""):
+            warn.append(f"event.url is http, not https: the token the {name} plugin is given would cross the network unencrypted")
+    elif variable is not None:
+        warn.append(f"event.token_env does nothing in this run: the {name} plugin takes no token (token = false in its plugin.toml)")
+    board = profile.board
+    if board is not None:
+        try:
+            if board.exists() and not board.is_dir():
+                refuse.append(f"event.board: {_show(board)}: is not a directory")
+        except OSError as exc:
+            refuse.append(f"event.board: {_show(board)}: cannot be read ({exc.strerror or type(exc).__name__})")
+    if not uses:
+        warn.append(f"this run does not use the {name} plugin: pull and submit are both by hand")
+
+
 def _check_manual(profile: EventProfile, refuse: list[str]) -> None:
     board = profile.board
     if board is None:
@@ -588,6 +677,13 @@ _MEANING = {
 FOLDER_BOARD = "a folder board: nothing to fetch"  # the pull line of a manual profile, whatever its policy
 # the pull line of a Game Master profile, whatever its policy: a run never pulls or starts an attempt
 GM_BOARD = "the board `flightdeck gm pull` wrote: a run pulls nothing and starts no attempt"
+# the pull line of a profile on a plugin's platform, by its policy
+PLUGIN_BOARD = {
+    Policy.AUTO: "flightdeck pulls the board through the plugin, at the start and again every 5 minutes",
+    Policy.CONFIRM: "flightdeck pulls the board through the plugin once, after you say yes (no later pulls)",
+    Policy.MANUAL: "the run pulls nothing: it plays the board `flightdeck plugin pull` wrote",
+    Policy.OFF: "the run pulls nothing: it plays the board `flightdeck plugin pull` wrote",
+}
 # A coding-agent lane's container reaches its CLI's own API whatever the instance policy
 # (run.lane_reach gives every such lane agent.egress.CLI_API), and nothing else but its instance.
 AGENT_NETWORK = "; a coding-agent lane (--agent) reaches its CLI's API in every case"
@@ -607,9 +703,11 @@ def describe(
 ) -> list[str]:
     """What a run with this profile and these policies will do, one line each, made safe to show.
     `config` is the player's config, or the ConfigError loading it raised, or None: with a
-    config that names no L1 pack, the l1 stage says nothing runs there and how to set one."""
+    config that names no L1 pack, the l1 stage says nothing runs there and how to set one.
+    A plugin's platform is named only when that config has it under [plugins]."""
     env = os.environ if environ is None else environ
     no_pack = isinstance(config, Config) and config.l1.pack is None
+    plugin = profile.platform if profile.plugin and isinstance(config, Config) and profile.platform in config.plugins else None
     mode = "team" if profile.team else "solo"
     if profile.platform == "ctfd":
         where = f"ctfd at {_shown_url(profile)}"
@@ -617,8 +715,10 @@ def describe(
         where = f"a Game Master at {_shown_url(profile)}"
     elif profile.platform == "manual":
         where = "manual (a folder board)"
+    elif plugin is not None:
+        where = f"{plugin} (a plugin) at {_shown_url(profile)}"
     else:
-        where = "a plugin's platform"
+        where = "a plugin's platform (not in your config)"
     lines = [f"event     {untrusted(profile.name, one_line=True)} · {where} · {mode}"]
     rules = [
         "AI allowed" if profile.ai_allowed else "no AI",
@@ -631,6 +731,9 @@ def describe(
     if profile.platform in ("ctfd", "gamemaster") and profile.token_env is not None:
         state = "set" if _is_set(env, profile.token_env) else "NOT set"
         lines.append(f"token     ${profile.token_env} ({state}), sent only to {_shown_url(profile)}")
+    if plugin is not None and profile.token_env is not None:
+        state = "set" if _is_set(env, profile.token_env) else "NOT set"
+        lines.append(f"token     ${profile.token_env} ({state}), given only to the {plugin} plugin")
     if profile.board is not None:
         lines.append(f"board     {_show(profile.board)}")
     if profile.start is not None or profile.end is not None:
@@ -653,6 +756,8 @@ def describe(
             meaning = FOLDER_BOARD
         if stage == "pull" and profile.platform == "gamemaster":
             meaning = GM_BOARD
+        if stage == "pull" and profile.plugin:
+            meaning = PLUGIN_BOARD[policy]
         if stage == "submit" and policy is Policy.AUTO and isinstance(config, Config) and config.lanes.submit_limited == "auto":
             meaning = meaning.removesuffix(COUNTED_WAIT) + COUNTED_GO
         if stage == "l1" and policy is not Policy.OFF and no_pack:

@@ -745,9 +745,11 @@ def test_a_bad_value_is_an_error_naming_the_key(tmp_path, table, key, value, exp
     assert message.startswith(f"{tmp_path / 'event.toml'}: {expected}"), message
 
 
-def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_no_run_plays_it_as_a_folder_board(tmp_path):
-    """The profile only selects a plugin by name. Until a run can use one, check() refuses it:
-    it is never played as a manual board, and the profile's word for it is not shown."""
+def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_is_never_played_as_a_folder_board(tmp_path):
+    """The profile only selects a plugin by name, and only the player's config allows one.
+    With no config to say so, check() refuses the run: the profile is never played as a
+    manual board, and its word for the platform is not shown (tests/test_plugin_platform.py
+    has the checks with a config)."""
     board = tmp_path / "board"
     board.mkdir()
     event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"',
@@ -755,13 +757,13 @@ def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_no_run_plays_it_
     loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
     assert (loaded.platform, loaded.plugin) == ("harbourctf", True)
     assert not profile().plugin and not manual(tmp_path).plugin
-    problems = check(loaded, chosen, max_lanes=4, environ={})
-    assert [p.message for p in problems if p.refuse] == [
-        "event.platform names a plugin's platform, and a run does not play one: `flightdeck plugin pull EVENT.toml` pulls "
-        "its board and submits nothing"
-    ]
-    shown = "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}))
-    assert "harbourctf" not in shown and "manual" not in shown and "a plugin's platform" in shown
+    refusal = ("event.platform names a plugin's platform, and your config could not be read, so flightdeck cannot tell "
+               "whether you added it")
+    for config in (None, ConfigError("no config file")):
+        problems = check(loaded, chosen, max_lanes=4, environ={}, model_config=config)
+        assert [p.message for p in problems if p.refuse] == [refusal]
+        shown = "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}, config=config))
+        assert "harbourctf" not in shown and "manual" not in shown and "a plugin's platform (not in your config)" in shown
     with pytest.raises(ValueError, match="platform must be"):
         profile(platform="Harbour CTF")
 
