@@ -301,6 +301,8 @@ ai_allowed = true                   # may model-driven lanes work challenges
 platform_automation = true          # may flightdeck pull and submit through the platform's API
 live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes touch challenge instances
 # max_lanes = 8                     # if the rules limit how many agents run at once
+# material_to_models = false        # if the rules forbid giving a challenge's text or files to a model: no lane then starts
+# declared_label = "Human-Led AI"   # if the event has teams declare a label for their AI use: yours, in the event's words
 
 [policies]                          # optional
 # pull = "auto"
@@ -364,6 +366,11 @@ The rules set the loosest policy a stage may have:
 
 - `ai_allowed = false` makes `agents` off. `play` is agent lanes, so it does not start with
   `agents` at `manual` or `off`.
+- `material_to_models = false` makes `agents` off too, with a refusal of its own. It is for the
+  event whose rules allow AI help (asking a model to explain a concept) and forbid giving a
+  model the challenge's text or files, or anything made from them. Every lane gives its model
+  both, so no lane can keep that rule: `preflight` and `play` refuse, and name
+  `rules.material_to_models`. Leave the key out, or say `true`, when the rules allow it.
 - `platform_automation = false` makes `pull` and `submit` manual: you put the challenges in the
   board folder, and you submit each flag and tell flightdeck how it went. flightdeck then has no
   use for CTFd's API, so such a profile must say `platform = "manual"` and name its `board`; a
@@ -390,6 +397,30 @@ What the policies mean during a run:
 
 `rules.max_lanes` caps how many lanes run at once, and `team = true` asks for a team folder
 (`play --team-dir`).
+
+### What your team declared
+
+Some events ask each team to declare a label for its AI use, and score or mark teams by it.
+The words are each event's own. `rules.declared_label` holds yours as the event writes it: a
+few words in letters, digits, spaces and hyphens, at most 40 characters.
+
+```toml
+[rules]
+declared_label = "Human-Led AI"
+```
+
+flightdeck does not know what a label means, and checks nothing by it. It keeps the label in
+front of you and on the record:
+
+- `preflight` shows it, and `play` says it first, before the console opens;
+- the run records it, and `flightdeck share` prints it on the flight card beside the run's
+  mode (hands-on, approve-only or hands-off), which is worked out from what you did;
+- `flightdeck records` puts it at the top of each solve record
+  ([GUIDE.md](GUIDE.md#a-record-of-each-solve)).
+
+What the label commits you to goes in the other keys: an event that asks a person to approve
+every flag is `submit = "confirm"`; one that forbids agents is `ai_allowed = false`; one that
+forbids giving a model the challenge is `material_to_models = false`.
 
 ## Instances on demand
 

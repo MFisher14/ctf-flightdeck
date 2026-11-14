@@ -19,6 +19,14 @@ the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
   player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
   and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
 
+Built after those, also waiting for the release:
+
+- **Rules that match 2026 events** (P58). An event profile can say that no challenge material
+  may go to a model (`material_to_models = false`: `play` refuses, naming the rule) and hold the
+  label the team declared to the event (`declared_label`: said before a run, on the flight
+  card). `flightdeck records` writes a record of each solve for an event's organisers: the
+  lanes' transcripts, the player's interventions, who let each flag go.
+
 Known limits, each said where it applies:
 
 - No plugin has met a real platform: the plugin path was built against synthetic plugins and a

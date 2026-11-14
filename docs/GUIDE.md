@@ -723,8 +723,11 @@ flightdeck start
 ```
 
 It asks, in order: the event's name; a folder for it (`~/ctf/<name>` unless you say otherwise,
-made for you); whether the rules allow AI tools (flightdeck does not play an event that forbids
-them); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
+made for you); whether the rules allow AI agents to work on the challenges, with each
+challenge's text and files given to a model (a lane does both, and flightdeck does not play an
+event that forbids either: a rule that allows asking a model about a concept and forbids
+giving it the challenge is a no); the label your team declared to the event for its AI use, if
+the event asks for one (Enter for none); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
 and submits flags; **by hand**: any other site); the site's address; what a flag looks like
 (`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
 (on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
@@ -1036,6 +1039,7 @@ flightdeck gaps RUN_DIR        # the challenges your L1 solvers did not solve, a
 flightdeck build gap CHALLENGE_DIR --pack ~/ctf/solvers   # a new engine stub with a test that must pass
 flightdeck build check ~/ctf/solvers                       # run the pack's tests: which engines pass
 flightdeck share RUN_DIR       # the run's flight card, to post: no flags, no challenge names
+flightdeck records RUN_DIR     # a record of each solve for the event's organisers: transcripts, your interventions, who let each flag go
 ```
 
 In place of RUN_DIR, the word `latest` means your newest run (the newest by start time under
@@ -1075,6 +1079,42 @@ keeps it), and you post it if you want to:
 [a flight card issue](https://github.com/MFisher14/ctf-flightdeck/issues/new?template=flight-card.yml).
 The setup lines come from `setup.json`, which a run writes in its folder when it starts; a run
 from before 0.3.0 has none, and its card says so.
+
+When the event profile has a `declared_label` (the label your team declared to the event for
+its AI use: [BOARDS.md](BOARDS.md#what-your-team-declared)), the card shows it under the mode,
+with the words that flightdeck does not check it. The mode is worked out from what you did;
+the label is your word.
+
+### A record of each solve
+
+Some events ask a team to show how it solved a challenge: what the agents did, what the people
+did, who submitted. `flightdeck records RUN_DIR` writes one Markdown file per challenge the run
+solved with a flag, in `RUN_DIR/records/`:
+
+- the challenge, when it was solved, the flag, and who the solve is credited to (a lane and
+  its model, a no-model solver, or you);
+- how the flag went to the platform: you approved it; it went out on its own under submit
+  `auto`; or you submitted it by hand and told flightdeck it was accepted;
+- the label your team declared, if the event profile has one;
+- every flag sent for the challenge, right or wrong, each with who let it go;
+- every intervention of yours on the challenge and its lanes (and autopilot's, apart), with
+  its time, its words (a hint's text) and what came of it, the refused ones too;
+- every lane that worked the challenge and its whole transcript: each turn with all of its
+  tool calls and what the transcript kept of their output, flightdeck's notes, the alerts, the
+  files changed and who changed them. The lane the accepted flag was sent on comes first.
+
+`--challenge ID` writes one challenge's record (give it again for more).
+
+A record is the run's log and nothing else. No model is called, nothing is picked or
+reworded, and running the command again writes each record again from the log, over any edit.
+Where the log does not say something, the record says that: a run played with an older
+flightdeck did not note whether you approved a flag, and its records say "the log does not
+say", never a guess.
+
+A record is not for posting. It holds the challenge's own text, the lanes' commands and
+outputs and the flag: hand it to the event's organisers, and read it first. The value of
+anything shaped like a credential is taken out, as in a writeup draft. Nothing is sent
+anywhere.
 
 ## Configuration and files
 

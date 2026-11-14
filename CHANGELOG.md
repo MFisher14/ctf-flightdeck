@@ -68,6 +68,21 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   with the event you just played first in the list; its spend, run folder and next commands
   are in the terminal under it. The practice set and the demo come back too. `q` there
   leaves, and a run that stops with an error leaves with its reason showing.
+- Event rules on AI use, three additions. `material_to_models = false` under `[rules]` in
+  event.toml is for an event that allows AI help and forbids giving a model the challenge's
+  text or files: `preflight` and `play` refuse, naming that rule, since every lane gives its
+  model both. `declared_label = "Human-Led AI"` holds the label your team declared to the
+  event, in the event's words: `play` says it before the console opens and `flightdeck share`
+  prints it on the flight card under the mode; flightdeck checks nothing by it. `flightdeck
+  start` and the home screen's form ask for the label (optional; `--label`), and their rules
+  question now says what a lane does: an AI agent works the challenge and is given its text
+  and files.
+- `flightdeck records RUN_DIR` writes a record of each solve for an event's organisers, in
+  `RUN_DIR/records/`: who solved it, whether you approved the flag, it went out on its own
+  under submit `auto`, or you submitted it by hand; every flag sent; each of your
+  interventions with its words; and every lane's whole transcript. It is the run's log and
+  nothing else, and no model is called. It holds challenge text and the flag, so it is not
+  for posting. How: [docs/GUIDE.md](docs/GUIDE.md#a-record-of-each-solve).
 
 ## 0.4.0 (2026-11-13)
 
