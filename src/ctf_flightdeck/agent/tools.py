@@ -764,6 +764,9 @@ class Toolbox:
         head = status
         if read.dropped:
             head += f"\n[{read.dropped} earlier bytes dropped: a session keeps at most {session.cap} bytes unread]"
+        if read.held:
+            head += (f"\n[{read.held} more bytes held for the next read: they could start a secret of the run's; "
+                     "read again (session_send with no input) and they come with what follows, or alone]")
         body = self._fit(text, read.output, self.max_chars - len(head) - 1, turn, index) if text else "(no output)"
         failed = read.why == "ended" and read.exit_code != 0
         return ToolResult(
@@ -804,7 +807,7 @@ def _session_status(read: Read, until: bytes | None) -> str:
         return f"running; quiet after {read.waited:.1f} s"
     if until is not None:
         return f"running; {looked} not seen in {read.waited:.1f} s"
-    if not read.output:
+    if not read.output and not read.held:
         return f"running; no output in {read.waited:.1f} s"
     return f"running; still writing after {read.waited:.1f} s"
 

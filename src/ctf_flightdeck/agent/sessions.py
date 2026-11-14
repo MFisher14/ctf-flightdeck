@@ -23,7 +23,9 @@ docker client; the container's removal ends the rest).
 Everything a session writes is the challenge's, as any tool output is: the Toolbox takes the
 run's secrets out of it before anything cuts it and fences it like the shell's output. A few
 bytes at the end of a read that could be the start of a secret wait for the next read (or the
-process's end), so a secret written across two reads is still found whole.
+process's end), so a secret written across two reads is still found whole. The read says how
+many it held; a read that sees no more output after them releases them (a prompt that ends
+without a newline, say), and a read that matched `until` shows the match whole.
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ class Read:
     why: str  # how the read ended: "matched", "quiet", "waited", "ended"
     waited: float  # seconds the read waited
     exit_code: int | None = None  # why == "ended": the process's status, None when it is not known
+    held: int = 0  # bytes at the end held back for the next read: they may start a secret
 
 
 class Session:
@@ -180,12 +183,18 @@ class Session:
                 code = await asyncio.wait_for(self.process.proc.wait(), END_WAIT)
             except TimeoutError:
                 code = None
-        keep = 0 if why == "ended" or self.unfinished is None else self.unfinished(bytes(self.buffer))
+        keep = 0
+        if why != "ended" and self.unfinished is not None and len(self.buffer) > self.held:
+            # held back only while output is still coming: a tail the last read held, with nothing
+            # after it since (a prompt with no newline, say), is released, so nothing waits for good
+            keep = self.unfinished(bytes(self.buffer))
+            if why == "matched" and until is not None:  # what matched is shown whole
+                keep = min(keep, len(self.buffer) - self.buffer.find(until) - len(until))
         output = bytes(self.buffer[: len(self.buffer) - keep])
         del self.buffer[: len(output)]
         self.held = len(self.buffer)
         dropped, self.dropped = self.dropped, 0
-        return Read(output, dropped, why, loop.time() - begun, code)
+        return Read(output, dropped, why, loop.time() - begun, code, held=self.held)
 
     async def stop(self) -> None:
         """Kill the process and everything it started; never raises."""

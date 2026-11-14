@@ -499,7 +499,9 @@ them, as it keeps the workspace's files.
 What a session writes is the challenge's, as any tool output is: it goes through the run's held
 secrets before anything cuts it, then the cut of `shell` (the rest to a file in `.flightdeck/out`).
 A few bytes at the end of a read that could begin a held secret (`Secrets.unfinished`) wait for the
-next read, so a secret written across two reads is found whole. Sessions are a tool of
+next read, so a secret written across two reads is found whole. The read says how many it held;
+the next read releases them when nothing came after them (a prompt with no newline), and a read
+that matched `until` shows the match whole. Sessions are a tool of
 flightdeck's own lanes; a coding-agent CLI has its own.
 
 ### Lane network

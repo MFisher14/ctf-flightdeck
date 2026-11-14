@@ -299,6 +299,37 @@ def test_a_held_secret_never_leaves_a_session_even_written_across_two_reads(tmp_
     assert rest.content.endswith("\n[API_KEY]\n")
 
 
+def test_output_that_ends_like_a_secret_starts_is_held_once_and_said_then_released(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        first = await call(box, "session_start", {"command": 'printf "Are you sure? yes"; sleep 30', "wait_seconds": 5})
+        second = await call(box, "session_send", {"session": "s1", "wait_seconds": 0.3})
+        third = await call(box, "session_send", {"session": "s1", "wait_seconds": 0.3})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return first, second, third
+
+    first, second, third = asyncio.run(go())
+    assert first.content.split("\n")[-1] == "Are you sure? ye"  # the "s" could start the key
+    assert "[1 more bytes held for the next read" in first.content
+    assert second.content.split("\n")[-1] == "s"  # nothing came after it: released, not held for good
+    assert "held" not in second.content and "no output" not in second.content
+    assert third.content.endswith("running; no output in 0.3 s\n(no output)")
+
+
+def test_a_read_that_matched_until_shows_the_match_whole(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        await call(box, "session_start", {"command": "cat", "wait_seconds": 0})
+        result = await call(box, "session_send", {"session": "s1", "input": "yes", "newline": False, "until": "yes"})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return result
+
+    result = asyncio.run(go())
+    assert result.content == "session s1: running; 'yes' appeared\nyes"
+
+
 def test_what_the_model_gets_wrong_comes_back_as_an_error(tmp_path, handout):
     async def go():
         box = await host_box(tmp_path, handout)
