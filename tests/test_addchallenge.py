@@ -64,6 +64,117 @@ def test_a_paste_that_is_only_paths_is_a_drop_whatever_way_the_terminal_wrote_th
         assert addchallenge.dropped(addchallenge.quote(file)) == [file]  # what the console writes on the command bar reads back
 
 
+NNBSP = " "  # NARROW NO-BREAK SPACE: what macOS writes before AM or PM in a screenshot's name on a 12-hour clock
+
+
+def backslashed(path, special: str) -> str:
+    """`path` with a backslash before each character of `special`, as a terminal that escapes those writes it."""
+    return "".join("\\" + c if c in special else c for c in str(path))
+
+
+ITERM2 = "\\ ()\"&'!$<>;|*?[]#`\t{}^+=@~"  # the characters iTerm2 escapes in a dropped file's path (ASCII only)
+GHOSTTY = "\\ ()[]{}<>\"'`!#$&;|*?\t"  # and Ghostty on macOS
+
+
+def single_quoted(path) -> str:
+    return "'" + str(path).replace("'", "'\\''") + "'"  # GNOME Terminal, VS Code, Windows Terminal for WSL
+
+
+def double_quoted(path) -> str:
+    return '"' + str(path).replace("\\", "\\\\").replace('"', '\\"') + '"'  # iTerm2's "wrap it in double quotes"
+
+
+def spaces_only(path) -> str:
+    return str(path).replace(" ", "\\ ")  # WezTerm's default: a backslash before each space and before nothing else
+
+
+def test_a_screenshot_named_as_macos_names_it_is_a_drop_from_a_terminal_that_escapes_ascii_only(tmp_path):
+    """The character before AM is not ASCII, so iTerm2 and Ghostty send it bare. It is a
+    character of the name: only an ASCII space or tab parts two words of a drop."""
+    shot = tmp_path / f"Screenshot 2026-11-14 at 9.41.12{NNBSP}AM.png"
+    other = tmp_path / f"Screenshot 2026-11-14 at 9.41.20{NNBSP}PM.png"
+    for file in (shot, other):
+        file.write_bytes(b"png")
+    assert NNBSP.isspace()  # which is why str.isspace() must not be what parts the words
+    for write in (lambda p: backslashed(p, ITERM2), lambda p: backslashed(p, GHOSTTY), spaces_only, single_quoted,
+                  double_quoted, str):
+        assert addchallenge.dropped(write(shot)) == [shot], write(shot)
+        assert addchallenge.dropped(write(shot) + " ") == [shot]  # iTerm2, WezTerm and Alacritty end a drop with a space
+    for write in (lambda p: backslashed(p, ITERM2), lambda p: backslashed(p, GHOSTTY), spaces_only, single_quoted, double_quoted):
+        assert addchallenge.dropped(f"{write(shot)} {write(other)}") == [shot, other]  # two files, side by side
+    assert addchallenge.dropped(f"{shot}\n{other}\n") == [shot, other]  # kitty: a line each, nothing escaped
+    assert addchallenge.dropped(addchallenge.quote(shot)) == [shot]
+    assert addchallenge.attach_arg(f"static-hiss {backslashed(shot, ITERM2)} ") == ("static-hiss", [shot])
+    # the same characters between two paths do not part them: both names are then one word, which is no file
+    assert addchallenge.dropped(f"{backslashed(shot, ITERM2)}{NNBSP}{backslashed(other, ITERM2)}") == []
+
+
+@pytest.mark.parametrize("name", ["my file (1).png", "it's.png", "John's notes.pdf", 'say "hi".txt', "a&b $HOME.bin",
+                                  "tab\there.txt", "naïve café.txt", "back\\slash.txt", "both ' and \".txt",
+                                  f"Screenshot 2026-11-14 at 9.41.12{NNBSP}AM.png"])
+def test_a_dropped_file_is_taken_in_each_terminals_way_of_writing_it(tmp_path, name):
+    """One row for each way a terminal writes a dropped file, for names that are awkward in at least one of them."""
+    folder = tmp_path / "mnt" / "c" / "My Files"  # (a folder with a space in it, standing in for /mnt/c/...)
+    folder.mkdir(parents=True)
+    file, second = folder / name, folder / "second.txt"
+    file.write_bytes(b"1")
+    second.write_bytes(b"2")
+    ways = {
+        "iTerm2": backslashed(file, ITERM2) + " ",
+        "iTerm2, two files": f"{backslashed(file, ITERM2)} {backslashed(second, ITERM2)} ",
+        "iTerm2, wrapped in double quotes": double_quoted(file) + " ",
+        "Ghostty on macOS": backslashed(file, GHOSTTY),
+        "Ghostty on macOS, two files": f"{backslashed(file, GHOSTTY)} {backslashed(second, GHOSTTY)}",
+        "kitty": str(file),
+        "kitty, two files": f"{file}\n{second}",
+        "Alacritty": f"{file} ",
+        "GNOME Terminal, Ptyxis": single_quoted(file) + " ",
+        "GNOME Terminal, two files": f"{single_quoted(file)} {single_quoted(second)} ",
+        "Windows Terminal for WSL": single_quoted(file),
+        "VS Code": single_quoted(file),
+        "a file:// address": "file://" + "".join(c if c.isascii() and (c.isalnum() or c in "/.-_") else "".join(
+            f"%{byte:02X}" for byte in c.encode()) for c in str(file)),
+    }
+    if "\t" not in name:  # Ghostty's GTK build leaves a tab as it is, and ends each path with a line end
+        ways["Ghostty on Linux"] = backslashed(file, "\\\"'$`*? |()") + "\n"
+        ways["Ghostty on Linux, two files"] = backslashed(file, "\\\"'$`*? |()") + "\n" + backslashed(second, "\\\"'$`*? |()") + "\n"
+    if "\\" not in name:  # WezTerm leaves a backslash as it is: one in a name cannot be told from its own escape
+        ways["WezTerm"] = spaces_only(file) + " "
+        ways["WezTerm, two files"] = f"{spaces_only(file)} {spaces_only(second)} "
+    for terminal, text in ways.items():
+        expected = [file, second] if "two files" in terminal else [file]
+        assert addchallenge.dropped(text) == expected, (terminal, text)
+
+
+def test_the_second_reading_of_a_drop_never_makes_a_file_of_text(tmp_path):
+    """WezTerm's way (a backslash before a space, a quote as it is) is read only when the
+    first reading names no file, and counts only when every word of it is a file that exists."""
+    folder = tmp_path / "My Drive"
+    folder.mkdir()
+    notes, plain = folder / "John's notes.pdf", folder / "plain.txt"
+    notes.write_bytes(b"1")
+    plain.write_bytes(b"2")
+    assert addchallenge.dropped(f"{spaces_only(notes)} {spaces_only(plain)} ") == [notes, plain]
+    assert addchallenge.dropped(f"{spaces_only(notes)} and words") == []  # a word that is no file: text
+    assert addchallenge.dropped(f"{spaces_only(notes)} /no/such/file.bin") == []
+    assert addchallenge.dropped(f"see {spaces_only(notes)}") == []
+    assert addchallenge.dropped(spaces_only(folder / "John's other notes.pdf")) == []  # no such file
+    with pytest.raises(AddError, match="no such file"):  # /attach names the word that is no file, as it was written
+        addchallenge.attach_arg(f"doll {spaces_only(notes)} /no/such/file.bin")
+    assert addchallenge.attach_arg(f"doll {spaces_only(notes)} ") == ("doll", [notes])
+
+
+def test_inside_double_quotes_a_backslash_is_read_only_before_a_quote_or_a_backslash(tmp_path):
+    quoted, slashed, plain = tmp_path / 'say "hi".txt', tmp_path / "a\\b.txt", tmp_path / "a\\nb.txt"
+    for file in (quoted, slashed, plain):
+        file.write_bytes(b"1")
+    assert addchallenge.dropped(f'"{tmp_path}/say \\"hi\\".txt"') == [quoted]
+    assert addchallenge.dropped(f'"{tmp_path}/a\\\\b.txt"') == [slashed]
+    assert addchallenge.dropped(f'"{tmp_path}/a\\nb.txt"') == [plain]  # any other backslash is a character of the name
+    assert addchallenge.dropped(f'"{tmp_path}/say \\"hi\\".txt') == []  # a quote that never closes
+    assert addchallenge.dropped(f'"{tmp_path}/a\\b.txt\\"') == []  # its last quote is escaped: it never closes either
+
+
 def test_a_word_a_path_that_does_not_exist_or_a_path_among_words_is_not_a_drop(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "flag").write_text("x")  # a file named like a word of the text, in the folder flightdeck runs in

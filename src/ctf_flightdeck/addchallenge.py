@@ -69,19 +69,27 @@ def slug(name: str) -> str:
 # ---------------------------------------------------------------------- a drop: a paste that is only paths
 
 
+# What parts two words of a drop: an ASCII space or a tab, and nothing else. Never str.isspace()
+# or \s: a terminal escapes or quotes ASCII only, so any other blank character arrives bare and
+# is a character of the file's name (macOS names a screenshot "... 9.41.12<U+202F>AM.png" on a
+# 12-hour clock).
+_BLANK = " \t"
 # A piece of one word of a drop, as a terminal writes a path: in quotes, or bare with each
 # space (and other special character) escaped by a backslash. Pieces side by side are one
-# word, as in a shell: 'it'\''s.txt' is it's.txt.
-_PIECE = re.compile(r"""'([^'\n]*)'|"([^"\n]*)"|((?:\\.|[^\s\\'"])+)""")
+# word, as in a shell: 'it'\''s.txt' is it's.txt. Inside double quotes a backslash is read
+# before a double quote or a backslash only (_IN_QUOTES), as the terminals that wrap a name in
+# them write it.
+_PIECE = re.compile(r"""'([^'\n]*)'|"((?:\\.|[^"\\\n])*)"|((?:\\.|[^ \t\\'"])+)""")
+_IN_QUOTES = re.compile(r"""\\(["\\])""")
 # Where the files start in /attach's argument: the first word written as an absolute path.
-_FIRST_PATH = re.compile(r"""(?:^|(?<=\s))['"]?(?:/|~/|~(?=['"]?(?:\s|$))|file://)""")
+_FIRST_PATH = re.compile(r"""(?:^|(?<=[ \t]))['"]?(?:/|~/|~(?=['"]?(?:[ \t]|$))|file://)""")
 
 
 def _path_of(word: str) -> Path | None:
     """`word` as a file or folder that exists on this machine, or None. Only an absolute
     path is one (/..., ~/..., file://...): a word must not become a file because one of that
     name is in the folder flightdeck runs in."""
-    text = word.strip()
+    text = word.strip(_BLANK)
     if not text or "\n" in text or len(text) > 4096:
         return None
     if text.startswith("file://"):
@@ -101,41 +109,62 @@ def _words(line: str) -> list[str] | None:
     words: list[str] = []
     at, end = 0, len(line)
     while at < end:
-        if line[at].isspace():
+        if line[at] in _BLANK:
             at += 1
             continue
         word = ""
-        while at < end and not line[at].isspace():
+        while at < end and line[at] not in _BLANK:
             match = _PIECE.match(line, at)
             if match is None:
                 return None
-            quoted = match.group(1) if match.group(1) is not None else match.group(2)
-            word += quoted if quoted is not None else re.sub(r"\\(.)", r"\1", match.group(3))
+            if match.group(1) is not None:
+                word += match.group(1)
+            elif match.group(2) is not None:
+                word += _IN_QUOTES.sub(r"\1", match.group(2))
+            else:
+                word += re.sub(r"\\(.)", r"\1", match.group(3))
             at = match.end()
         words.append(word)
     return words
+
+
+def _spaced_words(line: str) -> list[str]:
+    """The words of a line read a second way, as WezTerm writes dropped files by default: a
+    backslash before each space and before nothing else, so a quote or any other backslash
+    is a character of the name (John's\\ notes.pdf)."""
+    return [word.replace("\\ ", " ") for word in re.split(r"(?<!\\) +", line) if word]
+
+
+def _line(line: str) -> tuple[list[Path], str]:
+    """(the paths one line is made of, "") by the first reading in which every word is a
+    path that exists; else ([], the word of the first reading that is not one). The second
+    reading is only ever another way to find files that exist: it cannot make a file of text."""
+    first = _words(line)
+    for words in (first, _spaced_words(line)):
+        paths = [_path_of(word) for word in words or ()]
+        if paths and all(path is not None for path in paths):
+            return [path for path in paths if path is not None], ""
+    if first is None:
+        return [], line.strip(_BLANK)
+    return [], next(word for word in first if _path_of(word) is None)
+
+
+def _lines(text: str) -> list[str]:
+    return [line for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip(_BLANK)]
 
 
 def _drop(text: str) -> tuple[list[Path], str]:
     """(the paths `text` is made of, "") when the whole text is paths that exist; else
     ([], the word that is not one)."""
     found: list[Path] = []
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if not line.strip():
-            continue
+    for line in _lines(text):
         whole = _path_of(line)  # one path, pasted bare with its spaces as they are
         if whole is not None:
             paths = [whole]
         else:
-            words = _words(line)
-            if words is None:
-                return [], line.strip()
-            paths = []
-            for word in words:
-                path = _path_of(word)
-                if path is None:
-                    return [], word
-                paths.append(path)
+            paths, missing = _line(line)
+            if missing:
+                return [], missing
         for path in paths:
             if path not in found:
                 found.append(path)
@@ -144,8 +173,9 @@ def _drop(text: str) -> tuple[list[Path], str]:
 
 def dropped(text: str) -> list[Path]:
     """The files a paste hands over: its paths, when the WHOLE text is one or more absolute
-    paths that exist, separated by spaces or line ends, each quoted or with its spaces
-    escaped (what a terminal sends for files dropped on it). [] for any other text: a path
+    paths that exist, separated by ASCII spaces, tabs or line ends, each quoted or with its
+    spaces escaped (what a terminal sends for files dropped on it; each terminal writes them
+    its own way, and every way is read on every terminal). [] for any other text: a path
     inside a sentence is text, and nothing is ever taken out of text."""
     if not text.strip() or len(text) > MAX_DROP:
         return []
