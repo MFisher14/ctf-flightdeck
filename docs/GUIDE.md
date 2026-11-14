@@ -63,6 +63,17 @@ are in the terminal under the home screen, and `q` shows them. The practice set 
 back to it too. `q` on the home screen leaves, and a run that stops with an error leaves with its
 reason showing.
 
+**Settings and health.** The last choice on the home screen shows your setup in one place. At the
+top are your main settings: the config file, your model API, whether its API key is set (`set` or
+`not set`, and where; never the key itself), your models, where lanes run, and the console's
+layout, theme, bell, title and mouse. Under each is where it comes from, a line of your config or
+the default, and for the look how to change it (`/layout` or `/theme` in a run, then `s`). Below
+them are the checks `flightdeck doctor` runs, in its words: `ok`, `FAIL` for what stops a run and
+`warn` for what does not, with the fix under each problem and one line on top that counts them.
+The checks take a few seconds, and up to 20 more when Docker does not answer; the settings show at
+once, `esc` goes back at any time and stops the checks, and `r` runs them again. The screen only
+reads: in a run, `/config` (or `/settings`) changes that run's settings.
+
 **The same by command.** Each step has a command of its own, for a script, or when you would rather
 answer at the prompt:
 
@@ -95,7 +106,8 @@ for every key, any time ([The console](#the-console)).
 hold your API keys, a local model server and its models, the light model, Docker, the lane image and
 your terminal's size. Each problem has a line of its own with its fix under it, and the last line is
 the one to act on: how many things there are to fix before a run (the `FAIL` lines; a `warn` line is
-something a run does not wait for), or `Ready` with the next command. Before the console opens,
+something a run does not wait for), or `Ready` with the next command. The home screen's "Settings and health"
+shows the same checks. Before the console opens,
 `play` and `practice` ask the model API whether it takes your API key and serves every model in your
 ladder, and stop with what to fix if not. `ctfdeck` and `ctf-flightdeck` are other names for the
 `flightdeck` command.

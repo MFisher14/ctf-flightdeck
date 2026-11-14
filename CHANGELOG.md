@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- "Settings and health" on the home screen: your main settings (the config file, the model API,
+  whether its key is set, the models, where lanes run, and the layout, theme, bell, title and
+  mouse), each with where it is set, and the checks of `flightdeck doctor` with the fix under
+  each problem. A key shows as `set` or `not set`, never its value. The checks run while the
+  screen stays yours: `esc` leaves at once and stops them, `r` runs them again
+  ([the guide](docs/GUIDE.md#install-and-first-run)).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

@@ -1226,6 +1226,10 @@ whether Docker answers (`workspace.docker_unavailable_stoppable`: `docker versio
 group of its own, killed when the form closes or the app ends), and saves no runtime before it
 has answered or the player has chosen one. `cli._home` opens the home screen again after a run
 it started ends.
+Its "Settings and health" (`console/health.py`, P79) reads the config's main settings and where
+each is set, and shows doctor's checks, which run in a child process (`health.py`: `python -P -m
+ctf_flightdeck.health`, a process group of its own that prints the checks as JSON and is killed
+when the screen closes), given the terminal's size because its own output is a pipe.
 
 ### Credentials
 
