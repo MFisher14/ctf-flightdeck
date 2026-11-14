@@ -20,7 +20,7 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 from ..core.model import AlertKind, Challenge, ChallengeStatus
 from ..text import untrusted
 from . import theme
-from .commands import COMMANDS
+from .commands import COMMANDS, also
 from .views import HELD, LATER, sending_chip
 
 if TYPE_CHECKING:
@@ -879,7 +879,8 @@ class HelpScreen(ModalScreen[None]):
         keys.add_column()
         for key, text in KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
             keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
-        commands = Described([(Text(f"/{command.name} {command.args}".rstrip()), Text(command.help)) for command in COMMANDS],
+        commands = Described([(Text(f"/{command.name} {command.args}".rstrip()),
+                               Text(command.help + (f" (also {also(command)})" if command.aliases else ""))) for command in COMMANDS],
                              style=f"bold {theme.ACCENT}")
         alerts = Table.grid(padding=(0, 2))
         alerts.add_column(no_wrap=True)

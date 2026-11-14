@@ -35,10 +35,10 @@ from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
 from ..core.driver import TakeoverRefused
-from ..core.model import ME, UNLIMITED_LANES, Event, EventKind, Lane, LaneState, lanes_text
+from ..core.model import ME, UNLIMITED_LANES, ChallengeStatus, Event, EventKind, Lane, LaneState, lanes_text
 from ..text import untrusted
 from . import theme, views
-from .commands import CommandError, needs_lane, parse
+from .commands import CommandError, State, Word, needs_lane, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
@@ -825,6 +825,26 @@ class FlightdeckApp(App[None]):
                 if command and all(command != c for c, _ in out):
                     out.append((command, alert.kind.label.lower()))
         return tuple(out)
+
+    def command_state(self) -> State:
+        """What the command bar's menu offers after a command's name, as things stand: every
+        lane with its challenge and state (/open), the parked and new challenges (/queue), the
+        themes there are (/theme) and the layout in use (/layout). The bar asks while such a
+        menu is open; names are challenge text, which the bar draws through text.untrusted()."""
+        deck = self.deck
+
+        def named(challenge_id: str) -> str:
+            challenge = deck.challenges.get(challenge_id)
+            return challenge.name if challenge is not None else challenge_id
+
+        lanes = tuple(Word(lane.id, f"{named(lane.challenge_id)} · {lane.state.value}", named(lane.challenge_id)) for lane in deck.lanes.values())
+        queueable = tuple(Word(challenge.id, f"{challenge.name} · {challenge.status.value}", challenge.name)
+                          for challenge in deck.challenges.values() if challenge.status in (ChallengeStatus.PARKED, ChallengeStatus.NEW))
+        built_in, own = themes.names(self.themes_folder)
+        in_use = theme.active().name
+        listed = tuple(Word(name, kind + (", in use" if name == in_use else ""))
+                       for kind, names in (("built in", built_in), ("yours", own)) for name in names)
+        return State(lanes=lanes, queueable=queueable, themes=listed, layout=self.layout)
 
     def lane_verb(self, lane: Lane, verb: str) -> None:
         if verb == "pause":
