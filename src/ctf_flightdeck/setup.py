@@ -628,6 +628,15 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     elif config is not None:
         checks.append(Check("l1 pack", True, "none, so each lane starts on its model (optional: `flightdeck pack install` adds "
                             "flightdeck's solver pack, some 800 no-model solvers that run first)"))
+    if config is not None and config.plugins:
+        from .plugins import manifest as plugins
+
+        for name, ref in config.plugins.items():  # read, never run: a plugin that cannot be used stops only its own events
+            try:
+                checks.append(Check(f"plugin {name}", True, plugins.doctor_line(plugins.load(ref)), essential=False))
+            except plugins.PluginError as exc:
+                checks.append(Check(f"plugin {name}", False, str(exc),
+                                    f"fix the plugin's plugin.toml, or take [plugins.{name}] out of {path}", essential=False))
     found = False
     if agent is not None:
         agent_checks = _agent_checks(agent, config, environ)

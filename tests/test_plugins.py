@@ -749,7 +749,7 @@ def test_plugin_pull_says_why_the_plugin_failed_and_never_shows_the_token(tmp_pa
     assert result.exit_code == 2 and result.output.startswith("flightdeck: plugin acme: ") and "command must be a list of words" in result.output
 
 
-# ---------------------------------------------------------------------- the root command
+# ---------------------------------------------------------------------- the root command and doctor
 
 
 def test_flightdeck_plugin_is_mounted_with_its_three_commands():
@@ -757,3 +757,28 @@ def test_flightdeck_plugin_is_mounted_with_its_three_commands():
     for name in ("new", "add", "pull"):
         assert f" {name} " in shown
     assert "Plugins: play an event on a platform flightdeck does not know, through an adapter of your own." in " ".join(shown.split())
+
+
+def test_doctor_reports_each_enabled_plugin_and_a_broken_one_never_fails_the_setup(tmp_path, config, monkeypatch):
+    from ctf_flightdeck.setup import doctor
+
+    good_one = make_plugin(tmp_path / "acme")
+    broken = make_plugin(tmp_path / "harbour", toml='name = "harbour"\napi = 1\ncomand = ["x"]\n')
+    enabled(config, good_one)
+    enabled(config, broken, name="harbour")
+    enabled(config, tmp_path / "gone", name="gone")
+    checks = {check.name: check for check in doctor(config, environ={}) if check.name.startswith("plugin ")}
+    assert list(checks) == ["plugin acme", "plugin harbour", "plugin gone"]
+    assert (checks["plugin acme"].ok, checks["plugin acme"].essential) == (True, False)
+    assert checks["plugin acme"].detail == "platform acme, runs <flightdeck's python> adapter.py"
+    path = broken.resolve() / "plugin.toml"
+    assert (checks["plugin harbour"].ok, checks["plugin harbour"].essential) == (False, False)
+    assert checks["plugin harbour"].detail == f"plugin harbour: {path}: unknown key comand (known: {KNOWN})"
+    assert checks["plugin harbour"].fix == f"fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}"
+    assert checks["plugin gone"].detail == f"plugin gone: {tmp_path.resolve() / 'gone' / 'plugin.toml'}: no such file"
+    assert calls(good_one) == [] and calls(broken) == []  # doctor reads the manifests and runs nothing
+    result = CliRunner().invoke(cli.app, ["doctor", "--config", str(config)])
+    assert f"warn plugin harbour: plugin harbour: {path}: unknown key comand" in result.output
+    assert f"     fix: fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}" in result.output
+    assert "ok   plugin acme: platform acme, runs <flightdeck's python> adapter.py" in result.output
+    assert "FAIL plugin" not in result.output
