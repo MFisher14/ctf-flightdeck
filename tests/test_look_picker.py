@@ -259,9 +259,9 @@ def test_a_save_that_fails_says_why_leaves_the_file_as_it_was_and_the_run_keeps_
 
 def test_a_config_that_cannot_be_written_keeps_the_theme_for_the_run_and_says_so(tmp_path):
     config = a_config(tmp_path)
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a file's mode does not stop a write to it")
     config.chmod(0o400)
-    if os.access(config, os.W_OK):  # whoever runs this may write any file (root): the refusal cannot be shown
-        pytest.fail("this test needs a user a read-only file refuses; it was not run as one")
     world, app = busy_console(config_path=str(config))
 
     async def main() -> None:
@@ -423,6 +423,40 @@ def test_a_click_keeps_a_row_and_a_row_that_cannot_be_used_takes_no_click(tmp_pa
             assert app._status[0] == "theme gruvbox for this run. To keep it: /theme, then s"
 
     asyncio.run(main())
+
+
+def test_on_a_terminal_the_mock_saves_the_theme_picked_in_the_config_it_opened_in(tmp_path):
+    """The real command on a pty, through the driver a terminal window gets and with the keys
+    typed one at a time, as a player types them: `/theme`, down, `s`, then `ctrl+q`. The mock
+    reads its look from the config $FLIGHTDECK_CONFIG names, and saves there."""
+    import time
+
+    from test_play_signals import Terminal, env_for, wait_for
+
+    config = a_config(tmp_path)
+    term = Terminal(["mock"], env_for(tmp_path, FLIGHTDECK_CONFIG=str(config)), tmp_path)
+
+    def keys(*typed: bytes) -> None:
+        for key in typed:
+            os.write(term.master, key)
+            time.sleep(0.15)  # a player's pace: keys that come all at once are first held as a dropped path
+
+    def shown() -> str:
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", term.text())
+
+    try:
+        wait_for(lambda: "Welcome to flightdeck" in shown(), "the welcome screen", term)
+        keys(b"\x1b")
+        keys(*(letter.encode() for letter in "/theme"), b"\r")
+        wait_for(lambda: "keep it, and save it in your config" in shown(), "the list of themes, with its save key", term)
+        keys(b"\x1b[B", b"s")  # down to `light`, and save
+        wait_for(lambda: config.read_text() == CONFIG + '\n[console]\ntheme = "light"\n', "the theme saved", term, timeout=20.0)
+        wait_for(lambda: "theme light, saved in your config file:" in shown(), "the status line saying so", term, timeout=20.0)
+        os.write(term.master, b"\x11")  # ctrl+q
+        assert term.proc.wait(timeout=30) == 0, term.text()[-2000:]
+    finally:
+        term.close()
+    assert load_console(config).palette is themes.BUILTIN["light"]  # what the next mock opens in
 
 
 # ---------------------------------------------------------------------- /layout

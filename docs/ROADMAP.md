@@ -109,8 +109,8 @@ Known limits, each said where it applies:
   `flightdeck start` and the home screen's form do not offer a plugin's platform.
 - Saving a theme or a layout edits the config line by line: a `[console]` written as dotted
   keys or as an inline table is refused and left as it was, with the line to write by hand.
-  There is no key for the layout switch, and the lists were driven by headless tests, not
-  looked at in a real terminal.
+  There is no key for the layout switch. The lists were driven by headless tests and once on a
+  pseudo-terminal, not looked at in a terminal program.
 - The five built-in palettes were checked for contrast, not judged by eye on many terminals.
 - The gallery has no picture of the compact layout or of autopilot yet
   ([SCREENSHOTS.md](SCREENSHOTS.md)).

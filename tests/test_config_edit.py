@@ -152,9 +152,9 @@ def test_rewrite_needs_a_config_it_can_read_and_changes_nothing_when_the_change_
 
 def test_a_config_that_cannot_be_written_is_said_and_is_as_it_was(tmp_path):
     path = write(tmp_path, "a = 1\n")
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a file's mode does not stop a write to it")
     path.chmod(0o400)
-    if os.access(path, os.W_OK):  # whoever runs this may write any file (root): the refusal cannot be shown
-        pytest.fail("this test needs a user a read-only file refuses; it was not run as one")
     try:
         with pytest.raises(EditError) as caught:
             rewrite(path, lambda text: text + "b = 2\n", lambda: None, what="x")
