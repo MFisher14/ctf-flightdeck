@@ -614,7 +614,9 @@ max_running = 3                 # the most kept running at once: the site's cap 
   run ends. A slot freed by a solve goes to the next challenge that waits.
 - **What a lane gets.** The instance's address as its live instance: in its brief, and, in
   Docker, as the one thing its network reaches. A web challenge's is `http://host:port`, any
-  other `tcp://host:port`, unless the plugin itself gives a URL.
+  other `tcp://host:port`, unless the plugin itself gives a URL. A plugin that names a TLS
+  endpoint that is no web server (ctfd-whale's trp router does) gives `tls://host:port`: the
+  lane reaches that port, and its brief says to speak TLS to it, not plain `nc`.
 - **Your team.** An instance that is already running when flightdeck asks (a teammate's, or an
   earlier run's) is used and never stopped by this run. When the site says its cap is reached,
   flightdeck says so once and asks again every 30 seconds: teammates' instances take slots it
@@ -655,8 +657,9 @@ max_running = 3                 # the most kept running at once: the site's cap 
 | `docker_per_team` | [CTFd-Docker-Plugin](https://github.com/andyjsmith/CTFd-Docker-Plugin) or a fork of it | `container` | Seen working at an event |
 | `ctfd_owl` | [ctfd-owl](https://github.com/D0g3-Lab/H1ve/tree/master/CTFd/plugins/ctfd-owl) | `dynamic_check_docker` | Built from the plugin's source; never run against a site |
 | `chall_manager` | [ctfd-chall-manager](https://github.com/ctfer-io/ctfd-chall-manager) | `dynamic_iac` | Built from the plugin's source; never run against a site |
+| `ctfd_whale` | [ctfd-whale](https://github.com/frankli0324/ctfd-whale) | `dynamic_docker` | Built from the plugin's source; tested against fakes only |
 
-For the two that were never run against a site, try a practice challenge before you rely on
+For the three that were never run against a site, try a practice challenge before you rely on
 one, and tell us what happened in an issue.
 
 - **`docker_per_team`.** `POST /containers/api/request`, `stop`, `renew` and `view_info`, each
@@ -680,12 +683,24 @@ one, and tell us what happened in an issue.
   `http://name:password@host:port/` the lane gets the host and the port; the name and the
   password are yours to pass on with a hint. A start the team's mana cannot pay for is
   treated as the cap. An instance with no end is never renewed.
-- **ctfd-whale has no name here yet.** From its source: a start first removes whatever
-  container the account runs, of any challenge; asking about a challenge other than the
-  running one is refused; and the address comes as an `nc` line, a link, a pwntools snippet
-  or `[ssl] host port`, some of them TLS endpoints flightdeck cannot hand a lane yet. Until it
-  is built ([ROADMAP.md](ROADMAP.md)), start a whale instance on the site yourself.
-  `plugin = "ctfd_docker"`, a guess of 0.4.0 that matched no plugin, is refused: write
+- **`ctfd_whale`.** The plugin runs one container per user account (yours, not your team's,
+  even in team mode), so `max_running` is 1 and need not be written. Its start first removes
+  whatever container that account runs, of any challenge. So flightdeck asks the status
+  before every start and sends one only when the account runs nothing: when this challenge's
+  container already runs, it is used as it is, and when another challenge's runs (one you
+  started on the site, say), flightdeck treats that as the cap, says so once, asks again
+  every 30 seconds, and leaves it alone. Stop that container on the site, or let it end, and
+  flightdeck starts its own. One gap is left: a container you start on the site in the
+  instant between flightdeck's status and its start is removed by that start. Its stop also
+  takes whatever runs, so flightdeck asks first and stops only its own. The plugin refuses a
+  second change within a minute, so flightdeck leaves 60 seconds between two; a stop right
+  after a start waits that long. The address comes in the form the site's router writes:
+  `nc host port`, a link, a pwntools `remote("host", port, ssl=True)`, an `https://` URL or
+  `[ssl] host port`. The pwntools line with `ssl=True` and the `[ssl]` line are TLS endpoints,
+  given to the lane as `tls://host:port`; a pwntools line with any other argument is not read,
+  and is shown to you instead. Tested against a fake of the plugin's source only, never a
+  CTFd running it.
+- `plugin = "ctfd_docker"`, a guess of 0.4.0 that matched no plugin, is refused: write
   `docker_per_team` for CTFd-Docker-Plugin.
 
 For any other plugin, give the four routes yourself instead of `plugin`; look at what the

@@ -220,7 +220,8 @@ solvers run in containers too. `flightdeck image build` builds the image once, a
 `flightdeck image dockerfile` prints what it builds ([what a lane's shell
 has](#what-a-lanes-shell-has) lists it). A lane of flightdeck's own loop gets no
 network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
-`nc host port` (`tcp://host:port` in the challenge's `urls`). Under an event whose instance policy
+`nc host port` (`tcp://host:port` in the challenge's `urls`), or a TLS endpoint a CTFd instance
+plugin started for it (`tls://host:port`). Under an event whose instance policy
 is `confirm`, the lane asks you first.
 
 The network it then gets reaches **that instance and nothing else**: each host and port its

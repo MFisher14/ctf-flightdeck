@@ -2,6 +2,16 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- Instances on demand work with ctfd-whale: `plugin = "ctfd_whale"` under `[instances]`.
+  flightdeck never sends a start while your account runs a container, because whale's start
+  removes it: your own challenge's container is used as it is, and another challenge's is
+  treated as the cap and left alone. Each form the site writes the address in is read, and a
+  TLS endpoint reaches the lane as `tls://host:port`, with a brief that says to speak TLS to
+  it. Built from the plugin's public source and tested against a fake of it only
+  ([BOARDS.md](docs/BOARDS.md#which-plugin)).
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,
