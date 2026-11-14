@@ -100,15 +100,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   (`flightdeck pack image` rebuilds it), so the pack's decompile engine works from a lane and
   at intake.
 - A lane can look at a picture: flightdeck's own lanes have a `view_image` tool that shows the
-  model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
-  scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane
+  model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 3.75 MiB, so
+  it fits the API's 5 MB once encoded; never scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane
   moved to will not, the lane is told why and goes on without it instead of ending.
 - Dropping a file on the console: a terminal that types the dropped file's path (instead of
   pasting it) now attaches it too, and never types it into a field or runs its letters as keys.
   Every drop that lands says so (`attached NAME (SIZE)` in the `/new` form, `got NAME (SIZE):
   press Enter to attach` on the command bar), and one that is refused says why. If nothing at
-  all happens when you drop a file, your terminal kept it: use `ctrl+o`, or `/attach` with no
-  file, for the file window.
+  all happens when you drop a file, your terminal kept it: `ctrl+o` in the `/new` form, or
+  `/attach` with no file on the command bar, opens the file window.
 - A dropped file attaches in more cases. On a Mac with a 12-hour clock, a fresh screenshot
   dragged onto iTerm2 or Ghostty was pasted as text and not attached: its name has a narrow
   space before AM or PM that those terminals send as it is (a 24-hour clock's name has none).
