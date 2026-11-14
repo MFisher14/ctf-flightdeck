@@ -254,6 +254,18 @@ open menu is compared with the deck and drawn again if it differs. `no_match()` 
 row for a name that is no command. The bar's Enter takes a row while the name is incomplete
 or once the arrow keys chose one (`_chosen`), and otherwise posts what is typed.
 
+**The bar's title** (P64). The title on the bar's border says who what is typed goes to.
+`commands.goes_to(typed)` reads the text with `parse()`, so it is what Enter would do: the
+run's for a command that takes no lane, a lane's when the command names one, otherwise the
+lane the bar acts on (also for text `parse()` refuses). `views.bar_title(deck, typed, lane)`
+draws it: `to L04 · Ticket Desk`, `no lane`, `no lane L07`, `the run`, the challenge's name
+through `text.untrusted()` in a `Text`, never markup. `widgets.CommandBar` takes a `title`
+callable from the screen that hosts it and calls it in `show_title()`: at every change of
+its text, and when the screen says its lane may have changed (`FleetScreen._render_why`,
+with `bar_lane()`; `FocusScreen.refresh_view`, with the open lane). A title is set again
+only when its words or its colours differ, so a redraw that changes nothing costs nothing.
+`widgets.BAR` is the one placeholder of both views.
+
 ## 4. Lanes
 
 | Piece | Where | Job |

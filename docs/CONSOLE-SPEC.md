@@ -22,7 +22,8 @@ below describe. **simple**, the default, shows the same two views with less in t
 │                                  │ │    1  submit mock{…}   0  do not submit   enter open            │
 ╰──────────────────────────────────╯ ╰────────────────────────────────────────────────────────────────╯
  ● wren solved Night Shift · stopped L05                                    (status: latest outcome or event)
-╭ / for commands · enter opens the selected lane · or type a message to it ──────────────────────────╮
+╭─ to L04 · Ticket Desk ─────────────────────────────────────────────────────────────────────────────╮
+│ a message, or / for commands                                                                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  o open  ? help  p pause  h hint  r redirect  f fork  k kill  e escalate  t take over  a approve  d decline  A approve all  x dismiss  ...
 ```
@@ -55,6 +56,15 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   (for an alert about its course, also `x dismiss`).
 - **Command bar**: acts on the same lane the keys do (the board challenge's only lane when the board
   has focus; refused when the filter hides the selected lane). Its suggestions follow the selection.
+  The title on its border says who what is typed goes to, and follows the selection (P64):
+  `to L04 · Ticket Desk` for that lane; `no lane` when there is none (no lane yet, the board
+  on a challenge with no lane or several, a filter that hides the selected lane); the lane a
+  command names while it is typed (`/kill L07` reads `to L07 · …`, and `no lane L07` when
+  there is no such lane); `the run` while a command that takes no lane is typed (`/note`,
+  `/config`, `/queue`, `/approve all`). It is read from what is typed the way Enter reads
+  it, so a name not yet whole, or a command Enter would refuse, leaves the title on the
+  lane. The challenge's name is challenge text: made safe, never markup, cut with `…` at the
+  bar's width. The empty bar reads `a message, or / for commands`.
   Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
   word (`/approve 2` does not approve the selected lane; name it: `/approve L02`). `/approve all`
   names no lane: it is the fleet's `A` (Interventions, below), in either view.
@@ -67,7 +77,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   be, and stays until there is one (a status line would expire). On a board the player fills:
   `No challenges yet. Type /new to hand one over (its text, files, a screenshot).`, and the
   command bar reads `/new to add a challenge · / for commands`. On a board that fills by itself:
-  `Waiting for the board: challenges appear here when the event releases them.` A board with
+  `Waiting for the board: challenges appear here when the event releases them.`, and the bar
+  reads `/ for commands`. The bar's title is `no lane` on both. A board with
   challenges and no lane has `No lanes yet.` on the why line.
 - **The `/` menu**: every command that matches what is typed, eight rows at a time; the arrow
   keys scroll to the rest. A lane's suggested answers come first; with no lane to act on,
@@ -113,7 +124,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 │ │ ◆ waiting for you: submit mock{…}   /approve         │  │ │ ...                               │
 │ ╰──────────────────────────────────────────────────────╯  │ │                                   │
 ╰ plan  Decode the audio as slow-scan TV ──────────────────╯ ╰───────────────────────────────────╯
-╭ message this lane (it reads it on its next turn) · / for commands ─────────────────────────────────╮
+╭─ to L01 · Static Hiss ─────────────────────────────────────────────────────────────────────────────╮
+│ a message, or / for commands                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  esc fleet  enter send  / commands  1-9 0 answer  ctrl+n next lane needing you  tab files  pgup pgdn scroll
 ```
 
@@ -183,6 +196,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
+  Its border carries the same title as the fleet's command bar, in every layout: `to L01 ·
+  Static Hiss` for the open lane, the lane a command names while it is typed, `the run` while
+  a command that takes no lane is typed. Empty, it reads `a message, or / for commands`.
 - **Selecting and copying**: text selects with the mouse. Drag over the transcript, the calm
   card, the header or the status line, and what you dragged over is copied when you let go; the
   status line says `copied 212 characters`. A double-click takes the whole entry, also what the
@@ -254,7 +270,8 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
 │    1  redirect with the hinted technique   2  hint   x  dismiss   enter open                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ● Wave 2: 43 challenges · 10 lanes started · 33 queued
-╭ / for commands · enter opens the selected lane · or type a message to it ──────────────────────────╮
+╭─ to L01 · Static Hiss ─────────────────────────────────────────────────────────────────────────────╮
+│ a message, or / for commands                                                                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  1-9 answer  x dismiss  enter open  / commands  ? help  q quit
 ```
@@ -293,8 +310,8 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   and the full card. Key line: `esc lanes  / commands
   /help all keys  ctrl+o details`, with `1-9 answer` first while the lane has numbered answers
   (67 columns with the answers; narrower, the edge cuts `ctrl+o details` first, and `/help`
-  still lists it). The empty chat box names the lane a message goes to (`message L01 · /
-  commands`), and a lane that has ended says `esc goes back to the lanes`.
+  still lists it). The chat box names the lane a message goes to on its border, as in every
+  layout (Chat box, above), and a lane that has ended says `esc goes back to the lanes`.
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
   list with nothing typed in the command bar, and only while it is the one lane. Later lanes
@@ -553,7 +570,8 @@ matters there: what needs you and why, the one-key answers, and each lane's stat
 │                                                    │
 ╰────────────────────────────────────────────────────╯
  ● wren solved Night Shift · stopped L05
-╭ / for commands · enter opens the selected lane · … ╮
+╭─ to L04 · Ticket Desk ─────────────────────────────╮
+│ a message, or / for commands                       │
 ╰────────────────────────────────────────────────────╯
  a yes  d no  1-9 answer  / cmd  ? help  q quit
 ```

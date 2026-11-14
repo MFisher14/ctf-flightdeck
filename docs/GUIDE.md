@@ -157,7 +157,8 @@ a model API charges for. A **setting** is a line of your config.
   format.
 - **Command bar**: the line at the bottom of the console. `/` opens it for a command (`/new`,
   `/theme`) and lists the commands as you type ([The command bar](#the-command-bar)); plain
-  text typed in it is a message to the selected lane, which reads it on its next turn.
+  text typed in it is a message to the selected lane, which reads it on its next turn. The
+  bar's border names that lane.
 - **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
   **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
 - **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
@@ -464,6 +465,15 @@ simple layout's key line shows only the ones that apply now. The whole design is
 [console spec](CONSOLE-SPEC.md).
 
 ### The command bar
+
+The bar's border says who you are talking to. In the lane list it follows the selected lane:
+`to L04 · Ticket Desk` means a message you type goes to L04, and it changes as you move through
+the list. In a lane's view it names that lane. It reads `no lane` when there is none to take a
+message (no lane has started, or the board is on a challenge that no lane or several lanes
+work), and `the run` while you type a command that is not about one lane, such as `/note` or
+`/config`. A command that names a lane shows that lane while you type it: `/kill L07` reads
+`to L07 · …`, whichever lane is selected. Check the border before you press Enter: the
+lane named there is the one that reads your message on its next turn.
 
 `/` opens a menu of the commands, and typing narrows it. You do not need a command's exact
 name to find it:

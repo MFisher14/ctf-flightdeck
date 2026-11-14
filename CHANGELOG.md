@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- The command bar names the lane it talks to. Its border reads `to L04 · Ticket Desk` and
+  follows the selected lane in the lane list; in a lane's view it names that lane. It reads
+  `no lane` when there is none to take a message, `the run` while you type a command that is
+  not about one lane (`/note`, `/config`), and the lane a command names while you type it
+  (`/kill L07`). The empty bar is shorter, the same in both views: `a message, or / for
+  commands`.
 - The `/` menu forgives. It finds a command from the second word of its name (`/over` lists
   `/takeover`) and from an alias (`/q` and `/exit` for `/quit`, `/settings` for `/config`,
   `/lanes` for `/back`, each shown beside the name). After a command's name it lists what the
