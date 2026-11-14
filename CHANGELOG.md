@@ -2,6 +2,15 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- A lane that asks for the live instance (instance `confirm`) gives its slot to the next queued
+  challenge while it waits for your answer, so the queue does not stand still while you are
+  away. Once you answer, the lane goes on if a slot is free; if none is, its state reads `queued`
+  until one frees, and it takes that one before anything queued. Its transcript says which lane
+  took its slot, and the run log has a `slot` event for each move. Other approvals keep their
+  slot.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,
