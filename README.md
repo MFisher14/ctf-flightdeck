@@ -109,8 +109,10 @@ Autopilot, headless runs, reports.
 
 Lanes that need you sort first, and the line under the list says why and numbers the answers.
 `h` hint, `r` redirect, `f` fork, `k` kill, `e` escalate to the next model, `t` take over the
-lane's shell, `a` approve a flag, **Enter** for one lane full screen, `?` for every key. More
-pictures in the
+lane's shell, `a` approve a flag, **Enter** for one lane full screen, `?` for every key. The
+console opens in a simple layout: one list of lanes and the keys that apply now. `/layout deck`
+shows the whole dashboard, as pictured here, and `/theme` changes the colours. More pictures in
+the
 [screenshot gallery](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SCREENSHOTS.md).
 
 ## Your data stays yours
@@ -188,6 +190,7 @@ If you are an AI agent reading this for a user:
 [Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md) ·
 [Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md) ·
 [Solvers](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SOLVERS.md) ·
+[Plugins](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/PLUGINS.md) ·
 [Practice set](https://github.com/MFisher14/ctf-flightdeck/blob/main/src/ctf_flightdeck/practice/README.md) ·
 [Screenshots](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SCREENSHOTS.md) ·
 [Leaderboard](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/LEADERBOARD.md) ·
