@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import socket
 import time
 
 import anthropic
@@ -30,7 +29,8 @@ from ctf_flightdeck.agent.tools import TOOLS
 from ctf_flightdeck.config import ANTHROPIC_BASE_URL
 from ctf_flightdeck.pricing import Price
 from fake_anthropic import FakeAnthropicServer, attempt, error, message, refusal, text_message, thinking, tool_message
-from fake_model import FakeReply
+from fake_model import FakeReply, held_until_retried
+from serving import closed_port
 
 KEY = "test-anthropic-key-4Rq9-not-real"  # synthetic; the shape of no real provider's key
 SESSION = "flightdeck-run1-L01"
@@ -58,12 +58,6 @@ def fails(base_url: str, **kwargs) -> ModelError:
     with pytest.raises(ModelError) as info:
         chat(base_url, **kwargs)
     return info.value
-
-
-def closed_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def turn(server: FakeAnthropicServer, messages: list[dict], **kwargs) -> Reply:
@@ -427,16 +421,11 @@ def test_a_refused_connection_is_tried_again_then_fails_as_retryable_with_no_sta
 
 
 def test_a_try_that_takes_too_long_is_given_up_on_and_tried_again():
-    count = {"n": 0}
-
-    def slow_first(record: dict) -> dict:
-        count["n"] += 1
-        if count["n"] == 1:
-            time.sleep(0.6)
-        return text_message("on the second try")
-
-    with FakeAnthropicServer(responder=slow_first) as server:
-        reply = chat(server.base_url, timeout=0.3, max_retries=1)
+    # which try is slow is the server's count, not a sleep: the first answer is held until the
+    # retry has arrived, and the retry has 2 s to be answered in (0.3 s is lost on a loaded machine)
+    first_slow = held_until_retried(text_message("too late"), text_message("on the second try"))
+    with FakeAnthropicServer(responder=first_slow) as server:
+        reply = chat(server.base_url, timeout=2.0, max_retries=1)
         assert len(server.requests) == 2
     assert reply.content == "on the second try"
 

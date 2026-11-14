@@ -8,10 +8,8 @@ only named in a config, never contacted.
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 import re
-import time
 from pathlib import Path
 
 import pytest
@@ -28,7 +26,7 @@ from ctf_flightdeck.config import (
 )
 from fake_anthropic import FakeAnthropicServer
 from fake_anthropic import text_message as claude_says
-from fake_model import FakeModelServer, error_reply, text_reply, tool_call_reply
+from fake_model import FakeModelServer, error_reply, held_until_retried, text_reply, tool_call_reply
 
 LADDER = '[models]\nladder = ["m/small", "m/big"]\n'
 LOCAL = "http://127.0.0.1:11434/v1"
@@ -233,17 +231,10 @@ def test_the_anthropic_client_sends_its_own_cap_even_on_this_machine_unless_the_
 
 
 def slow_first(reply_late, reply_in_time):
-    """A responder whose first answer takes 2 s; the ones after it come at once. A reply that
-    is not the first proves the first try was given up before its answer came."""
-    count = itertools.count()
-
-    def answer(request: dict):
-        if next(count) == 0:
-            time.sleep(2.0)
-            return reply_late
-        return reply_in_time
-
-    return answer
+    """A responder whose first answer takes 2 s, unless a retry arrives sooner; the ones after
+    it come at once. A reply that is not the first proves the first try was given up before its
+    answer came. (Nothing sleeps the 2 s out: once the retry is in, the held answer is let go.)"""
+    return held_until_retried(reply_late, reply_in_time, hold=2.0)
 
 
 def test_the_configured_timeout_bounds_each_try_of_a_lane_call(tmp_path):

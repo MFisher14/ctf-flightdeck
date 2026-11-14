@@ -17,6 +17,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from serving import Serving
+
 STOP_WAIT = 5.0
 SECRET_PATH = "/hooks/T0PSECRET/webhook-token-of-the-test-7f3a91c2"  # synthetic: what a webhook's URL holds
 
@@ -35,20 +37,16 @@ class FakeWebhook:
         self._httpd = _Server(self)
         self.port = self._httpd.server_address[1]
         self.url = f"http://127.0.0.1:{self.port}{path}"
-        self._thread: threading.Thread | None = None
+        self._serving: Serving | None = None
 
     def __enter__(self) -> FakeWebhook:
-        self._thread = threading.Thread(
-            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, name="fake-webhook", daemon=True
-        )
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-webhook")
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.release()
-        if self._thread is not None:
-            self._httpd.shutdown()
-            self._thread.join()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
 
     def release(self) -> None:

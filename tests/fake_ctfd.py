@@ -56,6 +56,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
+from serving import Serving
+
 TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token has this shape
 FLAG_FORMAT = r"test\{\w+\}"  # the flags of the invented challenges below
 STOP_WAIT = 5.0  # seconds leaving the context waits for request threads in all
@@ -242,19 +244,15 @@ class FakeCTFd:
         self._lock = threading.Lock()
         self._httpd = _Server(self, tls)
         self.base_url = f"{'https' if tls else 'http'}://127.0.0.1:{self._httpd.server_address[1]}"
-        self._thread: threading.Thread | None = None
+        self._serving: Serving | None = None
 
     def __enter__(self) -> FakeCTFd:
-        self._thread = threading.Thread(
-            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, name="fake-ctfd", daemon=True
-        )
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-ctfd")
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._thread is not None:
-            self._httpd.shutdown()
-            self._thread.join()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
 
     # ------------------------------------------------------------------ for tests

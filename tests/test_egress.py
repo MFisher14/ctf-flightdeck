@@ -36,6 +36,7 @@ from ctf_flightdeck.core.model import ActionKind, Challenge
 from ctf_flightdeck.lane import IMAGE as LANE_IMAGE
 
 from l1_kit import FAKE_IMAGE, REQUIRE_LANE_IMAGE, docker_not_run, install_fake_docker
+from serving import Serving
 
 
 def run(coro):
@@ -148,10 +149,10 @@ class _Server(socketserver.ThreadingTCPServer):
         self.seen: list[bytes] = []
         super().__init__((host, 0), _Answer)
         self.port = self.server_address[1]
-        threading.Thread(target=self.serve_forever, daemon=True).start()
+        self._serving = Serving(self, "a-server")
 
     def stop(self) -> None:
-        self.shutdown()
+        self._serving.stop()
         self.server_close()
 
 

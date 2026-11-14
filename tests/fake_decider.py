@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
+from serving import Serving
+
 SYSTEMONE = "/v1/systemone"
 HEALTH = "/health"
 MODEL = "strands-decider-2B-qwen3.5-v1-2610"  # what the server reports for StrandsAgents/<this>
@@ -68,24 +70,23 @@ class FakeDeciderServer:
         self.most_at_once = 0
         self._at_once = 0
         self._lock = threading.Lock()
+        self.leaving = threading.Event()  # set as the context is left: a delayed answer waits no longer
         self._httpd = _Server(self)
         self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
-        self._thread: threading.Thread | None = None
+        self._serving: Serving | None = None
 
     def add(self, *replies) -> None:
         with self._lock:
             self._replies.extend(replies)
 
     def __enter__(self) -> FakeDeciderServer:
-        self._thread = threading.Thread(target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05},
-                                        name="fake-decider", daemon=True)
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-decider")
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._thread is not None:
-            self._httpd.shutdown()
-            self._thread.join()
+        self.leaving.set()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
 
     def asked(self) -> list[dict]:
@@ -270,7 +271,7 @@ class _Handler(BaseHTTPRequestHandler):
             headers = {name.lower(): value for name, value in self.headers.items()}
             reply = fake._answer(method, self.path, raw, headers)
             if reply.delay:
-                time.sleep(reply.delay)
+                fake.leaving.wait(reply.delay)  # the delay, cut short once the test is over: leaving waits for this thread
             self._send(reply)
         finally:
             fake._end()

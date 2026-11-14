@@ -47,8 +47,22 @@ git clone https://github.com/MFisher14/ctf-flightdeck
 cd ctf-flightdeck
 uv sync                               # the dependencies, and pytest
 git config core.hooksPath .githooks   # the commit guard: secrets and big files stay out
-uv run pytest
+uv run pytest                         # every test, one after the other: about ten minutes
+uv run pytest -n auto                 # the same tests on every core: a minute and a half on eight
 ```
+
+`-n` is [pytest-xdist](https://pytest-xdist.readthedocs.io/), which `uv sync` installs; `-n 4` (any
+number) leaves cores for other work, and one file alone is as quick without it. Most of the
+ten minutes is waiting (for a timeout to run out, for the console to settle), so the tests share
+a machine well. They can run at once because each has its own temporary folder, its own state
+folder and its own ports: keep a new test that way (`tmp_path`, a server on port 0, nothing in a
+fixed place), and do not make it depend on the test before it. One thing the tests do share is
+Docker: a lane's container is named after the second its run started, so a test that starts a
+real run in Docker (`play` with `runtime = "docker"`) takes the fixture
+`one_docker_run_at_a_time`, and those few tests take turns (`tests/turns.py`). A test that
+fails only with `-n` either shares something with another test (give it its own, or a turn) or
+has a wait too short for a busy machine (wait for what must happen, not for a time): both are
+bugs in the test, so fix them rather than run it alone.
 
 `uv run flightdeck mock` opens the console on scripted data. No test needs a key: the tests use
 local fakes (a fake model server, a fake CTFd, fake agent CLIs). The Docker tests run only when
@@ -57,7 +71,8 @@ Docker answers and `debian:bookworm-slim` is already on your machine
 Python L1 engine in the real lane image, and only when `flightdeck image build` has built it.
 No test pulls or builds an image.
 
-CI runs the tests and the secret scan on Linux and macOS for every push and pull request. Its
+CI runs the tests (with `-n auto`) and the secret scan on Linux and macOS for every push and
+pull request; the release workflow runs them one after the other before it publishes. CI's
 Linux job pulls `debian:bookworm-slim` first and sets `FLIGHTDECK_REQUIRE_DOCKER=1`: with that
 variable at 1, a Docker test that cannot run fails instead of being skipped, so the job never
 passes with those tests left out. A second job builds the lane image and runs its test with

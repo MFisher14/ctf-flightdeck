@@ -27,6 +27,7 @@ from ctf_flightdeck.agent import tools
 from ctf_flightdeck.agent.tools import SUBMITTED, TOOLS, ToolResult, Toolbox
 from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace, docker_unavailable
 from l1_kit import docker_not_run
+from serving import Serving
 
 IMAGE = "debian:bookworm-slim"
 NOTES = "".join(f"line {i}\n" for i in range(1, 1001))
@@ -474,10 +475,9 @@ def web():
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.requests = []
     server.redirect_to = ""
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    serving = Serving(server, "web")
     yield server
-    server.shutdown()
+    serving.stop()
     server.server_close()
 
 

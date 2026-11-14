@@ -9,7 +9,11 @@ client sent.
 
 The server listens on the loopback interface only, in a background thread. The responder
 runs on the server's request threads, possibly several at once: keep it quick and
-thread-safe, unless a test means it to be slow (to make the client time out).
+thread-safe, unless a test means it to be slow (to make the client time out). A slow responder
+that must lose a race does not sleep for a set time, which a loaded machine can outlast: it
+holds its answer until what the test waits for has happened (`held_until_retried`), or until
+the test is over (`server.leaving`). One that is only slow waits with `server.think(seconds)`,
+never time.sleep: leaving the context then does not wait the rest of its seconds out.
 
 With `models`, GET /v1/models lists those ids as an OpenAI-compatible server does, or gives
 that FakeReply (without, it answers 404, as a server that lists none). With `key`, every
@@ -32,6 +36,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+
+from serving import Serving
 
 CHAT_PATH = "/v1/chat/completions"
 MODELS_PATH = "/v1/models"
@@ -76,9 +82,10 @@ class FakeModelServer:
         self.key = key  # the key every request must carry; None: none needed
         self.public_models = public_models  # GET /v1/models needs no key
         self._lock = threading.Lock()
+        self.leaving = threading.Event()  # set as the context is left: what a responder that never answers waits on
         self._httpd = _Server(self)
         self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}/v1"
-        self._thread: threading.Thread | None = None
+        self._serving: Serving | None = None
 
     def add(self, *replies: dict | FakeReply) -> None:
         """Script more replies, after the ones still waiting."""
@@ -86,17 +93,20 @@ class FakeModelServer:
             self._replies.extend(replies)
 
     def __enter__(self) -> FakeModelServer:
-        self._thread = threading.Thread(
-            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, name="fake-model-server", daemon=True
-        )
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-model-server")
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._thread is not None:
-            self._httpd.shutdown()
-            self._thread.join()
+        self.leaving.set()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
+
+    def think(self, seconds: float) -> None:
+        """A slow responder's wait: `seconds`, as time.sleep would, but over as soon as the
+        context is being left. Leaving waits for the request threads, and one asleep held
+        the test for the rest of its seconds after the client had long given up."""
+        self.leaving.wait(seconds)
 
     def chats(self) -> list[dict]:
         """The requests made to the chat endpoint (the model calls), in order."""
@@ -129,6 +139,33 @@ class FakeModelServer:
             return _as_reply(responder(record))
         except Exception as exc:  # a bug in the test's responder: tell the client instead of hanging
             return FakeReply(500, _error(f"fake model server: the responder raised {type(exc).__name__}: {exc}"))
+
+
+HELD = 60.0  # seconds a held answer waits at most, should what releases it never come: the test has failed by then
+
+
+def held_until_retried(
+    late: dict | FakeReply, in_time: dict | FakeReply, *, hold: float = HELD
+) -> Callable[[dict], dict | FakeReply]:
+    """A responder for a try that must time out and a retry that must not, with nothing left to
+    the machine's speed: the first request's answer (`late`) is held until a second request has
+    arrived, which the client sends only once it has given the first up; every request after the
+    first gets `in_time` at once. So the first try runs out of the client's time however long
+    that is, and the only race left is the retry's answer against the client's timeout: give the
+    client seconds, not tenths. A client that never retries gets `late` after `hold` seconds: a
+    test of how soon a try is given up sets `hold` to the longest that may take. Nothing sleeps:
+    once the retry is in, the held request ends, and leaving the server waits for no one."""
+    count = itertools.count()
+    retried = threading.Event()
+
+    def answer(request: dict) -> dict | FakeReply:
+        if next(count) == 0:
+            retried.wait(hold)
+            return late
+        retried.set()
+        return in_time
+
+    return answer
 
 
 def error_reply(status: int, message: str, *, headers: dict[str, str] | None = None) -> FakeReply:

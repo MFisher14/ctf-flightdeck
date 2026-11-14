@@ -834,7 +834,7 @@ def test_after_flightdeck_is_killed_doctor_names_its_lanes_command_and_the_next_
                 os.killpg(pgid, signal.SIGKILL)
 
 
-def test_after_flightdeck_is_killed_its_lanes_container_is_removed_by_the_next_play(tmp_path):
+def test_after_flightdeck_is_killed_its_lanes_container_is_removed_by_the_next_play(tmp_path, one_docker_run_at_a_time):
     from test_play_signals import (
         IMAGE,
         QUIET,
