@@ -390,7 +390,7 @@ class AgentDriver:
         self.prices = dict(prices or {})
         self.max_tokens = max_tokens
         self.compact_at = compact_at  # None: never refresh a lane's context
-        self.fits: dict[str, int] = {}  # model -> the most prompt tokens its server was seen to keep whole (_dropped)
+        self.fits: dict[str, int] = {}  # model -> the smallest count of a call just before its server dropped messages (_dropped)
         self.l1 = l1  # the player's no-model solvers, run before a lane's first model call; None: none
         if instance not in INSTANCE_POLICIES:
             raise ValueError(f"instance must be one of {', '.join(INSTANCE_POLICIES)}, got {instance!r}")
@@ -1102,9 +1102,9 @@ class AgentDriver:
         OLLAMA_CONTEXT_LENGTH says more): it leaves out the oldest messages, keeping the system
         message and the latest, answers as usual and says nothing, so a lane's count stops
         growing below its refresh point and the lane goes on without its brief (seen on Ollama
-        0.34.2: docs/MODELS.md). Then the prompt tokens of the call before are as much of this
-        model's context as is known to fit, and the lane's later contexts on it are refreshed
-        there (`fits`); the player is told, once a model, what to set. Counts under
+        0.34.2: docs/MODELS.md). Then the lane's later contexts on this model are refreshed at the
+        prompt tokens of the call before, where the drop was seen (`fits`, the smallest such count);
+        that call may itself have been cut, so it is not a count known to fit; the player is told, once a model, what to set. Counts under
         DROPS_JUDGED_FROM are not judged: no real lane's request is that small."""
         tokens = reply.usage.prompt_tokens
         before, run.counted = run.counted, (messages, sent, model, reply.model, tokens)

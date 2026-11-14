@@ -104,8 +104,10 @@ flightdeck now notices this in a lane. When a call's context only grew since the
 same context, more messages, the same model) but the server counted no more prompt tokens, the
 server dropped messages. The lane's transcript says so, names `OLLAMA_CONTEXT_LENGTH` and `[api]
 context` the first time for each model, and the lane goes on at once in a fresh context with a
-summary. For the rest of the run, lanes on that model are refreshed when they reach the count the
-server was last seen to keep whole (about 28,300 in the run above), even with no `context` set.
+summary. For the rest of the run, lanes on that model are refreshed when they reach the count of
+the call before the drop (about 28,300 in the run above), even with no `context` set. That is the
+count where the drop was seen, not one known to fit: that call may already have been cut, and a
+context that jumps past the window in one turn can be cut below it without being noticed.
 One call has already gone without the oldest messages by then, so setting `context` is still the
 fix; the check only stops a lane from going on without its brief. Counts under 1,024 prompt
 tokens are not judged: no lane's request is that small.

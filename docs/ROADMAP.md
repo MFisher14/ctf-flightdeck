@@ -120,7 +120,7 @@ Proposals built and waiting for a release, in the order of their numbers in
   that past its window it leaves out a chat's oldest messages with no error and holds the
   prompt count under the window, so a lane with no `[api] context` never refreshed. The
   driver now sees a context that grew while the count did not, says so on the lane, refreshes
-  it at once, and refreshes later contexts on that model at the count known to fit.
+  it at once, and refreshes later contexts on that model at the count where the drop was seen.
 
 Known limits, each said where it applies:
 

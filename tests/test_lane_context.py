@@ -164,13 +164,13 @@ def test_a_lane_whose_server_drops_messages_is_refreshed_at_once_and_from_then_o
     stops growing at about 28,300 while the context grows, as Ollama 0.34.2's did past its
     32,768-token default (docs/MODELS.md): the lane is refreshed after the first call that
     counted no more than the one before, the player is told once what to set, and the lane's
-    next context on that model is refreshed when it reaches the 28,300 known to fit."""
+    next context on that model is refreshed when it reaches the 28,300 where the drop was seen."""
     sent, texts, fits = run_lane(tmp_path, [
         shell(1, 23_600),
         shell(2, 28_300),
         shell(3, 28_290),  # the context grew by a turn, yet the server counted less: it dropped messages
         shell(4, 12_000),  # the first call of a fresh context: not judged against the old one
-        shell(5, 28_300),  # under the driver's 50,000, but as much as the server was seen to keep
+        shell(5, 28_300),  # under the driver's 50,000, but the count where the drop was seen
     ])
     assert sent[2] == ["system", "user"] + ["assistant", "tool"] * 2  # the call the server dropped from
     assert sent[3] == ["system", "user", "user"]  # fresh, with the summary, right after it
@@ -181,6 +181,29 @@ def test_a_lane_whose_server_drops_messages_is_refreshed_at_once_and_from_then_o
     assert len([t for t in texts if "OLLAMA_CONTEXT_LENGTH=65536" in t]) == 1, texts
     assert any("context refreshed at 28,290 prompt tokens" in t for t in texts), texts
     assert any("context refreshed at 28,300 prompt tokens" in t for t in texts), texts
+
+
+def test_a_second_drop_on_the_same_model_is_said_without_the_hint_and_lowers_the_refresh_point(tmp_path):
+    """The hint to set OLLAMA_CONTEXT_LENGTH comes the first time for each model, not on every
+    drop; and a later drop at a smaller count lowers the model's refresh point to it."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 23_600),
+        shell(2, 28_300),
+        shell(3, 28_290),  # the first drop: fits 28,300, refreshed at once
+        shell(4, 12_000),  # a fresh context: not judged
+        shell(5, 20_000),  # under 28,300: not refreshed
+        shell(6, 19_000),  # the second drop, at a smaller count: fits 20,000, refreshed at once
+        shell(7, 12_000),  # a fresh context: not judged
+        shell(8, 20_000),  # under 28,300, but at the lowered point: refreshed
+    ])
+    assert fits == {"small": 20_000}
+    assert len([t for t in texts if DROPPED in t]) == 2, texts
+    assert len([t for t in texts if "OLLAMA_CONTEXT_LENGTH=65536" in t]) == 1, texts
+    assert sent[5] == ["system", "user", "user"] + ["assistant", "tool"] * 2  # grown, not refreshed at 20,000
+    assert sent[6] == ["system", "user", "user"]  # fresh after the second drop
+    assert sent[8] == ["system", "user", "user"]  # refreshed at the lowered 20,000
+    assert any("context refreshed at 19,000 prompt tokens" in t for t in texts), texts
+    assert any("context refreshed at 20,000 prompt tokens" in t for t in texts), texts
 
 
 @pytest.mark.parametrize("replies", [
