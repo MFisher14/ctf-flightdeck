@@ -54,7 +54,7 @@ a stronger model or hands you its shell.
 - **Learns from each run.** A report of where lanes stalled and which interventions helped,
   writeup drafts, and the list of challenges your solvers missed.
 
-> **Status: v0.4.0 (alpha)** is the newest release. On GitHub this page follows the code, which can
+> **Status: v0.5.0 (alpha)** is the newest release. On GitHub this page follows the code, which can
 > be ahead of that release: the
 > [changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) lists what is
 > "Unreleased", and the

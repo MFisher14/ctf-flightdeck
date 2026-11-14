@@ -2,7 +2,13 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.5.0 (2026-11-14)
+
+A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,
+and themes. Events on more platforms: plugins of the player's own, the http platform with an
+rCTF preset, and ctfd-owl and chall-manager instances. Rules that match 2026 events, with a
+record of each solve; gdb and radare2 in every Docker lane, now on Debian 13; and the first five
+minutes in a setup form on the home screen.
 
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
