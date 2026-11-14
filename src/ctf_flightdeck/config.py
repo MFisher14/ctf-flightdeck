@@ -356,20 +356,27 @@ def _config(path: Path, doc: dict) -> Config:
 
 def load_console(path: Path | None = None) -> ConsoleConfig:
     """The [console] table of the config (default: default_config_path()), for a command that
-    needs no config (the mock). No config file: the defaults. A file must be TOML with a valid
-    [console] table, or it is a ConfigError as in load_config(); its other tables are not
+    needs no config (the mock). The defaults only when no file was named and the usual one is
+    not there. A file the caller or $FLIGHTDECK_CONFIG names must be there: a named file that
+    is missing is a ConfigError, never the defaults in its place. A file must be TOML with a
+    valid [console] table, or it is a ConfigError as in load_config(); its other tables are not
     looked at, so a config that is not finished still gives the console its look."""
+    named = "the file asked for"
     if path is None:
+        named = f"the file ${CONFIG_ENV} names" if os.environ.get(CONFIG_ENV) else ""
         try:
             path = default_config_path()
         except ConfigError:
-            if os.environ.get(CONFIG_ENV):  # the player named a file, and it cannot be found
+            if named:  # the player named a file, and it cannot be found
                 raise
             return ConsoleConfig()  # no home directory: no config file
     else:
         path = expand(Path(path))
     if not path.exists():
-        return ConsoleConfig()
+        if named:
+            raise ConfigError(f"{path}: no such file ({named}), so the console's layout and theme cannot be read from it")
+        if not path.is_symlink():  # (a link to nowhere is a config that is there and broken: _parse says so)
+            return ConsoleConfig()  # the usual config is not there: a player who has not set one up
     return _console(path, _table(path, _parse(path), "console"))
 
 

@@ -1035,11 +1035,43 @@ def test_the_example_shows_the_console_table_with_the_defaults_it_has(tmp_path):
 # ---------------------------------------------------------------------- load_console: [console] alone, for the mock
 
 
-def test_load_console_without_a_config_file_gives_the_defaults(tmp_path, monkeypatch):
-    assert load_console(tmp_path / "absent.toml") == ConsoleConfig()
+def test_load_console_gives_the_defaults_only_when_the_usual_config_is_not_there(tmp_path):
+    assert not (tmp_path / "home" / ".config" / "ctf-flightdeck" / "config.toml").exists()
     assert load_console() == ConsoleConfig()  # the usual path, in a home that has no config
-    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "named-and-absent.toml"))
-    assert load_console() == ConsoleConfig()
+
+
+def test_load_console_reads_the_usual_config_when_it_is_there(tmp_path):
+    usual = tmp_path / "home" / ".config" / "ctf-flightdeck"
+    usual.mkdir(parents=True)
+    write(usual, '[console]\nlayout = "deck"\ntheme = "nord"\n')
+    assert load_console() == ConsoleConfig(layout="deck", theme="nord", palette=themes.BUILTIN["nord"])
+
+
+def test_load_console_refuses_a_named_file_that_is_not_there(tmp_path, monkeypatch):
+    """Naming a config is asking for its look: the defaults in its place would hide a typo."""
+    absent = tmp_path / "absent.toml"
+    with pytest.raises(ConfigError) as caught:
+        load_console(absent)
+    assert str(caught.value) == (f"{absent}: no such file (the file asked for), so the console's layout and "
+                                 "theme cannot be read from it")
+    named = tmp_path / "named-and-absent.toml"
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(named))
+    with pytest.raises(ConfigError) as caught:
+        load_console()
+    assert str(caught.value) == (f"{named}: no such file (the file $FLIGHTDECK_CONFIG names), so the console's "
+                                 "layout and theme cannot be read from it")
+    dangling = tmp_path / "dangling.toml"
+    dangling.symlink_to(tmp_path / "nowhere.toml")
+    with pytest.raises(ConfigError, match="no such file"):
+        load_console(dangling)
+
+
+def test_load_console_does_not_take_a_usual_config_that_is_a_link_to_nowhere_for_no_config(tmp_path):
+    usual = tmp_path / "home" / ".config" / "ctf-flightdeck"
+    usual.mkdir(parents=True)
+    (usual / "config.toml").symlink_to(tmp_path / "nowhere.toml")
+    with pytest.raises(ConfigError, match="no config file yet"):
+        load_console()
 
 
 def test_load_console_reads_the_table_of_the_file_it_is_given_or_the_usual_one(tmp_path, monkeypatch):
