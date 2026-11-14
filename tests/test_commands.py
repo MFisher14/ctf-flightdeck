@@ -46,6 +46,16 @@ def test_completion_lists_every_command_for_a_bare_slash():
     assert names == [f"/{c.name}" for c in COMMANDS]
 
 
+def test_with_no_lane_the_commands_that_need_none_come_first_and_the_rest_keep_their_order():
+    names = [c.text.strip() for c in complete("/", lane=False)]
+    assert names[:4] == ["/new", "/help", "/config", "/queue"]
+    assert names[4:] == [f"/{c.name}" for c in COMMANDS if c.name not in ("new", "help", "config", "queue")]
+    assert sorted(names) == sorted(f"/{c.name}" for c in COMMANDS)  # every command, once
+    assert [c.text for c in complete("/h", lane=False)] == ["/help ", "/hint "]  # narrowed: still what needs no lane first
+    suggested = (("/unhold", "the queue is held: no key"),)
+    assert [c.text for c in complete("/", suggested, lane=False)][:2] == ["/unhold", "/new "]  # a suggestion still leads
+
+
 def test_completion_narrows_by_prefix():
     assert [c.text for c in complete("/re")] == ["/redirect "]
     assert [c.text for c in complete("/e")] == ["/escalate "]

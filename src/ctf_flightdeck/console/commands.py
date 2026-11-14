@@ -51,6 +51,8 @@ COMMANDS = (
     Command("quit", "", "quit flightdeck (asks first while lanes are open)", lane=False),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
+# With no lane to act on, the menu lists these first: what can work now.
+NO_LANE_FIRST = ("new", "help", "config", "queue")
 
 # Alert suggestions name a key; in the command bar they become these commands.
 KEY_COMMAND = {
@@ -129,11 +131,13 @@ class Completion:
     suggested: bool = False
 
 
-def complete(typed: str, suggestions: tuple[tuple[str, str], ...] = ()) -> list[Completion]:
+def complete(typed: str, suggestions: tuple[tuple[str, str], ...] = (), *, lane: bool = True) -> list[Completion]:
     """Menu entries for the text typed so far.
 
     `suggestions` are full commands taken from the lane's alerts, as (command, why);
-    they come first while they still match what is typed.
+    they come first while they still match what is typed. `lane`: whether there is a lane
+    to act on; with none, the commands that need none come first (NO_LANE_FIRST), then
+    the rest in their usual order.
     """
     if not typed.startswith("/"):
         return []
@@ -145,7 +149,8 @@ def complete(typed: str, suggestions: tuple[tuple[str, str], ...] = ()) -> list[
     name, space, _ = typed[1:].partition(" ")
     if space:
         return out
-    for command in COMMANDS:
+    commands = COMMANDS if lane else (*(BY_NAME[first] for first in NO_LANE_FIRST), *(c for c in COMMANDS if c.name not in NO_LANE_FIRST))
+    for command in commands:
         if command.name.startswith(name.lower()):
             label = f"/{command.name} {command.args}".rstrip()
             out.append(Completion(f"/{command.name} ", label, command.help))

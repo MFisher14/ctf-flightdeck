@@ -356,7 +356,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         why = self.query_one("#why", Static)
         lane = self.bar_lane()
         self.query_one("#bar", CommandBar).set_suggestions(
-            self.fd.command_suggestions(lane.id if lane else None, with_lane=True)
+            self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None
         )
         if self.board_focused and self.selected_challenge in deck.challenges:
             why.update(views.challenge_why(deck, deck.challenges[self.selected_challenge]))
@@ -529,7 +529,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     def start_command(self, text: str) -> None:
         bar = self.query_one("#bar", CommandBar)
         lane = self.bar_lane()
-        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True))
+        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None)
         bar.start(text)
 
     @on(CommandBar.Submitted, "#bar")

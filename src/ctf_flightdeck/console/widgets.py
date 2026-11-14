@@ -1,4 +1,6 @@
 """The command bar: plain text messages a lane, `/` runs a command with a completion menu.
+The menu lists every command that matches what is typed and scrolls with the arrow keys;
+with no lane to act on, the commands that need none come first (commands.complete).
 
 Menu entries can carry lane text (a suggested redirect, a candidate flag), so they are
 drawn through text.untrusted() like everything else from a lane.
@@ -72,6 +74,7 @@ class CommandBar(Vertical):
         super().__init__(id=id)
         self.bar_placeholder = placeholder
         self.suggestions: tuple[tuple[str, str], ...] = ()  # (command, why), from the lane's alerts
+        self.has_lane = True  # there is a lane the bar acts on (the fleet with none selected: False)
         self.completions: list[Completion] = []
 
     def compose(self) -> ComposeResult:
@@ -110,16 +113,18 @@ class CommandBar(Vertical):
         self.bar_placeholder = text
         self.field.placeholder = text
 
-    def set_suggestions(self, suggestions: tuple[tuple[str, str], ...]) -> None:
-        """New suggestions (the lane's changed, or another lane is selected); an open menu follows."""
-        if suggestions == self.suggestions:
+    def set_suggestions(self, suggestions: tuple[tuple[str, str], ...], *, lane: bool = True) -> None:
+        """New suggestions (the lane's changed, or another lane is selected), and whether there
+        is a lane to act on; an open menu follows."""
+        if suggestions == self.suggestions and lane == self.has_lane:
             return
-        self.suggestions = suggestions
+        self.suggestions, self.has_lane = suggestions, lane
         if self.menu_open:
             self.refresh_menu()
 
     def refresh_menu(self) -> None:
-        self.completions = complete(self.field.value, self.suggestions)[:8]
+        """Every entry that matches what is typed: the menu shows eight rows and scrolls to the rest."""
+        self.completions = complete(self.field.value, self.suggestions, lane=self.has_lane)
         menu = self.menu
         menu.clear_options()
         if not self.completions:
