@@ -1108,7 +1108,7 @@ def test_a_drop_in_the_fleet_names_the_challenge_enter_attaches_to(tmp_path):
         await pilot.pause()
         bar = app.screen.query_one("#bar-input")
         assert bar.value == f"/attach static-hiss '{handout}' " and bar.has_focus  # the bar says where Enter sends it
-        assert "1 file ready: press Enter to attach to static-hiss" in app._status[0]
+        assert app._status[0].startswith("got doll.bin (1 B): press Enter to attach to static-hiss")  # the drop landed: said
         await pilot.press("enter")
         await until(pilot, lambda: calls)
         assert calls == [("static-hiss", [handout])]
@@ -1136,7 +1136,8 @@ def test_files_dropped_on_the_console_go_to_the_new_form_or_onto_an_attach_whate
                 await app.on_event(events.Paste(dropped))  # the fleet: the board has the focus, not the bar
                 await pilot.pause()
                 bar = app.screen.query_one("#bar-input")
-                assert bar.value == f"/attach '{handout}' " and bar.has_focus and "1 file ready" in app._status[0]
+                assert bar.value == f"/attach '{handout}' " and bar.has_focus
+                assert app._status[0] == "got my doll.bin (1 B): type the challenge's name after /attach, then Enter"
                 bar.value = ""
                 await app.on_event(events.Paste("just some words"))  # not files: an ordinary paste
                 await pilot.pause()
@@ -1150,11 +1151,186 @@ def test_files_dropped_on_the_console_go_to_the_new_form_or_onto_an_attach_whate
                 assert app.screen.files == [handout] and app.screen.query_one("#new-category").value == ""
                 assert app.screen.query_one("#new-text").text == ""  # attached, not written into the description
                 assert "1 file attached: my doll.bin" in str(app.screen.query_one("#new-attached").render())
+                assert said(app.screen).startswith("attached my doll.bin (1 B)")  # the drop landed: the form says so
                 await pilot.press("escape")
             await run.shutdown()
             run.close()
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------- a drop that arrives as typed keys
+
+
+GAP = 0.25  # seconds: the burst gap these tests run with, so a slow machine cannot split a burst or join two keys
+
+
+def key_drops(app, monkeypatch) -> None:
+    """Watch typed keys for a dropped path, as with a real terminal (off under a script, where every key comes at once)."""
+    from ctf_flightdeck.console import app as console_app
+
+    monkeypatch.setattr(console_app, "BURST_GAP", GAP)
+    app.key_drops = True
+
+
+async def burst(pilot, text: str, enter: bool = False) -> None:
+    """`text` as a terminal with no bracketed paste sends a dropped file: typed, all at once. `enter`: and Enter with it."""
+    from textual.keys import _character_to_key
+
+    await pilot.pause(GAP * 1.5)  # a drop comes after a pause: nobody types while they drag
+    for character in text:  # every key is in the queue before the first is read, as when a terminal writes them at once
+        pilot.app.post_message(events.Key(_character_to_key(character), character))
+    if enter:
+        pilot.app.post_message(events.Key("enter", "\r"))
+    await pilot.pause(GAP * 2)
+    await pilot.pause()
+
+
+def escaped(path) -> str:
+    return str(path).replace(" ", "\\ ") + " "  # as Terminal.app writes a dropped file's path
+
+
+def test_a_path_typed_all_at_once_into_any_field_of_the_form_is_a_dropped_file(tmp_path, monkeypatch):
+    handout, second = tmp_path / "my doll.bin", tmp_path / "notes.txt"
+    handout.write_bytes(b"x" * 10)
+    second.write_text("abc")
+
+    async def body(run, app, pilot):
+        key_drops(app, monkeypatch)
+        await pilot.press(*"/new", "enter")
+        await pilot.pause(GAP * 2)
+        form = app.screen
+        fields = {name: form.query_one(name) for name in ("#new-name", "#new-text", "#new-category", "#new-points")}
+        value = lambda field: field.text if hasattr(field, "text") else field.value  # noqa: E731
+        ways = [escaped(handout), f"'{handout}'", f'"{handout}"', f"{escaped(handout)}{second} "]
+        for (name, field), dropped in zip(fields.items(), ways, strict=True):
+            field.focus()
+            await pilot.pause()
+            await burst(pilot, dropped)
+            assert value(field) == "", (name, value(field))  # not one character of it was typed into the field
+            assert handout in form.files, name
+            assert said(form).startswith("attached "), (name, said(form))
+            form.files.clear()
+        assert said(form).startswith("attached my doll.bin (10 B), notes.txt (3 B)")  # the last one: two files
+        await pilot.press("escape")
+
+    in_console(tmp_path, body)
+
+
+def test_typing_is_never_a_drop_and_a_burst_that_is_not_only_files_is_typed_as_it_came(tmp_path, monkeypatch):
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"x")
+
+    async def body(run, app, pilot):
+        key_drops(app, monkeypatch)
+        await burst(pilot, "/new Doll")  # a burst, and no path: the keys it was, in order
+        bar = app.screen.query_one("#bar-input")
+        assert bar.value == "/new Doll"
+        await pilot.press("enter")  # a key that is not text
+        await pilot.pause()
+        form = app.screen
+        box = form.query_one("#new-text")
+        assert box.has_focus
+        for key in "/tmp":  # typed: a path that exists, a key at a time
+            await pilot.press(key)
+            await pilot.pause(GAP * 1.5)
+        await pilot.pause()
+        assert box.text == "/tmp" and form.files == []
+        box.text = ""
+        await burst(pilot, f"see {handout} ")  # all at once, but it does not start as a path does: never held
+        assert box.text == f"see {handout} " and form.files == []
+        box.text = ""
+        await burst(pilot, f"{handout} is the file")  # all at once and starts with a path, but is not only paths
+        assert box.text == f"{handout} is the file" and form.files == []
+        box.text = ""
+        await burst(pilot, f"{handout}.gone ")  # no such file
+        assert box.text == f"{handout}.gone " and form.files == []
+        box.text = ""
+        await burst(pilot, str(handout), enter=True)  # Enter straight after it: typed, and the line end with it
+        assert box.text == f"{handout}\n" and form.files == []
+        box.text = ""
+        await burst(pilot, "/")  # the root folder exists, and one key is never a drop
+        assert box.text == "/" and form.files == [] and said(form) == ""
+        await pilot.press("escape")
+
+    in_console(tmp_path, body)
+
+
+def test_a_path_typed_all_at_once_in_the_fleet_goes_onto_an_attach_and_none_of_its_keys_acts(tmp_path, monkeypatch):
+    handout = tmp_path / "park kill quit.bin"  # every letter of it is a key of the fleet
+    handout.write_bytes(b"x" * 2048)
+
+    async def body(run, app, pilot):
+        key_drops(app, monkeypatch)
+        await run.add_challenge(NewChallenge(name="Static Hiss", description="d"))
+        await until(pilot, lambda: app.fleet.selected_lane in run.deck.lanes)
+        lane = run.deck.lanes[app.fleet.selected_lane]
+        assert not app.screen.query_one("#bar-input").has_focus  # the lanes table has the focus: letters are its keys
+        await burst(pilot, escaped(handout))
+        bar = app.screen.query_one("#bar-input")
+        assert app.screen is app.fleet and not lane.finished and lane.state is not LaneState.PAUSED  # no key of it acted
+        assert bar.value == f"/attach static-hiss '{handout}' " and bar.has_focus
+        assert app._status[0].startswith("got park kill quit.bin (2.0 KB): press Enter to attach to static-hiss")
+        bar.value = "a half-written message"  # the bar has the focus and holds text: the path is text there, as a paste is
+        bar.cursor_position = len(bar.value)
+        await burst(pilot, f"'{handout}'")
+        assert bar.value == f"a half-written message'{handout}'"
+        bar.value = "a half-written message"
+        app.screen.set_focus(None)  # and with the focus elsewhere it is not taken, and the console says why
+        await burst(pilot, f"'{handout}'")
+        assert bar.value == "a half-written message" and app.screen is app.fleet
+        assert "1 file not taken: the command bar holds what you typed" in app._status[0]
+
+    in_console(tmp_path, body, busy_lanes())
+
+
+def test_files_dropped_on_a_board_that_takes_none_are_refused_aloud_and_their_keys_do_not_act(tmp_path, monkeypatch):
+    from ctf_flightdeck.console.app import FlightdeckApp
+    from ctf_flightdeck.mock import scenarios
+    from ctf_flightdeck.mock.world import FakeWorld
+
+    handout = tmp_path / "park kill quit.bin"
+    handout.write_bytes(b"x")
+
+    async def main():
+        world = FakeWorld(scenarios.get("sstv"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None)
+        async with app.run_test(size=(160, 46)) as pilot:
+            await pilot.pause()
+            key_drops(app, monkeypatch)
+            before = {lane.id: lane.state for lane in world.deck.lanes.values()}
+            await burst(pilot, escaped(handout))
+            assert app.screen is app.fleet and {lane.id: lane.state for lane in world.deck.lanes.values()} == before
+            assert app._status[:2] == ("not attached: files are attached on a board you fill yourself; this board is the mock's", "warning")
+            app._status = None
+            await app.on_event(events.Paste(escaped(handout)))  # the same as a paste
+            await pilot.pause()
+            assert app._status[0].startswith("not attached: files are attached on a board you fill yourself")
+            app._status = None
+            await pilot.press("slash")  # in the command bar it is text, and nothing is said
+            await pilot.pause(GAP * 2)
+            await burst(pilot, f"'{handout}'")
+            assert app.screen.query_one("#bar-input").value == f"/'{handout}'" and app._status is None
+
+    asyncio.run(main())
+
+
+def test_the_form_and_the_attach_command_say_what_to_do_when_a_dropped_file_does_not_land(tmp_path):
+    """A terminal may keep a drop to itself, and flightdeck is then sent nothing: the way that always works is on screen."""
+    from test_console import screen_text
+
+    async def body(run, app, pilot):
+        await pilot.press(*"/new", "enter")
+        await pilot.pause()
+        shown = " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
+        assert "Files: ctrl+o, or drag them in (if none lands, use ctrl+o)" in shown
+        assert "ctrl+o choose files" in " ".join(shown.split())
+        await pilot.press("escape")
+        await pilot.press(*"/att")  # the command menu, at /attach
+        await pilot.pause()
+        assert "add files to a challenge (drag them here, or none to choose)" in " ".join(screen_text(app).split())
+
+    in_console(tmp_path, body)
 
 
 def test_ctrl_o_and_a_bare_attach_open_the_file_window_and_take_what_was_chosen(tmp_path, monkeypatch):

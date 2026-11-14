@@ -40,7 +40,7 @@ COMMANDS = (
     Command("layout", "[simple|deck]", "simple: the lanes and what needs you; deck: the board and every column; alone: the other one",
             lane=False),
     Command("new", "[name]", "hand a challenge to a lane: its name, text, files and address", lane=False),
-    Command("attach", "[challenge] <files>", "add files to a challenge (drag them onto this bar); its lane restarts with them", lane=False),
+    Command("attach", "[challenge] <files>", "add files to a challenge (drag them here, or none to choose); its lane restarts", lane=False),
     Command("queue", "<challenge>", "queue a parked or new challenge", lane=False),
     Command("unhold", "", "lift the hold on the queue once its cause is fixed (a key or model id changed in "
                           "your config needs a new run)", lane=False),

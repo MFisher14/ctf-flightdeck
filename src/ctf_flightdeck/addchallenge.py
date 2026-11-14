@@ -12,7 +12,8 @@ address, when a line is nothing else (`parse`).
 
 A file is attached only when the player hands it over as a file: `--file`, the file window,
 the clipboard's image, /attach, or a drop. A terminal sends a drop as a paste that is nothing
-but paths, and only a paste of that shape is one (`dropped`). What may be attached is a
+but paths (or types the same text all at once, which the console tells from typing by its
+speed), and only text of that shape is one (`dropped`). What may be attached is a
 regular file or a folder (`refusal` names why anything else is not), and nothing is copied
 over a file that is already there.
 

@@ -8,6 +8,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
   scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane
   moved to will not, the lane is told why and goes on without it instead of ending.
+- Dropping a file on the console: a terminal that types the dropped file's path (instead of
+  pasting it) now attaches it too, and never types it into a field or runs its letters as keys.
+  Every drop that lands says so (`attached NAME (SIZE)` in the `/new` form, `got NAME (SIZE):
+  press Enter to attach` on the command bar), and one that is refused says why. If nothing at
+  all happens when you drop a file, your terminal kept it: use `ctrl+o`, or `/attach` with no
+  file, for the file window.
+- `mouse = false` under `[console]` leaves the mouse to your terminal, so you select and copy
+  text the terminal's own way. Clicks and the wheel then do nothing in the console; every key
+  works as before. The default is unchanged.
 - The console opens in a simpler layout: one list of lanes, a short header, and only the keys
   that apply to the selected lane now. Every key still acts, and `?` lists them. `/layout deck`
   brings the full dashboard back for the rest of a run; `layout = "deck"` under `[console]` in

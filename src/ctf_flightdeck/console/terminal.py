@@ -9,6 +9,10 @@ good, with the lanes still running and nothing left to stop them. TerminalDriver
 instead once its output thread is gone. On a hang-up, let_go() also stops Textual's input
 thread (it would spin on the end of file) and points stdout and stderr at /dev/null, so what
 flightdeck prints on its way out cannot fail either.
+
+The driver is also where the console's `mouse` setting acts ([console] mouse in the config):
+with it off, the terminal is never asked to report the mouse, so clicks, drags and the wheel
+stay the terminal's own (its text selection, for one).
 """
 
 from __future__ import annotations
@@ -28,6 +32,9 @@ class TerminalDriver(LinuxDriver):
     has died: what it would have drawn is dropped (there is no terminal to draw it on)."""
 
     gone = False  # let_go() has run: the terminal hung up
+
+    def __init__(self, app, *, debug: bool = False, mouse: bool = True, size: tuple[int, int] | None = None) -> None:
+        super().__init__(app, debug=debug, mouse=mouse and getattr(app, "mouse", True), size=size)
 
     def write(self, data: str) -> None:
         self._put(data)

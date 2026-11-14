@@ -343,6 +343,7 @@ def mock(
         world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True,
         palette=look.palette,
         layout=look.layout,
+        mouse=look.mouse,
         config_path=str(config_file) if config_file is not None else "",
         themes_folder=config_file.parent / "themes" if config_file is not None else None,
     ).run()

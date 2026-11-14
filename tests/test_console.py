@@ -69,6 +69,55 @@ NARROW = (120, 36)
 WIDE = (190, 46)  # every key of the fleet's key line fits, in team mode too
 
 
+# ---------------------------------------------------------------------- the mouse
+
+
+def test_a_console_told_to_leave_the_mouse_never_asks_the_terminal_for_it():
+    """What the terminal is sent when the console starts: with `mouse` off, none of the modes
+    that make it report clicks, drags and the wheel (so they stay the terminal's own)."""
+    from ctf_flightdeck.console.terminal import TerminalDriver
+
+    asks = ("\x1b[?1000h", "\x1b[?1003h", "\x1b[?1015h", "\x1b[?1006h")
+
+    async def sent(**kw) -> list[str]:
+        app = FlightdeckApp(FakeWorld(scenarios.get("sstv")).deck, **kw)
+        assert app.driver_class is TerminalDriver
+        driver = app.driver_class(app, mouse=True)  # as Textual makes it: App.run() asks for the mouse
+        written: list[str] = []
+        driver.write = written.append
+        driver.flush = lambda: None
+        driver._enable_mouse_support()
+        return written
+
+    assert [code for code in asyncio.run(sent()) if code in asks] == list(asks)  # the default: the console has the mouse
+    assert asyncio.run(sent(mouse=False)) == []
+
+
+@pytest.mark.parametrize("table, mouse", [("", True), ("[console]\nmouse = false\n", False), ("[console]\nmouse = true\n", True)])
+def test_the_mock_and_a_run_leave_the_mouse_when_the_config_says_so(tmp_path, monkeypatch, table, mouse):
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import cli
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.run import Run
+
+    config = tmp_path / "config.toml"
+    config.write_text('[models]\nladder = ["m"]\n' + table)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    opened = []
+    monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: opened.append(self.mouse))
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 0, result.output
+    assert opened == [mouse]
+
+    from types import SimpleNamespace
+
+    # what Run.app reads of a run: its console is made by the code a real run's is
+    of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
+                               release=None, shutdown=None)
+    assert Run.app(of_a_run).mouse is mouse
+
+
 # ---------------------------------------------------------------------- driving the app
 
 

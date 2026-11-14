@@ -780,10 +780,22 @@ challenge's files, for a terminal where a drop does not arrive; `/attach <challe
 file opens the same window. Files dropped on the console are taken wherever the focus is: into
 the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
 challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
-exist; any other paste is text, and text you typed on the command bar is never replaced. In the
-form, the line under the box says what is attached (each file's name and size) and the target
-it found, so you see a drop land before you add the challenge; `ctrl+r` takes the last file off
-again. A file or a folder can be attached. A device, your home folder itself, and anything that
+exist; any other paste is text, and text you typed on the command bar is never replaced. A
+terminal that types a dropped file's path instead of pasting it works too: keys that arrive
+all at once (faster than anyone types) and are nothing but the paths of files that exist are a
+drop; what you type is never read for paths. Every drop that lands says so: the form says
+`attached NAME (SIZE)`, the command bar `got NAME (SIZE): press Enter to attach`, and a file
+that cannot be attached says why. In the form, the line under the box says what is attached
+(each file's name and size) and the target it found; `ctrl+r` takes the last file off again.
+
+If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
+drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
+file window. A terminal may hold drops back while a program has the mouse, as the console does
+by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
+you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
+console, and every key works as before.
+
+A file or a folder can be attached. A device, your home folder itself, and anything that
 holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
 screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
 terminal's own way (cmd+v).
@@ -811,7 +823,8 @@ about a picture to be made up. Coding-agent lanes (`--agent`) use their CLI's ow
 
 A challenge added with no file and no target says so, and its lane is told to say what is
 missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
-challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file.
+challenge's name, and drag the file onto the command bar (or press Enter with no file, and
+choose it in the file window). Its lane starts afresh with the file.
 
 **A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
 `.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by
@@ -1074,8 +1087,9 @@ own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import
 into `FOLDER/.flightdeck/generated/`.
 
 Two optional parts of the config are about the console and about platforms. `[console]` has
-`layout` and `theme` ([Layouts](#layouts), [Themes](#themes)); your own themes are `NAME.toml`
-files in a `themes` folder beside the config file, read only when the config or `/theme` names
+`layout` and `theme` ([Layouts](#layouts), [Themes](#themes)) and `mouse` (`false` leaves the
+mouse to your terminal: its own text selection; the console is driven by keys); your own
+themes are `NAME.toml` files in a `themes` folder beside the config file, read only when the config or `/theme` names
 one. `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
 `flightdeck plugin add` ([Plugins](PLUGINS.md)); to stop allowing a plugin, take its table out.
 

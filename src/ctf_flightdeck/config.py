@@ -43,7 +43,8 @@ The optional [notify] table turns on the notification webhook (notify.py): webho
 the variable that holds its URL (a secret, read by webhook_url() as a key is; never the URL
 itself), and `on` lists which of NOTIFY_KINDS are sent (all of them when it is left out).
 
-The optional [console] table says how the console looks: `layout` (LAYOUTS) and `theme`, a
+The optional [console] table says how the console looks: `layout` (LAYOUTS), `mouse` (false:
+the console never asks the terminal for the mouse) and `theme`, a
 built-in palette or the name of a theme file in the `themes` folder beside the config
 (themes.py). The palette is loaded here, so a theme that cannot be used stops the command that
 loads the config; the default is never used in its place. load_console() reads this table
@@ -239,6 +240,7 @@ class ConsoleConfig:
     layout: str = "simple"  # simple | deck (LAYOUTS)
     theme: str = "flightdeck"  # a built-in theme, or NAME for themes/NAME.toml beside the config
     palette: themes.Palette = themes.DEFAULT  # that theme's colours
+    mouse: bool = True  # false: the terminal keeps the mouse (its own text selection; every key still works)
 
 
 @dataclass(frozen=True)
@@ -663,6 +665,9 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # "Themes", gives its keys). A theme that cannot be used is an error, never the default in its
 # place. In the console, /theme NAME tries one for the rest of the run.
 # theme = "flightdeck"
+# mouse: false leaves the mouse to your terminal, so you select and copy text the terminal's own
+# way; clicks and the wheel then do nothing in the console, and every key works as before.
+# mouse = true
 
 [agents]
 # Coding-agent CLIs as lanes (`flightdeck play --agent claude`): each CLI's own model ladder,
@@ -1406,10 +1411,13 @@ def _governor(path: Path, table: dict) -> GovernorConfig:
 
 
 def _console(path: Path, table: dict) -> ConsoleConfig:
-    _known(path, ("console",), table, ("layout", "theme"))
+    _known(path, ("console",), table, ("layout", "mouse", "theme"))
     layout = _choice(path, table, ("console", "layout"), ConsoleConfig().layout, LAYOUTS)
+    mouse = table.get("mouse", ConsoleConfig().mouse)
+    if not isinstance(mouse, bool):
+        raise _error(path, ("console", "mouse"), f"must be true or false{_got(mouse)}")
     if "theme" not in table:
-        return ConsoleConfig(layout=layout)  # no theme named: no theme file is looked for
+        return ConsoleConfig(layout=layout, mouse=mouse)  # no theme named: no theme file is looked for
     name = table["theme"]
     if not isinstance(name, str) or themes.NAME.fullmatch(name) is None:  # never shown: it is not a name
         got = "" if isinstance(name, str) else _got(name)
@@ -1420,7 +1428,7 @@ def _console(path: Path, table: dict) -> ConsoleConfig:
         raise _error(path, ("console", "theme"), str(exc)) from None
     except themes.ThemeError as exc:  # its text names the theme file
         raise ConfigError(str(exc)) from None
-    return ConsoleConfig(layout=layout, theme=name, palette=palette)
+    return ConsoleConfig(layout=layout, theme=name, palette=palette, mouse=mouse)
 
 
 def _plugins(path: Path, table: dict) -> dict[str, PluginRef]:
