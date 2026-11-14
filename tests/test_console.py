@@ -25,7 +25,7 @@ import rich.console
 from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
-from textual.widgets import DataTable, OptionList, RichLog, Select, Static
+from textual.widgets import DataTable, OptionList, Select, Static
 
 from ctf_flightdeck import credentials, fmt
 from ctf_flightdeck.console import room, theme, views
@@ -36,6 +36,7 @@ from ctf_flightdeck.console.fleet import key_room as fleet_key_room
 from ctf_flightdeck.console.focus import COMPACT_KEY_LABELS as FOCUS_COMPACT_KEYS
 from ctf_flightdeck.console.focus import KEY_LABELS as FOCUS_KEYS
 from ctf_flightdeck.console.focus import FocusScreen
+from ctf_flightdeck.console.lanelog import LaneLog
 from ctf_flightdeck.console.screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from ctf_flightdeck.console.views import FINISHED_ROW
 from ctf_flightdeck.console.widgets import CommandBar
@@ -774,7 +775,7 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
                 "(on the board, … is a queued challenge)") in text
         assert "… queued (after dollars: a cost still to come)" in text
 
-    drive(app, script, size=(160, 120))
+    drive(app, script, size=(160, 130))
 
 
 def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
@@ -1044,14 +1045,17 @@ def _log(lane) -> list[str]:
     return [shown[a.kind] + a.text for a in lane.actions if a.kind in shown]
 
 
+def shown_lines(focus: FocusScreen) -> list[str]:
+    """Every line of the transcript's rows, in view or not, whole (LaneLog.texts: a row of
+    two lines is two here)."""
+    return [line.strip() for text in focus.query_one("#transcript", LaneLog).texts() for line in text.split("\n")]
+
+
 def assert_whole_transcript(focus: FocusScreen, lane) -> None:
     """The transcript holds every step and message of `lane`, once and in order, scrolled
-    out of view or not (a long entry wraps: its first line starts it)."""
-    lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
-    got = [line for line in lines if line.startswith(("⏺ ", "› you  "))]
-    want = _log(lane)
-    assert len(got) == len(want), (len(got), len(want))
-    assert all(w.startswith(g) for g, w in zip(got, want)), list(zip(got, want))
+    out of view or not."""
+    got = [line for line in shown_lines(focus) if line.startswith(("⏺ ", "› you  "))]
+    assert got == _log(lane)
 
 
 def test_plain_text_in_the_chat_is_a_hint_and_the_transcript_shows_it():
@@ -1910,8 +1914,7 @@ def test_what_a_lane_did_is_shown_without_its_credentials_and_the_deck_keeps_it_
         assert "▲ Loop: The same output came back twice: OPENROUTER_API_KEY=[redacted]" in region_text(app, "#why")
         focus = await open_focus(pilot, app, lane.id)
         nothing_raw("focus")
-        lines = [strip.text.strip() for strip in focus.query_one("#transcript", RichLog).lines]
-        assert [line for line in lines if line.startswith(("⏺", "⎿", "The same"))] == [
+        assert [line for line in shown_lines(focus) if line.startswith(("⏺", "⎿", "The same"))] == [
             f"⏺ submit {flag}",
             "⏺ curl -H 'Authorization: Bearer [redacted]' 127.0.0.1",
             "⎿  OPENROUTER_API_KEY=[redacted]",
@@ -2494,7 +2497,7 @@ def test_reading_back_in_the_transcript_is_not_undone_by_new_steps():
     async def script(pilot):
         lane = max((x for x in deck.active_lanes() if x.state is LaneState.RUNNING), key=lambda x: len(x.actions))
         focus = await open_focus(pilot, app, lane.id)
-        log = focus.query_one("#transcript", RichLog)
+        log = focus.query_one("#transcript", LaneLog)
         await step_until(pilot, app, lambda: log.max_scroll_y > 0, "more transcript than fits")
         assert log.scroll_y == log.max_scroll_y  # it follows the lane at first
         await press(pilot, "pageup")
@@ -2568,7 +2571,7 @@ def test_at_80x24_the_focus_view_keeps_rows_for_the_transcript():
         focus = await open_focus(pilot, app, lane.id)
         talk = focus.query_one("#talk-pane").content_region.height
         assert focus.query_one("#transcript").region.height >= 3
-        assert focus.query_one("#now").region.height <= (talk + 1) // 2
+        assert focus.query_one("#now-scroll").region.height <= (talk + 1) // 2  # the card's box: a taller card scrolls in it
         assert _transcript(app)  # some of it is drawn
 
     drive(app, script, size=(80, 24))
@@ -3289,7 +3292,7 @@ def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_fo
         await press(pilot, "escape", "question_mark")
         assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
 
-    drive(app, script, size=(160, 120))  # tall enough for the whole help: it scrolls on a shorter terminal
+    drive(app, script, size=(160, 130))  # tall enough for the whole help: it scrolls on a shorter terminal
     log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
     log.attach(deck)
     log.close()

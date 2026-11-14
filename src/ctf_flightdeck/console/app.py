@@ -12,6 +12,11 @@ emits an event, whether or not a mock clock is ticking.
 In a real run, a hang-up (the terminal window closed) or a SIGTERM stops the run the way
 quitting does: every lane stops and every workspace closes before the console exits, and
 `stopped_by` names the signal (terminal.py has why a dead terminal cannot stop that).
+
+Text on the screen selects with the mouse, and what is selected is copied when the button comes
+up (a drag, a double-click for a whole entry, a triple-click for everything in its box), or
+with ctrl+c; /copy copies from a lane with no mouse. Every copy goes two ways (copy): to the
+terminal's clipboard (OSC 52) and to the operating system's, by its tool (clipboard.py).
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 
 from rich.text import Text
@@ -29,7 +34,7 @@ from textual.driver import Driver
 from textual.drivers.linux_driver import LinuxDriver
 from textual.screen import Screen
 
-from .. import themes
+from .. import clipboard, themes
 from ..config import LAYOUTS
 from ..core import interventions as iv
 from ..core.attention import SortMode
@@ -69,6 +74,7 @@ class FlightdeckApp(App[None]):
     DataTable > .datatable--header { background: transparent; color: $fd-muted; text-style: bold; }
     DataTable > .datatable--cursor { background: $fd-selected; text-style: bold; }
     DataTable:focus > .datatable--cursor { background: $fd-selected-focus; }
+    Screen > .screen--selection { background: $fd-selected-focus; }
     """
 
     def __init__(
@@ -93,6 +99,7 @@ class FlightdeckApp(App[None]):
         themes_folder: Path | None = None,
         layout: str = "deck",
         mouse: bool = True,
+        copier: Callable[[str], str] | None = None,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -102,12 +109,19 @@ class FlightdeckApp(App[None]):
         where /theme looks for the player's own themes (None: only the built-in ones).
         `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's).
         `mouse`: False never asks the terminal to report the mouse (TerminalDriver), which
-        leaves the terminal its own text selection; the console is driven by keys."""
+        leaves the terminal its own text selection; the console is driven by keys.
+        `copier` puts a text on the operating system's clipboard and returns what the player
+        must be told when it could not, "" when it did (None: clipboard.put)."""
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
         self.mouse = mouse
         self._open_first = False  # the first lane a /new starts is still to open in the focus view (simple layout)
+        # (challenge, the lane that ended to start afresh, the lanes there were then): the focus view on that lane
+        # goes to the fresh one (follow_restart); None: nothing to follow
+        self._follow: tuple[str, str, frozenset[str]] | None = None
+        self.copier = copier or clipboard.put
+        self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
         self._use_textual_theme()
@@ -310,6 +324,67 @@ class FlightdeckApp(App[None]):
 
     def warn(self, text: str) -> None:
         self.say(text, "warning")
+
+    # ------------------------------------------------------------------ copying
+
+    def copy(self, text: str, said: str) -> None:
+        """Put `text` on the clipboard and say `said`. It goes two ways, always both: to the
+        terminal's clipboard (OSC 52, Textual's own copy), which reaches the machine the player
+        sits at but never says whether the terminal took it, and to the operating system's, by
+        its tool (the copier). When no tool took it, the status line warns instead, with what
+        to do if the paste is empty: a copy is never a quiet nothing."""
+        super().copy_to_clipboard(text)
+        problem = self.copier(text)
+        if problem:
+            self.warn(problem)
+        else:
+            self.say(said)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Textual's copy (ctrl+c in a text field, a prompt's own ctrl+c) and the console's
+        copy of a selection: both ways, as every copy (copy)."""
+        self.copy(text, f"copied {len(text)} character{'' if len(text) == 1 else 's'}")
+
+    def copy_selection(self) -> bool:
+        """Copy the text selected on the screen in front. False when none is."""
+        text = self.screen.get_selected_text()
+        if not text:
+            return False
+        self._copied = self.screen.selections
+        self.copy_to_clipboard(text)
+        return True
+
+    def on_text_selected(self, event: events.TextSelected) -> None:
+        """A mouse button came up (Textual says so after every one, selection or not): what
+        the drag selected is copied. A selection already copied is not copied again by a
+        button that comes up over something else (a scroll bar dragged, a key clicked)."""
+        self._copy_once()
+
+    def _copy_once(self) -> None:
+        """Copy the selection the mouse made, unless it is the one last copied."""
+        if self.screen.selections is not self._copied:
+            self.copy_selection()
+
+    def copy_from(self, lane: Lane, what: str) -> None:
+        """/copy [output|command|flag|all]: a text of the lane's to the clipboard, with no
+        mouse (views.lane_copy has what each is). Alone it is the last output."""
+        word = what.strip().lower() or views.COPY_WHAT[0]
+        if word not in views.COPY_WHAT:  # not shown: it is not one of them
+            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(views.COPY_WHAT)}")
+            return
+        try:
+            text, name = views.lane_copy(self.deck, lane, word)
+        except views.NothingToCopy as exc:
+            self.warn(str(exc))
+            return
+        self.copy(text, f"copied {name}")
+
+    def on_click(self, event: events.Click) -> None:
+        """A double-click selects the whole entry under it and a triple-click everything in
+        its box (Textual's own), both after the button came up: copied here. Once: the news
+        that the button came up can get here after the selection is made, and has copied it then."""
+        if event.chain >= 2:
+            self._copy_once()
 
     async def on_event(self, event: events.Event) -> None:
         """Files dropped on the terminal arrive as pasted paths, or, from a terminal with no
@@ -615,20 +690,25 @@ class FlightdeckApp(App[None]):
             (warn or self.warn)(str(exc))
             return []
 
-    async def _attach(self, cid: str, files: list) -> None:
+    async def _attach(self, cid: str, files: list, lane_id: str | None = None) -> None:
         """/attach's work, in a worker: the file window when no file was named, then the copy
-        (the attacher makes it in a thread), with a line that says it is going on."""
+        (the attacher makes it in a thread), with a line that says it is going on. `lane_id`:
+        the lane the command was typed on; a focus view still on it once the files are there
+        goes to the fresh lane (follow)."""
         if not files:
             files = await self.pick_files()
             if not files:
                 return
         self.say(f"copying {len(files)} file{'' if len(files) == 1 else 's'} into {cid}...")
+        known = set(self.deck.lanes)
         try:
             ok, message = await self.attacher(cid, files)
         except Exception as exc:  # a bug: said, and the console goes on
             ok, message = False, f"could not attach to {cid}: {type(exc).__name__}: {exc}"
         self.say(message, "information" if ok else "warning")
         self.refresh_view()
+        if ok and lane_id is not None:
+            self.follow(cid, lane_id, known)
 
     def attach(self, arg: str, lane_id: str | None = None) -> None:
         """/attach [challenge] <files>: the files named (dragged onto the command bar) go into
@@ -646,7 +726,7 @@ class FlightdeckApp(App[None]):
             return
         cid = self._challenge_arg(rest, lane_id)
         if cid is not None:
-            self.run_worker(self._attach(cid, files), exclusive=False)
+            self.run_worker(self._attach(cid, files, lane_id), exclusive=False)
 
     def new_challenge(self, name: str = "") -> None:
         """/new: ask for a challenge (NewChallengePrompt), which puts it on the board (the
@@ -700,6 +780,51 @@ class FlightdeckApp(App[None]):
         if not field.has_focus and not field.value:
             self.open_lane(next(iter(self.deck.lanes)))
 
+    def follow(self, challenge_id: str, old: str, known: Iterable[str]) -> None:
+        """The lane `old` ended so that its challenge starts afresh (/attach, a kill that
+        re-queues): a focus view that shows it goes to the fresh lane, now or when that lane
+        starts (follow_restart). `known`: the lanes there were before, so the fresh one is
+        told from them. Nothing to follow when the view is not on `old`, when `old` is not a
+        lane of that challenge, or when it still runs (the deck did not restart it)."""
+        focus, lane = self.focus_screen, self.deck.lanes.get(old)
+        if focus is None or focus.lane_id != old or lane is None or lane.challenge_id != challenge_id or not lane.finished:
+            return
+        self._follow = (challenge_id, old, frozenset(known))
+        self.follow_restart()
+
+    def follow_restart(self) -> None:
+        """Move the focus view from a lane that ended to start afresh to the fresh lane, once
+        (follow), with what is typed in its chat box: a message written for the ended lane is
+        for the fresh one. Looked at when the follow is set, when the deck says something
+        (_redraw) and when the view comes back from under a prompt
+        (FocusScreen.on_screen_resume); left for the next look while the fresh lane has not
+        started (the queue is held, no lane is free) or a prompt is over the view. Nobody is
+        moved from what they turned to meanwhile: a player back in the lane list, or on
+        another lane, stays there. Dropped too once no lane is on its way (the challenge was
+        parked or solved): a lane started on it later moves nobody. The fresh lane is the
+        first one on the challenge that was not there before, is no fork and has not ended:
+        the view is never taken to a lane that has ended, such as one that started while
+        /attach copied and was ended with the files, or a fresh lane that was ended in its
+        turn under a prompt. The one that runs in its place is the fresh lane, when it
+        starts."""
+        if self._follow is None:
+            return
+        challenge_id, old, known = self._follow
+        focus = self.focus_screen
+        if focus is None or focus.lane_id != old:
+            self._follow = None
+            return
+        if self.screen is not focus:
+            return
+        fresh = next((lane for lane in self.deck.lanes.values()
+                      if lane.id not in known and lane.challenge_id == challenge_id and lane.parent is None
+                      and not lane.finished), None)
+        if fresh is None and self.deck.queued(challenge_id):
+            return
+        self._follow = None
+        if fresh is not None:
+            focus.show_lane(fresh.id, carry=True)
+
     def inform(self, text: str) -> None:
         self.say(text)
 
@@ -743,6 +868,7 @@ class FlightdeckApp(App[None]):
         self._redraw_queued = False
         self.refresh_view()
         self.open_first_lane()
+        self.follow_restart()
 
     # ------------------------------------------------------------------ navigation
 
@@ -791,9 +917,14 @@ class FlightdeckApp(App[None]):
     # ------------------------------------------------------------------ interventions
 
     def apply(self, intervention: iv.Intervention) -> iv.Outcome:
+        """Apply the player's intervention and say its outcome. A kill that re-queues, made on
+        the lane the focus view shows, takes the view to the fresh lane (follow)."""
+        known = set(self.deck.lanes)
         outcome = self.deck.apply(intervention)
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
+        if outcome.ok and isinstance(intervention, iv.Kill) and intervention.requeue:
+            self.follow(self.deck.lanes[intervention.lane].challenge_id, intervention.lane, known)
         return outcome
 
     def suggested(self, lane: Lane, key: str) -> str:
@@ -1091,6 +1222,15 @@ class FlightdeckApp(App[None]):
         narrow = "; this terminal is narrow, so the compact layout shows" if views.compact(self.size.width) else ""
         self.say(f"layout {word} for this run{keep}{narrow}")
 
+    def switch_details(self) -> None:
+        """/details: the lane view's details switch, as ctrl+o there (FocusScreen.action_details).
+        Typed anywhere else it is a warning: the switch is that view's."""
+        focus = self.focus_screen
+        if focus is None or self.screen is not focus:
+            self.warn("/details is for a lane's view (every line of its transcript, or the calm one): open a lane first")
+            return
+        focus.action_details()
+
     def set_theme(self, arg: str) -> None:
         """/theme: the themes there are; /theme NAME: the console's colours for the rest of
         this run (the config file keeps its own). A name that is no theme, or a theme file
@@ -1205,6 +1345,8 @@ class FlightdeckApp(App[None]):
             self.set_theme(arg)
         elif name == "layout":
             self.switch_layout(arg)
+        elif name == "details":
+            self.switch_details()
         elif name == "new":
             self.new_challenge(arg)
         elif name == "attach":
@@ -1269,6 +1411,8 @@ class FlightdeckApp(App[None]):
                 self.warn(f"No files pane under {views.COMPACT_MAX_WIDTH + 1} columns (diffs need it)")
                 return
             self.open_lane(lane.id, file=arg)
+        elif name == "copy":
+            self.copy_from(lane, arg)
         elif name == "open":
             self.open_lane(lane.id)
         else:

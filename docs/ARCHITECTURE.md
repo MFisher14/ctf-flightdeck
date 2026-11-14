@@ -170,6 +170,46 @@ challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY
 `EMPTY_PLATFORM`). `console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
 
+**The lane's transcript** (P63). `FocusScreen.details` is the view's one switch: as the player
+set it there (`ctrl+o`, `/details`), else off in `simple` and on in `deck` and the compact
+layout. `FocusScreen._rows()` turns the lane's log into rows for `console/lanelog.py`: with
+details on, one row for each action, drawn by `views.transcript_lines` as before; off, one for
+each entry of `views.entries()` (a run of consecutive tool calls is one entry), drawn by
+`views.entry_text()`. A row has a key (the index of its first action), a token that changes
+when what it draws does, and a function that draws it, called only for a row that is mounted.
+`LaneLog` is a scroll container with one Static for each row: rows that are unchanged stay, the
+last one is drawn again when its run grows, new ones are mounted under it, and anything else
+(another lane, the switch, a theme) mounts the rows again. It mounts the newest 300, follows the
+lane at its end with Textual's anchor, and puts the first entry in view back where it was when
+the rows are mounted again while the player reads back. What is mounted is a window of at most
+600 rows, since every mounted row is laid out again with each redraw: at the end the oldest
+go, and while the player reads back the rows before and after the window are counted in a
+first and a last row, where `pgup` and `pgdn` move it 300 rows.
+
+**Selecting and copying** (P63). Selection is Textual's: a drag, a double-click (the widget
+under it: one entry) and a triple-click (its scroll container: the transcript) select text in
+any Static that holds Text. `FlightdeckApp.on_text_selected` (a mouse button came up) and
+`on_click` (a click of two or more) copy what is selected, once for each selection; the two
+screens bind `ctrl+c` to the same copy, and take a selection down on `esc` before anything else
+(`key_escape` keeps Textual's own screen from doing it before the binding runs). Every copy
+goes through `FlightdeckApp.copy`: Textual's OSC 52 write, then the app's `copier`, which is
+`clipboard.put` (`clipboard.py`: `copy_text` runs `pbcopy`, or the first of `wl-copy`, `xclip`,
+`xsel` that takes the text, and no tool over SSH; `put` returns what the player must be told
+when no tool took it). `views.lane_copy()` is the text `/copy` copies. The highlight is
+`Screen > .screen--selection` in the app's styles, the palette's `selected_focus`.
+
+**The lane's card** (P63). `views.now_card()` draws what the lane needs from the player. Its
+full form is a Rich panel: the approval's rows first, then every open alert with its
+suggestions as commands. With `calm=True` (details off, and never in the compact layout) it
+returns the rows of `views.calm_card()` as Text: the question, its numbered answers in the
+order of `views.quick_answers()`, and what else is open (`ALSO_WORDS`). `calm_card` takes the
+width a row has and shortens the quotes of the answers row to it, so the edge cuts no numbered
+answer away. `FocusScreen._show_card()` puts the card in a Static (`#now`), which for the calm
+card has a border in `views.card_border()`'s colour, the title "needs you now" and rows that
+never wrap; the Static is inside `CardScroll` (`#now-scroll`), which carries the card's share
+of the pane and scrolls a card taller than that. The box tells the view when its width changes
+(`card_resized()`), and the calm card is drawn again for it.
+
 **Themes** (P52). `themes.py` is pure (no rich, no textual), so the config can load a palette
 without a console: `Palette` (17 colours by role, `dark`, the diff view's `syntax` style),
 `BUILTIN`, `parse()` and `load()` for a theme file, and `weak_pairs()`, the rows of `CONTRAST`

@@ -924,7 +924,7 @@ def test_the_simple_focus_view_shows_a_part_only_when_it_has_something_in_it():
             assert filler not in text, filler
         title = title_of(app, "#talk-pane")
         assert "glm" in title and "turn 1" in title and "1k tok" in title and "idle" in title  # as in the dashboard
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys"
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
         app.run_command("/diff", "L01")
         await pilot.pause()
         assert "L01 has not changed any files yet" in status_line(app) and not shown("#files-pane")
@@ -943,11 +943,11 @@ def test_the_simple_focus_view_shows_a_part_only_when_it_has_something_in_it():
         app.refresh_view()
         await pilot.pause()
         assert shown("#now") and "needs you now" in region_text(app, "#now")
-        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys"
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details"
         bar(app).field.focus()
         await press(pilot, "1")  # the answer the line promises, from the empty chat box
         assert deck.lanes["L01"].plan == "decode it as SSTV"
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys"
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
 
     drive(app, script, SIZE)
 
@@ -985,7 +985,7 @@ def test_the_deck_focus_view_keeps_every_part_and_layout_switches_an_open_lane()
         app.run_command("/layout simple", "L01")
         await pilot.pause()
         assert isinstance(app.screen, FocusScreen) and not view.query_one("#files-pane").display and not view.query_one("#others").display
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys"
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
         app.run_command("/layout deck", "L01")
         await pilot.pause()
         assert view.query_one("#files-pane").display and footer_line(app).strip().startswith("esc fleet  enter send")
@@ -1180,7 +1180,7 @@ def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leave
                 await open_focus(pilot, app, "L02")
             elif fit.compact:
                 assert keys == [f"{key} {label}" for key, label in focus.COMPACT_KEY_LABELS]  # whole at this width
-                assert list(fit.focus_keys) == ["/help all keys"]  # the one key of the simple line it has not got
+                assert list(fit.focus_keys) == ["/help all keys", "ctrl+o details"]  # the keys of the simple line it has not got
             else:
                 whole = [f"{key} {label}" for key, label in (focus.SIMPLE_ANSWER_LABEL, *focus.SIMPLE_KEY_LABELS)]
                 assert [key for key in whole if key not in keys] == list(fit.focus_keys), keys
@@ -1222,7 +1222,7 @@ def test_doctor_measures_the_terminal_in_the_layout_the_config_opens(tmp_path, m
         "each lane's state and cost); on a busy run the console leaves out the event's name and the flightdeck name in the "
         "header; each lane's last action in the lane list (the lane's own view has it) and the files pane of that view (the "
         "simple layout starts at 65 columns); x dismiss and enter open on the fleet view's key line (? lists every key); "
-        "/help all keys on the focus view's key line"
+        "/help all keys and ctrl+o details on the focus view's key line"
     )
 
 

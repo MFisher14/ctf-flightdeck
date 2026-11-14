@@ -381,9 +381,43 @@ first, and the line under the list says why and numbers the answers: one key ans
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
 commands; `esc` goes back).
 
-![One lane full screen: the two other lanes that need you, its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](screenshots/simple-lane.png)
+![One lane full screen: the two other lanes that need you; its transcript in five rows, two runs of tool calls with the last call of each and the alert between them; a needs-you box with two numbered answers; the files it changed and the diff of one of them; and the chat box](screenshots/simple-lane.png)
 
 *A lane full screen, from `flightdeck mock` (invented challenges).*
+
+A lane's view is calm: each thing the lane did is one row, cut at the edge of the pane. A run
+of tool calls is two rows, how many and the last one (`⏺ 12 tool calls`, then what it is doing
+now); a long command or output shows its first line and ` …+6 lines`; an alert is its name and
+turn; the model's own words are the one thing that wraps. `ctrl+o` (or `/details`) shows every
+line of every command and output, and again hides them; it works while you are typing, and
+what you typed stays. `pgup` and `pgdn` scroll, and the view stays where you are reading until
+you are back at the end.
+
+The box under the transcript, **needs you now**, is as short: three rows at most. The first is
+what the lane asks: the approval it waits for (`◆ waiting for you: raise the cap by 50%`), or
+its most urgent alert and why it fired. The second is the answers, each with its number: `1
+more budget   0 stop the lane`, or for an alert `1 hint "You are repeating …"   2 kill and
+re-queue fresh   /dismiss not a problem`, where the words in quotes are the start of the message
+that `1` sends. Press the number while the chat box is empty. The third row is there only when
+something else is open on the lane, and names it (`also: looping · stalled`). `ctrl+o` shows the
+full card: every alert with its whole reason, and each answer as the command you could type.
+On a full card too tall for its half of the pane, the approval and its answers stay on top and
+the mouse wheel scrolls to the rest.
+
+**Copying text.** Drag the mouse over the transcript, the needs-you box, the header or the
+status line: what you dragged over is copied when you let go, and the status line says `copied
+212 characters`. A double-click copies a whole entry, also the part the edge cut with `…`; a
+triple-click the whole transcript on screen. `ctrl+c` copies the selection again and `esc`
+takes it down. With no mouse, `/copy` copies the lane's last output with its line breaks,
+`/copy command` the command that printed it, `/copy flag` the lane's flag, and `/copy all` the
+whole transcript. A copy shows a credential's name and never its value, as the screen does.
+
+flightdeck copies through your system's clipboard tool (`pbcopy` on macOS; `wl-copy`, `xclip`
+or `xsel` on Linux) and through the terminal (OSC 52), which is what reaches your machine over
+SSH. If neither can be shown to have worked, the status line says so and what to do: install
+`xclip` or `wl-copy`, or use the terminal's own selection by holding fn (Terminal.app), Option
+(iTerm2) or Shift while you drag. That selection is also the way to copy from the full
+needs-you card, the diff and the lane list, which flightdeck's own selection does not reach.
 
 `t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
 lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
@@ -449,11 +483,14 @@ The console has two layouts.
 
 A lane's own view shows a part only when it has something in it: the files pane once the lane
 has changed a file, the strip of other lanes while one of them needs you. Its title has the
-lane's model, turns, tokens and idle time, which the list leaves out.
+lane's model, turns, tokens and idle time, which the list leaves out. Its transcript is the
+calm one, a row for each thing the lane did, and its needs-you box is three rows at most;
+`ctrl+o` shows every line and the full box.
 
 **deck** is the whole dashboard: the board of every challenge beside the lanes, each lane's
 model, turns and idle time in its row, tokens and the event clock in the header, and every key
-on the key line.
+on the key line. A lane's view shows every line of its transcript there and the full needs-you
+box, and `ctrl+o` gives the calm ones.
 
 ![The deck layout: the board of eight challenges on the left and six lanes on the right with their model, turns, cost and idle time](screenshots/fleet.png)
 
@@ -949,7 +986,11 @@ about a picture to be made up. Coding-agent lanes (`--agent`) use their CLI's ow
 A challenge added with no file and no target says so, and its lane is told to say what is
 missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
 challenge's name, and drag the file onto the command bar (or press Enter with no file, and
-choose it in the file window). Its lane starts afresh with the file.
+choose it in the file window). Its lane starts afresh with the file,
+and the status line names the fresh lane (`attached extra.txt to doll; L01 restarted as L02`).
+Typed in the lane's own view, `/attach` needs no name, and the view goes to the fresh lane with
+whatever you were typing; `/kill` there does the same. If no lane can start yet (the queue is
+held, every lane is busy) the view moves when one does, unless you have gone elsewhere meanwhile.
 
 **A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
 `.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by

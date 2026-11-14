@@ -82,6 +82,24 @@ def no_real_file_window(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_clipboard(monkeypatch):
+    """No test changes the real clipboard (clipboard.copy_text): one that would fails instead.
+    A console under test gets its own copier; a test of the tools gives its own runner."""
+    import subprocess
+
+    from ctf_flightdeck import clipboard
+
+    real = clipboard.copy_text
+
+    def guarded(*args, **kwargs):
+        if kwargs.get("run", subprocess.run) is subprocess.run:
+            raise AssertionError("a test would have changed the real clipboard: give FlightdeckApp a copier, or clipboard.copy_text a runner")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(clipboard, "copy_text", guarded)
+
+
+@pytest.fixture(autouse=True)
 def default_palette():
     """Each test starts and ends in the default theme: the palette in use is one for the whole
     process (console/theme.py), and a console a test opened in another theme would colour the

@@ -96,6 +96,34 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A status line too long for the terminal goes on in a second row instead of being cut, so
   what `/layout` and `/theme` answer (the config line that keeps the choice, and its file) is
   read whole at 80 columns.
+- A lane's view is calm in the simple layout: one row for each thing the lane did, a run of
+  tool calls on two (`⏺ 12 tool calls`, and the last one), a long L1 note or command as its first
+  line and ` …+14 lines`, an alert as its name and turn. `ctrl+o` (or `/details`) shows every
+  line and every output, and hides them again. The deck layout shows every line as before, and
+  `ctrl+o` gives the calm view there. The transcript wraps again when the terminal is resized.
+  A long transcript draws its newest 300 entries, and never more than 600: a first or last row
+  counts the rest, and `pgup` or `pgdn` there shows 300 more.
+- The "needs you now" card in a lane's view is calm in the simple layout too: three rows where
+  it could take twenty. What the lane asks (the approval it waits for, or its most urgent alert
+  and why it fired), the numbered answers (`1 more budget   0 stop the lane`), and a row for
+  whatever else is open (`also: looping · past its effort budget · stalled`). `ctrl+o` shows
+  the full card, every alert with its whole reason and each answer as a command, as the deck
+  layout does. On the full card the approval and its `1` and `0` now come first, and a card
+  taller than its half of the pane scrolls: before, a lane with four alerts lost the approval
+  under the edge. An approval's text on the card shows a credential's name but not its value,
+  as the transcript does (before, the card showed the value).
+- A lane that restarts takes its view with it: `/attach` or `/kill` typed in a lane's own view
+  moves the view to the fresh lane, with what you were typing (before, the view stayed on the
+  dead lane). `/attach` names the fresh lane (`L01 restarted as L02`), and the ended lane reads
+  `killed: to restart with extra.txt`. In the simple layout the chat box names its lane
+  (`message L01 · / commands`).
+- Text in the console selects and copies: drag over a lane's transcript, its needs-you box,
+  the header or the status line and it is copied when you let go (`copied 212 characters`); a
+  double-click copies a whole entry, a triple-click the transcript. `ctrl+c` copies the
+  selection again, `esc` takes it down. `/copy` copies with no mouse: a lane's last output,
+  `/copy command`, `/copy flag`, `/copy all`. It uses `pbcopy`, `wl-copy`, `xclip` or `xsel`
+  and the terminal's clipboard (OSC 52, which works over SSH), and says so when it cannot tell
+  that the copy arrived.
 - The mock opens in your config's layout and theme, and the home screen in its theme.
   `flightdeck doctor` measures your terminal in the layout your config names, and reports each
   plugin you added.
