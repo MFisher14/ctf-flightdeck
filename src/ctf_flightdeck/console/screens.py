@@ -222,8 +222,9 @@ class NewChallengePrompt(ModalScreen["str | None"]):
                 yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
                 yield Input(placeholder="points (optional)", id="new-points", classes="short")
             yield Static(Text(""), id="new-problem")
+            # ctrl+r is said when a file is attached (add_files): one more key here would wrap the line
             yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste a screenshot"),
-                               ("ctrl+r", "remove last file"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
+                               ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
     def on_mount(self) -> None:
         field = self.query_one("#new-name", Input)
