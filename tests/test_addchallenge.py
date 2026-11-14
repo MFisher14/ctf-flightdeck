@@ -335,7 +335,8 @@ def test_new_in_the_console_hands_a_challenge_with_its_file_to_a_lane_that_solve
             app = run.app(refresh_seconds=None)
             async with app.run_test(size=(160, 46)) as pilot:
                 await pilot.pause()
-                assert not run.deck.lanes and "/new" in app._status[0]
+                page = str(app.screen.query_one("#empty").render())  # in the page itself: a status line expires
+                assert not run.deck.lanes and "Type /new to hand one over" in page and app.screen.query_one("#empty").display
                 await pilot.press(*"/new Read Me", "enter")
                 await pilot.pause()
                 box = app.screen.query_one("#new-text")

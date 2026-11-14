@@ -6,6 +6,9 @@ to do about it. The command bar acts on the same lane the keys do. Under 100 col
 board hides so the lane list keeps its columns. The key line at the bottom always shows
 `? help` and `q quit`; on a narrow terminal the keys needed least are left out of it first.
 
+While the board has no challenge, the page says so where the tables would be, and what to do
+about it (EMPTY_BY_HAND, EMPTY_PLATFORM): it stays until there is one, unlike a status line.
+
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: each lane's
 row has what needs you, the lane, its challenge, state and cost; the why line has six rows,
 with the answers one a row; the key line has the answers, the commands, help and quit.
@@ -56,6 +59,15 @@ COMPACT_KEYS = (
     ("a", "a", "yes"), ("d", "d", "no"), ("", "1-9", "answer"), ("slash", "/", "cmd"),
     ("question_mark", "?", "help"), ("q", "q", "quit"),
 )
+# What the page says while the board has no challenge: on a board the player fills (/new works
+# there), and on one that comes from a platform or a script.
+EMPTY_BY_HAND = "No challenges yet. Type /new to hand one over (its text, files, a screenshot)."
+EMPTY_PLATFORM = "Waiting for the board: challenges appear here when the event releases them."
+# The command bar's placeholder: with lanes to act on, on an empty board the player fills, and
+# on an empty board that fills by itself.
+BAR = "/ for commands · enter opens the selected lane · or type a message to it"
+BAR_EMPTY_BY_HAND = "/new to add a challenge · / for commands"
+BAR_EMPTY_PLATFORM = "/ for commands"
 
 
 def lane_rows(lines: int, *, compact: bool = False) -> int:
@@ -68,6 +80,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen { layout: vertical; }
     FleetScreen #header { height: 1; margin: 0 1; }
     FleetScreen #main { height: 1fr; margin-top: 1; }
+    FleetScreen #empty { height: 1fr; margin: 1 1 0 1; padding: 1 2; border: round $fd-border; display: none; }
     FleetScreen #board-pane { width: 30%; min-width: 30; max-width: 52; }
     FleetScreen #lanes-pane { width: 1fr; }
     FleetScreen #board, FleetScreen #lanes { height: 1fr; }
@@ -76,6 +89,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen #status { height: 1; margin: 0 2; text-wrap: nowrap; text-overflow: ellipsis; }
     FleetScreen #keys { height: 1; margin: 0 1; link-style: none; link-style-hover: underline; }
     FleetScreen.-compact #main { margin-top: 0; width: 100%; }
+    FleetScreen.-compact #empty { margin: 0; padding: 0 1; }
     FleetScreen.-compact #why { height: 6; margin-top: 0; }
     """
     BINDINGS = [
@@ -116,6 +130,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         self._lane_cursor: str | None = None  # row key under the cursor: a lane or the finished row
         self._lane_columns: list[tuple[str, str, int]] = []
         self._board_columns: list[tuple[str, str, int]] = []
+        self._empty: bool | None = None  # the board has no challenge, so the page says so (None: not drawn yet)
         self._ready = False  # widgets composed; set at the start of on_mount
 
     @property
@@ -126,6 +141,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def compose(self) -> ComposeResult:
         yield Static(id="header")
+        yield Static(id="empty")
         with Horizontal(id="main"):
             with Vertical(id="board-pane", classes="panel"):
                 yield DataTable(id="board", cursor_type="row")
@@ -133,7 +149,7 @@ class FleetScreen(Screen, inherit_bindings=False):
                 yield DataTable(id="lanes", cursor_type="row")
                 yield Static(id="why")
         yield Static(id="status")
-        yield CommandBar("/ for commands · enter opens the selected lane · or type a message to it", id="bar")
+        yield CommandBar(BAR, id="bar")
         yield Static(id="keys")
 
     def on_mount(self) -> None:
@@ -143,7 +159,8 @@ class FleetScreen(Screen, inherit_bindings=False):
         self._fit_board(self.size.width)
         self._set_columns()
         self.refresh_view()
-        self.query_one("#lanes", DataTable).focus()
+        if not self._empty:  # on an empty board nothing has the focus: the keys act all the same
+            self.query_one("#lanes", DataTable).focus()
 
     def on_resize(self, event: events.Resize) -> None:
         changed = self._fit_layout(event.size.width)
@@ -224,10 +241,34 @@ class FleetScreen(Screen, inherit_bindings=False):
         with self.app.batch_update():
             header = self.query_one("#header", Static)
             header.update(self.fd.header_text(max(40, header.size.width or self.size.width - 2), compact=self.compact))
+            self._render_empty()
             self._render_board()
             self._render_lanes()
             self._render_why()
             self.query_one("#status", Static).update(self.fd.status_text())
+
+    def _render_empty(self) -> None:
+        """While the board has no challenge, say so in the page, in place of the tables: what
+        to do on a board the player fills, or that it fills by itself. A status line would
+        expire; this stays until a challenge is there. The command bar's placeholder follows."""
+        empty = not self.fd.deck.challenges
+        by_hand = self.fd.adder is not None
+        page = self.query_one("#empty", Static)
+        bar = self.query_one("#bar", CommandBar)
+        if empty:  # each time: /theme changes its colours, and Textual gives a screen it comes back to a focus
+            page.update(empty_text(by_hand))
+            if self.focused is not None and self.focused.id in ("board", "lanes"):
+                self.set_focus(None)  # a table that is not shown takes no keys: the screen's own keys act all the same
+        if empty == self._empty:
+            return
+        self._empty = empty
+        page.display = empty
+        self.query_one("#main").display = not empty
+        bar.set_placeholder((BAR_EMPTY_BY_HAND if by_hand else BAR_EMPTY_PLATFORM) if empty else BAR)
+        if not empty:  # the tables are back: they take their columns once they have a size, and the lane list the focus
+            self.call_after_refresh(self._set_columns)
+            if not bar.field.has_focus:  # a player typing in the bar goes on typing
+                self.query_one("#lanes", DataTable).focus()
 
     def _render_board(self, rebuild: bool = False) -> None:
         deck = self.fd.deck
@@ -568,6 +609,14 @@ class FleetScreen(Screen, inherit_bindings=False):
     def _allowed(self, action: str) -> bool:
         name = action.partition("(")[0]
         return "." in name or bool(self.check_action(name, ()))
+
+
+def empty_text(by_hand: bool) -> Text:
+    """What the page says while the board has no challenge (EMPTY_BY_HAND, EMPTY_PLATFORM)."""
+    if not by_hand:
+        return Text(EMPTY_PLATFORM, theme.MUTED)
+    before, command, after = EMPTY_BY_HAND.partition("/new")
+    return Text.assemble((before, theme.TEXT), (command, f"bold {theme.ACCENT}"), (after, theme.TEXT))
 
 
 def fit_keys(bindings: list[Binding], width: int | None) -> tuple[list[Binding], list[Binding]]:

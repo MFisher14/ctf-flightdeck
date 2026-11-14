@@ -105,6 +105,11 @@ class CommandBar(Vertical):
         self.field.value = ""
         self.hide_menu()
 
+    def set_placeholder(self, text: str) -> None:
+        """What the empty bar says (it changes with what the player can do now)."""
+        self.bar_placeholder = text
+        self.field.placeholder = text
+
     def set_suggestions(self, suggestions: tuple[tuple[str, str], ...]) -> None:
         """New suggestions (the lane's changed, or another lane is selected); an open menu follows."""
         if suggestions == self.suggestions:

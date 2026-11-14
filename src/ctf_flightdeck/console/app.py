@@ -161,8 +161,6 @@ class FlightdeckApp(App[None]):
             self._catch_signals()  # before any lane starts
         if self._on_start is not None:
             self._on_start()
-        if self.adder is not None and not self.deck.challenges:
-            self.say("The board is empty. Type /new to add a challenge: its name, then its text, files and screenshots.")
         if self.welcome:
             from .screens import WelcomeScreen
 
