@@ -13,6 +13,8 @@ with no model, which ones are:
   running instance of a wanted challenge is never stopped to make room: it is being worked.
   A wanted challenge whose start got no clear answer goes first in line (see below): its
   instance may be up and hold a slot, so the slot stays its own until its status is asked.
+  An instance of this run at an address flightdeck will not use holds its slot the same way,
+  for as long as it is known: first in line while wanted, and counted until it is stopped.
 - `InstanceRunner` applies it every few seconds from a task on the console's loop
   (`work()`), asking the platform in a worker thread (platform/instances.InstanceClient).
 
@@ -103,7 +105,8 @@ class Need:
     running: bool  # its instance is up, as far as this run knows
     ours: bool = True  # this run started it (False: adopted, never stopped here)
     place: int = 0  # its place in line: open lanes first, then the deck's queue order
-    claimed: bool = False  # a start of this run got no clear answer (CLAIM_FOR): its instance may be up and hold a slot
+    claimed: bool = False  # a start of this run got no clear answer (CLAIM_FOR), or `held`: its instance may be up and hold a slot
+    held: bool = False  # this run's instance is up at an address flightdeck will not use (`unusable`): it holds a slot
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,7 @@ def plan(needs: Sequence[Need], max_running: int) -> Plan:
         raise ValueError(f"max_running must be at least 1, got {max_running}")
     stop = tuple(n.challenge for n in needs if n.running and not n.wanted and n.ours)
     kept = sum(1 for n in needs if n.running and (n.wanted or not n.ours))
+    kept += sum(1 for n in needs if n.held and not n.running and not n.wanted)  # until it is stopped; a wanted one goes first below
     # a wanted challenge whose start got no clear answer goes first: its instance may hold a slot already, and only its
     # own next try (a status) finds it
     want = sorted((n for n in needs if n.wanted and not n.running), key=lambda n: (not n.claimed, n.place, n.challenge))
@@ -239,7 +243,8 @@ class InstanceRunner:
             lanes = any(not lane.finished for lane in deck.lanes_on(ch.id))
             wanted = not ch.closed and ch.status is not ChallengeStatus.BLOCKED and (lanes or ch.id in order)
             place = -1 if lanes else order.get(ch.id, len(order))
-            out.append(Need(ch.id, wanted, ch.id in self.running, ch.id not in self.adopted, place, ch.id in claims))
+            held = ch.id in self.unusable  # for as long as it is tracked, past CLAIM_FOR too: its container holds a slot
+            out.append(Need(ch.id, wanted, ch.id in self.running, ch.id not in self.adopted, place, ch.id in claims or held, held))
         return out
 
     # ------------------------------------------------------------------ the platform, asked

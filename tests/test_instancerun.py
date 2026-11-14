@@ -451,6 +451,46 @@ def test_an_instance_this_run_started_at_an_address_it_will_not_use_is_stopped_w
     assert asyncio.run(runner.close()) == [] and platform.calls[-1] == ("stop", "c0") and platform.up == {}
 
 
+class UnusableFor(Unusable):
+    """Unusable for the challenges named, and a plain platform for the rest."""
+
+    def __init__(self, names, **kw) -> None:
+        super().__init__(**kw)
+        self.names = set(names)
+
+    def _instance(self, cid):
+        return super()._instance(cid) if cid in self.names else Platform._instance(self, cid)
+
+    def start(self, cid):
+        return super().start(cid) if cid in self.names else Platform.start(self, cid)
+
+
+def test_an_instance_at_an_address_it_will_not_use_keeps_its_one_slot_past_the_claim_time():
+    """One slot (ctfd-owl). c0's start was done at an address flightdeck will not use, so its
+    container holds the only slot for as long as it runs. Past CLAIM_FOR, c1 put ahead of it
+    must not get that slot: it would be refused as full every 30 s, and c0 never asked again."""
+    needs = [Need("a", wanted=True, running=False, place=0, claimed=True, held=True), Need("b", wanted=True, running=False, place=-1)]
+    assert plan(needs, 1).start == ("a",) and plan(needs, 1).waiting == ("b",)
+    needs = [Need("a", wanted=False, running=False, claimed=True, held=True), Need("b", wanted=True, running=False)]
+    assert plan(needs, 1).start == () and plan(needs, 2).start == ("b",)  # unwanted, it holds the slot until it is stopped
+
+    deck, runner, _, urls, clock = lab(n=2, cap=1)
+    platform = runner.client = UnusableFor({"c0"}, cap=1, clock=clock.now)
+    step(runner)
+    assert platform.up == {"c0": 31000} and runner.unusable == {"c0"}
+    deck.queue.sort(key=lambda entry: entry.challenge != "c1")  # the player puts c1 first
+    clock.t += CLAIM_FOR + RETRY_MOST
+    step(runner)
+    assert ("start", "c1") not in platform.calls and platform.calls[-1] == ("status", "c0")  # c0 is asked again, c1 waits
+    assert not any(e.data.get("full") for e in deck.events)
+    deck.platform_solved("c0", "your team")
+    clock.t += RETRY_MOST
+    step(runner)
+    assert platform.calls[-1] == ("stop", "c0") and platform.up == {} and runner.unusable == set()
+    step(runner)
+    assert list(platform.up) == ["c1"]  # c1 has its turn
+
+
 def test_an_adopted_instance_that_ended_and_is_started_again_by_this_run_is_this_runs():
     deck, runner, platform, urls, clock = lab(n=1, seconds=600)
     platform.up["c0"] = 40000  # a teammate's
