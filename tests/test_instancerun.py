@@ -559,6 +559,66 @@ def test_owl_a_start_slower_than_the_client_waits_is_found_and_stopped_and_the_n
             client.close()
 
 
+def whale_lab():
+    """The real client against the fake of ctfd-whale, its one-minute rule off (it is
+    tests/test_instance_plugins.py's), and a container the player started on the site for a
+    challenge that is not on this board: whale's start would remove it."""
+    from ctf_flightdeck.platform.instances import InstanceClient, parse_config
+
+    from fake_ctfd import TOKEN, FakeChallenge, FakeCTFd
+    from fake_instance_plugins import WHALE_TYPE
+
+    board = [FakeChallenge(1, "Boxed", category="Web", type=WHALE_TYPE), FakeChallenge(2, "Second", category="Pwn", type=WHALE_TYPE),
+             FakeChallenge(9, "Elsewhere", category="Pwn", type=WHALE_TYPE)]
+    fake = FakeCTFd(board)
+    fake.whale.limit = 0
+    fake.whale.boot(9)
+    client = InstanceClient(fake.base_url, TOKEN, {"c0": 1, "c1": 2}, parse_config({"plugin": "ctfd_whale"}), timeout=5,
+                            sleep=lambda seconds: None)
+    return fake, client
+
+
+def test_whale_a_run_never_sends_a_start_while_the_account_runs_another_challenges_container():
+    from fake_instance_plugins import WHALE_ROUTE
+
+    fake, client = whale_lab()
+    with fake:
+        try:
+            deck, runner, _, urls, clock = lab(n=2, cap=1, client=client, categories=["web", "pwn"])
+            step(runner)
+            assert [r.method for r in fake.to(WHALE_ROUTE)] == ["GET"] and fake.whale.container["challenge"] == 9
+            (text,) = said(deck)
+            assert "cap on running instances is reached" in text and "the account's one container runs another challenge" in text
+            assert "c0" in deck.waits and runner.running == {}
+            clock.t += RETRY_FULL + 1
+            step(runner)  # still the player's: asked again, and still no start
+            assert [r.method for r in fake.to(WHALE_ROUTE)] == ["GET", "GET"] and fake.whale.removed == []
+            fake.whale.container = None  # the player stops theirs on the site
+            clock.t += RETRY_FULL + 1
+            step(runner)
+            assert urls["c0"] == ("http://198.51.100.9:28002",) and fake.whale.container["challenge"] == 1
+            deck.platform_solved("c0", "your team")
+            step(runner)
+            assert fake.whale.container["challenge"] == 2 and urls["c1"] == ("tcp://198.51.100.9:28003",)
+            assert asyncio.run(runner.close()) == [] and fake.whale.container is None
+            assert fake.whale.removed == [1, 2]  # only this run's own, each by its stop, never by a start
+        finally:
+            client.close()
+
+
+def test_whale_a_start_with_no_answer_is_not_found_in_another_challenges_container_at_the_end():
+    fake, client = whale_lab()
+    with fake:
+        try:
+            deck, runner, _, _, clock = lab(n=2, cap=1, client=client)
+            runner.unanswered["c0"] = clock.now()  # a start of c0 that got no answer; the account runs Elsewhere's
+            (left,) = asyncio.run(runner.close())
+            assert "got no answer, and the platform names no instance of it yet" in left  # not "may still run ...: refused"
+            assert fake.whale.container["challenge"] == 9 and fake.whale.removed == []
+        finally:
+            client.close()
+
+
 # ---------------------------------------------------------------- in a real run, against the fake CTFd
 
 

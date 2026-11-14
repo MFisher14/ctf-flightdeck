@@ -1,10 +1,10 @@
-"""Two CTFd container plugins, faked for tests: ctfd-owl and ctfd-chall-manager.
+"""Three CTFd container plugins, faked for tests: ctfd-owl, ctfd-chall-manager and ctfd-whale.
 
 Each is shaped from the plugin's public source, read on 2026-11-14, and answers as that code
 does where flightdeck depends on it. Neither was run: what a real site does beyond its source
 (a proxy in front, a fork, an older release) is not here. tests/fake_ctfd.py's FakeCTFd holds
 one of each (`fake.owl`, `fake.chall_manager`) and sends them their routes, after CTFd's own
-token check. Every host, address and challenge is invented.
+token check (`fake.whale` too). Every host, address and challenge is invented.
 
 ctfd-owl (github.com/D0g3-Lab/H1ve, CTFd/plugins/ctfd-owl: __init__.py, control_utils.py,
 db_utils.py). Site-root routes, the challenge's number in the query:
@@ -48,6 +48,30 @@ utils/decorators.py, utils/helpers.py, utils/instance_manager.py). Under CTFd's 
   manager's 404.
 - A challenge that is hidden or not there is a 403, "challenge not visible"; a request with
   no challengeId a 400, "missing args".
+
+ctfd-whale (github.com/frankli0324/ctfd-whale at 2cc84a9, read on 2026-11-14: api.py,
+decorators.py, utils/control.py, utils/routers/frp.py and trp.py). Under CTFd's API, the
+challenge's number in the query:
+
+    GET, POST, PATCH, DELETE /api/v1/plugins/ctfd-whale/container?challenge_id=N
+
+- One container per user account (the user, not the team, even in team mode).
+- GET (status): {"success": true, "data": {}} with nothing running; for another challenge's
+  container a 403, "Container already started but not from this challenge (<a ...>NAME</a>)";
+  else data with `user_access`, `lan_domain` and `remaining_time` (seconds).
+- POST (start) first removes the account's container, whatever its challenge, then starts
+  one and answers {"success": true, "message": "Container created"}, never the address.
+- PATCH (renew) puts the full time back, up to a number of times; for another challenge's
+  container a 403. DELETE (stop) removes the account's container whatever its challenge
+  (the route does not even check the challenge).
+- `user_access` is the router's line. frp: "nc IP PORT" for a direct challenge, a link's HTML
+  for an http one. trp: a pwntools snippet with ssl=True for a direct one, an https URL for
+  an http one, "[ssl] DOMAIN PORT" for any other.
+- Refusals are flask-restx aborts: HTTP 403 with {"message", "success": false}. A challenge
+  that is hidden or not there is a 403, "challenge not visible".
+- POST, PATCH and DELETE refuse a second one within 60 seconds ("Frequency limit, You should
+  wait at least 1 min."). The plugin keeps that clock in the session; this fake keeps one for
+  the account. `limit = 0` turns it off.
 """
 
 from __future__ import annotations
@@ -65,6 +89,8 @@ OWL_ROUTE = "/plugins/ctfd-owl/container"
 OWL_TYPE = "dynamic_check_docker"
 CHALL_MANAGER_ROUTE = "/api/v1/plugins/ctfd-chall-manager/instance"
 CHALL_MANAGER_TYPE = "dynamic_iac"
+WHALE_ROUTE = "/api/v1/plugins/ctfd-whale/container"
+WHALE_TYPE = "dynamic_docker"
 _NOT_FOUND = ("404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check "
               "your spelling and try again.")
 
@@ -258,6 +284,123 @@ class FakeChallManager:
     @staticmethod
     def _abort(status: int, words: str) -> Reply:  # flask-restx's abort(code, message, success=False)
         return _reply(status, {"message": words, "success": False})
+
+
+class FakeWhale:
+    """ctfd-whale's container route. `container` is the account's one container, or None."""
+
+    def __init__(self, site: FakeCTFd, clock=time.time) -> None:
+        self.site = site
+        self.clock = clock
+        self.container: dict | None = None  # {"challenge", "port", "uuid", "started", "renews"}
+        self.router = "frp"  # "frp" or "trp": which router the site uses, and so how user_access reads
+        self.kinds: dict[int, str] = {}  # challenge id -> its redirect_type: "direct" (the default), "http" or another
+        self.direct_ip = "198.51.100.9"  # frp_direct_ip_address (a documentation address)
+        self.http_suffix = "whale.example.test"  # frp_http_domain_suffix
+        self.http_port = "80"  # frp_http_port, a string as the site's config keeps it
+        self.trp_suffix = "trp.example.test"  # trp_domain_suffix
+        self.trp_port = 1443  # trp_listening_port
+        self.seconds = 3600  # docker_timeout
+        self.max_renews = 5  # docker_max_renew_count
+        self.max_containers = 1000  # docker_max_container_count, for the whole site
+        self.others = 0  # containers other accounts run
+        self.launch_fails = False  # the launch throws: the record is removed and the start refused
+        self.slow: threading.Event | None = None  # set: a start's answer waits for it (the launch is inside the POST)
+        self.limit = 60  # seconds between two changing requests; 0: no limit
+        self.removed: list[int] = []  # the challenges whose containers a start or a stop removed, in order
+        self._changed: int | None = None
+        self._next = 0
+
+    def boot(self, challenge_id: int) -> dict:
+        """A container for the account, as the player on the site (or an earlier run) would have started it."""
+        self._next += 1
+        self.container = {"challenge": challenge_id, "port": 28000 + self._next, "uuid": f"5eed{self._next:04d}",
+                          "started": self.clock(), "renews": 0}
+        return self.container
+
+    def answer(self, method: str, query: dict) -> Reply:
+        self._clean()
+        number = _number(query.get("challenge_id", [None])[0])
+        if method != "DELETE" and not self._visible(number):
+            return self._abort("challenge not visible")
+        if method == "GET":
+            if self.container is None:
+                return _reply(200, {"success": True, "data": {}})
+            if self.container["challenge"] != number:
+                theirs = self.site.challenges[self.container["challenge"]]
+                link = f'<a target="_blank" href="/challenges#{theirs.category}-{theirs.name}-{theirs.id}">{theirs.name}</a>'
+                return self._abort(f"Container already started but not from this challenge ({link})")
+            return _reply(200, {"success": True, "data": {
+                "lan_domain": f"1-{self.container['uuid']}", "user_access": self.access(self.container),
+                "remaining_time": int(self.seconds - (self.clock() - self.container["started"]))}})
+        if method not in ("POST", "PATCH", "DELETE"):
+            return _reply(405, {"message": "The method is not allowed for the requested URL."})
+        if self._limited():
+            return self._abort("Frequency limit, You should wait at least 1 min.")
+        if method == "POST":
+            self._remove()  # whatever runs, of any challenge: the plugin's first step
+            if self.others > self.max_containers:  # counted after the removal, as the plugin does
+                return self._abort("Max container count exceed.")
+            if self.launch_fails or self.site.challenges[number].type != WHALE_TYPE:
+                return self._abort("Container creation failed")
+            self.boot(number)
+            done = _reply(200, {"success": True, "message": "Container created"})
+            done.hold = self.slow
+            return done
+        if method == "DELETE":
+            if self.container is None:
+                return self._abort("No such container")
+            self._remove()
+            return _reply(200, {"success": True, "message": "Container destroyed"})
+        if self.container is None:
+            return self._abort("Instance not found.")
+        if self.container["challenge"] != number:
+            return self._abort(f"Container started but not from this challenge（{self.site.challenges[self.container['challenge']].name}）")
+        if self.container["renews"] >= self.max_renews:
+            return self._abort("Max renewal count exceed.")
+        self.container["started"] = self.clock()
+        self.container["renews"] += 1
+        return _reply(200, {"success": True, "message": "Container Renewed"})
+
+    def access(self, box: dict) -> str:
+        """user_access as the site's router writes it (frp.py's and trp.py's access())."""
+        kind = self.kinds.get(box["challenge"], "direct")
+        if self.router == "frp":
+            if kind == "direct":
+                return f"nc {self.direct_ip} {box['port']}"
+            if kind == "http":
+                host = self.http_suffix + (f":{self.http_port}" if self.http_port != "80" else "")
+                return f'<a target="_blank" href="http://{box["uuid"]}.{host}/">Link to the Challenge</a>'
+            return ""
+        domain = f"{box['uuid']}.{self.trp_suffix}"
+        if kind == "direct":
+            return f'from pwn import *<br>remote("{domain}", {self.trp_port}, ssl=True).interactive()'
+        if kind == "http":
+            return f"https://{domain}" + (f":{self.trp_port}" if self.trp_port != 443 else "")
+        return f"[ssl] {domain} {self.trp_port}"
+
+    def _remove(self) -> None:
+        if self.container is not None:
+            self.removed.append(self.container["challenge"])
+            self.container = None
+
+    def _visible(self, number: int | None) -> bool:
+        return number in self.site.challenges and self.site.challenges[number].type != "hidden"
+
+    def _limited(self) -> bool:
+        now = int(self.clock())
+        if self.limit and self._changed is not None and now - self._changed < self.limit:
+            return True
+        self._changed = now
+        return False
+
+    def _clean(self) -> None:  # the plugin's job, every 10 s: a container past its time is removed
+        if self.container is not None and self.clock() - self.container["started"] >= self.seconds:
+            self.container = None
+
+    @staticmethod
+    def _abort(words: str) -> Reply:  # flask-restx's abort(403, message, success=False)
+        return _reply(403, {"message": words, "success": False})
 
 
 def _number(value: object) -> int | None:

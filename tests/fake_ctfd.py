@@ -31,7 +31,7 @@ A reply can be held until the test lets it go (Reply.hold; hold_attempts for eve
 a flag, judged when it arrives as CTFd would): a CTFd slow to answer.
 
 It also stands for a CTFd with a container plugin: the docker_per_team routes below
-(`containers`), and ctfd-owl's and ctfd-chall-manager's (`owl`, `chall_manager`: each shaped
+(`containers`), and ctfd-owl's, ctfd-chall-manager's and ctfd-whale's (`owl`, `chall_manager`, `whale`: each shaped
 from the plugin's public source in tests/fake_instance_plugins.py). It answers GET, POST,
 PUT, PATCH and DELETE.
 
@@ -61,7 +61,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from fake_instance_plugins import CHALL_MANAGER_ROUTE, OWL_ROUTE, FakeChallManager, FakeOwl
+from fake_instance_plugins import CHALL_MANAGER_ROUTE, OWL_ROUTE, WHALE_ROUTE, FakeChallManager, FakeOwl, FakeWhale
 from serving import Serving
 
 TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token has this shape
@@ -247,6 +247,7 @@ class FakeCTFd:
         self._next_port = 31000
         self.owl = FakeOwl(self)  # the ctfd-owl plugin's routes
         self.chall_manager = FakeChallManager(self)  # the ctfd-chall-manager plugin's
+        self.whale = FakeWhale(self)  # the ctfd-whale plugin's
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
         self._lock = threading.Lock()
@@ -335,6 +336,8 @@ class FakeCTFd:
             return refused
         if route == CHALL_MANAGER_ROUTE:
             return self.chall_manager.answer(method, query, body)
+        if route == WHALE_ROUTE:
+            return self.whale.answer(method, query)
         if method == "GET" and route == "/api/v1/challenges":
             return self._list(query)
         found = re.fullmatch(r"/api/v1/challenges/(\d+)", route)
