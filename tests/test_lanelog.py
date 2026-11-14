@@ -1,21 +1,47 @@
-"""The lane's calm transcript (details off): what views.entries and views.entry_text make of a
-lane's log. Every lane here is synthetic: its commands and outputs are written in this file and
-nothing is run.
+"""The lane's transcript in the focus view: the calm one (details off) and the details switch.
+
+The pure tests read what views.entries and views.entry_text make of a lane's log; the app
+tests read the transcript's rows (LaneLog.texts) and the screen as a player sees it. Every
+lane here is synthetic: its commands and outputs are written in this file and nothing is run.
 """
 
 from __future__ import annotations
 
+from ctf_flightdeck import themes
 from ctf_flightdeck.agent import tools
-from ctf_flightdeck.console import theme, views
+from ctf_flightdeck.console import focus, room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
+from ctf_flightdeck.console.fleet import FleetScreen
+from ctf_flightdeck.console.lanelog import MOUNTED, LaneLog, RowText
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Alert, AlertKind, Call, Challenge, DeckConfig, Lane, Pending, PendingKind
 from ctf_flightdeck.detect.base import suggestions
 from ctf_flightdeck.text import NEWLINE
-from test_console import JWT, OPENROUTER, OSC, VALUES, osc, quiet_deck, shown
+from test_console import (
+    JWT,
+    OPENROUTER,
+    OSC,
+    VALUES,
+    assert_warning,
+    bar,
+    color_of,
+    drive,
+    footer_line,
+    open_focus,
+    osc,
+    press,
+    quiet_deck,
+    region_text,
+    screen_lines,
+    send,
+    shown,
+    status_line,
+    terminal_frame,
+)
 
+BIG = (254, 71)  # the terminal of the report this view answers
 FOLD = NEWLINE.strip()  # how a folded newline shows: no calm row has one
 
 
@@ -48,6 +74,22 @@ def calm(deck: Deck, lane: Lane) -> list[str]:
 def details(deck: Deck, lane: Lane) -> list[str]:
     """Every line of the transcript in detail: what the console drew before it had a calm one."""
     return [line.plain for action in lane.actions for line in views.transcript_lines(deck, lane, action)]
+
+
+def log_of(app: FlightdeckApp) -> LaneLog:
+    return app.screen.query_one("#transcript", LaneLog)
+
+
+def lines(app: FlightdeckApp) -> list[str]:
+    """Every line of every mounted row, in view or not."""
+    return [line for text in log_of(app).texts() for line in text.split("\n")]
+
+
+def drawn(app: FlightdeckApp) -> list[str]:
+    """The transcript's rows on the screen that have text, without the scroll bar's two columns."""
+    region = log_of(app).region
+    rows = [row[region.x:region.right - 2].rstrip() for row in screen_lines(app)[region.y:region.bottom]]
+    return [row for row in rows if row]
 
 
 # ---------------------------------------------------------------------- the lane of the report
@@ -262,3 +304,393 @@ def test_credentials_are_out_of_every_calm_row_and_untrusted_text_is_drawn_as_it
     both = "\n".join(rows + details(deck, lane))
     assert not [value for value in VALUES if value in both] and OSC not in both and "\x1b" not in both
     assert OPENROUTER in lane.actions[0].output  # the deck keeps it as it was, for the lane's model
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        for switched in (False, True):  # calm, then with details on
+            frame, text = terminal_frame(app), region_text(app, "#transcript")
+            assert OSC not in frame and not [value for value in VALUES if value in frame], switched
+            assert shown("ac") in text and shown("nt") in text and shown("sy") in text and click in text and "[redacted]" in text
+            assert app.is_running and app.screen.query_one("#transcript", LaneLog).texts()  # the click in the text is text
+            await press(pilot, "ctrl+o")
+
+    drive(app, script, BIG)
+
+
+# ---------------------------------------------------------------------- the view
+
+
+def test_the_reported_lane_is_calm_in_the_simple_layout():
+    deck, app, lane = busy_lane("simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        rows = drawn(app)
+        assert len(details(deck, lane)) >= 40 and len(rows) <= 18, rows  # what the console drew before, and now
+        whole = calm(deck, lane)
+        assert len(rows) == len(whole) == 16  # a row each, and two for a run
+        assert all(row == full or (row.endswith("…") and full.startswith(row[:-1])) for row, full in zip(rows, whole)), rows
+        assert len([row for row in rows if row.endswith("tool calls")]) == 2 and not [row for row in rows if FOLD in row]
+        assert rows[1].startswith("· L1 intake: unsure (handout: 3 file(s)") and rows[1].endswith("…")  # cut at the edge, never wrapped
+        assert rows[2:4] == ["⏺ 10 tool calls", "  ⎿ $ python3 - <<'EOF' …+6 lines → b'Qu\\x82\\x9c' …+1 line"]
+        assert f"⏺ {SAID}" in rows and "▲ Loop alert · turn 13" in rows
+        assert rows[-1] == "◆ asked you · turn 14: raise the cap by 50% (now 62k of 60k tokens)"
+        assert not [row for row in rows if "more)" in row or "The same command" in row]
+        assert lines(app) == calm(deck, lane)
+
+    drive(app, script, BIG)
+
+
+def test_the_deck_layout_draws_the_reported_lane_line_for_line_as_before():
+    deck, app, lane = busy_lane("deck")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert view.details
+        assert lines(app) == details(deck, lane)
+        assert log_of(app).texts() == ["\n".join(line.plain for line in views.transcript_lines(deck, lane, action)) for action in lane.actions]
+        rows = drawn(app)  # the end of it, wrapped as it was
+        assert rows[-1] == "◆ waiting for you: raise the cap by 50% (now 62k of 60k tokens)"
+        assert "⏺ says: I have the table now; computing the key." in rows and "▲ Loop" in rows
+        assert not [row for row in lines(app) if row.endswith("tool calls")]
+        assert footer_line(app).strip().startswith("esc fleet  enter send  / commands") and "ctrl+o" not in footer_line(app)
+
+    drive(app, script, BIG)
+
+
+def test_ctrl_o_and_the_details_command_switch_the_transcript_and_say_which():
+    deck, app, lane = busy_lane("simple")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert not view.details and lines(app) == calm(deck, lane)
+        await press(pilot, "ctrl+o")
+        assert view.details and lines(app) == details(deck, lane)
+        assert status_line(app).strip() == "● details on: every line and every alert (ctrl+o hides them)"
+        await press(pilot, "ctrl+o")
+        assert not view.details and lines(app) == calm(deck, lane)
+        assert status_line(app).strip() == "● details off (ctrl+o shows every line)"
+        await press(pilot, "t", "r", "y")  # with a message half written: the key is not typed, and the draft stays
+        await press(pilot, "ctrl+o")
+        assert view.details and lines(app) == details(deck, lane) and bar(app).field.value == "try"
+        await press(pilot, "ctrl+o")
+        assert lines(app) == calm(deck, lane) and bar(app).field.value == "try" and app.focused is bar(app).field
+        assert not lane.hints  # nothing was sent
+        bar(app).clear()
+        await send(pilot, app, "/details")
+        assert view.details and lines(app) == details(deck, lane)
+        assert "details on: every line and every alert (ctrl+o hides them)" in status_line(app)
+        await send(pilot, app, "/details")
+        assert not view.details and lines(app) == calm(deck, lane) and "details off (ctrl+o shows every line)" in status_line(app)
+
+    drive(app, script, BIG)
+
+
+def test_the_details_command_in_the_lane_list_says_it_is_the_lane_views():
+    deck, app, _ = busy_lane("simple")
+
+    async def script(pilot):
+        assert isinstance(app.screen, FleetScreen)
+        await press(pilot, "slash")
+        await send(pilot, app, "details")
+        assert isinstance(app.screen, FleetScreen)
+        assert_warning(app, "/details is for a lane's view (every line of its transcript, or the calm one): open a lane first")
+
+    drive(app, script, BIG)
+
+
+def test_the_transcript_follows_the_layout_until_the_player_sets_details_by_hand():
+    deck, app, lane = busy_lane("simple")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert lines(app) == calm(deck, lane)
+        await send(pilot, app, "/layout deck")
+        assert app.layout == "deck" and view.details and lines(app) == details(deck, lane)
+        await send(pilot, app, "/layout simple")
+        assert not view.details and lines(app) == calm(deck, lane)
+        await press(pilot, "ctrl+o")  # by hand: on, in the simple layout
+        assert lines(app) == details(deck, lane)
+        await send(pilot, app, "/layout deck")
+        assert lines(app) == details(deck, lane)
+        await press(pilot, "ctrl+o")  # by hand: off, in the deck layout
+        assert lines(app) == calm(deck, lane)
+        await send(pilot, app, "/layout simple")
+        assert lines(app) == calm(deck, lane)
+        await send(pilot, app, "/layout deck")
+        assert not view.details and lines(app) == calm(deck, lane)  # the layout no longer changes it
+        await press(pilot, "escape")  # the switch is this view's: the next lane opened starts at the layout's
+        view = await open_focus(pilot, app, "L01")
+        assert view.details and lines(app) == details(deck, lane)
+
+    drive(app, script, (160, 46))
+
+
+def test_the_transcript_follows_the_lane_at_its_end_and_stays_where_the_player_reads():
+    deck, app, lane = one_lane("simple")
+    says(deck, "the first words")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        assert log.max_scroll_y == 0
+        for i in range(log.region.height + 4):  # the update that first outgrows the view: no scroll bar was there before it
+            says(deck, f"words {i}")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.max_scroll_y > 0 and log.scroll_y == log.max_scroll_y and drawn(app)[-1] == f"⏺ words {log.region.height + 3}"
+        for i in range(60):
+            says(deck, f"more words {i}")
+            if i % 20 == 0:  # as the lane streams: each redraw ends at the end
+                app.refresh_view()
+                await pilot.pause()
+                assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == f"⏺ more words {i}"
+        app.refresh_view()
+        await pilot.pause()
+        await press(pilot, "pageup")
+        at, top = log.scroll_y, drawn(app)[0]
+        assert at < log.max_scroll_y
+        for i in range(30):
+            says(deck, f"while reading back {i}")
+        shell(deck, "ls", "a\n")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.scroll_y == at and drawn(app)[0] == top and at < log.max_scroll_y  # still where the player was reading
+        await press(pilot, *["pagedown"] * 8)
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ $ ls → a"
+        shell(deck, "ls -la", "b\n")  # the last entry grows into a run: drawn again in place, and the view stays at the end
+        app.refresh_view()
+        await pilot.pause()
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-2:] == ["⏺ 2 tool calls", "  ⎿ $ ls -la → b"]
+
+    drive(app, script, (100, 24))
+
+
+def test_switching_details_while_reading_back_keeps_the_entry_the_player_was_on():
+    deck, app, lane = one_lane("simple")
+    for i in range(40):
+        says(deck, f"words {i}")
+        shell(deck, f"xxd -s {i} a.bin", "one\ntwo\n")
+        shell(deck, f"xxd -l {i} a.bin", "one\ntwo\n")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        assert log.scroll_y == log.max_scroll_y > 0
+        await press(pilot, "pageup", "pageup")
+        first = drawn(app)[0]
+        assert first.startswith("⏺ words ") and log.scroll_y < log.max_scroll_y  # an entry's first row is the view's first
+        await press(pilot, "ctrl+o")
+        assert drawn(app)[0] == first.replace("⏺ ", "⏺ says: ") and log.scroll_y < log.max_scroll_y
+        log.scroll_to(y=log.scroll_y + 3, animate=False)  # into the run that follows: its second call
+        await pilot.pause()
+        number = first.removeprefix("⏺ words ")
+        assert drawn(app)[0] == f"⏺ $ xxd -l {number} a.bin"
+        await press(pilot, "ctrl+o")
+        assert drawn(app)[:2] == ["⏺ 2 tool calls", f"  ⎿ $ xxd -l {number} a.bin → one …+1 line"]  # the entry that holds that call
+        await press(pilot, *["pagedown"] * 30)
+        assert log.scroll_y == log.max_scroll_y
+        await press(pilot, "ctrl+o")  # at the end, the end stays the end
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "  ⎿  one ⏎ two"
+
+    drive(app, script, (100, 24))
+
+
+def test_a_narrower_terminal_wraps_the_details_again_and_cuts_no_row_under_the_scroll_bar():
+    deck, app, lane = one_lane("simple")
+    long = "the table at 0x2010 is filled by a loop that runs before main compares anything, " * 3
+    says(deck, long.strip())
+    shell(deck, "echo " + "abcdefghij " * 20, "abcdefghij " * 20)
+    for i in range(50):
+        says(deck, f"words {i}")
+    says(deck, long.strip())
+
+    def words_of(rows: list[str]) -> list[str]:
+        return " ".join(rows).split()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        for size in ((160, 30), (100, 30)):
+            await pilot.resize_terminal(*size)
+            await pilot.pause()
+            await pilot.pause()
+            width = log.region.width - 2
+            assert log.scroll_y == log.max_scroll_y  # it was at the end, and is at the new end
+            tail = drawn(app)[-(-(len(long.strip()) + 2) // width + 1):]
+            assert words_of(tail)[-len(long.split()):] == long.split() and all(len(row) <= width for row in drawn(app))
+            log.scroll_home(animate=False)
+            await pilot.pause()
+            rows = drawn(app)
+            assert words_of(rows)[: len(long.split()) + 1] == ["⏺", *long.split()]  # the model's words: wrapped, never cut
+            call = next(row for row in rows if row.startswith("⏺ $ echo"))
+            assert len(call) == width and call.endswith("…")  # a tool call: one row, cut at the edge
+            await press(pilot, "ctrl+o")
+            log.scroll_home(animate=False)
+            await pilot.pause()
+            rows = drawn(app)
+            command = ["⏺", "$", "echo", *["abcdefghij"] * 20]
+            assert words_of(rows)[len(long.split()) + 2:][: len(command)] == command and all(len(row) <= width for row in rows)
+            await press(pilot, "ctrl+o")
+            await press(pilot, *["pagedown"] * 10)
+
+    drive(app, script, (160, 30))
+
+
+def test_another_theme_draws_the_rows_again_in_its_colours_where_the_player_was():
+    deck, app, lane = one_lane("simple")
+    nord = themes.BUILTIN["nord"]
+    for i in range(60):
+        says(deck, f"words {i}")
+    deck.note("L01", "a note from flightdeck")
+
+    def colours() -> tuple[str, str]:
+        region = log_of(app).region
+        rows = screen_lines(app)
+        words = next(y for y in range(region.y, region.bottom) if "⏺ words" in rows[y])
+        return color_of(app, "words", words), color_of(app, "a note from flightdeck", region.bottom - 1)
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        assert colours() == (themes.DEFAULT.text, themes.DEFAULT.muted)
+        before = lines(app)
+        await send(pilot, app, "/theme nord")
+        await pilot.pause()
+        assert theme.active() is nord and colours() == (nord.text, nord.muted) != (themes.DEFAULT.text, themes.DEFAULT.muted)
+        assert lines(app) == before and log.scroll_y == log.max_scroll_y  # every row again, none twice
+        await press(pilot, "pageup")
+        at, top = log.scroll_y, drawn(app)[0]
+        await send(pilot, app, "/theme default")
+        await pilot.pause()
+        assert log.scroll_y == at and drawn(app)[0] == top and lines(app) == before
+
+    drive(app, script, (100, 24))
+
+
+def test_a_long_transcript_mounts_its_newest_entries_and_page_up_at_the_top_mounts_more():
+    deck, app, lane = one_lane("simple")
+    for i in range(MOUNTED + 100):
+        says(deck, f"words {i}")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        assert MOUNTED == 300 and len(log.query(RowText)) == MOUNTED + 1 and log.earlier == 100
+        assert log.texts()[:2] == ["· 100 earlier entries: pgup here shows them", "⏺ words 100"] and log.texts()[-1] == "⏺ words 399"
+        assert log.scroll_y == log.max_scroll_y
+        says(deck, "one more")  # a new entry: mounted under the rest, and the 100 stay 100
+        app.refresh_view()
+        await pilot.pause()
+        assert log.texts()[0] == "· 100 earlier entries: pgup here shows them" and log.texts()[-1] == "⏺ one more"
+        log.scroll_home(animate=False)
+        await pilot.pause()
+        assert drawn(app)[:3] == ["· 100 earlier entries: pgup here shows them", "⏺ words 100", "⏺ words 101"]
+        await press(pilot, "pageup")
+        assert log.earlier == 0 and len(log.query(RowText)) == MOUNTED + 101 and log.texts()[0] == "⏺ words 0"
+        assert drawn(app)[:3] == ["⏺ words 99", "⏺ words 100", "⏺ words 101"]  # the row the player was on, where it was
+        await press(pilot, "pageup")
+        assert drawn(app)[1] == f"⏺ words {100 - log.region.height}"  # and the next page up is a page
+        says(deck, "and another")
+        app.refresh_view()
+        await pilot.pause()
+        assert drawn(app)[1] == f"⏺ words {100 - log.region.height}" and log.texts()[-1] == "⏺ and another"
+        for i in range(2 * MOUNTED):  # reading back, every entry that comes stays mounted: nothing moves under the player
+            says(deck, f"later words {i}")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.earlier == 0 and len(log.texts()) == len(lane.actions) and drawn(app)[1] == f"⏺ words {100 - log.region.height}"
+        log.scroll_end(animate=False)  # at the end again, the log lets the oldest go once it holds twice what it mounts
+        await pilot.pause()
+        await press(pilot, "pagedown")
+        assert log.scroll_y == log.max_scroll_y
+        says(deck, "the last words")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.earlier == len(lane.actions) - MOUNTED and len(log.query(RowText)) == MOUNTED + 1
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ the last words"
+
+    drive(app, script, (100, 24))
+
+
+def test_another_lane_opens_at_its_own_end_in_its_own_rows():
+    deck, app, lane = one_lane("simple")
+    deck.release([Challenge("other", "Other", "misc", 100)], [QueueEntry("other", "glm")])
+    for i in range(60):
+        says(deck, f"words {i}")
+        deck.report("L02", TurnReport(turn=False, action=f"says: other words {i}"))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        await press(pilot, "pageup")
+        assert log.scroll_y < log.max_scroll_y
+        view.show_lane("L02")
+        await pilot.pause()
+        assert lines(app) == [f"⏺ other words {i}" for i in range(60)]  # the same keys as L01's rows, and none of its text
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ other words 59"
+
+    drive(app, script, (100, 24))
+
+
+def test_a_mouse_button_held_in_the_transcript_stops_it_following_until_it_is_up():
+    deck, app, lane = one_lane("simple")
+    for i in range(60):
+        says(deck, f"words {i}")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        at = log.scroll_y
+        assert at == log.max_scroll_y
+        await pilot.mouse_down(log, offset=(4, 2))
+        for i in range(10):
+            says(deck, f"under the mouse {i}")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.scroll_y == at < log.max_scroll_y  # nothing moves under a selection being made
+        await pilot.mouse_up(app.screen.query_one("#keys"))  # wherever the button comes up
+        await pilot.pause()
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ under the mouse 9"
+        assert app.focused is bar(app).field  # the chat box still has the keys
+
+    drive(app, script, (100, 24))
+
+
+# ---------------------------------------------------------------------- the key line, help, doctor's room
+
+
+def test_the_simple_key_line_names_the_details_key_last_and_the_edge_cuts_it_first():
+    deck, app, lane = one_lane("simple")
+    shell(deck, "ls", "a\n")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
+        deck.report("L01", TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, "connect to the live box")))
+        app.refresh_view()
+        await pilot.pause()
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details"
+        await pilot.resize_terminal(66, 24)
+        await pilot.pause()
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o"  # its label is past the edge
+
+    drive(app, script, (67, 24))
+    assert focus.SIMPLE_KEY_LABELS[-1] == ("ctrl+o", "details")
+    assert focus.key_room(67, simple=True) == ([], 67) and focus.key_room(66, simple=True) == (["ctrl+o details"], 67)
+    assert focus.key_room(120, simple=False)[1] == focus.key_room(120)[1] and "ctrl+o" not in dict(focus.KEY_LABELS)  # the deck's line is as it was
+    at_65 = room.room(65, 40, max_lanes=4, containerized=True, layout="simple")
+    assert at_65.focus_keys == ("ctrl+o details",) and "ctrl+o details on the focus view's key line" in at_65.left_out()
+    assert room.room(67, 40, max_lanes=4, containerized=True, layout="simple").focus_keys == ()
+    assert room.room(64, 40, max_lanes=4, containerized=True, layout="simple").focus_keys == ("/help all keys", "ctrl+o details")
+    assert "ctrl+o details" not in room.room(65, 40, max_lanes=4, containerized=True, layout="deck").focus_keys
+
+
+def test_help_lists_the_details_key_and_command():
+    from ctf_flightdeck.console.commands import BY_NAME, complete, needs_lane, parse
+    from ctf_flightdeck.console.screens import KEY_HELP
+
+    assert dict(KEY_HELP)["ctrl+o"].startswith("In a lane: details on or off")
+    parsed = parse("/details")
+    assert parsed.command is BY_NAME["details"] and not needs_lane(parsed) and BY_NAME["details"].args == ""
+    assert [c.text for c in complete("/det")] == ["/details "]

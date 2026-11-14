@@ -25,6 +25,7 @@ from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.home import HomeApp, Menu
+from ctf_flightdeck.console.lanelog import LaneLog
 from ctf_flightdeck.core.model import AlertKind
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.world import FakeWorld
@@ -376,14 +377,15 @@ def test_theme_repaints_what_is_already_on_the_screen_a_transcripts_lines_includ
 
             assert shown() == (themes.DEFAULT.accent, themes.DEFAULT.accent, {themes.DEFAULT.page, themes.DEFAULT.border})
             status = focus.query_one("#status").region.y
-            written, lines = focus._written, [line for row, line in enumerate(screen_lines(app)) if row != status]
+            log = focus.query_one("#transcript", LaneLog)
+            written, lines = log.texts(), [line for row, line in enumerate(screen_lines(app)) if row != status]
             app.run_command("/theme nord", lane.id)
             await pilot.pause()
             await pilot.pause()
             assert app._status[:2] == ("theme nord for this run (this console has no config file)", "information")
             assert theme.active() is NORD and app.theme == "fd-nord"
             assert shown() == (NORD.accent, NORD.accent, {NORD.page, NORD.border})
-            assert focus._written == written and isinstance(app.screen, FocusScreen)  # every line again, none twice
+            assert log.texts() == written != [] and isinstance(app.screen, FocusScreen)  # every row again, none twice
             assert [line for row, line in enumerate(screen_lines(app)) if row != status] == lines  # the same text, in other colours
             app.show_fleet()
             await pilot.pause()

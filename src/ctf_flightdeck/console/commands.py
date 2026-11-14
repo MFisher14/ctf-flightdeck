@@ -39,6 +39,7 @@ COMMANDS = (
     Command("theme", "[name]", "the console's colours for this run; alone: the themes you have", lane=False),
     Command("layout", "[simple|deck]", "simple: the lanes and what needs you; deck: the board and every column; alone: the other one",
             lane=False),
+    Command("details", "", "in a lane's view: every line and every alert, or the calm view (ctrl+o)", lane=False),
     Command("new", "[name]", "hand a challenge to a lane: its name, text, files and address", lane=False),
     Command("attach", "[challenge] <files>", "add files to a challenge (drag them onto this bar); its lane restarts with them", lane=False),
     Command("queue", "<challenge>", "queue a parked or new challenge", lane=False),

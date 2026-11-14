@@ -10,6 +10,12 @@ the lane it was written for. When the lane is ended to start afresh (/attach, a 
 re-queues), the view goes to the fresh lane, and the unsent message with it
 (FlightdeckApp.follow_restart).
 
+The transcript has one switch, `details` (`ctrl+o`, /details). On: every line the lane's log
+keeps, each action as views.transcript_lines draws it. Off, the calm transcript: one row for
+each entry, a run of tool calls on two (views.entries, views.entry_text). It starts off in the
+simple layout and on in the deck and compact layouts, and follows the layout until the player
+switches it by hand in this view.
+
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: one pane, with
 what the lane needs from you above its transcript, and no files pane.
 
@@ -31,11 +37,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import OptionList, RichLog, Static
+from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..core.model import Lane
 from . import theme, views
+from .lanelog import LaneLog, Row
 from .widgets import CommandBar
 
 if TYPE_CHECKING:
@@ -48,13 +55,17 @@ KEY_LABELS = (
 )
 # The compact layout's key line: back, the answers, the commands, the next lane that needs you.
 COMPACT_KEY_LABELS = (("esc", "fleet"), ("1-9 0", "answer"), ("/", "cmd"), ("ctrl+n", "next"))
-# The simple layout's key line: back, the commands, and where every key is listed (the chat box
-# takes what is typed, so no key opens help here); the answers lead while the lane has any.
-SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("/help", "all keys"))
+# The simple layout's key line: back, the commands, where every key is listed (the chat box
+# takes what is typed, so no key opens help here) and the details switch, which the edge cuts
+# first; the answers lead while the lane has any.
+SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("/help", "all keys"), ("ctrl+o", "details"))
 SIMPLE_ANSWER_LABEL = ("1-9", "answer")
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 # What the empty chat box says: in the deck and compact layouts, and in the simple one (the lane by name).
 CHAT_PLACEHOLDER = "message this lane (it reads it on its next turn) · / for commands"
+# What the status line says when the details switch is turned (ctrl+o, /details).
+DETAILS_ON = "details on: every line and every alert (ctrl+o hides them)"
+DETAILS_OFF = "details off (ctrl+o shows every line)"
 
 
 def simple_placeholder(lane_id: str) -> str:
@@ -97,7 +108,8 @@ class FocusScreen(Screen, inherit_bindings=False):
     FocusScreen #main { height: 1fr; margin-top: 1; }
     FocusScreen #talk-pane { width: 3fr; }
     FocusScreen #files-pane { width: 2fr; }
-    FocusScreen #transcript { height: 1fr; min-height: 3; background: transparent; }
+    FocusScreen #transcript { height: 1fr; min-height: 3; background: transparent; overflow-y: scroll; }
+    FocusScreen.-simple #transcript { overflow-y: auto; }
     FocusScreen #now { height: auto; max-height: 50%; }
     FocusScreen #files { height: auto; max-height: 8; background: transparent; border: none; }
     FocusScreen #diff-scroll { height: 1fr; }
@@ -116,13 +128,14 @@ class FocusScreen(Screen, inherit_bindings=False):
         Binding("shift+tab", "app.focus_previous", "panes back", show=False),
         Binding("pageup", "scroll(-1)", "scroll", show=False),
         Binding("pagedown", "scroll(1)", "scroll", show=False),
+        Binding("ctrl+o", "details", "details", show=False),
     ]
 
     def __init__(self, lane_id: str, file: str | None = None) -> None:
         super().__init__()
         self.lane_id = lane_id
         self._first_file = file
-        self._written = 0  # transcript entries already written
+        self._details: bool | None = None  # the details switch as the player set it in this view; None: the layout's
         self._file_paths: list[str] | None = None  # None: the list must be rebuilt
         self._drafts: dict[str, str] = {}  # unsent chat text, by lane
         self.diff_path: str | None = None
@@ -143,7 +156,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         yield Static(id="others")
         with Horizontal(id="main"):
             with Vertical(id="talk-pane", classes="panel"):
-                yield RichLog(id="transcript", wrap=True, min_width=20, auto_scroll=True)
+                yield LaneLog(id="transcript")  # not focusable: pgup/pgdn scroll it from anywhere, so tab goes chat -> files -> diff
                 yield Static(id="now")
             with Vertical(id="files-pane", classes="panel"):
                 yield OptionList(id="files")
@@ -156,8 +169,6 @@ class FocusScreen(Screen, inherit_bindings=False):
     def on_mount(self) -> None:
         self._ready = True
         self.query_one("#chat", CommandBar).field.quick = self._quick
-        # pgup/pgdn scroll the transcript from anywhere, so tab goes chat -> files -> diff
-        self.query_one("#transcript", RichLog).can_focus = False
         self._fit_layout(self.size.width)
         self.show_lane(self.lane_id, self._first_file)
 
@@ -210,21 +221,48 @@ class FocusScreen(Screen, inherit_bindings=False):
             self.query_one("#keys", Static).update(_key_line(labels))
 
     def repaint(self) -> None:
-        """Draw everything again in the palette now in use (/theme): the transcript's lines
-        were written in the old one, so the log is emptied and written again, as on a lane
-        change; the key line too."""
+        """Draw everything again in the palette now in use (/theme): the transcript's rows
+        were drawn in the old one, so each is drawn again (its token names the palette:
+        _rows), where the player was reading; the key line too."""
         if not self._ready:
             return
-        self._written = 0
         self._file_paths = None  # the files list's labels too
-        self.query_one("#transcript", RichLog).clear()
         self._show_keys()
         self.refresh_view()
 
     def relayout(self) -> None:
         """Draw in the layout now in use (/layout): refresh_view shows or hides the parts
-        the simple layout shows only when they have something in them, and the key line."""
+        the simple layout shows only when they have something in them, and the key line. The
+        transcript is drawn again in the layout's form (calm or in detail), unless the player
+        set the details switch by hand in this view."""
         self.refresh_view()
+
+    @property
+    def details(self) -> bool:
+        """The details switch: as the player set it in this view (ctrl+o, /details), else the
+        layout's: off in the simple layout, on in the deck and compact ones."""
+        if self._details is not None:
+            return self._details
+        return self.fd.layout == "deck" or self.compact
+
+    def action_details(self) -> None:
+        """ctrl+o, /details: details on or off, and the status line says which."""
+        self._details = not self.details
+        self.fd.say(DETAILS_ON if self._details else DETAILS_OFF)
+        self.refresh_view()
+
+    def _rows(self, lane: Lane) -> list[Row]:
+        """The lane's log as the transcript's rows: in detail, each action as
+        views.transcript_lines draws it; calm, each entry of views.entries. A row's token is
+        all that can change what it draws: the lane, the switch, the palette, and for a run
+        of tool calls how far it has grown (the log itself is only added to)."""
+        deck, palette = self.fd.deck, theme.active()
+        if self.details:
+            return [Row(i, (lane.id, True, palette), lambda action=action: Text("\n").join(views.transcript_lines(deck, lane, action)))
+                    for i, action in enumerate(lane.actions)]
+        return [Row(entry.first, (lane.id, False, palette, len(entry.actions), len(entry.actions[-1].calls)),
+                    lambda entry=entry: views.entry_text(deck, lane, entry), one_row=entry.kind != "says")
+                for entry in views.entries(lane.actions)]
 
     def show_lane(self, lane_id: str, file: str | None = None, *, carry: bool = False) -> None:
         """Switch this view to another lane (or reopen it). `carry`: what is typed in the chat
@@ -245,11 +283,11 @@ class FocusScreen(Screen, inherit_bindings=False):
             chat.field.cursor_position = len(draft)
         elif not carry:  # carried: the chat box stays as it is (its text, the cursor, an open menu)
             chat.hide_menu()
+        if lane_id != self.lane_id:
+            self.query_one("#transcript", LaneLog).clear()  # another lane's transcript starts at its end
         self.lane_id = lane_id
-        self._written = 0
         self._file_paths = None
         self.diff_path = file or None  # "" means: the newest file
-        self.query_one("#transcript", RichLog).clear()
         self.refresh_view()
         if file is not None and not self.compact:
             self.query_one("#files", OptionList).focus()
@@ -275,12 +313,7 @@ class FocusScreen(Screen, inherit_bindings=False):
             pane = self.query_one("#talk-pane")
             pane.border_title = views.focus_title(deck, lane, compact=self.compact)
             pane.border_subtitle = views.plan_line(deck, lane)
-            log = self.query_one("#transcript", RichLog)
-            at_end = log.scroll_y >= log.max_scroll_y  # a player reading back stays where they are
-            for action in lane.actions[self._written :]:
-                for line in views.transcript_lines(deck, lane, action):
-                    log.write(line, scroll_end=at_end)
-            self._written = len(lane.actions)
+            self.query_one("#transcript", LaneLog).show(self._rows(lane))  # a player reading back stays where they are
             card = views.now_card(deck, lane, compact=self.compact, simple=simple)
             now = self.query_one("#now", Static)
             now.update(card)
@@ -354,8 +387,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         self.show_lane(nxt)
 
     def action_scroll(self, direction: int) -> None:
-        log = self.query_one("#transcript", RichLog)
-        if direction < 0:
-            log.scroll_page_up(animate=False)
-        else:
-            log.scroll_page_down(animate=False)
+        self.query_one("#transcript", LaneLog).page(direction)
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        self.query_one("#transcript", LaneLog).released()  # wherever the button came up

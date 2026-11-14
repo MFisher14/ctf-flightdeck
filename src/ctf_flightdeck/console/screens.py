@@ -721,6 +721,7 @@ KEY_HELP = (
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
     ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
+    ("ctrl+o", "In a lane: details on or off. Off: one row for each entry, a run of tool calls on two"),
     ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
 )
 # Approving several flags and dismissing an alert (kept apart from KEY_HELP's rows).

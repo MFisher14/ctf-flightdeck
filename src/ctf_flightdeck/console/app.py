@@ -891,6 +891,15 @@ class FlightdeckApp(App[None]):
         narrow = "; this terminal is narrow, so the compact layout shows" if views.compact(self.size.width) else ""
         self.say(f"layout {word} for this run{keep}{narrow}")
 
+    def switch_details(self) -> None:
+        """/details: the lane view's details switch, as ctrl+o there (FocusScreen.action_details).
+        Typed anywhere else it is a warning: the switch is that view's."""
+        focus = self.focus_screen
+        if focus is None or self.screen is not focus:
+            self.warn("/details is for a lane's view (every line of its transcript, or the calm one): open a lane first")
+            return
+        focus.action_details()
+
     def set_theme(self, arg: str) -> None:
         """/theme: the themes there are; /theme NAME: the console's colours for the rest of
         this run (the config file keeps its own). A name that is no theme, or a theme file
@@ -1005,6 +1014,8 @@ class FlightdeckApp(App[None]):
             self.set_theme(arg)
         elif name == "layout":
             self.switch_layout(arg)
+        elif name == "details":
+            self.switch_details()
         elif name == "new":
             self.new_challenge(arg)
         elif name == "attach":
