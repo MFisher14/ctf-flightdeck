@@ -617,7 +617,7 @@ class Deck:
                 self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}")
                 self._emit(EventKind.SUBMIT, f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'} "
                            f"(it was solved meanwhile)", lane.id, ch.id,
-                           data={"flag": flag, "correct": ok, "by": "platform", "solved_meanwhile": True,
+                           data={"flag": flag, "correct": ok, "by": "platform", "approved": sent.approved, "solved_meanwhile": True,
                                  **self._variant_data(ch.id, flag), **extra})
                 if not ok:
                     self._remember_not_flag(ch.id, flag, REJECTED)
@@ -1696,15 +1696,19 @@ class Deck:
         submit event (the platform's words, the tries it said are left). A flag the deck
         proposed as a variant says so in the event (`variant_of`, `variant_changes`). After
         the platform's wrong, the next variant may be proposed (_variant): `approved` says the
-        flag went out on the player's yes, `also` names the other lanes that sent it."""
+        flag went out on the player's yes, `also` names the other lanes that sent it. A flag
+        the platform judged says so in its event too (`approved`: true on the player's yes,
+        false when it went out on its own under auto), so a solve record can say who let it
+        go; a verdict that is the player's word carries none (the player submitted it)."""
         ch = self.challenges[lane.challenge_id]
         self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}" + (" (you said so)" if by == "player" else ""))
+        went: dict[str, object] = {"approved": approved} if by == "platform" else {}
         self._emit(
             EventKind.SUBMIT,
             f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'}",
             lane.id,
             ch.id,
-            data={"flag": flag, "correct": ok, "by": by, **self._variant_data(ch.id, flag), **(data or {})},
+            data={"flag": flag, "correct": ok, "by": by, **went, **self._variant_data(ch.id, flag), **(data or {})},
         )
         if not ok:
             self._remember_not_flag(ch.id, flag, REJECTED if by == "platform" else SAID_REJECTED)

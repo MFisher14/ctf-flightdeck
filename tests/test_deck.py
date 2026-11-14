@@ -965,7 +965,7 @@ def test_a_rejected_flag_lets_the_lane_carry_on():
     ch = deck.challenges["c0"]
     assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.RUNNING, None, 10)
     submit = events(deck, EventKind.SUBMIT)[-1]
-    assert submit.data == {"flag": "t{wrong}", "correct": False, "by": "platform"} and submit.text.endswith(": incorrect")
+    assert submit.data == {"flag": "t{wrong}", "correct": False, "by": "platform", "approved": True} and submit.text.endswith(": incorrect")
     assert any(a.by is Actor.DECK and "t{wrong}" in a.text and "incorrect" in a.text for a in lane.actions)
 
 

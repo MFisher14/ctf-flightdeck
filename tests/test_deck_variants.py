@@ -122,8 +122,8 @@ def test_a_variant_that_is_the_flag_solves_the_challenge_for_its_lane():
     ch = deck.challenges["c0"]
     assert ch.status is ChallengeStatus.SOLVED and ch.solved_by == lane.id
     assert lane.state is LaneState.SOLVED and lane.result == "solved with t{abcd}"
-    assert submits(deck)[-1] == {"flag": "t{abcd}", "correct": True, "by": "platform", "variant_of": WRONG,
-                                 "variant_changes": ["case:lower"], "detail": "Correct"}
+    assert submits(deck)[-1] == {"flag": "t{abcd}", "correct": True, "by": "platform", "approved": False, "variant_of": WRONG,
+                                 "variant_changes": ["case:lower"], "detail": "Correct"}  # under auto: nobody approved the variant
 
 
 def test_a_boards_answers_file_judges_a_variant_at_once():
