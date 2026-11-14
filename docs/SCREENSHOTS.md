@@ -152,11 +152,12 @@ you, its state and its cost; the line under the list has the reason and one answ
 `19-compact-focus-56x40.svg` (a lane: what it needs above its transcript, no files pane). No
 picture of it here yet: make your own with that command.
 
-![The help screen listing every key and command](screenshots/help.png)
+![Help opened from the lane list: first what the keys do now (here with no lane selected), then the lane list's keys, peek and esc among them; further down a lane's keys, the keys both views have, the commands, the alerts and the marks](screenshots/help.png)
 
-`?` shows every key and command (in a lane, where the chat box takes what you type, `/help`
-does): `ctrl+o` for a lane's details, `pgup` and `pgdn`, the mouse drag that copies and
-`ctrl+c` are in the list.
+`?` opens help for where you are, in a lane too while its chat box is empty. It starts with the
+keys that apply now to the lane in front of you, then the keys of the view you are in, the
+other view's (`ctrl+o` for a lane's details, `pgup` and `pgdn`), and the ones both have (the
+mouse drag that copies, `ctrl+c`); then every command.
 
 ## Themes
 
