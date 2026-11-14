@@ -13,7 +13,7 @@
 
 [auth]
 kind = "exchange"
-link_param = "token"
+link_param = "token"  # the variable may hold the login link (/login?token=...): its token is taken and decoded
 request = ["POST", "/api/v1/auth/login"]
 body = { teamToken = "{token}" }
 token_path = "$.data.authToken"
