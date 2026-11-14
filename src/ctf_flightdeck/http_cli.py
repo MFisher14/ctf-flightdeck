@@ -52,6 +52,8 @@ submit = "confirm"                  # you approve each flag before it is sent ("
 PRESET = """\
 [http]
 preset = "rctf"                     # rCTF's routes, which ship with flightdeck; a key written under [http] wins
+# rCTF: put your team's login link in the variable, whole and in quotes (its profile page's "Team Invite":
+# https://.../login?token=...), or the token alone. flightdeck takes the token out of the link and decodes it.
 """
 ROUTES_HEAD = """\
 # The routes of the platform's API. These are rCTF's, written out: change them to the platform in

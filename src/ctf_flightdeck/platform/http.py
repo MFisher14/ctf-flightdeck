@@ -25,6 +25,10 @@ teammate's profile too. What keeps that safe is in this module:
   into a request. Where a placeholder stands decides how it is written: percent-encoded in a
   path, a JSON string in a body ({ref:int}: a JSON number).
 - No headers of the table's choosing but the one that carries the token.
+- The token is the variable's value as it stands, unless the table says the platform hands
+  it out in a link (auth.link_param: rCTF's /login?token=...). Then the variable may hold the
+  link or the token as the link writes it, percent-encoded, and the link's host must be
+  event.url's: a link to another site holds that site's token, and nothing is sent.
 - A file a challenge lists is fetched from event.url's origin (with the token only when the
   table says files_auth = true) or, over https only, from another host, and then with no
   token, no cookie and no header of the platform's. Its redirects are followed the same way.
@@ -67,7 +71,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from importlib.resources import files as package_files
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -111,6 +115,7 @@ _ROUTE = re.compile(r"/[A-Za-z0-9_./{}?=&~-]*")
 _PLACEHOLDER = re.compile(r"\{([a-z]+)(?::([a-z]+))?\}")
 _HEADER = re.compile(r"[A-Za-z][A-Za-z0-9-]{0,63}")
 _COOKIE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}")
+_LINK_PARAM = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _HEADER_VALUE = re.compile(r"[\x21-\x7e]+")  # what a header may carry of a token: printable ASCII, no spaces
 _COOKIE_VALUE = re.compile(r"[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]+")  # RFC 6265's cookie-octet
 _WHOLE_NUMBER = re.compile(r"-?[0-9]{1,18}")
@@ -239,6 +244,7 @@ class Auth:
     body: Mapping[str, object] | None = field(default=None, hash=False)  # its JSON body, with {token} in it
     token_path: JsonPath | None = None  # where its answer holds the session token
     scheme: str = "Bearer"  # kind "exchange": the session token goes as Authorization: SCHEME TOKEN
+    link_param: str | None = None  # the platform hands the token out in a link, as this query parameter (_token_from)
 
 
 @dataclass(frozen=True)
@@ -331,7 +337,7 @@ class HttpConfig:
 
 
 _TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved")
-_AUTH = ("kind", "header", "cookie", "request", "body", "token_path", "scheme")
+_AUTH = ("kind", "header", "cookie", "request", "body", "token_path", "scheme", "link_param")
 _LIST = ("request", "items", "ref", *FIELDS)
 _DETAIL = ("request", *FIELDS)
 _SUBMIT = ("request", "body", "verdict_path", "detail_path", "retry_after_path", "retry_after_unit", "tries_left_path",
@@ -489,22 +495,26 @@ def _auth(table: Mapping) -> Auth:
         raise ValueError(f"http.auth.kind must be one of {', '.join(AUTH_KINDS)}")
     wanted = {"bearer": (), "token": (), "header": ("header",), "cookie": ("cookie",),
               "exchange": ("request", "body", "token_path", "scheme")}[kind]
-    extra = [key for key in table if key != "kind" and key not in wanted]
+    extra = [key for key in table if key not in ("kind", "link_param") and key not in wanted]
     if extra:
         raise ValueError(f'http.auth.{extra[0]} is not for kind = "{kind}"' + (f" (it takes: {', '.join(wanted)})" if wanted else ""))
+    link = table.get("link_param")
+    if link is not None and (not isinstance(link, str) or not _LINK_PARAM.fullmatch(link)):
+        raise ValueError("http.auth.link_param must be the name of the query parameter that holds the token in the platform's "
+                         "login link (letters, digits, _ and -)")
     if kind == "header":
         name = table.get("header")
         if not isinstance(name, str) or not _HEADER.fullmatch(name) or name.lower() in _HEADERS_REFUSED:
             raise ValueError("http.auth.header must be the name of the header that carries the token (letters, digits and -), "
                              "and not one that means something else to a server (Host, Cookie, Content-Type, ...)")
-        return Auth(kind, header=name)
+        return Auth(kind, header=name, link_param=link)
     if kind == "cookie":
         name = table.get("cookie")
         if not isinstance(name, str) or not _COOKIE.fullmatch(name):
             raise ValueError("http.auth.cookie must be the name of the cookie that carries the token (letters, digits, _ . and -)")
-        return Auth(kind, cookie=name)
+        return Auth(kind, cookie=name, link_param=link)
     if kind != "exchange":
-        return Auth(kind)
+        return Auth(kind, link_param=link)
     for key in ("request", "body", "token_path"):
         if key not in table:
             raise ValueError(f'http.auth.{key} is required for kind = "exchange"')
@@ -515,7 +525,7 @@ def _auth(table: Mapping) -> Auth:
     if not isinstance(body, dict) or "{token}" not in json.dumps(body):
         raise ValueError("http.auth.body must be a table with {token} in one of its values: where the token goes in the sign-in request")
     return Auth(kind, request=_route("http.auth.request", "auth", table["request"]), body=body,
-                token_path=parse_path("http.auth.token_path", table["token_path"]), scheme=scheme)
+                token_path=parse_path("http.auth.token_path", table["token_path"]), scheme=scheme, link_param=link)
 
 
 def _fields(where: str, table: Mapping) -> dict[str, JsonPath]:
@@ -651,6 +661,9 @@ def plan(config: HttpConfig) -> list[str]:
         lines.append(f"the {config.preset} preset's routes, with the [http] table's own keys on top")
     if config.game is not None:
         lines.append(f"{{game}} is {untrusted(config.game, one_line=True)}")
+    if auth.link_param is not None:
+        lines.append(f"link      the token variable may hold your login link (its ?{auth.link_param}= is taken) or the token as the "
+                     "link writes it (%2B is read as +)")
     if auth.request is not None:
         lines.append(f"sign in   {auth.request}: your token in the request's body; the answer's {auth.token_path.text} is the "
                      "session token")
@@ -706,8 +719,9 @@ class Checked:
 class HttpCaller:
     """The [http] table's platform for one event: pull(), submit() and solved(), as a plugin's
     Caller has them (plugins.call.PlatformCaller), in process. Each call opens its own
-    connections and closes them, so one caller serves any event loop. `token` is the event's
-    token; with auth.kind "exchange" it is turned into a session token once, and again (at
+    connections and closes them, so one caller serves any event loop. `token` is what the
+    event's variable holds: the token, or with auth.link_param the link it is handed out in
+    (_token_from; ValueError when that gives no token for this event). With auth.kind "exchange" it is turned into a session token once, and again (at
     most every RELOGIN_SECONDS) after the platform refuses the session with a 401."""
 
     label = LABEL
@@ -718,7 +732,6 @@ class HttpCaller:
                  file_seconds: float = FILE_SECONDS, max_file_bytes: int = MAX_FILE_BYTES) -> None:
         self.config = config
         self.url = url
-        self.token = token or ""
         self.timeout = timeout
         self.deadline = deadline  # a server that answers a byte at a time never outlasts it
         self.file_seconds = file_seconds
@@ -727,9 +740,12 @@ class HttpCaller:
         self._base = _base_url(url)
         self._session: str | None = None  # the exchanged session token
         self._signed_in = 0.0  # time.monotonic() when it was last asked for
-        kind = config.auth.kind
-        if not self.token:
+        kind, link = config.auth.kind, config.auth.link_param
+        if not token:
             raise ValueError("the http platform needs the event's token: the variable event.token_env names is empty")
+        self.token = token if link is None else _token_from(token, link, self._base)
+        written = quote(self.token, safe="")  # as a link of the platform's would write it: cut out of what is shown, too
+        self._written = written if link is not None and written != self.token else None
         if (kind in ("bearer", "token", "header") and not _HEADER_VALUE.fullmatch(self.token)) or \
                 (kind == "cookie" and not _COOKIE_VALUE.fullmatch(self.token)):
             raise ValueError("the event's token holds characters a request header cannot carry (spaces, line breaks, "
@@ -1263,7 +1279,7 @@ class HttpCaller:
     # ------------------------------------------------------------------ what is shown
 
     def _secrets(self) -> list[str]:
-        return [secret for secret in (self.token, self._session) if secret]
+        return [secret for secret in (self._written, self.token, self._session) if secret]
 
     def _cut(self, value: object) -> object:
         """`value` (parsed JSON) with the token and the session token cut out of every string, keys included."""
@@ -1315,6 +1331,35 @@ def _filled(body: object, values: Mapping[str, str]) -> object:
     if isinstance(body, Mapping):
         return {key: _filled(item, values) for key, item in body.items()}
     return body
+
+
+def _token_from(value: str, param: str, base: httpx.URL) -> str:
+    """The token in what the event's variable holds, for a table whose auth.link_param says
+    the platform hands its token out in a link (rCTF: /login?token=...). `value` is that
+    link, the token as the link writes it (percent-encoded: rCTF's is base64, so its + / =
+    stand there as %2B %2F %3D) or the token itself; a + is never read as a space.
+    ValueError, which never shows the value: a link with no such parameter, and a link to
+    another site than event.url (told by its host), whose token is another event's."""
+    where, fix = "the variable event.token_env names", "put your login link in it, or the token alone"
+    written = value
+    if value.lower().startswith(("http://", "https://")):
+        try:
+            link, query = httpx.URL(value), urlsplit(value).query
+        except (httpx.InvalidURL, ValueError):
+            link, query = None, ""
+        if link is None or not link.host:
+            raise ValueError(f"{where} holds a link flightdeck cannot read: {fix}")
+        if link.host != base.host:
+            raise ValueError(f"{where} holds a link to another site ({_origin_text(link)}, and event.url is {_origin_text(base)}): "
+                             f"flightdeck does not send one site's token to another. Put this event's login link in it, or the "
+                             "token alone")
+        written = next((raw for key, _, raw in (part.partition("=") for part in query.split("&")) if unquote(key) == param), "")
+        if not written:
+            raise ValueError(f"{where} holds a link with no {param} parameter in it: {fix}")
+    try:
+        return unquote(written, errors="strict")
+    except UnicodeDecodeError:
+        raise ValueError(f"{where} holds a %XX that stands for no character: {fix}") from None
 
 
 def _base_url(url: object) -> httpx.URL:

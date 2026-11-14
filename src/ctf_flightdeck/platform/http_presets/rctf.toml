@@ -6,10 +6,14 @@
 # played a real event through this table yet: `flightdeck http check EVENT.toml` shows what
 # each path matches on the site in front of you, and submits nothing.
 #
-# The token is the team token: the `token` in the team's login link (/login?token=...).
+# The token is the team token. rCTF shows it as the team's login link (/login?token=...), where
+# the token is percent-encoded (it is base64: its + / = stand there as %2B %2F %3D), and its
+# sign-in takes it only decoded. link_param lets the player's variable hold the whole link, the
+# token as the link writes it, or the token itself.
 
 [auth]
 kind = "exchange"
+link_param = "token"
 request = ["POST", "/api/v1/auth/login"]
 body = { teamToken = "{token}" }
 token_path = "$.data.authToken"

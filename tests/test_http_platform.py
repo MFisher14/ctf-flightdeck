@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -19,7 +20,7 @@ from ctf_flightdeck.platform.http import HttpCaller, parse_config, parse_path, p
 from ctf_flightdeck.plugins.call import CallFailed, PlatformCaller, Verdict
 
 from fake_ctfd import HANG_UP, Reply, make_tls
-from fake_http import AUTH_TOKEN, TEAM_TOKEN, FakeRCTF, FakeSite, RTask, answer, sample
+from fake_http import AUTH_TOKEN, TEAM_TOKEN, FakeRCTF, FakeSite, RTask, answer, login_link, sample
 from serving import closed_port
 
 RCTF = {"preset": "rctf"}
@@ -254,6 +255,10 @@ def test_a_submit_table_must_say_where_the_flag_goes_and_how_the_answer_is_read(
      "http.auth.scheme must be Bearer or Token: how the session token is sent in the Authorization header"),
     ({"kind": "exchange", "request": ["GET", "/login"], "body": {"t": "{token}"}, "token_path": "$.t"},
      "http.auth.request: the method must be POST"),
+    ({"kind": "bearer", "link_param": "to ken"}, "http.auth.link_param must be the name of the query parameter that holds the token in "
+                                                 "the platform's login link (letters, digits, _ and -)"),
+    ({"kind": "cookie", "cookie": "sid", "link_param": 3}, "http.auth.link_param must be the name of the query parameter that holds the "
+                                                           "token in the platform's login link (letters, digits, _ and -)"),
 ])
 def test_the_token_goes_only_where_the_auth_table_can_say(auth, said):
     """No header of the table's choosing but the one that carries the token, and none that
@@ -264,6 +269,8 @@ def test_the_token_goes_only_where_the_auth_table_can_say(auth, said):
 def test_the_plan_says_every_request_and_where_the_token_goes():
     assert plan(parse_config(RCTF)) == [
         "the rctf preset's routes, with the [http] table's own keys on top",
+        "link      the token variable may hold your login link (its ?token= is taken) or the token as the link writes it (%2B is read "
+        "as +)",
         "sign in   POST /api/v1/auth/login: your token in the request's body; the answer's $.data.authToken is the session token",
         "list      GET /api/v1/challs, with the session token (Authorization: Bearer)",
         "files     each address at $.files[*].url: on the event's own address without your token; on another host over https only, "
@@ -300,6 +307,75 @@ def test_a_token_no_header_can_carry_is_refused_and_never_shown(kind, token):
     with pytest.raises(ValueError) as caught:
         HttpCaller(parse_config(table(auth=auth)), "https://ctf.example.test", token)
     assert "event.token_env" in str(caught.value) and (not token or token not in str(caught.value))
+
+
+# ---------------------------------------------------------------------- a token handed out in a link
+
+LINKED = quote(TEAM_TOKEN, safe="")  # the team token as rCTF's login link writes it
+
+
+@pytest.mark.parametrize("held", ["the token", "the token as the link writes it", "the link", "the link with more in it"])
+def test_rctfs_team_token_is_taken_from_the_login_link_or_as_the_link_writes_it(held):
+    """rCTF's token is base64 (+ / =) and its login link percent-encodes it: a player who
+    copies the link, or the token out of the link, must sign in as one who has the token."""
+    assert all(escape in LINKED for escape in ("%2B", "%2F", "%3D"))  # the fake's token is one the link changes
+    with FakeRCTF(sample()) as fake:
+        value = {"the token": TEAM_TOKEN, "the token as the link writes it": LINKED, "the link": login_link(fake.url),
+                 "the link with more in it": f"{fake.url}/login?next=%2Fchalls&token={LINKED}&x=1#top"}[held]
+        made = HttpCaller(parse_config(RCTF), fake.url, value)
+        assert made.token == TEAM_TOKEN
+        assert run(made.solved()) == {"done-a4d0"}
+        assert [r.json for r in fake.of("login")] == [{"teamToken": TEAM_TOKEN}]
+        assert all(LINKED not in r.path and LINKED not in r.body.decode() for r in fake.requests)
+
+
+def test_the_token_as_the_link_writes_it_is_cut_out_of_what_the_platform_says():
+    with FakeRCTF(sample()) as fake:
+        fake.script("me", answer(403, "badPerms", f"Sign in again: {login_link('https://ctf.example.test')} (token {TEAM_TOKEN})"))
+        said = str(failure(HttpCaller(parse_config(RCTF), fake.url, login_link(fake.url)).solved()))
+    assert "login?token=<token> (token <token>)" in said and LINKED not in said and TEAM_TOKEN not in said
+
+
+@pytest.mark.parametrize("value, said", [
+    ("https://ctf.example.test/login", "holds a link with no token parameter in it: put your login link in it, or the token alone"),
+    ("https://ctf.example.test/login?token=", "holds a link with no token parameter in it: put your login link in it, or the token alone"),
+    ("https://ctf.example.test/login?team=" + LINKED, "holds a link with no token parameter in it: put your login link in it, or the "
+                                                     "token alone"),
+    ("https://other.example.test/login?token=" + LINKED, "holds a link to another site (https://other.example.test, and event.url is "
+                                                         "https://ctf.example.test): flightdeck does not send one site's token to "
+                                                         "another. Put this event's login link in it, or the token alone"),
+    ("https://[not-a-host/login?token=" + LINKED, "holds a link flightdeck cannot read: put your login link in it, or the token alone"),
+    ("fake%FFtoken", "holds a %XX that stands for no character: put your login link in it, or the token alone"),
+    ("https://ctf.example.test/login?token=fake%FFtoken", "holds a %XX that stands for no character: put your login link in it, or the "
+                                                          "token alone"),
+])
+def test_a_link_that_gives_no_token_for_this_event_is_refused_and_never_shown(value, said):
+    """A link to another site is another event's token: it stays home. No message shows the
+    variable's value, only the two sites' addresses."""
+    with pytest.raises(ValueError) as caught:
+        HttpCaller(parse_config(RCTF), "https://ctf.example.test", value)
+    assert str(caught.value) == f"the variable event.token_env names {said}"
+    assert LINKED not in str(caught.value) and "fake%FF" not in str(caught.value)
+
+
+def test_the_links_site_is_told_by_its_host_whatever_its_scheme_port_or_case():
+    made = HttpCaller(parse_config(RCTF), "https://ctf.example.test", "http://CTF.Example.Test:8443/login?token=" + LINKED)
+    assert made.token == TEAM_TOKEN
+
+
+def test_only_a_table_that_says_so_reads_its_token_out_of_a_link():
+    """link_param is the table's: without it a % in a token is the token's own, and a table
+    for another platform names its own parameter."""
+    with FakeSite(lambda request: Reply(200, {"ids": []})) as fake:
+        run(caller(fake, token="abc%2Bdef").solved())
+        run(caller(fake, table(auth={"kind": "bearer", "link_param": "key"}), token="abc%2Bdef").solved())
+        run(caller(fake, table(auth={"kind": "bearer", "link_param": "key"}), token=f"{fake.url}/join?key=abc%2Fdef").solved())
+        run(caller(fake, table(auth={"kind": "bearer", "link_param": "key"}), token=f"{fake.url}/join?key=a+b%3D").solved())  # + is no space
+        assert [r.headers["authorization"] for r in fake.requests] == ["Bearer abc%2Bdef", "Bearer abc+def", "Bearer abc/def", "Bearer a+b="]
+    assert parse_config(table()).auth.link_param is None and parse_config(RCTF).auth.link_param == "token"
+    assert "link      " not in "\n".join(plan(parse_config(table())))
+    assert plan(parse_config(table(auth={"kind": "bearer", "link_param": "key"})))[0] == (
+        "link      the token variable may hold your login link (its ?key= is taken) or the token as the link writes it (%2B is read as +)")
 
 
 # ---------------------------------------------------------------------- rCTF: the pull

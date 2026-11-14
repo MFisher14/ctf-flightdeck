@@ -24,7 +24,7 @@ from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, 
 from ctf_flightdeck.run import RunError, RunOptions, prepare_run
 
 from fake_ctfd import Reply
-from fake_http import AUTH_TOKEN, FLAG_FORMAT, TEAM_TOKEN, FakeRCTF, RTask, answer, sample
+from fake_http import AUTH_TOKEN, FLAG_FORMAT, TEAM_TOKEN, FakeRCTF, RTask, answer, login_link, sample
 from fake_model import FakeModelServer
 from test_event_run import Model, config, log, model_api, play, platform_solves, submit, wait_for  # noqa: F401
 
@@ -70,6 +70,8 @@ def test_an_http_profile_needs_no_leave_from_the_players_config_and_its_plan_is_
     assert f"token     ${TOKEN_VAR} (set), sent only to {URL}" in lines
     assert [line for line in lines if line.startswith("http")] == [
         "http      the rctf preset's routes, with the [http] table's own keys on top",
+        "http      link      the token variable may hold your login link (its ?token= is taken) or the token as the link writes it "
+        "(%2B is read as +)",
         "http      sign in   POST /api/v1/auth/login: your token in the request's body; the answer's $.data.authToken is the session token",
         "http      list      GET /api/v1/challs, with the session token (Authorization: Bearer)",
         "http      files     each address at $.files[*].url: on the event's own address without your token; on another host over "
@@ -296,6 +298,36 @@ def test_http_check_shows_what_each_path_matched_and_submits_nothing(tmp_path, o
     assert "solved   GET /api/v1/users/me: HTTP 200, $.data.solves[*].id matched 1 ref, 1 of them on the list" in out
     assert out[-1] == "every path a pull needs matched; nothing was submitted"
     assert TEAM_TOKEN not in result.output and AUTH_TOKEN not in result.output
+
+
+def test_http_check_signs_in_with_the_login_link_in_the_token_variable(tmp_path, own_config, monkeypatch):
+    """What the docs tell an rCTF player to export: the team's login link, where the token is percent-encoded."""
+    with FakeRCTF(sample()) as fake:
+        link = login_link(fake.url)
+        assert TEAM_TOKEN not in link
+        monkeypatch.setenv(TOKEN_VAR, link)
+        result = invoke("check", event_file(tmp_path, fake.url))
+        assert fake.kinds() == ["login", "challs", "me"] and fake.of("login")[0].json == {"teamToken": TEAM_TOKEN}
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines()[-1] == "every path a pull needs matched; nothing was submitted"
+        assert TEAM_TOKEN not in result.output and link.split("=", 1)[1] not in result.output
+        monkeypatch.setenv(TOKEN_VAR, login_link("https://other.example.test"))
+        refused = invoke("check", event_file(tmp_path, fake.url))
+        assert len(fake.requests) == 3
+    assert refused.exit_code == 2 and refused.output == (
+        f"flightdeck: the variable event.token_env names holds a link to another site (https://other.example.test, and event.url is "
+        f"{fake.url}): flightdeck does not send one site's token to another. Put this event's login link in it, or the token alone "
+        f"({TOKEN_VAR})\n")
+
+
+def test_a_run_refuses_a_login_link_to_another_site_before_the_platform_is_asked(tmp_path, monkeypatch):
+    monkeypatch.setenv(TOKEN_VAR, login_link("https://other.example.test"))
+    with FakeRCTF(sample()) as fake, FakeModelServer(responder=Model({})) as server:
+        with pytest.raises(RunError) as refused:
+            rctf_run(tmp_path, fake, server)
+        assert fake.requests == []
+    assert str(refused.value).startswith("the variable event.token_env names holds a link to another site (https://other.example.test, ")
+    assert str(refused.value).endswith(f"({TOKEN_VAR})") and "fake" not in str(refused.value)
 
 
 def test_http_check_exits_1_for_a_path_that_matches_nothing_and_2_when_the_platform_does_not_answer(tmp_path, own_config, token):

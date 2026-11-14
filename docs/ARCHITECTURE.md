@@ -647,7 +647,9 @@ runs. It reuses the plugin's run side whole through one protocol.
   scheme, no host, no `..`); placeholders are a closed set, each allowed only in the requests
   and places `_PATH_PLACEHOLDERS` and `_BODY_PLACEHOLDERS` list (`{token}` only in the
   sign-in body, `{flag}` only in a body); the auth header's name may not be one that means
-  something else to a server; verdict rules map to `plugins.call.VERDICTS` only. Keys another
+  something else to a server; `auth.link_param` names the query parameter of the platform's
+  login link that holds the token (`_token_from`: the variable may hold the link, whose host
+  must be `event.url`'s, or the token percent-encoded as the link writes it); verdict rules map to `plugins.call.VERDICTS` only. Keys another
   platform would want and the engine lacks are refused by what they stand for (`NOT_BUILT`).
 - **Paths** (`http.JsonPath`): `$`, `.name`, `['name']`, `[n]`, `[*]`, `.*`. `shaped()` tells a
   list that is missing (the wrong answer: a `CallFailed`) from one that is empty (nothing
@@ -658,7 +660,7 @@ runs. It reuses the plugin's run side whole through one protocol.
   placeholder percent-encoded whole, and checked to be on the origin before it leaves. The
   token header is added per request (`_auth`), never as a client default. An exchanged session
   is kept for the caller's life and asked for again, at most every `RELOGIN_SECONDS`, after a
-  401. Every answer is read up to a size limit, parsed, and has the token and the session cut
+  401. Every answer is read up to a size limit, parsed, and has the token (also as a link writes it), and the session, cut
   out of every string (`_cut`); HTML where JSON is expected is a `CallFailed` (`_refuse_page`).
 - **Pull**: the list, each item read by the table's paths (`_challenge`; one that cannot be
   read is left out and named), an optional detail request for each ref not on the board, and

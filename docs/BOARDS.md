@@ -280,7 +280,7 @@ plugin to trust. rCTF ships as a preset.
 
 ```sh
 flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--routes: every route written out)
-export RCTF_TOKEN=...                               # rCTF: your team token, the `token` in your team's login link
+export RCTF_TOKEN='https://ctf.example.org/login?token=...'   # rCTF: your team's login link, whole (or the token alone)
 flightdeck preflight ~/ctf/quals/event.toml         # every request a run would make, and where your token goes
 flightdeck http check ~/ctf/quals/event.toml        # signs in, lists, reads the solved list; submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
@@ -309,8 +309,14 @@ and each folder's id on the platform; `/new` and `/attach` are off on it.
 
 `preset = "rctf"` covers rCTF as its own source has it (`/api/v1`, which its successor keeps):
 a sign-in that turns the team token into a session token, the challenge list, files, submit
-and the team's solves. It was built against a stand-in that answers in that shape; nobody has
-played a real rCTF event through it yet, so run `http check` first. flightdeck does not start
+and the team's solves. Your token there is the one in your team's login link (the "Team
+Invite" link on rCTF's profile page, `/login?token=...`). Put the whole link in the variable,
+in quotes: the link writes the token percent-encoded (`%2B` for `+`, `%2F` for `/`, `%3D` for
+`=`) and rCTF's sign-in takes it only decoded, so flightdeck takes the `token` out of the link
+and decodes it. The token copied out of the link works too, encoded or not. A link to another
+site than `event.url` is refused: its token is that site's. The preset was built against a
+stand-in that answers in rCTF's shape; nobody has played a real rCTF event through it yet, so
+run `http check` first. flightdeck does not start
 an rCTF instance (start it on the site), and counts no tries there: rCTF has none.
 
 ### The `[http]` table
@@ -330,6 +336,7 @@ request = ["POST", "/api/v1/auth/login"]
 body = { teamToken = "{token}" }
 token_path = "$.data.authToken"
 scheme = "Bearer"
+link_param = "token"                    # the token is handed out in a link, as this query parameter
 
 [http.list]
 request = ["GET", "/api/v1/challs"]
@@ -364,6 +371,7 @@ refs = "$.data.solves[*].id"
 | Key | What it is |
 |---|---|
 | `auth.kind` | `bearer`: `Authorization: Bearer TOKEN`. `token`: `Authorization: Token TOKEN`. `header`, with `header = "X-Api-Key"`: the token in that header. `cookie`, with `cookie = "session"`: the token as that cookie's value. `exchange`: one sign-in request (`request`, a `body` with `{token}` in it), whose answer holds a session token at `token_path`; that is then sent as `Authorization: SCHEME TOKEN` (`scheme`: `Bearer` or `Token`). |
+| `auth.link_param` | Optional, for a platform that hands the token out in a link (rCTF's `/login?token=...`): the name of that query parameter. The token variable may then hold the whole link, whose host must be `event.url`'s, or the token as the link writes it: flightdeck takes the parameter's value and percent-decodes it (`%2B` is read as `+`; a `+` stays a `+`). Without the key the variable's value is the token as it stands. |
 | `list.request`, `items`, `ref`, `name` | Required. `items` matches one value per challenge; `ref` is the platform's id for it (a string or a whole number), which a submit is sent with. |
 | `list.category`, `points`, `solves`, `description`, `max_attempts` | Optional, as in [`challenge.json`](#challengejson). `max_attempts` makes the challenge one whose tries are counted. |
 | `list.file_urls`, `file_names` | Each file's address, and optionally its name (else the last part of the address). Both must match the same number of values. |
@@ -397,6 +405,9 @@ request with where the token goes before anything runs:
   password. A profile cannot name your CTFd token, a model key, a proxy setting, a variable
   your config names for a secret, or anything else. The profile still names the address, so
   read `preflight`'s `token` line before you play a profile you did not write.
+- **A token out of a link, for the link's own site.** `auth.link_param` only says which part of
+  your variable's value is the token. When the variable holds a link, its host must be
+  `event.url`'s, or nothing is sent: a link to another site holds that site's token.
 - **Five placeholders and no more:** `{ref}`, `{flag}`, `{game}`, `{submission}` and, in the
   sign-in body only, `{token}`. A challenge's name, text or file names can never be put into a
   request. A placeholder in a path is percent-encoded whole; in a body it is a JSON string.

@@ -12,7 +12,8 @@ FakeRCTF answers in the shape of rCTF's player API, as its public source has it
 carrying the verdict whatever the HTTP status.
 
 - POST /api/v1/auth/login {"teamToken"}: 200 goodLogin with data.authToken; 401
-  badTokenVerification for another token;
+  badTokenVerification for another token, and for the token as the login link writes it
+  (percent-encoded: rCTF decodes nothing there);
 - every other route wants `Authorization: Bearer <authToken>`: else 401 badToken;
 - GET /api/v1/challs: 200 goodChallenges, data a list of {id, name, description, category,
   author, files: [{name, url}], points, solves, sortWeight}; 401 badNotStarted before the
@@ -39,7 +40,9 @@ from urllib.parse import parse_qs, quote, urlsplit
 from fake_ctfd import STOP_WAIT, TLS, Reply, Request, _Server
 from serving import Serving
 
-TEAM_TOKEN = "fake-rctf-team-token-for-tests-51b8"  # synthetic, and not shaped like any real token
+# Synthetic, and no real token. It has the characters rCTF's tokens have (standard base64: + / =),
+# which the team's login link writes percent-encoded (login_link below).
+TEAM_TOKEN = "fake+rctf/team+token/for+tests/51b8=="
 AUTH_TOKEN = "fake-rctf-session-for-tests-e07a"  # what the fake's login answers with
 FLAG_FORMAT = r"t\{\w+\}"  # the flags of the invented challenges below
 
@@ -104,6 +107,13 @@ def sample() -> list[RTask]:
         RTask("web-19c2", "Web Thing", category="web", points=250, flag="t{web}", solves=4),
         RTask("done-a4d0", "Done Before", points=150, flag="t{done}", solved=True),
     ]
+
+
+def login_link(url: str, token: str = TEAM_TOKEN) -> str:
+    """The team's login link as rCTF's own page builds it (its client's profile page:
+    `${location.origin}/login?token=${encodeURIComponent(teamToken)}`): the token is
+    percent-encoded in it, so + / = stand as %2B %2F %3D."""
+    return f"{url}/login?token={quote(token, safe='')}"
 
 
 def answer(status: int, kind: str, message: str, data: object = None) -> Reply:
