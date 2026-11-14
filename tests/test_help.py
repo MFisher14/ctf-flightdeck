@@ -251,6 +251,27 @@ def test_on_the_board_help_is_about_the_challenges_only_lane_and_about_none_when
     drive(app, script, SIZE)
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_filter_that_hides_the_selected_lane_gives_help_no_lane_as_the_keys_have_none(layout):
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        app.fleet.select_lane("L02")
+        app.fleet.set_filter("gamma")  # hides the selected lane: every key refuses it
+        await pilot.pause()
+        assert app.fleet.selected_lane == "L02" and app.fleet.bar_lane() is None
+        await press(pilot, "question_mark")
+        assert now(app) == ("Now, with no lane selected", ["/new", "?", "q"])
+        assert "Beta" not in prompt_text(app).split("Keys in the lane list")[0]  # "now" names no lane
+        await press(pilot, "escape")
+        app.fleet.set_filter("")  # the selection is shown again, and help is about it again
+        await pilot.pause()
+        await press(pilot, "question_mark")
+        assert now(app) == ("The selected lane, now: L02 · Beta", LIST_NOW["L02"])
+
+    drive(app, script, SIZE)
+
+
 def test_in_the_command_bar_a_question_mark_opens_help_only_while_the_bar_is_empty():
     deck, app = three_lanes("simple")
 

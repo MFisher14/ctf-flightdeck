@@ -624,9 +624,10 @@ class FleetScreen(Screen, inherit_bindings=False):
         """What help opens on from this view (P65): the lane the keys act on, and the keys the
         simple layout's key line has for it now (context_keys), as that line shows them. In
         every layout: the deck's line has every key and the compact one's is fixed, and help's
-        first rows are the ones that apply to this lane. The lane is the key line's: the
-        selected one, or on the board (the deck layout) its challenge's only lane."""
-        lane = self.bar_lane() if self.board_focused else self.fd.deck.lanes.get(self.selected_lane or "")
+        first rows are the ones that apply to this lane. The lane is the one the keys act on
+        (bar_lane): the selected one, or on the board (the deck layout) its challenge's only
+        lane; none while the filter hides the selected lane, since every key refuses it then."""
+        lane = self.bar_lane()
         return lane, tuple(shown for _, shown, _ in context_keys(lane, by_hand=self.fd.adder is not None))
 
     def target_lane(self) -> Lane | None:

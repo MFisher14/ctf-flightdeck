@@ -558,8 +558,8 @@ follows the view it was opened from.
 1. **Now.** The keys the simple layout's key line has for the lane the keys act on, each with
    its sentence, under `This lane, now: L03 · Gamma` (in a lane) or `The selected lane, now:
    L02 · Beta` (in the list: the selected lane, or on the board its challenge's only lane).
-   With no lane it reads `Now, with no lane selected` and has the keys that act without one
-   (`/new`, `?`, `q`). These are the same rows in every layout, since they are about the
+   With no lane (also while the filter hides the selected lane, which every key refuses) it
+   reads `Now, with no lane selected` and has the keys that act without one (`/new`, `?`, `q`). These are the same rows in every layout, since they are about the
    lane's state and not about the key line on screen. The challenge's name is challenge text:
    made safe, on one row, never markup.
 2. **Keys in a lane** or **Keys in the lane list**: the view it was opened from first, then the
