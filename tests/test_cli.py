@@ -40,8 +40,8 @@ runner = CliRunner()
 
 # The default scenario's moments, in the order they are shot. "alert" is alert-<tag>.
 MOMENTS = (
-    "open", "wave-drop", "alert", "command-menu", "focus-lane", "chat", "focus-after", "diff",
-    "approve-pending", "approve-submit", "team-stop", "attention-sort", "narrow-120x36",
+    "open", "simple-open", "wave-drop", "alert", "simple-alert", "command-menu", "focus-lane", "simple-focus", "chat",
+    "focus-after", "diff", "approve-pending", "approve-submit", "team-stop", "attention-sort", "theme-light", "narrow-120x36",
     "compact-56x40", "compact-focus-56x40", "fork-prompt", "kill-prompt", "take-over", "challenge-card", "help",
 )
 COURSE_TAGS = {kind.tag: kind for kind in COURSE_ALERTS}
@@ -647,6 +647,34 @@ def test_only_the_narrow_and_the_compact_shots_are_narrow(default_run):
     assert set(widths.values()) == {screenshots.SIZE[0]}
 
 
+def test_the_simple_shots_show_the_same_moments_in_the_simple_layout(default_run):
+    _, out = default_run
+    deck, simple = screen_text(shot(out, "open")), screen_text(shot(out, "simple-open"))
+    was, now = header(shot(out, "open")), header(shot(out, "simple-open"))
+    assert "board " in deck and "fleet " in deck and "docker" in was and any(part.startswith("tok ") for part in was)
+    assert "board " not in simple and re.search(r"╭─ lanes \d+/\d+", simple)  # one list, and no board
+    assert "docker" not in now and not any(part.startswith(("tok ", "lanes ", "T+")) for part in now)
+    assert [part for part in was if part.startswith("▲ ")] == [part for part in now if part.startswith("▲ ")] != []
+    assert "last action" in simple and "turns" not in simple and "idle" not in simple
+    alert, simple_alert = screen_text(shot(out, ALERT_SHOT)), screen_text(shot(out, "simple-alert"))
+    selected = re.search(r"▌(L\d\d) ▲ ", alert).group(1)
+    assert f"▌{selected} ▲ " in simple_alert  # the same lane, and why it is flagged
+    assert simple_alert.rstrip().splitlines()[-1].strip() == "1-9 answer  x dismiss  enter open  / commands  ? help  q quit"
+    lane = screen_text(shot(out, "simple-focus"))
+    assert f"─ {selected} · " in lane and "needs you now" in lane and "No other lane needs you" not in lane
+    assert lane.rstrip().splitlines()[-1].strip() == "1-9 answer  esc lanes  / commands  /help all keys"
+    assert "o open  ? help" in screen_text(shot(out, "command-menu"))  # the shots after a simple one are the deck's again
+
+
+def test_the_light_theme_shot_is_drawn_in_the_light_theme_and_the_next_in_the_default(default_run):
+    _, out = default_run
+    light = shot(out, "theme-light").read_text(encoding="utf-8").lower()
+    assert "#fafafa" in light and "#121212" not in light  # the light page, and nothing of the default one
+    after = shot(out, "narrow-120x36").read_text(encoding="utf-8").lower()
+    assert "#121212" in after and "#fafafa" not in after
+    assert screen_text(shot(out, "theme-light")) == screen_text(shot(out, "attention-sort"))  # the same screen, other colours
+
+
 def test_the_compact_shots_show_what_needs_you_the_answers_and_each_lanes_state_and_cost(default_run):
     _, out = default_run
     fleet, lane = screen_text(shot(out, "compact-56x40")), screen_text(shot(out, "compact-focus-56x40"))
@@ -718,7 +746,7 @@ def test_the_flag_scenario_reports_the_moments_it_does_not_have(flag_runs):
     assert result.exit_code == 0, result.output
     skipped = result.stderr.splitlines()
     assert any(line.startswith("skipped wave-drop: ") for line in skipped), skipped
-    assert any(line.startswith("skipped alert, command-menu, focus-lane, chat, focus-after, diff: ") for line in skipped), skipped
+    assert any(line.startswith("skipped alert, simple-alert, command-menu, focus-lane, simple-focus, chat, focus-after, diff: ") for line in skipped), skipped
     names = [p.name for p in out.iterdir()]
     assert not [name for name in names if "wave-drop" in name or "-alert-" in name]
     assert any(name.endswith("-approve-submit.svg") for name in names)  # it did play
