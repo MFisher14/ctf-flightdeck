@@ -271,15 +271,22 @@ def _colours(source: Path, table: object, base: Palette | None) -> dict[str, str
 
 def _read(file: Path) -> str:
     """The file's text. It is opened without waiting (O_NONBLOCK) and read only when it is a
-    regular file: a FIFO or a device would otherwise hold the console until something writes to it."""
+    regular file: a FIFO or a device would otherwise hold the console until something writes to it.
+    The kind is checked on the bare descriptor, before it is wrapped (os.fdopen raises on a
+    directory and leaves the descriptor open), and the descriptor is closed on every path."""
     try:
         descriptor = os.open(file, os.O_RDONLY | os.O_NONBLOCK)
-        with os.fdopen(descriptor, "rb") as handle:
-            mode = os.fstat(handle.fileno()).st_mode
+        try:
+            mode = os.fstat(descriptor).st_mode
             if stat.S_ISDIR(mode):
                 raise IsADirectoryError
             if not stat.S_ISREG(mode):
                 raise ThemeError(f"{file}: is not a regular file, so it is not read")
+            handle = os.fdopen(descriptor, "rb")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with handle:  # the handle owns the descriptor now: closing it closes the descriptor
             raw = handle.read(MAX_BYTES + 1)
     except IsADirectoryError:
         raise ThemeError(f"{file}: is a directory, not a theme file") from None

@@ -353,6 +353,36 @@ def test_a_file_that_is_not_text_or_not_a_file_is_refused(tmp_path):
     assert message.startswith(f"{tmp_path / 'themes' / 'gone.toml'}: cannot read it (") and not isinstance(caught.value, NoSuchTheme)
 
 
+def test_a_theme_file_that_is_a_directory_leaves_no_descriptor_open(tmp_path):
+    """The directory opens (O_RDONLY works on one): the descriptor must be closed when it is
+    refused, or every /theme on it leaks one until the console runs out."""
+    import os
+
+    folder = tmp_path / "themes"
+    folder.mkdir()
+    directory = folder / "x.toml"
+    directory.mkdir()
+    seen = os.stat(directory)
+
+    def open_on_it() -> list[int]:
+        fds = []
+        for entry in os.listdir("/dev/fd"):
+            try:
+                found = os.fstat(int(entry))
+            except OSError:  # the listing's own descriptor, closed by now
+                continue
+            if (found.st_dev, found.st_ino) == (seen.st_dev, seen.st_ino):
+                fds.append(int(entry))
+        return fds
+
+    assert open_on_it() == []
+    for _ in range(3):
+        with pytest.raises(ThemeError) as caught:
+            themes.load("x", folder)
+        assert str(caught.value) == f"{directory}: is a directory, not a theme file"
+    assert open_on_it() == []
+
+
 def test_a_theme_file_that_is_a_fifo_is_refused_and_never_waited_on(tmp_path):
     """A FIFO (or a link to one) would block the open until something writes to it: the
     console would freeze on /theme. It is refused at once instead."""
