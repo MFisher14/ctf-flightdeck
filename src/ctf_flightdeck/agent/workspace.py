@@ -683,24 +683,60 @@ _CPUS = re.compile(r"\d+(\.\d+)?")
 _SIGKILL_STATUS = 128 + signal.SIGKILL
 
 
+DOCKER_VERSION = ("docker", "version", "--format", "{{.Server.Version}}")  # answered by the daemon, so only a running one answers
+DOCKER_VERSION_TIMEOUT = 20.0
+DOCKER_NOT_ANSWERING = f"docker daemon not answering (docker version took over {DOCKER_VERSION_TIMEOUT:.0f} s)"
+
+
 def docker_unavailable() -> str | None:
     """Why docker cannot run lanes here ("docker not found on PATH", "docker daemon not
     running ..."), or None when it can."""
     if shutil.which("docker") is None:
         return "docker not found on PATH"
     try:
-        proc = subprocess.run(
-            ["docker", "version", "--format", "{{.Server.Version}}"],
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=20,
-        )
+        proc = subprocess.run(DOCKER_VERSION, stdin=subprocess.DEVNULL, capture_output=True, timeout=DOCKER_VERSION_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return "docker daemon not answering (docker version took over 20 s)"
+        return DOCKER_NOT_ANSWERING
     except OSError as exc:
         return f"docker cannot be run: {exc.strerror or exc}"
-    if proc.returncode != 0 or not proc.stdout.strip():
-        detail = _first_line(proc.stderr.decode("utf-8", "replace"))
+    return _docker_answered(proc.returncode, proc.stdout, proc.stderr)
+
+
+async def docker_unavailable_stoppable() -> str | None:
+    """docker_unavailable() for an event loop that must never wait for Docker (a screen the
+    player can leave): cancel the task that awaits this and `docker version` is killed at
+    once, with everything it started, so nothing is left running and nobody waits out a
+    daemon that does not answer. The same reasons, word for word."""
+    if shutil.which("docker") is None:
+        return "docker not found on PATH"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *DOCKER_VERSION,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,  # a group of its own, so the whole of it can be killed
+        )
+    except OSError as exc:
+        return f"docker cannot be run: {exc.strerror or exc}"
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), DOCKER_VERSION_TIMEOUT)
+    except TimeoutError:
+        return DOCKER_NOT_ANSWERING
+    finally:
+        if proc.returncode is None:  # timed out, or cancelled: never leave it running
+            _kill_group(proc.pid)
+            try:  # collected, so no zombie stays; never for long, should something outside the group hold its pipes
+                await asyncio.wait_for(proc.wait(), 2.0)
+            except TimeoutError:
+                pass
+    return _docker_answered(proc.returncode, out, err)
+
+
+def _docker_answered(returncode: int | None, out: bytes, err: bytes) -> str | None:
+    """What `docker version` ending this way says of the daemon: a reason, or None for running."""
+    if returncode != 0 or not out.strip():
+        detail = _first_line(err.decode("utf-8", "replace"))
         return f"docker daemon not running ({detail})" if detail else "docker daemon not running"
     return None
 

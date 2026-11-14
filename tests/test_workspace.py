@@ -39,6 +39,7 @@ from ctf_flightdeck.agent.workspace import (
     WorkspaceError,
     changed_files,
     docker_unavailable,
+    docker_unavailable_stoppable,
     open_inside,
     remove_shell_home,
     take_snapshot,
@@ -670,6 +671,61 @@ def test_docker_unavailable_names_a_daemon_that_is_not_running(monkeypatch, tmp_
     monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path}/no-daemon.sock")
     reason = docker_unavailable()
     assert reason is not None and reason.startswith("docker daemon not running")
+
+
+def stand_in_docker(tmp_path, monkeypatch, version: str) -> Path:
+    """A stand-in `docker`, the only one on PATH, whose `docker version` is the shell lines
+    `version`; it writes its process id to `pid` in its folder, which is returned. Never the
+    real docker, and it runs nothing."""
+    folder = tmp_path / f"stand-in-{uuid.uuid4().hex[:8]}"
+    folder.mkdir()
+    exe = folder / "docker"
+    exe.write_text(f'#!/bin/sh\n[ "$1" = "version" ] || exit 64\necho $$ > "{folder}/pid"\n{version}\n')
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(folder))
+    return folder
+
+
+NEVER_ANSWERS = "n=0\nwhile [ $n -lt 100 ]; do /bin/sleep 0.1; n=$((n+1)); done\nexit 1"  # 10 s, then it ends by itself
+
+
+def test_the_stoppable_docker_check_gives_the_reasons_the_plain_one_gives(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))  # an empty directory: no docker on it
+    assert run(docker_unavailable_stoppable()) == docker_unavailable() == "docker not found on PATH"
+    stand_in_docker(tmp_path, monkeypatch, "echo 27.0.0; exit 0")
+    assert run(docker_unavailable_stoppable()) is None and docker_unavailable() is None
+    stand_in_docker(tmp_path, monkeypatch, "echo 'Cannot connect to the Docker daemon' >&2; exit 1")
+    assert run(docker_unavailable_stoppable()) == docker_unavailable() == "docker daemon not running (Cannot connect to the Docker daemon)"
+    stand_in_docker(tmp_path, monkeypatch, "exit 0")  # it ran and named no server: no daemon answered
+    assert run(docker_unavailable_stoppable()) == docker_unavailable() == "docker daemon not running"
+
+
+def test_cancelling_the_stoppable_docker_check_kills_docker_at_once_and_waits_for_nothing(monkeypatch, tmp_path):
+    folder = stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
+
+    async def asked_then_cancelled() -> tuple[int, float]:
+        check = asyncio.ensure_future(docker_unavailable_stoppable())
+        while not ((folder / "pid").exists() and (folder / "pid").read_text().strip()):
+            await asyncio.sleep(0.02)
+        began = time.monotonic()
+        check.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await check
+        return int((folder / "pid").read_text()), time.monotonic() - began
+
+    began = time.monotonic()
+    pid, took = run(asked_then_cancelled())
+    assert took < 3 and time.monotonic() - began < 5  # neither the cancel nor the loop's end waits the stand-in's 10 s out
+    assert_dies(pid, within=1.0)
+
+
+def test_the_stoppable_docker_check_gives_up_on_a_daemon_that_does_not_answer_and_kills_docker(monkeypatch, tmp_path):
+    folder = stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
+    monkeypatch.setattr(workspace_module, "DOCKER_VERSION_TIMEOUT", 0.5)
+    began = time.monotonic()
+    assert run(docker_unavailable_stoppable()) == "docker daemon not answering (docker version took over 20 s)"
+    assert time.monotonic() - began < 5
+    assert_dies(int((folder / "pid").read_text()), within=1.0)
 
 
 def test_a_docker_lane_without_docker_fails_loudly_and_writes_nothing(monkeypatch, tmp_path, handout):
