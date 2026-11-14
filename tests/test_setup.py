@@ -1096,3 +1096,31 @@ def test_a_setup_that_cannot_be_written_keeps_no_key_and_a_key_that_cannot_be_ke
     with pytest.raises(FileExistsError):  # a config that is there: refused before the key is touched
         setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": "another-synthetic-key"})
     assert keys.load_keys(keys_file)["OPENROUTER_API_KEY"] == PASTED_KEY
+
+
+def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the_replaced_config_back(tmp_path, monkeypatch):
+    """The config is written before the key is kept: a write that fails (a full disk, a folder
+    that cannot be written) leaves the keys file as it was, the key already there too; and with
+    --force, a key the keys file refuses puts back the config the new one replaced."""
+    from pathlib import Path
+
+    from ctf_flightdeck import keys, setup
+
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    keys.save("OPENROUTER_API_KEY", "the-old-synthetic-key")
+    target = tmp_path / "config.toml"
+
+    def full(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "write_text", full)
+        with pytest.raises(OSError):
+            setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY})
+    assert not target.exists() and keys.load_keys(keys_file) == {"OPENROUTER_API_KEY": "the-old-synthetic-key"}
+    target.write_text("# the player's old config\n")
+    keys_file.chmod(0o644)
+    with pytest.raises(keys.KeysError):
+        setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
+    assert target.read_text() == "# the player's old config\n"

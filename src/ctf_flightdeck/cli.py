@@ -142,9 +142,8 @@ def _home_choice(menu, status: str, *, palette=None, ready=None):
 
 
 def _set_up(done):
-    """Write what the home screen's setup form ended with (console/home.py Setup): the key to
-    the keys file, then the config (setup.write_setup: both, or neither where that can be
-    told beforehand). What was done is said in the terminal too, for after the home screen,
+    """Write what the home screen's setup form ended with (console/home.py Setup): the config,
+    then the key to the keys file (setup.write_setup: both, or neither). What was done is said in the terminal too, for after the home screen,
     and is what the home screen opens on next (home.Ready): with building the lane image
     first when Docker lanes need it and Docker can build it. Docker is asked only for Docker
     lanes, with the wait said first (the home screen is closed: a silent terminal looks
