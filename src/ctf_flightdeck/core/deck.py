@@ -1627,10 +1627,15 @@ class Deck:
         before = set(self.lanes)
         self._fill()
         started = [lane_id for lane_id in self.lanes if lane_id not in before]
+        # said whether or not a lane started in it (the queue may be empty, held or gated): the
+        # run log has every move of a slot, so a later "waiting" or "taken" has its "given"
         if started:
             self._note(lane, f"gave its slot to {', '.join(started)} while it waits for your live-box answer")
-            self._emit(EventKind.SLOT, f"{lane.id} waits for your live-box answer: its slot went to {', '.join(started)}",
-                       lane.id, lane.challenge_id, data={"slot": "given", "started": started})
+            said = f"its slot went to {', '.join(started)}"
+        else:  # nothing to tell the player on the lane: its transcript has the approval it waits on
+            said = "its slot is free, and no queued lane started in it"
+        self._emit(EventKind.SLOT, f"{lane.id} waits for your live-box answer: {said}",
+                   lane.id, lane.challenge_id, data={"slot": "given", "started": started})
 
     def _back_to_work(self, lane: Lane) -> bool:
         """The lane has nothing left to wait for: it runs again (True), unless it gave its slot
@@ -1646,7 +1651,9 @@ class Deck:
                     self._emit(EventKind.SLOT, f"{lane.id} waits for a free slot to go on: {self._busy()}",
                                lane.id, lane.challenge_id, data={"slot": "waiting"})
                 return False
-            lane.benched = False
+            lane.benched = False  # a slot is free and no lane is ahead: it takes it now (the run log says so; its transcript has the answer)
+            self._emit(EventKind.SLOT, f"{lane.id} took a free slot and goes on", lane.id, lane.challenge_id,
+                       data={"slot": "taken"})
         lane.state = LaneState.RUNNING
         return True
 

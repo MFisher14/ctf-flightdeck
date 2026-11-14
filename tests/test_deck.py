@@ -456,6 +456,22 @@ def test_an_answered_lane_takes_its_slot_back_at_once_when_one_is_free():
     assert deck.apply(iv.Decline(lane.id)).ok
     assert lane.state is LaneState.RUNNING and not lane.benched
     assert driver.named("declined") == [(lane.id, PendingKind.LIVE_BOX, None)]
+    taken = events(deck, EventKind.SLOT)
+    assert [(e.lane, e.data["slot"]) for e in taken] == [("L01", "given"), ("L01", "taken")]
+
+
+def test_a_lane_gives_its_slot_up_in_the_run_log_when_no_queued_lane_starts_in_it():
+    deck, driver, _ = make_deck(n=2, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.hold_queue("the model API refuses the key")  # c1 is queued but may not start
+    ask_box(deck, lane)
+    assert lane.benched and driver.started() == ["c0"]
+    (given,) = events(deck, EventKind.SLOT)
+    assert (given.lane, given.data) == ("L01", {"slot": "given", "started": []})
+    assert "no queued lane started in it" in given.text
+    assert deck.apply(iv.Approve(lane.id)).ok  # the slot is free still: it takes it back at once
+    assert lane.state is LaneState.RUNNING
+    assert [e.data["slot"] for e in events(deck, EventKind.SLOT)] == ["given", "taken"]
 
 
 def test_lanes_waiting_for_a_slot_take_free_ones_in_the_order_they_were_answered():
