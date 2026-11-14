@@ -6,8 +6,9 @@ appends `[plugins.NAME]` (plugins.manifest.enable), and the console keeps the th
 layout the player picked (save_console). The shape is the same for all three:
 
 1. read the file as it is, byte for byte (its line endings too);
-2. make the new text, and write it over the old one in place, so a config that is a link
-   (a dotfiles folder) stays a link and keeps its mode;
+2. make the new text, and put it in place of the old one in one step (_write): a reader or a
+   crash finds the old file or the new one, never half of one; a config that is a link (a
+   dotfiles folder) stays a link, and the file keeps its mode;
 3. load the file again and check that it holds the change;
 4. when it does not load, or does not hold the change, write the old text back.
 
@@ -18,9 +19,13 @@ into the wrong place (as config.py).
 
 from __future__ import annotations
 
+import os
 import re
+import stat
+import tempfile
 import tomllib
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from pathlib import Path
 
 from . import themes
@@ -96,7 +101,7 @@ def rewrite(path: Path, change: Callable[[str], str], check: Callable[[], None],
             first: str = "run `flightdeck init` first") -> bool:
     """Write change(the config's text) over the config at `path`, then call `check`, which
     loads the file and raises ConfigError when it does not load or does not hold the change:
-    the old text is then written back. False when the change leaves the text as it is (nothing
+    the old text is then written back (and so it is for any other error the check raises). False when the change leaves the text as it is (nothing
     is written, and nothing is checked). `what` is the change in a few words ("the pack"), for
     the message; `first` is what to do when there is no config. `change` may raise to refuse:
     nothing is written before it returns."""
@@ -116,11 +121,13 @@ def rewrite(path: Path, change: Callable[[str], str], check: Callable[[], None],
         raise EditError(f"cannot write the config {path} ({exc.strerror or type(exc).__name__}): {_left(path, before)}") from None
     try:
         check()
-    except ConfigError as exc:
+    except Exception as exc:  # noqa: BLE001 - whatever stopped the check, the old text goes back
+        # a ConfigError's text never holds a value from the file; any other error is named by its kind only
+        why = str(exc) if isinstance(exc, ConfigError) else getattr(exc, "strerror", None) or type(exc).__name__
         left = _left(path, before)
         if left != PUT_BACK:
-            raise EditError(f"the config did not load with {what} in it ({exc}), and {left}") from None
-        raise EditError(f"the config did not load with {what} in it, so it was put back as it was: {exc}") from None
+            raise EditError(f"the config did not load with {what} in it ({why}), and {left}") from None
+        raise EditError(f"the config did not load with {what} in it, so it was put back as it was: {why}") from None
     return True
 
 
@@ -129,8 +136,25 @@ PUT_BACK = "it was put back as it was"
 
 
 def _write(path: Path, text: str) -> None:
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write(text)
+    """Put `text` in place of the config in one step: written to a new file in the same folder
+    with the config's mode, flushed to the disk, then renamed over what the path points at (a
+    link stays a link). A config the player cannot write is refused as before (it is opened
+    for writing first, and nothing is changed). OSError when it cannot be done."""
+    target = Path(os.path.realpath(path))
+    os.close(os.open(target, os.O_WRONLY))  # the file's own mode decides, as a write in place would
+    mode = stat.S_IMODE(os.stat(target).st_mode)
+    descriptor, name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+            os.fchmod(handle.fileno(), mode)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, target)
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(name)
+        raise
 
 
 def _left(path: Path, before: str) -> str:
