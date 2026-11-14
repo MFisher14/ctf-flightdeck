@@ -2553,10 +2553,10 @@ def test_the_focus_view_has_no_clock_keys_in_its_header_and_tab_goes_to_the_file
     world, app = make("sstv")
 
     async def script(pilot):
-        assert "space freezes" in region_text(app, "#header")  # in the fleet, space does
+        assert "▶ live: , freezes" in region_text(app, "#header")  # in the fleet, `,` does
         focus = await open_focus(pilot, app, "L01")
         header = region_text(app, "#header")
-        assert "▶ live" in header and "space" not in header
+        assert "▶ live" in header and "freezes" not in header
         await press(pilot, "tab")
         assert app.focused is focus.query_one("#files")
 
