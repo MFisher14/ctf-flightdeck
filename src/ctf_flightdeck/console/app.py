@@ -42,7 +42,7 @@ from .commands import CommandError, needs_lane, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
-from .terminal import STOP_SIGNALS, TerminalDriver
+from .terminal import STOP_SIGNALS, Beacon, TerminalDriver
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
@@ -93,6 +93,8 @@ class FlightdeckApp(App[None]):
         themes_folder: Path | None = None,
         layout: str = "deck",
         mouse: bool = True,
+        terminal_title: bool = True,
+        terminal_bell: bool = True,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -102,11 +104,15 @@ class FlightdeckApp(App[None]):
         where /theme looks for the player's own themes (None: only the built-in ones).
         `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's).
         `mouse`: False never asks the terminal to report the mouse (TerminalDriver), which
-        leaves the terminal its own text selection; the console is driven by keys."""
+        leaves the terminal its own text selection; the console is driven by keys.
+        `terminal_title`: the terminal's title says how many lanes need the player, and is put
+        back when the console leaves; `terminal_bell`: the terminal's bell rings once each time
+        that count goes up (terminal.Beacon; a run passes the config's [console] title and bell)."""
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
         self.mouse = mouse
+        self._beacon = Beacon(self._to_terminal, title=terminal_title, bell=terminal_bell)
         self._open_first = False  # the first lane a /new starts is still to open in the focus view (simple layout)
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
@@ -190,6 +196,12 @@ class FlightdeckApp(App[None]):
         return next((s for s in reversed(self.screen_stack) if isinstance(s, FocusScreen)), None)
 
     def on_mount(self) -> None:
+        self._beacon.open()
+        self._tell_terminal()
+        # A shell that takes the terminal (take over) gets the title the console found, and the console writes
+        # its own again when it is back. At once: the driver lets the terminal go right after the signal
+        self.app_suspend_signal.subscribe(self, lambda _: self._beacon.close(), immediate=True)
+        self.app_resume_signal.subscribe(self, lambda _: self._back_on_terminal(), immediate=True)
         if self._ticker is not None and self._tick_seconds:
             self.set_interval(self._tick_seconds, self._on_tick)
         if self._refresh_seconds:
@@ -265,6 +277,7 @@ class FlightdeckApp(App[None]):
             self.call_later(self._quit_now, f"{signal.Signals(sig).name}: ")
 
     def on_unmount(self) -> None:
+        self._beacon.close()  # the driver's output is still open: it closes after this
         self._unsubscribe()
         loop = asyncio.get_running_loop()
         for sig in self._signals:
@@ -274,9 +287,27 @@ class FlightdeckApp(App[None]):
     # ------------------------------------------------------------------ drawing
 
     def refresh_view(self) -> None:
+        self._tell_terminal()
         for screen in self.screen_stack:
             if isinstance(screen, (FleetScreen, FocusScreen)):
                 screen.refresh_view()
+
+    def _tell_terminal(self) -> None:
+        """The terminal's title and bell follow what the header counts: the lanes that need
+        the player, and whether the queue is held (terminal.Beacon)."""
+        self._beacon.show(len(self.deck.needing()), bool(self.deck.held))
+
+    def _back_on_terminal(self) -> None:
+        self._beacon.open()
+        self._tell_terminal()
+
+    def _to_terminal(self, data: str) -> None:
+        """Write `data` to the terminal as it is, through the driver: behind what is being
+        drawn, and dropped once the terminal has hung up (TerminalDriver). Not App.bell(),
+        which writes nothing on a headless driver, where a test must see what was written."""
+        driver = self._driver
+        if driver is not None:
+            driver.write(data)
 
     def header_text(self, width: int, *, clock_keys: bool = True, compact: bool = False) -> Text:
         """The header; `clock_keys` says how to freeze the mock clock (only where space does).

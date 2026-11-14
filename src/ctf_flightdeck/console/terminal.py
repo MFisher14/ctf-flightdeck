@@ -13,6 +13,16 @@ flightdeck prints on its way out cannot fail either.
 The driver is also where the console's `mouse` setting acts ([console] mouse in the config):
 with it off, the terminal is never asked to report the mouse, so clicks, drags and the wheel
 stay the terminal's own (its text selection, for one).
+
+Beacon is what the console says outside its own window, for a player who is looking at
+another one ([console] title and bell in the config): how many lanes need the player, in the
+terminal's title, and the terminal's bell once each time that count goes up. The title is
+made of a count and fixed words (title_text), so no text of a challenge or a lane can be in
+it. The console saves the title it found on the terminal's own title stack before it writes
+one, and puts it back when it leaves (xterm's window operations 22 and 23:
+https://invisible-island.net/xterm/ctlseqs/ctlseqs.html). Textual's App.bell() writes nothing
+on a headless driver, so the bell and the title are written here, through whatever write the
+console hands over: a test reads what was written.
 """
 
 from __future__ import annotations
@@ -20,11 +30,84 @@ from __future__ import annotations
 import os
 import queue
 import signal
+from collections.abc import Callable
 
 from textual.drivers.linux_driver import LinuxDriver
 
 STOP_SIGNALS = (signal.SIGHUP, signal.SIGTERM)  # SIGINT already ends the run through asyncio
 PUT_WAIT = 0.25  # seconds a write waits for room in the output queue before it checks the thread again
+
+NAME = "flightdeck"  # the title when nothing needs the player, and the end of every other one
+HELD = "queue held"  # the header's words for it (views.HELD)
+BELL = "\a"
+TITLE_SAVE = "\x1b[22;0t"  # the terminal puts its icon and window title on its stack
+TITLE_BACK = "\x1b[23;0t"  # and takes them back from it
+
+
+def title_text(need: int, held: bool) -> str:
+    """The terminal's title: how many lanes need the player (the header's "▲ N need you"),
+    that the queue is held, and the name. A count and fixed words, nothing else."""
+    parts = [f"▲ {int(need)} need you"] if need > 0 else []
+    if held:
+        parts.append(HELD)
+    return " · ".join([*parts, NAME])
+
+
+def set_title(text: str) -> str:
+    """The write that sets the terminal's icon and window title (OSC 0), which is the tab's
+    title where the terminal has tabs."""
+    return f"\x1b]0;{text}{BELL}"
+
+
+class Beacon:
+    """The terminal's title and bell, written only while the console has the terminal
+    (between open() and close()), and only when there is something new to say."""
+
+    def __init__(self, write: Callable[[str], None], *, title: bool = True, bell: bool = True) -> None:
+        self._write = write
+        self.title = title  # false: the title is never read, written or put back
+        self.bell = bell  # false: the bell never rings
+        self._open = False
+        self._shown: str | None = None  # the title the terminal has from here (None: none yet)
+        self._need: int | None = None  # the count last seen (None: none yet, so the next one rings no bell)
+
+    def open(self) -> None:
+        """The console has the terminal (it started, or came back from a shell): the title
+        that is there is saved, and the next show() writes the console's own."""
+        if self._open:
+            return
+        self._open = True
+        self._shown = self._need = None
+        if self.title:
+            self._write(TITLE_SAVE)
+
+    def show(self, need: int, held: bool) -> None:
+        """`need` lanes need the player, and the queue is held or not. The title is written
+        when its text is not the one already there; the bell rings once when `need` is more
+        than it was at the last call, never for the first count after open() (the player is
+        at the console then), a count that stays, or one that falls."""
+        if not self._open:
+            return
+        if self.title:
+            text = title_text(need, held)
+            if text != self._shown:
+                self._write(set_title(text))
+                self._shown = text
+        rose = self._need is not None and need > self._need
+        self._need = need
+        if rose and self.bell:
+            self._write(BELL)
+
+    def close(self) -> None:
+        """The console lets the terminal go (it ends, or hands the terminal to a shell): the
+        title goes back to what open() saved. A terminal with no title stack ignores that,
+        so the title is emptied first, which is the terminal's own default title: a count of
+        lanes never stays behind."""
+        if not self._open:
+            return
+        self._open = False
+        if self.title:
+            self._write(set_title("") + TITLE_BACK)
 
 
 class TerminalDriver(LinuxDriver):
