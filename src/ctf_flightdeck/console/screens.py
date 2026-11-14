@@ -33,7 +33,7 @@ MODAL_CSS = """
 }}
 {name} .muted {{ color: $text-muted; }}
 {name} .keys {{ color: $text-muted; margin-top: 1; }}
-{name} Input {{ margin-top: 1; border: round #3c4146; }}
+{name} Input {{ margin-top: 1; border: round $fd-border; }}
 {name} Input:focus {{ border: round $accent; }}
 {name} Select {{ margin-top: 1; }}
 {name} Horizontal {{ height: auto; margin-top: 1; }}
@@ -100,7 +100,7 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
     DEFAULT_CSS = MODAL_CSS.format(name="NewChallengePrompt") + """
     NewChallengePrompt > Vertical { width: 124; }
-    NewChallengePrompt TextArea { height: 12; margin-top: 1; border: round #3c4146; }
+    NewChallengePrompt TextArea { height: 12; margin-top: 1; border: round $fd-border; }
     NewChallengePrompt TextArea:focus { border: round $accent; }
     NewChallengePrompt .short { width: 40; }
     NewChallengePrompt #new-problem { color: $warning; }
@@ -148,9 +148,9 @@ class NewChallengePrompt(ModalScreen["str | None"]):
         if problems:
             self._say("not attached: " + "; ".join(problems))
         elif taken:
-            self._say(said or f"attached {', '.join(file.name for file in taken)} (ctrl+r removes the last file)", "green")
+            self._say(said or f"attached {', '.join(file.name for file in taken)} (ctrl+r removes the last file)", theme.GREEN)
         elif known:
-            self._say("already attached", "green")
+            self._say("already attached", theme.GREEN)
         return bool(taken or known)
 
     def action_remove_file(self) -> None:
@@ -158,7 +158,7 @@ class NewChallengePrompt(ModalScreen["str | None"]):
         if not self.files:
             self._say("no file is attached")
             return
-        self._say(f"removed {self.files.pop().name}", "green")
+        self._say(f"removed {self.files.pop().name}", theme.GREEN)
         self._show_attached()
 
     def action_choose_files(self) -> None:
@@ -238,7 +238,7 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
         _, urls = parse(self.query_one("#new-text", TextArea).text)
         self.query_one("#new-attached", Static).update(
-            Text(attached_text(self.files, urls), style="bold green" if self.files else "bold"))
+            Text(attached_text(self.files, urls), style=f"bold {theme.GREEN}" if self.files else "bold"))
 
     @on(Input.Submitted, "#new-name")
     def _named(self) -> None:
@@ -563,10 +563,10 @@ class ChallengeCard(ModalScreen[str | None]):
         self.card_challenge, self.card_lanes, self.card_owner, self.card_team = challenge, lanes, owner, team
 
     def compose(self) -> ComposeResult:
-        from .views import BOARD_MARK, route_text
+        from .views import board_mark, route_text
 
         ch = self.card_challenge
-        mark, color = BOARD_MARK[ch.status]
+        mark, color = board_mark(ch.status)
         title = Text()
         title.append(untrusted(ch.name, one_line=True), "bold")
         title.append(f"   {untrusted(ch.category, one_line=True)} · {ch.points} pts · {ch.solves} solves · ", "dim")
@@ -706,7 +706,7 @@ class HelpScreen(ModalScreen[None]):
         alerts.add_column()
         for kind, text in ALERT_HELP:
             alerts.add_row(theme.chip(kind.tag, *theme.alert_colors(kind)), Text(f"{kind.label}: {text}"))
-        alerts.add_row(theme.chip("submit", *theme.PENDING_COLORS), Text("Waiting for your approval (press a, or /approve)"))
+        alerts.add_row(theme.chip("submit", *theme.pending_colors()), Text("Waiting for your approval (press a, or /approve)"))
         alerts.add_row(sending_chip(), Text(SENDING_HELP))
         marks = Table.grid(padding=(0, 2))
         marks.add_column(no_wrap=True)

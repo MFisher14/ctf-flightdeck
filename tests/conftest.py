@@ -66,3 +66,16 @@ def no_real_file_window(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(filepick, "choose", guarded)
+
+
+@pytest.fixture(autouse=True)
+def default_palette():
+    """Each test starts and ends in the default theme: the palette in use is one for the whole
+    process (console/theme.py), and a console a test opened in another theme would colour the
+    next test's."""
+    from ctf_flightdeck import themes
+    from ctf_flightdeck.console import theme
+
+    theme.use(themes.DEFAULT)
+    yield
+    theme.use(themes.DEFAULT)

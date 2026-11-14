@@ -22,7 +22,7 @@ from textual.screen import Screen
 from textual.widgets import Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from .. import start
+from .. import start, themes
 from ..text import untrusted
 from . import theme
 
@@ -229,24 +229,33 @@ class NewEventForm(Screen):
 
 class HomeApp(App):
     TITLE = "flightdeck"
-    CSS = f"""
-    Screen {{ background: {theme.PAGE}; align: center middle; }}
-    #home {{ width: 100; max-width: 100%; height: auto; border: round {theme.BORDER}; padding: 1 3; }}
-    #ask {{ margin-top: 1; }}
-    #menu {{ height: auto; max-height: 24; margin-top: 1; border: none; background: transparent; padding: 0; }}
-    #menu > .option-list--option-highlighted {{ background: {theme.SELECTED}; }}
-    #status, #keys, #formkeys {{ margin-top: 1; }}
-    NewEventForm {{ align: center top; padding: 1 2; }}
-    #formtitle, #problem, #formkeys {{ width: 110; max-width: 100%; padding: 0 3; height: auto; }}
-    #form {{ width: 110; max-width: 100%; height: 1fr; border: round {theme.BORDER}; padding: 0 3 1 3; }}
-    #form .q {{ margin-top: 1; }}
-    #form Input {{ border: round {theme.BORDER}; }}
-    #form Input:focus {{ border: round {theme.ACCENT}; }}
+    ENABLE_COMMAND_PALETTE = False  # no Textual palette: its theme picker would repaint half the screen
+    CSS = """
+    Screen { background: $fd-page; align: center middle; }
+    #home { width: 100; max-width: 100%; height: auto; border: round $fd-border; padding: 1 3; }
+    #ask { margin-top: 1; }
+    #menu { height: auto; max-height: 24; margin-top: 1; border: none; background: transparent; padding: 0; }
+    #menu > .option-list--option-highlighted { background: $fd-selected; }
+    #status, #keys, #formkeys { margin-top: 1; }
+    NewEventForm { align: center top; padding: 1 2; }
+    #formtitle, #problem, #formkeys { width: 110; max-width: 100%; padding: 0 3; height: auto; }
+    #form { width: 110; max-width: 100%; height: 1fr; border: round $fd-border; padding: 0 3 1 3; }
+    #form .q { margin-top: 1; }
+    #form Input { border: round $fd-border; }
+    #form Input:focus { border: round $fd-accent; }
     """
 
-    def __init__(self, menu: list[Item], status: str = "") -> None:
+    def __init__(self, menu: list[Item], status: str = "", palette: themes.Palette | None = None) -> None:
+        """`palette`: the theme of the player's config (None: the default)."""
+        theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
+        textual_theme = theme.textual()
+        self.register_theme(textual_theme)
+        self.theme = textual_theme.name  # set here, so $TEXTUAL_THEME does not colour half of it
         self.menu, self.status = menu, status
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return theme.css_variables()
 
     def get_default_screen(self) -> Screen:
         return Menu(self.menu, self.status)

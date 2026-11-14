@@ -17,6 +17,7 @@ import asyncio
 import signal
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from rich.text import Text
 from textual import events
@@ -25,6 +26,7 @@ from textual.driver import Driver
 from textual.drivers.linux_driver import LinuxDriver
 from textual.screen import Screen
 
+from .. import themes
 from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
@@ -45,18 +47,18 @@ STATUS_SECONDS = 12.0
 class FlightdeckApp(App[None]):
     TITLE = "flightdeck"
     ENABLE_COMMAND_PALETTE = False
-    CSS = f"""
-    FleetScreen, FocusScreen {{ background: {theme.PAGE}; }}
-    .panel {{
-        border: round {theme.BORDER}; border-title-color: $text; border-subtitle-color: {theme.MUTED};
+    CSS = """
+    FleetScreen, FocusScreen { background: $fd-page; }
+    .panel {
+        border: round $fd-border; border-title-color: $text; border-subtitle-color: $fd-muted;
         padding: 0 1; margin: 0 1;
-    }}
-    .panel:focus-within {{ border: round {theme.ACCENT}; }}
-    .-compact .panel {{ margin: 0; padding: 0; }}
-    DataTable {{ background: transparent; }}
-    DataTable > .datatable--header {{ background: transparent; color: {theme.MUTED}; text-style: bold; }}
-    DataTable > .datatable--cursor {{ background: {theme.SELECTED}; text-style: bold; }}
-    DataTable:focus > .datatable--cursor {{ background: #22324a; }}
+    }
+    .panel:focus-within { border: round $fd-accent; }
+    .-compact .panel { margin: 0; padding: 0; }
+    DataTable { background: transparent; }
+    DataTable > .datatable--header { background: transparent; color: $fd-muted; text-style: bold; }
+    DataTable > .datatable--cursor { background: $fd-selected; text-style: bold; }
+    DataTable:focus > .datatable--cursor { background: $fd-selected-focus; }
     """
 
     def __init__(
@@ -75,12 +77,19 @@ class FlightdeckApp(App[None]):
         paster: Callable[[], object] | None = None,
         attacher: Callable[[str, list], Awaitable[tuple[bool, str]]] | None = None,
         welcome: bool = False,
+        palette: themes.Palette | None = None,
+        themes_folder: Path | None = None,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
         (a real run stops its lanes and closes their workspaces), also on SIGHUP or SIGTERM.
-        `run_dir` is where the run's log goes (the quit prompt says it stays there)."""
+        `run_dir` is where the run's log goes (the quit prompt says it stays there).
+        `palette` is the theme the console opens in (None: the default); `themes_folder` is
+        where /theme looks for the player's own themes (None: only the built-in ones)."""
+        theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
+        self._use_textual_theme()
+        self.themes_folder = themes_folder
         self.deck = deck
         self.mock = mock
         self._on_start = on_start
@@ -108,6 +117,28 @@ class FlightdeckApp(App[None]):
 
     def get_default_screen(self) -> Screen:
         return self._fleet
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return theme.css_variables()
+
+    def _use_textual_theme(self) -> None:
+        """Give Textual the palette in use as its theme, so its own styles and the console's
+        drawn colours are one palette. Set here, so $TEXTUAL_THEME does not colour half of it."""
+        textual_theme = theme.textual()
+        again = self.theme == textual_theme.name  # the same name with other colours: a theme file edited since
+        self.register_theme(textual_theme)
+        self.theme = textual_theme.name
+        if again:
+            self.mutate_reactive(App.theme)
+
+    def set_palette(self, palette: themes.Palette) -> None:
+        """Draw in `palette` from now on (/theme): the styles, and everything already on
+        screen, a transcript's lines included."""
+        theme.use(palette)
+        self._use_textual_theme()
+        for screen in self.screen_stack:
+            if isinstance(screen, (FleetScreen, FocusScreen)):
+                screen.repaint()
 
     def get_driver_class(self) -> type[Driver]:
         driver = super().get_driver_class()

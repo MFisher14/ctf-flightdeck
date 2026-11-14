@@ -59,26 +59,38 @@ from .commands import KEY_COMMAND, lane_id
 
 CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 
-STATE_COLOR = {
-    LaneState.RUNNING: theme.GREEN,
-    LaneState.WAITING: theme.PURPLE,
-    LaneState.PAUSED: theme.YELLOW,
-    LaneState.TAKEOVER: theme.CYAN,
-    LaneState.SOLVED: theme.GREEN,
-    LaneState.KILLED: theme.RED,
-    LaneState.STOPPED: theme.MUTED,
-    LaneState.GAVE_UP: theme.MUTED,
+_STATE_ROLE = {  # a lane state's colour, as a role of the palette (themes.ROLES)
+    LaneState.RUNNING: "ok",
+    LaneState.WAITING: "pending",
+    LaneState.PAUSED: "warn",
+    LaneState.TAKEOVER: "info",
+    LaneState.SOLVED: "ok",
+    LaneState.KILLED: "error",
+    LaneState.STOPPED: "muted",
+    LaneState.GAVE_UP: "muted",
 }
 
-BOARD_MARK = {
-    ChallengeStatus.NEW: ("·", theme.MUTED),
-    ChallengeStatus.QUEUED: ("…", theme.MUTED),
-    ChallengeStatus.RUNNING: ("▶", theme.GREEN),
-    ChallengeStatus.SOLVED: ("✓", theme.GREEN),
-    ChallengeStatus.TEAMMATE: ("✓", theme.CYAN),
-    ChallengeStatus.BLOCKED: ("✗", theme.RED),
-    ChallengeStatus.PARKED: ("‖", theme.YELLOW),
+_BOARD_MARK = {  # a challenge status's mark, and its colour as a role of the palette
+    ChallengeStatus.NEW: ("·", "muted"),
+    ChallengeStatus.QUEUED: ("…", "muted"),
+    ChallengeStatus.RUNNING: ("▶", "ok"),
+    ChallengeStatus.SOLVED: ("✓", "ok"),
+    ChallengeStatus.TEAMMATE: ("✓", "info"),
+    ChallengeStatus.BLOCKED: ("✗", "error"),
+    ChallengeStatus.PARKED: ("‖", "warn"),
 }
+
+
+def state_color(state: LaneState) -> str:
+    """The colour of a lane's state, in the palette in use (read when drawn: theme.py)."""
+    return getattr(theme.active(), _STATE_ROLE[state])
+
+
+def board_mark(status: ChallengeStatus) -> tuple[str, str]:
+    """(mark, colour) for a challenge's status on the board, in the palette in use."""
+    mark, role = _BOARD_MARK[status]
+    return mark, getattr(theme.active(), role)
+
 
 PENDING_TAG = {
     PendingKind.SUBMIT: "submit",
@@ -515,7 +527,11 @@ def owner(deck: Deck, ch: Challenge) -> tuple[str, str]:
     return "", ""
 
 
-OWNER_STYLE = {"mate": theme.CYAN, "me": "bold", "lane": "", "l1": theme.GREEN, "": ""}
+def owner_style(kind: str) -> str:
+    """The style of the board's owner cell, for a kind owner() gives."""
+    return {"mate": theme.CYAN, "me": "bold", "lane": "", "l1": theme.GREEN, "": ""}[kind]
+
+
 GUESSED = "?"  # after a light model's guess at a category the board does not name
 
 
@@ -540,7 +556,7 @@ def route_text(ch: Challenge) -> str:
 
 
 def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
-    mark, mark_color = BOARD_MARK[ch.status]
+    mark, mark_color = board_mark(ch.status)
     dim = theme.MUTED if ch.status in (ChallengeStatus.SOLVED, ChallengeStatus.TEAMMATE, ChallengeStatus.BLOCKED) else ""
     own, kind = owner(deck, ch)
     if ch.claimed_by == ME and kind == "lane":
@@ -551,7 +567,7 @@ def board_cells(deck: Deck, ch: Challenge) -> dict[str, Text]:
         "pts": safe(ch.points, dim, justify="right"),
         "solv": safe(ch.solves, theme.MUTED, justify="right"),
         "mark": Text(mark, style=mark_color),
-        "own": safe(own, OWNER_STYLE[kind]),
+        "own": safe(own, owner_style(kind)),
     }
 
 
@@ -665,7 +681,7 @@ def attention_cell(lane: Lane, sending: bool = False, *, compact: bool = False) 
         return cell
     if lane.pending is not None:
         tags = COMPACT_PENDING_TAG if compact else PENDING_TAG
-        return theme.chip(tags[lane.pending.kind], *theme.PENDING_COLORS)
+        return theme.chip(tags[lane.pending.kind], *theme.pending_colors())
     if sending:
         return theme.chip(COMPACT_SENDING, theme.WHITE, theme.BLUE) if compact else sending_chip()
     if lane.alerts:
@@ -701,7 +717,7 @@ def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool 
         "lane": Text(lane.id, style=theme.MUTED if lane.finished else "bold"),
         "chall": safe(ch.name, dim),
         "model": safe(lane.model, dim or theme.CYAN),
-        "state": Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=STATE_COLOR[lane.state]),
+        "state": Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=state_color(lane.state)),
         "turns": Text(str(lane.turns), style=dim, justify="right"),
         "cost": Text(cost, style=dim or theme.MUTED, justify="right"),
         "idle": Text("-" if lane.finished else fmt.duration(idle), style=dim or (theme.ACCENT if idle >= 600 else ""), justify="right"),
@@ -841,7 +857,7 @@ def lane_why(deck: Deck, lane: Lane) -> Text:
     out.append("▌", theme.ACCENT)
     out.append(f"{lane.id} ", "bold")
     if lane.finished:
-        out.append(f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}")
+        out.append(f"{lane.state.value}: ", f"bold {state_color(lane.state)}")
         out.append(lane_line(deck, lane, lane.result))
         out.append("\n  enter opens its transcript", theme.MUTED)
         return out
@@ -915,7 +931,7 @@ def compact_why(deck: Deck, lane: Lane, width: int) -> Text:
     last = ["enter open"]
     top = top_answerable(lane)
     if lane.finished:
-        head.append(f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}")
+        head.append(f"{lane.state.value}: ", f"bold {state_color(lane.state)}")
         head.append(lane_line(deck, lane, lane.result))
         last = ["enter opens its transcript"]
     elif top is not None:
@@ -959,7 +975,7 @@ def compact_why(deck: Deck, lane: Lane, width: int) -> Text:
 
 def challenge_why(deck: Deck, ch: Challenge) -> Text:
     out = Text(no_wrap=True, overflow="ellipsis")
-    mark, color = BOARD_MARK[ch.status]
+    mark, color = board_mark(ch.status)
     out.append(untrusted(ch.name, one_line=True), "bold")
     out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · {ch.solves} solves · ", theme.MUTED)
     out.append(f"{mark} {ch.status.value}", color)
@@ -988,7 +1004,7 @@ def focus_title(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
     out = Text()
     if compact:
         out.append(f"{lane.id} ", "bold")
-        out.append(lane.state.value, STATE_COLOR[lane.state])
+        out.append(lane.state.value, state_color(lane.state))
         out.append(f" {lane_dollars(lane)}", theme.MUTED)
         out.append(" · ")
         out.append(untrusted(ch.name, one_line=True), "bold")
@@ -998,7 +1014,7 @@ def focus_title(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
     out.append(f"  {untrusted(ch.category, one_line=True)} {ch.points} · ", theme.MUTED)
     out.append(untrusted(lane.model, one_line=True), theme.CYAN)
     out.append(" · ")
-    out.append(lane.state.value, STATE_COLOR[lane.state])
+    out.append(lane.state.value, state_color(lane.state))
     spent = lane_dollars(lane) + (" (this turn's cost comes when it ends)" if lane.dollars_later else "")
     out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · {spent}", theme.MUTED)
     if not lane.finished:
@@ -1057,7 +1073,7 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False) -> RenderableType
     one_row = {"no_wrap": True, "overflow": "ellipsis"} if compact else {}
     if lane.finished:
         return Text.assemble(
-            (f"{lane.state.value}: ", f"bold {STATE_COLOR[lane.state]}"),
+            (f"{lane.state.value}: ", f"bold {state_color(lane.state)}"),
             (untrusted(lane_text(deck, lane, lane.result), one_line=True), theme.TEXT),
             ("   this lane has ended; esc goes back to the fleet", theme.MUTED),
         )
@@ -1131,7 +1147,7 @@ def file_label(change: FileChange) -> Text:
 
 def diff_view(deck: Deck, lane: Lane, change: FileChange) -> RenderableType:
     """The diff of a file `lane` changed, as its transcript keeps it (lane_text)."""
-    return Syntax(untrusted(lane_text(deck, lane, change.diff)), "diff", theme="monokai", background_color=theme.PAGE, word_wrap=False)
+    return Syntax(untrusted(lane_text(deck, lane, change.diff)), "diff", theme=theme.active().syntax, background_color=theme.PAGE, word_wrap=False)
 
 
 def needing(deck: Deck, exclude: str | None = None) -> list[Lane]:
@@ -1144,7 +1160,7 @@ def _need_chip(lane: Lane) -> Text:
         fg, bg = theme.alert_colors(top.kind)
         tag = top.kind.tag
     else:
-        fg, bg = theme.PENDING_COLORS
+        fg, bg = theme.pending_colors()
         tag = PENDING_TAG[lane.pending.kind] if lane.pending else "?"
     chip = theme.chip(f"{lane.id} {tag}", fg, bg)
     chip.stylize(Style(meta={"@click": f"app.open_lane('{lane.id}')"}))

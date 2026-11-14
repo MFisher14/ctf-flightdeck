@@ -44,16 +44,13 @@ KEY_MARGIN = 2  # the key line has a margin of one cell each side
 
 
 def _key_line(labels: tuple[tuple[str, str], ...] = KEY_LABELS) -> Text:
+    """The key line, in the colours of the palette in use: drawn when it is shown, never kept."""
     out = Text(no_wrap=True, overflow="ellipsis")
     for i, (key, label) in enumerate(labels):
         out.append("  " if i else "")
         out.append(key, f"bold {theme.ACCENT}")
         out.append(f" {label}", theme.MUTED)
     return out
-
-
-KEYS = _key_line()
-COMPACT_KEYS = _key_line(COMPACT_KEY_LABELS)
 
 
 def key_room(columns: int) -> tuple[list[str], int]:
@@ -69,7 +66,7 @@ def key_room(columns: int) -> tuple[list[str], int]:
         end += (2 if i else 0) + cell_len(f"{key} {label}")
         if end > width:
             cut.append(f"{key} {label}")
-    return left + cut, KEYS.cell_len + KEY_MARGIN
+    return left + cut, _key_line().cell_len + KEY_MARGIN
 
 
 class FocusScreen(Screen, inherit_bindings=False):
@@ -131,7 +128,7 @@ class FocusScreen(Screen, inherit_bindings=False):
                     yield Static(id="diff")
         yield Static(id="status")
         yield CommandBar("message this lane (it reads it on its next turn) · / for commands", id="chat")
-        yield Static(KEYS, id="keys")
+        yield Static(_key_line(), id="keys")
 
     def on_mount(self) -> None:
         self._ready = True
@@ -160,8 +157,23 @@ class FocusScreen(Screen, inherit_bindings=False):
                 self.query_one("#chat", CommandBar).field.focus()  # the files pane is gone
         else:
             pane.move_child(now, after=log)
-        self.query_one("#keys", Static).update(COMPACT_KEYS if compact else KEYS)
+        self._show_keys()
         return True
+
+    def _show_keys(self) -> None:
+        self.query_one("#keys", Static).update(_key_line(COMPACT_KEY_LABELS if self.compact else KEY_LABELS))
+
+    def repaint(self) -> None:
+        """Draw everything again in the palette now in use (/theme): the transcript's lines
+        were written in the old one, so the log is emptied and written again, as on a lane
+        change; the key line too."""
+        if not self._ready:
+            return
+        self._written = 0
+        self._file_paths = None  # the files list's labels too
+        self.query_one("#transcript", RichLog).clear()
+        self._show_keys()
+        self.refresh_view()
 
     def show_lane(self, lane_id: str, file: str | None = None) -> None:
         """Switch this view to another lane (or reopen it).

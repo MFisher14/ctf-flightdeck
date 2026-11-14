@@ -39,15 +39,15 @@ class BarInput(Input):
 
 
 class CommandBar(Vertical):
-    DEFAULT_CSS = f"""
-    CommandBar {{ height: auto; padding: 0 1; }}
-    CommandBar > #menu {{
+    DEFAULT_CSS = """
+    CommandBar { height: auto; padding: 0 1; }
+    CommandBar > #menu {
         display: none; height: auto; max-height: 10;
-        border: round {theme.ACCENT}; background: $surface; padding: 0 1;
-    }}
-    CommandBar > #menu.-open {{ display: block; }}
-    CommandBar > Input {{ border: round {theme.BORDER}; background: transparent; padding: 0 1; }}
-    CommandBar > Input:focus {{ border: round {theme.ACCENT}; }}
+        border: round $fd-accent; background: $fd-surface; padding: 0 1;
+    }
+    CommandBar > #menu.-open { display: block; }
+    CommandBar > Input { border: round $fd-border; background: transparent; padding: 0 1; }
+    CommandBar > Input:focus { border: round $fd-accent; }
     """
     BINDINGS = [
         Binding("up", "menu(-1)", show=False),

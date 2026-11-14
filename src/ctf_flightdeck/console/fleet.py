@@ -163,6 +163,14 @@ class FleetScreen(Screen, inherit_bindings=False):
     def _show_keys(self, width: int) -> None:
         self.query_one("#keys", Static).update(self.key_line(width - KEY_MARGIN))
 
+    def repaint(self) -> None:
+        """Draw everything again in the palette now in use (/theme): the key line is only
+        drawn when the width changes, so it is drawn here."""
+        if not self._ready:
+            return
+        self._show_keys(self.size.width)
+        self.refresh_view()
+
     @property
     def board_hidden(self) -> bool:
         return not self.query_one("#board-pane").display

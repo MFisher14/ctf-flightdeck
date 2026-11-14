@@ -194,6 +194,20 @@ def _runs(app: FlightdeckApp) -> tuple[list[tuple[str, float, int, float, str]],
     return runs, dict(FILL.findall(svg))
 
 
+BACKGROUND = re.compile(r'<rect fill="(#[0-9a-fA-F]{6})"')
+SVG_FRAME = frozenset({"#292929", "#c5c8c6"})  # the picture's own window frame, and the text no style colours
+
+
+def screen_colors(app) -> set[str]:
+    """Every color on the screen, lower-case: of the text (the style classes the SVG export
+    uses) and of the backgrounds behind it (its filled rectangles). The export's own window
+    frame is in it too (SVG_FRAME)."""
+    svg = app.export_screenshot()
+    used = set(re.findall(r'class="([^"]*-r\d+)"', svg))
+    text = {color for cls, color in FILL.findall(svg) if cls in used}
+    return {color.lower() for color in text | set(BACKGROUND.findall(svg))}
+
+
 def screen_lines(app: FlightdeckApp) -> list[str]:
     """The screen as plain text, one string per terminal row."""
     runs, _ = _runs(app)
