@@ -323,7 +323,7 @@ def test_each_view_lists_its_own_keys_and_no_row_says_in_a_lane_of_a_list_key():
     assert lane["?"] == "This help, while the chat box is empty; with text in the box it is a question mark"
     assert listed["?"] == "This help, for where you are; in the command bar, only while it is empty"
     assert lane["esc"] == "Back to the lane list" and listed["esc"] == "Leave the command bar, close the peek, or clear the filter"
-    assert {"mouse drag", "ctrl+c", "ctrl+q"} == set(dict(BOTH_KEY_HELP))
+    assert {"mouse drag", "ctrl+c", "ctrl+q", "↑ ↓", "ctrl+g"} == set(dict(BOTH_KEY_HELP))
     assert HELP_KEY_WIDTH == len("enter on board")  # the widest key: one column of keys down the dialog
 
 

@@ -546,6 +546,8 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
+| up, down (bar) | | In the command bar and a lane's chat box: what was sent this run, newest first, from either view; down past the newest gives back what was being typed. While the `/` menu is open they move in the menu. Nothing is sent while walking, and the history is never written to a file (Command bar history and editor, below) |
+| `ctrl+g` (bar) | | In the command bar and a lane's chat box: what is typed, in the player's editor (`$VISUAL`, else `$EDITOR`); its text comes back on one line and Enter sends it (Command bar history and editor, below) |
 | `?` | `/help` | Help for where you are: the keys for the lane now, then every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks (Help, below). In the command bar and in a lane's chat box, only while it is empty |
 | `q`, `ctrl+q` | `/quit` (also `/q`, `/exit`) | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
@@ -567,11 +569,37 @@ follows the view it was opened from.
    made safe, on one row, never markup.
 2. **Keys in a lane** or **Keys in the lane list**: the view it was opened from first, then the
    other one.
-3. **Keys in both**: selecting and copying, and `ctrl+q`.
+3. **Keys in both**: selecting and copying, `ctrl+q`, and the command bar's history (up and
+   down) and editor key (`ctrl+g`).
 4. The commands, the alerts, the header and cost marks, and the board's marks, as before.
 
 `?`, `esc` or `q` closes it, and the focus is back where it was, with the chat box's draft as it
 was. A `?` that opened help sends nothing to a lane.
+
+### Command bar history and editor
+
+Both bars (the lane list's and a lane's chat box) share one history for the run (P71): each
+message and command Enter sent, a repeat of the one before kept once, at most 500, in memory
+only. Up puts back the one before what is shown, down the one after; the first up keeps what
+was typed and down past the newest gives it back; up at the oldest stays. A recalled command
+opens no `/` menu, so the arrows stay on the history; typing into a recalled line ends the
+walk. While the menu is open the arrows are the menu's, as before.
+
+`ctrl+g` writes what is typed to a file only the player can read, hands the terminal to
+`$VISUAL` (else `$EDITOR`) as a take-over hands it to a shell, and removes the file when the
+editor exits. On status 0 the file's text is the bar's: its lines with no blanks at their
+ends, empty ones left out, joined by single spaces, and a control character drawn as the
+console draws one from a lane (ESC as `^[`). Nothing is sent until Enter. Each failure is a
+warning on the status line and leaves the bar as it was:
+
+- neither variable set: `ctrl+g needs an editor: set VISUAL or EDITOR to one (neither is set)`;
+- the variable names a program not on `PATH`, or is not a command line: the variable is named,
+  and the other one is not tried in its place;
+- the editor exits with another status: `the editor (vim) exited with status 1: the box keeps what it had`;
+- the editor leaves the file empty (only blanks): `the editor left the file empty: the box keeps what it had`;
+- the file cannot be made (a full or read-only temporary folder) or read back (the editor
+  moved or removed it): the reason is named;
+- a console that cannot hand over the terminal: `this console cannot hand the terminal to an editor`.
 
 ### Approving several flags at once
 

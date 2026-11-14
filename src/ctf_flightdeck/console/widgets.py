@@ -14,6 +14,12 @@ drawn through text.untrusted() like everything else from a lane.
 The bar's border carries a title: who what is typed goes to (P64). The screen that hosts
 the bar says it (views.bar_title: the lane, `no lane`, `the run`, or that the lane has
 finished or takes no more turns), for the text typed so far; the bar asks again at every key, and the screen has it ask whenever its lane changes.
+
+Up and down walk back through what the player sent this run, as a shell's history does (P71):
+the bars of both views share one History, which the app keeps (in memory only, never in a
+file). The bar is one line, so the arrows never moved a cursor; while the menu is open they
+move in the menu, as before. ctrl+g opens what is typed in the player's editor (editor.py),
+and what it holds when the editor exits is the bar's text again: nothing is sent until enter.
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
 from ..text import untrusted
-from . import theme
+from . import editor, theme
 from .commands import Completion, State, complete, find, no_match
 
 # What the empty bar says, in the lane list and in a lane's view: the border's title names the lane.
@@ -63,6 +69,21 @@ class BarInput(Input):
         await super()._on_key(event)
 
 
+class History:
+    """What the player sent from a command bar this run, oldest first: every message and
+    command enter sent, a repeat of the last one kept once, the oldest let go past LIMIT."""
+
+    LIMIT = 500
+
+    def __init__(self) -> None:
+        self.entries: list[str] = []
+
+    def add(self, text: str) -> None:
+        if text and (not self.entries or self.entries[-1] != text):
+            self.entries.append(text)
+            del self.entries[:-self.LIMIT]
+
+
 class CommandBar(Vertical):
     DEFAULT_CSS = """
     CommandBar { height: auto; padding: 0 1; }
@@ -79,6 +100,7 @@ class CommandBar(Vertical):
         Binding("down", "menu(1)", show=False),
         Binding("tab", "accept", "complete", show=False),
         Binding("escape", "dismiss", show=False),
+        Binding("ctrl+g", "editor", "edit in your editor", show=False),
     ]
 
     class Submitted(Message):
@@ -93,8 +115,14 @@ class CommandBar(Vertical):
         def control(self) -> CommandBar:
             return self.bar
 
-    def __init__(self, placeholder: str, *, id: str | None = None, title: Callable[[str], Text] | None = None) -> None:
+    def __init__(self, placeholder: str, *, id: str | None = None, title: Callable[[str], Text] | None = None,
+                 history: History | None = None) -> None:
+        """`history`: what was sent, shared with the other bars of the run (None: this bar's own)."""
         super().__init__(id=id)
+        self.history = history if history is not None else History()
+        self._recalled: int | None = None  # the entry of the history up and down have put in the field; None: not walking it
+        self._recalled_text = ""  # that entry's text
+        self._draft = ""  # what was typed before the walk began: down past the newest entry brings it back
         self.bar_placeholder = placeholder
         self.title = title  # the border's title for the text typed so far (None: the bar has none)
         self._title: tuple | None = None  # the one shown: its text and its colours
@@ -125,6 +153,7 @@ class CommandBar(Vertical):
 
     def start(self, text: str = "") -> None:
         """Focus the bar with `text` in it."""
+        self._recalled = None
         field = self.field
         field.value = text
         field.cursor_position = len(text)
@@ -132,6 +161,7 @@ class CommandBar(Vertical):
         self.refresh_menu()
 
     def clear(self) -> None:
+        self._recalled = None
         self.field.value = ""
         self.hide_menu()
 
@@ -212,6 +242,10 @@ class CommandBar(Vertical):
     @on(Input.Changed, "#bar-input")
     def _changed(self, event: Input.Changed) -> None:
         event.stop()
+        if self._recalled is not None and self.field.value == self._recalled_text:
+            self.show_title()  # an entry up or down put there: no menu, so the next arrow goes on through the history
+            return
+        self._recalled = None  # typed: the walk is over, and the next up starts it again from what is in the field
         self.refresh_menu()
         self.show_title()
 
@@ -224,6 +258,7 @@ class CommandBar(Vertical):
             self._fill(self.completions[at])
             return
         self.clear()
+        self.history.add(value)
         self.post_message(self.Submitted(self, value))
 
     @on(OptionList.OptionSelected, "#menu")
@@ -243,13 +278,68 @@ class CommandBar(Vertical):
         self.field.focus()
 
     def action_menu(self, step: int) -> None:
+        """Up and down: a row of the open menu, else the history."""
         if not self.menu_open:
-            raise SkipAction()
+            self._walk(step)
+            return
         if step < 0:
             self.menu.action_cursor_up()
         else:
             self.menu.action_cursor_down()
         self._chosen = self.menu.highlighted is not None
+
+    def _walk(self, step: int) -> None:
+        """One entry back (-1) or on (1) through what was sent. The first step back keeps what
+        is typed, and a step on past the newest entry brings it back; at the oldest, up stays."""
+        entries = self.history.entries
+        if step < 0:
+            if not entries:
+                raise SkipAction()
+            if self._recalled is None:
+                self._draft, at = self.field.value, len(entries) - 1
+            else:
+                at = max(self._recalled - 1, 0)
+        else:
+            if self._recalled is None:
+                raise SkipAction()
+            at = self._recalled + 1
+            if at >= len(entries):  # past the newest
+                self._recalled = None
+                self._put(self._draft)
+                return
+        at = min(at, len(entries) - 1)
+        self._recalled, self._recalled_text = at, entries[at]
+        self.hide_menu()
+        self._put(entries[at])
+
+    def _put(self, text: str) -> None:
+        self.field.value = text
+        self.field.cursor_position = len(text)
+
+    def action_editor(self) -> None:
+        """ctrl+g: what is typed, in the player's editor; back in the bar when it exits."""
+        self.run_worker(self._edit(self.field.value), name="editor", group="editor", exclusive=True, exit_on_error=False)
+
+    async def _edit(self, text: str) -> None:
+        try:
+            line, lines = await editor.edit(self.app, text)
+        except editor.EditorError as exc:
+            self._say(str(exc), warn=True)
+            return
+        self.start(line)
+        if lines > 1:
+            self._say(f"Your editor's {lines} lines are one line here, joined by spaces: enter sends it")
+        else:
+            self._say("Back from your editor: enter sends it")
+
+    def _say(self, text: str, *, warn: bool = False) -> None:
+        """On the status line of the app that hosts the bar (FlightdeckApp.say); an app with
+        none shows it as a notification."""
+        say = getattr(self.app, "say", None)
+        if say is not None:
+            say(text, "warning" if warn else "information")
+        else:
+            self.notify(text, severity="warning" if warn else "information")
 
     def action_accept(self) -> None:
         """Tab: the highlighted row into the bar, or the first when none is."""

@@ -50,6 +50,7 @@ from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from .terminal import STOP_SIGNALS, Beacon, TerminalDriver
+from .widgets import History
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
@@ -132,6 +133,7 @@ class FlightdeckApp(App[None]):
         # the copier runs here, off the event loop the lanes share: a clipboard tool that hangs
         # holds up only the copies after it, one at a time so the last copy is the one that stays
         self._clipboard_thread: ThreadPoolExecutor | None = None
+        self.bar_history = History()  # what the command bars sent this run, for up and down (P71); never written to a file
         self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()

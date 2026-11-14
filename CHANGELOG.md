@@ -18,6 +18,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - In the simple layout, while the filter hides the selected lane, the key line shows the keys
   for no lane, as help and the command bar's `no lane` do, instead of keys that would be
   refused.
+- Up and down in the command bar and a lane's chat box bring back what you sent this run,
+  newest first, as a shell does; down past the newest gives back what you were typing. While
+  the `/` menu is open they still move in the menu. `ctrl+g` opens what is in the box in your
+  editor (`$VISUAL`, else `$EDITOR`); when you save and quit, the text is back in the box on one
+  line and nothing is sent until you press Enter. With no editor set it says so and opens
+  nothing ([the guide](docs/GUIDE.md#the-command-bar)).
 
 ## 0.5.0 (2026-11-14)
 

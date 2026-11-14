@@ -16,6 +16,11 @@ Proposals built and waiting for a release, in the order of their numbers in
 - **Three small gaps in the console** (P70). The mock rings the bell only with `bell = true`
   (a run rings as P61 has it), `/copy ` lists what it copies, and the simple key line shows the
   keys for no lane while the filter hides the selected lane.
+- **Up and down recall what was sent; `ctrl+g` opens the bar in your editor** (P71). One
+  history for the run, shared by the lane list's bar and a lane's chat box, in memory only;
+  the `/` menu keeps the arrows while it is open. `ctrl+g` hands the terminal to `$VISUAL` or
+  `$EDITOR` and puts the text back in the bar on one line, sending nothing; with neither set it
+  says so. Not built: `ctrl+r` search, a history kept across runs, a bar of several lines.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

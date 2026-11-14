@@ -1065,6 +1065,10 @@ BOTH_KEY_HELP = (
     ("mouse drag", "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"),
     ("ctrl+c", "Copy the selected text again; esc takes the selection down. /copy copies with no mouse"),
     ("ctrl+q", "Quit, as q does in the lane list"),
+    ("↑ ↓", "In the command bar or the chat box: what you sent this run, newest first; down past the newest "
+            "gives back what you were typing. While the menu is open they move in the menu"),
+    ("ctrl+g", "In the command bar or the chat box: write what is in it in your editor ($VISUAL, else $EDITOR). "
+               "When the editor exits its text is back in the box, on one line, and enter sends it"),
 )
 # Approving several flags and dismissing an alert (kept apart from KEY_HELP's rows).
 BATCH_KEY_HELP = (
