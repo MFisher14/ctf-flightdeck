@@ -20,7 +20,7 @@ from ctf_flightdeck.console.screens import KillPrompt
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, Lane, LaneState, Pending, PendingKind
+from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, Lane, LaneState, Pending, PendingKind
 from ctf_flightdeck.detect import DetectConfig, LoopDetector, Watch
 from ctf_flightdeck.detect.base import suggestions
 from ctf_flightdeck.detect.detectors import default_detectors
@@ -227,6 +227,31 @@ def test_an_answer_that_only_opens_a_prompt_quotes_nothing_and_more_than_three_a
         "▲ Budget: At 85% of its cap.",
         "  1 approve 50% more budget now   2 escalate to a stronger model   3 kill the lane   +2 more",  # no /dismiss: not about its course
     ]
+
+
+def test_in_a_narrow_card_the_quotes_shorten_until_every_answer_fits_and_go_before_a_number_is_cut():
+    """The view cuts a row at the card's edge. A row of answers that is too long would lose
+    the answers after the first quote, numbers and all: the quotes give way first."""
+    deck, _, lane = one_lane()
+    raise_alerts(deck, alert(AlertKind.HINT, "The description hints at slow-scan TV.", ("r", "Redirect with the hinted technique", "Decode it as SSTV and read the picture"),
+                             ("h", "Hint", "Think slow-scan TV, not stereo tricks")))
+
+    def answers(width: int | None) -> str:
+        return views.calm_card(deck, lane, width).plain.split("\n")[1]
+
+    whole = '  1 redirect with the hinted technique "Decode it as SSTV and read the picture"   2 hint "Think slow-scan TV, not stereo tricks"   /dismiss not a problem'
+    assert answers(None) == whole and answers(len(whole)) == whole and answers(500) == whole
+    # one cell short: each quote ends a character sooner than the longer one did, and says so
+    assert answers(len(whole) - 1) == ('  1 redirect with the hinted technique "Decode it as SSTV and read the pictu…"   '
+                                       '2 hint "Think slow-scan TV, not stereo trick…"   /dismiss not a problem')
+    least = '  1 redirect with the hinted technique "Decode it as…"   2 hint "Think slow-s…"   /dismiss not a problem'
+    assert answers(len(least)) == least and views.CALM_QUOTE_MIN == 12
+    bare = "  1 redirect with the hinted technique   2 hint   /dismiss not a problem"
+    assert answers(len(least) - 1) == bare  # less of a quote says nothing: none
+    assert answers(len(bare)) == bare and answers(20) == bare  # the rest is the edge's to cut
+    assert views.now_card(deck, lane, simple=True, calm=True, width=len(least)).plain.split("\n")[1] == least
+    rows = views.calm_card(deck, lane, 20).plain.split("\n")
+    assert rows[0] == "▲ Ignores the hint: The description hints at slow-scan TV." and len(rows) == 2  # only the answers are fitted
 
 
 def test_with_no_question_the_card_is_the_message_not_read_yet_or_how_many_or_what_flightdeck_did():
@@ -456,6 +481,41 @@ def test_a_calm_row_longer_than_the_card_is_cut_at_its_edge_and_never_wraps():
         assert all(len(row) == width for row in rows)
         assert rows[1].startswith("│ ▲ Loop: The same command ran 6 times in the last 6 turns: cd /work && python3") and rows[1].endswith("… │")
         assert rows[3] == "│   also: past its effort budget · stalled   ctrl+o shows all".ljust(width - 1) + "│"
+
+    drive(app, script, NARROW)
+
+
+HINTED = alert(AlertKind.HINT, "The description hints at slow-scan TV.", ("r", "Redirect with the hinted technique", "Decode it as SSTV and read the picture"),
+               ("h", "Hint", "Think slow-scan TV, not stereo tricks"))
+HINTED_WHOLE = ('  1 redirect with the hinted technique "Decode it as SSTV and read the picture"   2 hint "Think slow-scan TV, not stereo tricks"'
+                "   /dismiss not a problem")
+HINTED_BARE = "  1 redirect with the hinted technique   2 hint   /dismiss not a problem"  # with no quote
+
+
+def test_the_calm_cards_answers_are_fitted_to_the_card_as_it_is_drawn_and_again_when_its_width_changes():
+    deck, app, lane = one_lane("simple")
+    deck.report("L01", TurnReport(action="write solve.py", files=(FileChange("solve.py", "+++ b/solve.py\n+print(1)\n", status="added"),)))
+
+    async def script(pilot):
+        app.open_lane("L01")  # nothing open on it: no card, and its box is not shown
+        await pilot.pause()
+        view = app.screen
+        box = view.query_one("#now-scroll")
+        assert not box.display and view.query_one("#files-pane").display
+        raise_alerts(deck, HINTED)
+        app.refresh_view()  # one redraw, as the console's timer does: the box is first laid out after it
+        await pilot.pause()
+        assert box.display and box.region.width < len(HINTED_WHOLE)  # beside the files pane the card is narrower than its answers
+        row = inside(app)[1]  # both numbers in view: the quotes gave way, and the edge cuts what is left
+        assert row.startswith("  1 redirect with the hinted technique   2 hint   /dismiss") and row.endswith("…") and HINTED_BARE.startswith(row[:-1])
+        await pilot.resize_terminal(300, 40)
+        await pilot.pause()
+        assert inside(app)[1] == HINTED_WHOLE  # room for them: no redraw was asked for
+        await pilot.resize_terminal(220, 40)
+        await pilot.pause()
+        row = inside(app)[1]
+        assert row.startswith('  1 redirect with the hinted technique "Decode it as') and row.endswith("…\"   /dismiss not a problem")
+        assert '2 hint "Think slow-' in row and len(row) <= box.region.width - 4 and "pictu" not in row
 
     drive(app, script, NARROW)
 

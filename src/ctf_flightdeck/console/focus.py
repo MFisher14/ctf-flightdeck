@@ -107,9 +107,16 @@ def key_room(columns: int, *, simple: bool = False) -> tuple[list[str], int]:
     return left + cut, _key_line(whole).cell_len + KEY_MARGIN
 
 
+CALM_EDGE = 4  # cells of the calm card's width that are not its rows': the border and the padding, each side
+
+
 class CardScroll(VerticalScroll, can_focus=False):
     """The box the "needs you now" card is in: it carries the card's share of the pane, and
     scrolls a card taller than that. Not focusable: tab goes chat -> files -> diff."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        if isinstance(self.screen, FocusScreen):
+            self.screen.card_resized()  # the calm card's answers are fitted to its width
 
 
 class FocusScreen(Screen, inherit_bindings=False):
@@ -155,6 +162,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         self.diff_path: str | None = None
         self.compact = False  # the compact layout (views.compact of the terminal's width)
         self._labels: tuple[tuple[str, str], ...] = ()  # the key line as drawn
+        self._card_room = 0  # the width of the card's box when the card was last drawn; 0: not known then
         self._ready = False  # widgets composed; set at the start of on_mount
 
     @property
@@ -342,10 +350,13 @@ class FocusScreen(Screen, inherit_bindings=False):
 
     def _show_card(self, lane: Lane, simple: bool) -> None:
         """What the lane needs from the player: the full card, or with details off the calm
-        one, its rows cut at the edge inside a border this view draws (the compact layout's
-        card is never calm). No card: no blank row either."""
+        one, its rows fitted to the card's width and cut at its edge, inside a border this
+        view draws (the compact layout's card is never calm). No card: no blank row either."""
         calm = not self.details and not self.compact
-        card = views.now_card(self.fd.deck, lane, compact=self.compact, simple=simple, calm=calm)
+        self._card_room = self.query_one("#now-scroll", CardScroll).scrollable_content_region.width
+        # no room known: the box is not laid out or not shown yet, and the rows are fitted when it is (card_resized)
+        width = self._card_room - CALM_EDGE if self._card_room else None
+        card = views.now_card(self.fd.deck, lane, compact=self.compact, simple=simple, calm=calm, width=width)
         border = views.card_border(lane) if calm else ""  # "" too for the one line of a lane that ended or needs nothing
         now = self.query_one("#now", Static)
         now.set_class(bool(border), "-calm")
@@ -354,6 +365,12 @@ class FocusScreen(Screen, inherit_bindings=False):
         nothing = isinstance(card, Text) and not card.plain
         for part in (now, self.query_one("#now-scroll")):
             part.set_class(nothing, "-nothing")
+
+    def card_resized(self) -> None:
+        """The card's box has another width (the terminal's changed, the files pane came or
+        went, the box was first shown): the calm card's rows are fitted to it again."""
+        if self._ready and self.app.is_running and self.query_one("#now-scroll", CardScroll).scrollable_content_region.width != self._card_room:
+            self._show_card(self.lane, self.simple)
 
     def _render_files(self) -> None:
         lane = self.lane

@@ -1288,7 +1288,8 @@ def card_border(lane: Lane) -> str:
     return theme.PURPLE if lane.pending is not None else theme.BORDER
 
 
-def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False, calm: bool = False) -> RenderableType:
+def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False, calm: bool = False,
+             width: int | None = None) -> RenderableType:
     """What the lane needs from the player right now, with the answers as commands: the
     approval it waits for first, then every open alert with its reason and its suggestions,
     then the messages it has not read yet. In the compact layout each answer is one row, its
@@ -1296,7 +1297,7 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
     stays on the card. In the simple layout (`simple`) a lane that needs nothing has no card:
     an empty Text, and a lane that has ended says esc goes back to the lanes (that layout's
     word for the fleet). `calm`: the rows of calm_card, as Text; the view draws their border
-    (card_border)."""
+    (card_border), and `width` is the cells a row has in it."""
     one_row = {"no_wrap": True, "overflow": "ellipsis"} if compact else {}
     if lane.finished:
         return Text.assemble(
@@ -1310,7 +1311,7 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
             return Text("")
         return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
     if calm:
-        return calm_card(deck, lane)
+        return calm_card(deck, lane, width)
     rows: list[RenderableType] = []
     numbered = {(answer.key, answer.text): answer.number for answer in quick_answers(lane)}
     top = top_answerable(lane)
@@ -1374,6 +1375,7 @@ _ASKED_BY = {  # the alert an approval is about: the approval is the question, s
 }
 CALM_ANSWERS = 3  # the numbered answers the calm card shows; the rest are counted
 CALM_QUOTE = 48  # characters of the text an answer sends that the calm card quotes
+CALM_QUOTE_MIN = 12  # in a card too narrow for that, the quotes shorten to this; then there are none
 SENDS_TEXT = ("h", "r", "f")  # the answers that send their suggested text at once (FlightdeckApp.answer)
 
 
@@ -1388,7 +1390,7 @@ def _shows_all(out: Text) -> None:
     out.append(" shows all", theme.MUTED)
 
 
-def calm_card(deck: Deck, lane: Lane) -> Text:
+def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
     """The "needs you now" card with details off: three rows at most, each cut at the edge by
     the view, and never a list of commands (the full card has them: ctrl+o).
 
@@ -1397,6 +1399,10 @@ def calm_card(deck: Deck, lane: Lane) -> Text:
     numbers of quick_answers, so a digit answers what row 1 asks; an answer that sends a text
     at once quotes the start of it. Row 3, only when something else is open, names it: the
     other alerts in a word or two each, further approvals, messages the lane has not read yet.
+
+    `width`: the cells a row has. The quotes of row 2 shorten until the row fits, and go when
+    CALM_QUOTE_MIN characters of each do not fit either: the edge would cut the answers after
+    the first quote, and their numbers with them.
 
     With no question (no approval, no alert that wants an answer): an alert that needs no
     answer as the full card shows it, and the message not read yet, or how many there are.
@@ -1427,19 +1433,31 @@ def calm_card(deck: Deck, lane: Lane) -> Text:
         asked = top.kind
         rows.append(Text.assemble((f"▲ {top.kind.label}: ", alert_style(top.kind)), (lane_line(deck, lane, top.reason), theme.TEXT)))
         numbered = quick_answers(lane)
-        for answer in numbered[:CALM_ANSWERS]:
-            answers.append("   " if answers else "  ")
-            answers.append(answer.number, f"bold {theme.ACCENT}")
-            answers.append(f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED)
-            if answer.text and answer.key in SENDS_TEXT:
-                text = lane_line(deck, lane, answer.text)  # cut after the credentials are out: no part of one is left
-                answers.append(f' "{text[:CALM_QUOTE]}{"…" if len(text) > CALM_QUOTE else ""}"', theme.TEXT)
-        if len(numbered) > CALM_ANSWERS:
-            answers.append(f"   +{len(numbered) - CALM_ANSWERS} more", theme.MUTED)
-        if top.kind in COURSE_ALERTS:  # what /dismiss would take down
-            answers.append("   " if answers else "  ")
-            answers.append("/dismiss", f"bold {theme.ACCENT}")
-            answers.append(" not a problem", theme.MUTED)
+        quotes = {answer.number: lane_line(deck, lane, answer.text)  # cut after the credentials are out: no part of one is left
+                  for answer in numbered[:CALM_ANSWERS] if answer.text and answer.key in SENDS_TEXT}
+
+        def row(quoted: int) -> Text:
+            out = Text()
+            for answer in numbered[:CALM_ANSWERS]:
+                out.append("   " if out else "  ")
+                out.append(answer.number, f"bold {theme.ACCENT}")
+                out.append(f" {untrusted(answer.label, one_line=True).lower()}", theme.MUTED)
+                quote = quotes.get(answer.number, "")
+                if quote and quoted:
+                    out.append(f' "{quote[:quoted]}{"…" if len(quote) > quoted else ""}"', theme.TEXT)
+            if len(numbered) > CALM_ANSWERS:
+                out.append(f"   +{len(numbered) - CALM_ANSWERS} more", theme.MUTED)
+            if top.kind in COURSE_ALERTS:  # what /dismiss would take down
+                out.append("   " if out else "  ")
+                out.append("/dismiss", f"bold {theme.ACCENT}")
+                out.append(" not a problem", theme.MUTED)
+            return out
+
+        quoted = CALM_QUOTE
+        answers = row(quoted)
+        while width is not None and quotes and quoted and answers.cell_len > width:
+            quoted = quoted - 1 if quoted > CALM_QUOTE_MIN else 0
+            answers = row(quoted)
     if answers:
         rows.append(answers)
     also = [ALSO_WORDS[kind] for kind in dict.fromkeys(alert.kind for alert in alerts) if kind is not asked]
