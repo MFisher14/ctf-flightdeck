@@ -183,6 +183,37 @@ def test_a_short_plugin_name_does_not_let_a_variable_through_that_only_has_its_l
     assert checked(tmp_path, config, platform="ai", token_env="AI_TOKEN", environ={"AI_TOKEN": "set"}) == ([], [])
 
 
+@pytest.mark.parametrize("plugin, variable", [("https", "HTTPS_PROXY"), ("all", "ALL_PROXY"), ("no", "NO_PROXY"),
+                                              ("https", "HTTPS_PROXY_PASSWORD"), ("ftp", "FTP_PROXY")])
+def test_a_proxy_setting_is_never_a_plugins_token_even_one_its_name_starts(tmp_path, plugin, variable):
+    """A proxy setting holds a proxy's address and often its password: a plugin called https
+    does not get HTTPS_PROXY from a teammate's profile."""
+    config = player_config(tmp_path, plugin)
+    refusals, _ = checked(tmp_path, config, platform=plugin, token_env=variable, environ={variable: "set"})
+    own = plugin.upper()
+    assert refusals == [f"event.token_env names {variable}, a proxy setting, whose value is a proxy's address and often the "
+                        f"password for it, not a token for this platform: flightdeck would hand its value to the {plugin} "
+                        f"plugin. Name the variable that holds your token for it, like {own}_TOKEN"]
+    assert checked(tmp_path, config, platform=plugin, token_env=f"{own}_TOKEN", environ={f"{own}_TOKEN": "set"}) == ([], [])
+
+
+def test_a_plugin_the_player_named_like_a_proxy_setting_still_takes_its_own_token(tmp_path):
+    config = player_config(tmp_path, "http_proxy")
+    assert checked(tmp_path, config, platform="http_proxy", token_env="HTTP_PROXY_TOKEN",
+                   environ={"HTTP_PROXY_TOKEN": "set"}) == ([], [])
+
+
+def test_a_plugins_token_is_never_handed_to_a_plugin_whose_name_is_the_start_of_its_name(tmp_path):
+    """MY_CTF_TOKEN starts with MY_, but it is the my-ctf plugin's token, not the my plugin's."""
+    config = player_config(tmp_path, "my", "my-ctf")
+    refusals, _ = checked(tmp_path, config, platform="my", token_env="MY_CTF_TOKEN", environ={"MY_CTF_TOKEN": "set"})
+    assert refusals == ["event.token_env names MY_CTF_TOKEN, a variable named for the my-ctf plugin of your config, not a token "
+                        "for this platform: flightdeck would hand its value to the my plugin. Name the variable that holds your "
+                        "token for it, like MY_TOKEN"]
+    assert checked(tmp_path, config, platform="my", token_env="MY_TOKEN", environ={"MY_TOKEN": "set"}) == ([], [])
+    assert checked(tmp_path, config, platform="my-ctf", token_env="MY_CTF_TOKEN", environ={"MY_CTF_TOKEN": "set"}) == ([], [])
+
+
 @pytest.mark.parametrize("table, where, what", [
     ('[fallback]\nbase_url = "http://127.0.0.1:11435/v1"\nkey_env = "{v}"\nladder = ["local-model"]\n', "fallback.key_env",
      "a variable for another service's key"),

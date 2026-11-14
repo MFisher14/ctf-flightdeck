@@ -579,15 +579,23 @@ def plugin_token_env(name: str, plugin: str, config: Config) -> str | None:
     for the plugin: its name starts with the plugin's own and a _ (ACME_TOKEN for acme; a
     name that merely has the letters in it does not count). Never a variable the config
     names for a secret of its own (config_secrets), nor one of OTHER_SERVICE_KEYS, whatever
-    their names. So another event's token, another service's key and a secret no list knows
-    stay where they are."""
-    own = plugin.upper().replace("-", "_")
+    their names. Never a proxy setting either (a plugin called https names HTTPS_PROXY), nor
+    one named for another plugin of the config whose name starts with this one's (MY_CTF_TOKEN
+    is the my-ctf plugin's, not the my plugin's). So another event's token, another service's
+    key, a proxy's password and a secret no list knows stay where they are."""
+    own = _variable_prefix(plugin)
     setting = config_secrets(config).get(name)
     where = f" ({setting} in your config)" if setting else ""
+    longer = sorted((other for other in getattr(config, "plugins", {}) if other != plugin
+                     and len(_variable_prefix(other)) > len(own) and name.startswith(f"{_variable_prefix(other)}_")), key=len)
     if setting == "notify.webhook_env":
         what = "the variable that holds your notification webhook's URL"
     elif setting or name in OTHER_SERVICE_KEYS:
         what = "a variable for another service's key"
+    elif _PROXY_VARIABLE.fullmatch(name) and not _PROXY_VARIABLE.fullmatch(own):  # a plugin the player called http_proxy keeps HTTP_PROXY_TOKEN
+        what = "a proxy setting, whose value is a proxy's address and often the password for it"
+    elif longer:
+        what = f"a variable named for the {longer[-1]} plugin of your config"
     elif name.startswith(f"{own}_"):
         return None
     else:
@@ -597,6 +605,11 @@ def plugin_token_env(name: str, plugin: str, config: Config) -> str | None:
                      "another service's or another event's secret")
     return (f"event.token_env names {name}{where}, {what}, not a token for this platform: flightdeck would hand its value "
             f"to the {plugin} plugin. Name the variable that holds your token for it, like {own}_TOKEN")
+
+
+def _variable_prefix(plugin: str) -> str:
+    """The start of the names of a plugin's own variables: ACME for acme, MY_CTF for my-ctf."""
+    return plugin.upper().replace("-", "_")
 
 
 def http_token_env(name: str, http: HttpConfig, config: Config | None, url: str) -> str | None:
