@@ -115,6 +115,9 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **A pack names the flightdeck it needs** (P76). `flightdeck = ">=0.6"` in a `pack.toml`; a
+  flightdeck that does not meet it refuses the pack, at install and wherever its engines are
+  found, with both versions and what to do.
 
 Known limits, each said where it applies:
 

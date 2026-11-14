@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A solver pack can say which flightdeck it needs: `flightdeck = ">=0.6"` in its `pack.toml`
+  (`>=`, `>`, `<=`, `<`, `==`, `!=`, joined by commas). A flightdeck that does not meet it
+  refuses the pack and says both versions, as in `this pack needs flightdeck >=0.6, you have
+  0.5.0: upgrade flightdeck`: `pack install` stops before it runs anything, and doctor,
+  `pack info`, the `l1` commands and a run use none of its engines. `pack info` shows the
+  requirement ([the solver guide](docs/SOLVERS.md#a-pack-that-needs-setup)).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

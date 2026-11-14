@@ -210,6 +210,21 @@ def test_a_pack_for_a_newer_flightdeck_is_refused_when_read_and_when_its_engines
         discover(root)
 
 
+def test_a_run_and_doctor_refuse_a_pack_for_a_newer_flightdeck(tmp_path, monkeypatch):
+    import ctf_flightdeck
+    from ctf_flightdeck.run import RunError, _l1_manifests
+    from ctf_flightdeck.setup import _l1_check
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.5.0")
+    root = make_pack(tmp_path / "p", toml='name = "p"\nflightdeck = ">=0.6"\n')
+    with pytest.raises(RunError, match=r"the L1 pack cannot be used: .*needs flightdeck >=0\.6, you have 0\.5\.0"):
+        _l1_manifests(root)
+    check = _l1_check(root)
+    assert not check.ok and "needs flightdeck >=0.6, you have 0.5.0" in check.detail
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.6.0")
+    assert [m.id for m in _l1_manifests(root)] == ["e"] and _l1_check(root).ok
+
+
 def test_a_pack_without_the_key_works_with_any_flightdeck(tmp_path, monkeypatch):
     import ctf_flightdeck
 

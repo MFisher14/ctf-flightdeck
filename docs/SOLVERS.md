@@ -321,6 +321,7 @@ version = "1.0.0"                    # optional
 description = "What it solves."      # optional, one line
 engines = "flightdeck"               # optional: the only folder searched for *.manifest.toml
 tools = ["tshark", "binwalk"]        # optional: the programs the engines call, by name
+flightdeck = ">=0.5"                 # optional: the flightdeck versions the pack works with
 
 [setup]                              # optional
 command = "./setup.sh"               # a file of the pack and its arguments, run in the pack's folder
@@ -350,6 +351,16 @@ note = "docs/LANE.md"                # a text file inside the pack; {pack} in it
   run in Docker, asked of one throwaway container with no network. `flightdeck pack info` lists
   them too. Both only warn: an engine whose program is missing says so and does not run, and the
   rest work. When the image is not on this machine, doctor says that and guesses nothing.
+- `flightdeck` says which flightdeck the pack works with, for a pack that uses something a
+  newer one added. A flightdeck that does not meet it refuses the pack with both versions, as
+  in `this pack needs flightdeck >=0.6, you have 0.5.0: upgrade flightdeck`: `pack install`
+  stops before it runs anything, and doctor, `pack info`, the `l1` commands and a run say the
+  same and use none of its engines. It is checked before the other keys, so a pack made for a
+  newer flightdeck says that, not that it has a key this one does not know. Only plain
+  requirements are read: `>=`, `>`, `<=`, `<`, `==` and `!=`, each with a version of numbers
+  and dots (`0.5` is `0.5.0`), joined by commas (`">=0.5, <1"`); anything else, `~=` or a `*`
+  included, is an error rather than half read. A pre-release counts as below its release, so
+  `0.6.0rc1` does not meet `>=0.6`. Without the key a pack works with any flightdeck.
 - An unknown key is an error.
 
 ## From a gap to a new engine
