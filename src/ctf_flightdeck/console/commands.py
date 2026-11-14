@@ -180,6 +180,27 @@ def needs_lane(parsed: Parsed) -> bool:
     return parsed.command.lane and not (parsed.command.name == "approve" and parsed.arg == ALL)
 
 
+@dataclass(frozen=True)
+class Aim:
+    """Where what is typed would go if it were sent now (goes_to)."""
+
+    run: bool = False  # a command that takes no lane: it is the run's
+    lane: str | None = None  # the lane the command names; None: the lane the bar acts on
+
+
+def goes_to(typed: str) -> Aim:
+    """Where the text typed so far would go: read by `parse`, so it is what enter would do.
+    A command that takes no lane (/note, /config, /approve all) is the run's; a lane command
+    that names a lane (`/kill L07`) goes to that one; everything else goes to the lane the
+    bar acts on: a plain message, a lane command that names none, and text `parse` refuses
+    (a name not typed whole yet, a stray word), which goes nowhere until it is put right."""
+    try:
+        parsed = parse(typed)
+    except CommandError:
+        return Aim()
+    return Aim(lane=parsed.lane) if needs_lane(parsed) else Aim(run=True)
+
+
 def lane_id(token: str) -> str | None:
     """'l7' or 'L07' -> 'L07'; anything else -> None."""
     match = LANE_ID.match(token)

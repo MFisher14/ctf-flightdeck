@@ -61,7 +61,7 @@ from ..runrecord import L1 as BY_L1
 from ..runrecord import Credit, EventLine, Solve, accepted
 from ..text import NEWLINE, untrusted
 from . import theme
-from .commands import KEY_COMMAND, lane_id
+from .commands import KEY_COMMAND, goes_to, lane_id
 
 CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 
@@ -1116,6 +1116,33 @@ def focus_title(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
     out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · {spent}", theme.MUTED)
     if not lane.finished:
         out.append(f" · idle {fmt.duration(lane.idle(deck.now))}", theme.MUTED)
+    return out
+
+
+BAR_RUN = "the run"  # the bar's title while a command that takes no lane is typed
+BAR_NO_LANE = "no lane"  # and while what is typed has no lane to go to
+
+
+def bar_title(deck: Deck, typed: str, lane: Lane | None) -> Text:
+    """The title on the command bar's border: who what is typed in it goes to (P64).
+    `to L04 · Ticket Desk` for `lane`, the lane the bar acts on (the selected one in the lane
+    list, the open one in a lane's view), or for the lane a command names (`/kill L07`);
+    `no lane` when there is none (`no lane L07` when the one named is not there); `the run`
+    while a command that takes no lane is typed. commands.goes_to reads what is typed as
+    enter would. The challenge's name is challenge text: made safe, and never markup."""
+    aim = goes_to(typed)
+    if aim.run:
+        return Text(BAR_RUN, theme.MUTED)
+    if aim.lane is not None:
+        lane = deck.lanes.get(aim.lane)
+        if lane is None:
+            return Text(f"{BAR_NO_LANE} {aim.lane}", theme.MUTED)
+    if lane is None:
+        return Text(BAR_NO_LANE, theme.MUTED)
+    out = Text("to ", theme.MUTED)
+    out.append(lane.id, f"bold {theme.TEXT}")
+    out.append(" · ", theme.MUTED)
+    out.append(untrusted(deck.challenges[lane.challenge_id].name, one_line=True), theme.TEXT)
     return out
 
 

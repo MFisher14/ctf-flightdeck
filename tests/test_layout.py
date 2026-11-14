@@ -146,7 +146,7 @@ def test_the_lane_list_takes_the_empty_pages_place_once_a_challenge_is_released(
         shown = screen_text(app)
         assert fleet.EMPTY_BY_HAND not in shown and fleet.EMPTY_PLATFORM not in shown
         assert lane_rows(app) == ["L01", "L02"] and "Alpha" in region_text(app, "#lanes")
-        assert bar(app).field.placeholder == fleet.BAR
+        assert bar(app).field.placeholder == fleet.BAR == "a message, or / for commands"
         assert isinstance(app.focused, DataTable) and app.focused.id == "lanes"  # the keys act on the lane under the cursor
         await press(pilot, "p")
         assert deck.lanes["L01"].state is LaneState.PAUSED

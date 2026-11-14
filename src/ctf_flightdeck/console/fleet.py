@@ -41,7 +41,7 @@ from ..core.attention import SortMode, sort_lanes
 from ..core.model import COURSE_ALERTS, Lane
 from . import theme, views
 from .commands import CommandError, needs_lane, parse
-from .widgets import CommandBar
+from .widgets import BAR, CommandBar
 
 if TYPE_CHECKING:
     from .app import FlightdeckApp
@@ -82,9 +82,9 @@ HELP_KEY, QUIT_KEY = ("question_mark", "?", "help"), ("q", "q", "quit")
 # there), and on one that comes from a platform or a script.
 EMPTY_BY_HAND = "No challenges yet. Type /new to hand one over (its text, files, a screenshot)."
 EMPTY_PLATFORM = "Waiting for the board: challenges appear here when the event releases them."
-# The command bar's placeholder: with lanes to act on, on an empty board the player fills, and
-# on an empty board that fills by itself.
-BAR = "/ for commands · enter opens the selected lane · or type a message to it"
+# The command bar's placeholder: widgets.BAR with challenges on the board (the bar's title names
+# the lane a message goes to), and these on an empty board the player fills and on one that
+# fills by itself.
 BAR_EMPTY_BY_HAND = "/new to add a challenge · / for commands"
 BAR_EMPTY_PLATFORM = "/ for commands"
 
@@ -183,7 +183,7 @@ class FleetScreen(Screen, inherit_bindings=False):
                 yield FittedTable(id="lanes", cursor_type="row")
                 yield Static(id="why")
         yield Static(id="status")
-        yield CommandBar(BAR, id="bar")
+        yield CommandBar(BAR, id="bar", title=self._bar_title)
         yield Static(id="keys")
 
     def on_mount(self) -> None:
@@ -414,9 +414,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         deck = self.fd.deck
         why = self.query_one("#why", Static)
         lane = self.bar_lane()
-        self.query_one("#bar", CommandBar).set_suggestions(
-            self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None
-        )
+        bar = self.query_one("#bar", CommandBar)
+        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None)
+        bar.show_title()  # the lane the bar acts on follows the selection
         if self.board_focused and self.selected_challenge in deck.challenges:
             why.update(views.challenge_why(deck, deck.challenges[self.selected_challenge]))
             return
@@ -516,6 +516,10 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.board_focused = True
         self._render_why()
 
+    def _bar_title(self, typed: str) -> Text:
+        """The command bar's title for what is typed: the lane the keys point at, by name."""
+        return views.bar_title(self.fd.deck, typed, self.bar_lane())
+
     def bar_lane(self) -> Lane | None:
         """The lane keys and the command bar act on, if there is one (no warnings)."""
         deck = self.fd.deck
@@ -601,7 +605,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     @on(CommandBar.Submitted, "#bar")
     def _command(self, event: CommandBar.Submitted) -> None:
-        """Run what was typed on the lane the keys point at (the bar's placeholder says so)."""
+        """Run what was typed on the lane the keys point at (the bar's title names it)."""
         self._leave_bar()
         if not event.value:
             self.action_open_lane()  # enter on an empty bar opens the selected lane

@@ -10,6 +10,10 @@ typed, and commands.parse decides what it is.
 
 Menu entries can carry lane text (a suggested redirect, a candidate flag), so they are
 drawn through text.untrusted() like everything else from a lane.
+
+The bar's border carries a title: who what is typed goes to (P64). The screen that hosts
+the bar says it (views.bar_title: the lane, `no lane`, `the run`), for the text typed so
+far; the bar asks again at every key, and the screen has it ask whenever its lane changes.
 """
 
 from __future__ import annotations
@@ -29,6 +33,9 @@ from textual.widgets.option_list import Option
 from ..text import untrusted
 from . import theme
 from .commands import Completion, State, complete, find, no_match
+
+# What the empty bar says, in the lane list and in a lane's view: the border's title names the lane.
+BAR = "a message, or / for commands"
 
 
 class BarInput(Input):
@@ -76,9 +83,11 @@ class CommandBar(Vertical):
         def control(self) -> CommandBar:
             return self.bar
 
-    def __init__(self, placeholder: str, *, id: str | None = None) -> None:
+    def __init__(self, placeholder: str, *, id: str | None = None, title: Callable[[str], Text] | None = None) -> None:
         super().__init__(id=id)
         self.bar_placeholder = placeholder
+        self.title = title  # the border's title for the text typed so far (None: the bar has none)
+        self._title: tuple | None = None  # the one shown: its text and its colours
         self.suggestions: tuple[tuple[str, str], ...] = ()  # (command, why), from the lane's alerts
         self.has_lane = True  # there is a lane the bar acts on (the fleet with none selected: False)
         self.completions: list[Completion] = []
@@ -115,6 +124,18 @@ class CommandBar(Vertical):
     def clear(self) -> None:
         self.field.value = ""
         self.hide_menu()
+
+    def show_title(self) -> None:
+        """The title on the bar's border, for what is typed now: who it goes to, as the screen
+        that hosts the bar says. The screen calls this when the lane the bar acts on may have
+        changed (another is selected, the board took the focus, the theme's colours changed)."""
+        if self.title is None:
+            return
+        title = self.title(self.field.value)
+        shown = (title.plain, str(title.style), tuple(title.spans))  # Text's own == passes over its base style
+        if shown != self._title:  # only a title that changed, in words or in colours, is drawn again
+            self._title = shown
+            self.field.border_title = title
 
     def set_placeholder(self, text: str) -> None:
         """What the empty bar says (it changes with what the player can do now)."""
@@ -182,6 +203,7 @@ class CommandBar(Vertical):
     def _changed(self, event: Input.Changed) -> None:
         event.stop()
         self.refresh_menu()
+        self.show_title()
 
     @on(Input.Submitted, "#bar-input")
     def _submitted(self, event: Input.Submitted) -> None:
