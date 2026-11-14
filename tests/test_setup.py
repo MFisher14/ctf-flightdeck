@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import replace
 
 import pytest
 from typer.testing import CliRunner
@@ -49,6 +50,44 @@ def test_init_never_overwrites_a_config_unless_forced_and_never_writes_a_bad_one
     assert not (tmp_path / "bad.toml").exists()
     write_config(ANSWERS, path, force=True)
     assert load_config(path).models == ANSWERS.models
+
+
+def test_init_replaces_a_config_whole_and_keeps_its_mode_and_a_write_that_fails_leaves_it_as_it_was(tmp_path, monkeypatch):
+    from ctf_flightdeck import config_edit
+
+    path, twin = tmp_path / "config.toml", tmp_path / "twin.toml"
+    path.write_text("# mine\n")
+    path.chmod(0o600)
+    os.link(path, twin)  # a second name for the same file: written over in place, it would change too
+    write_config(ANSWERS, path, force=True)
+    assert load_config(path).models == ANSWERS.models and (path.stat().st_mode & 0o777) == 0o600
+    assert twin.read_text() == "# mine\n"  # a new file took the path; the old one was not written into
+
+    def broken(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(config_edit.os, "fsync", broken)
+    before = path.read_text()
+    with pytest.raises(OSError, match="No space"):
+        write_config(replace(ANSWERS, models=("vendor/other",)), path, force=True)
+    assert path.read_text() == before and sorted(p.name for p in tmp_path.iterdir()) == ["config.toml", "twin.toml"]
+    fresh = tmp_path / "new" / "config.toml"
+    with pytest.raises(OSError, match="No space"):
+        write_config(ANSWERS, fresh)
+    assert list(fresh.parent.iterdir()) == []  # no half-made config, and no empty one either
+
+
+def test_init_writes_a_new_config_with_the_mode_the_umask_gives_and_through_a_link(tmp_path):
+    old = os.umask(0o027)
+    try:
+        path = write_config(ANSWERS, tmp_path / "config.toml")
+    finally:
+        os.umask(old)
+    assert (path.stat().st_mode & 0o777) == 0o640
+    link = tmp_path / "link.toml"
+    link.symlink_to(tmp_path / "real.toml")  # a link to a config not written yet
+    write_config(ANSWERS, link)
+    assert link.is_symlink() and load_config(tmp_path / "real.toml").models == ANSWERS.models
 
 
 def docker_that(tmp_path, monkeypatch, *, has_image: bool) -> None:
@@ -1102,8 +1141,6 @@ def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the
     """The config is written before the key is kept: a write that fails (a full disk, a folder
     that cannot be written) leaves the keys file as it was, the key already there too; and with
     --force, a key the keys file refuses puts back the config the new one replaced."""
-    from pathlib import Path
-
     from ctf_flightdeck import keys, setup
 
     keys_file = tmp_path / "keys.env"
@@ -1111,11 +1148,11 @@ def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the
     keys.save("OPENROUTER_API_KEY", "the-old-synthetic-key")
     target = tmp_path / "config.toml"
 
-    def full(self, *args, **kwargs):
+    def full(*args, **kwargs):
         raise OSError(28, "No space left on device")
 
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "write_text", full)
+        patch.setattr(os, "fsync", full)  # the config's new file cannot be flushed to the disk
         with pytest.raises(OSError):
             setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY})
     assert not target.exists() and keys.load_keys(keys_file) == {"OPENROUTER_API_KEY": "the-old-synthetic-key"}

@@ -654,10 +654,30 @@ def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
     """Check the config in memory, then write it. Refuses to overwrite unless force.
 
     A ConfigError names `path` and what is wrong; nothing is written before the check, so
-    a key typed in the wrong place never reaches a file."""
+    a key typed in the wrong place never reaches a file.
+
+    The file is never written over in place: the text goes into a new file beside it, which
+    is renamed over the path (config_edit.replace_file: the mode of the config it replaces
+    is kept, a link stays a link). A write that fails half way leaves the config that was
+    there as it was, and a new config that cannot be written is not left half made. A new
+    config gets the mode any new file of the player's gets (their umask), and a file that
+    appears at the path while this runs is not written over (FileExistsError)."""
+    from .config_edit import replace_file
+
     text = check_config(answers, path, force=force)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    target = Path(os.path.realpath(path))  # what a link at the path points at, there or not yet
+    made = False
+    if not target.exists():
+        # an empty file, made with the mode the umask gives, which replace_file then keeps
+        os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
+        made = True
+    try:
+        replace_file(path, text.encode("utf-8"))
+    except BaseException:
+        if made:
+            target.unlink(missing_ok=True)
+        raise
     return path
 
 
