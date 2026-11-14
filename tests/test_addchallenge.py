@@ -258,6 +258,19 @@ def test_the_drop_sentence_inside_tmux_or_over_ssh_wins_over_the_terminal_progra
     assert hint(TERM_PROGRAM="ghostty", XDG_SESSION_TYPE="x11") == GENERIC_DROP
 
 
+@pytest.mark.parametrize(("env", "said"), [
+    ({}, "drag them in, or ctrl+o if none lands"),
+    ({"TERM_PROGRAM": "Apple_Terminal"}, "drag them in, or ctrl+o if none lands"),
+    ({"TERM_PROGRAM": "vscode"}, "drag one at a time (VS Code types one), or ctrl+o"),
+    ({"TERM_PROGRAM": "iTerm.app"}, "drag them in with no key held, or ctrl+o"),
+    ({"TERM_PROGRAM": "tmux"}, "drop them on the terminal tmux runs in, or ctrl+o"),
+    ({"TERM_PROGRAM": "WezTerm", "XDG_SESSION_TYPE": "x11"}, "ctrl+o (a drop needs a nightly WezTerm on X11)"),
+    ({"SSH_TTY": "/dev/pts/3", "TERM_PROGRAM": "iTerm.app"}, "over SSH, scp them here and paste the path"),
+])
+def test_the_forms_files_line_is_the_short_one_for_the_same_terminal(env, said):
+    assert addchallenge.form_files_line(env) == f"Files: {said}; the line under the box names them."
+
+
 def test_the_drop_sentence_shows_nothing_from_the_environment():
     """Fixed words only: a TERM_PROGRAM or a TMUX value never reaches the screen."""
     for env in ({"TERM_PROGRAM": "\x1b]0;owned\x07"}, {"TMUX": "\x1b[2J/tmp/x,1,0"}, {"TERM_PROGRAM": "vscode\x1b[31m"}):
@@ -2125,8 +2138,7 @@ def test_the_form_and_the_attach_command_say_what_to_do_when_a_dropped_file_does
         await pilot.press(*"/new", "enter")
         await pilot.pause()
         shown = " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
-        assert ("Drag a file onto this window to attach it. If nothing lands, your terminal kept the drop: press ctrl+o "
-                "to choose it.") in shown
+        assert "Files: drag them in, or ctrl+o if none lands; the line under the box names them." in shown
         assert "ctrl+o choose files" in " ".join(shown.split())
         await pilot.press("escape")
         await pilot.press(*"/att")  # the command menu, at /attach
@@ -2150,7 +2162,8 @@ def test_the_form_and_help_say_how_a_drop_works_in_the_terminal_flightdeck_runs_
     async def body(run, app, pilot):
         await pilot.press(*"/new", "enter")
         await pilot.pause()
-        assert ITERM2_DROP in shown(app) and GENERIC_DROP not in shown(app)
+        assert "Files: drag them in with no key held, or ctrl+o; the line under the box names them." in shown(app)
+        assert "Files: drag them in, or ctrl+o if none lands" not in shown(app)
         await pilot.press("escape")
         await pilot.pause()
         app.action_help()

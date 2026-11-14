@@ -403,6 +403,27 @@ def test_the_new_form_shows_every_field_and_how_to_add_the_challenge(size):
     drive(app, script, size)
 
 
+@pytest.mark.parametrize("env", [{"TERM_PROGRAM": "vscode"}, {"TERM_PROGRAM": "tmux"}, {"TERM_PROGRAM": "iTerm.app"},
+                                 {"SSH_TTY": "/dev/pts/3"}, {"TERM_PROGRAM": "WezTerm", "XDG_SESSION_TYPE": "x11"}],
+                         ids=["vscode", "tmux", "iterm2", "ssh", "wezterm-x11"])
+def test_the_new_form_fits_at_its_smallest_with_the_files_line_of_any_terminal(env, monkeypatch):
+    """Each terminal's files line (P77) leaves every field of the form on screen at 66x24."""
+    from ctf_flightdeck.addchallenge import form_files_line
+
+    for name in ("SSH_CONNECTION", "SSH_TTY", "TMUX", "TERM_PROGRAM", "XDG_SESSION_TYPE"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    deck, app = console(by_hand=True, layout="simple", welcome=True)
+
+    async def script(pilot):
+        await press(pilot, "enter")
+        assert form_files_line(env).split(";")[0] in " ".join(prompt_text(app).split())
+        assert [part for part in FORM_PARTS if not shown_whole(app, part)] == []
+
+    drive(app, script, (66, 24))
+
+
 @pytest.mark.parametrize("size", [(80, 16), (56, 20)], ids=["80x16", "56x20"])
 def test_a_new_form_too_tall_for_the_terminal_keeps_its_keys_and_scrolls_to_the_field_in_use(size):
     deck, app = console(by_hand=True, layout="simple")

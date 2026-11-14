@@ -160,7 +160,7 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     the same text typed all at once (FlightdeckApp.take_drop, take_keys); the line under the
     box shows each one. A dropped file is copied into the run's folder at once, and the copy
     is what is attached (add_dropped). A terminal may keep a drop to itself: the form says
-    ctrl+o for that, in the sentence for the terminal it runs in (addchallenge.drop_hint).
+    ctrl+o for that, in the words for the terminal it runs in (addchallenge.form_files_line).
 
     ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
     thread. The form closes once the challenge is added, with what to tell the player (None:
@@ -374,7 +374,7 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         self.add_files([path], said=f"pasted the clipboard's image as {path.name}; the model reads its text when you add the challenge")
 
     def compose(self) -> ComposeResult:
-        from ..addchallenge import drop_hint  # the way a drop works in this terminal (P77)
+        from ..addchallenge import form_files_line  # the way a drop works in this terminal (P77)
 
         with Vertical():
             with VerticalScroll(id="new-body", can_focus=False):  # tab goes through the fields only
@@ -382,8 +382,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
                 yield Static(Text("Name, as the site shows it:"), classes="muted")
                 yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
                 yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
-                                  "text), with the target's address (https://... or nc host port) on a line of its own. The line "
-                                  "under the box names each file attached. " + drop_hint(choose="press ctrl+o to choose it")), classes="muted", id="new-how")
+                                  f"text). {form_files_line()} Put the target's address (https://... or nc host port) on a line "
+                                  "of its own:"), classes="muted")
                 yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
                 yield Static(Text("no file attached", style="bold"), id="new-attached")
                 with Horizontal():

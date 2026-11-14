@@ -334,6 +334,23 @@ def drop_hint(*, choose: str, env: Mapping[str, str] | None = None) -> str:
     return f"Drag a file onto this window to attach it. If nothing lands, your terminal kept the drop: {choose}."
 
 
+# The /new form's files line, by drop_terminal: drop_hint in as few words, since the form has
+# to fit on 66 by 24 with every field showing. Over SSH a path pasted that names a file here is a drop.
+_FORM_FILES = {
+    "ssh": "Files: over SSH, scp them here and paste the path",
+    "tmux": "Files: drop them on the terminal tmux runs in, or ctrl+o",
+    "vscode": "Files: drag one at a time (VS Code types one), or ctrl+o",
+    "iterm2": "Files: drag them in with no key held, or ctrl+o",
+    "wezterm-x11": "Files: ctrl+o (a drop needs a nightly WezTerm on X11)",
+    "": "Files: drag them in, or ctrl+o if none lands",
+}
+
+
+def form_files_line(env: Mapping[str, str] | None = None) -> str:
+    """The /new form's short line on how to attach files here (drop_hint has the whole sentence)."""
+    return _FORM_FILES[drop_terminal(env)] + "; the line under the box names them."
+
+
 # ---------------------------------------------------------------------- what may be attached
 
 

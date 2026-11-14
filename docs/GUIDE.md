@@ -1105,8 +1105,8 @@ on this machine, the console says so and pastes it as the text it is. The line s
 
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
-file window. The `/new` form, and help under "Files, in this terminal", say this in one
-sentence chosen for where flightdeck runs. flightdeck reads `SSH_CONNECTION` and `SSH_TTY`,
+file window. The `/new` form (in a few words) and help (under "Files, in this terminal") say this
+for where flightdeck runs. flightdeck reads `SSH_CONNECTION` and `SSH_TTY`,
 `TMUX` and `TERM_PROGRAM` for it, and nothing else depends on them:
 
 - **Over SSH:** the file you drop stays on your own machine; copy it over first (`scp`), then
