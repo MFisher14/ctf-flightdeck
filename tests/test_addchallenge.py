@@ -325,6 +325,72 @@ def test_a_file_that_cannot_be_read_is_named_in_the_refusal_and_nothing_is_left(
     assert list(board.iterdir()) == []
 
 
+# ---------------------------------------------------------------------- a drop's files, kept in the run folder
+
+
+def test_a_dropped_file_is_copied_under_its_own_name_and_outlives_the_file_it_was(tmp_path):
+    staging = tmp_path / "run" / "dropped"
+    shot, twin, folder = tmp_path / "a" / "shot.png", tmp_path / "b" / "shot.png", tmp_path / "handout"
+    for file, data in ((shot, b"one"), (twin, b"two")):
+        file.parent.mkdir()
+        file.write_bytes(data)
+    (folder / "src").mkdir(parents=True)
+    (folder / "src" / "main.c").write_text("int main;")
+    copies = addchallenge.stage(staging, [shot, twin, folder])
+    assert copies == [staging / "1" / "shot.png", staging / "2" / "shot.png", staging / "3" / "handout"]  # two of one name: a folder each
+    shot.unlink()  # a screenshot's thumbnail, or a terminal's temporary file: gone before the player attaches it
+    assert copies[0].read_bytes() == b"one" and copies[1].read_bytes() == b"two"
+    assert (copies[2] / "src" / "main.c").read_text() == "int main;"
+    assert addchallenge.stage(staging, [twin]) == [staging / "4" / "shot.png"]  # a later drop takes the next number
+    board = tmp_path / "board"
+    board.mkdir()
+    made = addchallenge.create(board, NewChallenge(name="Doll", files=(copies[0], copies[2])))  # a copy attaches as any file does
+    assert (made / "shot.png").read_bytes() == b"one" and (made / "handout" / "src" / "main.c").is_file()
+
+
+def test_a_drop_that_cannot_be_copied_names_the_file_and_leaves_no_copy(tmp_path, monkeypatch):
+    import os
+
+    staging, good, broken = tmp_path / "run" / "dropped", tmp_path / "good.txt", tmp_path / "broken"
+    good.write_text("good")
+    broken.mkdir()
+    os.mkfifo(broken / "pipe")  # a folder may be attached, but one with a named pipe in it cannot be copied
+    with pytest.raises(AddError, match=r"broken/pipe is a named pipe: a folder with one in it cannot be attached"):
+        addchallenge.stage(staging, [good, broken])
+    assert list(staging.iterdir()) == []  # the first file's copy is gone again too
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    for file, why in ((home, "is your home folder itself"), (tmp_path / "gone.bin", "no such file"),
+                      (Path("/dev/null"), "is a device"), (tmp_path / "run", "holds the folder it would be copied into")):
+        with pytest.raises(AddError, match=why):  # checked before anything is copied, as a file is before it is attached
+            addchallenge.stage(staging, [good, file])
+    assert list(staging.iterdir()) == []
+
+    def full(source, target, made=None):
+        raise OSError(28, "No space left on device", str(target))
+
+    monkeypatch.setattr(addchallenge, "_copy", full)
+    with pytest.raises(AddError, match=r"cannot copy .*/good\.txt: No space left on device \(.*/dropped/1/good\.txt\)"):
+        addchallenge.stage(staging, [good])
+    assert list(staging.iterdir()) == []
+
+
+def test_only_a_drops_own_copy_is_ever_removed(tmp_path):
+    staging, own = tmp_path / "run" / "dropped", tmp_path / "7" / "own.bin"
+    own.parent.mkdir()
+    own.write_bytes(b"the player's own")
+    one, two = addchallenge.stage(staging, [own, own])
+    nested = staging / "9" / "deep" / "file.bin"  # not a copy `stage` made: two folders down
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"x")
+    addchallenge.unstage(staging, [one, own, nested, staging / "nope" / "x", tmp_path / "run" / "eventlog.jsonl"])
+    assert not one.parent.exists() and two.read_bytes() == b"the player's own"  # the copy named, and only that
+    assert own.read_bytes() == b"the player's own" and nested.is_file()  # a file in a numbered folder of the player's stays
+    addchallenge.unstage(staging, [two])
+    assert sorted(entry.name for entry in staging.iterdir()) == ["9"]
+
+
 # ---------------------------------------------------------------------- what may be attached
 
 
@@ -509,9 +575,10 @@ def test_new_in_the_console_hands_a_challenge_with_its_file_to_a_lane_that_solve
                 await pilot.pause()
                 box = app.screen.query_one("#new-text")
                 box.text = "Read the note.\n"
+                form = app.screen
                 await app.on_event(events.Paste(f"{handout}\n"))  # the file dropped on the terminal
-                await pilot.pause()
-                assert box.text == "Read the note.\n" and app.screen.files == [handout]
+                await until(pilot, lambda: form.files == [copy_of(run, "note.txt")])  # the run's own copy of it is what is attached
+                assert box.text == "Read the note.\n"
                 await pilot.press("ctrl+s")
                 for _ in range(500):
                     lanes = list(run.deck.lanes.values())
@@ -839,6 +906,16 @@ def said(form) -> str:
     return str(form.query_one("#new-problem").render())
 
 
+def copy_of(run, name: str, n: int = 1) -> Path:
+    """Where the run keeps its copy of a dropped file: the n-th file its console took, under its own name."""
+    return run.dir / "dropped" / str(n) / name
+
+
+async def on_bar(pilot, value: str) -> None:
+    """Wait until the command bar holds `value`: a drop lands on it once its files are copied, in a thread."""
+    await until(pilot, lambda: pilot.app.screen.query_one("#bar-input").value == value)
+
+
 def test_the_name_takes_any_character_and_a_file_dropped_while_it_has_the_focus_is_attached(tmp_path):
     handout = tmp_path / "doll.bin"
     handout.write_bytes(b"x" * 10)
@@ -855,12 +932,13 @@ def test_the_name_takes_any_character_and_a_file_dropped_while_it_has_the_focus_
         assert name.value == "~home /dev/null /" and form.files == [] and form.query_one("#new-text").text == ""
         assert shown() == "no file attached"
         await app.on_event(events.Paste(f"{handout} "))  # a drop, while the name has the focus
-        await pilot.pause()
-        assert name.value == "~home /dev/null /" and form.files == [handout]
+        await until(pilot, lambda: form.files == [copy_of(run, "doll.bin")])
+        assert name.value == "~home /dev/null /"
         assert shown() == "1 file attached: doll.bin (10 B)" and "attached doll.bin" in said(form)
-        await pilot.press("ctrl+r")  # and off again
-        await pilot.pause()
+        await pilot.press("ctrl+r")  # and off again: the run's copy goes with it
+        await until(pilot, lambda: not copy_of(run, "doll.bin").parent.exists())
         assert form.files == [] and shown() == "no file attached" and "removed doll.bin" in said(form)
+        assert handout.read_bytes() == b"x" * 10  # the player's own file is never touched
         await pilot.press("escape")
 
     in_console(tmp_path, body)
@@ -1296,14 +1374,14 @@ def test_a_pasted_path_never_replaces_what_was_typed_in_the_command_bar(tmp_path
         await pilot.pause()
         assert bar.value == "a half-written message"
         assert "1 file not taken: the command bar holds what you typed" in app._status[0] and app._status[1] == "warning"
+        assert not (run.dir / "dropped").exists()  # and a drop that is not taken is not copied either
         bar.value = "/attach doll "  # an /attach being written: the file is added to it
         await app.on_event(events.Paste(str(handout)))
-        await pilot.pause()
-        assert bar.value == f"/attach doll '{handout}' " and bar.has_focus
+        await on_bar(pilot, f"/attach doll '{copy_of(run, 'rockyou.txt')}' ")
+        assert bar.has_focus
         bar.value = "/att"  # the start of that very command: nothing is lost by finishing it
         await app.on_event(events.Paste(str(handout)))
-        await pilot.pause()
-        assert bar.value == f"/attach '{handout}' "
+        await on_bar(pilot, f"/attach '{copy_of(run, 'rockyou.txt', 2)}' ")
         bar.value = "/hint L01 "
         await app.on_event(events.Paste("~"))  # the home folder is never an attachment: said, and pasted as the text it is
         await pilot.pause()
@@ -1326,19 +1404,18 @@ def test_a_drop_in_the_fleet_names_the_challenge_enter_attaches_to(tmp_path):
         await until(pilot, lambda: app.fleet.selected_lane in run.deck.lanes)
         app.attacher = attacher
         await app.on_event(events.Paste(f"{handout} "))  # the lanes table has the focus, and a lane is selected
-        await pilot.pause()
+        await on_bar(pilot, f"/attach static-hiss '{copy_of(run, 'doll.bin')}' ")  # the bar says where Enter sends it
         bar = app.screen.query_one("#bar-input")
-        assert bar.value == f"/attach static-hiss '{handout}' " and bar.has_focus  # the bar says where Enter sends it
+        assert bar.has_focus
         assert app._status[0].startswith("got doll.bin (1 B): press Enter to attach to static-hiss")  # the drop landed: said
         await pilot.press("enter")
         await until(pilot, lambda: calls)
-        assert calls == [("static-hiss", [handout])]
+        assert calls == [("static-hiss", [copy_of(run, "doll.bin")])]
         await until(pilot, lambda: app._status[0] == "attached to static-hiss")
         app.open_lane(app.fleet.selected_lane)  # the same in a lane's own view
         await pilot.pause()
         await app.on_event(events.Paste(f"{handout} "))
-        await pilot.pause()
-        assert app.screen.query_one("#bar-input").value == f"/attach static-hiss '{handout}' "
+        await on_bar(pilot, f"/attach static-hiss '{copy_of(run, 'doll.bin', 2)}' ")
 
     in_console(tmp_path, body, busy_lanes())
 
@@ -1355,9 +1432,9 @@ def test_files_dropped_on_the_console_go_to_the_new_form_or_onto_an_attach_whate
             async with app.run_test(size=(160, 46)) as pilot:
                 await pilot.pause()
                 await app.on_event(events.Paste(dropped))  # the fleet: the board has the focus, not the bar
-                await pilot.pause()
+                await on_bar(pilot, f"/attach '{copy_of(run, 'my doll.bin')}' ")
                 bar = app.screen.query_one("#bar-input")
-                assert bar.value == f"/attach '{handout}' " and bar.has_focus
+                assert bar.has_focus
                 assert app._status[0] == "got my doll.bin (1 B): type the challenge's name after /attach, then Enter"
                 bar.value = ""
                 await app.on_event(events.Paste("just some words"))  # not files: an ordinary paste
@@ -1367,9 +1444,10 @@ def test_files_dropped_on_the_console_go_to_the_new_form_or_onto_an_attach_whate
                 await pilot.press(*"/new Doll", "enter")
                 await pilot.pause()
                 app.screen.query_one("#new-category").focus()  # the focus is not on the box
+                form = app.screen
                 await app.on_event(events.Paste(dropped))
-                await pilot.pause()
-                assert app.screen.files == [handout] and app.screen.query_one("#new-category").value == ""
+                await until(pilot, lambda: form.files == [copy_of(run, "my doll.bin", 2)])
+                assert app.screen.query_one("#new-category").value == ""
                 assert app.screen.query_one("#new-text").text == ""  # attached, not written into the description
                 assert "1 file attached: my doll.bin" in str(app.screen.query_one("#new-attached").render())
                 assert said(app.screen).startswith("attached my doll.bin (1 B)")  # the drop landed: the form says so
@@ -1438,6 +1516,164 @@ def test_a_board_that_takes_no_files_says_nothing_about_a_path_that_is_not_there
     asyncio.run(main())
 
 
+def test_a_file_that_is_gone_after_it_was_dropped_is_still_added_and_still_attached(tmp_path):
+    """The file behind a drop may be a temporary one: the console copies it when the drop
+    lands, not when the player presses the key that attaches it."""
+    shot, more = tmp_path / "TemporaryItems" / "shot.bin", tmp_path / "TemporaryItems" / "more.bin"
+    shot.parent.mkdir()
+    shot.write_bytes(b"what the thumbnail showed")
+    more.write_bytes(b"more of it")
+
+    async def body(run, app, pilot):
+        await pilot.press(*"/new Doll", "enter")
+        await pilot.pause()
+        form = app.screen
+        await app.on_event(events.Paste(f"{shot} "))
+        await until(pilot, lambda: form.files == [copy_of(run, "shot.bin")])
+        assert said(form).startswith("attached shot.bin (25 B)")
+        await app.on_event(events.Paste(f"{shot} "))  # dropped again: the same file, said, and not copied twice
+        await pilot.pause()
+        assert said(form) == "already attached" and form.files == [copy_of(run, "shot.bin")] and not form.copying
+        assert sorted(entry.name for entry in (run.dir / "dropped").iterdir()) == ["1"]
+        shot.unlink()  # gone before ctrl+s
+        await pilot.press("ctrl+s")
+        await until(pilot, lambda: "doll" in run.deck.challenges)
+        assert (run.options.board / "doll" / "shot.bin").read_bytes() == b"what the thumbnail showed"
+        await until(pilot, lambda: not copy_of(run, "shot.bin").parent.exists())  # on the board: the run's copy is not kept
+        await until(pilot, lambda: app.screen.query("#bar-input") and app.focused is not None)
+        app.screen.set_focus(None)
+        await app.on_event(events.Paste(f"{more} "))  # the same outside the form: onto an /attach, as a copy
+        await on_bar(pilot, f"/attach doll '{copy_of(run, 'more.bin')}' ")
+        more.unlink()  # gone before Enter
+        await pilot.press("enter")
+        await until(pilot, lambda: "attached more.bin to doll" in app._status[0])
+        assert (run.options.board / "doll" / "more.bin").read_bytes() == b"more of it"
+        await until(pilot, lambda: not copy_of(run, "more.bin").parent.exists())
+
+    in_console(tmp_path, body, busy_lanes())
+
+
+def test_a_drop_is_copied_off_the_ui_thread_and_ctrl_s_waits_for_it(tmp_path):
+    import threading
+
+    handout = tmp_path / "disk.img"
+    handout.write_bytes(b"big")
+    go, threads = threading.Event(), []
+
+    async def body(run, app, pilot):
+        stage = app.stager
+
+        def slow(files):  # a copy that takes its time, as a disk image's would
+            threads.append(threading.current_thread())
+            go.wait(5)
+            return stage(files)
+
+        app.stager = slow
+        try:
+            await pilot.press(*"/new Disk", "enter")
+            await pilot.pause()
+            form = app.screen
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: len(threads) == 1)
+            assert threads[0] is not threading.main_thread() and form.files == []
+            assert said(form) == "copying disk.img (3 B)..."
+            await pilot.press(*"ok")  # the keys go on: typed into the box while the copy is made
+            await pilot.pause()
+            assert form.query_one("#new-text").text == "ok"
+            await pilot.press("ctrl+s")  # not added without the file that is on its way
+            await pilot.pause()
+            assert "still copying the files you dropped" in said(form) and not form.adding and not run.deck.challenges
+            go.set()
+            await until(pilot, lambda: form.files == [copy_of(run, "disk.img")])
+            assert said(form).startswith("attached disk.img (3 B)")
+            go.clear()
+            await pilot.press("escape")  # cancelled: nothing will attach the copy now, so it goes
+            await until(pilot, lambda: not copy_of(run, "disk.img").parent.exists())
+            await pilot.press(*"/new Disk", "enter")
+            await pilot.pause()
+            form = app.screen
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: len(threads) == 2)
+            await pilot.press("escape")  # closed while the copy is made: the copy is removed once it is there
+            await pilot.pause()
+            assert app.screen is app.fleet
+            go.set()
+            await until(pilot, lambda: (run.dir / "dropped").is_dir() and list((run.dir / "dropped").iterdir()) == [])
+            assert handout.read_bytes() == b"big"
+        finally:
+            go.set()
+
+    in_console(tmp_path, body)
+
+
+def test_what_is_typed_while_a_drop_is_copied_is_never_replaced_and_a_copy_that_fails_is_said(tmp_path):
+    import threading
+
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"x")
+    go, calls = threading.Event(), []
+
+    async def body(run, app, pilot):
+        stage = app.stager
+
+        def slow(files):
+            calls.append(files)
+            go.wait(5)
+            return stage(files)
+
+        def failing(files):
+            raise AddError(f"cannot copy {files[0]}: No space left on device")
+
+        app.stager = slow
+        try:
+            bar = app.screen.query_one("#bar-input")
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: len(calls) == 1)
+            assert bar.value == "" and app._status[0] == "copying doll.bin (1 B)..."
+            await pilot.press(*"/hint L01 wait")  # typed while the copy is made
+            go.set()
+            await until(pilot, lambda: "1 file not taken: the command bar holds what you typed" in app._status[0])
+            assert bar.value == "/hint L01 wait" and app._status[1] == "warning"
+            await until(pilot, lambda: list((run.dir / "dropped").iterdir()) == [])  # and the copy is not kept
+            bar.value = ""
+            app.stager = failing
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: app._status[0] == f"not attached: cannot copy {handout}: No space left on device")
+            assert bar.value == "" and app._status[1] == "warning"
+            await pilot.press(*"/new Doll", "enter")
+            await pilot.pause()
+            form = app.screen
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: said(form) == f"not attached: cannot copy {handout}: No space left on device")
+            assert form.files == [] and not form.copying
+            await pilot.press("escape")
+        finally:
+            go.set()
+
+    in_console(tmp_path, body)
+
+
+def test_copies_of_dropped_files_that_were_never_attached_go_when_the_run_closes(tmp_path):
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"x")
+
+    async def main():
+        with FakeModelServer([]) as model:
+            run = prepare_run(options(tmp_path, model))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                await app.on_event(events.Paste(f"{handout} "))  # onto an /attach that is never sent
+                await on_bar(pilot, f"/attach '{copy_of(run, 'doll.bin')}' ")
+            await run.shutdown()
+            assert copy_of(run, "doll.bin").is_file()
+            (run.dir / "pasted").mkdir()  # a pasted screenshot's folder is not a drop's: it stays
+            run.close()
+            assert not (run.dir / "dropped").exists() and (run.dir / "pasted").is_dir() and handout.is_file()
+
+    asyncio.run(main())
+
+
 # ---------------------------------------------------------------------- a drop that arrives as typed keys
 
 
@@ -1486,8 +1722,9 @@ def test_a_path_typed_all_at_once_into_any_field_of_the_form_is_a_dropped_file(t
             field.focus()
             await pilot.pause()
             await burst(pilot, dropped)
+            await until(pilot, lambda: form.files and not form.copying)
             assert value(field) == "", (name, value(field))  # not one character of it was typed into the field
-            assert handout in form.files, name
+            assert form.files[0].name == "my doll.bin" and form.files[0].parent.parent == run.dir / "dropped", name
             assert said(form).startswith("attached "), (name, said(form))
             form.files.clear()
         assert said(form).startswith("attached my doll.bin (10 B), notes.txt (3 B)")  # the last one: two files
@@ -1549,9 +1786,10 @@ def test_a_path_typed_all_at_once_in_the_fleet_goes_onto_an_attach_and_none_of_i
         lane = run.deck.lanes[app.fleet.selected_lane]
         assert not app.screen.query_one("#bar-input").has_focus  # the lanes table has the focus: letters are its keys
         await burst(pilot, escaped(handout))
+        await on_bar(pilot, f"/attach static-hiss '{copy_of(run, 'park kill quit.bin')}' ")
         bar = app.screen.query_one("#bar-input")
         assert app.screen is app.fleet and not lane.finished and lane.state is not LaneState.PAUSED  # no key of it acted
-        assert bar.value == f"/attach static-hiss '{handout}' " and bar.has_focus
+        assert bar.has_focus
         assert app._status[0].startswith("got park kill quit.bin (2.0 KB): press Enter to attach to static-hiss")
         bar.value = "a half-written message"  # the bar has the focus and holds text: the path is text there, as a paste is
         bar.cursor_position = len(bar.value)

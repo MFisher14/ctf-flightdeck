@@ -13,9 +13,11 @@ address, when a line is nothing else (`parse`).
 A file is attached only when the player hands it over as a file: `--file`, the file window,
 the clipboard's image, /attach, or a drop. A terminal sends a drop as a paste that is nothing
 but paths (or types the same text all at once, which the console tells from typing by its
-speed), and only text of that shape is one (`dropped`). What may be attached is a
-regular file or a folder (`refusal` names why anything else is not), and nothing is copied
-over a file that is already there.
+speed), and only text of that shape is one (`dropped`). A drop the console takes is copied
+into the run's folder at once (`stage`): the file behind a drop may be a temporary one. A
+paste of that shape whose file is not there is text, and gets a line that says why
+(`not_there_line`). What may be attached is a regular file or a folder (`refusal` names why
+anything else is not), and nothing is copied over a file that is already there.
 
 The text is the player's own, typed at their console, but the description in it is the
 event's: it goes into challenge.json and is handled as challenge text from there on
@@ -436,6 +438,57 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
     else:
         path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------- a drop, kept until it is attached
+
+
+def stage(folder: Path, files: Sequence[Path]) -> list[Path]:
+    """Copy files the console took as a drop into `folder` (the run's own) and return the
+    copies, each under its own name in a numbered folder of its own: `folder`/1/shot.png.
+    The copy is what is attached later, so a file that is gone by then (a screenshot's
+    thumbnail, a terminal's temporary file) is attached all the same. Each file is checked
+    first (`refusal`); AddError names the one that cannot be copied and why, and what this
+    call copied is removed again."""
+    made: list[Path] = []
+    copies: list[Path] = []
+    file: Path | None = None
+    try:
+        for file in files:
+            why = refusal(file, into=folder)
+            if why is not None:
+                raise AddError(why)
+            real = file.resolve()
+            name = file.name if file.name not in ("", "..") else real.name
+            folder.mkdir(parents=True, exist_ok=True)
+            n = 1
+            while True:  # making the folder decides whose number it is: two drops copied at once get one each
+                slot = folder / str(n)
+                try:
+                    slot.mkdir()
+                    break
+                except FileExistsError:
+                    n += 1
+            made.append(slot)
+            _copy(real, slot / name)
+            copies.append(slot / name)
+    except (OSError, AddError) as exc:
+        for slot in made:
+            shutil.rmtree(slot, ignore_errors=True)
+        if isinstance(exc, AddError):
+            raise
+        raise AddError(f"cannot copy {file}: {_why(exc)}") from None
+    return copies
+
+
+def unstage(folder: Path, files: Sequence[Path]) -> None:
+    """Remove the copies among `files` that `stage` made in `folder`, each with its numbered
+    folder. Any other path is left alone: only a numbered folder directly in `folder` is
+    ever removed, so a file of the player's own that was attached from where it is stays."""
+    for file in files:
+        slot = file.parent
+        if slot.parent == folder and slot.name.isdigit() and not slot.is_symlink():
+            shutil.rmtree(slot, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------- the text
