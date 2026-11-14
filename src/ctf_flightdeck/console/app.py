@@ -471,7 +471,11 @@ class FlightdeckApp(App[None]):
         moved from what they turned to meanwhile: a player back in the lane list, or on
         another lane, stays there. Dropped too once no lane is on its way (the challenge was
         parked or solved): a lane started on it later moves nobody. The fresh lane is the
-        first one on the challenge that was not there before and is no fork."""
+        first one on the challenge that was not there before, is no fork and has not ended:
+        the view is never taken to a lane that has ended, such as one that started while
+        /attach copied and was ended with the files, or a fresh lane that was ended in its
+        turn under a prompt. The one that runs in its place is the fresh lane, when it
+        starts."""
         if self._follow is None:
             return
         challenge_id, old, known = self._follow
@@ -482,7 +486,8 @@ class FlightdeckApp(App[None]):
         if self.screen is not focus:
             return
         fresh = next((lane for lane in self.deck.lanes.values()
-                      if lane.id not in known and lane.challenge_id == challenge_id and lane.parent is None), None)
+                      if lane.id not in known and lane.challenge_id == challenge_id and lane.parent is None
+                      and not lane.finished), None)
         if fresh is None and self.deck.queued(challenge_id):
             return
         self._follow = None

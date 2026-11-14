@@ -218,6 +218,36 @@ def test_a_view_on_a_lane_that_had_already_ended_goes_to_the_lane_attach_starts(
     drive(app, script)
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_lane_that_started_during_the_copy_and_was_ended_with_the_files_is_not_the_one_the_view_goes_to(tmp_path, layout):
+    """The view is on a lane that gave up. While /attach copies, the player queues the challenge
+    and a lane starts on it: the files end that lane too, and the view goes to the lane that
+    runs with them, not to the one just ended."""
+    extra = tmp_path / "extra.txt"
+    extra.write_text("x")
+    deck, app, copy = console("c", layout=layout, attach=True)
+    deck.report("L01", TurnReport(action="ls", gave_up="the handout is missing"))
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert deck.lanes["L01"].finished and not deck.lanes_on("c")
+        await send(pilot, app, f"/attach {extra}")
+        await settle(pilot, copy.started.is_set)
+        await type_line(pilot, "/queue c")  # a lane starts on it while the files are copied
+        assert list(deck.lanes) == ["L01", "L02"] and not deck.lanes["L02"].finished and shown(app) == "L01"
+        copy.end.set()
+        await settle(pilot, lambda: len(deck.lanes) == 3 and "attached" in app._status[0])
+        await pilot.pause()
+        ended, runs = deck.lanes["L02"], deck.lanes["L03"]
+        assert (ended.state, ended.result) == (LaneState.KILLED, "to restart with extra.txt; re-queued fresh")
+        assert (runs.challenge_id, runs.parent, runs.finished) == ("c", None, False)
+        assert shown(app) == "L03" and app._follow is None
+        if layout == "simple":
+            assert chat(app).placeholder == "message L03 · / commands"
+
+    drive(app, script)
+
+
 # ---------------------------------------------------------------------- a kill that re-queues
 
 
@@ -293,6 +323,61 @@ def test_a_fresh_lane_that_starts_while_a_prompt_is_over_the_view_is_shown_when_
         assert isinstance(app.screen, HelpScreen) and app.focus_screen.lane_id == "L01"  # nothing moves under a prompt
         await press(pilot, "escape")
         assert shown(app) == "L02"
+
+    drive(app, script)
+
+
+def test_a_fresh_lane_that_was_ended_again_under_a_prompt_is_passed_over_for_the_lane_that_runs():
+    """The fresh lane starts and is ended to start afresh once more while a prompt is over the
+    view: the view goes to the lane that runs, at once or when it starts, never to the one
+    that ended in between."""
+    for held_again in (False, True):
+        deck, app, _ = console("c")
+
+        async def script(pilot, held_again=held_again, deck=deck, app=app):
+            deck.hold_queue("the model API refuses the key")
+            await open_focus(pilot, app, "L01")
+            await type_line(pilot, "/kill")
+            await type_line(pilot, "/help")
+            assert deck.release_hold().ok and not deck.lanes["L02"].finished
+            if held_again:
+                deck.hold_queue("the model API refuses the key")
+            assert deck.apply(iv.Kill("L02", requeue=True)).ok  # as autopilot ends a lane that loops
+            await pilot.pause()
+            assert isinstance(app.screen, HelpScreen) and deck.lanes["L02"].finished
+            await press(pilot, "escape")
+            if held_again:
+                assert list(deck.lanes) == ["L01", "L02"] and deck.queued("c")
+                assert shown(app) == "L01" and app._follow is not None  # the lane that will run has not started
+                await type_line(pilot, "/unhold")
+                await pilot.pause()
+            later = deck.lanes["L03"]
+            assert (later.challenge_id, later.parent, later.finished) == ("c", None, False)
+            assert shown(app) == "L03" and app._follow is None
+
+        drive(app, script)
+
+
+def test_a_fresh_lane_that_ended_under_a_prompt_with_none_on_its_way_ends_the_follow():
+    """The fresh lane gave up while a prompt was over the view, and its challenge is parked:
+    the view is not taken to a lane that has ended, and a lane started on the challenge later
+    moves nobody."""
+    deck, app, _ = console("c")
+
+    async def script(pilot):
+        deck.hold_queue("the model API refuses the key")
+        await open_focus(pilot, app, "L01")
+        await type_line(pilot, "/kill")
+        await type_line(pilot, "/help")
+        assert deck.release_hold().ok and not deck.lanes["L02"].finished
+        deck.report("L02", TurnReport(action="ls", gave_up="nothing to go on"))
+        await pilot.pause()
+        assert deck.lanes["L02"].finished and not deck.queued("c")
+        await press(pilot, "escape")
+        assert shown(app) == "L01" and app._follow is None
+        assert deck.apply(iv.Queue("c")).ok and not deck.lanes["L03"].finished
+        await pilot.pause()
+        assert shown(app) == "L01"
 
     drive(app, script)
 

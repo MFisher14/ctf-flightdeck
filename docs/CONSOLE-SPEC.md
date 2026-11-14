@@ -107,10 +107,12 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   re-queues made here (`/kill`, the Kill prompt's re-queue, the numbered "kill and re-queue fresh"
   answer), end the lane and start a fresh one on its challenge: the view goes to the fresh lane,
   and an unsent message goes with it. While the fresh lane has not started (the queue is held, no
-  lane is free) the view stays, and moves when it starts. A player who went back to the fleet or
-  opened another lane meanwhile is not moved, and nothing follows once the challenge is parked or
-  solved. `/kill park` starts no lane, so the view stays. The same when the lane in view had
-  already ended and `/attach` starts a lane on its challenge.
+  lane is free) the view stays, and moves when it starts. It never goes to a lane that has itself
+  ended (one that started during the copy and was ended with the files): it goes to the lane that
+  runs. A player who went back to the fleet or opened another lane meanwhile is not moved, and
+  nothing follows once the challenge is parked or solved. `/kill park` starts no lane, so the view
+  stays. The same when the lane in view had already ended and `/attach` starts a lane on its
+  challenge.
 - **ctrl+n** goes through the lanes that need you in attention order, then round to the first.
 
 ## Layouts
