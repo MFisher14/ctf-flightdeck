@@ -94,6 +94,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   at the mock, install with uv, `flightdeck`) with `pipx` and the `.deb` as other ways to
   install, and the guide's glossary now comes second, with wave, live instance, brief, command
   bar and park added.
+- The README opens on a one-minute recording of the demo (`uvx ctf-flightdeck mock`): a flag
+  submitted with one key, a lane that ignores its hint redirected, a lane going the wrong way
+  killed and started fresh, a wave of 43 challenges. It is the mock itself, played key by key
+  by a script in the repository (`scripts/demo.py`), so it shows the console as it is.
 
 ## 0.4.0 (2026-11-13)
 

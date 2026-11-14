@@ -39,6 +39,13 @@ Built since, from the list of what comes next (the
   machine says why; and an empty paste in the `/new` form pastes the clipboard's image. None
   of it was tried in a real terminal: each format is from that terminal's own source or
   documentation, and Terminal.app's and tmux's are not known.
+- **A one-minute demo at the top of the README** (P60,
+  [#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)). `scripts/demo.py` plays the
+  mock key by key with no terminal and writes `docs/screenshots/demo.gif`; the tests play it on
+  every push, so a change to the console that breaks a step fails with that step's name. It is
+  the console's own screenshots joined into a GIF, not a recording of a terminal. Still open
+  from the same issue: what the 14-challenge practice set costs. Nothing prints a figure until
+  one full run has been measured.
 
 Known limits, each said where it applies:
 
