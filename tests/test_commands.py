@@ -130,3 +130,15 @@ def test_the_menu_offers_approve_all_and_dismiss():
     labels = {c.label: c.help for c in complete("/")}
     assert "/approve [all]" in labels and "after a prompt" in labels["/approve [all]"]
     assert "/dismiss" in labels and "stays quiet" in labels["/dismiss"]
+
+
+def test_theme_takes_a_name_or_nothing_and_acts_on_no_lane():
+    parsed = parse("/theme nord")
+    assert (parsed.command.name, parsed.lane, parsed.arg) == ("theme", None, "nord")
+    assert parse("/theme").arg == "" and not needs_lane(parse("/theme")) and not needs_lane(parsed)
+    assert (parse("/theme l7").lane, parse("/theme l7").arg) == (None, "l7")  # a theme file may be named like a lane
+    assert [c.text for c in complete("/th")] == ["/theme "]
+    labels = {c.label: c.help for c in complete("/")}
+    assert labels["/theme [name]"] == "the console's colours for this run; alone: the themes you have"
+    names = [c.name for c in COMMANDS]
+    assert names.index("theme") == names.index("config") + 1  # beside the run's other settings

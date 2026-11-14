@@ -728,6 +728,27 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
     drive(app, script, size=(160, 120))
 
 
+def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
+    world, app = make("sstv")
+    listed = "/theme [name] the console's colours for this run; alone: the themes you have"
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen) and listed in prompt_text(app)
+        await press(pilot, "escape")
+        await press(pilot, "tab")
+        await press(pilot, *"/th")
+        assert bar(app).menu_open and listed in " ".join(region_text(app, "#bar").split())
+        await press(pilot, "tab")
+        assert bar(app).field.value == "/theme "
+        await type_line(pilot, "light")
+        assert theme.active().name == "light" and app.theme == "fd-light"
+        assert "theme light for this run (this console has no config file)" in status_line(app)
+        assert theme.PAGE == "#fafafa" and "#fafafa" in screen_colors(app) and "#121212" not in screen_colors(app)
+
+    drive(app, script, size=(160, 120))
+
+
 def test_in_a_run_help_and_the_command_menu_say_what_take_over_and_decline_do_and_they_do_it():
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",), flag_format=r"t\{[a-z]+\}"))
     deck.release([Challenge("alpha", "Alpha", "misc", 50), Challenge("bravo", "Bravo", "misc", 50)],

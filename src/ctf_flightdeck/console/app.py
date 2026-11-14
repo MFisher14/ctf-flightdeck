@@ -759,6 +759,32 @@ class FlightdeckApp(App[None]):
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
 
+    def set_theme(self, arg: str) -> None:
+        """/theme: the themes there are; /theme NAME: the console's colours for the rest of
+        this run (the config file keeps its own). A name that is no theme, or a theme file
+        that cannot be used, is a warning, and the theme in use stays."""
+        name = arg.strip()
+        if not name:
+            built_in, own = themes.names(self.themes_folder)
+            in_use = theme.active().name
+            self.say("themes: " + ", ".join(f"{one} (in use)" if one == in_use else one for one in built_in + own))
+            return
+        if themes.NAME.fullmatch(name) is None:  # not shown: it is not a name
+            self.warn("/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them")
+            return
+        try:
+            palette = themes.load(name, self.themes_folder)
+        except themes.NoSuchTheme as exc:  # "names no theme: ...", which does not repeat the name
+            self.warn(f"/theme {exc}")
+            return
+        except themes.ThemeError as exc:  # its text names the theme file
+            self.warn(str(exc))
+            return
+        self.set_palette(palette)
+        keep = (f'. To keep it: theme = "{name}" under [console] in {self.config_path}' if self.config_path
+                else " (this console has no config file)")
+        self.say(f"theme {name} for this run{keep}")
+
     def config_dialog(self) -> None:
         """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the
         same deck calls as /config lanes and /config submit, so the event's rules hold."""
@@ -843,6 +869,8 @@ class FlightdeckApp(App[None]):
             self.refresh_view()
         elif name == "config":
             self.configure(arg)
+        elif name == "theme":
+            self.set_theme(arg)
         elif name == "new":
             self.new_challenge(arg)
         elif name == "attach":

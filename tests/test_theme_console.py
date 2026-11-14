@@ -317,6 +317,159 @@ def test_TEXTUAL_THEME_in_the_environment_changes_no_colour():
     assert themes.DEFAULT.page in here["config"] and themes.DEFAULT.page in here["home"]
 
 
+# ---------------------------------------------------------------------- /theme
+
+
+def own_themes(tmp_path: Path) -> Path:
+    folder = tmp_path / "themes"
+    folder.mkdir()
+    (folder / "dusk.toml").write_text('base = "nord"\n[colors]\naccent = "#ff5fd7"\n')
+    (folder / "broken.toml").write_text('base = "nord"\n[colors]\naccent = "pink"\n')
+    (folder / "Not A Name.toml").write_text('base = "nord"\n')
+    (folder / "notes.txt").write_text("not a theme\n")
+    return folder
+
+
+def test_theme_alone_lists_the_built_in_themes_and_the_players_own_and_marks_the_one_in_use(tmp_path):
+    world, app = busy_console(NORD, themes_folder=own_themes(tmp_path))
+
+    async def main() -> None:
+        async with app.run_test(size=SIZE) as pilot:
+            await pilot.pause()
+            app.run_command("/theme", None)
+            assert app._status[:2] == ("themes: flightdeck, light, nord (in use), gruvbox, dracula, broken, dusk", "information")
+            assert theme.active() is NORD and app.theme == "fd-nord"
+
+    asyncio.run(main())
+    world, bare = busy_console()  # no themes folder (the mock with no config): the built-in ones
+
+    async def main() -> None:
+        async with bare.run_test(size=SIZE) as pilot:
+            await pilot.pause()
+            bare.run_command("/theme", None)
+            assert bare._status[0] == "themes: flightdeck (in use), light, nord, gruvbox, dracula"
+
+    asyncio.run(main())
+
+
+def test_theme_repaints_what_is_already_on_the_screen_a_transcripts_lines_included():
+    world, app = busy_console()
+
+    async def main() -> None:
+        async with app.run_test(size=SIZE) as pilot:
+            await pilot.pause()
+            await step_until(pilot, app, lambda: busy(world), "a busy console", limit=400)
+            header = app.screen.query_one("#header").region.y
+            assert color_of(app, "flightdeck", header) == themes.DEFAULT.ink_light
+            lane = next(lane for lane in world.deck.lanes.values() if lane.files)
+            focus = await open_focus(pilot, app, lane.id)
+            app.run_command("written before the switch", lane.id)
+            await pilot.pause()
+            app.refresh_view()
+            await pilot.pause()
+
+            styled = {themes.DEFAULT.page, themes.DEFAULT.border, NORD.page, NORD.border}  # what the styles draw: the page, a pane's border
+
+            def shown() -> tuple[str, str, set[str]]:
+                return (color_of(app, "written before the switch", row_of(app, "written before the switch")),
+                        color_of(app, "esc", focus.query_one("#keys").region.y), screen_colors(app) & styled)
+
+            assert shown() == (themes.DEFAULT.accent, themes.DEFAULT.accent, {themes.DEFAULT.page, themes.DEFAULT.border})
+            status = focus.query_one("#status").region.y
+            written, lines = focus._written, [line for row, line in enumerate(screen_lines(app)) if row != status]
+            app.run_command("/theme nord", lane.id)
+            await pilot.pause()
+            await pilot.pause()
+            assert app._status[:2] == ("theme nord for this run (this console has no config file)", "information")
+            assert theme.active() is NORD and app.theme == "fd-nord"
+            assert shown() == (NORD.accent, NORD.accent, {NORD.page, NORD.border})
+            assert focus._written == written and isinstance(app.screen, FocusScreen)  # every line again, none twice
+            assert [line for row, line in enumerate(screen_lines(app)) if row != status] == lines  # the same text, in other colours
+            app.show_fleet()
+            await pilot.pause()
+            # the fleet under it too: what it draws itself, and what its styles draw
+            assert color_of(app, "flightdeck", header) == NORD.ink_light != themes.DEFAULT.ink_light
+            assert color_of(app, "last action", row_of(app, "last action")) == NORD.muted
+            assert not set(colours(themes.DEFAULT).values()) - set(colours(NORD).values()) & screen_colors(app)
+
+    asyncio.run(main())
+
+
+def test_theme_repaints_the_fleets_key_line_which_is_otherwise_drawn_only_when_the_width_changes():
+    """In the compact layout: there the keys with no click of their own are in the palette's
+    colours (a key that can be clicked is in the colour the styles give a link)."""
+    world, app = busy_console()
+
+    async def main() -> None:
+        async with app.run_test(size=(56, 40)) as pilot:
+            await pilot.pause()
+            keys = app.screen.query_one("#keys").region.y
+            assert app.fleet.compact and "1-9 answer" in screen_lines(app)[keys]
+            assert (color_of(app, "1-9", keys), color_of(app, "answer", keys)) == (themes.DEFAULT.accent, themes.DEFAULT.muted)
+            app.run_command("/theme gruvbox", None)
+            await pilot.pause()
+            await pilot.pause()
+            gruvbox = themes.BUILTIN["gruvbox"]
+            assert (color_of(app, "1-9", keys), color_of(app, "answer", keys)) == (gruvbox.accent, gruvbox.muted)
+
+    asyncio.run(main())
+
+
+def test_a_theme_that_is_no_theme_or_cannot_be_used_is_a_warning_and_the_theme_in_use_stays(tmp_path):
+    folder = own_themes(tmp_path)
+    world, app = busy_console(NORD, themes_folder=folder, config_path=str(tmp_path / "config.toml"))
+
+    async def main() -> None:
+        async with app.run_test(size=SIZE) as pilot:
+            await pilot.pause()
+            before = screen_colors(app)
+            for typed, warning in (
+                ("/theme nope", "/theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula; "
+                                f"your own is NAME.toml in {folder}"),
+                ("/theme broken", f'{folder / "broken.toml"}: colors.accent must be a colour written as # and six hex digits, '
+                                  'like "#ffa62b"'),
+                ("/theme ../dusk", "/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them"),
+                ("/theme Nord", "/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them"),
+                ("/theme nord dusk", "/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them"),
+            ):
+                app.run_command(typed, None)
+                await pilot.pause()
+                assert app._status[:2] == (warning, "warning"), typed
+                assert theme.active() is NORD and app.theme == "fd-nord", typed
+            app.say("")
+            await pilot.pause()
+            assert screen_colors(app) == before
+
+    asyncio.run(main())
+
+
+def test_theme_takes_the_players_own_theme_says_how_to_keep_it_and_reads_its_file_again_when_asked_again(tmp_path):
+    folder, config = own_themes(tmp_path), tmp_path / "config.toml"
+    world, app = busy_console(themes_folder=folder, config_path=str(config))
+
+    async def main() -> None:
+        async with app.run_test(size=SIZE) as pilot:
+            await pilot.pause()
+            await step_until(pilot, app, lambda: busy(world), "a busy console", limit=400)
+            app.run_command("/theme dusk", None)
+            await pilot.pause()
+            await pilot.pause()
+            assert app._status[:2] == (f'theme dusk for this run. To keep it: theme = "dusk" under [console] in {config}', "information")
+            assert (theme.active().name, theme.active().accent, theme.active().border) == ("dusk", "#ff5fd7", NORD.border)
+            assert "#ff5fd7" in screen_colors(app) and NORD.accent not in screen_colors(app)  # dusk's own accent (the focused pane's border)
+            assert color_of(app, "last action", row_of(app, "last action")) == NORD.muted  # and its base's other colours
+            assert NORD.border in screen_colors(app) and "#aa55cc" not in screen_colors(app)
+            # the file is changed and the same theme asked for again: its colours now, in the styles too
+            (folder / "dusk.toml").write_text('base = "nord"\n[colors]\naccent = "#ff5fd7"\nborder = "#aa55cc"\n')
+            app.run_command("/theme dusk", None)
+            await pilot.pause()
+            await pilot.pause()
+            assert theme.active().border == "#aa55cc" and app.theme == "fd-dusk"
+            assert "#aa55cc" in screen_colors(app) and NORD.border not in screen_colors(app)
+
+    asyncio.run(main())
+
+
 # ---------------------------------------------------------------------- the home screen
 
 
