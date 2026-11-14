@@ -21,7 +21,8 @@ screenshotted like a run folder.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from weakref import WeakKeyDictionary
@@ -1308,9 +1309,44 @@ def _more_lines(count: int) -> str:
     return f" …+{count} line{'' if count == 1 else 's'}"
 
 
-def _call_row(deck: Deck, lane: Lane, call: Call, out: Text) -> None:
+_BLANKS = re.compile("[ \t]+")
+
+
+def _call_key(call: Call) -> str:
+    """What two tool calls must share to fold into one row: the call's whole text, every run of
+    blanks (spaces and tabs) read as one space. Nothing else is read as the same: `xxd -s 16`
+    and `xxd -s 32` are two calls, since a sweep over offsets is progress, and a row that said
+    they were one command would say what the lane did not do. A newline or any other control
+    character is not a blank (str.split would take it for one): a two-line script is not the
+    same words on one line."""
+    return _BLANKS.sub(" ", call.text).strip(" ")
+
+
+def same_call(one: Call, other: Call) -> bool:
+    """Whether two tool calls fold into one row (_call_key)."""
+    return _call_key(one) == _call_key(other)
+
+
+def repeats(calls: Sequence[Call]) -> int:
+    """How many of the last `calls` are the same call as the last one, in a row: 1 when the
+    last differs from the one before it, 0 when there are none."""
+    count = 0
+    for call in reversed(calls):
+        if count and not same_call(call, calls[-1]):
+            break
+        count += 1
+    return count
+
+
+FOLD_MARK = "×"  # before a call that ran several times in a row: `×4 $ curl …`
+
+
+def _call_row(deck: Deck, lane: Lane, call: Call, out: Text, times: int = 1) -> None:
     """One tool call on one row: the first line of the call, then of its output, each with
-    how many lines more it has."""
+    how many lines more it has. `times`: the same call ran that many times in a row, and this
+    is the last of them; the count comes first, where the edge that cuts a long row leaves it."""
+    if times > 1:
+        out.append(f"{FOLD_MARK}{times} ", "bold")
     first, more = _first_line(untrusted(lane_text(deck, lane, call.text), one_line=True))
     out.append(first, "bold")
     if more:
@@ -1325,7 +1361,8 @@ def _call_row(deck: Deck, lane: Lane, call: Call, out: Text) -> None:
 def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
     """One entry of the calm transcript, its text as the lane's transcript keeps it (lane_text).
     Each line of it is one row, which the view cuts at its edge: a run of tool calls is two
-    (how many, and the last one, which is what the lane is doing now), anything else is one,
+    (how many, and the last one, which is what the lane is doing now, with how many times in a
+    row it ran when it is the same call as the ones before it), anything else is one,
     with how many lines more it has. The model's words are the exception: the view wraps them."""
     action = entry.actions[0]
     out = Text()
@@ -1335,7 +1372,7 @@ def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
         if len(calls) > 1:
             out.append(f"{len(calls)} tool calls", "bold")
             out.append("\n  ⎿ ", theme.MUTED)
-        _call_row(deck, lane, calls[-1], out)
+        _call_row(deck, lane, calls[-1], out, repeats(calls))
         return out
     if entry.kind == "message":
         return transcript_lines(deck, lane, action)[0]
@@ -1367,25 +1404,44 @@ PEEK_EMPTY = "nothing yet: the lane has taken no step"
 PEEK_NO_LANE = "the peek shows the lane the keys act on: there is none here"
 
 
+def _backwards(actions: Sequence[Action]) -> Iterator[tuple[int, Action, Call | None]]:
+    """`actions` newest first, each tool call on its own (the action that holds it, and the
+    call), anything else with no call."""
+    for index in range(len(actions) - 1, -1, -1):
+        action = actions[index]
+        if _is_call(action):
+            for call in reversed(calls_of(action)):
+                yield index, action, call
+        else:
+            yield index, action, None
+
+
 def peek_lines(deck: Deck, lane: Lane, rows: int) -> list[Text]:
     """The last `rows` rows of `lane`'s log, oldest first, each one row that the peek cuts at
     its edge. They are the calm transcript's rows (entry_text) with a run of tool calls
     opened: every call has its own row (its first line, then its output's), since the last
-    few steps are what the player reads a peek for, where the lane's own view counts them."""
-    out: list[Text] = []
-    for index in range(len(lane.actions) - 1, -1, -1):
-        if len(out) >= rows:
+    few steps are what the player reads a peek for, where the lane's own view counts them.
+    The same call made several times in a row (same_call), in one turn or over several, is
+    one row, the last of them with how many times it ran (`×4 $ curl …`), so a lane that
+    loops shows it in one row and leaves the others for what came before."""
+    found: list[list] = []  # [index, action, call or None, times], newest first
+    for index, action, call in _backwards(lane.actions):
+        if call is not None and found and found[-1][2] is not None and same_call(found[-1][2], call):
+            found[-1][3] += 1
+            continue
+        if len(found) >= rows:
             break
-        action = lane.actions[index]
-        if _is_call(action):
-            for call in reversed(calls_of(action)):
-                row = Text("⏺ ", theme.GREEN)
-                _call_row(deck, lane, call, row)
-                out.append(row)
+        found.append([index, action, call, 1])
+    out: list[Text] = []
+    for index, action, call, times in reversed(found):
+        if call is not None:
+            row = Text("⏺ ", theme.GREEN)
+            _call_row(deck, lane, call, row, times)
+            out.append(row)
         else:
             kind = "says" if action.kind is ActionKind.STEP else _ENTRY_KIND[action.kind]
             out.append(entry_text(deck, lane, Entry(index, kind, (action,))))
-    return out[:rows][::-1]
+    return out
 
 
 def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:

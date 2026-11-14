@@ -229,6 +229,58 @@ def test_a_turn_of_three_tool_calls_counts_three_and_no_calm_row_says_more():
     assert not [row for row in calm(deck, lane) if "more)" in row]
 
 
+def test_a_run_that_ends_in_the_same_call_says_how_many_times_in_a_row_it_ran():
+    """A lane that loops makes the same call again and again: the run's last row says so
+    (P72), with the count first, where a long row's edge does not cut it."""
+    deck, _, lane = one_lane()
+    shell(deck, "file a.bin", "a.bin: data\n")
+    for _ in range(4):
+        shell(deck, "curl -s http://127.0.0.1:8080/flag", "404 Not Found\n")
+    assert calm(deck, lane) == ["⏺ 5 tool calls", "  ⎿ ×4 $ curl -s http://127.0.0.1:8080/flag → 404 Not Found"]
+    shell(deck, "curl  -s   http://127.0.0.1:8080/flag ", "404 Not Found\n")  # only its blanks differ: the same call
+    assert calm(deck, lane)[1] == "  ⎿ ×5 $ curl  -s   http://127.0.0.1:8080/flag → 404 Not Found"  # the last of them, as it was typed
+    shell(deck, "curl -s http://127.0.0.1:8080/admin", "403\n")  # another call: the count starts again
+    assert calm(deck, lane) == ["⏺ 7 tool calls", "  ⎿ $ curl -s http://127.0.0.1:8080/admin → 403"]
+    shell(deck, "curl -s http://127.0.0.1:8080/admin", "403\n")
+    assert calm(deck, lane)[1] == "  ⎿ ×2 $ curl -s http://127.0.0.1:8080/admin → 403"
+
+
+def test_only_spaces_and_tabs_are_blanks_a_newline_or_a_control_character_makes_another_call():
+    """P72 reads a run of blanks as one space and nothing looser: a two-line script is not the
+    same words on one line, and a separator a challenge can write is not a space."""
+    assert views.same_call(Call("$ cat a  \t rm b", ""), Call("$ cat a rm b", ""))
+    for other in ("$ cat a\nrm b", "$ cat a\rrm b", "$ cat a\x1frm b", "$ cat a\x0brm b", "$ cat a\x85rm b", "$ cat a rm b"):
+        assert not views.same_call(Call(other, ""), Call("$ cat a rm b", "")), repr(other)
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action="$ cat a", output="x", calls=(Call("$ cat a\nrm b", "x"), Call("$ cat a rm b", "x"))))
+    assert calm(deck, lane) == ["⏺ 2 tool calls", "  ⎿ $ cat a rm b → x"]  # no ×2: they are two calls
+    assert not [row for row in calm(deck, lane) if views.FOLD_MARK in row]
+
+
+def test_calls_that_differ_in_a_number_are_not_folded_and_a_note_between_two_ends_the_fold():
+    deck, _, lane = one_lane()
+    shell(deck, "xxd -s 16 -l 16 a.bin", "00000010: 01\n")
+    shell(deck, "xxd -s 32 -l 16 a.bin", "00000020: 02\n")  # a sweep over offsets is progress, not one command
+    assert calm(deck, lane)[1] == "  ⎿ $ xxd -s 32 -l 16 a.bin → 00000020: 02"
+    deck.note("L01", "the handout has one file")
+    shell(deck, "xxd -s 32 -l 16 a.bin", "00000020: 02\n")  # after the note, a run of its own
+    assert calm(deck, lane)[-1] == "⏺ $ xxd -s 32 -l 16 a.bin → 00000020: 02"
+    assert not [row for row in calm(deck, lane) if views.FOLD_MARK in row]
+
+
+def test_a_turn_of_the_same_call_three_times_folds_and_details_keep_every_call():
+    deck, _, lane = one_lane()
+    calls = tuple(Call("$ nc -z 127.0.0.1 9000", "exit 1") for _ in range(3))
+    deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000  (+2 more)", output="exit 1", calls=calls))
+    assert calm(deck, lane) == ["⏺ 3 tool calls", "  ⎿ ×3 $ nc -z 127.0.0.1 9000 → exit 1"]
+    for _ in range(2):
+        shell(deck, "ls", "a.bin\n")
+    assert len(details(deck, lane)) == 6 and details(deck, lane).count("⏺ $ ls") == 2  # details draw each call's step as before
+    assert not [line for line in details(deck, lane) if views.FOLD_MARK in line]
+    copied, _ = views.lane_copy(deck, lane, "all")
+    assert copied.count("$ ls") == 2 and views.FOLD_MARK not in copied  # /copy all is the transcript in detail: every call
+
+
 def test_a_long_l1_note_is_one_row_that_says_how_many_lines_more_it_has():
     deck, _, lane = one_lane()
     notes = "\n".join([TRIAGE, *(f"## engine {i:02d} that fits but was not run: it needs a person's arguments" for i in range(40))])[:6000]
@@ -483,6 +535,26 @@ def test_the_transcript_follows_the_lane_at_its_end_and_stays_where_the_player_r
         app.refresh_view()
         await pilot.pause()
         assert log.scroll_y == log.max_scroll_y and drawn(app)[-2:] == ["⏺ 2 tool calls", "  ⎿ $ ls -la → b"]
+
+    drive(app, script, (100, 24))
+
+
+def test_the_view_draws_a_folded_row_again_in_place_as_the_same_call_comes_again():
+    deck, app, lane = one_lane("simple")
+    shell(deck, "ls", "a.bin\n")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        for _ in range(2):
+            shell(deck, "cat flag.txt", "No such file or directory\n")
+            app.refresh_view()
+            await pilot.pause()
+        assert drawn(app)[-2:] == ["⏺ 3 tool calls", "  ⎿ ×2 $ cat flag.txt → No such file or directory"]
+        shell(deck, "cat flag.txt", "No such file or directory\n")
+        app.refresh_view()
+        await pilot.pause()
+        assert drawn(app)[-2:] == ["⏺ 4 tool calls", "  ⎿ ×3 $ cat flag.txt → No such file or directory"]
+        assert lines(app) == calm(deck, lane)
 
     drive(app, script, (100, 24))
 

@@ -21,6 +21,9 @@ Proposals built and waiting for a release, in the order of their numbers in
   the `/` menu keeps the arrows while it is open. `ctrl+g` hands the terminal to `$VISUAL` or
   `$EDITOR` and puts the text back in the bar on one line, sending nothing; with neither set it
   says so. Not built: `ctrl+r` search, a history kept across runs, a bar of several lines.
+- **The same call in a row is one row with a count** (P72). A lane's calm view and the peek
+  fold the same tool call made several times in a row into one row, `×7` first, so a lane
+  that loops shows it at a glance; details and `/copy` still have every call.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

@@ -383,6 +383,7 @@ first, and the line under the list says why and numbers the answers: one key ans
 **Space** peeks at the selected lane without leaving the list: a panel opens under the list
 with the lane's last six steps, each on one row cut at the edge (a command and the first line
 of its output, the model's own words, your messages, an alert, the question it waits on). The
+same command run several times in a row is one row, with how many times first (`×7`). The
 line that says why the lane is flagged, and its numbered answers, stay under it. Move through
 the list and the peek follows; what you type in the command bar still goes to the lane the
 peek names, so you can read what a lane did, then hint or redirect it, and never open it.
@@ -404,7 +405,8 @@ the box it is a question mark.
 
 A lane's view is calm: each thing the lane did is one row, cut at the edge of the pane. A run
 of tool calls is two rows, how many and the last one (`⏺ 12 tool calls`, then what it is doing
-now); a long command, output or note from flightdeck (your L1 engines' intake too) shows its
+now, with `×7` before it when it is the seventh time in a row the lane made that same call: a
+lane that loops shows it at a glance); a long command, output or note from flightdeck (your L1 engines' intake too) shows its
 first line and ` …+6 lines`; an alert is its name and turn (`▲ Loop alert · turn 11`), and why
 it fired is in the box below; the model's own words are the one thing that wraps. `ctrl+o` (or
 `/details`) shows every line of every command and output, and again hides them; it works while

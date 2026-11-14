@@ -68,7 +68,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     They are the calm transcript's rows (Focus view, below) with a run of tool calls opened:
     every call is a row (`⏺ the call → the first line of its output`, each with ` …+N lines`
     when it has more), and the model's words, a message or an intervention, a note, an alert
-    (`▲ Loop alert · turn 3`) and an approval (`◆ asked you · turn 12: …`) are a row each. A
+    (`▲ Loop alert · turn 3`) and an approval (`◆ asked you · turn 12: …`) are a row each. The
+    same call made several times in a row, in one turn or over several, is one row: the last
+    of them, with how many times first (`⏺ ×7 $ nc -z 127.0.0.1 9000 → exit 1`), so a lane that
+    loops takes one row and leaves the others for what it did before (P72). A
     lane with no step yet says so. The panel is the same height for every lane, so the list
     does not move with the cursor.
   - Its rows come from the lane list, which scrolls and keeps the selected lane in view. The
@@ -194,7 +197,7 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   | Entry | Drawn as, with details off |
   |---|---|
   | one tool call | `⏺ $ unzip -l rev.zip → Archive:  rev.zip`: the first line of the call and of its output, each followed by ` …+6 lines` when it has more |
-  | a run of tool calls | two rows: `⏺ 12 tool calls`, then `  ⎿ ` and the last call as above, which is what the lane is doing now |
+  | a run of tool calls | two rows: `⏺ 12 tool calls`, then `  ⎿ ` and the last call as above, which is what the lane is doing now. When the calls before it in the run are the same call, the count comes first: `  ⎿ ×7 $ nc -z 127.0.0.1 9000 → exit 1` is the seventh in a row (P72) |
   | the model's words | `⏺ ` and the words, wrapped: the one entry that is never cut |
   | a note from flightdeck (L1 too) | `· L1 intake: unsure (handout: 3 file(s) … …+14 lines`: its first line |
   | an alert | `▲ Loop alert · turn 3`; its reason is on the needs-you card |
@@ -271,6 +274,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   The chat box keeps the focus through a drag. The highlight is the theme's colour for a selected
   row (`selected_focus`), and the text on it keeps its own colour.
 
+  `/copy` reads the lane's log and not the calm rows, so a folded row (`×7`) is never what it
+  copies: `/copy all` has every call, as details draw them, and `/copy output` and `/copy
+  command` take the last call that printed something, which need not be the one a folded row shows.
   A copy goes two ways, both every time: to the terminal's clipboard (OSC 52), and to the
   operating system's by its tool, which is `pbcopy` on macOS and on Linux `wl-copy`, else
   `xclip -selection clipboard`, else `xsel --clipboard --input`. Over SSH (`SSH_CONNECTION` or

@@ -24,6 +24,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   editor (`$VISUAL`, else `$EDITOR`); when you save and quit, the text is back in the box on one
   line and nothing is sent until you press Enter. With no editor set it says so and opens
   nothing ([the guide](docs/GUIDE.md#the-command-bar)).
+- A lane that runs the same command again and again shows it at a glance. In a lane's calm
+  view the last row of a run of tool calls starts with how many times in a row the lane made
+  that call (`⎿ ×7 $ nc -z 127.0.0.1 9000 → exit 1`), and in the peek the repeats are one row
+  with the count, so the rows above it still show what the lane did before. Calls fold only
+  when their text is the same (blanks aside). `ctrl+o` still shows every call, and `/copy all`
+  copies every one.
 
 ## 0.5.0 (2026-11-14)
 

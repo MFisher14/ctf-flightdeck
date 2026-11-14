@@ -533,6 +533,37 @@ def test_the_peek_gives_every_tool_call_its_own_row_and_one_row_to_anything_else
     drive(app, script, SIZE)
 
 
+def test_the_same_call_made_several_times_in_a_row_is_one_row_in_the_peek_with_how_many_times():
+    """A lane that loops would fill the peek with one command; folded (P72), it is one row,
+    `×N` first, and the rows above it show what the lane did before."""
+    deck, app = console(by_hand=True, layout="simple")
+    release(deck, "alpha")
+    lane = deck.lanes["L01"]
+    deck.report("L01", TurnReport(action="says: the service answers on 9000"))
+    deck.report("L01", TurnReport(action="unzip a.zip", output="2 files"))
+    for _ in range(5):  # five turns of one call each
+        deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000", output="exit 1"))
+    deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000", output="exit 1", calls=(  # and a turn that made it twice more
+        Call("$ nc -z 127.0.0.1 9000", "exit 1"), Call("$  nc -z 127.0.0.1  9000", "exit 1"))))
+    assert [line.plain for line in views.peek_lines(deck, lane, 6)] == [
+        "⏺ the service answers on 9000",
+        "⏺ unzip a.zip → 2 files",
+        "⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1",  # the last of the seven, as it was made
+    ]
+    assert [line.plain for line in views.peek_lines(deck, lane, 1)] == ["⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1"]  # counted whole in one row
+    deck.note("L01", "the port is closed")
+    deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000", output="exit 1"))  # after the note, a fold of its own
+    assert [line.plain for line in views.peek_lines(deck, lane, 3)] == [
+        "⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1", "· the port is closed", "⏺ $ nc -z 127.0.0.1 9000 → exit 1"]
+
+    async def script(pilot):
+        await press(pilot, "space")
+        assert peek_rows(app) == [line.plain for line in views.peek_lines(deck, lane, 6)]
+        assert "⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1" in peek_rows(app)
+
+    drive(app, script, SIZE)
+
+
 def test_a_row_longer_than_the_peek_is_cut_at_its_edge_and_never_wraps():
     deck, app = console(by_hand=True, layout="simple")
     release(deck, "alpha")
