@@ -254,9 +254,9 @@ def test_when_the_api_refuses_the_request_that_carries_the_picture_the_lane_is_t
                 "many pixels, too much for one request). Work on the file with the shell instead."
             )
             assert [m["role"] for m in again["json"]["messages"]] == ["system", "user", "assistant", "tool"]
-            assert any(note.startswith(f"{lane.id} view_image: the call to small that carried a picture failed (the model API "
-                                       "answered HTTP 400 (Bad Request): this model does not support image input)")
-                       for note in notes(lane))  # the player reads it too
+            assert (f"{lane.id} view_image: the call to small that carried a picture failed (the model API answered HTTP 400 "
+                    "(Bad Request): this model does not support image input); the lane was told so in place of it, and the "
+                    "call is made again without it") in notes(lane)  # the player reads it too
             assert lane.tokens == (100 + 20) + (300 + 30)  # the refused request cost nothing, and counted nothing
             await lab.finish()
 

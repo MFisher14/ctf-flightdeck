@@ -621,9 +621,9 @@ class AgentDriver:
         for message in new:
             del message[IMAGE_KEY]
             message["content"] = self.redact(told)
-        count = "a picture" if len(new) == 1 else f"{len(new)} pictures"
+        count, them = ("a picture", "it") if len(new) == 1 else (f"{len(new)} pictures", "them")
         self._say(run.lane_id, f"{run.lane_id} view_image: the call to {model} that carried {count} failed ({error}); "
-                               "the lane was told so in place of what it looked at, and the call is made again without")
+                               f"the lane was told so in place of {them}, and the call is made again without {them}")
         return True
 
     def _no_images(self, run: _Run) -> str | None:
