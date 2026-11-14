@@ -703,7 +703,7 @@ def test_an_image_that_is_no_image_or_too_big_is_refused_before_any_model_is_ask
     (tmp_path / "notes.txt").write_text("x")
     big = tmp_path / "big.png"
     big.write_bytes(b"0" * (imageread.MAX_BYTES + 1))
-    for path, why in [(tmp_path / "notes.txt", "not a PNG"), (big, "at most 4 MB")]:
+    for path, why in [(tmp_path / "notes.txt", "not a PNG"), (big, "at most 3,932,160 bytes \\(3.75 MiB\\)")]:
         with pytest.raises(imageread.ImageError, match=why):
             imageread.message(path)
 

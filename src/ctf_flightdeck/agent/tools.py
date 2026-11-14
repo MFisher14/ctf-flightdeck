@@ -119,7 +119,7 @@ TOOLS: list[dict] = [
     ),
     _tool(
         "view_image",
-        f"Look at an image file in the workspace ({IMAGE_KINDS}, at most {IMAGE_BYTES / 1_000_000:g} MB): you get the picture itself.",
+        f"Look at an image file in the workspace ({IMAGE_KINDS}, at most {IMAGE_BYTES / 2**20:g} MiB): you get the picture itself.",
         {"path": {"type": "string", "description": "Relative to the workspace."}},
         ["path"],
     ),
@@ -729,7 +729,7 @@ def _open_problem(path: str, exc: OSError) -> str:
 
 def _too_big(path: str, size: int) -> str:
     return (f"{path} is {size:,} bytes; view_image shows an image of at most {IMAGE_BYTES:,} bytes "
-            f"({IMAGE_BYTES / 1_000_000:g} MB, what a model API takes) and never scales one down")
+            f"({IMAGE_BYTES / 2**20:g} MiB, 5 MiB in base64: what a model API takes) and never scales one down")
 
 
 def _read_line(f: Any, limit: int) -> tuple[bytes | None, bool]:

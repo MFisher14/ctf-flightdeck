@@ -1125,11 +1125,11 @@ model that takes no images is said, and the challenge is added without that text
 A lane can also look at a picture itself. flightdeck's own lanes have a `view_image` tool: it
 shows the model a PNG, JPEG, GIF or WebP file from the lane's workspace, one that came with the
 challenge or one the lane made (a frame it cut out, a plot it drew), and you see it in the lane
-as `view pic.png`, a step like any other. The file is sent as it is. One over 4.5 MB is refused,
+as `view pic.png`, a step like any other. The file is sent as it is. One over 3.75 MiB is refused,
 not scaled down, and so is a path outside the workspace and a file that is no image by its first
 bytes, whatever it is called. The picture stays in the lane's conversation, so each later call
 pays for its tokens until the conversation is refreshed, and one conversation carries at most 20
-pictures and 18 MB of them: after that the tool says there is no room. When your model's API will
+pictures and 15 MiB of them: after that the tool says there is no room. When your model's API will
 not take a picture (a model that reads no images, a damaged file, one with too many pixels), the
 lane is told why in place of the picture and carries on with its shell, and a note on the lane
 tells you the same; the lane does not end. The same happens to every picture of a conversation

@@ -154,7 +154,7 @@ OUTAGE_LANES = 2
 OUTAGE_SECONDS = 300.0
 # The pictures one context carries (view_image), every one in every request from then on. More than 20 images in a
 # request and the Anthropic API takes only small ones (2000 px a side); its requests end at 32 MB, and four pictures
-# of the largest size are 24 MB in base64.
+# of the largest size are 20 MiB in base64.
 MAX_CONTEXT_IMAGES = 20
 MAX_CONTEXT_IMAGE_BYTES = 4 * IMAGE_BYTES
 # A model API's failure that a picture in the request did not cause: the key, the account's credits, and what means

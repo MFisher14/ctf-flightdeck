@@ -410,18 +410,28 @@ def test_view_image_refuses_a_file_that_is_no_image_by_its_bytes_and_hands_over_
 
 
 def test_view_image_takes_an_image_at_the_size_limit_and_refuses_one_byte_more_without_scaling_it(viewer, lane):
-    assert tools.IMAGE_BYTES == imageread.MAX_BYTES == 4_500_000  # the limit is the one /new's image reading has
+    assert tools.IMAGE_BYTES == imageread.MAX_BYTES == 3_932_160  # the limit is the one /new's image reading has
     at_limit = PNG + b"\x00" * (tools.IMAGE_BYTES - len(PNG))
     (lane.root / "big.png").write_bytes(at_limit)
     (lane.root / "bigger.png").write_bytes(at_limit + b"\x00")
     taken = call(viewer, "view_image", {"path": "big.png"})
-    assert taken.image == Image("image/png", base64.b64encode(at_limit).decode()) and taken.output == "image/png, 4,500,000 bytes"
+    assert taken.image == Image("image/png", base64.b64encode(at_limit).decode()) and taken.output == "image/png, 3,932,160 bytes"
     refused = call(viewer, "view_image", {"path": "bigger.png"})
     assert refused.error and refused.image is None
-    assert refused.content == ("error: bigger.png is 4,500,001 bytes; view_image shows an image of at most 4,500,000 bytes "
-                               "(4.5 MB, what a model API takes) and never scales one down")
-    assert viewer.asked == [4_500_000]  # the one over the limit was refused before anyone was asked
-    assert (lane.root / "bigger.png").stat().st_size == 4_500_001  # and left as it was
+    assert refused.content == ("error: bigger.png is 3,932,161 bytes; view_image shows an image of at most 3,932,160 bytes "
+                               "(3.75 MiB, 5 MiB in base64: what a model API takes) and never scales one down")
+    assert viewer.asked == [3_932_160]  # the one over the limit was refused before anyone was asked
+    assert (lane.root / "bigger.png").stat().st_size == 3_932_161  # and left as it was
+
+
+def test_the_image_limit_is_what_the_anthropic_api_takes_once_the_image_is_in_base64():
+    # The API's 5 MiB is measured on the base64 it is sent, which is 4/3 of the file: an image at the limit fits, and
+    # one more byte would not. A limit of 4.5 MB of file (6 MB of base64) was refused by the API with a 400.
+    limit = 5 * 1024 * 1024
+    assert len(base64.b64encode(b"\x00" * tools.IMAGE_BYTES)) <= limit
+    assert len(base64.b64encode(b"\x00" * (tools.IMAGE_BYTES + 1))) > limit
+    [view] = [t["function"]["description"] for t in tools.TOOLS if t["function"]["name"] == "view_image"]
+    assert "at most 3.75 MiB" in view  # what the model is promised is what the API takes
 
 
 def test_view_image_follows_a_symlink_that_stays_inside_and_takes_an_absolute_path_in_the_workspace(viewer, lane):

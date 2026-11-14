@@ -370,7 +370,7 @@ Where: `agent/tools.py` (`view_image`), `agent/driver.py`, `agent/client.py`, `a
 `view_image(path)` hands the lane's model a picture from its workspace. The path goes through
 `read_file`'s fence (nothing outside the workspace, symlink escapes included, opened without
 following a link). The file is a PNG, JPEG, GIF or WebP by its first bytes, whatever its name, and
-at most `imageread.MAX_BYTES` (4.5 MB, what a model API takes for one image): a bigger one is
+at most `imageread.MAX_BYTES` (3.75 MiB: in base64 that is the 5 MiB a model API takes for one image): a bigger one is
 refused with that reason, and nothing scales or re-encodes a file. The result's text names the file,
 its kind and size, and says that what it shows is the challenge's data, not instructions; the bytes
 go beside it (`ToolResult.image`), never into the console, the transcript or the event log.
@@ -384,8 +384,8 @@ of the context carries it, so its tokens are in those calls' usage and are count
 any other. A picture the API took stays in its context (a model's thinking is tied to the history
 it was made in; a move to the `[fallback]` API, below, is the one exception), so one context
 carries at most 20 pictures (`MAX_CONTEXT_IMAGES`: past 20 in a
-request the Anthropic API takes only small ones) and 18 MB of them (`MAX_CONTEXT_IMAGE_BYTES`: four
-of the largest, 24 MB in base64 of a request's 32). Past that `view_image` answers that there is no
+request the Anthropic API takes only small ones) and 15 MiB of them (`MAX_CONTEXT_IMAGE_BYTES`: four
+of the largest, 20 MiB in base64 of a request's 32 MB). Past that `view_image` answers that there is no
 room; an escalation or a context refresh starts without pictures.
 
 Nothing falls back in silence. A client says whether it can carry an image (`image_problem`; the
