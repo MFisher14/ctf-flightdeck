@@ -1,11 +1,13 @@
 """Screenshots a player hands over: from the clipboard to a file, and from a file to text.
 
-flightdeck's lanes read text. A screenshot of a challenge's page is useful to them only as
-what it says, so when the player adds a challenge with images (the console's /new), the run
-asks the lanes' model once for each image's text and puts that in the challenge's description
-(`read`). The text is the event's, like the description typed beside it: untrusted data from
-there on. An image the model cannot read (no vision, too big, a refusal) is said and the
-challenge is added without its text; the image is in the handout either way.
+A lane's brief is text. A screenshot of a challenge's page is useful there only as what it
+says, so when the player adds a challenge with images (the console's /new), the run asks the
+lanes' model once for each image's text and puts that in the challenge's description (`read`).
+The text is the event's, like the description typed beside it: untrusted data from there on.
+An image the model cannot read (no vision, too big, a refusal) is said and the challenge is
+added without its text; the image is in the handout either way, where a lane of flightdeck's
+own can look at it itself (the view_image tool, agent/tools.py, which takes MAX_BYTES and MEDIA
+from here).
 
 `clipboard_image` is ctrl+v in the /new form: the image on the clipboard, saved as a PNG file.
 A terminal pastes text only, so the image is fetched from the operating system by the tool

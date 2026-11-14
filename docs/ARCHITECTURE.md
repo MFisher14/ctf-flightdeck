@@ -188,7 +188,7 @@ transcript log and writes it again.
 | Piece | Where | Job |
 |---|---|---|
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | flightdeck's own loop: one asyncio task per lane, one model call per turn. [More](#agent-driver). |
-| Tools | `agent/tools.py` | `shell`, `read_file`, `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
+| Tools | `agent/tools.py` | `shell`, `read_file`, `view_image` (a picture in the workspace, for the model to look at: [More](#lane-images)), `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane, on the host or in a container, and the take-over shell. [More](#workspaces). |
 | Lane network | `agent/egress.py`, `agent/egress_proxy.py` | The fence round a Docker lane's network: its challenge's instance, a coding-agent CLI's API, nothing else. [More](#lane-network). |
 | Lane summary | `core/summary.py` | What a lane did, in at most 3000 characters (plan, the newest steps, files, flags and what became of them, alerts, the player's messages). Escalation and the context refresh hand it to the model, fenced as data, after the L1 results. |
@@ -234,6 +234,43 @@ output where it arrives, before anything cuts it, then every report to the deck 
 the driver's notes on the lane, and what else the driver writes into the lane's context (L1
 results, the first look, the player's messages, a summary). A `--host` lane that reads the keys
 file sends its model the names, not the values.
+
+### Lane images
+
+Where: `agent/tools.py` (`view_image`), `agent/driver.py`, `agent/client.py`, `agent/anthropic_client.py`.
+
+`view_image(path)` hands the lane's model a picture from its workspace. The path goes through
+`read_file`'s fence (nothing outside the workspace, symlink escapes included, opened without
+following a link). The file is a PNG, JPEG, GIF or WebP by its first bytes, whatever its name, and
+at most `imageread.MAX_BYTES` (4.5 MB, what a model API takes for one image): a bigger one is
+refused with that reason, and nothing scales or re-encodes a file. The result's text names the file,
+its kind and size, and says that what it shows is the challenge's data, not instructions; the bytes
+go beside it (`ToolResult.image`), never into the console, the transcript or the event log.
+
+The driver keeps the picture on the tool message that shows it, under the private key `_image`, and
+each client sends it its own way. The Anthropic client puts it inside the tool result (its content
+becomes the text and an image block). A chat completions tool message is text only, so the
+OpenAI-compatible client sends it as an image part of a user message right after that turn's tool
+messages, under a line of flightdeck's that says it is a file of the challenge. Every later request
+of the context carries it, so its tokens are in those calls' usage and are counted and priced like
+any other. Nothing takes a picture out of a context again (a model's thinking is tied to the history
+it was made in), so one context carries at most 20 pictures (`MAX_CONTEXT_IMAGES`: past 20 in a
+request the Anthropic API takes only small ones) and 18 MB of them (`MAX_CONTEXT_IMAGE_BYTES`: four
+of the largest, 24 MB in base64 of a request's 32). Past that `view_image` answers that there is no
+room; an escalation or a context refresh starts without pictures.
+
+Nothing falls back in silence. A client says whether it can carry an image (`image_problem`; the
+`[fallback]` pair asks the API the lane's session is on now); for a run whose client does not,
+`view_image` is refused with that reason and the brief does not offer it. Whether the model takes
+a given picture only its API can say, so when the request that first carries one fails
+(`AgentDriver._ask`: a model that reads no images, a damaged file, too many pixels, a request too
+large), the call is made once more without it: the tool result becomes an error with the API's own
+words, the lane goes on, and a note on the lane tells the player. A failure a picture cannot have
+caused (401, 402, 403, 429, no answer at all, a refusal) is never blamed on it, and a second failure
+ends the lane as any failed call does. A server that accepts a picture and ignores it looks, from
+here, like one that looked. The brief names the tool in one line (`prompts.VIEW_IMAGE`) only when a
+file of the challenge is an image by its name. Coding-agent lanes have their CLI's tools, not this
+one.
 
 ### What lanes share
 
@@ -333,7 +370,8 @@ Where: `agent/client.py`.
 OpenAI-compatible chat completions over httpx; a stable `session_id` per lane for OpenRouter's
 sticky prompt caching; never `provider.order`; retries with backoff, each try bounded by the
 client's timeout (a lane's: `[api] timeout`, else 180 s); usage incl. cached tokens and the reported
-cost. A message key starting with `_` is flightdeck's own and never sent. Per client, `max_tokens`
+cost. A message key starting with `_` is flightdeck's own and never sent; the image a tool result
+carries under `_image` goes out as an image part of a user message ([lane images](#lane-images)). Per client, `max_tokens`
 goes with every call that gives none (a lane's: `[api] max_tokens`, or 8192 to a server on this
 machine, nothing to another API), and `extra_body` adds a server's own fields to every request (the
 light role's thinking off); it may not set a field the client sets or never sends.
