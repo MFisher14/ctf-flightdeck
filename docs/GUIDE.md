@@ -1209,6 +1209,12 @@ flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, 
 flightdeck play --event ~/ctf/quals/event.toml
 ```
 
+On rCTF v2, `preset = "rctf2"` also marks the challenges that have an instance the site starts
+for your team, and an `[instances]` table with `plugin = "rctf"` lets flightdeck start each one
+before a lane works it, as on CTFd ([Instances on demand](BOARDS.md#instances-on-demand)). If
+the site asks for a CAPTCHA to start one, flightdeck says so and leaves it to you: start it on
+the site, and the lane gets its address once it is up.
+
 Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
 board, submit the flags you approve and read the solved list:
 

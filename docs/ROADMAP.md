@@ -3,6 +3,16 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not released
+
+- **Instances beyond CTFd, rCTF v2's first** (P81). `[instances] plugin = "rctf"` with
+  `preset = "rctf2"`: the instancer is asked by the challenge's string id with the `[http]`
+  table's own sign-in; an instance may have several addresses, and one still starting is
+  waited for; a start behind a CAPTCHA is left to the player
+  ([BOARDS.md](BOARDS.md#instances-on-demand)). Built from rCTF v2's API reference and tested
+  against a fake of it only. Not built: a `tcp-ssl` address handed to a lane, GZCTF's
+  instances, and klodd's (it wants a CAPTCHA for every start).
+
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
 Eighteen proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P51 to P68),

@@ -316,8 +316,16 @@ in quotes: the link writes the token percent-encoded (`%2B` for `+`, `%2F` for `
 and decodes it. The token copied out of the link works too, encoded or not. A link to another
 site than `event.url` is refused: its token is that site's. The preset was built against a
 stand-in that answers in rCTF's shape; nobody has played a real rCTF event through it yet, so
-run `http check` first. flightdeck does not start
-an rCTF instance (start it on the site), and counts no tries there: rCTF has none.
+run `http check` first. flightdeck counts no tries there: rCTF has none.
+
+`preset = "rctf2"` is for rCTF v2 (OtterSec's rewrite of 2026). It is the same table, but it
+lists the challenges from `/api/v2/challs`, which also says which challenges have an instance
+the site starts for your team, and marks each of those on-demand on the board. With
+`plugin = "rctf"` under `[instances]`, flightdeck then starts those instances itself
+([Instances on demand](#instances-on-demand)). The token variable is named as for `rctf`
+(`RCTF_TOKEN`). An event on the older rCTF has no `/api/v2`: keep `preset = "rctf"` there. Its
+instances usually come from a separate site (klodd) whose start wants a CAPTCHA every time,
+so start them on that site yourself.
 
 ### The `[http]` table
 
@@ -376,6 +384,7 @@ refs = "$.data.solves[*].id"
 | `list.request`, `items`, `ref`, `name` | Required. `items` matches one value per challenge; `ref` is the platform's id for it (a string or a whole number), which a submit is sent with. |
 | `list.category`, `points`, `solves`, `description`, `max_attempts` | Optional, as in [`challenge.json`](#challengejson). `max_attempts` makes the challenge one whose tries are counted. |
 | `list.file_urls`, `file_names` | Each file's address, and optionally its name (else the last part of the address). Both must match the same number of values. |
+| `list.instance` | Optional: a value that says the challenge has an instance the platform starts when asked (rCTF v2's `instancerLifetime`). Any value but `null`, `false`, `0` or `""` writes `"instance": "on-demand"` in its `challenge.json`. |
 | `[http.detail]` | Optional: `request` with `{ref}` in it and any of the fields above, read from one more request for each new challenge. A field here wins over the list's; `file_urls` here without `file_names` names each file from its address. |
 | `submit.request`, `body` | Required for flightdeck to submit. The body is JSON; `{flag}` must be in it, and `{ref}` in the path or the body (`"{ref:int}"` as a whole value sends the ref as a number). |
 | `submit.verdict_path`, `[http.submit.verdicts]` | Where the answer holds the platform's word, and which verdict each word means: `correct`, `incorrect`, `already_solved`, `rate_limited` or `unjudged`. The answer is read whatever its HTTP status (rCTF answers a wrong flag with 400). `true` and `false` and numbers are matched as those words. |
@@ -431,8 +440,9 @@ request with where the token goes before anything runs:
 
 Not built, and refused by name when a table asks for them: pages of a listing, a download
 route per challenge, form-encoded bodies, a CSRF header, HTML scraping, passwords and
-captchas, encrypted requests. A [plugin](PLUGINS.md) can do those. flightdeck starts instances
-only on CTFd.
+captchas, encrypted requests. A [plugin](PLUGINS.md) can do those. An `[instances]` table
+reaches the platform the same way, with the same token and the same limits
+([Instances on demand](#instances-on-demand)).
 
 ## The event profile: `event.toml`
 
@@ -593,20 +603,22 @@ forbids giving a model the challenge is `material_to_models = false`.
 
 ## Instances on demand
 
-Some CTFd challenges have no fixed address: a plugin starts a container for your team when you
-press a button, lets only a few run at once, and stops each after a while. With an `[instances]`
-table in the event profile, flightdeck presses the button:
+Some challenges have no fixed address: the site starts a container for your team when you
+press a button, lets only a few run at once, and stops each after a while. On CTFd a plugin
+does this; rCTF v2 does it itself. With an `[instances]` table in the event profile,
+flightdeck presses the button:
 
 ```toml
 [instances]
-plugin = "docker_per_team"      # the site's container plugin
+plugin = "docker_per_team"      # the site's container plugin (rCTF v2: "rctf")
 types = ["container"]           # CTFd challenge types that have such an instance
 max_running = 3                 # the most kept running at once: the site's cap for a team, or less
 ```
 
 - **Which challenges.** A challenge whose `type` (above) is one of `types`, or whose
   `challenge.json` says `"instance": "on-demand"`. To find the type name, pull the board and look
-  at a container challenge's `challenge.json`.
+  at a container challenge's `challenge.json`. On rCTF v2 the `rctf2` preset writes
+  `"instance"` itself, and `types` is not needed.
 - **When.** flightdeck starts an instance before a lane works its challenge, in the queue's own
   order, and no lane starts on such a challenge before its instance is up; the challenges behind
   it in the queue start meanwhile. It renews an instance five minutes before its end while lanes
@@ -614,7 +626,19 @@ max_running = 3                 # the most kept running at once: the site's cap 
   run ends. A slot freed by a solve goes to the next challenge that waits.
 - **What a lane gets.** The instance's address as its live instance: in its brief, and, in
   Docker, as the one thing its network reaches. A web challenge's is `http://host:port`, any
-  other `tcp://host:port`, unless the plugin itself gives a URL.
+  other `tcp://host:port`, unless the plugin itself gives a URL or says which. An instance with
+  several addresses (a web front and a TCP service) gives the lane every one, in the site's
+  order. One flightdeck cannot hand a lane yet (a TLS service, rCTF's `tcp-ssl`) is left out,
+  and the line that says the instance started names it; if that leaves none, no lane starts
+  on the challenge and the instance is treated as one at an address flightdeck will not use
+  (below).
+- **An instance on its way up.** Some sites answer a start with "starting" and give the
+  address only later. flightdeck then asks the status every 10 seconds and sends no other
+  start; the lanes wait, and the instance is the one flightdeck started when it comes up.
+- **A start that wants a person.** A site that guards its start button with a CAPTCHA refuses
+  flightdeck's start, and flightdeck never tries to pass it: it says so once and sends no start
+  for that challenge again. Start the instance on the site yourself; flightdeck asks the status
+  every 30 seconds, uses the instance once it is up, and leaves it running, as a teammate's.
 - **Your team.** An instance that is already running when flightdeck asks (a teammate's, or an
   earlier run's) is used and never stopped by this run. When the site says its cap is reached,
   flightdeck says so once and asks again every 30 seconds: teammates' instances take slots it
@@ -636,10 +660,14 @@ max_running = 3                 # the most kept running at once: the site's cap 
   no lane gets that address, and flightdeck stops the instance once nobody works the
   challenge, and when the run ends. A start still out when the run ends is waited for, and
   its instance stopped too.
-- **What it needs.** `platform = "ctfd"`, `platform_automation = true`, and the `instance` policy
-  at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. Otherwise
-  flightdeck starts none, and `preflight` and the start of a run say why; start it on the site
-  yourself, and the lane works from the files.
+- **What it needs.** `platform = "ctfd"`, or `platform = "http"` with a run that uses the
+  platform (`pull` or `submit` not by hand), `platform_automation = true`, and the `instance`
+  policy at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. A named
+  plugin must be one of the event's platform (`rctf` is for `http`, the others for `ctfd`).
+  Otherwise flightdeck starts none, and `preflight` and the start of a run say why; start it on
+  the site yourself, and the lane works from the files. On the http platform the instancer is
+  asked with the same token, the same sign-in and the same one address as the `[http]` table's
+  own requests, by the challenge's id there.
 - **Limits.** If the platform ends an instance and starts it again at another address, lanes
   hear of it, but a Docker lane's network was fenced to the old address: kill such a lane and
   queue the challenge again. A flightdeck that is killed leaves its instances to the platform,
@@ -655,8 +683,9 @@ max_running = 3                 # the most kept running at once: the site's cap 
 | `docker_per_team` | [CTFd-Docker-Plugin](https://github.com/andyjsmith/CTFd-Docker-Plugin) or a fork of it | `container` | Seen working at an event |
 | `ctfd_owl` | [ctfd-owl](https://github.com/D0g3-Lab/H1ve/tree/master/CTFd/plugins/ctfd-owl) | `dynamic_check_docker` | Built from the plugin's source; never run against a site |
 | `chall_manager` | [ctfd-chall-manager](https://github.com/ctfer-io/ctfd-chall-manager) | `dynamic_iac` | Built from the plugin's source; never run against a site |
+| `rctf` | [rCTF v2](https://github.com/otter-sec/rctf)'s own instancer, with `platform = "http"` and `preset = "rctf2"` | (none: the preset marks them) | Built from rCTF's API reference; never run against a site |
 
-For the two that were never run against a site, try a practice challenge before you rely on
+For the ones that were never run against a site, try a practice challenge before you rely on
 one, and tell us what happened in an issue.
 
 - **`docker_per_team`.** `POST /containers/api/request`, `stop`, `renew` and `view_info`, each
@@ -680,6 +709,12 @@ one, and tell us what happened in an issue.
   `http://name:password@host:port/` the lane gets the host and the port; the name and the
   password are yours to pass on with a hint. A start the team's mana cannot pay for is
   treated as the cap. An instance with no end is never renewed.
+- **`rctf`.** `GET`, `PUT`, `PATCH` and `DELETE` on `/api/v2/integrations/challs/ID/instance`
+  (the status, the start, the extension and the stop), with the challenge's own id in the path.
+  The answer says the instance's state and lists its addresses, each a kind (`tcp`, `http`,
+  `https` or `tcp-ssl`), a host and a port; the end is in milliseconds. A deployment may guard
+  the start and the extension with a CAPTCHA: then start the instance on the site (above), and
+  renew it there too.
 - **ctfd-whale has no name here yet.** From its source: a start first removes whatever
   container the account runs, of any challenge; asking about a challenge other than the
   running one is refused; and the address comes as an `nc` line, a link, a pwntools snippet
@@ -702,11 +737,24 @@ api = true                      # the paths are under /api/v1 (false: under the 
 # address_key = "connectionInfo"  # the answer's key that holds the address
 # port_key = "port"             # ... the port, when the address has none
 # expires_key = "until"         # ... the seconds left, or the moment it ends (a number or a timestamp)
+# expires_unit = "ms"           # ... when a number of the end counts milliseconds
+# endpoints_key = "endpoints"   # the answer's key that holds a list of {"kind", "host", "port"}, one per address
+# state_key = "status"          # the answer's key that says what the instance is doing
+# running_states = ["running"]  # ... its words for "up" (any other word: no instance)
+# pending_states = ["starting"] # ... its words for "on its way up or down": wait, and send nothing
 types = ["container"]
 ```
 
-- **The number.** A route whose path has `{id}` carries the number there and sends no body;
-  any other route sends `{"<body_key>": N}`. A plugin may mix the two.
+- **The number.** A route whose path has `{id}` carries the challenge's id there and sends no
+  body; any other route sends `{"<body_key>": N}`. A plugin may mix the two. On the http
+  platform the id is the challenge's own on the platform (a string, such as rCTF's), written
+  into the path percent-encoded.
+- **Several addresses.** With `endpoints_key`, each item of the list is an object with a
+  `host`, a `port` and optionally a `kind` (`tcp`, `http`, `https`; any other kind is left out
+  and named). At most 8 are taken.
+- **States.** With `state_key`, an answer whose word is one of `pending_states` is an instance
+  on its way (asked again in 10 seconds); with `running_states` given, only those words mean an
+  instance is up.
 - **The answer's keys.** Each is one key name or a list tried in order, looked for in the
   answer and then in its `data`. Left out, flightdeck tries `hostname`, `host`, `ip`,
   `connect`, `url`, `address` for the address, `port` for the port, and `remaining_time`,
@@ -717,7 +765,8 @@ types = ["container"]
   flightdeck then asks the status, up to three times two seconds apart, and gives up with the
   plugin's own words if no address comes. The start itself is never sent twice.
 - **A refusal** is shown in the plugin's words, whether it sends them as `error`, `errors`,
-  `message` or `msg`.
+  `message` or `msg`, and the words under its `data` when they say more. Words that name a
+  CAPTCHA make it a start that wants a person (above).
 
 flightdeck asks the plugin only about challenges on your board, sends each request that
 changes something once, and never calls a route that spends points.
