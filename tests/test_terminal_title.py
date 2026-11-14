@@ -277,6 +277,37 @@ def test_a_console_told_to_leave_the_title_and_the_bell_writes_neither(written):
     assert ours(written) == []
 
 
+@pytest.mark.parametrize("table, title_on, bell_on", [
+    ("", True, True),
+    ("[console]\ntitle = false\n", False, True),
+    ("[console]\nbell = false\n", True, False),
+    ("[console]\ntitle = false\nbell = false\n", False, False),
+])
+def test_the_mock_and_a_run_take_the_title_and_the_bell_from_the_config(tmp_path, monkeypatch, table, title_on, bell_on):
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import cli
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.run import Run
+
+    config = tmp_path / "config.toml"
+    config.write_text('[models]\nladder = ["m"]\n' + table)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
+    opened = []
+    monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: opened.append((self._beacon.title, self._beacon.bell)))
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 0, result.output
+    assert opened == [(title_on, bell_on)]
+
+    # what Run.app reads of a run: its console is made by the code a real run's is
+    of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
+                               release=None, shutdown=None)
+    beacon = Run.app(of_a_run)._beacon
+    assert (beacon.title, beacon.bell) == (title_on, bell_on)
+
+
 # ---------------------------------------------------------------------- a real terminal
 
 
