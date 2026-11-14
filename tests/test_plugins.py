@@ -13,9 +13,10 @@ import time
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-from ctf_flightdeck import __version__
-from ctf_flightdeck.config import PluginRef
+from ctf_flightdeck import __version__, cli, plugin_cli
+from ctf_flightdeck.config import PluginRef, load_config
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.plugins import board as boards
 from ctf_flightdeck.plugins import call, manifest
@@ -24,7 +25,9 @@ from ctf_flightdeck.plugins.manifest import PluginError
 
 from plugin_kit import TOKEN, calls, challenge, make_plugin, set_replies
 
+runner = CliRunner()
 URL = "https://ctf.example.test"
+CONFIG = '[api]\nbase_url = "http://127.0.0.1:11434/v1"\nkey_env = ""\n\n[models]\nladder = ["local-model"]\n\n[lanes]\nruntime = "host"\n'
 KNOWN = "name, api, command, version, description, token"
 
 
@@ -32,8 +35,24 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def invoke(*args, **kw):
+    return runner.invoke(plugin_cli.app, [str(a) for a in args], prog_name="flightdeck plugin", **kw)
+
+
 def caller(folder: Path, replies: dict, *, token: str | None = TOKEN, **kw) -> Caller:
     return Caller(manifest.read(make_plugin(folder, replies)), URL, "Quals", token, **kw)
+
+
+@pytest.fixture
+def config(tmp_path: Path, monkeypatch) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG)
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(path))
+    return path
+
+
+def enabled(config: Path, folder: Path, name: str = "acme") -> None:
+    config.write_text(config.read_text() + f'\n[plugins.{name}]\npath = "{folder}"\n')
 
 
 # ---------------------------------------------------------------------- plugin.toml
@@ -441,3 +460,300 @@ def test_a_pull_that_fails_adds_nothing_and_leaves_no_staging_folder(tmp_path):
     with pytest.raises(CallFailed, match="^it exited with status 1: the platform is down$"):
         pull(tmp_path / "acme", board, {"pull": {"exit": 1, "stderr": "the platform is down\n"}})
     assert sorted(entry.name for entry in tmp_path.iterdir()) == ["acme", "board"] and list(board.iterdir()) == []
+
+
+# ---------------------------------------------------------------------- flightdeck plugin new
+
+
+def test_plugin_new_writes_a_plugin_flightdeck_accepts_and_never_writes_over_one(tmp_path):
+    result = invoke("new", "harbour-ctf", "--dir", tmp_path)
+    assert result.exit_code == 0, result.output
+    folder = tmp_path / "harbour-ctf"
+    assert sorted(entry.name for entry in folder.iterdir()) == ["adapter.py", "event.example.toml", "plugin.toml"]
+    plugin = manifest.read(folder)
+    assert (plugin.name, plugin.api, plugin.argv, plugin.token) == ("harbour-ctf", 1, (sys.executable, "adapter.py"), True)
+    compile((folder / "adapter.py").read_text(), "adapter.py", "exec")  # it is Python; it is not run
+    for op in ('"pull"', '"submit"', '"solved"', "FLIGHTDECK_PLUGIN_TOKEN"):
+        assert op in (folder / "adapter.py").read_text()
+    from ctf_flightdeck.preflight import load_profile
+
+    profile, _ = load_profile(folder / "event.example.toml")
+    assert (profile.platform, profile.plugin, profile.token_env) == ("harbour-ctf", True, "HARBOUR_CTF_TOKEN")
+    before = (folder / "adapter.py").read_text()
+    (folder / "adapter.py").write_text(before + "# my own routes\n")
+    again = invoke("new", "harbour-ctf", "--dir", tmp_path)
+    assert again.exit_code == 2 and "is already there: flightdeck does not write over it" in again.output
+    assert (folder / "adapter.py").read_text() == before + "# my own routes\n"
+
+
+@pytest.mark.parametrize("name, why", [
+    ("Harbour", "a plugin's name is the platform's name: lower-case letters, digits, - and _, starting with a letter, at most 32 characters"),
+    ("ctfd", "ctfd is a platform flightdeck has built in: a plugin cannot take its name"),
+])
+def test_plugin_new_refuses_a_name_no_platform_can_have(tmp_path, name, why):
+    result = invoke("new", name, "--dir", tmp_path)
+    assert result.exit_code == 2 and f"flightdeck: {why}" in result.output and list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------- flightdeck plugin add
+
+
+def test_plugin_add_shows_the_card_and_stops_with_no_terminal_and_no_yes(tmp_path, config):
+    root = make_plugin(tmp_path / "acme")
+    result = invoke("add", root)
+    assert result.exit_code == 2 and "there is no terminal to ask at" in result.output
+    assert config.read_text() == CONFIG
+    for line in (
+        "  plugin    acme 0.3.1 (plugin API 1): Acme events",
+        f"  folder    {root.resolve()}",
+        '  provides  platform "acme"   (event.toml: platform = "acme")',
+        "  runs      <flightdeck's python> adapter.py   in that folder: for each pull, each flag, and each minute for the solved list",
+        "  gets      the event's URL, its token (the variable event.token_env names), the flags it submits",
+        "  not given your model API keys or the rest of your environment",
+        "  flightdeck does not sandbox a plugin: it runs as you, and can read your files and use the network. Read its files first.",
+    ):
+        assert line + "\n" in result.output
+    assert calls(root) == []  # nothing of the plugin is run to show it
+
+
+def test_plugin_add_asks_and_no_leaves_the_config_as_it_was(tmp_path, config, monkeypatch):
+    monkeypatch.setattr(plugin_cli, "_at_terminal", lambda: True)
+    root = make_plugin(tmp_path / "acme")
+    for answer in ("n\n", "\n"):
+        result = invoke("add", root, input=answer)
+        assert result.exit_code == 1 and "Enable it? [y/N]" in result.output and "the plugin was not enabled" in result.output
+        assert config.read_text() == CONFIG
+    result = invoke("add", root, input="y\n")
+    assert result.exit_code == 0, result.output
+    assert load_config(config).plugins == {"acme": PluginRef("acme", root.resolve())}
+    assert config.read_text().startswith(CONFIG) and f"config: {config} now has [plugins.acme] path = {root.resolve()}" in result.output
+
+
+def test_plugin_add_with_yes_writes_the_table_and_a_second_add_is_refused(tmp_path, config):
+    root = make_plugin(tmp_path / "ac me")  # a folder name with a space in it
+    assert invoke("add", root, "--yes").exit_code == 0
+    assert load_config(config).plugins["acme"].path == root.resolve()
+    assert manifest.load(load_config(config).plugins["acme"]).name == "acme"
+    after = config.read_text()
+    again = invoke("add", root, "--yes")
+    assert again.exit_code == 2 and f"flightdeck: plugins.acme is already in {config}: change its path there" in again.output
+    assert config.read_text() == after
+    other = make_plugin(tmp_path / "token-free", name="token-free", toml='name = "token-free"\napi = 1\ncommand = ["{python}", "adapter.py"]\ntoken = false\n')
+    result = invoke("add", other, "--yes")
+    assert result.exit_code == 0 and "  gets      the event's URL, the flags it submits\n" in result.output
+    assert sorted(load_config(config).plugins) == ["acme", "token-free"]
+
+
+def test_plugin_add_needs_a_config_and_a_plugin_it_can_read(tmp_path, config, monkeypatch):
+    broken = make_plugin(tmp_path / "broken", toml='name = "acme"\napi = 1\ncomand = ["x"]\n')
+    result = invoke("add", broken, "--yes")
+    assert result.exit_code == 2 and f"unknown key comand (known: {KNOWN})" in result.output and config.read_text() == CONFIG
+    later = make_plugin(tmp_path / "later", toml='name = "acme"\napi = 2\ncommand = ["{python}", "adapter.py"]\n')
+    assert invoke("add", later, "--yes").exit_code == 2 and config.read_text() == CONFIG
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "none.toml"))
+    missing = invoke("add", make_plugin(tmp_path / "acme"), "--yes")
+    assert missing.exit_code == 2 and f"flightdeck: there is no config at {tmp_path / 'none.toml'}: run `flightdeck init` first" in missing.output
+    assert not (tmp_path / "none.toml").exists()
+
+
+def test_a_config_that_does_not_load_with_the_plugin_in_it_is_put_back(tmp_path):
+    path = tmp_path / "config.toml"
+    # [plugins] as an inline table: valid, and a [plugins.acme] table after it is not
+    closed = "plugins = {}\n" + CONFIG
+    path.write_text(closed)
+    with pytest.raises(PluginError, match="^the config did not load with the plugin in it, so it was put back as it was: "):
+        manifest.enable(path, "acme", tmp_path / "acme")
+    assert path.read_text() == closed
+    with pytest.raises(PluginError) as caught:
+        manifest.enable(tmp_path / "none.toml", "acme", tmp_path / "acme")
+    assert str(caught.value) == f"there is no config at {tmp_path / 'none.toml'}: run `flightdeck init` first"
+    path.write_text(CONFIG)
+    manifest.enable(path, "acme", tmp_path / 'a "quoted" folder')
+    assert load_config(path).plugins["acme"].path == tmp_path / 'a "quoted" folder'
+    with pytest.raises(PluginError) as caught:
+        manifest.enable(path, "acme", tmp_path / "elsewhere")
+    assert str(caught.value) == f"plugins.acme is already in {path}: change its path there"
+
+
+def test_a_plugins_own_words_are_shown_made_safe(tmp_path, config):
+    root = make_plugin(tmp_path / "acme", toml=(
+        'name = "acme"\napi = 1\ncommand = ["{python}", "adapter.py", "--mode=\\u001b[2Jx"]\n'
+        'version = "1\\u001b[31m"\ndescription = "nice \\u001b[31mred\\u001b[0m\\nplugin"\n'))
+    result = invoke("add", root)
+    assert "\x1b" not in result.output and "nice ^[[31mred^[[0m" in result.output and "--mode=^[[2Jx" in result.output
+    assert "plugin    acme 1^[[31m (plugin API 1): nice" in result.output
+
+
+# ---------------------------------------------------------------------- flightdeck plugin pull
+
+EVENT = """[event]
+name = "Quals"
+platform = "acme"
+url = "https://ctf.example.test"
+token_env = "ACME_TOKEN"
+board = "board"
+
+[rules]
+ai_allowed = true
+platform_automation = {automation}
+live_targets = "off"
+"""
+LISTED = {
+    "pull": {"write": {"17/chal.zip": "zip"}, "answer": {"challenges": [
+        challenge("17", "Warm Up", files=["17/chal.zip"]), challenge("23", "Web Thing", category="web"), challenge("31", "Late One")]}},
+    "solved": {"answer": {"solved": ["23", "99"]}},
+}
+
+
+def event_file(tmp_path: Path, *, automation: bool = True, text: str = EVENT) -> Path:
+    folder = tmp_path / "quals"
+    folder.mkdir(exist_ok=True)
+    path = folder / "event.toml"
+    path.write_text(text.replace("{automation}", "true" if automation else "false"))
+    return path
+
+
+def test_plugin_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    keys = tmp_path / "keys.env"  # the token comes from the keys file; the plugin gets it and no other key
+    keys.write_text(f"ACME_TOKEN={TOKEN}\nOPENROUTER_API_KEY=sk-or-fake-for-this-test\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    event = event_file(tmp_path)
+    board = tmp_path / "quals" / "board"
+    result = invoke("pull", event)
+    assert result.exit_code == 0, result.output
+    assert result.output == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
+    assert [seen["request"]["op"] for seen in calls(root)] == ["pull", "solved"]
+    for seen in calls(root):
+        assert seen["env"]["FLIGHTDECK_PLUGIN_TOKEN"] == TOKEN and seen["request"]["url"] == URL and seen["request"]["event"] == "Quals"
+        assert "OPENROUTER_API_KEY" not in seen["env"] and "ACME_TOKEN" not in seen["env"]
+    assert [item.challenge.id for item in load_board(board).challenges] == ["late-one", "warm-up", "web-thing"]
+    more = [*LISTED["pull"]["answer"]["challenges"], challenge("40", "Newer", category="web")]
+    set_replies(root, {**LISTED, "pull": {**LISTED["pull"], "answer": {"challenges": more}}})
+    other = tmp_path / "elsewhere"
+    again = invoke("pull", event)
+    assert again.output == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
+    named = invoke("pull", event, other)  # FOLDER: another board folder than the profile's
+    assert named.exit_code == 0 and named.output.startswith(f"pulled into {other}: 4 challenges")
+    assert [seen["request"]["op"] for seen in calls(root)] == ["pull", "solved"] * 3
+
+
+def test_plugin_pull_names_what_was_left_out_and_exits_1(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", {
+        "pull": {"answer": {"notes": ["2 challenges are locked"], "challenges": [challenge("17", "Warm Up"), challenge("18", "Odd", points=-1)]}},
+        "solved": {"answer": {"solved": []}},
+    })
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    result = invoke("pull", event_file(tmp_path))
+    assert result.exit_code == 1
+    assert 'acme: not added: Odd: "points" must be a whole number, 0 or more\n' in result.output
+    assert "acme: 2 challenges are locked\n" in result.output
+    assert "1 challenge (misc 1), 0 listed as solved; nothing was submitted\n" in result.output
+
+
+def test_plugin_pull_runs_nothing_when_the_rules_forbid_scripts_on_the_platform(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    event = event_file(tmp_path, automation=False)
+    result = invoke("pull", event)
+    assert result.exit_code == 2
+    assert (f"flightdeck: rules.platform_automation = false in {event}: the event's rules do not allow scripts on the platform, "
+            "so flightdeck does not run the acme plugin for it\n") == result.output
+    assert calls(root) == [] and not (tmp_path / "quals" / "board").exists()
+
+
+def test_plugin_pull_runs_only_a_plugin_the_players_config_allows(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", LISTED)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    event = event_file(tmp_path)
+    result = invoke("pull", event)
+    assert result.exit_code == 2 and calls(root) == []
+    assert result.output == ('flightdeck: event.platform is not "ctfd", "manual" or "gamemaster", and names no plugin in your config '
+                             "(your config has no [plugins] table). `flightdeck plugin add FOLDER` adds one, after showing you what it runs\n")
+    enabled(config, root, name="rival")  # the config allows another name: the profile's word is not shown
+    result = invoke("pull", event)
+    assert result.exit_code == 2 and "(your config has: rival)" in result.output and "acme" not in result.output and calls(root) == []
+    config.write_text(CONFIG)
+    enabled(config, root)
+    builtin = event_file(tmp_path, text=EVENT.replace('platform = "acme"', 'platform = "manual"'))
+    result = invoke("pull", builtin)
+    assert result.exit_code == 2 and 'event.platform is "manual", which flightdeck has built in' in result.output and calls(root) == []
+    config.write_text("[models\n")
+    result = invoke("pull", event_file(tmp_path))
+    assert result.exit_code == 2 and calls(root) == []
+    assert "event.platform names a plugin's platform, and your config could not be read, so flightdeck cannot tell whether you added it" in result.output
+
+
+@pytest.mark.parametrize("change, set_token, message", [
+    (("token_env = \"ACME_TOKEN\"\n", ""), True,
+     'flightdeck: event.token_env is required for platform "acme": the name of the environment variable that holds your token\n'),
+    (("url = \"https://ctf.example.test\"\n", ""), True,
+     "flightdeck: event.url is required for a plugin's platform: the address its adapter talks to\n"),
+    (("board = \"board\"\n", ""), True,
+     "flightdeck: name the board folder: `flightdeck plugin pull EVENT.toml FOLDER`, or set event.board in the profile\n"),
+    (("", ""), False,
+     "flightdeck: the token variable ACME_TOKEN (event.token_env) is not set or is empty: put ACME_TOKEN=<token> in your keys file "
+     "or export it, then pull again\n"),
+    (("ACME_TOKEN", "OPENAI_API_KEY"), True,
+     "flightdeck: event.token_env names OPENAI_API_KEY, a variable for another service's key, not a token for this platform: "
+     "flightdeck would hand its value to the acme plugin. Name the variable that holds your token for it, like ACME_TOKEN\n"),
+    (("ACME_TOKEN", "MY_API_KEY"), True,
+     "flightdeck: event.token_env names MY_API_KEY, a name ending in _API_KEY like other services' key variables (a name with ACME "
+     "in it is fine), not a token for this platform: flightdeck would hand its value to the acme plugin. Name the variable that "
+     "holds your token for it, like ACME_TOKEN\n"),
+])
+def test_plugin_pull_refuses_before_it_runs_the_plugin(tmp_path, config, monkeypatch, change, set_token, message):
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    for name in ("ACME_TOKEN", "OPENAI_API_KEY", "MY_API_KEY"):
+        monkeypatch.setenv(name, TOKEN) if set_token else monkeypatch.delenv(name, raising=False)
+    result = invoke("pull", event_file(tmp_path, text=EVENT.replace(*change) if change[0] else EVENT))
+    assert (result.exit_code, result.output) == (2, message)
+    assert calls(root) == []
+
+
+def test_plugin_pull_never_hands_the_model_key_of_the_config_to_a_plugin(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", LISTED)
+    config.write_text(CONFIG.replace('key_env = ""', 'key_env = "HOUSE_KEY"'))
+    enabled(config, root)
+    monkeypatch.setenv("HOUSE_KEY", "sk-fake-for-this-test")
+    result = invoke("pull", event_file(tmp_path, text=EVENT.replace("ACME_TOKEN", "HOUSE_KEY")))
+    assert result.exit_code == 2 and calls(root) == []
+    assert "event.token_env names HOUSE_KEY (api.key_env in your config), a variable for another service's key" in result.output
+
+
+def test_plugin_pull_says_why_the_plugin_failed_and_never_shows_the_token(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", {"pull": {"exit": 1, "stderr": "401 for token {token}\n"}})
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    event = event_file(tmp_path)
+    result = invoke("pull", event)
+    assert (result.exit_code, result.output) == (
+        2, "flightdeck: the acme plugin could not pull the board: it exited with status 1: 401 for token <token>\n")
+    set_replies(root, {"pull": LISTED["pull"], "solved": {"raw": "<html>"}})
+    result = invoke("pull", event)
+    board = tmp_path / "quals" / "board"
+    assert result.exit_code == 2 and TOKEN not in result.output
+    assert result.output == (
+        f"pulled into {board}: 3 challenges (misc 2, web 1); nothing was submitted\n"
+        f"flightdeck: could not read the solved list from the acme plugin: its answer is not one JSON object; what was pulled "
+        f"stays in {board}\n")
+    broken = make_plugin(tmp_path / "broken", toml='name = "acme"\napi = 1\n')
+    config.write_text(CONFIG)
+    enabled(config, broken)
+    result = invoke("pull", event)
+    assert result.exit_code == 2 and result.output.startswith("flightdeck: plugin acme: ") and "command must be a list of words" in result.output
+
+
+# ---------------------------------------------------------------------- the root command
+
+
+def test_flightdeck_plugin_is_mounted_with_its_three_commands():
+    shown = CliRunner().invoke(cli.app, ["plugin", "--help"], terminal_width=200).output
+    for name in ("new", "add", "pull"):
+        assert f" {name} " in shown
+    assert "Plugins: play an event on a platform flightdeck does not know, through an adapter of your own." in " ".join(shown.split())

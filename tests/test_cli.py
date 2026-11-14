@@ -364,6 +364,8 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
         ("add", "folder"): "FOLDER",
         ("vpn add", "folder"): "FOLDER", ("vpn add", "file"): "FILE",
         ("vpn up", "target"): "FOLDER", ("vpn status", "target"): "FOLDER", ("vpn down", "target"): "FOLDER",
+        ("plugin new", "name"): "NAME", ("plugin add", "folder"): "FOLDER",
+        ("plugin pull", "event"): "EVENT.toml", ("plugin pull", "folder"): "FOLDER",
         ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR", ("share", "run_dir"): "RUN_DIR",
         ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
         ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
@@ -759,7 +761,7 @@ def test_the_root_help_groups_the_commands():
     out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
     for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run"):
         assert panel in out
-    for name in ("preflight", "ctfd", "gm", "team", "l1", "report", "writeups", "score", "eval-local", "gaps"):
+    for name in ("preflight", "ctfd", "gm", "team", "plugin", "l1", "report", "writeups", "score", "eval-local", "gaps"):
         assert f" {name} " in out
 
 
@@ -777,7 +779,7 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
     assert panels == {
         "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
         "Play": ["mock", "play", "practice", "start"],
-        "Before and during an event": ["add", "preflight", "ctfd", "gm", "team", "vpn"],
+        "Before and during an event": ["add", "preflight", "ctfd", "gm", "team", "vpn", "plugin"],
         "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
         "Solvers (L1)": ["l1", "pack", "build"],
     }
