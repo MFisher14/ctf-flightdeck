@@ -952,7 +952,14 @@ Unknown keys fail loudly. Keys are read from the environment, else
 machine, suggests a ladder for Ollama and MLX and a light model for `--light ollama|mlx` (from
 flightdeck's benchmark, docs/MODELS.md; never written unless the player takes it), and writes `thinking = false`
 for a light model on this machine; `flightdeck doctor` names what lane calls to a server on this
-machine send and wait (`lane calls`).
+machine send and wait (`lane calls`). It also offers a ladder for OpenRouter (its names for the
+Claude ladder) and for OpenAI (two models nothing here measured), so every provider has one, and
+at a terminal asks for a key that is not set at a hidden prompt and puts it in the keys file
+(`setup.write_setup`, `keys.save`): the config is checked first, the key kept, then the config
+written. The home screen's setup form (`console/home.py` `SetupForm`) asks the same questions,
+is checked by the same answer functions and builds the same config (`setup.answers_for`); it
+writes nothing itself, and `cli._set_up` writes for it. `cli._home` opens the home screen again
+after a run it started ends.
 
 ### Credentials
 

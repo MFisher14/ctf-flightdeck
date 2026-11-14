@@ -29,6 +29,22 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - The mock opens in your config's layout and theme, and the home screen in its theme.
   `flightdeck doctor` measures your terminal in the layout your config names, and reports each
   plugin you added.
+- First-time setup happens in the home screen. With no config, "Get started" opens a form
+  there: your model API, its key (typed out of sight and kept in your keys file), the models
+  and Docker or host, which is offered by whether Docker runs here. `ctrl+s` saves it, and
+  the home screen then offers the practice set first and starting an event one below, with
+  building the lane image before both when Docker lanes need it. "Start a new CTF" with no
+  config asks the same setup first.
+- `flightdeck init` asks for your API key at a hidden prompt and keeps it in your keys file,
+  so there is no file to make by hand; Enter alone skips it. It asks only at a terminal, and
+  only for a key that is not set yet.
+- Every model API has models to offer in `init` and in the setup form: for OpenRouter its
+  names for Claude Haiku, Sonnet and Opus 5.5, for OpenAI `gpt-5.4-mini` then `gpt-5.4`
+  (flightdeck has not measured these two). Enter takes them, or give your own.
+- When a run you started from the home screen ends, flightdeck comes back to the home screen
+  with the event you just played first in the list; its spend, run folder and next commands
+  are in the terminal under it. The practice set and the demo come back too. `q` there
+  leaves, and a run that stops with an error leaves with its reason showing.
 
 ## 0.4.0 (2026-11-13)
 

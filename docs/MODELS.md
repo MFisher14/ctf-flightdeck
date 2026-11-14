@@ -25,7 +25,13 @@ in front of it, and costs nothing per token.
 ## What we would start with
 
 **Lanes on an API:** Anthropic's ladder (`flightdeck init --provider anthropic`: Claude Haiku,
-Sonnet and Opus 5.5), or any model on OpenRouter.
+Sonnet and Opus 5.5), or any model on OpenRouter. For OpenRouter, `init` and the home screen's
+setup form offer that same ladder under OpenRouter's names (`anthropic/claude-haiku-5.5`,
+`anthropic/claude-sonnet-5.5`, `anthropic/claude-opus-5.5`). For OpenAI's own API they offer
+`gpt-5.4-mini`, then `gpt-5.4`. We have not measured those two: they are offered because
+OpenAI's model pages (read 2026-11-14) list both with function calling on Chat Completions,
+the API flightdeck speaks, and with reasoning off unless asked for. Each is only what is
+offered: give any model ids your API serves.
 
 **Lanes on your own machine:** `gpt-oss:20b` on Ollama, as Ollama serves it. Of the four larger
 models it solved the most practice challenges with no settings changed: 2 of 4 (Qwen3.5 9B on

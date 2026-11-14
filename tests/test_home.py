@@ -645,6 +645,33 @@ def test_setup_from_the_home_screen_is_written_with_its_key_out_of_sight_and_the
     assert third["ready"] is None and third["status"].startswith("Back from your run.")
 
 
+def test_what_the_setup_form_ends_with_is_what_flightdeck_writes_and_doctor_then_finds_the_key(home, fresh, tmp_path, monkeypatch):
+    """The form and the command line, end to end: the provider chosen and its offered models
+    taken in the form, then the config and the keys file as `flightdeck` alone leaves them."""
+    from ctf_flightdeck import keys
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.console import home as homes
+    from ctf_flightdeck.setup import doctor
+
+    async def script(app, pilot):
+        form = await open_setup(app, pilot)
+        fill(form, provider="openai", key=SETUP_KEY)
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+
+    given = choose(monkeypatch, drive_home(homes.items(have_config=False), script))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 0, result.output
+    config = load_config(fresh)
+    assert (config.api.base_url, config.api.key_env) == ("https://api.openai.com/v1", "OPENAI_API_KEY")
+    assert (config.models, config.lanes.runtime, config.light.engine) == (("gpt-5.4-mini", "gpt-5.4"), "host", "rules")
+    assert keys.load_keys(tmp_path / "fresh" / "keys.env") == {"OPENAI_API_KEY": SETUP_KEY}
+    assert SETUP_KEY not in result.output and SETUP_KEY not in fresh.read_text()
+    found = {check.name: check for check in doctor(fresh, environ={})}
+    assert found["config"].ok and found["api key"].ok and found["api key"].detail == "OPENAI_API_KEY is set (in your keys file)"
+    assert given["calls"][1]["ready"].first == "practice"
+
+
 def test_after_setup_the_lane_image_is_offered_first_only_when_docker_lanes_need_it_and_docker_can_build_it(home, fresh, tmp_path, monkeypatch):
     from ctf_flightdeck import setup
     from ctf_flightdeck.console.home import Ready, Setup

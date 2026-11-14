@@ -134,7 +134,7 @@ def _home_choice(menu, status: str, *, palette=None, ready=None):
     return HomeApp(menu, status, palette, ready).run()
 
 
-def _set_up(done) -> object:
+def _set_up(done):
     """Write what the home screen's setup form ended with (console/home.py Setup): the key to
     the keys file, then the config (setup.write_setup: both, or neither where that can be
     told beforehand). What was done is said in the terminal too, for after the home screen,
