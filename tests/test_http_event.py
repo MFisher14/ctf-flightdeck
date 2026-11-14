@@ -10,7 +10,9 @@ same link a plugin's platform uses. Nothing real is contacted.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from typer.testing import CliRunner
@@ -585,3 +587,40 @@ def test_answers_cannot_be_checked_against_a_file_when_flags_go_through_the_http
         assert fake.requests == []
     assert str(refused.value) == ("--answers checks flags against a file, and this event checks them on its platform, through the http "
                                   "adapter: drop --answers")
+
+
+def test_a_coding_agent_lane_on_an_http_event_shows_the_login_link_and_the_token_in_it_by_their_names(tmp_path, monkeypatch):
+    """The event's variable holds the team's login link (auth.link_param), exported in the
+    player's shell: a host lane can read it. The link, the token taken out of it and the token
+    as a link writes it are secrets the run holds, each shown as [NAME] wherever the lane
+    prints it (here the fake CLI echoes all three), in the run's events and transcripts too."""
+    from test_external import Fake
+
+    encoded = quote(TEAM_TOKEN, safe="")
+    assert encoded != TEAM_TOKEN  # the token has + / =, so the two forms differ
+    path = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-credential-for-tests")
+    agent = None
+    try:
+        with FakeRCTF(sample()) as fake:
+            link = login_link(fake.url)
+            monkeypatch.setenv(TOKEN_VAR, link)
+            agent = Fake(tmp_path, {"turns": [{"calls": [{"tools": [{"bash": f"echo token '{link}' '{TEAM_TOKEN}' '{encoded}'"}]}]}]})
+            monkeypatch.setenv("PATH", os.pathsep.join([str(agent.bin), *path]))
+            run = rctf_run(tmp_path, fake, agent="claude", runtime="host")
+
+            async def body(run):
+                (lane,) = run.deck.lanes.values()
+                await wait_for(lambda: any(a.output.startswith("token ") for a in lane.actions), "the step")
+
+            play(run, body)
+    finally:
+        if agent is not None:
+            agent.kill_leftovers()
+    (lane,) = run.deck.lanes.values()
+    assert [a.output for a in lane.actions if a.output.startswith("token ")] == [
+        f"token [{TOKEN_VAR}] [{TOKEN_VAR}_DECODED] [{TOKEN_VAR}_ENCODED]"]
+    for kept in (run.log.path, *(run.dir / "lanes").iterdir()):
+        text = kept.read_text()
+        assert TEAM_TOKEN not in text and encoded not in text, kept.name

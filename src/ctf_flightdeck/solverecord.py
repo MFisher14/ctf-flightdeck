@@ -44,6 +44,7 @@ heading in a record.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
@@ -405,6 +406,10 @@ class _Writer:
                 out += [f"Tool call {number} of {len(action.calls)}:", "", fenced(self.clean(call.text)), ""]
                 if call.output:
                     out += ["Its output, as the transcript kept it:", "", fenced(self.clean(call.output)), ""]
+            skipped = _NOT_RUN.search(action.text)  # the driver's note on the calls it did not run
+            if skipped:
+                count, why = int(skipped.group(1)), self.clean(skipped.group(2))
+                out += [f"{_plural(count, 'more tool call')} the model asked for did not run: {inline(why)}.", ""]
             return out
         out += [fenced(self.clean(action.text)), ""]
         if action.output:
@@ -422,6 +427,9 @@ class _Writer:
             if change.diff:
                 out += ["", fenced(self.clean(change.diff), "diff"), ""]
         return [*out, ""]
+
+
+_NOT_RUN = re.compile(r"\((\d+) tool calls? not run: ([^()]*)\)\s*$")
 
 
 def _text(value: object) -> str:

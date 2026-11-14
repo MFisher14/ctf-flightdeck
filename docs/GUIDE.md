@@ -262,9 +262,9 @@ What that fence does not do:
 your files, your keys file and flightdeck's own environment, and send what it reads to its model's
 API, which nothing can take back. flightdeck says so before every host run. A lane's commands get
 an environment built from an allowlist, with no keys in it. The value of each key flightdeck holds
-(every entry of your keys file, the `[api]` and `[fallback]` keys, the CTFd token) is replaced by
-its name, like `[OPENROUTER_API_KEY]`, in what a lane's tool calls return, before its model sees
-it; so the run log, the console, transcripts, reports and writeup drafts show a key's name but not
+(every entry of your keys file, the `[api]` and `[fallback]` keys, the event's platform token) is
+replaced by its name, like `[OPENROUTER_API_KEY]`, in what a lane's tool calls return, before its
+model sees it; so the run log, the console, transcripts, reports and writeup drafts show a key's name but not
 its value. That is cleanup, not a fence (a lane that can read a key can also use it, or print it
 encoded): use Docker, a disposable VM, or a separate key with a low limit.
 
