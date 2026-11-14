@@ -263,10 +263,49 @@ def test_docker_problems_fail_the_doctor_only_for_a_docker_runtime(tmp_path, mon
 
 def test_report_marks_each_check_and_says_what_to_do():
     text, status = report([Check("python", True, "3.12"), Check("api key", False, "K is not set", "export K=...")])
-    assert text.splitlines() == ["ok   python: 3.12", "FAIL api key: K is not set", "     fix: export K=..."]
+    assert text.splitlines() == ["ok   python: 3.12", "FAIL api key: K is not set", "     fix: export K=...",
+                                 "1 thing to fix before a run: the FAIL line above. Then run `flightdeck doctor` again."]
     assert status == 1
-    text, status = report([Check("terminal", False, "80x24", "bigger is easier", essential=False)])
-    assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice`.")
+    text, status = report([Check("python", True, "3.12")])
+    assert status == 0 and text.splitlines() == ["ok   python: 3.12", "Ready. Try `flightdeck practice`."]
+
+
+def test_doctors_last_line_is_the_one_to_act_on_the_count_to_fix_or_the_next_command():
+    """A player reads the last line: with something a run needs missing, it counts the FAIL
+    lines and says what to run then (it used to be the last check's own line, whatever that
+    was); with nothing missing it is Ready and the next command. Warnings are counted too,
+    as what a run does not wait for, and never make the status 1."""
+    ok, key, docker = Check("python", True, "3.12"), Check("api key", False, "K is not set", "export K=..."), Check("docker", False, "not running")
+    small = Check("terminal", False, "80x24", "bigger is easier", essential=False)
+    left = Check("leftovers", False, "a container a killed run left", essential=False)
+
+    def last(checks, **more) -> tuple[str, int]:
+        text, status = report(checks, **more)
+        assert text.endswith("\n") and not text.endswith("\n\n")
+        return text.splitlines()[-1], status
+
+    assert last([ok, key, docker, ok]) == (  # the last check passed: the last line is still the count
+        "2 things to fix before a run: the FAIL lines above. Then run `flightdeck doctor` again.", 1)
+    assert last([key, small]) == ("1 thing to fix before a run: the FAIL line above. Then run `flightdeck doctor` again. "
+                                  "(1 warning besides: a run does not wait for it.)", 1)
+    assert last([key, small, left])[0].endswith("(2 warnings besides: a run does not wait for them.)")
+    assert last([ok, small]) == ("Ready, with 1 warning above that a run does not wait for. Try `flightdeck practice`.", 0)
+    assert last([small, left, ok]) == ("Ready, with 2 warnings above that a run does not wait for. Try `flightdeck practice`.", 0)
+    # for a coding-agent CLI's lanes, both the check to repeat and the practice to try are that CLI's
+    assert last([key], agent="codex") == ("1 thing to fix before a run: the FAIL line above. Then run `flightdeck doctor --agent codex` again.", 1)
+    assert last([ok], agent="codex") == ("Ready. Try `flightdeck practice --agent codex`.", 0)
+
+
+def test_doctor_with_no_config_ends_by_saying_one_thing_is_left_and_how_to_check_again(tmp_path, monkeypatch):
+    """The command itself, as a new player first runs it: no config, so `flightdeck init` is
+    the fix under the FAIL line, and the last line counts what stops a run."""
+    monkeypatch.setenv("PATH", str(tmp_path))  # no docker to ask
+    result = CliRunner().invoke(cli.app, ["doctor", "--config", str(tmp_path / "none.toml")])
+    lines = result.stdout.splitlines()
+    failed = [line for line in lines if line.startswith("FAIL ")]
+    assert result.exit_code == 1 and failed and f"FAIL config: no config at {tmp_path / 'none.toml'}" in failed
+    count = f"{len(failed)} thing{'' if len(failed) == 1 else 's'} to fix before a run: the FAIL line{'' if len(failed) == 1 else 's'} above."
+    assert lines[-1].startswith(f"{count} Then run `flightdeck doctor` again."), lines[-1]
 
 
 def test_doctor_says_plainly_when_there_is_no_config_and_points_at_a_broken_one(tmp_path):
@@ -538,7 +577,10 @@ def test_doctor_for_agent_lanes_only_warns_about_the_api_key_they_never_use(tmp_
     assert key.detail == ("OPENROUTER_API_KEY is not set (only flightdeck's own lanes use it; claude lanes use claude's "
                           "own credential and models)")
     text, status = report(checks, agent="claude")
-    assert status == 0 and text.rstrip().endswith("Ready. Try `flightdeck practice --agent claude`.")
+    warned = sum(1 for check in checks if not check.ok)  # the unused API key is one of them
+    assert status == 0 and warned >= 1 and text.splitlines()[-1] == (
+        f"Ready, with {warned} warning{'' if warned == 1 else 's'} above that a run does not wait for. "
+        "Try `flightdeck practice --agent claude`.")
     assert "fake-oauth-token-for-doctor-tests" not in text
     own = doctor(cfg, environ=fake_claude_bin)  # flightdeck's own lanes do need the key
     assert {c.name: c for c in own}["api key"].essential and report(own)[1] == 1
