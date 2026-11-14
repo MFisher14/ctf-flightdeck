@@ -28,6 +28,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..config import PLUGIN_NAME, RESERVED_PLATFORMS, ConfigError, PluginRef, load_config
+from ..config_edit import EditError, rewrite
 from ..text import untrusted
 
 MANIFEST = "plugin.toml"
@@ -312,29 +313,28 @@ def skeleton(name: str) -> dict[str, str]:
 
 def enable(config_path: Path, name: str, root: Path) -> None:
     """Add `[plugins.NAME] path` to the config at `config_path`: what allows the plugin. The
-    edited file must load with the plugin in it, or it is put back as it was."""
-    try:
-        before = config_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise PluginError(f"there is no config at {config_path}: run `flightdeck init` first") from None
-    except (OSError, UnicodeDecodeError) as exc:
-        raise PluginError(f"cannot read the config {config_path}: {exc}") from None
-    try:
-        there = tomllib.loads(before).get("plugins")
-    except tomllib.TOMLDecodeError:
-        there = None  # a config that is not TOML: the load below says why, and the file stays as it is
-    if isinstance(there, dict) and name in there:
-        raise PluginError(f"plugins.{name} is already in {config_path}: change its path there")
-    gap = "" if not before or before.endswith("\n\n") else ("\n" if before.endswith("\n") else "\n\n")
-    after = f"{before}{gap}[plugins.{name}]\npath = {_toml(str(root))}\n"
-    config_path.write_text(after, encoding="utf-8")
-    try:
+    edited file must load with the plugin in it, or it is put back as it was
+    (config_edit.rewrite, the one place a config is changed in)."""
+
+    def change(before: str) -> str:
+        try:
+            there = tomllib.loads(before).get("plugins")
+        except tomllib.TOMLDecodeError:
+            there = None  # a config that is not TOML: the load after the write says why, and the file is put back
+        if isinstance(there, dict) and name in there:
+            raise PluginError(f"plugins.{name} is already in {config_path}: change its path there")
+        gap = "" if not before or before.endswith("\n\n") else ("\n" if before.endswith("\n") else "\n\n")
+        return f"{before}{gap}[plugins.{name}]\npath = {_toml(str(root))}\n"
+
+    def check() -> None:
         ref = load_config(config_path).plugins.get(name)
         if ref is None or ref.path != root:
             raise ConfigError(f"{config_path}: [plugins.{name}] did not take the plugin's folder")
-    except ConfigError as exc:
-        config_path.write_text(before, encoding="utf-8")
-        raise PluginError(f"the config did not load with the plugin in it, so it was put back as it was: {exc}") from None
+
+    try:
+        rewrite(config_path, change, check, what="the plugin")
+    except EditError as exc:
+        raise PluginError(str(exc)) from None
 
 
 def _toml(value: str) -> str:
