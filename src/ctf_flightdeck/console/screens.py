@@ -160,7 +160,7 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     the same text typed all at once (FlightdeckApp.take_drop, take_keys); the line under the
     box shows each one. A dropped file is copied into the run's folder at once, and the copy
     is what is attached (add_dropped). A terminal may keep a drop to itself: the form says
-    ctrl+o for that.
+    ctrl+o for that, in the sentence for the terminal it runs in (addchallenge.drop_hint).
 
     ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
     thread. The form closes once the challenge is added, with what to tell the player (None:
@@ -374,14 +374,16 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         self.add_files([path], said=f"pasted the clipboard's image as {path.name}; the model reads its text when you add the challenge")
 
     def compose(self) -> ComposeResult:
+        from ..addchallenge import drop_hint  # the way a drop works in this terminal (P77)
+
         with Vertical():
             with VerticalScroll(id="new-body", can_focus=False):  # tab goes through the fields only
                 yield Static(Text("New challenge", style="bold"))
                 yield Static(Text("Name, as the site shows it:"), classes="muted")
                 yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
                 yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
-                                  "text). Files: ctrl+o, or drag them in (if none lands, use ctrl+o); the line under the box names "
-                                  "them. Put the target's address (https://... or nc host port) on a line of its own:"), classes="muted")
+                                  "text), with the target's address (https://... or nc host port) on a line of its own. The line "
+                                  "under the box names each file attached. " + drop_hint(choose="press ctrl+o to choose it")), classes="muted", id="new-how")
                 yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
                 yield Static(Text("no file attached", style="bold"), id="new-attached")
                 with Horizontal():
@@ -1110,6 +1112,8 @@ KEYS_HEADING = {"list": "Keys in the lane list", "lane": "Keys in a lane"}
 BOTH_HEADING = "Keys in both"
 NOW_HEADING = {"list": "The selected lane, now", "lane": "This lane, now"}
 NOW_NO_LANE = "Now, with no lane selected"
+FILES_HEADING = "Files, in this terminal (/new and /attach)"  # then the drop sentence for where flightdeck runs (P77)
+FILES_CHOOSE = "press ctrl+o in the /new form, or type /attach with no file, to choose it"
 HELP_KEY_WIDTH = max(len(key) for key, _ in KEY_HELP + BATCH_KEY_HELP + LANE_KEY_HELP + BOTH_KEY_HELP)  # one column of keys down the dialog
 
 
@@ -1151,6 +1155,8 @@ class HelpScreen(ModalScreen[None]):
         return keys
 
     def compose(self) -> ComposeResult:
+        from ..addchallenge import drop_hint
+
         by_view = {
             "list": self._key_rows(KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()), of_list=True),
             "lane": self._key_rows(LANE_KEY_HELP),
@@ -1185,6 +1191,7 @@ class HelpScreen(ModalScreen[None]):
             Text(KEYS_HEADING[other], "bold underline"), by_view[other], Text(""),
             Text(BOTH_HEADING, "bold underline"), self._key_rows(BOTH_KEY_HELP), Text(""),
             Text("Commands (the bar at the bottom; plain text is a message to the lane)", "bold underline"), commands, Text(""),
+            Text(FILES_HEADING, "bold underline"), Text(drop_hint(choose=FILES_CHOOSE)), Text(""),
             Text("Alerts (lanes that need you come first, most urgent first)", "bold underline"), alerts, Text(""),
             Text("Header and cost (the marks after dollars, on a lane and in the header)", "bold underline"), marks, Text(""),
             Text("Board", "bold underline"), board,

@@ -25,9 +25,10 @@ FLAG = "t{handed_over}"
 
 @pytest.fixture(autouse=True)
 def a_plain_local_terminal(monkeypatch):
-    """Not over SSH, not under WSL and not VS Code's terminal, wherever the tests run: the line
-    said for a dropped file that is not there is chosen by those (addchallenge.not_there_line)."""
-    for name in ("SSH_CONNECTION", "SSH_TTY", "WSL_DISTRO_NAME", "WSL_INTEROP", "TERM_PROGRAM"):
+    """Not over SSH, not under WSL, not in tmux and not VS Code's terminal, wherever the tests
+    run: the line said for a dropped file that is not there, and the drop sentence, are chosen
+    by those (addchallenge.not_there_line, drop_hint)."""
+    for name in ("SSH_CONNECTION", "SSH_TTY", "WSL_DISTRO_NAME", "WSL_INTEROP", "TERM_PROGRAM", "TMUX", "XDG_SESSION_TYPE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -207,6 +208,62 @@ def test_a_paste_that_reads_as_dropped_files_names_the_one_that_is_not_there_and
     assert addchallenge.windows_path('"C:\\Users\\me\\my shot.png" "D:\\b.bin"') == '"C:\\Users\\me\\my shot.png" "D:\\b.bin"'
     for text in ["C: is the drive", "see C:\\Users\\me\\shot.png", str(gone), "c:\\ ", ""]:
         assert addchallenge.windows_path(text) == "", text
+
+
+CHOOSE = "press ctrl+o to choose it"
+GENERIC_DROP = "Drag a file onto this window to attach it. If nothing lands, your terminal kept the drop: press ctrl+o to choose it."
+VSCODE_DROP = ("VS Code's terminal types only the first file of a drop, and leaves ` $ | & > ~ # ! ^ * ; < out of its name: "
+               "drop one file at a time, or press ctrl+o to choose it.")
+ITERM2_DROP = ("In iTerm2, drag the file with no key held: with Option iTerm2 offers an upload or takes nothing, and with "
+               "Command it types a cd line. If nothing lands, press ctrl+o to choose it.")
+TMUX_DROP = ("Inside tmux, drop the file on the terminal tmux runs in: tmux passes its path on as a paste (flightdeck cannot "
+             "tell which terminal that is). If nothing lands, press ctrl+o to choose it.")
+SSH_DROP = ("Over SSH a file you drop stays on the machine your terminal runs on: copy it here first (scp), then /attach "
+            "its path.")
+WEZTERM_X11_DROP = "WezTerm takes a dropped file on X11 only in its nightly builds: press ctrl+o to choose it."
+
+
+@pytest.mark.parametrize(("program", "said"), [
+    ("vscode", VSCODE_DROP),
+    ("iTerm.app", ITERM2_DROP),
+    ("tmux", TMUX_DROP),
+    # nothing in their own source or documentation that this sentence could name: the generic one
+    ("Apple_Terminal", GENERIC_DROP),
+    ("ghostty", GENERIC_DROP),
+    ("kitty", GENERIC_DROP),
+    ("WezTerm", GENERIC_DROP),  # off X11 its drops paste as any other terminal's
+    ("WarpTerminal", GENERIC_DROP),
+    ("gnome-terminal", GENERIC_DROP),
+    ("Hyper", GENERIC_DROP),
+    ("", GENERIC_DROP),
+    (None, GENERIC_DROP),  # GNOME Terminal, kitty and Alacritty set no TERM_PROGRAM at all
+])
+def test_the_drop_sentence_is_the_one_for_the_terminal_program(program, said):
+    env = {} if program is None else {"TERM_PROGRAM": program}
+    assert addchallenge.drop_hint(choose=CHOOSE, env=env) == said
+
+
+def test_the_drop_sentence_inside_tmux_or_over_ssh_wins_over_the_terminal_program():
+    hint = lambda **env: addchallenge.drop_hint(choose=CHOOSE, env=env)  # noqa: E731
+    # tmux sets TERM_PROGRAM to its own name in a pane, but a shell started before it may keep the outer one
+    assert hint(TMUX="/tmp/tmux-501/default,4242,0", TERM_PROGRAM="iTerm.app") == TMUX_DROP
+    assert hint(TMUX="/tmp/tmux-501/default,4242,0") == TMUX_DROP
+    assert hint(TMUX="") == GENERIC_DROP  # set but empty is no tmux
+    # over SSH the file is on the other machine, in tmux or not, whatever the terminal
+    assert hint(SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22", TMUX="/tmp/tmux-501/default,1,0") == SSH_DROP
+    assert hint(SSH_TTY="/dev/pts/3", TERM_PROGRAM="vscode") == SSH_DROP
+    # WezTerm's own sentence is for X11 only, where its documentation says drops need a nightly build
+    assert hint(TERM_PROGRAM="WezTerm", XDG_SESSION_TYPE="x11") == WEZTERM_X11_DROP
+    assert hint(TERM_PROGRAM="WezTerm", XDG_SESSION_TYPE="wayland") == GENERIC_DROP
+    assert hint(TERM_PROGRAM="ghostty", XDG_SESSION_TYPE="x11") == GENERIC_DROP
+
+
+def test_the_drop_sentence_shows_nothing_from_the_environment():
+    """Fixed words only: a TERM_PROGRAM or a TMUX value never reaches the screen."""
+    for env in ({"TERM_PROGRAM": "\x1b]0;owned\x07"}, {"TMUX": "\x1b[2J/tmp/x,1,0"}, {"TERM_PROGRAM": "vscode\x1b[31m"}):
+        said = addchallenge.drop_hint(choose=CHOOSE, env=env)
+        assert "\x1b" not in said and "owned" not in said, env
+    assert addchallenge.drop_hint(choose=CHOOSE, env={"TERM_PROGRAM": "vscode\x1b[31m"}) == GENERIC_DROP  # only the exact name
 
 
 def test_the_line_for_a_dropped_file_that_is_not_there_says_why_it_is_not_where_the_console_runs(tmp_path):
@@ -2068,12 +2125,48 @@ def test_the_form_and_the_attach_command_say_what_to_do_when_a_dropped_file_does
         await pilot.press(*"/new", "enter")
         await pilot.pause()
         shown = " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
-        assert "Files: ctrl+o, or drag them in (if none lands, use ctrl+o)" in shown
+        assert ("Drag a file onto this window to attach it. If nothing lands, your terminal kept the drop: press ctrl+o "
+                "to choose it.") in shown
         assert "ctrl+o choose files" in " ".join(shown.split())
         await pilot.press("escape")
         await pilot.press(*"/att")  # the command menu, at /attach
         await pilot.pause()
         assert "add files to a challenge (drag them here, or none to choose)" in " ".join(screen_text(app).split())
+
+    in_console(tmp_path, body)
+
+
+def test_the_form_and_help_say_how_a_drop_works_in_the_terminal_flightdeck_runs_in(tmp_path, monkeypatch):
+    """Where the player looks to learn how to attach: the /new form and help, each with the sentence for this terminal."""
+    from test_console import prompt_text
+
+    from ctf_flightdeck.console.screens import FILES_CHOOSE, HelpScreen
+
+    monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
+
+    def shown(app) -> str:
+        return " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
+
+    async def body(run, app, pilot):
+        await pilot.press(*"/new", "enter")
+        await pilot.pause()
+        assert ITERM2_DROP in shown(app) and GENERIC_DROP not in shown(app)
+        await pilot.press("escape")
+        await pilot.pause()
+        app.action_help()
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        body, seen = app.screen.query_one("#help-body"), []
+        while True:  # help is longer than the screen: read it a page at a time, to its end
+            seen.append(prompt_text(app))
+            if body.scroll_y >= body.max_scroll_y:
+                break
+            body.scroll_page_down(animate=False)
+            await pilot.pause()
+        said = " ".join(seen)
+        assert "Files, in this terminal (/new and /attach)" in said
+        assert ITERM2_DROP.replace(CHOOSE, FILES_CHOOSE) in said
+        assert "press ctrl+o in the /new form, or type /attach with no file, to choose it" in said
 
     in_console(tmp_path, body)
 
