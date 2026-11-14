@@ -52,9 +52,11 @@ a stronger model or hands you its shell.
 - **Learns from each run.** A report of where lanes stalled and which interventions helped,
   writeup drafts, and the list of challenges your solvers missed.
 
-> **Status: v0.4.0 (alpha).** See the
-> [changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) and the
-> [roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md).
+> **Status: v0.4.0 (alpha)** is the newest release. On GitHub this page follows the code, which can
+> be ahead of that release: the
+> [changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) lists what is
+> "Unreleased", and the
+> [roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md) what comes next.
 
 ## Quickstart
 
@@ -79,6 +81,10 @@ kept in a file only you can read), the models (it offers some for every API) and
 2. **Practice**: 14 small practice challenges on your model. This spends money on your model API
    unless the model runs on your machine; each lane stops and asks you at $2 or 400,000 model
    tokens by default.
+
+The setup form came after 0.4.0 (`flightdeck --version` says which you have). On 0.4.0, "Get
+started" asks the same at the prompt and goes on to set up an event: for the practice set, run
+the four commands under "The same by command" below instead.
 
 The console opens on a welcome screen that says what you are looking at. You need three keys:
 **Enter** opens a lane to watch it and talk to it, `a` approves a flag a lane found, and `?` lists

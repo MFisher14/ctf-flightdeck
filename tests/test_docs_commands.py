@@ -298,6 +298,59 @@ def test_in_the_readme_a_bare_key_is_one_you_press_and_a_token_says_which_kind_i
     assert len(bare("models and keys, the console's keys, boards", "key")) == 2  # two meanings in one sentence, both bare
 
 
+SETUP_FORM = "First-time setup happens in the home screen."  # how the changelog line the setup form came with begins
+_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) \(", re.M)
+
+
+def release_before(changelog: str, line: str) -> str:
+    """The newest release that does not have what the changelog line beginning `line` tells:
+    the first release heading under that line. While the line is under "## Unreleased" that is
+    the newest release there is; once a release has taken the line, it is the one before it."""
+    parts = changelog.split(f"\n- {line}")
+    assert len(parts) == 2, f"the changelog has {len(parts) - 1} lines that begin {line!r}: one is expected"
+    under = _RELEASE.search(parts[1])
+    assert under, f"no release is under the changelog line that begins {line!r}"
+    return under.group(1)
+
+
+def test_release_before_is_the_newest_release_while_a_line_is_unreleased_and_the_one_before_once_it_is_out():
+    unreleased = "# C\n\n## Unreleased\n\n- A form. More.\n- Other.\n\n## 0.4.0 (2026-11-13)\n\n- Old.\n\n## 0.3.0 (2026-11-12)\n"
+    assert release_before(unreleased, "A form.") == "0.4.0"
+    released = unreleased.replace("## Unreleased", "## 0.5.0 (2026-12-01)")
+    assert release_before(released, "A form.") == "0.4.0" and release_before(released, "Old.") == "0.3.0"
+    with pytest.raises(AssertionError, match="0 lines"):
+        release_before(unreleased, "Not there.")
+    with pytest.raises(AssertionError, match="no release is under"):
+        release_before("## Unreleased\n\n- A form.\n", "A form.")
+
+
+def test_each_page_that_tells_of_the_setup_form_says_which_release_does_not_have_it_and_what_to_do_there():
+    """The README and the guide follow the code, and the quickstart leads to a form the newest
+    release may not have: a player who installed that release is told so where the form is
+    told of, with the commands that do the same there. The release is the changelog's: the
+    one under the line the form came with."""
+    changelog = read(ROOT / "CHANGELOG.md")
+    last = release_before(changelog, SETUP_FORM)
+    said = f"The setup form came after {last} (`flightdeck --version` says which you have)."
+    quick = flat(section(read(README), "## Quickstart"))
+    assert said in quick, f"README.md, Quickstart: {said}"
+    # after the form is told of, and before the commands it sends that player to
+    assert quick.index("**Get started** is a form on the home screen:") < quick.index(said) < quick.index("### The same by command")
+    there = quick[quick.index(said):quick.index("The console opens on a welcome screen")]
+    assert f'On {last}, "Get started" asks the same at the prompt' in there and 'the four commands under "The same by command"' in there
+    assert len(commands_in([block.group(2) for block in _FENCE.finditer(section(read(README), "### The same by command"))][0])) == 4
+    first = section(read(GUIDE), "## Install and first run")
+    assert said in flat(first), f"docs/GUIDE.md, Install and first run: {said}"
+    assert flat(first).index('"Get started" sets flightdeck up in a form') < flat(first).index(said) < flat(first).index("**The same by command.**")
+    assert f'On {last}, "Get started" asks the same at the prompt' in flat(first) and 'run the commands under "The same by command" below' in flat(first)
+    assert f'The setup form came after {last}: on {last} "Get started" asks the same at the prompt' in flat(read(ROOT / "llms.txt"))
+    # and the status line names the newest release, and says this page can be ahead of it
+    newest = _RELEASE.search(changelog).group(1)
+    status = flat(read(README)).split("> **Status: ", 1)[1].split(" ## ", 1)[0].replace(" > ", " ")  # one quoted paragraph
+    assert status.startswith(f"v{newest} (alpha)** is the newest release."), status
+    assert "this page follows the code, which can be ahead of that release" in status and '"Unreleased"' in status
+
+
 def test_the_guide_explains_its_words_second_and_names_commands_the_console_has():
     """The glossary comes right after "Install and first run", before any section that uses
     its words, and has the five a new player met undefined: wave, live instance, brief,

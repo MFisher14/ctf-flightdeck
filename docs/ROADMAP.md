@@ -29,7 +29,8 @@ Built since, from the list of what comes next (the
   with what is left to fix or the next command; an API key, an access token and model tokens
   are each called by name; and the guide's glossary comes second. The README and the guide
   describe the tree, so this quickstart is true of a release from the next one on: 0.4.0 has no
-  setup form on its home screen.
+  setup form on its home screen, and both pages say so beside the form, with the commands that
+  do the same on 0.4.0.
 
 Known limits, each said where it applies:
 

@@ -31,6 +31,10 @@ your model. The paragraphs below say what each step asks and does. The words thi
 here on (lane, ladder, board, lane image) are in [Words used here](#words-used-here), the next
 section.
 
+The setup form came after 0.4.0 (`flightdeck --version` says which you have). On 0.4.0, "Get
+started" asks the same at the prompt and goes on to set up an event: for the practice set there,
+run the commands under "The same by command" below, which that release has too.
+
 **The first run.** With no config yet the home screen sets flightdeck up itself. "Get started", its
 first choice, is a form: your model API, its API key (typed out of sight; it goes to your keys
 file), the models (every API has some to offer) and Docker or host, where Docker is offered when it
