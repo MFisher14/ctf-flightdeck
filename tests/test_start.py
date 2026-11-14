@@ -594,7 +594,7 @@ def test_init_given_anthropic_and_openrouter_together_writes_openrouter_as_the_f
 
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     target = tmp_path / "config.toml"
-    result = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input="anthropic, openrouter, codingagent\n\nhost\n")
+    result = CliRunner().invoke(cli.app, ["init", "--path", str(target)], input="anthropic, openrouter, codingagent\n\nhost\n\n\n")  # no key pasted for either
     assert result.exit_code == 0, result.output
     config = load_config(target)
     assert config.api.provider == "anthropic" and config.fallback is not None and "openrouter" in config.fallback.base_url

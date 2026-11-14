@@ -69,47 +69,133 @@ def root(
 MAX_RESUME = 6  # events offered on the opening menu, most recently played first
 
 
+BACK_FROM_A_RUN = ("Back from your run. What it spent, its run folder and the commands that read it are in the terminal, "
+                   "under this screen: q shows them.")
+
+
 def _home() -> None:
     """`flightdeck` alone, at a terminal: the home screen (console/home.py), then what the
-    player chose there."""
+    player chose there, then the home screen again. A run started from it comes back to it
+    when the player quits the console, with the event just played first in the list; first-time
+    setup comes back to what was set up and what next (the practice set first). Quitting the
+    home screen leaves, and so does a step that stops with an error (typer.Exit goes
+    through), so its reason is the last thing in the terminal and no screen covers it."""
     from . import events, start_cli
     from .config import ConfigError, default_config_path, load_config
     from .console import home
 
-    try:
-        path = default_config_path()
-        have = path.exists()
-        loaded = load_config(path) if have else None
-    except ConfigError as exc:
-        typer.echo(f"flightdeck: {exc}", err=True)
-        raise typer.Exit(2) from None
-    status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
-    menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
-                      pack_installed=loaded is not None and loaded.l1.pack is not None)
-    choice = _home_choice(menu, status, palette=loaded.console.palette if loaded is not None else None)
-    if choice is None:
-        return
-    kind = choice[0]
-    if kind == "resume":
-        play(board=choice[1])
-    elif kind == "new":
-        _start_new(choice[1])
-    elif kind == "practice":
-        practice()
-    elif kind == "mock":
-        mock()
-    elif kind == "pack":
-        from . import pack_cli
+    ready = None  # after setup: what the home screen opens on (home.Ready)
+    back = ""  # after a run: where its exit lines are
+    while True:
+        try:
+            path = default_config_path()
+            have = path.exists()
+            loaded = load_config(path) if have else None
+        except ConfigError as exc:
+            typer.echo(f"flightdeck: {exc}", err=True)
+            raise typer.Exit(2) from None
+        status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
+        if back:
+            status = back + (f"\n{status}" if status else "")
+        menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
+                          pack_installed=loaded is not None and loaded.l1.pack is not None)
+        choice = _home_choice(menu, status, palette=loaded.console.palette if loaded is not None else None, ready=ready)
+        ready, back = None, ""
+        if choice is None:
+            return
+        kind = choice[0]
+        if kind == "setup":
+            ready = _set_up(choice[1])
+        elif kind == "image":  # the lane image, built in the plain terminal; then what setup offered again
+            image_build(tag="")
+            ready = home.Ready(("The lane image is built: Docker lanes can start.",), first=choice[1])
+        elif kind == "pack":
+            from . import pack_cli
 
-        pack_cli.install()
-    elif kind == "setup":
-        start_cli.start()
+            pack_cli.install()
+            return  # what it installed, and what it says to do next, stay on the terminal
+        elif kind == "mock":
+            mock()
+        else:  # a run: its exit lines are printed to the terminal, and the home screen opens over them
+            if kind == "resume":
+                play(board=choice[1])
+                events.remember(choice[1])  # played until now: first in the list
+            elif kind == "new":
+                _start_new(choice[1])
+                events.remember(choice[1].folder)
+            elif kind == "practice":
+                practice()
+            back = BACK_FROM_A_RUN
 
 
-def _home_choice(menu, status: str, *, palette=None):
+def _home_choice(menu, status: str, *, palette=None, ready=None):
     from .console.home import HomeApp
 
-    return HomeApp(menu, status, palette).run()
+    return HomeApp(menu, status, palette, ready).run()
+
+
+def _set_up(done):
+    """Write what the home screen's setup form ended with (console/home.py Setup): the key to
+    the keys file, then the config (setup.write_setup: both, or neither where that can be
+    told beforehand). What was done is said in the terminal too, for after the home screen,
+    and is what the home screen opens on next (home.Ready): with building the lane image
+    first when Docker lanes need it and Docker can build it. Docker is asked only for Docker
+    lanes, with the wait said first (the home screen is closed: a silent terminal looks
+    hung), and for the image only once it has answered. The key is never shown."""
+    from . import keys
+    from . import setup as setups
+    from .agent.workspace import docker_unavailable
+    from .config import ConfigError, default_config_path
+    from .console import home
+
+    def fail(text: str) -> NoReturn:
+        typer.echo(f"flightdeck: {text}", err=True)
+        raise typer.Exit(2)
+
+    answers = done.answers
+    variable = answers.key_env
+    try:
+        path = default_config_path()
+        written = setups.write_setup(answers, path, keys={variable: done.key} if done.key else None)
+    except FileExistsError:
+        fail(f"{path} was written meanwhile, so nothing was set up: run `flightdeck` again to use it")
+    except (ConfigError, keys.KeysError) as exc:
+        fail(f"{exc}. Nothing was set up: fix that, then run `flightdeck` again")
+    except OSError as exc:
+        fail(f"cannot write {path}: {exc.strerror or type(exc).__name__}. Nothing was set up")
+    notes = [f"Your config: {written}"]
+    if variable:
+        try:
+            where = keys.source(variable)
+            keys_file = keys.keys_path()
+        except keys.KeysError as exc:
+            fail(str(exc))
+        if done.key:
+            notes.append(f"Your key: kept in {keys_file} as {variable}, which only you can read (never shown, never in the config)"
+                         + (f". {variable} is also set in your environment, and the environment's is the one a run uses"
+                            if where == "environment" else ""))
+        else:
+            notes.append(f"Your key: {variable}, as set in your {where}")
+    if answers.runtime == "host":
+        from .run import host_warning
+
+        notes.append(host_warning())
+    notes += setups.server_lines(answers, done.provider)
+    build = False
+    if answers.runtime == "docker":
+        # Docker first, with the wait said before it: a daemon that does not answer is waited for once, and not again for its image
+        typer.echo("flightdeck: asking Docker whether it can run lanes and has the lane image (up to 20 s when Docker does not "
+                   "answer)…", err=True)
+        reason = docker_unavailable()
+        if reason is not None:
+            notes.append(f"Docker lanes cannot start: Docker cannot run them now ({reason}). Start Docker; `flightdeck doctor` "
+                         "then says whether the lane image is still to build (`flightdeck image build`).")
+        elif setups.lane_image_missing(answers):
+            build = True
+            notes.append("Docker lanes run in the lane image, which is not built yet: the first choice here builds it.")
+    for note in notes:
+        typer.echo(f"flightdeck: {note}", err=True)
+    return home.Ready(tuple(notes), build=build, first=done.then)
 
 
 def _start_new(new) -> None:
@@ -696,30 +782,27 @@ def init(
         raise typer.Exit(2) from None
     from .agent.workspace import docker_unavailable
     from .config import ConfigError, default_config_path
-    from .keys import KeysError, keys_path, source
+    from .keys import KeysError, keys_path, load_keys, source, value_problem
     from .setup import (
         ANTHROPIC,
         ANTHROPIC_LADDER,
-        BENCHMARK,
-        LOCAL_PROVIDERS,
         PROVIDERS,
         RUNTIME_QUESTION,
         SUGGESTED_LADDERS,
         AnswerError,
-        Answers,
+        answers_for,
         anthropic_fallback,
-        anthropic_prices,
         base_url_answer,
         image_present,
         key_env_answer,
         light_model_answer,
-        mlx_server_command,
         models_answer,
         PROVIDER_MENU,
         provider_answer,
         providers_answer,
         runtime_answer,
-        write_config,
+        server_lines,
+        write_setup,
     )
 
     from .lane import IMAGE as LANE_IMAGE
@@ -754,6 +837,29 @@ def init(
             return source(variable) is not None
         except KeysError:
             return False  # doctor reports the keys file
+
+    def ask_key(variable: str) -> str:
+        """The key for `variable`, pasted at a hidden prompt ("" when the player skips it, or
+        when the keys file could not take it: said, and never asked for then). It is checked
+        as it is given and kept only once the config is (write_setup)."""
+        try:
+            load_keys()
+        except KeysError as exc:
+            typer.echo(f"note: {exc}; so {variable} is not asked for here")
+            return ""
+
+        def proc(typed: str) -> str:
+            if not typed.strip():
+                return ""
+            problem = value_problem(typed)
+            if problem is not None:
+                typer.echo(f"That key {problem}.")  # said here: a hidden prompt's own error gives no reason
+                raise typer.BadParameter(f"the key {problem}")
+            return typed.strip()
+
+        return typer.prompt(f"Paste your key for {variable} (nothing shows as you paste; it goes to your keys file, never "
+                            "into the config; Enter alone skips it for now)",
+                            default="", hide_input=True, show_default=False, value_proc=proc)
 
     target = _path(path or default_config_path())
     if target.exists() and not force:  # said before any question, so no answer is lost
@@ -825,7 +931,6 @@ def init(
         if suggested is not None:
             typer.echo(f"Suggested: {suggested}, {why}. Press Enter to take it, or give your own.")
         ladder = ask(question, models_answer, suggested)
-    prices = anthropic_prices(ladder) if dialect == "anthropic" else {}  # the refusal fallback's models too
     spare, offer = None, ""
     if dialect == "anthropic":
         candidate = anthropic_fallback(ladder)
@@ -852,25 +957,31 @@ def init(
         suggested, why = SUGGESTED_LIGHT[light_choice]
         typer.echo(f"Suggested light model: {suggested}, {why}. Press Enter to take it, or give your own.")
         light_table = light_answers(light_choice, ask("Light model, as your server names it", light_model_answer, suggested))
-    # A local model costs nothing and reports no cost: a dollar cap would only make every lane
-    # stop once to ask whether to carry on without it.
-    dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
-    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
     from .light import on_this_machine
 
-    here = dialect == "openai" and on_this_machine(base_url)  # a server on this machine: its replies can take minutes
     mlx_here = provider == "mlx" and on_this_machine(base_url)  # the lanes' MLX server, at whatever port it was given
     if light_table is not None and light_choice == "mlx" and mlx_here and light_table.model == ladder[0]:
         from dataclasses import replace
 
         light_table = replace(light_table, base_url=base_url)  # the one server the player starts serves both
-    answers = Answers(base_url, key_env or "", ladder, lanes_at, max_lanes, dollar_cap=dollar_cap,
-                      provider=dialect, prices=prices, fallback=spare, light=light_table,
-                      timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None)
+    answers = answers_for(provider, ladder, lanes_at, base_url=base_url, key_env=key_env or "", max_lanes=max_lanes,
+                          fallback=spare, light=light_table)
+    # The keys the config names that are not set yet (the API's, and the fallback's): asked for
+    # at a terminal, last, so that nothing typed after a key can be taken for one.
+    pasted: dict[str, str] = {}
+    if interactive:
+        for variable in dict.fromkeys(name for name in (answers.key_env, spare.key_env if spare is not None else "") if name):
+            if not known(variable):
+                key = ask_key(variable)
+                if key:
+                    pasted[variable] = key
     try:
-        written = write_config(answers, target, force=force)
+        written = write_setup(answers, target, keys=pasted, force=force)
     except (ConfigError, FileExistsError) as exc:
         fail(str(exc))
+    except KeysError as exc:
+        fail(f"{exc}. No config was written: fix that and run `flightdeck init` again, or skip the key there (Enter) and "
+             "export it instead")
     except OSError as exc:
         fail(f"cannot write {target}: {exc.strerror or type(exc).__name__}")
     typer.echo(f"wrote {written}")
@@ -880,18 +991,8 @@ def init(
         typer.echo(f"warning: {host_warning()}")
     if spare is not None:
         typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
-    if here:
-        typer.echo(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
-                   "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
-                   f"12B's replies {BENCHMARK}); change timeout and max_tokens under [api]")
-    from .setup import OLLAMA_CONTEXT_NOTE, is_ollama
-
-    if dialect == "openai" and is_ollama(base_url):
-        typer.echo(f"context: {OLLAMA_CONTEXT_NOTE}")
-    if provider == "mlx":
-        typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
-                   "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX "
-                   f"{BENCHMARK})")
+    for line in server_lines(answers, provider):  # a server on this machine: its lane calls, Ollama's context, the MLX command
+        typer.echo(line)
     if light_table is not None and light_choice == "mlx":
         import shlex
         from urllib.parse import urlsplit
@@ -916,12 +1017,14 @@ def init(
             where = source(variable)
         except KeysError:
             where = None  # a keys file flightdeck refuses to read: doctor says why
-        if where is not None:
+        if variable in pasted:
+            typer.echo(f"key: {variable} is saved in {keys_file}, which only you can read (never shown, never in the config)")
+        elif where is not None:
             shown = keys_file if where == "keys file" else "your environment"
             typer.echo(f"key: {variable} is set in {shown} (its value is never shown or stored)")
         else:
             typer.echo(f"next: put {variable}=<your key> in {keys_file} (chmod 600), or export {variable}=<your key>  "
-                       "(flightdeck never stores it)")
+                       "(the config never holds it)")
     if offer:
         typer.echo(offer)
     if lanes_at == "docker" and not image_present(LANE_IMAGE):  # the image init wrote; a built one needs no step

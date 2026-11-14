@@ -1,8 +1,12 @@
 """First-run help: `flightdeck init` writes a config, `flightdeck doctor` checks a setup.
 
 Both exist so a new player gets from install to a running console without reading the
-architecture (the v0.1.0 requirement). Neither ever asks for, reads out or stores the API
-key itself: the config names the environment variable that holds it.
+architecture (the v0.1.0 requirement). The config names the environment variable that holds
+the API key, never the key. At a terminal init asks for a key that is not set yet at a hidden
+prompt and puts it in the player's keys file (keys.save); neither init nor doctor ever reads
+a key out, and no message or config holds one. The home screen's setup form (console/home.py)
+asks the same questions and writes the same config: both go through the *_answer functions,
+answers_for and write_setup here.
 
 init checks each answer as it is given (the *_answer functions: a bad one is asked again
 at a terminal, and named by its option away from one), then checks the whole config in
@@ -99,11 +103,22 @@ LIGHT_CHOICES = ("rules", "ollama", "mlx", "anthropic", "cactus", "decider")  # 
 LIGHT_MEASURED = "measured (`flightdeck models` gives each result): Qwen3.5 9B or Gemma 4 12B with thinking off"
 LIGHT_ANTHROPIC = "claude-haiku-5-5"  # `init --light anthropic` without --light-model
 
-# What init suggests for a server on this machine: the default at its prompt, named in its
-# message away from a terminal, never written without the player choosing it. From a benchmark
-# of open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11: docs/MODELS.md), not a guarantee.
+# What init suggests where it has no ladder of its own to write: the default at its prompt and in
+# the home screen's setup form, named in its message away from a terminal, never written without
+# the player choosing it. For a model API: OpenRouter's names for the Claude ladder ("Lanes on an
+# API" in docs/MODELS.md), and for OpenAI's own API two models its documentation lists with
+# function calling on Chat Completions (the API flightdeck speaks) and no reasoning to switch off
+# first; flightdeck has measured neither, and docs/MODELS.md says so. For a server on this
+# machine: from a benchmark of open-weight models on one Mac (Apple M4 Max, 36 GB, 2026-11-11:
+# docs/MODELS.md), not a guarantee.
 BENCHMARK = "in flightdeck's benchmark (docs/MODELS.md)"
 SUGGESTED_LADDERS = {
+    "openrouter": (",".join(OPENROUTER_NAMES[model] for model in ANTHROPIC_LADDER),
+                   "OpenRouter's names for Claude Haiku, Sonnet and Opus 5.5, the ladder flightdeck would start with on an "
+                   "API (docs/MODELS.md)"),
+    "openai": ("gpt-5.4-mini,gpt-5.4",
+               "a small model and a larger one that take tool calls on OpenAI's Chat Completions API; flightdeck has not "
+               "measured them (docs/MODELS.md)"),
     "local": ("gpt-oss:20b", f"the local model that solved the most practice challenges as served (2 of 4), {BENCHMARK}"),
     "mlx": ("mlx-community/Qwen3.5-9B-MLX-4bit",
             f"it solved 2 of 4 practice challenges with thinking off and replies of up to 8192 tokens, {BENCHMARK}"),
@@ -384,16 +399,23 @@ def provider_answer(text: str) -> str:
     return name
 
 
+# The provider menu, in parts: init prints it whole at its prompt (PROVIDER_MENU), and the home
+# screen's setup form lists the same choices in the same words (provider_menu()).
+PROVIDER_QUESTION = "Which model API do the lanes use?"
+PROVIDER_LINES = (  # in PROVIDER_CHOICES' order; the local provider is shown as ollama
+    ("openrouter", "one key for many vendors' models (OPENROUTER_API_KEY)"),
+    ("anthropic", "Claude models on Anthropic's API (ANTHROPIC_API_KEY)"),
+    ("openai", "OpenAI's API (OPENAI_API_KEY)"),
+    ("ollama", "open-weight models on this machine, free"),
+    ("mlx", "an MLX server on this Mac, free"),
+    ("custom", "any other OpenAI-compatible server"),
+)
+AGENT_NOTE = ("A coding-agent CLI (Claude Code, Codex) is not chosen here: it needs no setup, `flightdeck play --agent "
+              "claude` uses it.")
 PROVIDER_MENU = (
-    "Which model API do the lanes use?\n"
-    "  1  openrouter   one key for many vendors' models (OPENROUTER_API_KEY)\n"
-    "  2  anthropic    Claude models on Anthropic's API (ANTHROPIC_API_KEY)\n"
-    "  3  openai       OpenAI's API (OPENAI_API_KEY)\n"
-    "  4  ollama       open-weight models on this machine, free\n"
-    "  5  mlx          an MLX server on this Mac, free\n"
-    "  6  custom       any other OpenAI-compatible server\n"
-    "Choose one, by number or name. A coding-agent CLI (Claude Code, Codex) is not chosen here: it needs\n"
-    "no setup, `flightdeck play --agent claude` uses it. Your choice"
+    PROVIDER_QUESTION + "\n"
+    + "".join(f"  {number}  {name:<13}{what}\n" for number, (name, what) in enumerate(PROVIDER_LINES, 1))
+    + "Choose one, by number or name. " + AGENT_NOTE.replace("it needs no setup", "it needs\nno setup") + " Your choice"
 )
 _AGENT_WORDS = ("agent", "codex", "cli", "claudecode", "claude-code")
 _CHOOSE = "choose a number from 1 to 6, or one of openrouter, anthropic, openai, ollama (or local), mlx or custom"
@@ -420,6 +442,21 @@ def providers_answer(text: str) -> tuple[str, ...]:
     if not chosen:
         raise AnswerError(_CHOOSE)
     return tuple(chosen)
+
+
+def provider_menu() -> tuple[tuple[str, str], ...]:
+    """The menu's choices as (provider, "name: what it is"), in its order: what the home
+    screen's setup form lists."""
+    return tuple((provider_answer(name), f"{name}: {what}") for name, what in PROVIDER_LINES)
+
+
+def default_models(provider: str) -> tuple[str, str]:
+    """The models offered for `provider` before the player types any, as the models question
+    takes them (weakest first, comma-separated), and why those: Anthropic's ladder, else what
+    SUGGESTED_LADDERS holds. ("", "") for custom, whose models only its server can name."""
+    if provider == "anthropic":
+        return ",".join(ANTHROPIC_LADDER), "Claude Haiku, Sonnet and Opus 5.5, written with Anthropic's list prices"
+    return SUGGESTED_LADDERS.get(provider, ("", ""))
 
 
 def models_answer(text: str) -> tuple[str, ...]:
@@ -537,20 +574,109 @@ def _lane_image() -> str:
     return IMAGE
 
 
-def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
-    """Check the config in memory, then write it. Refuses to overwrite unless force.
+def provider_api(provider: str) -> tuple[str | None, str | None]:
+    """A provider's address and the variable that holds its key ("" for a server that needs
+    none); (None, None) for custom, which has neither of its own."""
+    if provider == "anthropic":
+        return ANTHROPIC
+    return PROVIDERS.get(provider, (None, None))
 
-    A ConfigError names `path` and what is wrong; nothing is written before the check, so
-    a key typed in the wrong place never reaches a file."""
+
+def answers_for(provider: str, ladder: Sequence[str], runtime: str, *, base_url: str | None = None,
+                key_env: str | None = None, max_lanes: int = 4, fallback: FallbackAnswers | None = None,
+                light: LightAnswers | None = None) -> Answers:
+    """The config for a provider (one of PROVIDER_CHOICES), a ladder and a runtime, as
+    `flightdeck init` and the home screen's setup form both write it: the provider's address
+    and key variable unless others are given (custom has neither of its own, so both must
+    be: ValueError), Anthropic's prices for an Anthropic ladder, no dollar cap for a server
+    that costs nothing (a cap would only stop every lane once to ask about a cost nobody
+    reports), and for an OpenAI-compatible server on this machine the longer timeout and the
+    reply cap, since a local model can take minutes for one reply."""
+    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
+    from .light import on_this_machine
+
+    dialect = "anthropic" if provider == "anthropic" else "openai"
+    url, env = provider_api(provider)
+    base_url = base_url or url
+    key_env = env if key_env is None else key_env
+    if base_url is None or key_env is None:
+        raise ValueError(f"the {provider} provider has no address or key variable of its own: give both ('' for no key)")
+    here = dialect == "openai" and on_this_machine(base_url)
+    return Answers(
+        base_url, key_env, tuple(ladder), runtime, max_lanes,
+        dollar_cap=None if provider in LOCAL_PROVIDERS else 2.0,
+        provider=dialect, prices=anthropic_prices(ladder) if dialect == "anthropic" else {},  # the refusal fallback's models too
+        fallback=fallback, light=light,
+        timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None,
+    )
+
+
+def server_lines(answers: Answers, provider: str) -> list[str]:
+    """What a player is told about a model server on this machine once its config is written:
+    how long a lane's call may take and how long its reply may be, what Ollama does with a
+    lane's context, and the command that starts the MLX server. Nothing for a remote API."""
+    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
+
+    lines = []
+    if answers.timeout is not None:
+        lines.append(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
+                     "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
+                     f"12B's replies {BENCHMARK}); change timeout and max_tokens under [api]")
+    if answers.provider == "openai" and is_ollama(answers.base_url):
+        lines.append(f"context: {OLLAMA_CONTEXT_NOTE}")
+    if provider == "mlx":
+        lines.append(f"next: start the MLX server: {mlx_server_command(answers.models[0], answers.base_url)}   (thinking off, "
+                     "and a reply cap of 8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice "
+                     f"challenges on MLX {BENCHMARK})")
+    return lines
+
+
+def lane_image_missing(answers: Answers) -> bool:
+    """Whether the config's lanes need the lane image built first: Docker lanes, and the image
+    init names (flightdeck's own) is not on this machine."""
+    return answers.runtime == "docker" and not image_present(_lane_image())
+
+
+def check_config(answers: Answers, path: Path, *, force: bool = False) -> str:
+    """The config's text for `answers`, checked in memory as load_config() would check the
+    file: a ConfigError names `path` and what is wrong. FileExistsError when `path` is there
+    and `force` is not given. Nothing is written."""
     from .config import parse_config
 
     text = render(answers)
     parse_config(text, path)
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; use --force to replace it")
+    return text
+
+
+def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
+    """Check the config in memory, then write it. Refuses to overwrite unless force.
+
+    A ConfigError names `path` and what is wrong; nothing is written before the check, so
+    a key typed in the wrong place never reaches a file."""
+    text = check_config(answers, path, force=force)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def write_setup(answers: Answers, path: Path, *, keys: Mapping[str, str] | None = None, force: bool = False) -> Path:
+    """Write the config and keep the keys the player gave for it: each of `keys` ({variable:
+    key}) goes to the keys file (keys.save: the owner's only, never shown, never in the
+    config). Only a variable the config names is taken (its API's, its fallback's:
+    ValueError otherwise). The config is checked first (check_config) and the keys are kept
+    before it is written, so a config that would be refused keeps no key, and a key that
+    cannot be kept (keys.KeysError) leaves no config behind that names a key nobody has."""
+    from . import keys as keys_file
+
+    check_config(answers, path, force=force)
+    named = {answers.key_env, answers.fallback.key_env if answers.fallback is not None else ""} - {""}
+    for variable, value in (keys or {}).items():
+        if variable not in named:
+            raise ValueError("a key was given for a variable the config does not name")
+        keys_file.save(variable, value)
+    return write_config(answers, path, force=force)
 
 
 @dataclass(frozen=True)

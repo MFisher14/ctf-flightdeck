@@ -12,8 +12,7 @@ Needs Python 3.12+ on macOS or Linux (Windows through WSL), and Docker for the s
 
 ```sh
 pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
-flightdeck init               # a few questions (provider, models, Docker or host); writes your config
-# put your key in ~/.config/ctf-flightdeck/keys.env (chmod 600): init names the variable
+flightdeck init               # a few questions (provider, models, Docker or host, your API key); writes your config
 flightdeck image build        # once, for Docker lanes: pulls Debian and common tools (about 700 MB)
 flightdeck doctor             # checks your setup and says how to fix each problem
 flightdeck practice           # 14 small practice challenges: spends tokens on your model API
@@ -22,7 +21,12 @@ flightdeck practice           # 14 small practice challenges: spends tokens on y
 `init` shows a numbered list of model APIs: answer with a number or a name. Lanes use one API;
 "anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing.
 A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
-uses it. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
+uses it. Every API has models to offer, and Enter takes them (which, and why:
+[Models](MODELS.md#what-we-would-start-with)). Last, `init` asks for your API key: nothing
+shows as you paste, and it goes to your keys file (`~/.config/ctf-flightdeck/keys.env`, yours
+only), never into the config. Enter alone skips it; a key already in your environment or in
+that file is not asked for, and away from a terminal `init` asks nothing and says where the
+key goes. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
 
 `flightdeck` on its own, at a terminal, opens the home screen: resume an event (the ones you
 set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
@@ -32,8 +36,26 @@ sets the event up and opens its console. What would stop that (a folder that can
 VPN file that is not there, a token that cannot be kept) is said in the form, with your answers
 still in it, and under the flag format the form says what it made of what you typed. Steps that need your password (connecting a VPN,
 installing its tool or the solver pack) are asked in the plain terminal before the console
-opens. With no config yet the home screen offers "Get started", which asks about your model API
-in the terminal and then your first event. In a script or a pipe it asks nothing and prints the commands
+opens. When a run you started there ends (you quit its console), flightdeck comes back to the
+home screen with that event first in the list; what the run spent, its run folder and the
+commands that read it are in the terminal under the home screen, and `q` shows them. The
+practice set and the demo come back to it too. `q` on the home screen leaves, and a run that
+stops with an error leaves with its reason showing.
+
+With no config yet the home screen does `init`'s part itself. "Get started", its first choice,
+is a form with the same questions: your model API, its key (typed out of sight; it goes to your
+keys file), the models (every API has some to offer) and Docker or host, where Docker is offered
+when it runs on your machine and host when it does not. Docker can take a while to answer (up
+to 20 s when its daemon hangs): until it does the form offers neither and saves none, so wait
+for it or choose one yourself, and a choice you made meanwhile stands. Leaving the form stops
+the question. `ctrl+s` saves it; what is wrong with an answer is said in the form. The home screen then says what it wrote and offers the practice
+set first, with starting an event one below; when your lanes run in Docker and the lane image
+is not built yet, building it comes first (`flightdeck image build`, run for you in the
+terminal). "Start a new CTF" with no config asks the same setup first and then offers the
+event's form first. The form sets up one model API with the rules as the light model; for an
+OpenRouter fallback or a light model, use `flightdeck init`.
+
+In a script or a pipe `flightdeck` alone asks nothing and prints the commands
 instead. The first console you open, and the mock, start on a welcome screen: what the board,
 the lanes and the command bar are, and the keys you need; Enter goes on (on an empty board, to
 adding your first challenge). `flightdeck doctor` checks Python,
@@ -194,7 +216,8 @@ can read the practice set's reference solutions in a clone of this repository.
 
 Your config names the environment variable that holds each key, never the key; flightdeck reads
 it from your environment, else from the keys file, `~/.config/ctf-flightdeck/keys.env`, which
-must be readable by you only:
+must be readable by you only. `flightdeck init` and the home screen's setup form put the key you
+paste there for you (hidden as you paste, never shown again). To make or change the file by hand:
 
 ```sh
 mkdir -p ~/.config/ctf-flightdeck && touch ~/.config/ctf-flightdeck/keys.env && chmod 600 ~/.config/ctf-flightdeck/keys.env

@@ -41,7 +41,8 @@ moves one step up. `flightdeck config --example` shows every key.
 The config names each key's environment variable, never the key. flightdeck reads the variable
 from its environment first, then from `~/.config/ctf-flightdeck/keys.env` (or the file
 `$FLIGHTDECK_KEYS` names), which must be readable by you only (chmod 600). flightdeck never
-prints, logs or stores a key. A lane's commands get an environment built from an allowlist, so
+prints or logs a key, and keeps one in that file only: the key you paste at `flightdeck init`'s
+hidden prompt or in the home screen's setup form goes there, and nowhere else. A lane's commands get an environment built from an allowlist, so
 no key is handed to them; on the host runtime a lane still runs as you and can read your files
 (see [Docker or host](GUIDE.md#docker-or-host) in the guide). A coding-agent lane is different: its
 CLI gets its own credential, and the commands the agent runs can read it, in Docker too, so give

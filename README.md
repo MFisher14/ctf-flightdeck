@@ -59,7 +59,7 @@ Needs Python 3.12+ on macOS or Linux (Windows through WSL). Docker is recommende
 
 ```sh
 pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
-flightdeck init               # a few questions; writes your config and names the key it needs
+flightdeck init               # a few questions; writes your config and keeps your API key (pasted, hidden)
 flightdeck image build        # once, for Docker lanes (about 700 MB)
 flightdeck pack install       # optional, needs uv: some 800 no-model solvers that run first
 flightdeck doctor             # checks everything and says how to fix each problem

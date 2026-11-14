@@ -160,7 +160,7 @@ def test_init_for_any_other_api_says_nothing_of_ollamas_context(tmp_path, monkey
 
 def test_at_a_terminal_a_light_model_on_ollama_is_offered_with_thinking_off(tmp_path, monkeypatch):
     result, target = init(monkeypatch, tmp_path, "--provider", "openrouter", "--models", "a/b", "--host",
-                          "--light", "ollama", terminal=True, answers="\n")
+                          "--light", "ollama", terminal=True, answers="\n\n")  # the suggestion taken; then no key pasted
     assert result.exit_code == 0, result.output
     assert load_config(target).light == LightConfig("openai", "qwen3.5:9b", "http://127.0.0.1:11434/v1", "", thinking=False)
     assert ("Suggested light model: qwen3.5:9b, with thinking off it scored 42 of the 44 hint and judge cases in eval-local against the rules' "
@@ -173,7 +173,7 @@ def test_at_a_terminal_a_light_model_on_ollama_is_offered_with_thinking_off(tmp_
 
 def test_a_light_model_on_mlx_is_offered_and_init_says_how_to_serve_it(tmp_path, monkeypatch):
     result, target = init(monkeypatch, tmp_path, "--provider", "openrouter", "--models", "a/b", "--host",
-                          "--light", "mlx", terminal=True, answers="\n")
+                          "--light", "mlx", terminal=True, answers="\n\n")  # the suggestion taken; then no key pasted
     assert result.exit_code == 0, result.output
     light = load_config(target).light
     assert (light.model, light.base_url, light.thinking) == (QWEN_MLX, "http://127.0.0.1:8080/v1", False)
