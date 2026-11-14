@@ -2,6 +2,17 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- `ctrl+o` in the lane list opens your system's file window to attach files to the selected
+  lane's challenge, as `/attach` with no file does: for a terminal where dragging a file in
+  does nothing. In a lane's own view `ctrl+o` still turns details on or off. `?` lists both.
+- A `/new` with a screenshot that was answered with `reading 1 image...` and then could not be
+  added removes the copies of the files you dropped for it, and the warning says so: drop them
+  again with `/new`. They used to stay in the run's folder until the run ended.
+- `flightdeck init --force` replaces your config in one step, keeping its permissions: a write
+  cut off half way (a full disk) leaves the old config as it was, never half of each.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,

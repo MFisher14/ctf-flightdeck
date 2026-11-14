@@ -1065,7 +1065,8 @@ if it was accepted or `d` if not.
 
 `ctrl+o` in the form opens your system's file window (Finder's on macOS) to choose the
 challenge's files, for a terminal where a drop does not arrive; `/attach <challenge>` with no
-file opens the same window. Files dropped on the console are taken wherever the focus is: into
+file opens the same window, and so does `ctrl+o` in the lane list, for the selected lane's
+challenge. Files dropped on the console are taken wherever the focus is: into
 the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
 challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
 exist; any other paste is text, and text you typed on the command bar is never replaced. A
@@ -1083,7 +1084,9 @@ name. A dropped file is copied into the run's folder the moment it lands, and th
 what gets attached: the file behind a drop can be a temporary one, so it may be gone by the
 time you press `ctrl+s` or Enter, and the challenge has it all the same. That is why the
 `/attach` on the command bar names a path under `dropped/` in the run's folder. The copy is
-removed once the challenge has the file.
+removed once the challenge has the file. It is also removed when a `/new` with a screenshot was
+answered (`reading 1 image...`) and the challenge then could not be written: the form is closed
+by then, so the warning says the copies are gone and you drop the files again with `/new`.
 
 On macOS, drag the saved screenshot (from the Desktop or a Finder window), not the thumbnail
 that floats in the corner right after you take it: the thumbnail's file may be gone before
@@ -1093,7 +1096,7 @@ on this machine, the console says so and pastes it as the text it is. The line s
 `no such file:` or `not on this machine:` and says the likely reason for where you are:
 
 - **A temporary file that is gone.** Drag the saved file, or choose it: `ctrl+o` in the
-  form, `/attach` with no file elsewhere.
+  form or the lane list, `/attach` with no file in a lane.
 - **Over SSH.** A file you drop is on the machine your terminal runs on, not the one
   flightdeck runs on. Copy it over first (`scp`), then `/attach` its path.
 - **Windows Terminal with WSL.** A path that starts `C:\` is a Windows path. A WSL profile
@@ -1101,12 +1104,12 @@ on this machine, the console says so and pastes it as the text it is. The line s
   set `"pathTranslationStyle": "wsl"`, or `/attach` the `/mnt/c/...` path.
 - **VS Code's terminal.** It takes `` ` $ | & > ~ # ! ^ * ; < `` out of a dropped file's
   name, so a file with one of those in its name arrives as a path that names nothing. Choose
-  that file instead: `ctrl+o` in the form, `/attach` with no file elsewhere.
+  that file instead: `ctrl+o` in the form or the lane list, `/attach` with no file in a lane.
 
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Choose the file instead: `ctrl+o` in the `/new`
-form; anywhere else, `/attach <challenge>` with no file opens the file window. (`ctrl+o` is
-only the form's file window: in a lane's view it turns details on or off.) A terminal may hold drops back while a program has the mouse, as the console does
+form, or in the lane list for the selected lane's challenge; in a lane's own view,
+`/attach` with no file opens the file window (`ctrl+o` there turns details on or off). A terminal may hold drops back while a program has the mouse, as the console does
 by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
 you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
 console, and every key works as before.

@@ -1207,7 +1207,10 @@ text back when it does not load or does not hold the change. Three callers: `pac
 `save_console()` (the console's `theme` and `layout`). `set_keys()` edits a table by lines, so
 comments stay; `save_console()` also checks, before it writes, that the new text parses to the
 old settings with those keys changed and nothing else. Every failure is an `EditError` that
-names the file, the reason and how the file was left.
+names the file, the reason and how the file was left. `flightdeck init` writes its config the
+same way the edits put text in place (P85): `setup.write_config` hands it to
+`config_edit.replace_file`, a new file beside it renamed over the path, so a write cut off
+half way never leaves half a config; a new config is first made empty with the umask's mode.
 
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).
