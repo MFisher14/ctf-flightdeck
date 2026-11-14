@@ -184,7 +184,7 @@ def test_what_an_http_profile_must_have_and_what_is_only_a_warning(tmp_path):
     with pytest.raises(ProfileError) as missing:
         load_profile(event_file(tmp_path, http=None))
     assert str(missing.value) == (f'{tmp_path / "event.toml"}: the [http] table is missing: platform = "http" asks the platform by the '
-                                  'routes it writes (preset = "rctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
+                                  'routes it writes (preset = "rctf" or "noctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
     with pytest.raises(ProfileError) as bad:
         load_profile(event_file(tmp_path, http='preset = "rctf"\n[http.list]\nrequest = ["GET", "https://evil.example.test/x"]'))
     assert str(bad.value).startswith(f'{tmp_path / "event.toml"}: http.list.request: the path must start with / and name a route under event.url')

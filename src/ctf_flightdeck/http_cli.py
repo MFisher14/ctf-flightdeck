@@ -1,6 +1,6 @@
 """`flightdeck http`: an event on a platform with a JSON API, played from a table of routes.
 
-    flightdeck http example [--routes]         # print an event profile to edit: the rctf preset, or every route written out
+    flightdeck http example [--preset NAME] [--routes]  # print an event profile to edit: a preset (rctf, noctf), or its routes written out
     flightdeck http check EVENT.toml           # sign in, list, read the solved list; show what each path matched; submit nothing
     flightdeck http pull EVENT.toml [FOLDER]   # pull the event's board and read the solved list; submit nothing
 
@@ -23,7 +23,7 @@ from .text import untrusted
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="A platform with a JSON API (rCTF and others): play it from the routes in the event profile's [http] table.",
+    help="A platform with a JSON API (rCTF, noCTF and others): play it from the routes in the event profile's [http] table.",
 )
 
 EXAMPLE = """\
@@ -49,39 +49,60 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 submit = "confirm"                  # you approve each flag before it is sent ("auto": a claimed flag goes at once)
 
 """
-PRESET = """\
+PRESET = {
+    "rctf": """\
 [http]
 preset = "rctf"                     # rCTF's routes, which ship with flightdeck; a key written under [http] wins
 # rCTF: put your team's login link in the variable, whole and in quotes (its profile page's "Team Invite":
 # https://.../login?token=...), or the token alone. flightdeck takes the token out of the link and decodes it.
-"""
+""",
+    "noctf": """\
+[http]
+preset = "noctf"                    # noCTF's routes, which ship with flightdeck; a key written under [http] wins
+# noCTF: event.url is the address of its API, which may not be the web page's (the browser's network tab shows
+# the host the requests to /challenges go to). The token is the session token the page keeps once you sign in
+# (the browser's storage for the site, under noctf-session-token); a session lasts a week.
+""",
+}
 ROUTES_HEAD = """\
-# The routes of the platform's API. These are rCTF's, written out: change them to the platform in
+# The routes of the platform's API. These are {label}'s, written out: change them to the platform in
 # front of you (its browser's network tab shows its routes). `flightdeck http check` tries them.
 """
+LABELS = {"rctf": "rCTF", "noctf": "noCTF"}  # each preset's name as the platform writes it
+_TOKEN_LINE = 'token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...'
 
 
-def example_profile(routes: bool = False) -> str:
-    """An event profile on the http platform that loads: with the rctf preset, or (`routes`)
-    with the preset's table written out under [http], to edit for another platform."""
+def example_profile(routes: bool = False, preset: str = "rctf") -> str:
+    """An event profile on the http platform that loads: with `preset`, or (`routes`) with
+    that preset's table written out under [http], to edit for another platform."""
+    from .platform.http import PRESETS, preset_text
+
+    if preset not in PRESETS:
+        raise ValueError(f"no preset of that name (known: {', '.join(PRESETS)})")
     if not routes:
-        return EXAMPLE + PRESET
-    from .platform.http import preset_text
-
-    table = re.sub(r"(?m)^\[([a-z.]+)\]$", r"[http.\1]", preset_text("rctf"))
+        variable = f"{preset.upper()}_TOKEN"
+        own = EXAMPLE.replace(_TOKEN_LINE, f'token_env = "{variable}"'.ljust(36) + f"# the NAME of the variable that holds your token: "
+                              f"{preset.upper()}_..., HTTP_TOKEN or HTTP_TOKEN_...")
+        assert preset == "rctf" or own != EXAMPLE
+        return own + PRESET[preset]
+    table = re.sub(r"(?m)^\[([a-z.]+)\]$", r"[http.\1]", preset_text(preset))
     table = "\n".join(line for line in table.splitlines() if not line.startswith("#")).strip("\n")
-    own = EXAMPLE.replace('token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...',
-                          'token_env = "HTTP_TOKEN"            # the NAME of the variable that holds your token: HTTP_TOKEN or HTTP_TOKEN_...')
+    own = EXAMPLE.replace(_TOKEN_LINE, 'token_env = "HTTP_TOKEN"            # the NAME of the variable that holds your token: HTTP_TOKEN or HTTP_TOKEN_...')
     assert own != EXAMPLE
-    return own + ROUTES_HEAD + table + "\n"
+    return own + ROUTES_HEAD.format(label=LABELS[preset]) + table + "\n"
 
 
 @app.command("example")
 def example(
-    routes: Annotated[bool, typer.Option("--routes", metavar="", help="Write every route out under [http] (rCTF's), to edit for another platform.")] = False,
+    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf or noctf.")] = "rctf",
+    routes: Annotated[bool, typer.Option("--routes", metavar="", help="Write every route of the preset out under [http], to edit for another platform.")] = False,
 ) -> None:
     """Print an event profile for the http platform, to edit: `flightdeck http example > event.toml`."""
-    typer.echo(example_profile(routes), nl=False)
+    try:
+        text = example_profile(routes, preset)
+    except ValueError as exc:
+        _fail(str(exc))
+    typer.echo(text, nl=False)
 
 
 @app.command("check")

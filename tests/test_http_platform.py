@@ -142,13 +142,13 @@ def test_a_checked_table_can_be_hashed_and_compared_as_the_rest_of_a_profile_is(
 
 def test_a_preset_flightdeck_does_not_have_is_refused_and_its_name_is_not_shown():
     said = refused({"preset": "s3cr3t-pasted-here"})
-    assert said.startswith("http.preset is not a preset flightdeck has (known: rctf)") and "s3cr3t" not in said
+    assert said.startswith("http.preset is not a preset flightdeck has (known: rctf, noctf)") and "s3cr3t" not in said
 
 
 @pytest.mark.parametrize("config, said", [
     ("routes", "http must be a table ([http])"),
-    ({}, 'http needs [http.auth], [http.list], [http.solved] (or preset = "rctf", which has them)'),
-    (table(solved=None), 'http needs [http.solved] (or preset = "rctf", which has them)'),
+    ({}, 'http needs [http.auth], [http.list], [http.solved] (or preset = "rctf" or "noctf", which have them)'),
+    (table(solved=None), 'http needs [http.solved] (or preset = "rctf" or "noctf", which have them)'),
     ({**table(), "headers": {"X-Evil": "1"}}, "http.headers is not a key flightdeck knows (known in [http]: preset, game, files_auth, auth, "
                                               "list, detail, submit, solved)"),
     (table(**{"list.next_path": "$.next"}), "http.list.next_path: pages of a listing is not something the http platform does yet; a plugin "

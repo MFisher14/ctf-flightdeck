@@ -83,7 +83,8 @@ from .ctfd import CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _ret
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
 LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NAME plugin"
 PULL_COMMAND = "flightdeck http pull"
-PRESETS = ("rctf",)  # http_presets/NAME.toml
+PRESETS = ("rctf", "noctf")  # http_presets/NAME.toml
+PRESET_CHOICE = "preset = " + " or ".join(f'"{name}"' for name in PRESETS)  # for messages: preset = "rctf" or "noctf"
 PRESET_DIR = "platform/http_presets"
 TOKEN_VARIABLE = "HTTP_TOKEN"  # event.token_env of a profile with no preset: this, or this and _NAME (HttpConfig.names_token)
 
@@ -380,7 +381,7 @@ def parse_config(table: object) -> HttpConfig:
         raise ValueError("http.files_auth must be true or false: whether a file on the event's own address is asked for with the token")
     missing = [f"[http.{name}]" for name in ("auth", "list", "solved") if name not in table]
     if missing:
-        raise ValueError(f"http needs {', '.join(missing)}" + ("" if preset else ' (or preset = "rctf", which has them)'))
+        raise ValueError(f"http needs {', '.join(missing)}" + ("" if preset else f" (or {PRESET_CHOICE}, which have them)"))
     config = HttpConfig(
         auth=_auth(_sub(table, "auth")),
         list=_listing(_sub(table, "list")),
