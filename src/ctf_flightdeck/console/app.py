@@ -306,9 +306,13 @@ class FlightdeckApp(App[None]):
         """Files dropped on the terminal arrive as pasted paths, or, from a terminal with no
         bracketed paste, as the same text typed all at once (take_keys). Wherever the focus
         is, they go where files belong (take_drop) instead of into whatever widget had the
-        focus; any other paste, and any other key, goes on as usual."""
-        if isinstance(event, events.Paste) and not event.is_forwarded and self.take_drop(event.text):
-            return
+        focus; any other paste, and any other key, goes on as usual. A paste that reads as
+        dropped files, one of which is not on this machine, also gets a line that says why
+        (say_not_there)."""
+        if isinstance(event, events.Paste) and not event.is_forwarded:
+            if self.take_drop(event.text):
+                return
+            self.say_not_there(event.text)  # and the text goes on, as any paste
         if isinstance(event, events.Key) and not event.is_forwarded:  # (forwarded: one a widget passed back up)
             if event is self._typing:  # a key that was held, back to be typed: the next one once this one has acted
                 self._typing = None
@@ -326,8 +330,9 @@ class FlightdeckApp(App[None]):
         before (a path in the middle of text that arrives all at once is text), and takes
         every key of text that comes within BURST_GAP of the one before. When no more come it is a drop
         only if all of it together is paths of files that exist (addchallenge.dropped) and it
-        is at least BURST_MIN characters; any other burst is typed, in order, as if it had
-        never been held (at most BURST_GAP late). A key that is not text (Enter, an arrow)
+        is at least BURST_MIN characters. A burst that reads as dropped files of which one is
+        not there is said (say_not_there) and is a paste of that text: no key of it acts. Any
+        other burst is typed, in order, as if it had never been held (at most BURST_GAP late). A key that is not text (Enter, an arrow)
         ends a burst as typing. Nothing a player types is read for paths: no one types a path
         that exists at 50 keys a second."""
         from ..addchallenge import MAX_DROP
@@ -414,7 +419,31 @@ class FlightdeckApp(App[None]):
             if not self.take_drop(text):  # not taken (take_drop said why): text for a field that has the focus, as a paste is
                 await super().on_event(events.Paste(text))
             return
+        if len(text) >= BURST_MIN and self.say_not_there(text):
+            # a dropped file that is not there (said): text for a field that has the focus, and none of its keys acts
+            await super().on_event(events.Paste(text))
+            return
         self._type(keys)
+
+    def say_not_there(self, text: str) -> bool:
+        """Whether `text` reads as dropped files of which one is not on this machine, on a
+        board that takes files: the console then says why, and what works instead
+        (addchallenge.not_there_line), in the /new form when it is open. The text itself is
+        left to go on as the paste it is."""
+        from ..addchallenge import not_there_line
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        form = self.screen if isinstance(self.screen, NewChallengePrompt) else None
+        line = not_there_line(text, choose="press ctrl+o to choose it" if form else "type /attach with no file to choose it")
+        if not line:
+            return False
+        if form is not None:
+            form.problem(line)
+        else:
+            self.warn(line)
+        return True
 
     def take_drop(self, text: str) -> bool:
         """Whether `text` was files dropped (or pasted) on the console, now taken. Only a

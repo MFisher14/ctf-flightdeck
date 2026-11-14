@@ -199,6 +199,10 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         """The line over the keys: a problem (in the warning colour), or with a style, what is going on."""
         self.query_one("#new-problem", Static).update(Text(text, style=style) if style else Text(text))
 
+    def problem(self, text: str) -> None:
+        """Say `text` on the form's own line, as a problem (the console's status line is under the form)."""
+        self._say(text)
+
     def add_files(self, files, *, said: str = "") -> bool:
         """Attach files the player handed over (a drop, the file window, the clipboard's
         image). One that cannot be attached is not, and the form says why (addchallenge.refusal).

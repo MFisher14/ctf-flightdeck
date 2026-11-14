@@ -29,13 +29,14 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .keys import KeysError, keys_path
 from .platform.manual import CHALLENGE_FILE, ID, MAX_ID, _origin, tcp_service
+from .text import untrusted
 
 MAX_NAME = 120
 MAX_DROP = 20_000  # characters: a longer paste is text, not a drop
@@ -200,6 +201,88 @@ def quote(path: Path) -> str:
     """A path as one word that `dropped` and `attach_arg` read back."""
     text = str(path)
     return f"'{text}'" if "'" not in text else re.sub(r"""([\s\\'"])""", r"\\\1", text)
+
+
+# ---------------------------------------------------------------------- a drop whose file is not there
+
+
+# An absolute path as a terminal writes a dropped file's: two parts or more. One name under the
+# root is not read as one: /help and /new are commands, and no dropped file lives there.
+_FULL_PATH = re.compile(r"(?:/[^/ \t]+/|~/)")
+_NAMED = re.compile(r"\.[A-Za-z0-9]{1,8}$")  # how a file's name ends: a dot and its kind
+_WINDOWS_PATH = re.compile(r"""["']?[A-Za-z]:\\[^ \t]""")  # C:\Users\..., as a terminal on Windows writes one
+VSCODE_LEAVES_OUT = "` $ | & > ~ # ! ^ * ; <"  # what VS Code's terminal takes out of a dropped file's name
+MAX_SHOWN_PATH = 48  # characters of a path in a status line: its end, where the file's name is
+
+
+def _written(word: str) -> str | None:
+    """`word` when it is written as a full absolute path (/a/b, ~/a, file:///a/b), whether or
+    not anything is there; else None."""
+    text = word.strip(_BLANK)
+    if len(text) > 4096:
+        return None
+    if text.startswith("file://"):
+        text = unquote(urlsplit(text).path)
+    return text if _FULL_PATH.match(text) else None
+
+
+def not_there(text: str) -> str:
+    """The first path of `text` that names nothing on this machine, when the text reads as a
+    drop but for that: every word of it is written as a full absolute path, in one of the
+    ways a terminal writes dropped files (the readings `dropped` makes, and a whole line as
+    one bare path). "" for a drop, and for any other text. This only chooses a line to say:
+    nothing is ever attached, or kept from being pasted, because of it."""
+    if not text.strip() or len(text) > MAX_DROP or _drop(text)[0]:
+        return ""
+    missing = ""
+    for line in _lines(text):
+        # a whole line as one bare path only when it ends as a file's name does: prose may start with a path too
+        bare = [line] if _NAMED.search(line.rstrip(_BLANK)) else []
+        for words in (_words(line), _spaced_words(line), bare):
+            written = [_written(word) for word in words or ()]
+            if written and all(word is not None for word in written):
+                break
+        else:
+            return ""
+        missing = missing or next((word for word in written if word is not None and _path_of(word) is None), "")
+    return missing
+
+
+def windows_path(text: str) -> str:
+    """The first line of `text` when every line of it starts as a Windows path does (C:\\...,
+    quoted or not), which is what a terminal on Windows sends for a dropped file unless it is
+    set to translate the path; else ""."""
+    lines = _lines(text) if len(text) <= MAX_DROP else []
+    return lines[0].strip(_BLANK) if lines and all(_WINDOWS_PATH.match(line.lstrip(_BLANK)) for line in lines) else ""
+
+
+def _shown(path: str) -> str:
+    """A path for a status line: safe to draw, on one line, and its end when it is long."""
+    text = untrusted(path, one_line=True)
+    return text if len(text) <= MAX_SHOWN_PATH else "..." + text[-(MAX_SHOWN_PATH - 3):]
+
+
+def not_there_line(text: str, *, choose: str, env: Mapping[str, str] | None = None) -> str:
+    """What to tell the player about a paste that reads as dropped files of which one is not
+    on this machine ("" for any other text): why that happens here, and what works instead.
+    `choose` is how the player chooses a file where the paste arrived ("press ctrl+o to
+    choose it"). The environment only picks the sentence (over SSH, under WSL, in VS Code's
+    terminal); how a paste is read never depends on it."""
+    env = os.environ if env is None else env
+    missing, windows = not_there(text), windows_path(text)
+    if (missing or windows) and (env.get("SSH_CONNECTION") or env.get("SSH_TTY")):
+        return (f"not on this machine: {_shown(missing or windows)}. Over SSH a dropped file stays on the machine your "
+                "terminal runs on: copy it here first (scp), then /attach its path")
+    if windows and (env.get("WSL_DISTRO_NAME") or env.get("WSL_INTEROP")):
+        return (f'{_shown(windows)} is a Windows path. Set "pathTranslationStyle": "wsl" on this Windows Terminal profile '
+                "and drop the file again, or /attach its /mnt/c/... path")
+    if not missing:
+        return ""
+    if env.get("TERM_PROGRAM") == "vscode":
+        return (f"no such file: {_shown(missing)}. VS Code's terminal leaves {VSCODE_LEAVES_OUT} out of a dropped "
+                f"file's name: {choose}")
+    return (f"no such file: {_shown(missing)}. A dropped file may have been a temporary one, gone by now: drag the "
+            f"saved file, or {choose}")
 
 
 # ---------------------------------------------------------------------- what may be attached

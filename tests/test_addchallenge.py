@@ -22,6 +22,14 @@ from test_run import config
 FLAG = "t{handed_over}"
 
 
+@pytest.fixture(autouse=True)
+def a_plain_local_terminal(monkeypatch):
+    """Not over SSH, not under WSL and not VS Code's terminal, wherever the tests run: the line
+    said for a dropped file that is not there is chosen by those (addchallenge.not_there_line)."""
+    for name in ("SSH_CONNECTION", "SSH_TTY", "WSL_DISTRO_NAME", "WSL_INTEROP", "TERM_PROGRAM"):
+        monkeypatch.delenv(name, raising=False)
+
+
 # ---------------------------------------------------------------------- the pasted text
 
 
@@ -173,6 +181,55 @@ def test_inside_double_quotes_a_backslash_is_read_only_before_a_quote_or_a_backs
     assert addchallenge.dropped(f'"{tmp_path}/a\\nb.txt"') == [plain]  # any other backslash is a character of the name
     assert addchallenge.dropped(f'"{tmp_path}/say \\"hi\\".txt') == []  # a quote that never closes
     assert addchallenge.dropped(f'"{tmp_path}/a\\b.txt\\"') == []  # its last quote is escaped: it never closes either
+
+
+def test_a_paste_that_reads_as_dropped_files_names_the_one_that_is_not_there_and_any_other_text_names_none(tmp_path):
+    there = tmp_path / "there.bin"
+    there.write_bytes(b"1")
+    gone = tmp_path / "TemporaryItems" / f"Screenshot 2026-11-14 at 9.41.12{NNBSP}AM.png"  # as a thumbnail's file, gone
+    for write in (lambda p: backslashed(p, ITERM2) + " ", lambda p: backslashed(p, GHOSTTY), single_quoted, double_quoted,
+                  lambda p: spaces_only(p) + " ", str, lambda p: f"{p} "):
+        assert addchallenge.not_there(write(gone)) == str(gone), write(gone)
+        assert addchallenge.dropped(write(gone)) == []
+    assert addchallenge.not_there(f"{there} {single_quoted(gone)}") == str(gone)  # one of two is not there
+    assert addchallenge.not_there(f"{there}\n{gone}\n") == str(gone)
+    assert addchallenge.not_there("file:///no/such%20folder/shot.png") == "/no/such folder/shot.png"
+    assert addchallenge.not_there("~/no-such-folder-of-flightdecks-tests/a.bin") == "~/no-such-folder-of-flightdecks-tests/a.bin"
+    for text in [str(there), f"{there} {there}",  # a drop: nothing is missing
+                 "/help", "/new Crab Walk", "/hint L01 look at /etc/passwd", "/attach doll /no/such/file.bin",  # commands
+                 "/flag.txt",  # one name under the root: no dropped file is written so
+                 f"see {gone}", f"{backslashed(gone, ITERM2)} is the file", "/api/v1/flag returns the admin's token",
+                 "/var/www/html holds the site", "relative/shot.png", "just some words", "", "  \n",
+                 f"Find the flag.\n{gone}\n", f"{single_quoted(gone)} " * 5000]:
+        assert addchallenge.not_there(text) == "", text
+    assert addchallenge.windows_path("C:\\Users\\me\\shot.png") == "C:\\Users\\me\\shot.png"
+    assert addchallenge.windows_path('"C:\\Users\\me\\my shot.png" "D:\\b.bin"') == '"C:\\Users\\me\\my shot.png" "D:\\b.bin"'
+    for text in ["C: is the drive", "see C:\\Users\\me\\shot.png", str(gone), "c:\\ ", ""]:
+        assert addchallenge.windows_path(text) == "", text
+
+
+def test_the_line_for_a_dropped_file_that_is_not_there_says_why_it_is_not_where_the_console_runs(tmp_path):
+    gone, windows = str(tmp_path / "gone" / "shot.png"), '"C:\\Users\\me\\my shot.png"'
+    shown = "..." + gone[-45:]  # a long path shows its end, where the name is
+    assert len(gone) > 48
+    line = lambda text, **env: addchallenge.not_there_line(text, choose="press ctrl+o to choose it", env=env)  # noqa: E731
+    assert line(gone) == (f"no such file: {shown}. A dropped file may have been a temporary one, gone by now: drag the "
+                          "saved file, or press ctrl+o to choose it")
+    assert line(gone, TERM_PROGRAM="vscode") == (f"no such file: {shown}. VS Code's terminal leaves ` $ | & > ~ # ! ^ * ; < "
+                                                 "out of a dropped file's name: press ctrl+o to choose it")
+    over_ssh = ("Over SSH a dropped file stays on the machine your terminal runs on: copy it here first (scp), "
+                "then /attach its path")
+    assert line(gone, SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22") == f"not on this machine: {shown}. {over_ssh}"
+    assert line(gone, SSH_TTY="/dev/pts/3", TERM_PROGRAM="vscode") == f"not on this machine: {shown}. {over_ssh}"
+    assert line(windows, SSH_TTY="/dev/pts/3", WSL_DISTRO_NAME="Ubuntu") == f"not on this machine: {windows}. {over_ssh}"
+    assert line(windows, WSL_DISTRO_NAME="Ubuntu") == line(windows, WSL_INTEROP="/run/WSL/8_interop") == (
+        f'{windows} is a Windows path. Set "pathTranslationStyle": "wsl" on this Windows Terminal profile and drop the '
+        "file again, or /attach its /mnt/c/... path")
+    assert line(windows) == ""  # a Windows path anywhere else is text
+    for text in ["/help", "see " + gone, "just words", str(tmp_path)]:  # no drop but for a missing file: nothing to say
+        assert line(text) == line(text, SSH_TTY="/dev/pts/3") == line(text, WSL_DISTRO_NAME="Ubuntu") == "", text
+    assert line("/no/such/\x1b[31mred.png") == ("no such file: /no/such/^[[31mred.png. A dropped file may have been a temporary one, "
+                                                "gone by now: drag the saved file, or press ctrl+o to choose it")
 
 
 def test_a_word_a_path_that_does_not_exist_or_a_path_among_words_is_not_a_drop(tmp_path, monkeypatch):
@@ -1270,6 +1327,64 @@ def test_files_dropped_on_the_console_go_to_the_new_form_or_onto_an_attach_whate
     asyncio.run(main())
 
 
+def test_a_dropped_file_that_is_not_there_is_said_with_the_reason_and_pasted_as_the_text_it_is(tmp_path, monkeypatch):
+    gone = tmp_path / "TemporaryItems" / "my shot.png"  # as a screenshot's thumbnail: gone when the paste arrives
+    text = str(gone).replace(" ", "\\ ") + " "
+    why = "my shot.png. A dropped file may have been a temporary one, gone by now: drag the saved file, or "
+
+    async def body(run, app, pilot):
+        bar = app.screen.query_one("#bar-input")
+        await app.on_event(events.Paste(text))  # the lanes table has the focus: a paste has nowhere to go
+        await pilot.pause()
+        assert bar.value == "" and app._status[1] == "warning"
+        assert app._status[0].startswith("no such file: ...") and app._status[0].endswith(why + "type /attach with no file to choose it")
+        app._status = None
+        await pilot.press("slash")
+        await app.on_event(events.Paste(text))  # in the command bar: the same line, and the text where the cursor is
+        await pilot.pause()
+        assert bar.value == "/" + text and app._status[0].endswith(why + "type /attach with no file to choose it")
+        bar.value, app._status = "", None
+        for words in ("hint L01 look at /etc/passwd", f"hint L01 open {gone}", "help"):  # text, and a command: nothing is said
+            await app.on_event(events.Paste(words))
+            await pilot.pause()
+            assert bar.value == words and app._status is None
+            bar.value = ""
+        await pilot.press(*"/new Shot", "enter")
+        await pilot.pause()
+        form = app.screen
+        box = form.query_one("#new-text")
+        await app.on_event(events.Paste(text))  # in the form: said on the form's own line, with the form's key
+        await pilot.pause()
+        assert box.text == text and form.files == []
+        assert said(form).startswith("no such file: ...") and said(form).endswith(why + "press ctrl+o to choose it")
+        monkeypatch.setenv("SSH_CONNECTION", "192.0.2.1 50000 192.0.2.2 22")
+        await app.on_event(events.Paste(text))
+        await pilot.pause()
+        assert "Over SSH a dropped file stays on the machine your terminal runs on" in said(form)
+        await pilot.press("escape")
+
+    in_console(tmp_path, body)
+
+
+def test_a_board_that_takes_no_files_says_nothing_about_a_path_that_is_not_there(tmp_path):
+    from ctf_flightdeck.console.app import FlightdeckApp
+    from ctf_flightdeck.mock import scenarios
+    from ctf_flightdeck.mock.world import FakeWorld
+
+    async def main():
+        world = FakeWorld(scenarios.get("sstv"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None)
+        async with app.run_test(size=(160, 46)) as pilot:
+            await pilot.pause()
+            app._status = None
+            await pilot.press("slash")
+            await app.on_event(events.Paste(f"{tmp_path}/gone/shot.png "))
+            await pilot.pause()
+            assert app.screen.query_one("#bar-input").value == f"/{tmp_path}/gone/shot.png " and app._status is None
+
+    asyncio.run(main())
+
+
 # ---------------------------------------------------------------------- a drop that arrives as typed keys
 
 
@@ -1354,9 +1469,12 @@ def test_typing_is_never_a_drop_and_a_burst_that_is_not_only_files_is_typed_as_i
         await burst(pilot, f"{handout} is the file")  # all at once and starts with a path, but is not only paths
         assert box.text == f"{handout} is the file" and form.files == []
         box.text = ""
-        await burst(pilot, f"{handout}.gone ")  # no such file
+        assert said(form) == ""
+        await burst(pilot, f"{handout}.gone ")  # no such file: the text it is, and the form says what it looks like
         assert box.text == f"{handout}.gone " and form.files == []
+        assert said(form).startswith("no such file: ") and said(form).endswith("or press ctrl+o to choose it")
         box.text = ""
+        form.problem("")
         await burst(pilot, str(handout), enter=True)  # Enter straight after it: typed, and the line end with it
         assert box.text == f"{handout}\n" and form.files == []
         box.text = ""
@@ -1391,6 +1509,35 @@ def test_a_path_typed_all_at_once_in_the_fleet_goes_onto_an_attach_and_none_of_i
         await burst(pilot, f"'{handout}'")
         assert bar.value == "a half-written message" and app.screen is app.fleet
         assert "1 file not taken: the command bar holds what you typed" in app._status[0]
+
+    in_console(tmp_path, body, busy_lanes())
+
+
+def test_a_typed_path_of_a_file_that_is_not_there_is_said_and_none_of_its_keys_acts(tmp_path, monkeypatch):
+    """VS Code's terminal types a dropped file's path and leaves characters out of its name, so
+    the path it types may name nothing. Its letters are still not keys of the lane list."""
+    gone = tmp_path / "park kill quit.bin"  # every letter of it is a key of the fleet, and the file is not there
+    monkeypatch.setenv("TERM_PROGRAM", "vscode")
+
+    async def body(run, app, pilot):
+        key_drops(app, monkeypatch)
+        await run.add_challenge(NewChallenge(name="Static Hiss", description="d"))
+        await until(pilot, lambda: app.fleet.selected_lane in run.deck.lanes)
+        lane = run.deck.lanes[app.fleet.selected_lane]
+        bar = app.screen.query_one("#bar-input")
+        for typed in (f"'{gone}'", escaped(gone)):  # as VS Code types it, and as Warp does
+            app._status = None
+            await burst(pilot, typed)
+            assert app.screen is app.fleet and not lane.finished and lane.state is not LaneState.PAUSED  # no key of it acted
+            assert bar.value == "" and not bar.has_focus  # not even its first: `/` opens the command bar
+            assert app._status[0].startswith("no such file: ...") and app._status[1] == "warning"
+            assert app._status[0].endswith("park kill quit.bin. VS Code's terminal leaves ` $ | & > ~ # ! ^ * ; < out of a "
+                                           "dropped file's name: type /attach with no file to choose it")
+        await pilot.press("slash")  # with the command bar open it is text there, as a paste is, and said all the same
+        await pilot.pause(GAP * 2)
+        app._status = None
+        await burst(pilot, f"'{gone}'")
+        assert bar.value == f"/'{gone}'" and app._status[0].startswith("no such file: ...")
 
     in_console(tmp_path, body, busy_lanes())
 
