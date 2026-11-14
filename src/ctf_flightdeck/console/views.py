@@ -1416,9 +1416,9 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
         if len(lane.hints) == 1:
             rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (lane_line(deck, lane, lane.hints[0]), theme.ACCENT)))
         elif lane.hints:
-            row = Text(f"› {len(lane.hints)} messages sent, not read yet", theme.MUTED)
-            _shows_all(row)
-            rows.append(row)
+            unread = Text(f"› {len(lane.hints)} messages sent, not read yet", theme.MUTED)
+            _shows_all(unread)
+            rows.append(unread)
         return Text("\n").join(rows)
     answers = Text()
     if pending is not None:
@@ -1466,9 +1466,9 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
     if lane.hints:
         also.append(f"{_count(len(lane.hints), 'message', 'messages')} it has not read yet")
     if also:
-        row = Text(f"  also: {' · '.join(also)}", theme.MUTED)
-        _shows_all(row)
-        rows.append(row)
+        last = Text(f"  also: {' · '.join(also)}", theme.MUTED)
+        _shows_all(last)
+        rows.append(last)
     return Text("\n").join(rows)
 
 
