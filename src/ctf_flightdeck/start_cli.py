@@ -308,15 +308,20 @@ def add(
     folder: Annotated[Path, typer.Argument(metavar="FOLDER", show_default=False, file_okay=False,
                                            help="The event's folder (the one `flightdeck start` made), or a board folder.")],
     name: Annotated[str, typer.Option("--name", "-n", help="The challenge's name, as the site shows it.")],
-    text: Annotated[str | None, typer.Option("--text", "-t", help="Its description; `-` reads it from standard input. A line that is "
-                                             "only a web address or `nc host port` is also taken as its instance.")] = None,
-    file: Annotated[list[Path] | None, typer.Option("--file", "-f", help="A file, screenshot or folder of its handout (repeat for more).")] = None,
+    text: Annotated[str | None, typer.Option("--text", "-t", help="Its description, kept as you give it; `-` reads it from standard "
+                                             "input. A line that is only a web address or `nc host port` is also taken as its "
+                                             "instance. A path in it is only text: files come from --file.")] = None,
+    file: Annotated[list[Path] | None, typer.Option("--file", "-f", help="A file, screenshot or folder of its handout (repeat for more). "
+                                                    "Each one attached is printed with its size.")] = None,
     url: Annotated[list[str] | None, typer.Option("--url", "-u", help="Its instance: https://host[:port], or `nc host port` (repeat for more).")] = None,
     category: Annotated[str, typer.Option("--category", "-c", help="Its category: web, crypto, pwn...")] = "",
     points: Annotated[int, typer.Option("--points", "-p", min=0, help="Its points.")] = 0,
 ) -> None:
     """Add a challenge to a board you fill yourself: makes its folder from a name, its text
-    and its files. A run that is playing the board starts a lane on it within seconds."""
+    and its files. A run that is playing the board starts a lane on it within seconds.
+
+    The text is kept as it is given and is never searched for files: only --file attaches
+    one, and each file attached is printed."""
     import sys
 
     from . import addchallenge
@@ -325,7 +330,7 @@ def add(
 
     try:
         folder = expand(folder)
-        files = tuple(expand(item) for item in file or ())
+        files = tuple(dict.fromkeys(expand(item) for item in file or ()))
     except ConfigError as exc:
         _fail(str(exc))
     board = folder / events.BOARD_DIR if events.is_event_folder(folder) else folder
@@ -333,17 +338,21 @@ def add(
         _fail(f"{board} is not a folder: give the event's folder (`flightdeck start` makes one) or a board folder")
     if text == "-":
         text = sys.stdin.read()
-    description, found, addresses = addchallenge.parse(text or "")
+    description, addresses = addchallenge.parse(text or "")
     for item in url or ():
-        ((_, _, more)) = addchallenge.parse(item)
-        if not more:
+        one = addchallenge.address(item)
+        if one is None:
             _fail(f"--url: {_show(item)} is not a web address (https://host) or `nc host port`")
-        addresses += tuple(a for a in more if a not in addresses)
+        if one not in addresses:
+            addresses += (one,)
     try:
         made = addchallenge.create(board, addchallenge.NewChallenge(
-            name=name, category=category, points=points, description=description,
-            files=tuple(dict.fromkeys(files + found)), urls=addresses))
+            name=name, category=category, points=points, description=description, files=files, urls=addresses))
     except addchallenge.AddError as exc:
         _fail(str(exc))
     typer.echo(f"added {made}")
+    for item in files:
+        typer.echo(f"attached {_show(item.name)} ({addchallenge.size_text(item)})")
+    if not files:
+        typer.echo("no file attached (--file attaches one)")
     typer.echo(f"a run playing this board starts a lane on it within seconds; otherwise: flightdeck play {folder}")

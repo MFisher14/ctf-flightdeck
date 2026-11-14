@@ -666,18 +666,21 @@ class Run:
             self.deck.release([b.challenge for b in new], self.entries(new), "Added")
         return [b.challenge.id for b in new]
 
-    def add_challenge(self, new) -> tuple[bool, str]:
-        """The console's /new: write the challenge's folder on the board (addchallenge.create)
-        and release it now. (whether it was taken, what to tell the player). A challenge with
-        images is added once the lanes' model has read them (imageread.read): their text goes
-        into its description, and the answer here says it is on its way."""
-        from .addchallenge import AddError, slug
+    async def add_challenge(self, new) -> tuple[bool, str]:
+        """The console's /new: write the challenge's folder on the board (addchallenge.create,
+        in a thread: its files may be big, and the lanes share this loop) and release it.
+        (whether it was taken, what to tell the player). Everything the challenge can be
+        refused for is checked first (addchallenge.check), so a refusal comes back before
+        anything is read or written. A challenge with images is added once the lanes' model
+        has read them (imageread.read): their text goes into its description, and the answer
+        here says it is on its way."""
+        from .addchallenge import AddError, check
         from .imageread import MAX_IMAGES, is_image
 
         if not self.watches_folder:
             return False, "this board comes from the platform: challenges are added there, not here"
         try:
-            slug(new.name)
+            check(self.options.board, new)
         except AddError as exc:
             return False, str(exc)
         images = [file for file in new.files if is_image(file)][:MAX_IMAGES]
@@ -686,12 +689,14 @@ class Run:
             self._tasks.append(task)
             return True, (f"reading {len(images)} image{'' if len(images) == 1 else 's'} with {self.model} for "
                           f"{new.name!r}, then a lane starts on it (a few seconds)")
-        return self._add_now(new)
+        return await self._add_now(new)
 
-    def attach_files(self, challenge_id: str, files: Sequence[Path]) -> tuple[bool, str]:
-        """The console's /attach: copy files into a challenge's folder on the board, and start
-        its lanes afresh so each works in a copy that has them (a lane's workspace is a copy
-        made when it starts). (whether they were attached, what to tell the player)."""
+    async def attach_files(self, challenge_id: str, files: Sequence[Path]) -> tuple[bool, str]:
+        """The console's /attach: copy files into a challenge's folder on the board (in a
+        thread), and start its lanes afresh so each works in a copy that has them (a lane's
+        workspace is a copy made when it starts). (whether they were attached, what to tell
+        the player: which lanes restarted, or, when the challenge has none to restart and the
+        deck starts none, why not)."""
         from .addchallenge import AddError, attach
         from .core import interventions as iv
 
@@ -699,36 +704,49 @@ class Run:
         if not self.watches_folder or handout is None:
             return False, "files are attached to a challenge on a board you fill yourself"
         try:
-            names = attach(handout, files)
+            names = await asyncio.to_thread(attach, handout, files)
             item = load_challenge(handout)
         except (AddError, BoardError) as exc:
             return False, str(exc)
         self._folders[handout.name] = _mtime(handout)
         self.driver.files[challenge_id] = item.challenge.files
         self.deck.challenges[challenge_id].files = item.challenge.files
-        restarted = [lane.id for lane in self.deck.lanes_on(challenge_id) if lane in self.deck.active_lanes()]
-        for lane_id in restarted:
-            self.deck.apply(iv.Kill(lane_id, requeue=True))
-        if not restarted and not self.deck.queued(challenge_id):
-            self.deck.apply(iv.Queue(challenge_id))
         what = f"attached {', '.join(names)} to {challenge_id}"
-        return True, what + (f"; {', '.join(restarted)} restarted as a fresh lane with it" if restarted else "; a lane starts on it when one is free")
+        active = [lane.id for lane in self.deck.lanes_on(challenge_id) if lane in self.deck.active_lanes()]
+        restarted, refused = [], ""
+        for lane_id in active:
+            outcome = self.deck.apply(iv.Kill(lane_id, requeue=True))
+            if outcome.ok:
+                restarted.append(lane_id)
+            else:
+                refused = outcome.message
+        if restarted:
+            return True, what + f"; {', '.join(restarted)} restarted as a fresh lane with it"
+        if active:
+            return True, what + f"; its lane was not restarted: {refused}"
+        if not self.deck.queued(challenge_id):
+            outcome = self.deck.apply(iv.Queue(challenge_id))
+            if not outcome.ok:  # solved, a teammate's, blocked, a lane that is not running: no lane will start
+                return True, what + f"; no lane was started on it: {outcome.message}"
+        return True, what + "; a lane starts on it when one is free"
 
     def paste_image(self) -> Path:
         """ctrl+v in the /new form: the clipboard's image as a file in the run folder
-        (imageread.clipboard_image; ImageError when there is none)."""
+        (imageread.clipboard_image; ImageError when there is none). It runs the clipboard
+        tool and waits for it, so the form calls it in a thread."""
         from .imageread import clipboard_image
 
         return clipboard_image(self.dir / "pasted")
 
-    def _add_now(self, new) -> tuple[bool, str]:
+    async def _add_now(self, new) -> tuple[bool, str]:
         from .addchallenge import AddError, create
 
         try:
-            folder = create(self.options.board, new)
+            folder = await asyncio.to_thread(create, self.options.board, new)
         except AddError as exc:
             return False, str(exc)
-        if folder.name not in self.scan_board():
+        # the folder watch may have released it while this waited for the loop: on the board either way
+        if folder.name not in self.scan_board() and self._handouts.get(folder.name) != folder:
             return False, f"{_show(folder)} was written but could not be added: the warning above says why"
         files = len(self.driver.files.get(folder.name, ()))
         if not files and not new.urls:  # the lane has the description and nothing else: said, so it is no surprise
@@ -756,7 +774,7 @@ class Run:
                 self.deck.warn(f"/new: could not read {_show(image.name)}: {type(exc).__name__}: {exc}", data={"source": "board"})
                 continue
             description = (description + "\n\n" if description else "") + f"[Text read from the image {image.name} by {self.model}:]\n{text}"
-        ok, said = self._add_now(replace(new, description=description))
+        ok, said = await self._add_now(replace(new, description=description))
         if not ok:
             self.deck.warn(f"/new: {said}", data={"source": "board"})
 
