@@ -638,6 +638,28 @@ def test_copy_flag_gives_the_flag_that_waits_else_the_newest_the_run_knows_and_w
     drive(app, script, BIG)
 
 
+def test_copy_flag_gives_the_flag_the_lane_proposed_last_when_the_run_knew_it_before():
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        deck.record_l1("crackme", "strings_sweep", "candidate", flags=["flag{right_from_l1}"], lane_id="L01")
+        deck.report("L01", TurnReport(flag="flag{wrong_guess}"))
+        await send(pilot, app, "/decline")
+        assert lane.pending is None and "Not submitted: flag{wrong_guess}" in status_line(app)
+        await send(pilot, app, "/copy flag")
+        assert clip.texts == ["flag{wrong_guess}"]  # the last one the run met, though the player declined it
+        deck.report("L01", TurnReport(flag="flag{right_from_l1}"))  # the lane comes to the flag L1 had reported before its guess
+        await send(pilot, app, "/approve")
+        assert lane.pending is None and "flag{right_from_l1}" in status_line(app)  # submitted: nothing waits
+        await send(pilot, app, "/copy flag")
+        assert clip.texts[-1] == "flag{right_from_l1}"  # the one just submitted, not the guess declined before it
+        assert views.known_flags(deck, "crackme") == ("flag{wrong_guess}", "flag{right_from_l1}")  # each once, the last met last
+
+    drive(app, script, BIG)
+
+
 def test_copy_warns_when_the_lane_has_nothing_of_it_or_the_word_is_not_one_of_its():
     deck, app, lane = one_lane()
     app.copier = clip = Clip()

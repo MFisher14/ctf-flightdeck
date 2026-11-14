@@ -139,7 +139,9 @@ class _Flags:
         for event in events[self.read :]:
             found = named_flags(event.data)
             if found and event.challenge:
-                self.of[event.challenge] = tuple(dict.fromkeys((*self.of.get(event.challenge, ()), *found)))
+                # a flag met again goes to the end: the last is the one the run named last, which /copy flag gives
+                earlier = (flag for flag in self.of.get(event.challenge, ()) if flag not in found)
+                self.of[event.challenge] = tuple(dict.fromkeys((*earlier, *found)))
         self.read = len(events)
 
 
@@ -148,7 +150,8 @@ LINE_CHARS = 1000  # a one-line cell (the last action, the why line) shows no mo
 
 
 def known_flags(deck: Deck, challenge_id: str) -> tuple[str, ...]:
-    """The flags the run knows for a challenge, each once, in the order it first met them."""
+    """The flags the run knows for a challenge, each once, in the order it last met them: the
+    last is the one a lane proposed, the player submitted or an L1 engine reported most lately."""
     flags = _FLAGS.get(deck)
     if flags is None:
         flags = _FLAGS[deck] = _Flags()
