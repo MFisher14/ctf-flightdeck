@@ -68,6 +68,16 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   with the event you just played first in the list; its spend, run folder and next commands
   are in the terminal under it. The practice set and the demo come back too. `q` there
   leaves, and a run that stops with an error leaves with its reason showing.
+- The first five minutes read the way they run. `flightdeck --help` opens with the "New here?"
+  line (run `flightdeck`: its home screen sets you up and offers the practice set), and
+  `eval-local` has a panel of its own, below the commands a new player needs. `flightdeck
+  doctor` ends with the line to act on: how many things there are to fix before a run (it used
+  to end without one when a check failed), or `Ready` and the next command, with the warnings
+  counted as what a run does not wait for. Help says "API key", "access token" and "model
+  tokens" where "key" and "token" stood alone. The README's quickstart is three commands (look
+  at the mock, install with uv, `flightdeck`) with `pipx` and the `.deb` as other ways to
+  install, and the guide's glossary now comes second, with wave, live instance, brief, command
+  bar and park added.
 
 ## 0.4.0 (2026-11-13)
 
