@@ -333,8 +333,8 @@ and the open issues of 0.1.x and 0.2.0.
 - `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the
   newest run in your config's `[run] dir`, by when the run started; the command names the
   folder it took, and a folder really named `latest` still wins (#20).
-- Install with Homebrew or apt, from this release on:
-  `brew install mfisher14/tap/ctf-flightdeck`, or the `.deb` for amd64 or arm64 on the GitHub
+- Install with apt, from this release on (the Homebrew formula is built but its tap is not set
+  up yet, so `brew install` does not work): the `.deb` for amd64 or arm64 on the GitHub
   release (`sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb`). The `.deb` brings its own
   Python 3.12 under `/opt/ctf-flightdeck`, since Debian 12 has 3.11. There is no apt
   repository yet, so `apt upgrade` does not find a new release (#29).
