@@ -4,6 +4,7 @@ command, and the config's [l1] table. No network: every git address is a file://
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -268,6 +269,29 @@ def test_a_pack_tomls_text_is_shown_made_safe(tmp_path, config):
     root = make_pack(tmp_path / "mine", toml='name = "p"\ndescription = "nice \\u001b[31mred\\u001b[0m pack"\n')
     result = invoke("info", root)
     assert result.exit_code == 0 and "\x1b" not in result.output and "nice" in result.output
+
+
+def test_pack_info_reads_the_config_it_is_given_and_its_help_says_read_not_write(tmp_path, config):
+    """`pack info` writes nothing, so its --config is the file it reads the pack's place from.
+    `install` and `image` do write the config, and their help keeps saying so."""
+    def shown(command: str) -> str:
+        output = runner.invoke(app, [command, "--help"], prog_name="flightdeck pack", terminal_width=200).output
+        return " ".join(re.sub(r"[│╭╮╰╯─]", " ", output).split())
+
+    info = shown("info")
+    assert "--config <file> The config file that names the pack when PACK is left out (default: your config). Only read: info writes nothing." in info
+    assert "write the pack into" not in info
+    for command in ("install", "image"):
+        assert "--config <file> The config file to write the pack into (default: your config)." in shown(command), command
+
+    root = make_pack(tmp_path / "mine")
+    other = tmp_path / "other.toml"
+    other.write_text(LADDER + f'\n[l1]\npack = "{root}"\n')
+    result = invoke("info", "--config", other)
+    assert result.exit_code == 0 and f"pack: demo-pack 1.2.0 at {root.resolve()}" in result.output.splitlines()
+    assert other.read_text() == LADDER + f'\n[l1]\npack = "{root}"\n' and config.read_text() == LADDER
+    none = invoke("info", "--config", config)  # the config it was given names no pack: it says so, and still writes nothing
+    assert none.exit_code == 2 and "your config names no pack ([l1] pack)" in none.output and config.read_text() == LADDER
 
 
 def test_the_default_pack_is_this_checkouts_own(tmp_path, config):

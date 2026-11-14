@@ -3,6 +3,7 @@ help."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Group
@@ -85,11 +86,17 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
         self.dismiss(None)
 
 
-class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
-    """/new: a challenge the player hands over. A name, and one box for everything they
-    have: the description as the site shows it, files and screenshots dragged in (a terminal
-    pastes a dropped file as its path), and the instance's address on a line of its own.
-    addchallenge.parse sorts the box into description, files and addresses."""
+class NewChallengePrompt(ModalScreen["str | None"]):
+    """/new: a challenge the player hands over. A name (any characters), one box for its
+    description as the site shows it, and its files. The box is text and stays text: nothing
+    in it is taken for a file (addchallenge.parse reads only the instance's address, on a line
+    of its own). Files are attached by handing them over: ctrl+o (the file window), ctrl+v
+    (the clipboard's image), or a drop, which arrives as a paste that is only paths
+    (FlightdeckApp.take_drop); the line under the box shows each one.
+
+    ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
+    thread. The form closes once the challenge is added, with what to tell the player (None:
+    cancelled); a refusal leaves it open, everything typed still there, and says why."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="NewChallengePrompt") + """
     NewChallengePrompt > Vertical { width: 124; }
@@ -101,57 +108,121 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
     """
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True),
                 Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True),
-                Binding("ctrl+o", "choose_files", "choose files", priority=True)]
+                Binding("ctrl+o", "choose_files", "choose files", priority=True),
+                Binding("ctrl+r", "remove_file", "remove the last file", priority=True)]
 
-    def __init__(self, name: str = "", *, paster=None) -> None:
+    def __init__(self, name: str = "", *, paster=None, adder=None) -> None:
         super().__init__()
         self.given_name = name
         self.paster = paster  # saves the clipboard's image as a file and returns its path; raises with the reason
+        self.adder = adder  # async: puts the challenge on the board; (whether it was taken, what to tell the player)
+        self.files: list[Path] = []  # what is attached, in the order it was handed over
+        self.adding = self.choosing = self.pasting = False  # what is going on off the UI thread
 
-    def add_files(self, files) -> None:
-        """Put files in the box, each on a line of its own (a drop, the file window, a paste)."""
-        box = self.query_one("#new-text", TextArea)
-        box.text = box.text + ("" if not box.text or box.text.endswith("\n") else "\n") + "".join(f"{file}\n" for file in files)
-        box.move_cursor(box.document.end)
+    def _say(self, text: str, style: str = "") -> None:
+        """The line over the keys: a problem (in the warning colour), or with a style, what is going on."""
+        self.query_one("#new-problem", Static).update(Text(text, style=style) if style else Text(text))
 
-    async def action_choose_files(self) -> None:
-        """ctrl+o: the operating system's file window, for a terminal where a drop does not arrive."""
-        files = await self.app.pick_files()
-        if files:
+    def add_files(self, files, *, said: str = "") -> bool:
+        """Attach files the player handed over (a drop, the file window, the clipboard's
+        image). One that cannot be attached is not, and the form says why (addchallenge.refusal).
+        False when nothing in `files` was taken."""
+        from ..addchallenge import CHALLENGE_FILE, refusal
+
+        taken, known, problems = [], 0, []
+        for file in files:
+            if file in self.files:
+                known += 1
+                continue
+            why = refusal(file)
+            if why is None and file.name == CHALLENGE_FILE:
+                why = f"{file}: a handout file cannot be named {CHALLENGE_FILE}; rename it"
+            if why is None and any(other.name == file.name for other in self.files):
+                why = f"{file}: a file named {file.name} is already attached; rename one"
+            if why is not None:
+                problems.append(why)
+                continue
+            self.files.append(file)
+            taken.append(file)
+        self._show_attached()
+        if problems:
+            self._say("not attached: " + "; ".join(problems))
+        elif taken:
+            self._say(said or f"attached {', '.join(file.name for file in taken)} (ctrl+r removes the last file)", "green")
+        elif known:
+            self._say("already attached", "green")
+        return bool(taken or known)
+
+    def action_remove_file(self) -> None:
+        """ctrl+r: take the last attached file off again."""
+        if not self.files:
+            self._say("no file is attached")
+            return
+        self._say(f"removed {self.files.pop().name}", "green")
+        self._show_attached()
+
+    def action_choose_files(self) -> None:
+        """ctrl+o: the operating system's file window, for a terminal where a drop does not
+        arrive. It is waited for in a worker, so the keys go on working while it is open."""
+        if self.choosing:
+            self._say("the file window is already open: it may be behind this window")
+            return
+        self.choosing = True
+        self._say("the file window is open: choose the files there (it may be behind this window)", "bold")
+        self.run_worker(self._choose_files(), exclusive=False)
+
+    async def _choose_files(self) -> None:
+        said: list[str] = []
+        try:
+            files = await self.app.pick_files(warn=said.append)
+        finally:
+            self.choosing = False
+        if said:
+            self._say(said[0])
+        elif files:
             self.add_files(files)
+        else:
+            self._say("")
 
     def action_paste_image(self) -> None:
-        """ctrl+v: the image on the clipboard becomes a file, and its path a line of the box.
-        (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)"""
-        note = self.query_one("#new-problem", Static)
+        """ctrl+v: the image on the clipboard becomes a file, and is attached. The clipboard
+        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)"""
         if self.paster is None:
-            note.update(Text("pasting an image is not available here; drag the file in"))
+            self._say("pasting an image is not available here; drag the file in")
             return
+        if self.pasting:
+            return
+        self.pasting = True
+        self._say("reading the clipboard...", "bold")
+        self.run_worker(self._paste_image(), exclusive=False)
+
+    async def _paste_image(self) -> None:
+        import asyncio
+
         try:
-            path = self.paster()
+            path = await asyncio.to_thread(self.paster)
         except Exception as exc:  # ImageError: no image on the clipboard, or no tool to read it
-            note.update(Text(str(exc)))
+            self._say(str(exc))
             return
-        box = self.query_one("#new-text", TextArea)
-        box.text = box.text + ("" if not box.text or box.text.endswith("\n") else "\n") + f"{path}\n"
-        box.move_cursor(box.document.end)
-        note.update(Text(f"pasted the clipboard's image as {path.name}; the model reads its text when you add the challenge",
-                         style="green"))
+        finally:
+            self.pasting = False
+        self.add_files([path], said=f"pasted the clipboard's image as {path.name}; the model reads its text when you add the challenge")
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static(Text("New challenge", style="bold"))
             yield Static(Text("Name, as the site shows it:"), classes="muted")
             yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
-            yield Static(Text("Everything you have: paste the description; add files with ctrl+o (or drag them in); the line "
-                              "under the box says what is attached. Put the target's address (https://... or "
-                              "nc host port) on a line of its own:"), classes="muted")
+            yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
+                              "text). Files: ctrl+o, or drag them in; the line under the box says what is attached. Put the "
+                              "target's address (https://... or nc host port) on a line of its own:"), classes="muted")
             yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
             yield Static(Text("no file attached", style="bold"), id="new-attached")
             with Horizontal():
                 yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
                 yield Input(placeholder="points (optional)", id="new-points", classes="short")
             yield Static(Text(""), id="new-problem")
+            # ctrl+r is said when a file is attached (add_files): one more key here would wrap the line
             yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste a screenshot"),
                                ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
@@ -162,45 +233,66 @@ class NewChallengePrompt(ModalScreen["NewChallenge | None"]):
 
     @on(TextArea.Changed, "#new-text")
     def _show_attached(self) -> None:
-        """Say under the box what it holds: the files found in it (name and size) and the target."""
+        """Say under the box what is attached (each file's name and size) and the target found in the box."""
         from ..addchallenge import attached_text, parse
 
-        _, files, urls = parse(self.query_one("#new-text", TextArea).text)
-        self.query_one("#new-attached", Static).update(Text(attached_text(files, urls), style="bold green" if files else "bold"))
-
-    @on(Input.Changed, "#new-name")
-    def _dropped_on_the_name(self, event: Input.Changed) -> None:
-        """A file dropped while the name has the focus lands in the name: move it to the box."""
-        from ..addchallenge import _take_paths
-
-        rest, files = _take_paths(event.value) if event.value.strip() else (event.value, [])
-        if not files:
-            return
-        box = self.query_one("#new-text", TextArea)
-        box.text = box.text + ("" if not box.text or box.text.endswith("\n") else "\n") + "".join(f"{file}\n" for file in files)
-        event.input.value = rest
+        _, urls = parse(self.query_one("#new-text", TextArea).text)
+        self.query_one("#new-attached", Static).update(
+            Text(attached_text(self.files, urls), style="bold green" if self.files else "bold"))
 
     @on(Input.Submitted, "#new-name")
     def _named(self) -> None:
         self.query_one("#new-text", TextArea).focus()  # Enter in the name goes on to the box
 
     def action_add(self) -> None:
+        """ctrl+s: check what the form can check, then hand the challenge to the adder in a
+        worker (it copies the files in a thread). The form stays open until it is added."""
         from ..addchallenge import AddError, NewChallenge, parse, slug
 
+        if self.adding:
+            self._say("still adding it: the files are being copied", "bold")
+            return
+        if self.adder is None:
+            self._say("a challenge cannot be added from here")
+            return
         name = " ".join(self.query_one("#new-name", Input).value.split())
         points_text = self.query_one("#new-points", Input).value.strip()
         try:
             slug(name)
-            if points_text and not (points_text.isdigit() and len(points_text) <= 6):
+            # isascii: isdigit() is also true of digits int() does not read (a superscript 2)
+            if points_text and not (points_text.isascii() and points_text.isdigit() and len(points_text) <= 6):
                 raise AddError("points must be a whole number, or left empty")
         except AddError as exc:
-            self.query_one("#new-problem", Static).update(Text(str(exc)))
+            self._say(str(exc))
             return
-        description, files, urls = parse(self.query_one("#new-text", TextArea).text)
-        self.dismiss(NewChallenge(name=name, category=self.query_one("#new-category", Input).value.strip(),
-                                  points=int(points_text or 0), description=description, files=files, urls=urls))
+        description, urls = parse(self.query_one("#new-text", TextArea).text)
+        new = NewChallenge(name=name, category=self.query_one("#new-category", Input).value.strip(),
+                           points=int(points_text or 0), description=description, files=tuple(self.files), urls=urls)
+        self.adding = True
+        count = len(self.files)
+        self._say(f"adding it: copying {count} file{'' if count == 1 else 's'}... (esc closes this form; the copy goes on)"
+                  if count else "adding it...", "bold")
+        app = self.app
+        app.run_worker(self._add(new, app), exclusive=False)  # the app's worker: it goes on when this form is closed
+
+    async def _add(self, new: NewChallenge, app) -> None:
+        try:
+            ok, message = await self.adder(new)
+        except Exception as exc:  # a bug: said, and the console goes on
+            ok, message = False, f"could not add {new.name!r}: {type(exc).__name__}: {exc}"
+        finally:
+            self.adding = False
+        if self not in app.screen_stack:  # the form was closed while the files were copied
+            app.say(message, "information" if ok else "warning")
+            app.refresh_view()
+        elif ok:
+            self.dismiss(message)
+        else:
+            self._say(message)  # refused: the form stays, with everything typed
 
     def action_cancel(self) -> None:
+        if self.adding:
+            self.app.say("still adding the challenge: this line says when it is on the board")
         self.dismiss(None)
 
 

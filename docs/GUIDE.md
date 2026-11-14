@@ -27,7 +27,9 @@ uses it. For an event, the next command is `flightdeck start` ([Events and teams
 set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
 a demo, or install the solver pack when you have none. Arrow keys move, Enter chooses, `q` quits.
 "Start a new CTF" is a form on that screen with the questions `flightdeck start` asks; `ctrl+s`
-sets the event up and opens its console. Steps that need your password (connecting a VPN,
+sets the event up and opens its console. What would stop that (a folder that cannot be made, a
+VPN file that is not there, a token that cannot be kept) is said in the form, with your answers
+still in it, and under the flag format the form says what it made of what you typed. Steps that need your password (connecting a VPN,
 installing its tool or the solver pack) are asked in the plain terminal before the console
 opens. With no config yet the home screen offers "Get started", which asks about your model API
 in the terminal and then your first event. In a script or a pipe it asks nothing and prints the commands
@@ -52,12 +54,10 @@ pack, run `flightdeck pack install` again after an upgrade so the pack matches t
 
 ### Install with Homebrew or apt
 
-Not yet: 0.2.0 is on PyPI only. Both arrive with the first release after 0.2.0, and until then
-the commands below find nothing.
+**apt:** from 0.3.0 on, each release's page has a `.deb` for amd64 and for arm64, with a
+`SHA256SUMS` file to check it against.
 
 ```sh
-brew install mfisher14/tap/ctf-flightdeck        # macOS or Linux, from flightdeck's own tap
-
 # Debian or Ubuntu: the .deb for your machine (amd64 or arm64) from the release's page,
 # https://github.com/MFisher14/ctf-flightdeck/releases
 sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
@@ -66,7 +66,11 @@ sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
 The `.deb` brings a Python of its own under `/opt/ctf-flightdeck` (Debian 12 has 3.11, and
 flightdeck needs 3.12), so it needs no Python from your system and changes none. There is no apt
 repository yet, so `apt upgrade` does not find a new release: install the next `.deb` over the
-old one. Neither way installs Docker.
+old one. It does not install Docker.
+
+**Homebrew:** not yet. flightdeck's tap does not exist yet, so
+`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `pipx` or `uv`
+as above.
 
 ## What a run costs
 
@@ -570,6 +574,17 @@ and submits flags; **by hand**: any other site); the site's address; what a flag
 variable of this event's own, never into the event's folder, and is never shown. Then it says
 whether the solver pack is installed (and offers to install it), and launches.
 
+For the flag format you can also paste an example flag from the rules: `CTF{s0me_t3xt}` is read
+as `CTF{...}` (any text between the braces), and start says what it understood. Anything with a
+backslash, a bracket or a quantifier in it is kept as your own regular expression.
+
+A token belongs to a site. The variable is named after the event (`CTFD_TOKEN_EXAMPLE_CTF`), and
+a token already there is used again only when an event you set up before, at the same address,
+names it. An event of the same name at another address (this year's edition on a new site, or a
+site that only looks like last year's) gets a variable of its own (`CTFD_TOKEN_EXAMPLE_CTF_2`)
+and is asked for its token, and start says why; so is an event whose variable is set while none
+of your events says which site it is for. One site's token is never sent to another's address.
+
 What it leaves:
 
 ```
@@ -580,28 +595,41 @@ What it leaves:
 
 `flightdeck play ~/ctf/example-ctf` plays that event again, with no option to remember: a folder
 with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/example-ctf` does the
-same for a folder already set up. Every question has an option (`flightdeck start --help`), for
-a script.
+same for a folder already set up (answers given as options are then not used, and it says so).
+Every question has an option (`flightdeck start --help`), for a script. The token is the
+exception: no option takes it, because a command line stays in your shell's history and shows in
+the process list. `--token-env NAME` reads it from the environment variable you name, and
+`--token-stdin` from a pipe; either way start keeps it in your keys file. Options are checked
+before anything is written: a `--vpn` file that is not there, a folder that cannot be made or a
+token that cannot be kept stops start with no folder made and no token kept.
 
 By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
-`/new` to hand a challenge over. The form asks for its name and has one box for everything you
-have: paste the description as the site shows it, drag in its files and screenshots (your
-terminal pastes each as a path, one to a line), and put the instance's address (`https://...`
-or `nc host port`) on a line of its own. `ctrl+s` adds it: flightdeck makes the challenge's
-folder under `board/`, copies the files in, and a lane starts on it at once. Category and
-points are optional. From another terminal, `flightdeck add ~/ctf/example-ctf --name "Crab
-Walk" --text - --file postcard.txt` does the same, and a run that is playing picks it up within
-seconds; so does a challenge folder you make yourself. flightdeck shows each flag; you submit it
-on the site and press `a` if it was accepted or `d` if not.
+`/new` to hand a challenge over. The form asks for its name and has a box for its description:
+paste it as the site shows it, and put the instance's address (`https://...` or `nc host port`)
+on a line of its own. The description is kept exactly as you give it: a path in it is only
+text, and never attaches a file. Attach its files and screenshots by dragging them onto the
+terminal, or with `ctrl+o`. `ctrl+s` adds it: flightdeck makes the challenge's folder under
+`board/`, copies the files in, and a lane starts on it at once. Big files are copied in the
+background: the form says so, and the console goes on. A challenge that cannot be added leaves
+the form open with everything you typed, and says why. Category and points are optional. From
+another terminal, `flightdeck add ~/ctf/example-ctf --name "Crab Walk" --text - --file
+postcard.txt` does the same (only `--file` attaches a file, and each one attached is printed
+with its size), and a run that is playing picks it up within seconds; so does a challenge
+folder you make yourself. flightdeck shows each flag; you submit it on the site and press `a`
+if it was accepted or `d` if not.
 
 `ctrl+o` in the form opens your system's file window (Finder's on macOS) to choose the
 challenge's files, for a terminal where a drop does not arrive; `/attach <challenge>` with no
 file opens the same window. Files dropped on the console are taken wherever the focus is: into
-the form when it is open, otherwise onto the command bar as an `/attach` to finish with Enter.
-In the form, the line under the box says what is attached (each file's name and size) and the
-target it found, so you see a drop land before you add the challenge. A file dropped anywhere
-is taken: in the middle of a line, or on the name. `ctrl+v` pastes a screenshot from the
-clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the terminal's own way (cmd+v).
+the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
+challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
+exist; any other paste is text, and text you typed on the command bar is never replaced. In the
+form, the line under the box says what is attached (each file's name and size) and the target
+it found, so you see a drop land before you add the challenge; `ctrl+r` takes the last file off
+again. A file or a folder can be attached. A device, your home folder itself, and anything that
+holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
+screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
+terminal's own way (cmd+v).
 flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
 once for each image's text and puts it in the description; the image is in the handout too. A
 model that takes no images is said, and the challenge is added without that text.
@@ -624,6 +652,22 @@ flightdeck vpn up ~/ctf/example-ctf                          # connect (installs
 flightdeck vpn status ~/ctf/example-ctf
 flightdeck vpn down ~/ctf/example-ctf
 ```
+
+A VPN file can run programs as root (WireGuard's `PreUp`, `PostUp`, `PreDown` and `PostDown`
+lines; OpenVPN's `up` and `down` scripts, `plugin`, `script-security 2` and their kin), so
+flightdeck is careful with one:
+
+- It connects only a file you added: with `flightdeck vpn add`, or as the VPN answer of
+  `flightdeck start` or the home screen's form. A `vpn.conf` or `vpn.ovpn` that is merely in a
+  folder you play (a board somebody shared), or that changed since you added it, is
+  unverified: `play` says so and connects nothing, and `vpn up` refuses. Read the file, then
+  `flightdeck vpn add FOLDER FILE` adds it (again).
+- Before it connects, it shows every line of the file that runs a program as root, as written,
+  and asks, with no as the answer if you only press Enter. `--yes` does not answer that
+  question, and with no terminal to ask at (a script, `--headless`) the file is not connected.
+- `vpn down` stops an OpenVPN only when it is the one flightdeck started for that file (it
+  checks the process with `ps`). A `vpn.pid` left from before a reboot, or naming some other
+  program, is removed and reported as not connected; nothing is stopped.
 
 The VPN is this machine's. Lanes on the host runtime use it as any program does. A Docker
 lane reaches a target through flightdeck's fence, which leaves by this machine's routes; if a

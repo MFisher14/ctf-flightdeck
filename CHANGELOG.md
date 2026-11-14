@@ -18,13 +18,26 @@ screen, `flightdeck start` sets an event up, and `/new` hands a challenge to a l
 
 - `/config` alone opens a settings dialog: lanes at once and what happens to a flag.
 - In `/new`, `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads the
-  text of a challenge's images into its description. The form says what is attached, and takes
-  a file dropped anywhere. `/attach` adds files to a challenge afterwards and restarts its lane.
+  text of a challenge's images into its description. The form says what is attached. `/attach`
+  adds files to a challenge afterwards and restarts its lane.
+- A challenge's description is kept exactly as you give it, in `/new` and in `flightdeck add
+  --text`: a path in it is text and never attaches a file. Files are attached only by handing
+  them over (`--file`, `ctrl+o`, `ctrl+v`, `/attach`, or a drop), and each one is shown
+  (`flightdeck add` prints it with its size). A device, your home folder itself and flightdeck's
+  own config folder or keys file are refused, with the reason.
+- `/new` stays open, with everything you typed, when the challenge cannot be added, and says
+  why. Big files are copied in the background while the console goes on, and a path pasted on
+  the command bar never replaces what you had typed there.
 - A challenge with no file and no target says so when added, and its lane is told to say what
   is missing and stop instead of spending its budget waiting.
 - `flightdeck vpn add|up|status|down` keeps an event's WireGuard or OpenVPN file and connects
   it; `flightdeck start` asks for the file and `flightdeck play` offers to connect it. A missing
   `wg-quick` or `openvpn` is installed with your package manager, on your yes.
+- flightdeck connects only a VPN file you added (`vpn add`, or the VPN answer of `start`): one
+  merely found in a folder you play, or changed since, is said to be unverified and is left
+  alone. Lines of the file that run a program as root (`PostUp`, `up`, `plugin` and the like)
+  are shown and asked about first, with no as the default; `--yes` does not answer for them.
+  `vpn down` stops only the OpenVPN flightdeck started; a stale `vpn.pid` is removed, not killed.
 
 - A board you fill yourself can start empty, and `/new` in the console hands a challenge to a
   lane: its name, then one box for its description, its files and screenshots (dragged in) and
@@ -37,6 +50,17 @@ screen, `flightdeck start` sets an event up, and `/new` hands a challenge to a l
   format and CTFd access token, makes the event's folder (`event.toml` and `board/`), keeps the
   token in your keys file, says whether the solver pack is installed (and offers it), and
   launches. `flightdeck play FOLDER` then plays that folder with no `--event`.
+- An event's CTFd token is tied to its site. A token already in your keys file is used again
+  only for an event at the same address as one you set up before; an event of the same name at
+  another address gets a variable of its own and is asked for its token.
+- `flightdeck start --token-env NAME` and `--token-stdin` hand the token over in a script, from
+  an environment variable or a pipe; no option takes the token itself. Options are checked
+  before anything is written, and for a folder already set up start says they were not used.
+- An example flag given as the flag format (`CTF{s0me_t3xt}`) is read as `CTF{...}`, and start
+  and the home screen's form say what they understood. The form also says, while it is open,
+  why an event cannot be set up (a folder that cannot be made, a token that cannot be kept).
+- A key or token with a line break or a hidden character in it is refused before it reaches
+  your keys file, and the keys file is replaced in one step, so a save that fails loses no key.
 - `flightdeck init` asks for the model API from a numbered list, and takes several answers at
   once ("anthropic, openrouter" writes OpenRouter as the fallback).
 - `flightdeck` on its own and `flightdeck doctor` say whether no-model solvers (L1) are
@@ -309,8 +333,8 @@ and the open issues of 0.1.x and 0.2.0.
 - `flightdeck report latest` (and `writeups`, `gaps`, `score`, `share`): `latest` means the
   newest run in your config's `[run] dir`, by when the run started; the command names the
   folder it took, and a folder really named `latest` still wins (#20).
-- Install with Homebrew or apt, from this release on:
-  `brew install mfisher14/tap/ctf-flightdeck`, or the `.deb` for amd64 or arm64 on the GitHub
+- Install with apt, from this release on (the Homebrew formula is built but its tap is not set
+  up yet, so `brew install` does not work): the `.deb` for amd64 or arm64 on the GitHub
   release (`sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb`). The `.deb` brings its own
   Python 3.12 under `/opt/ctf-flightdeck`, since Debian 12 has 3.11. There is no apt
   repository yet, so `apt upgrade` does not find a new release (#29).

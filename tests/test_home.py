@@ -148,6 +148,125 @@ def test_the_new_ctf_form_says_what_is_missing_and_ends_with_the_event_it_descri
     assert (new.token, new.vpn) == ("ctfd_synthetic", vpn_file)
 
 
+def fill(form, **fields):
+    for field, value in fields.items():
+        form.query_one(f"#{field}").value = value
+
+
+def test_the_new_ctf_form_refuses_a_folder_that_cannot_be_made_and_a_token_that_cannot_be_kept_while_it_is_open(home, tmp_path, monkeypatch):
+    """What would stop the event being set up is said in the form, with every answer still
+    in it: not after the app has gone, with the token already in the keys file."""
+    from ctf_flightdeck import keys
+    from ctf_flightdeck.console import home as homes
+
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+    (tmp_path / "plainfile").write_text("a file\n")
+
+    async def script(app, pilot):
+        await pilot.press("enter")
+        await pilot.pause()
+        form = app.screen
+        problem = lambda: str(form.query_one("#problem").render())  # noqa: E731
+        fill(form, name="Example CTF", url="ctf.example.org", token="ctfd_synthetic", ai="yes", folder=str(tmp_path / "plainfile" / "sub"))
+        await pilot.press("ctrl+s")
+        assert f"Folder: {tmp_path / 'plainfile' / 'sub'} cannot be made: {tmp_path / 'plainfile'} is a file, not a folder" in problem()
+        assert app.return_value is None and form.query_one("#name").value == "Example CTF"  # still open, the answers still there
+        fill(form, folder=str(tmp_path / "events" / "example"), token='"ctfd_synthetic"')
+        await pilot.press("ctrl+s")
+        assert "Token: it is in quotes: give it without them" in problem() and "ctfd_synthetic" not in problem()
+        fill(form, token="ctfd_syn\u2028thetic")
+        await pilot.press("ctrl+s")
+        assert "Token: it has a line break in it (U+2028)" in problem() and app.return_value is None
+        (tmp_path / "keys.env").write_text("OTHER=one\n")
+        (tmp_path / "keys.env").chmod(0o644)
+        fill(form, token="ctfd_synthetic")
+        await pilot.press("ctrl+s")
+        assert "Token: " in problem() and "chmod 600" in problem() and app.return_value is None  # a keys file that would refuse it
+        (tmp_path / "keys.env").chmod(0o600)
+        await pilot.press("ctrl+s")
+
+    kind, new = drive_home(homes.items(have_config=True), script)
+    assert kind == "new" and (new.folder, new.token) == (tmp_path / "events" / "example", "ctfd_synthetic")
+    assert not (tmp_path / "events").exists() and keys.load_keys(tmp_path / "keys.env") == {"OTHER": "one"}  # the form itself writes nothing
+
+
+def test_the_new_ctf_form_says_what_it_made_of_the_flag_format_as_it_is_typed(home, tmp_path):
+    from ctf_flightdeck.console import home as homes
+
+    async def script(app, pilot):
+        await pilot.press("enter")
+        await pilot.pause()
+        form = app.screen
+        read = lambda: str(form.query_one("#flagread").render())  # noqa: E731
+        assert read() == ""
+        fill(form, flag="CTF{s0me_t3xt}")  # the rules' example flag, pasted
+        await pilot.pause()
+        assert read() == ("read CTF{s0me_t3xt} as an example flag: flags look like CTF{...}, with any text between the braces "
+                          "(the regular expression CTF\\{[^}]+\\})")
+        fill(form, flag="CTF\\{[")
+        await pilot.pause()
+        assert "neither a prefix (like PP) nor a regular expression" in read()
+        fill(form, flag="")
+        await pilot.pause()
+        assert read() == ""
+        fill(form, name="Example CTF", url="ctf.example.org", ai="yes", flag="CTF{s0me_t3xt}")
+        await pilot.press("ctrl+s")
+
+    kind, new = drive_home(homes.items(have_config=True), script)
+    assert kind == "new" and new.answers.flag_format == r"CTF\{[^}]+\}"
+
+
+def test_the_new_ctf_form_never_takes_another_sites_token_for_this_event(home, tmp_path, monkeypatch):
+    """An event of the same name at another site was set up before, and its token is in the
+    keys file. The form does not go on with that token: it asks for this event's own, and
+    keeps it under a variable of its own."""
+    from ctf_flightdeck import keys
+    from ctf_flightdeck.console import home as homes
+
+    root, _ = home
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+    old = root / "ctf" / "example-ctf"
+    start.write(old, start.EventAnswers(name="Example CTF", platform="ctfd", url="https://old.example.org", token_env="CTFD_TOKEN_EXAMPLE_CTF"))
+    keys.save("CTFD_TOKEN_EXAMPLE_CTF", "ctfd_old_synthetic", path=tmp_path / "keys.env")
+
+    async def script(app, pilot):
+        await pilot.press("down", "enter")  # past "Resume Example CTF", to "Start a new CTF"
+        await pilot.pause()
+        form = app.screen
+        problem = lambda: str(form.query_one("#problem").render())  # noqa: E731
+        fill(form, name="Example CTF", url="ctf.example.org", ai="yes", folder=str(tmp_path / "this-year"))
+        await pilot.press("ctrl+s")  # no token typed: last year's is there under the name's variable
+        assert "Token: CTFD_TOKEN_EXAMPLE_CTF is the token for old.example.org" in problem()
+        assert "Paste this event's token: it is kept as CTFD_TOKEN_EXAMPLE_CTF_2" in problem() and app.return_value is None
+        assert "ctfd_old_synthetic" not in problem()
+        fill(form, token="ctfd_new_synthetic")
+        await pilot.press("ctrl+s")
+
+    kind, new = drive_home(homes.items(have_config=True, events=events.known()), script)
+    assert kind == "new" and (new.answers.token_env, new.token) == ("CTFD_TOKEN_EXAMPLE_CTF_2", "ctfd_new_synthetic")
+    assert new.notes == (f"CTFD_TOKEN_EXAMPLE_CTF is the token for old.example.org (the event in {old.resolve()}), so it is not used for this event",)
+    choose(monkeypatch, (kind, new))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 0, result.output
+    assert keys.load_keys(tmp_path / "keys.env") == {"CTFD_TOKEN_EXAMPLE_CTF": "ctfd_old_synthetic", "CTFD_TOKEN_EXAMPLE_CTF_2": "ctfd_new_synthetic"}
+    assert "flightdeck: token: CTFD_TOKEN_EXAMPLE_CTF is the token for old.example.org" in result.output
+    assert "ctfd_new_synthetic" not in result.output and "ctfd_old_synthetic" not in result.output
+
+
+def test_no_token_is_kept_for_an_event_from_the_form_that_could_not_be_set_up(home, tmp_path, monkeypatch):
+    from ctf_flightdeck import keys
+    from ctf_flightdeck.console.home import NewEvent
+
+    _, launched = home
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+    (tmp_path / "plainfile").write_text("a file\n")
+    answers = start.EventAnswers(name="Example", platform="ctfd", url="https://ctf.example.org", token_env="CTFD_TOKEN_EXAMPLE")
+    choose(monkeypatch, ("new", NewEvent(answers, tmp_path / "plainfile" / "sub", "ctfd_synthetic", None)))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 2 and "cannot write" in result.output
+    assert not (tmp_path / "keys.env").exists() and launched == [] and events.known() == []
+
+
 def test_flightdeck_alone_does_what_the_home_screen_ended_with(home, monkeypatch):
     root, launched = home
     folder = event(root / "ctf" / "example", "Example CTF")
