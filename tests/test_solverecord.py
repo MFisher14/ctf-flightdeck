@@ -14,9 +14,10 @@ import pytest
 from typer.testing import CliRunner
 
 from ctf_flightdeck import cli
+from ctf_flightdeck.autopilot import Autopilot, Budget
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Call, Challenge, FileChange
+from ctf_flightdeck.core.model import Alert, AlertKind, Call, Challenge, FileChange
 from ctf_flightdeck.platform.manual import cannot_check
 from ctf_flightdeck.runrecord import load_run
 from ctf_flightdeck.solverecord import APPROVED, BY_HAND, NOT_IN_THE_LOG, ON_ITS_OWN, SolveRecordError, record, solved, who_sent
@@ -206,6 +207,100 @@ def test_a_fork_shows_both_lanes_whole_the_solving_one_first_and_the_fork_as_the
         assert step in text
     assert "approach: angr it" in section(text, "## Your interventions")
     assert bullets(text, "## Who did what on this challenge")["Lanes (AI agents)"].startswith("2 lanes, 8 turns in all")
+
+
+def under_autopilot(folder: Path) -> Script:
+    """Three challenges solved with autopilot engaged, each flag with the player's yes. One:
+    its lane loops, autopilot kills it and later queues the challenge on the next model, where
+    it is solved. Two: its lane stalls, autopilot escalates it, and it solves. Three: solved
+    with nothing from autopilot."""
+    run = Script(folder, flags={"one": "t{one}", "two": "t{two}", "three": "t{three}"}, max_lanes=3)
+    pilot = Autopilot(run.deck, Budget(tokens=1_000_000))
+    pilot.attach()
+    assert pilot.engage().ok
+    run.release([Challenge("one", "One", "misc", 50), Challenge("two", "Two", "web", 100), Challenge("three", "Three", "rev", 100)])
+    first, second, third = run.lane("one"), run.lane("two"), run.lane("three")
+    run.at(10)
+    run.turn(first, "ls")
+    run.deck.report(first, TurnReport(turn=False, alerts=(Alert(AlertKind.LOOP, "the same command three times"),)))
+    pilot.step()  # kills the looping lane, and parks One
+    run.at(20)
+    run.turn(second, "curl /")
+    run.deck.report(second, TurnReport(turn=False, alerts=(Alert(AlertKind.STALL, "no new step for a while"),)))
+    pilot.step()  # escalates the stalled lane
+    run.at(30)
+    run.turn(second, "curl -b admin=1 /", flag="t{two}")
+    run.do(iv.Approve(second))
+    run.at(35)
+    run.turn(third, "strings blob", flag="t{three}")
+    run.do(iv.Approve(third))
+    pilot.step()  # no lane runs now: One goes round again on the next model
+    again = run.newest()
+    assert again != first and run.lane("one") == again
+    run.at(40)
+    run.turn(again, "xxd blob", flag="t{one}")
+    run.do(iv.Approve(again))
+    return run
+
+
+def by_rule(text: str) -> list[str]:
+    """The lines of a record's autopilot section, without the wall-clock time of each."""
+    return [re.sub(r" \(`[^`]+`\)", "", line) for line in section(text, "## Autopilot's interventions, by rule")]
+
+
+def test_autopilots_interventions_on_the_challenge_are_listed_apart_from_the_players(tmp_path):
+    played = under_autopilot(tmp_path).close()
+    two = record(played, "two")
+    assert by_rule(two) == ["- T+00:00:20 · escalate · lane L02 · took effect: Escalated L02 from small to big"]
+    assert re.search(r"^- T\+00:00:20 \(`\d{4}-\d\d-\d\dT[^`]+`\) · escalate ", two, re.M)  # when, by the wall clock too
+    said = bullets(two, "## The solve")
+    assert said["Autopilot"] == "was engaged at some point of this run; what it did on this challenge is listed below"
+    assert said["Credited to"] == "lane L02, on the model small then big"
+    counts = bullets(two, "## Who did what on this challenge")
+    assert counts["Autopilot, by rule"] == "1 intervention: 1 escalate"
+    assert counts["You"] == "1 intervention: 1 approve"  # the escalate is not counted as the player's
+    mine = [line for line in section(two, "## Your interventions") if line.startswith("- ")]
+    assert len(mine) == 1 and " · approve · lane L02 · " in mine[0]  # nor listed as the player's
+    assert "approve" not in "\n".join(by_rule(two))  # and the player's yes is not autopilot's
+
+
+def test_autopilots_act_on_a_lane_or_on_the_challenge_itself_is_this_solves_with_its_words(tmp_path):
+    played = under_autopilot(tmp_path).close()
+    one = record(played, "one")
+    assert by_rule(one) == [
+        "- T+00:00:10 · kill · lane L01 · took effect: Killed L01; One is parked",  # a lane that did not solve it: still this challenge's
+        "```text", "requeue: no", "```",
+        "- T+00:00:35 · queue · the challenge · took effect: Started L04 on One on big",  # on the challenge, with no lane yet
+        "```text", "model: big", "```",
+    ]
+    assert bullets(one, "## Who did what on this challenge")["Autopilot, by rule"] == "2 interventions: 1 kill, 1 queue"
+    assert "escalate" not in one and "L02" not in one  # what autopilot did on another challenge is not this solve's
+
+
+def test_a_solve_autopilot_did_not_touch_says_so_in_a_run_it_flew(tmp_path):
+    three = record(under_autopilot(tmp_path).close(), "three")
+    assert by_rule(three) == ["Autopilot made no intervention on this challenge or its lanes."]
+    assert bullets(three, "## Who did what on this challenge")["Autopilot, by rule"] == "no interventions"
+    assert bullets(three, "## The solve")["Autopilot"].startswith("was engaged at some point of this run")
+    assert "kill" not in three and "escalate" not in three and "queue" not in three
+
+
+def test_a_run_without_autopilot_has_no_autopilot_section(played):
+    text = record(played, "alpha")
+    assert "## Autopilot's interventions, by rule" not in text
+    assert bullets(text, "## Who did what on this challenge")["Autopilot, by rule"] == "no interventions"
+
+
+def test_a_log_that_lost_the_line_where_autopilot_was_engaged_still_shows_what_it_did(tmp_path):
+    under_autopilot(tmp_path).close()
+    log = tmp_path / "events.jsonl"
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    kept = [event for event in events if not (event["kind"] == "warning" and "autopilot" in event["data"])]
+    assert len(kept) < len(events)  # the engage line was there, and is gone
+    log.write_text("".join(json.dumps(event) + "\n" for event in kept))
+    two = record(load_run(tmp_path), "two")
+    assert by_rule(two) == ["- T+00:00:20 · escalate · lane L02 · took effect: Escalated L02 from small to big"]
+    assert bullets(two, "## The solve")["Autopilot"].startswith("was engaged at some point of this run")  # never "was not engaged"
 
 
 def test_a_wrong_flag_sent_for_the_challenge_is_in_its_record_beside_the_right_one(tmp_path):
