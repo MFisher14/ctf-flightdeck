@@ -8,6 +8,8 @@ app, and setup that needs a password (sudo, a package manager) belongs to the pl
 terminal. Neither form writes anything: each ends the app with its answers, checked.
 
     ("resume", folder) | ("new", NewEvent) | ("setup", Setup) | ("image", then) | ("practice",) | ("mock",) | ("pack",) | None
+
+Settings and health (health.py) is a screen here too, and ends nothing: esc comes back.
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ class Ready:
 
 
 NEW_CTF = "its name, site, flag format, token and VPN file; then it launches"
+HEALTH = "what your config sets, and whether this machine is ready to play (flightdeck doctor's checks)"
 
 
 def items(*, have_config: bool, events=(), pack_installed: bool = False) -> list[Item]:
@@ -89,6 +92,7 @@ def items(*, have_config: bool, events=(), pack_installed: bool = False) -> list
     out.append(Item(("mock",), "Demo", "the console on fake data: nothing spent"))
     if not pack_installed:
         out.append(Item(("pack",), "Install the solver pack", "some 800 no-model solvers that run first on every challenge"))
+    out.append(Item(("health",), "Settings and health", HEALTH))
     return out
 
 
@@ -103,7 +107,7 @@ def ready_items(ready: Ready) -> list[Item]:
     if ready.build:
         out.insert(0, Item(("image", ready.first), "Build the lane image",
                            "what a Docker lane's shell has inside: built once (about 830 MB), then you are back here"))
-    out.append(Item(("menu",), "Home", "everything else: the demo, the solver pack"))
+    out.append(Item(("menu",), "Home", "everything else: the demo, the solver pack, settings and health"))
     return out
 
 
@@ -149,6 +153,10 @@ class Menu(Screen):
             self.app.push_screen(NewEventForm())
         elif item.choice[0] == "setup":
             self.app.push_screen(SetupForm(then=item.choice[1]))
+        elif item.choice == ("health",):
+            from .health import HealthScreen
+
+            self.app.push_screen(HealthScreen())
         elif item.choice == ("menu",):  # from what setup offers, to everything else (over it: q there quits the app all the same)
             self.app.push_screen(Menu(self.app.menu, self.app.status))
         else:
@@ -508,7 +516,7 @@ class HomeApp(App):
     #menu { height: auto; max-height: 24; margin-top: 1; border: none; background: transparent; padding: 0; }
     #menu > .option-list--option-highlighted { background: $fd-selected; }
     #status, #keys, #formkeys, #notes { margin-top: 1; }
-    NewEventForm, SetupForm { align: center top; padding: 1 2; }
+    NewEventForm, SetupForm, HealthScreen { align: center top; padding: 1 2; }
     #formtitle, #problem, #formkeys { width: 110; max-width: 100%; padding: 0 3; height: auto; }
     #form { width: 110; max-width: 100%; height: 1fr; border: round $fd-border; padding: 0 3 1 3; }
     #form .q { margin-top: 1; }

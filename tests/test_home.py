@@ -93,7 +93,7 @@ def test_the_home_menu_puts_the_last_event_first_and_offers_the_pack_only_when_i
     root, _ = home
     event(root / "ctf" / "example", "Example CTF")
     menu = homes.items(have_config=True, events=events.known(), pack_installed=False)
-    assert [item.choice[0] for item in menu] == ["resume", "new", "practice", "mock", "pack"]
+    assert [item.choice[0] for item in menu] == ["resume", "new", "practice", "mock", "pack", "health"]
     assert menu[0].title == "Resume Example CTF" and "0 challenges" in menu[0].detail
     assert "pack" not in [item.choice[0] for item in homes.items(have_config=True, pack_installed=True)]
     # no config yet: setup that leads to the practice set first, starting an event one below (setup first too), the demo
@@ -796,7 +796,7 @@ def test_setup_from_the_home_screen_is_written_with_its_key_out_of_sight_and_the
     assert ready.notes[0] == f"Your config: {fresh}"
     assert ready.notes[1] == f"Your key: kept in {keys_file} as OPENROUTER_API_KEY, which only you can read (never shown, never in the config)"
     assert ready.notes[2].startswith("Lanes run on this machine (runtime host)") and len(ready.notes) == 3  # what host means
-    assert [item.choice[0] for item in second["menu"]] == ["new", "practice", "mock", "pack"]  # set up now: the menu behind it
+    assert [item.choice[0] for item in second["menu"]] == ["new", "practice", "mock", "pack", "health"]  # set up now: the menu behind it
     assert f"flightdeck: Your config: {fresh}" in result.output  # said in the terminal too, for after the home screen
     assert launched == [("practice", None)]
     assert third["ready"] is None and third["status"].startswith("Back from your run.")
