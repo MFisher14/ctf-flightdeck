@@ -319,6 +319,24 @@ workspace (readline reads `~/.inputrc` whatever bash's flags say, and the player
 show a script the lane wrote the player's credentials). A host workspace notes the process groups it
 starts in the run's process record (`leftovers.py`).
 
+**What the shell has (P59).** The lane image (`lane/Dockerfile`: Debian 13) has a debugger, `gdb`
+with `gdb-multiarch`, and a decompiler, radare2 with its r2ghidra plugin (`pdg`): Debian packages
+of the first, and for the second the two projects' release archives, each checked against a
+SHA-256 in the Dockerfile. The solver pack's image (`packs/solvers/flightdeck/Dockerfile`) installs
+the same archives the same way. They are in the image because a lane has no other way to them: the
+pack's separate engine images (`packs/solvers/docker/`) are started with `docker run`, and a
+lane's container has no docker client and no socket, which is the fence. `prepare()` asks a lane's
+own container once which of `SHELL_TOOLS` its image has (`probe_tools`: a script run from `/`
+that looks three programs up and asks r2 whether it loaded the Ghidra plugin, with no file and no
+settings, so nothing of the challenge is read; an L1 engine's container is not asked), and
+`prompts.shell_tools` says them in one line of the brief, after the fence, when the challenge has
+files: the program and how to drive it without a terminal, nothing about technique. The driver
+writes the brief again once the container exists, since the lane's first brief is made before it.
+The fence is as it was: no capability is added and Docker's default seccomp profile stays, under
+which gdb traces its own child but cannot switch address randomisation off. `lane.build_command`
+labels the image with the Dockerfile's fingerprint (`lane.LABEL`), and `flightdeck doctor` warns
+of a lane image that carries another, or none (`setup._lane_image_build_checks`).
+
 ### Lane network
 
 Where: `agent/egress.py` (the fence), `agent/egress_proxy.py` (the proxy's script), `run.py`

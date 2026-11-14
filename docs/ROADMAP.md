@@ -33,6 +33,13 @@ Known limits, each said where it applies:
 - The gallery has no picture of the compact layout or of autopilot yet
   ([SCREENSHOTS.md](SCREENSHOTS.md)).
 
+Also built and waiting for that release: **a debugger and a decompiler in every Docker lane**
+(P59). The lane image and the solver pack's image have `gdb` and radare2 with the Ghidra
+decompiler, and a lane's brief says how to run them without a terminal
+([the guide](GUIDE.md#what-a-lanes-shell-has)). Its limits: gdb runs only binaries of the
+image's own architecture (no emulator in the image), gdb's tracing was run on arm64 only, and
+no run has yet measured what the two tools change in solves.
+
 ## Released: 0.4.0, M6 the solver pack and the first run (2026-11-13)
 
 The author's own solvers and the pipeline he won events with come into flightdeck (D24; P29 to
