@@ -100,6 +100,26 @@ def no_real_clipboard(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def pause_waits_for_the_screen(monkeypatch):
+    """`await pilot.pause()` with no delay waits until the screen has done everything it was
+    asked to (settling.py), not until the process looks idle, which on a loaded machine it
+    does before the screen is drawn. A pause with a delay is left as Textual has it."""
+    from textual.pilot import Pilot
+
+    from settling import settle
+
+    real = Pilot.pause
+
+    async def pause(self, delay: float | None = None) -> None:
+        if delay is not None:
+            await real(self, delay)
+        else:
+            await settle(self, real)
+
+    monkeypatch.setattr(Pilot, "pause", pause)
+
+
+@pytest.fixture(autouse=True)
 def default_palette():
     """Each test starts and ends in the default theme: the palette in use is one for the whole
     process (console/theme.py), and a console a test opened in another theme would colour the
