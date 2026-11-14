@@ -47,7 +47,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the full card, every alert with its whole reason and each answer as a command, as the deck
   layout does. On the full card the approval and its `1` and `0` now come first, and a card
   taller than its half of the pane scrolls: before, a lane with four alerts lost the approval
-  under the edge.
+  under the edge. An approval's text on the card shows a credential's name but not its value,
+  as the transcript does (before, the card showed the value).
 - A lane that restarts takes its view with it: `/attach` or `/kill` typed in a lane's own view
   moves the view to the fresh lane, with what you were typing (before, the view stayed on the
   dead lane). `/attach` names the fresh lane (`L01 restarted as L02`), and the ended lane reads

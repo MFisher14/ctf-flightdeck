@@ -150,6 +150,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   not read yet   ctrl+o shows all`), under the row of an alert that needs no answer. The
   border and its title are as on the full card: the colour of the most urgent alert that wants
   an answer, else the approval's. A suggestion with no key (advice only) is on the full card.
+
+  On both cards what the lane wrote (an approval's text, an alert's reason, a quoted answer, a
+  message) shows a credential's name but not its value, as the transcript does. The flag an
+  approval asks about is shown whole.
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
