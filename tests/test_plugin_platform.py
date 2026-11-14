@@ -239,6 +239,38 @@ def test_a_board_that_is_a_file_is_refused_and_one_not_there_yet_is_fine(tmp_pat
     assert checked(tmp_path, config)[0] == [f"event.board: {tmp_path / 'board'}: is not a directory"]
 
 
+BOARD_ELSEWHERE = ("event.board: for a plugin's platform the board is a folder inside the profile's own folder ({folder}): a pull "
+                   "writes what the platform lists into it, and a profile may be someone else's. For a board elsewhere, take "
+                   "event.board out of the profile and name the folder yourself: `flightdeck play FOLDER --event EVENT.toml`, "
+                   "`flightdeck plugin pull EVENT.toml FOLDER`")
+
+
+def test_a_profile_cannot_send_a_plugins_pull_to_a_folder_outside_its_own(tmp_path):
+    """event.board is the profile's word, and a pull writes the platform's files under it with
+    no question under the pull policy auto: it may name a folder beside the profile, never an
+    editor's plugin folder, whether by an absolute path, a ~, a .. or a link."""
+    config = player_config(tmp_path, "acme")
+    event = tmp_path / "event"
+    event.mkdir()
+    outside = tmp_path / "home" / ".config" / "editor" / "plugin"  # not there: a pull would make it
+    refused = [BOARD_ELSEWHERE.format(folder=event)]
+
+    def of(board: str, **fields) -> tuple[list[str], list[str]]:
+        loaded, chosen = load_profile(profile_file(event, board=board, **fields))
+        problems = check(loaded, chosen, max_lanes=4, environ=TOKEN_SET, model_config=config)
+        return [p.message for p in problems if p.refuse], [p.message for p in problems if not p.refuse and "flag_format" not in p.message]
+
+    for board in (str(outside), "../home/.config/editor/plugin", "..", ".", "board/../../elsewhere"):
+        assert of(board)[0] == refused, board
+        assert of(board, pull="manual", submit="manual")[0] == refused, board  # also when this run pulls nothing: `plugin pull` would
+    (event / "linked").symlink_to(tmp_path / "home", target_is_directory=True)  # a link that leaves the folder, as a shared repo can hold
+    (tmp_path / "home").mkdir()
+    assert of("linked/.config/editor/plugin")[0] == refused and of("linked")[0] == refused
+    assert not outside.exists()
+    for board in ("board", "boards/quals", str(event / "board"), "./board"):  # inside it, however it is written
+        assert of(board) == ([], []), board
+
+
 def test_a_run_that_uses_the_plugin_for_nothing_says_so(tmp_path):
     config = player_config(tmp_path, "acme")
     unused = "this run does not use the acme plugin: pull and submit are both by hand"

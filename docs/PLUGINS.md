@@ -90,7 +90,7 @@ name = "Quals"
 platform = "myctf"                  # the plugin you added
 url = "https://ctf.example.org"     # the address the adapter talks to
 token_env = "MYCTF_TOKEN"           # the NAME of the variable that holds your token, never the token
-board = "board"                     # the folder the challenges are pulled into
+board = "board"                     # the folder the challenges are pulled into: inside this file's folder
 
 [rules]
 ai_allowed = true
@@ -309,6 +309,12 @@ run that is playing the board picks up what a pull in another terminal added, wi
 A folder that holds something else is refused: one that is not empty and has no `plugin.json`,
 and a board pulled by another plugin or from another address. Flags would go to the wrong
 place; use a new folder.
+
+`event.board` must be a folder inside the profile's own folder (links followed). A pull makes
+the folder and writes the platform's files into it, under `pull = "auto"` without a question,
+and a profile may be someone else's: it cannot point a pull at another folder of your machine.
+For a board elsewhere, leave `board` out of the profile and name the folder yourself:
+`flightdeck plugin pull EVENT.toml FOLDER`, `flightdeck play FOLDER --event EVENT.toml`.
 
 ## Trust
 

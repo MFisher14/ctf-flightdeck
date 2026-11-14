@@ -597,13 +597,43 @@ def _check_plugin(
         warn.append(f"event.token_env does nothing in this run: the {name} plugin takes no token (token = false in its plugin.toml)")
     board = profile.board
     if board is not None:
-        try:
-            if board.exists() and not board.is_dir():
-                refuse.append(f"event.board: {_show(board)}: is not a directory")
-        except OSError as exc:
-            refuse.append(f"event.board: {_show(board)}: cannot be read ({exc.strerror or type(exc).__name__})")
+        elsewhere = plugin_board_problem(profile)
+        if elsewhere is not None:
+            refuse.append(elsewhere)
+        else:
+            try:
+                if board.exists() and not board.is_dir():
+                    refuse.append(f"event.board: {_show(board)}: is not a directory")
+            except OSError as exc:
+                refuse.append(f"event.board: {_show(board)}: cannot be read ({exc.strerror or type(exc).__name__})")
     if not uses:
         warn.append(f"this run does not use the {name} plugin: pull and submit are both by hand")
+
+
+def plugin_board_problem(profile: EventProfile) -> str | None:
+    """Why the event.board of a profile on a plugin's platform cannot be its board, or None.
+
+    A pull through a plugin writes what the platform lists (folders, and files under the names
+    the platform gives them) into the board folder, makes that folder when it is not there,
+    and under the pull policy auto asks nothing. The profile may be someone else's, so the
+    folder it names must be inside the profile's own folder, links followed: never another
+    folder of the machine that loads what is put in it (an editor's plugin folder).
+    A folder the player names on the command line is the player's own word, and may be
+    anywhere; the profile then names none."""
+    board, source = profile.board, profile.source
+    if board is None or source is None:
+        return None
+    try:
+        folder = source.absolute().parent.resolve()
+        inside = board.resolve().is_relative_to(folder) and board.resolve() != folder
+    except (OSError, RuntimeError):  # a loop of links, a name too long
+        inside = False
+    if inside:
+        return None
+    return (f"event.board: for a plugin's platform the board is a folder inside the profile's own folder "
+            f"({_show(source.absolute().parent)}): a pull writes what the platform lists into it, and a profile may be someone "
+            "else's. For a board elsewhere, take event.board out of the profile and name the folder yourself: "
+            "`flightdeck play FOLDER --event EVENT.toml`, `flightdeck plugin pull EVENT.toml FOLDER`")
 
 
 def _check_manual(profile: EventProfile, refuse: list[str]) -> None:

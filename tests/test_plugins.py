@@ -796,6 +796,24 @@ def test_plugin_pull_warns_before_a_token_crosses_the_network_unencrypted(tmp_pa
         assert result.exit_code == 0 and "warning" not in result.output, result.output
 
 
+def test_plugin_pull_writes_nowhere_a_profile_points_outside_its_own_folder(tmp_path, config, monkeypatch):
+    """The profile's board is the profile's word. Outside the profile's folder it is refused
+    before the plugin runs and before any folder is made; a folder the player names is the player's."""
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    outside = tmp_path / "home" / ".config" / "editor" / "plugin"
+    event = event_file(tmp_path, text=EVENT.replace('board = "board"', f'board = "{outside}"'))
+    result = invoke("pull", event)
+    assert result.exit_code == 2 and calls(root) == [] and not (tmp_path / "home").exists()
+    assert result.output.startswith("flightdeck: event.board: for a plugin's platform the board is a folder inside the profile's own folder")
+    result = invoke("pull", event, tmp_path / "mine")  # naming a folder does not make the profile's word fine: it is taken out
+    assert result.exit_code == 2 and calls(root) == [] and not (tmp_path / "mine").exists()
+    unset = event_file(tmp_path, text=EVENT.replace('board = "board"\n', ""))
+    result = invoke("pull", unset, tmp_path / "mine")  # the player's own word, on the command line: anywhere
+    assert result.exit_code == 0 and (tmp_path / "mine" / "plugin.json").is_file()
+
+
 def test_plugin_pull_never_hands_the_model_key_of_the_config_to_a_plugin(tmp_path, config, monkeypatch):
     root = make_plugin(tmp_path / "acme", LISTED)
     config.write_text(CONFIG.replace('key_env = ""', 'key_env = "HOUSE_KEY"'))
