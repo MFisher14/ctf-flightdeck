@@ -832,8 +832,10 @@ def test_the_root_help_says_where_a_new_player_starts_above_the_commands_and_nam
     said = flat(out[out.index("New here?"):out.index("╭─ Options")])
     assert said.startswith("New here? Run flightdeck on its own: its home screen sets you up (your model API and its API key) "
                            "and then offers the practice set.")
-    named = re.findall(r"flightdeck ([a-z][a-z-]*)(?=[,.:])", said)
-    assert named == ["mock", "init", "doctor", "practice", "start"], said
+    named = re.findall(r"flightdeck ([a-z][a-z-]*)(?=[,.:]| \()", said)
+    assert named == ["init", "doctor", "practice", "start", "mock"], said
+    mock = "No setup at all: flightdeck mock (fake data, nothing spent)."  # the sentence `flightdeck` alone prints, here too
+    assert said.endswith(mock) and mock in cli._next_steps()
     assert set(named) <= set(typer.main.get_command(cli.app).commands)
     assert "New here?" not in CliRunner().invoke(cli.app, ["play", "--help"], terminal_width=200).output  # the root's own line
 

@@ -18,15 +18,15 @@ SCENARIO_LIST = "Scenarios:\n\n" + "\n".join(
 )
 
 PLAY, SETUP, EVENT, AFTER, SOLVERS = "Play", "Set up", "Before and during an event", "After a run", "Solvers (L1)"
-MEASURE = "Measure a model"  # eval-local: for an optional feature (the light model), so not among what a new player sets up
+MEASURE = "Measure a model"  # eval-local: it scores a model for the light-model jobs, which are off by default; setting up needs none of it
 PANELS = (SETUP, PLAY, EVENT, AFTER, SOLVERS, MEASURE)  # the order `flightdeck --help` shows them in
 
 WHAT = "A terminal harness for playing CTFs with AI agents, where you run the loop."
+NO_SETUP = "No setup at all: `flightdeck mock` (fake data, nothing spent)."  # in --help, and what `flightdeck` alone prints in a pipe
 # What a new player reads first in `flightdeck --help`: above the commands, since help is read top down.
 NEW_HERE = ("New here? Run `flightdeck` on its own: its home screen sets you up (your model API and its API key) and "
-            "then offers the practice set. To look first, with nothing set up and nothing spent: `flightdeck mock`. "
-            "The same without the home screen: `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. "
-            "An event: `flightdeck start`.")
+            "then offers the practice set. The same without the home screen: `flightdeck init`, then `flightdeck doctor`, "
+            f"then `flightdeck practice`. An event: `flightdeck start`. {NO_SETUP}")
 
 
 class _ByPanel(typer.core.TyperGroup):
@@ -283,7 +283,7 @@ def _next_steps() -> str:
             pack = f"\n{exc}\n"
     width = max(len(command) for command, _ in steps)
     text += "".join(f"  {command:<{width}}  {what}\n" for command, what in steps)
-    return text + pack + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
+    return text + pack + f"\n{NO_SETUP.replace('`', '')} Every command: flightdeck --help\n"
 
 
 def _path(path: Path) -> Path:
