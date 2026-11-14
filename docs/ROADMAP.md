@@ -44,6 +44,13 @@ Built since, from the list of what comes next (the
   machine says why; and an empty paste in the `/new` form pastes the clipboard's image. None
   of it was tried in a real terminal: each format is from that terminal's own source or
   documentation, and Terminal.app's and tmux's are not known.
+- **The need-you count in the terminal's title, and a bell** (P61,
+  [#38](https://github.com/MFisher14/ctf-flightdeck/issues/38)). The terminal's title says how
+  many lanes need the player and whether the queue is held, in a count and fixed words; the
+  bell rings once each time the count goes up; the title the terminal had comes back when the
+  console leaves. Both are on, each with a switch under `[console]`. Inside tmux the bell
+  marks the window with nothing set up, so it is what reaches a phone over SSH. Tested on a
+  pseudo-terminal; not yet looked at in each terminal program or in tmux.
 - **Two more CTFd container plugins** (P57). `plugin = "ctfd_owl"` and `plugin = "chall_manager"`
   in `[instances]`, the keys of a plugin's answer by name (`address_key`, `port_key`,
   `expires_key`), a start that answers without an address followed by a look at the status,

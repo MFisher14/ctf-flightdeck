@@ -323,6 +323,48 @@ way before `play` exits: every lane stops, every workspace closes and your live-
 team folder. `play` prints the same lines on the way out, says that the console failed, and exits
 with status 1.
 
+## Terminal title and bell
+
+What the console says outside its own window, for a player who is looking at another one
+(`console/terminal.py`, `Beacon`; P61).
+
+- **Title.** The terminal's icon and window title (OSC 0), from the header's own count and
+  words:
+
+  | Lanes that need you | Queue | Title |
+  |---|---|---|
+  | none | running | `flightdeck` |
+  | 2 | running | `▲ 2 need you · flightdeck` |
+  | none | held | `queue held · flightdeck` |
+  | 2 | held | `▲ 2 need you · queue held · flightdeck` |
+
+  It is written when the console opens and after that only when its text changes. It holds a
+  count and fixed words and nothing else: no challenge name, no reason for a hold, no lane text
+  (rule 5).
+- **Bell.** One BEL each time the count of lanes that need you is higher than it was at the
+  last redraw. None for the count the console opens on (the player is at the console), for a
+  count that stays or falls, or for a hold.
+- **Putting the title back.** Before its first title the console has the terminal save the one
+  it shows (xterm's window operation 22, the title stack), and when it leaves it empties the
+  title and has the terminal take the saved one back (operation 23). A terminal with a title
+  stack shows what it showed before; one without is left with an empty title, which is its
+  default one, never a count. This happens on every way out that still has a terminal (`q`,
+  a run's SIGTERM, the event's end, a console that failed), and while a lane's shell has the
+  terminal (`t` take over): the title goes back first, nothing is written while the shell has
+  the terminal, and on the way back the title is saved and written again, with no bell.
+  After a hang-up there is no terminal to write to. A SIGKILL leaves the title as it was, and
+  so does a flightdeck stopped from outside (SIGTSTP, SIGSTOP) for as long as it is stopped.
+- **Switches.** `title = false` and `bell = false` under `[console]`, each by itself. With
+  `title` off nothing about the title is written, the save and the take-back included.
+- **tmux.** With tmux's defaults a bell marks the window in the status line and is passed on to
+  the terminal outside (`monitor-bell` on, `bell-action any`); a title sets the pane's title and
+  reaches the terminal outside only with `set-titles on` (off by default). So over SSH on a
+  phone the bell is the signal that arrives with nothing set up.
+
+Both are written through the console's terminal driver, behind what is being drawn, and are
+dropped once the terminal has hung up. Textual's `App.bell()` is not used: it writes nothing on
+a headless driver, and the tests read what the driver is handed.
+
 ## Autopilot
 
 While autopilot is engaged the header has an `AUTOPILOT` chip (`AP` in the compact layout) after
