@@ -371,6 +371,25 @@ def test_the_transcript_has_every_tool_call_of_a_turn_the_notes_and_the_files_wi
     assert "- `notes.md` · added · turn 1 · by you, in a take-over" in body and "+mine" in body  # yours, kept apart from the lane's
 
 
+
+def test_the_transcript_says_which_tool_calls_of_a_turn_were_not_run_and_why(tmp_path):
+    run = Script(tmp_path, flags={"one": "t{one}"})
+    run.release(one())
+    lane = run.lane("one")
+    run.at(10)  # the model asked for 4 calls; 2 ran before the player took over (the driver's own note)
+    run.turn(lane, "ls  (+1 more)  (2 tool calls not run: taken over)", output="note.txt",
+             calls=(Call("ls", "note.txt"), Call("cat note.txt", "hello")))
+    run.at(20)
+    run.turn(lane, "cat note.txt", output="hello", calls=(Call("cat note.txt", "hello"),))
+    run.at(30)
+    run.turn(lane, "strings blob", flag="t{one}")
+    run.at(40)
+    run.do(iv.Approve(lane))
+    body = "\n".join(section(record(run.close(), "one"), "## Transcript of lane L01 (the lane the accepted flag was sent on)"))
+    assert "Tool call 2 of 2:" in body
+    assert body.count("2 more tool calls the model asked for did not run: taken over.") == 1  # on the turn that skipped them, and no other
+
+
 def test_a_lane_with_no_transcript_is_said_to_have_none(tmp_path):
     run = one_solve(tmp_path)
     run.close()
