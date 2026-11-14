@@ -1154,14 +1154,16 @@ choice of sentence depends on them, never how a drop is read:
   flightdeck as a paste. tmux gives every pane its own `TERM_PROGRAM`, so flightdeck cannot
   tell which terminal that is and names none.
 - **VS Code's terminal:** it types the first file of a drop and no more, and leaves some
-  characters out of its name: drop one file at a time, or use `ctrl+o`.
+  characters out of its name: drop one file at a time, or choose it (`ctrl+o` in the form,
+  `/attach` with no file elsewhere).
 - **iTerm2:** drag with no key held. With Option held iTerm2 offers to upload the file or
   takes nothing, and with Command it types a `cd` line instead of the path.
 - **WezTerm on X11** (`XDG_SESSION_TYPE=x11`): its documentation lists drops on X11 for
-  nightly builds only, so use `ctrl+o`.
+  nightly builds only, so choose the file (`ctrl+o` in the form, `/attach` with no file
+  elsewhere).
 - **Every other terminal** (Terminal.app, Ghostty, kitty, GNOME Terminal, Alacritty, Warp and
   any not known) gets the general sentence: drag the file onto the window, and if nothing
-  lands, `ctrl+o`. Nothing in those terminals' own documentation or source gives a reason to
+  lands, choose it (`ctrl+o` in the form, `/attach` with no file elsewhere). Nothing in those terminals' own documentation or source gives a reason to
   say more.
 
 A terminal may hold drops back while a program has the mouse, as the console does
