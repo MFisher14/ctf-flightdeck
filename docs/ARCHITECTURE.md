@@ -259,7 +259,10 @@ or once the arrow keys chose one (`_chosen`), and otherwise posts what is typed.
 run's for a command that takes no lane, a lane's when the command names one, otherwise the
 lane the bar acts on (also for text `parse()` refuses). `views.bar_title(deck, typed, lane)`
 draws it: `to L04 · Ticket Desk`, `no lane`, `no lane L07`, `the run`, the challenge's name
-through `text.untrusted()` in a `Text`, never markup. `widgets.CommandBar` takes a `title`
+through `text.untrusted()` in a `Text`, never markup. A lane that would refuse what is typed
+is not named: `goes_to` also says what the text asks of its lane (`commands.Ask`: a turn, an
+action, a fork with its approach, a read), and `views.lane_refuses(lane, ask)` holds that to
+the lane's state as `Deck._apply` does: `L04 has finished`, `L04 takes no more turns`. `widgets.CommandBar` takes a `title`
 callable from the screen that hosts it and calls it in `show_title()`: at every change of
 its text, and when the screen says its lane may have changed (`FleetScreen._render_why`,
 with `bar_lane()`; `FocusScreen.refresh_view`, with the open lane). A title is set again

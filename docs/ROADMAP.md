@@ -86,7 +86,8 @@ Proposals built and waiting for a release, in the order of their numbers in
   [#39](https://github.com/MFisher14/ctf-flightdeck/issues/39)). The bar's border reads
   `to L04 · Ticket Desk` and follows the selection in the lane list and the lane in a lane's
   view; `no lane` when there is none, `the run` while a command that takes no lane is typed,
-  and the lane a command names while it is typed. The empty bar reads `a message, or / for
+  the lane a command names while it is typed, and `L04 has finished` or `L04 takes no more
+  turns` for a lane that would refuse what is typed. The empty bar reads `a message, or / for
   commands` in both views. Not built: a border colour of its own for each of the three.
 
 Known limits, each said where it applies:

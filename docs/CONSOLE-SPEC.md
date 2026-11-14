@@ -63,8 +63,13 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   there is no such lane); `the run` while a command that takes no lane is typed (`/note`,
   `/config`, `/queue`, `/approve all`). It is read from what is typed the way Enter reads
   it, so a name not yet whole, or a command Enter would refuse, leaves the title on the
-  lane. The challenge's name is challenge text: made safe, never markup, cut with `…` at the
-  bar's width. The empty bar reads `a message, or / for commands`.
+  lane. A lane that would refuse what is typed is not named: `L04 has finished` for a lane
+  that has ended (solved, killed, stopped, gave up), which still takes what reads it
+  (`/open`, `/diff`, `/copy`) and, unless it solved its challenge, `/fork` with an approach;
+  `L04 takes no more turns` for a lane that gave up and is open only for its flag's answer,
+  for a message, `/hint`, `/redirect` and `/escalate`. With nothing typed the title is the
+  one a message would get. The challenge's name is challenge text: made safe, never markup,
+  cut with `…` at the bar's width. The empty bar reads `a message, or / for commands`.
   Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
   word (`/approve 2` does not approve the selected lane; name it: `/approve L02`). `/approve all`
   names no lane: it is the fleet's `A` (Interventions, below), in either view.
@@ -198,7 +203,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
   Its border carries the same title as the fleet's command bar, in every layout: `to L01 ·
   Static Hiss` for the open lane, the lane a command names while it is typed, `the run` while
-  a command that takes no lane is typed. Empty, it reads `a message, or / for commands`.
+  a command that takes no lane is typed, and `L01 has finished` or `L01 takes no more turns`
+  when the lane would refuse what is typed. Empty, it reads `a message, or / for commands`.
 - **Selecting and copying**: text selects with the mouse. Drag over the transcript, the calm
   card, the header or the status line, and what you dragged over is copied when you let go; the
   status line says `copied 212 characters`. A double-click takes the whole entry, also what the

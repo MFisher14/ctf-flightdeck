@@ -475,6 +475,13 @@ work), and `the run` while you type a command that is not about one lane, such a
 `to L07 · …`, whichever lane is selected. Check the border before you press Enter: the
 lane named there is the one that reads your message on its next turn.
 
+A lane that would refuse what you type is not named. Once a lane has ended (solved, killed,
+stopped, gave up) the border reads `L04 has finished`: a message to it would go nowhere.
+It names the lane again while you type something an ended lane still takes: `/open`,
+`/diff`, `/copy`, and `/fork` with an approach when the lane ended without the flag. A lane
+that gave up while its flag still waits reads `L04 takes no more turns`: it is open for
+that answer only, so `/approve` and `/decline` name it and a message does not.
+
 `/` opens a menu of the commands, and typing narrows it. You do not need a command's exact
 name to find it:
 

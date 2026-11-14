@@ -8,8 +8,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   follows the selected lane in the lane list; in a lane's view it names that lane. It reads
   `no lane` when there is none to take a message, `the run` while you type a command that is
   not about one lane (`/note`, `/config`), and the lane a command names while you type it
-  (`/kill L07`). The empty bar is shorter, the same in both views: `a message, or / for
-  commands`.
+  (`/kill L07`). A lane that would refuse what you type is not named: the border reads
+  `L04 has finished` for a lane that has ended (until you type something it still takes,
+  such as `/open` or `/copy`), and `L04 takes no more turns` for one that gave up and is
+  open only for its flag's answer. The empty bar is shorter, the same in both views:
+  `a message, or / for commands`.
 - The `/` menu forgives. It finds a command from the second word of its name (`/over` lists
   `/takeover`) and from an alias (`/q` and `/exit` for `/quit`, `/settings` for `/config`,
   `/lanes` for `/back`, each shown beside the name). After a command's name it lists what the
