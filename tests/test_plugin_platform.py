@@ -1139,3 +1139,31 @@ def test_a_token_the_plugin_prints_and_an_escape_sequence_it_passes_on_never_rea
         data = path.read_bytes()
         assert secret.encode() not in data and OSC.encode() not in data, path
     assert secret not in "\n".join(run.notes() + run.errors)
+
+
+def test_a_coding_agent_lane_on_a_plugin_event_shows_the_token_by_its_name(tmp_path, token, monkeypatch):
+    """The plugin's token is a secret the run holds, as the CTFd token is: exported in the
+    player's shell, a host lane can read it, and a lane that prints it (here the fake CLI
+    echoes it) shows it as [NAME] in the run's events and transcripts (agent/external.py)."""
+    from test_external import Fake
+
+    agent = Fake(tmp_path, {"turns": [{"calls": [{"tools": [{"bash": f"echo token {PLATFORM_TOKEN}"}]}]}]})
+    path = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and not any(os.access(os.path.join(d, cli), os.X_OK) for cli in ("claude", "codex"))]
+    monkeypatch.setenv("PATH", os.pathsep.join([str(agent.bin), *path]))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-credential-for-tests")
+    try:
+        with FakePlatform(sample()) as fake:
+            run = acme_run(tmp_path, fake, agent="claude", runtime="host")
+
+            async def body(run):
+                (lane,) = run.deck.lanes.values()
+                await wait_for(lambda: any(a.output.startswith("token ") for a in lane.actions), "the step")
+
+            play(run, body)
+    finally:
+        agent.kill_leftovers()
+    (lane,) = run.deck.lanes.values()
+    assert [a.output for a in lane.actions if a.output.startswith("token ")] == [f"token [{TOKEN_VAR}]"]
+    for kept in (run.log.path, *(run.dir / "lanes").iterdir()):
+        assert PLATFORM_TOKEN not in kept.read_text(), kept.name

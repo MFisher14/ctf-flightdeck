@@ -115,6 +115,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from .agent.client import ChatClient
 from .agent.driver import COMPACT_AT, AgentDriver
@@ -1224,7 +1225,7 @@ def prepare_run(options: RunOptions) -> Run:
 
     files = {b.challenge.id: b.challenge.files for b in board.challenges}
     # each shown as [NAME] wherever a lane's tool call or its CLI writes it (agent/held.py)
-    held = _held_secrets(config, profile, token)
+    held = _held_secrets(config, profile, token, adapter.secrets if adapter is not None else None)
     if agent is not None:
         from .agent.external import ExternalDriver
 
@@ -1435,14 +1436,17 @@ def _flag_format_note(effective: str, profile: EventProfile | None, board: Board
     return f"flag format: {_show(effective)}, from {where}"
 
 
-def _held_secrets(config: Config, profile: EventProfile | None, token: str | None) -> dict[str, str]:
+def _held_secrets(config: Config, profile: EventProfile | None, token: str | None,
+                  adapter: Mapping[str, str] | None = None) -> dict[str, str]:
     """Every secret this run holds, as name -> value, for a lane's redaction (agent/held.py:
     flightdeck's own lanes show each value as [NAME] wherever a tool call gives it, before the
     model or the deck has it; agent/external.py's wherever the CLI writes it, before anything
     is shown, logged or put in a transcript): each value in the keys file, the [api] and
     [fallback] keys (a coding-agent run uses neither, but a host lane can read them), the
-    notification webhook's URL ([notify] webhook_env: it often holds a token), and the CTFd token. A variable set in the environment wins over the keys file, as it does
-    everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
+    notification webhook's URL ([notify] webhook_env: it often holds a token), the CTFd or Game
+    Master token, and the token of a plugin's or the http platform's event (`adapter`: each form
+    _adapter read it in, the environment's value too). A variable set in the environment wins
+    over the keys file, as it does everywhere in flightdeck; a keys-file value it overrides is a secret all the same, shown as
     [NAME_IN_KEYS_FILE]. A key that is not set is no secret to hide, and no error here."""
     from .keys import KeysError, load_keys
 
@@ -1459,6 +1463,7 @@ def _held_secrets(config: Config, profile: EventProfile | None, token: str | Non
     }
     if profile is not None and profile.token_env and token:
         held[profile.token_env] = token
+    held.update(adapter or {})
     for name, value in filed.items():
         if value and value != held.get(name):
             held[f"{name}_IN_KEYS_FILE"] = value
@@ -1958,6 +1963,7 @@ class _Adapter:
     caller: Callable[[], PlatformCaller]  # a new caller each time: the first pull runs on another loop than the run's
     label: str  # how messages name it: "the acme plugin", "the http adapter"
     command: str  # what pulls its board outside a run: "flightdeck plugin pull", "flightdeck http pull"
+    secrets: Mapping[str, str] = field(default_factory=dict)  # the event's token in each form it was read in, for _held_secrets
 
 
 def _adapter(profile: EventProfile, config: Config) -> _Adapter:
@@ -1967,7 +1973,8 @@ def _adapter(profile: EventProfile, config: Config) -> _Adapter:
     url, event = profile.url, profile.name
     if profile.platform != "http":
         plugin, token = _plugin_token(profile, config)
-        return _Adapter(plugin.name, lambda: Caller(plugin, url, event, token), plugin_label(plugin.name), PLUGIN_PULL)
+        held = {profile.token_env: token} if profile.token_env and token else {}
+        return _Adapter(plugin.name, lambda: Caller(plugin, url, event, token), plugin_label(plugin.name), PLUGIN_PULL, held)
     table, name = profile.http, profile.token_env
     assert table is not None and name is not None  # check() refuses an http profile without either
     from .keys import KeysError, environment
@@ -1980,11 +1987,13 @@ def _adapter(profile: EventProfile, config: Config) -> _Adapter:
         raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
                        "keys file or export it, then start play again")
     try:
-        http_platform.HttpCaller(table, url, value)
+        read = http_platform.HttpCaller(table, url, value)
     except ValueError as exc:  # a token no header can carry; the message never shows it
         raise RunError(f"{exc} ({name})") from None
+    # the variable's value, and with auth.link_param the token taken out of the link, as it is and as a link writes it
+    held = {name: value, f"{name}_DECODED": read.token, f"{name}_ENCODED": quote(read.token, safe="")}
     return _Adapter(http_platform.NAME, lambda: http_platform.HttpCaller(table, url, value), http_platform.LABEL,
-                    http_platform.PULL_COMMAND)
+                    http_platform.PULL_COMMAND, {key: secret for key, secret in held.items() if key == name or secret != value})
 
 
 def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifest.Plugin, str | None]:

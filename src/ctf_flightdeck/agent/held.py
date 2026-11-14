@@ -1,7 +1,7 @@
 """The secrets a run holds, taken out of a lane's text by value.
 
 A run holds secrets (run.py's _held_secrets: each value in the keys file, the [api] and
-[fallback] keys, the CTFd token; a coding-agent lane's own credential too), and a lane can
+[fallback] keys, the event's platform token; a coding-agent lane's own credential too), and a lane can
 read them: a host lane the keys file itself, or another process's environment. Secrets
 replaces each value with [NAME] in text a lane produced, for both kinds of lane
 (agent/driver.py's own lanes: what a tool call gave, before the model or the deck has it;
