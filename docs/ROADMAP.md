@@ -30,6 +30,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   prompt count under the window, so a lane with no `[api] context` never refreshed. The
   driver now sees a context that grew while the count did not, says so on the lane, refreshes
   it at once, and refreshes later contexts on that model at the count where the drop was seen.
+- **A noCTF preset for the http platform** (P74). `preset = "noctf"` plays an event on noCTF,
+  DownUnderCTF's platform, with the session token the site keeps, and `flightdeck http example
+  --preset noctf` prints a profile for it
+  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)). No change to the engine
+  was needed: every route fits the `[http]` table as it was. Like the rctf preset, it has met a
+  fake on 127.0.0.1 only, never a real noCTF.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

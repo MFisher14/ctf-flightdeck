@@ -47,7 +47,7 @@ whatever the pull policy), so only its submit policy uses the platform: auto or 
 answers to the Game Master and read its solved list.
 
 An "http" profile carries an [http] table (platform/http.py): the routes of the platform's
-API, or a preset that ships with flightdeck (rctf). The table is data, not code, so the
+API, or a preset that ships with flightdeck (rctf, noctf). The table is data, not code, so the
 profile may carry it, a teammate's too: every route is a path under event.url, the token goes
 nowhere else, and describe() prints each request and where the token goes before anything
 runs. The token variable must be named for the platform (HTTP_TOKEN, HTTP_TOKEN_..., or the
@@ -660,7 +660,7 @@ def _check_http(
     be inside the profile's own folder, as a plugin's."""
     http = profile.http
     if http is None:
-        refuse.append('platform "http" needs an [http] table: preset = "rctf", or the platform\'s own routes (docs/BOARDS.md)')
+        refuse.append(f'platform "http" needs an [http] table: {http_platform.PRESET_CHOICE}, or the platform\'s own routes (docs/BOARDS.md)')
         return
     uses = requested.pull in USES_PLATFORM or requested.submit in USES_PLATFORM
     if profile.url is None:
@@ -1147,7 +1147,7 @@ def _http(path: Path, doc: dict, event: dict) -> HttpConfig | None:
     if "http" not in doc:
         if event.get("platform") == "http":
             raise ProfileError(f'{_show(path)}: the [http] table is missing: platform = "http" asks the platform by the routes it '
-                               'writes (preset = "rctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
+                               f'writes ({http_platform.PRESET_CHOICE}, or the platform\'s own: `flightdeck http example` prints one to edit)')
         return None
     try:
         return http_platform.parse_config(doc["http"])

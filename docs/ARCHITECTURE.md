@@ -47,7 +47,7 @@ The components, in one line each:
 
 | Component | Job |
 |---|---|
-| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, `http` (a platform with a JSON API, by the routes the event profile writes; rCTF is a preset), and any other platform through a plugin: the player's own program, run out of process. |
+| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, `http` (a platform with a JSON API, by the routes the event profile writes; rCTF and noCTF are presets), and any other platform through a plugin: the player's own program, run out of process. |
 | Order | Fewest points first, then most solves, then by name: rules, not a model. With the light model's `route` job, a lane's opening brief also carries a guess at the challenge's category, where the board names none, and the specialist family it suits; neither changes the order. |
 | L1 runner | Routes a challenge to the player's no-model solvers and collects their `SolverResult`s. Each engine runs in its own copy of the handout, with an allowlisted environment, its own process group and a timeout: in a container when lanes run in Docker, as you on the host. The results go into the lane's opening context. |
 | Lane manager | Starts, queues (`max_lanes`), pauses, forks, kills lanes; Docker or host per `[lanes] runtime`. |
@@ -704,7 +704,7 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
 | Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes (`docker_per_team`, `ctfd_owl`, `chall_manager`) or the profile's own routes and answer keys, scoped to the board's challenges, each request that changes something sent once; a start that names no address asks the status; on a plugin with one container per account a stop asks first), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped (one that turns up within ten minutes of this run's own start that got no clear answer is this run's), a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
 | Plugins | `plugins/`, `plugin_cli.py`, `platform/plugin_run.py`, `platform/link.py` | A platform flightdeck does not know, through a program of the player's own: one process per call (`pull`, `submit`, `solved`), allowed only by the player's config. [More](#plugins). |
-| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF is a preset): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
+| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF and noCTF are presets): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -800,7 +800,7 @@ Nothing of a plugin is imported, and no third-party code is loaded for one.
 
 ### http platform
 
-Where: `platform/http.py`, `platform/http_presets/rctf.toml`, `http_cli.py`, `preflight.py`,
+Where: `platform/http.py`, `platform/http_presets/` (`rctf.toml`, `noctf.toml`), `http_cli.py`, `preflight.py`,
 `run.py` (P56; [BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api) is the player's
 page).
 
@@ -1361,5 +1361,5 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **More of the http platform.** Pages of a listing, a download route per challenge,
   form-encoded bodies and a CSRF header are refused by name ([http platform](#http-platform));
   instances on an http platform (rCTF v2 has them) are not started; `flightdeck start` and the
-  home screen's form do not offer `http` or `rctf`; and the rctf preset has met a stand-in
-  only, never a real rCTF.
+  home screen's form do not offer `http`, `rctf` or `noctf`; and the presets have met a stand-in
+  only, never a real rCTF or noCTF.

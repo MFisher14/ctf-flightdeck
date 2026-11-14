@@ -37,6 +37,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   and `[api] context`, and goes on at once in a fresh context with a summary. For the rest of
   the run, lanes on that model are refreshed when they reach the count where the drop was seen
   ([details](docs/MODEL-APIS.md#context-on-a-server-on-your-machine)).
+- noCTF, DownUnderCTF's platform, ships as a preset of the http platform: `preset = "noctf"`
+  under `[http]`, the API's address as `event.url`, and the session token the site keeps once
+  you sign in in a variable named `NOCTF_...`. `flightdeck http example --preset noctf` prints
+  a profile for it. A flag noCTF queues for the organisers to judge comes back to you, never
+  marked wrong. It was written from noCTF's source and tried against a stand-in only, not a
+  real noCTF yet: run `flightdeck http check` first
+  ([Boards](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
 
 ## 0.5.0 (2026-11-14)
 
