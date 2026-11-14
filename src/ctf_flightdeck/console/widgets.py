@@ -145,12 +145,11 @@ class CommandBar(Vertical):
     def refresh_menu(self, *, keep: bool = False) -> None:
         """Every entry that matches what is typed: the menu shows eight rows and scrolls to the rest.
         With none, and no command named: one muted row that says so. The first row is highlighted
-        only while the name is being typed, which is when enter takes it; `keep` leaves the
-        highlight on the row it was on, if that row is still listed."""
+        only while the name is being typed, which is when enter takes it; `keep` leaves a row
+        the arrow keys chose highlighted, if it is still listed."""
         menu = self.menu
         at = menu.highlighted
-        held = self.completions[at].text if keep and at is not None and at < len(self.completions) else None
-        chosen = self._chosen
+        held = self.completions[at].text if keep and self._chosen and at is not None and at < len(self.completions) else None
         self.completions, self.no_match = self._listed()
         menu.clear_options()
         self._chosen = False
@@ -170,7 +169,7 @@ class CommandBar(Vertical):
             menu.add_option(Option(label))
         texts = [completion.text for completion in self.completions]
         if held in texts:
-            menu.highlighted, self._chosen = texts.index(held), chosen
+            menu.highlighted, self._chosen = texts.index(held), True
         else:
             menu.highlighted = 0 if texts and " " not in self.field.value else None
         menu.add_class("-open")

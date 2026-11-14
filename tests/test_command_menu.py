@@ -16,6 +16,7 @@ from ctf_flightdeck.console.commands import COMMANDS
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.core import interventions as iv
+from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, LaneState
 from test_console import assert_warning, bar, color_of, open_focus, press, prompt_text, status_line
 from test_layout import SIZE, console, drive, menu_text, release, three_lanes
@@ -255,5 +256,28 @@ def test_a_challenges_name_is_drawn_as_untrusted_text_in_the_menu():
         shown = menu_text(app)
         assert "\x1b" not in shown and len(rows(app)) == 1 and rows(app)[0].startswith("/queue odd two")
         assert "red · new" in rows(app)[0]  # one row, the escape left out
+
+    drive(app, script, SIZE)
+
+
+def test_a_suggestion_that_arrives_while_the_menu_is_open_leads_it_unless_the_arrow_keys_chose_a_row():
+    deck, app = console(by_hand=True)
+    release(deck, "alpha")
+
+    async def script(pilot):
+        await press(pilot, "slash")
+        menu = bar(app)
+        assert menu.menu.highlighted == 0 and listed(app)[0] == "/hint "
+        deck.report("L01", TurnReport(action="cat flag.txt", flag="flag{synthetic}"))
+        app.refresh_view()
+        await pilot.pause()
+        assert listed(app)[0] == "/approve L01" and menu.menu.highlighted == 0  # the new first row, as before
+        await press(pilot, "down", "down")
+        chosen = listed(app)[2]
+        assert deck.apply(iv.Decline("L01")).ok
+        app.refresh_view()
+        await pilot.pause()
+        assert "/approve L01" not in listed(app)
+        assert listed(app)[menu.menu.highlighted] == chosen  # the list moved up a row; the chosen row is still the one
 
     drive(app, script, SIZE)
