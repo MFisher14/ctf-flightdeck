@@ -353,3 +353,29 @@ def test_in_the_mock_the_first_rows_say_what_quit_does_there():
         assert "q Quit (the mock has nothing to stop, so it never asks)" in first and "asks first" not in first
 
     drive(app, script, SIZE)
+
+
+# ---------------------------------------------------------------------- the docs
+
+
+def test_the_spec_the_guide_and_the_changelog_say_of_help_what_the_console_draws():
+    """The spec's Help section names each of help's headings in the words the dialog draws them;
+    the spec, the changelog and the roadmap give a lane's simple key line as focus draws it; and
+    no page still sends a player in a lane to `/help all keys`."""
+    from test_docs_commands import ROOT, flat, read, section
+
+    spec, guide = read(ROOT / "docs" / "CONSOLE-SPEC.md"), read(ROOT / "docs" / "GUIDE.md")
+    changelog, roadmap = read(ROOT / "CHANGELOG.md"), read(ROOT / "docs" / "ROADMAP.md")
+    help_ = flat(section(spec, "### Help"))
+    for heading in (*screens.NOW_HEADING.values(), screens.NOW_NO_LANE, *screens.KEYS_HEADING.values(), screens.BOTH_HEADING):
+        assert heading in help_, heading
+    assert "`?`, `esc` or `q` closes it" in help_ and {"escape", "question_mark", "q"} <= {b.key for b in HelpScreen.BINDINGS}
+    line = focus._key_line(focus.SIMPLE_KEY_LABELS).plain
+    assert line == "esc lanes  / commands  ? help  ctrl+o details"
+    for page in (spec, changelog, roadmap):
+        assert f"`{flat(line)}`" in flat(page), "a page gives another key line"  # wrapped as it may be
+    answered = focus._key_line((focus.SIMPLE_ANSWER_LABEL, *focus.SIMPLE_KEY_LABELS)).plain
+    assert f"{len(answered) + focus.KEY_MARGIN} columns with the answers" in flat(spec)
+    for page in (spec, guide, changelog):
+        assert "/help all keys" not in flat(page)
+    assert "`?` on the empty chat box opens help for that lane" in flat(guide)
