@@ -37,6 +37,17 @@ screen, `flightdeck start` sets an event up, and `/new` hands a challenge to a l
   format and CTFd access token, makes the event's folder (`event.toml` and `board/`), keeps the
   token in your keys file, says whether the solver pack is installed (and offers it), and
   launches. `flightdeck play FOLDER` then plays that folder with no `--event`.
+- An event's CTFd token is tied to its site. A token already in your keys file is used again
+  only for an event at the same address as one you set up before; an event of the same name at
+  another address gets a variable of its own and is asked for its token.
+- `flightdeck start --token-env NAME` and `--token-stdin` hand the token over in a script, from
+  an environment variable or a pipe; no option takes the token itself. Options are checked
+  before anything is written, and for a folder already set up start says they were not used.
+- An example flag given as the flag format (`CTF{s0me_t3xt}`) is read as `CTF{...}`, and start
+  and the home screen's form say what they understood. The form also says, while it is open,
+  why an event cannot be set up (a folder that cannot be made, a token that cannot be kept).
+- A key or token with a line break or a hidden character in it is refused before it reaches
+  your keys file, and the keys file is replaced in one step, so a save that fails loses no key.
 - `flightdeck init` asks for the model API from a numbered list, and takes several answers at
   once ("anthropic, openrouter" writes OpenRouter as the fallback).
 - `flightdeck` on its own and `flightdeck doctor` say whether no-model solvers (L1) are

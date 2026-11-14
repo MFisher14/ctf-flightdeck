@@ -27,7 +27,9 @@ uses it. For an event, the next command is `flightdeck start` ([Events and teams
 set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
 a demo, or install the solver pack when you have none. Arrow keys move, Enter chooses, `q` quits.
 "Start a new CTF" is a form on that screen with the questions `flightdeck start` asks; `ctrl+s`
-sets the event up and opens its console. Steps that need your password (connecting a VPN,
+sets the event up and opens its console. What would stop that (a folder that cannot be made, a
+VPN file that is not there, a token that cannot be kept) is said in the form, with your answers
+still in it, and under the flag format the form says what it made of what you typed. Steps that need your password (connecting a VPN,
 installing its tool or the solver pack) are asked in the plain terminal before the console
 opens. With no config yet the home screen offers "Get started", which asks about your model API
 in the terminal and then your first event. In a script or a pipe it asks nothing and prints the commands
@@ -570,6 +572,17 @@ and submits flags; **by hand**: any other site); the site's address; what a flag
 variable of this event's own, never into the event's folder, and is never shown. Then it says
 whether the solver pack is installed (and offers to install it), and launches.
 
+For the flag format you can also paste an example flag from the rules: `CTF{s0me_t3xt}` is read
+as `CTF{...}` (any text between the braces), and start says what it understood. Anything with a
+backslash, a bracket or a quantifier in it is kept as your own regular expression.
+
+A token belongs to a site. The variable is named after the event (`CTFD_TOKEN_EXAMPLE_CTF`), and
+a token already there is used again only when an event you set up before, at the same address,
+names it. An event of the same name at another address (this year's edition on a new site, or a
+site that only looks like last year's) gets a variable of its own (`CTFD_TOKEN_EXAMPLE_CTF_2`)
+and is asked for its token, and start says why; so is an event whose variable is set while none
+of your events says which site it is for. One site's token is never sent to another's address.
+
 What it leaves:
 
 ```
@@ -580,8 +593,13 @@ What it leaves:
 
 `flightdeck play ~/ctf/example-ctf` plays that event again, with no option to remember: a folder
 with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/example-ctf` does the
-same for a folder already set up. Every question has an option (`flightdeck start --help`), for
-a script.
+same for a folder already set up (answers given as options are then not used, and it says so).
+Every question has an option (`flightdeck start --help`), for a script. The token is the
+exception: no option takes it, because a command line stays in your shell's history and shows in
+the process list. `--token-env NAME` reads it from the environment variable you name, and
+`--token-stdin` from a pipe; either way start keeps it in your keys file. Options are checked
+before anything is written: a `--vpn` file that is not there, a folder that cannot be made or a
+token that cannot be kept stops start with no folder made and no token kept.
 
 By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
 `/new` to hand a challenge over. The form asks for its name and has one box for everything you
