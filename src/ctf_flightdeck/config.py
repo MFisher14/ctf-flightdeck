@@ -90,7 +90,7 @@ _TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback"
 LAYOUTS = ("simple", "deck")  # [console] layout: the lanes and what needs the player | the whole dashboard
 PLUGIN_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")  # a plugin's name, which is the name of the platform it provides
 # The platforms flightdeck has built in (preflight.PLATFORMS; a literal here: preflight imports this module).
-RESERVED_PLATFORMS = ("ctfd", "manual", "gamemaster")
+RESERVED_PLATFORMS = ("ctfd", "manual", "gamemaster", "http")
 NOTIFY_KINDS = ("flag", "needs-you", "disengaged")  # what [notify] on may list, and its default: all three
 _API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")

@@ -296,7 +296,7 @@ def _state(root: Path, path: Path, plugin: str, url: str, label: str) -> dict[st
     if not isinstance(refs, dict) or not all(isinstance(cid, str) and valid_ref(ref) for cid, ref in refs.items()):
         raise broken
     if data.get("plugin") != plugin or _address(data.get("url")) != _address(url):
-        other = "by another plugin" if label == plugin_label(plugin) else f"by something else than {label}"
+        other = "by another plugin" if label == plugin_label(plugin) else f"by something other than {label}"
         raise PluginError(f"{_show(root)} holds a board pulled {other} or from another address: use a new folder")
     return dict(refs)
 

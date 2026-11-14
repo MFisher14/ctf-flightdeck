@@ -788,7 +788,7 @@ def test_plugin_pull_runs_only_a_plugin_the_players_config_allows(tmp_path, conf
     event = event_file(tmp_path)
     result = invoke("pull", event)
     assert result.exit_code == 2 and calls(root) == []
-    assert result.output == ('flightdeck: event.platform is not "ctfd", "manual" or "gamemaster", and names no plugin in your config '
+    assert result.output == ('flightdeck: event.platform is not "ctfd", "manual", "gamemaster" or "http", and names no plugin in your config '
                              "(your config has no [plugins] table). `flightdeck plugin add FOLDER` adds one, after showing you what it runs\n")
     enabled(config, root, name="rival")  # the config allows another name: the profile's word is not shown
     result = invoke("pull", event)

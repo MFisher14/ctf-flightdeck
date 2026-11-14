@@ -75,6 +75,11 @@ the submit policy uses the platform, flags go to the plugin through the deck's s
 solved list is read at the start and every solves_seconds (platform/plugin_run.py:
 PluginLink). The plugin's program gets the event's token and none of the player's other keys
 (plugins/call.py). A profile that uses the plugin for nothing plays as a by-hand board.
+
+An event on the http platform (platform "http", with the routes of the platform's JSON API in
+the profile's [http] table: platform/http.py) plays the same way through the same link, with
+flightdeck making the three calls itself: no program of the player's runs, and the token goes
+only to event.url. Outside a run its board is pulled by `flightdeck http pull`.
 While autopilot guards the run the model client sends no server-side refusal fallback.
 
 The host governor (governor.py, `[governor]` in the config): unless it is turned off, the
@@ -136,11 +141,12 @@ from .platform.gamemaster_run import GameMasterLink, listed_solved
 from .platform.link import PlatformLink
 from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, challenge_folders, load_board, load_challenge
 from .platform.plugin_run import PULL_SECONDS as PLUGIN_PULL_SECONDS
+from .platform import http as http_platform
 from .platform.plugin_run import PluginLink
 from .plugins import manifest as plugin_manifest
 from .plugins.board import load_refs as load_plugin_refs
 from .plugins.board import pull_into
-from .plugins.call import CallFailed, Caller
+from .plugins.call import PLUGIN_PULL, CallFailed, Caller, PlatformCaller, plugin_label
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
@@ -273,7 +279,7 @@ class Run:
     ctfd: CTFdLink | None = None
     verifier: CTFdVerifier | None = None  # what submits a CTFd board's flags, when submit uses the platform
     gm: GameMasterLink | None = None  # a Game Master board's submitter and solved list, when submit uses the platform
-    plug: PluginLink | None = None  # a plugin's platform: its pulls, its solved list, and its submitter when submit uses it
+    plug: PluginLink | None = None  # a plugin's platform, or the http platform: its pulls, its solved list, and its submitter when submit uses it
     team: TeamChannel | None = None
     _notes: list[str] = field(default_factory=list, repr=False)
     _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
@@ -656,7 +662,7 @@ class Run:
         without an answers file (a practice set is whole from the start). So is the board of
         an event on a plugin's platform whose policies use the plugin for nothing."""
         return self.ctfd is None and self.gm is None and self.plug is None and self.options.board is not None \
-            and not self.board.answers and (self.profile is None or self.profile.platform == "manual" or self.profile.plugin)
+            and not self.board.answers and (self.profile is None or self.profile.platform == "manual" or self.profile.adapter)
 
     @property
     def watches_folder(self) -> bool:
@@ -909,14 +915,14 @@ class _Plan:
 
     @property
     def plug_pulls(self) -> bool:
-        """An event on a plugin's platform whose pull policy uses the platform."""
-        return self.profile is not None and self.profile.plugin and self.policies is not None \
+        """An event on a plugin's platform, or the http platform, whose pull policy uses the platform."""
+        return self.profile is not None and self.profile.adapter and self.policies is not None \
             and self.policies.pull in USES_PLATFORM
 
     @property
     def plug(self) -> bool:
-        """An event on a plugin's platform whose pull or submit uses the platform."""
-        return self.plug_pulls or (self.profile is not None and self.profile.plugin and self.platform)
+        """An event on a plugin's platform, or the http platform, whose pull or submit uses the platform."""
+        return self.plug_pulls or (self.profile is not None and self.profile.adapter and self.platform)
 
 
 def prepare_run(options: RunOptions) -> Run:
@@ -933,7 +939,7 @@ def prepare_run(options: RunOptions) -> Run:
     options = plan.options
     engage, budget = _autopilot_asked(options, config, runtime)
     # a by-hand event's board may be empty: the player adds challenges as they go (/new, `flightdeck add`)
-    filled_by_hand = plan.profile is not None and (plan.profile.platform == "manual" or plan.profile.plugin) and not plan.plug
+    filled_by_hand = plan.profile is not None and (plan.profile.platform == "manual" or plan.profile.adapter) and not plan.plug
     # a CTFd board, and a plugin's, is read once the platform has been asked (the first pull, or the board's plugin.json)
     board = None if plan.ctfd or plan.plug else _load_board(options, empty_ok=filled_by_hand)
     if board is not None and not board.challenges:
@@ -1005,10 +1011,10 @@ def prepare_run(options: RunOptions) -> Run:
     if plan.gm:
         assert profile is not None
         token, gm_ids = _gm_token(profile, options.board)
-    plugin = plug_first = None
+    adapter = plug_first = None
     if plan.plug:
         assert profile is not None
-        plugin, token = _plugin_token(profile, config)
+        adapter = _adapter(profile, config)
     if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
         _check_apis(config, key, spare_key, plan.notes)
     if engage and profile is not None:  # every check is done: wait for the event's start before anything is pulled
@@ -1020,8 +1026,8 @@ def prepare_run(options: RunOptions) -> Run:
     if gm_ids is not None:  # the Game Master's solved list, read once before the run starts
         assert profile is not None and token is not None
         gm_solved = _gm_solved(profile, token)
-    if plugin is not None:  # the plugin's pull (or the board an earlier pull wrote), then its solved list, read once
-        plug_first = _plugin_first(options, plan, plugin, token)
+    if adapter is not None:  # the adapter's pull (or the board an earlier pull wrote), then its solved list, read once
+        plug_first = _plugin_first(options, plan, adapter)
         board = plug_first.board
     assert board is not None
     runs = (options.run_dir or config.run_dir).expanduser()
@@ -1120,15 +1126,15 @@ def prepare_run(options: RunOptions) -> Run:
         )
     plug = None
     if plug_first is not None:
-        assert profile is not None and profile.url is not None and plan.policies is not None and plugin is not None
+        assert profile is not None and profile.url is not None and plan.policies is not None and adapter is not None
         plug = PluginLink(
-            Caller(plugin, profile.url, profile.name, token),  # a caller of its own: the first pull's ran on another loop
-            plugin.name, options.board, plug_first.refs, solved=plug_first.solved,
+            adapter.caller(),  # a caller of its own: the first pull's ran on another loop
+            adapter.name, options.board, plug_first.refs, solved=plug_first.solved,
             pulls=plan.policies.pull is Policy.AUTO, solves_seconds=options.solves_seconds,
         )
         plug.reported = set(plug_first.reported)
         if plan.platform:
-            plan.notes.append(f"flags go to {_show(profile.url)} through the {plugin.name} plugin")
+            plan.notes.append(f"flags go to {_show(profile.url)} through {adapter.label}")
     plug_submits = plug if plug is not None and plan.platform else None  # the deck's submitter only when submit uses the platform
     if verifier is not None:
         assert link is not None
@@ -1529,9 +1535,10 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
             raise RunError("--answers checks flags against a file, and a CTFd event checks them on CTFd: drop --answers")
     elif board is None:
         board = profile.board  # check() refused a manual profile without one
-        if board is None and profile.plugin:
+        if board is None and profile.adapter:
+            whose = "the http platform" if profile.platform == "http" else "a plugin's platform"
             raise RunError(
-                "an event on a plugin's platform needs the board folder its challenges are pulled into: `flightdeck play "
+                f"an event on {whose} needs the board folder its challenges are pulled into: `flightdeck play "
                 "FOLDER --event EVENT.toml`, or board = that folder in the profile's [event]"
             )
         if board is None:  # a Game Master profile may leave it to the command line
@@ -1544,9 +1551,10 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
     submit = _event_submit(options, policies)
     if profile.platform == "gamemaster" and submit.platform and options.answers is not None:
         raise RunError("--answers checks flags against a file, and this event checks them on the Game Master: drop --answers")
-    if profile.plugin and submit.platform and options.answers is not None:
-        raise RunError("--answers checks flags against a file, and this event checks them on its platform, through the "
-                       f"{profile.platform} plugin: drop --answers")
+    if profile.adapter and submit.platform and options.answers is not None:
+        through = http_platform.LABEL if profile.platform == "http" else plugin_label(profile.platform)
+        raise RunError(f"--answers checks flags against a file, and this event checks them on its platform, through {through}: "
+                       "drop --answers")
     if not submit.platform:
         notes.append(
             f'submit is "{policies.submit}" in the event profile: flightdeck never submits a flag. It shows each one; '
@@ -1882,6 +1890,44 @@ def _gm_solved(profile: EventProfile, token: str) -> set[str]:
         raise RunError(f"could not read the Game Master's list: {exc}") from None
 
 
+@dataclass(frozen=True)
+class _Adapter:
+    """What makes the three calls for an event (plugins.call.PlatformCaller): a plugin of the
+    player's, whose program is run for each, or the http platform, which makes them itself."""
+
+    name: str  # the name on the board's record (plugin.json): the plugin's, or "http"
+    caller: Callable[[], PlatformCaller]  # a new caller each time: the first pull runs on another loop than the run's
+    label: str  # how messages name it: "the acme plugin", "the http adapter"
+    command: str  # what pulls its board outside a run: "flightdeck plugin pull", "flightdeck http pull"
+
+
+def _adapter(profile: EventProfile, config: Config) -> _Adapter:
+    """The adapter of an event on a plugin's platform or on the http platform, with the
+    event's token read. RunError when the plugin, the table or the token cannot be used."""
+    assert profile.url is not None  # check() refuses the profile without one
+    url, event = profile.url, profile.name
+    if profile.platform != "http":
+        plugin, token = _plugin_token(profile, config)
+        return _Adapter(plugin.name, lambda: Caller(plugin, url, event, token), plugin_label(plugin.name), PLUGIN_PULL)
+    table, name = profile.http, profile.token_env
+    assert table is not None and name is not None  # check() refuses an http profile without either
+    from .keys import KeysError, environment
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
+    if not value:
+        raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
+                       "keys file or export it, then start play again")
+    try:
+        http_platform.HttpCaller(table, url, value)
+    except ValueError as exc:  # a token no header can carry; the message never shows it
+        raise RunError(f"{exc} ({name})") from None
+    return _Adapter(http_platform.NAME, lambda: http_platform.HttpCaller(table, url, value), http_platform.LABEL,
+                    http_platform.PULL_COMMAND)
+
+
 def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifest.Plugin, str | None]:
     """The plugin the player's config allows for the profile's platform, and the event's token
     for it, from the variable event.token_env names (the environment, else the keys file;
@@ -1918,17 +1964,17 @@ class _PluginFirst:
     reported: tuple[str, ...] = ()  # what the first pull left out or noted, as the link would warn of it: said in the notes
 
 
-def _plugin_first(options: RunOptions, plan: _Plan, plugin: plugin_manifest.Plugin, token: str | None) -> _PluginFirst:
-    """The board of an event on a plugin's platform before the console starts: pulled through
-    the plugin under the pull policy auto or confirm (confirm: once the player says yes), else
-    the board an earlier pull wrote, which must be this plugin's from this address when its
-    flags go to the platform; then the plugin's solved list, read once. RunError when any of
-    it fails: a run never starts blind to the platform."""
+def _plugin_first(options: RunOptions, plan: _Plan, adapter: _Adapter) -> _PluginFirst:
+    """The board of an event on a plugin's platform (or the http platform) before the console
+    starts: pulled through the adapter under the pull policy auto or confirm (confirm: once
+    the player says yes), else the board an earlier pull wrote, which must be this adapter's
+    from this address when its flags go to the platform; then the solved list, read once.
+    RunError when any of it fails: a run never starts blind to the platform."""
     profile, policies = plan.profile, plan.policies
     assert profile is not None and policies is not None and profile.url is not None and options.board is not None
-    folder, name = options.board, plugin.name
+    folder, name, label, command = options.board, adapter.name, adapter.label, adapter.command
     url, where = _show(profile.url), _show(folder)
-    caller = Caller(plugin, profile.url, profile.name, token)
+    caller = adapter.caller()
     reported: list[str] = []
     if policies.pull in USES_PLATFORM:
         if policies.pull is Policy.CONFIRM:
@@ -1938,43 +1984,43 @@ def _plugin_first(options: RunOptions, plan: _Plan, plugin: plugin_manifest.Plug
                     'here (not at a terminal, or a headless run): start play at a terminal without --headless, or set '
                     'pull = "auto" in the profile\'s [policies]'
                 )
-            if not options.confirm(f"Pull the board from {url} through the {name} plugin into {where}?"):
+            if not options.confirm(f"Pull the board from {url} through {label} into {where}?"):
                 raise RunError("you said no to the pull, so nothing was pulled and the run did not start")
         try:
             written = _sync(pull_into(caller, folder, plugin=name, url=profile.url))
         except CallFailed as exc:
-            raise RunError(f"the {name} plugin could not pull the board: {exc}; nothing was started") from None
+            raise RunError(f"{label} could not pull the board: {exc}; nothing was started") from None
         except plugin_manifest.PluginError as exc:
             raise RunError(str(exc)) from None
         reported = [f"{name}: not added: {problem}" for problem in written.problems] + [f"{name}: {note}" for note in written.notes]
         plan.notes += reported
     try:
-        refs = load_plugin_refs(folder, plugin=name, url=profile.url)
+        refs = load_plugin_refs(folder, plugin=name, url=profile.url, label=label, command=command)
     except plugin_manifest.PluginError as exc:
         raise RunError(str(exc)) from None
     board = _load_board(options, empty_ok=True)  # the platform may list nothing yet
     try:
         solved = _sync(caller.solved())
     except CallFailed as exc:
-        raise RunError(f"could not read the solved list from the {name} plugin: {exc}; nothing was started") from None
+        raise RunError(f"could not read the solved list from {label}: {exc}; nothing was started") from None
     total = len(board.challenges)
     count = f"{total} challenge{'' if total == 1 else 's'}"
     if policies.pull is Policy.AUTO:
-        plan.notes.append(f"board: {count} from {url} through the {name} plugin in {where} ({len(written.added)} new); "
+        plan.notes.append(f"board: {count} from {url} through {label} in {where} ({len(written.added)} new); "
                           f"flightdeck pulls again every {PLUGIN_PULL_SECONDS:g} s")
     elif policies.pull is Policy.CONFIRM:
-        plan.notes.append(f"board: {count} from {url} through the {name} plugin in {where} ({len(written.added)} new)")
+        plan.notes.append(f"board: {count} from {url} through {label} in {where} ({len(written.added)} new)")
         plan.notes.append(
             'pull is "confirm" in the event profile: flightdeck pulled the board once, after you said yes, and pulls no '
-            "more; start play again, or `flightdeck plugin pull` in another terminal, to add new challenges"
+            f"more; start play again, or `{command}` in another terminal, to add new challenges"
         )
     else:
         plan.notes.append(
-            f'board: {count} in {where}, as `flightdeck plugin pull` wrote it; pull is "{policies.pull}" in the event '
-            "profile, so this run pulls nothing (`flightdeck plugin pull` in another terminal adds new challenges)"
+            f'board: {count} in {where}, as `{command}` wrote it; pull is "{policies.pull}" in the event '
+            f"profile, so this run pulls nothing (`{command}` in another terminal adds new challenges)"
         )
     if not plan.platform:
-        plan.notes.append(f"the {name} plugin reads the solved list from {url}; no flag goes through it")
+        plan.notes.append(f"{label} reads the solved list from {url}; no flag goes through it")
     return _PluginFirst(board, refs, frozenset(solved), tuple(reported))
 
 
