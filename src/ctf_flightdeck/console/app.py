@@ -45,7 +45,7 @@ from ..core.driver import TakeoverRefused
 from ..core.model import ME, UNLIMITED_LANES, ChallengeStatus, Event, EventKind, Lane, LaneState, lanes_text
 from ..text import untrusted
 from . import theme, views
-from .commands import CommandError, State, Word, needs_lane, parse
+from .commands import COPY_WHAT, CommandError, State, Word, needs_lane, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
@@ -420,9 +420,9 @@ class FlightdeckApp(App[None]):
     def copy_from(self, lane: Lane, what: str) -> None:
         """/copy [output|command|flag|all]: a text of the lane's to the clipboard, with no
         mouse (views.lane_copy has what each is). Alone it is the last output."""
-        word = what.strip().lower() or views.COPY_WHAT[0]
-        if word not in views.COPY_WHAT:  # not shown: it is not one of them
-            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(views.COPY_WHAT)}")
+        word = what.strip().lower() or COPY_WHAT[0]
+        if word not in COPY_WHAT:  # not shown: it is not one of them
+            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(COPY_WHAT)}")
             return
         try:
             text, name = views.lane_copy(self.deck, lane, word)

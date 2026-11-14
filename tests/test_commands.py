@@ -269,6 +269,16 @@ def test_after_its_name_a_command_lists_the_words_it_takes():
     assert not any(c.suggested or c.also for c in by_text.values())
 
 
+def test_copy_lists_what_it_copies_each_with_what_it_is():
+    listed = complete("/copy ")
+    assert [c.text for c in listed] == ["/copy output", "/copy command", "/copy flag", "/copy all"]
+    assert all(c.help and not (c.suggested or c.also) for c in listed)
+    assert listed[0].help == "the last output (also /copy alone)"
+    assert texts("/copy f") == ["/copy flag"] and texts("/copy C") == ["/copy command"]
+    assert texts("/copy flag") == [] and texts("/copy x") == []
+    assert texts("/co") == ["/copy ", "/config "]  # the name first: the words only after the space
+
+
 def test_a_word_typed_whole_is_not_listed_since_tab_would_change_nothing():
     assert texts("/layout deck") == [] and texts("/layout DECK ") == [] and texts("/sort lane") == []
     assert texts("/autopilot on") == []
@@ -313,7 +323,7 @@ def test_the_console_is_asked_for_its_state_only_by_a_command_whose_words_follow
 def test_a_command_without_words_of_its_own_lists_nothing_after_its_name():
     for typed in ("/hint ", "/kill ", "/kill p", "/approve ", "/config ", "/settings ", "/new ", "/attach ", "/note ", "/filter ", "/diff "):
         assert complete(typed, state=state) == [], typed
-    assert [name for name, command in BY_NAME.items() if command.words] == ["open", "theme", "layout", "queue", "autopilot", "sort"]
+    assert [name for name, command in BY_NAME.items() if command.words] == ["copy", "open", "theme", "layout", "queue", "autopilot", "sort"]
 
 
 def test_suggestions_still_lead_the_words_after_a_name():

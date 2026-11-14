@@ -13,6 +13,9 @@ Proposals built and waiting for a release, in the order of their numbers in
   container that is gone, a cancel: the console comes back at once, the lane is handed back as
   it was, and the status line says why. Until now Textual's suspend was never left when the
   shell's start raised, and the console drew nothing.
+- **Three small gaps in the console** (P70). The mock rings the bell only with `bell = true`
+  (a run rings as P61 has it), `/copy ` lists what it copies, and the simple key line shows the
+  keys for no lane while the filter hides the selected lane.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

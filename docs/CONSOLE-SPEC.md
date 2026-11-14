@@ -140,7 +140,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     the lane's id, `l1` for L01, or by a word of its challenge's name), the parked and new
     challenges for `/queue` (by id or by a word of the name), the themes for `/theme` (built
     in, then yours, the one in use marked), `simple` and `deck` for `/layout` (the one in use
-    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`. A word typed whole is
+    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`, and `output`, `command`,
+    `flag` and `all` for `/copy`, each with what it copies. A word typed whole is
     not listed. While the menu is open it follows the deck: a lane that changes state, a
     challenge that is parked. Other commands list nothing after their name.
   - When what is typed names no command and nothing is listed, the menu stays open with one
@@ -369,6 +370,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   |---|---|
   | none, on a board the player fills | `/new add a challenge  ? help  q quit` |
   | none, on a platform's board | `? help  q quit` |
+  | hidden by the filter | as for none: every key refuses it, and the bar's title says `no lane` |
   | needs nothing, or has finished | `enter open  / commands  ? help  q quit` |
   | waits for an approval | `a approve  d decline  enter open  / commands  ? help  q quit` |
   | has an alert with numbered answers | `1-9 answer`, and `x dismiss` when the alert is about its course, then `enter open  / commands  ? help  q quit` |
@@ -675,6 +677,9 @@ What the console says outside its own window, for a player who is looking at ano
   so does a flightdeck stopped from outside (SIGTSTP, SIGSTOP) for as long as it is stopped.
 - **Switches.** `title = false` and `bell = false` under `[console]`, each by itself. With
   `title` off nothing about the title is written, the save and the take-back included.
+- **The mock.** `flightdeck mock` writes the title as a run does, and rings the bell only when
+  the config says `bell = true`: with `bell` left out, or no config at all, it rings none
+  (P70). A run rings unless `bell = false`.
 - **tmux.** With tmux's defaults a bell marks the window in the status line and is passed on to
   the terminal outside (`monitor-bell` on, `bell-action any`); a title sets the pane's title and
   reaches the terminal outside only with `set-titles on` (off by default). So over SSH on a

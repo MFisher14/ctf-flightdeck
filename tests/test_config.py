@@ -941,11 +941,14 @@ def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_
     assert console("mouse = true") == ConsoleConfig()
     assert console('mouse = false\ntheme = "light"\nlayout = "deck"') == ConsoleConfig(
         layout="deck", theme="light", palette=themes.BUILTIN["light"], mouse=False)
-    # the terminal's title and bell are on unless the config turns one off, each by itself
-    assert (console("").title, console("").bell) == (True, True)
+    # the terminal's title and bell are on unless the config turns one off, each by itself;
+    # a bell left out rings in a run and not in the mock, one written as true in both (P70)
+    assert (console("").title, console("").rings_bell(mock=False), console("").rings_bell(mock=True)) == (True, True, False)
     assert console("title = false") == ConsoleConfig(title=False)
     assert console("bell = false") == ConsoleConfig(bell=False)
-    assert console("title = true\nbell = true") == ConsoleConfig()
+    assert [console("bell = false").rings_bell(mock=m) for m in (False, True)] == [False, False]
+    assert [console("bell = true").rings_bell(mock=m) for m in (False, True)] == [True, True]
+    assert console("title = true\nbell = true") == ConsoleConfig(bell=True)
     assert console('title = false\nbell = false\ntheme = "light"') == ConsoleConfig(
         theme="light", palette=themes.BUILTIN["light"], title=False, bell=False)
     for name, palette in themes.BUILTIN.items():

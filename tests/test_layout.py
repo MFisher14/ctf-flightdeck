@@ -945,6 +945,26 @@ def test_the_simple_key_line_shows_the_keys_that_apply_to_the_selected_lane():
     drive(app, script, SIZE)
 
 
+def test_a_filter_that_hides_the_selected_lane_gives_the_simple_key_line_the_no_lane_keys():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        app.fleet.select_lane("L02")
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+        app.fleet.set_filter("gamma")  # hides the selected lane: every key refuses it
+        await pilot.pause()
+        assert app.fleet.selected_lane == "L02" and app.fleet.bar_lane() is None
+        assert footer_line(app).strip() == NO_LANE_BY_HAND  # as help's "now" and the bar's `no lane` say
+        await press(pilot, "a")  # and the line is right: the key refuses
+        assert deck.lanes["L02"].pending is not None
+        app.fleet.set_filter("")  # the selection is shown again: its keys are back
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+
+    drive(app, script, SIZE)
+
+
 @pytest.mark.parametrize("by_hand, line", [(True, NO_LANE_BY_HAND), (False, NO_LANE_PLATFORM)], ids=["by hand", "platform"])
 def test_with_no_lane_the_simple_key_line_says_how_to_start(by_hand, line):
     deck, app = console(by_hand=by_hand, layout="simple")

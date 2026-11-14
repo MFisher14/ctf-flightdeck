@@ -433,7 +433,8 @@ status line: what you dragged over is copied when you let go, and the status lin
 triple-click the whole transcript on screen. `ctrl+c` copies the selection again and `esc`
 takes it down. With no mouse, `/copy` copies the lane's last output with its line breaks,
 `/copy command` the command that printed it, `/copy flag` the lane's flag, and `/copy all` the
-whole transcript. A copy shows a credential's name and never its value, as the screen does.
+whole transcript; `/copy ` with a space lists the four, each with what it copies. A copy shows
+a credential's name and never its value, as the screen does.
 
 flightdeck copies through your system's clipboard tool (`pbcopy` on macOS; `wl-copy`, `xclip`
 or `xsel` on Linux) and through the terminal (OSC 52), which is what reaches your machine over
@@ -523,7 +524,8 @@ name to find it:
 - After the name and a space, the menu lists what the command takes: the lanes with their
   challenge and state after `/open` (type `l2`, or part of the challenge's name), the parked
   and new challenges after `/queue`, your themes after `/theme`, `simple` and `deck` after
-  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`.
+  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`, and `output`,
+  `command`, `flag` and `all` after `/copy`.
 - When nothing matches, the menu says `No commands match "/x"` and stays open, so you can
   correct what you typed.
 
@@ -717,7 +719,8 @@ The console tells you that a lane needs you when you are looking at another wind
 - **The bell.** The terminal's bell rings once each time that count goes up. It does not ring
   for what already waits when the console opens, while the count stays, when it falls, or when
   the queue is held. What a bell does is your terminal's own setting: a sound, a mark on the
-  tab, a badge, or nothing.
+  tab, a badge, or nothing. `flightdeck mock` rings it only when your config says `bell = true`:
+  its lanes are scripted and need no one, so trying it out does not keep calling you.
 
 When the console leaves, the title you had comes back: flightdeck asks the terminal to save its
 title before it writes one, and to take it back at the end. The same happens while you are in a
@@ -740,7 +743,7 @@ Either can be turned off under `[console]` in your config:
 ```toml
 [console]
 title = false   # leave the terminal's title alone
-bell = false    # never ring the bell
+bell = false    # never ring the bell (true: ring it in flightdeck mock too)
 ```
 
 This is tested by reading what a pseudo-terminal is sent, byte for byte. It has not yet been

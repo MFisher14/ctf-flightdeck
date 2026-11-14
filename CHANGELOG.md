@@ -10,6 +10,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   back as it was (a paused lane stays paused), and the status line says why: `the shell did
   not start: docker was not found (is it installed and on your PATH?)`, or `the shell exited at
   once with status 1`. A shell that never ran is not told to the lane.
+- `flightdeck mock` no longer rings the terminal's bell unless your config says `bell = true`
+  under `[console]`: its lanes are scripted and need no one. A run rings as before, and
+  `bell = false` still silences both.
+- `/copy ` with a space lists what it copies (`output`, `command`, `flag`, `all`), each with a
+  few words, as `/sort` and `/autopilot` list theirs.
+- In the simple layout, while the filter hides the selected lane, the key line shows the keys
+  for no lane, as help and the command bar's `no lane` do, instead of keys that would be
+  refused.
 
 ## 0.5.0 (2026-11-14)
 

@@ -351,7 +351,7 @@ def mock(
         layout=look.layout,
         mouse=look.mouse,
         terminal_title=look.title,
-        terminal_bell=look.bell,
+        terminal_bell=look.rings_bell(mock=True),  # only with bell = true written: P70
         config_path=str(config_file) if config_file is not None else "",
         themes_folder=config_file.parent / "themes" if config_file is not None else None,
     ).run()
