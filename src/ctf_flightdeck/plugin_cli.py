@@ -104,13 +104,9 @@ def pull(
     Exit status 1 when some challenges were left out (each is named, with the reason), 2 when
     the pull could not start or the plugin's call failed.
     """
-    import asyncio
-
     from .config import ConfigError, load_config
-    from .platform.manual import BoardError, load_board
     from .plugins import manifest
-    from .plugins.board import load_refs, pull_into
-    from .plugins.call import CallFailed, Caller
+    from .plugins.call import Caller
     from .preflight import (
         NO_CONFIG_FOR_PLUGIN,
         PLATFORMS,
@@ -126,8 +122,9 @@ def pull(
     except ProfileError as exc:
         _fail(str(exc))
     if profile.platform in PLATFORMS:
+        other = "; `flightdeck http pull` pulls this one" if profile.platform == "http" else ""
         _fail(f'event.platform is "{profile.platform}", which flightdeck has built in: `flightdeck plugin pull` is for an '
-              "event on a plugin's platform")
+              f"event on a plugin's platform{other}")
     try:
         config = load_config()
     except ConfigError as exc:
@@ -153,10 +150,22 @@ def pull(
     board = folder.expanduser() if folder is not None else profile.board
     if board is None:
         _fail("name the board folder: `flightdeck plugin pull EVENT.toml FOLDER`, or set event.board in the profile")
-    caller = Caller(plugin, profile.url, profile.name, token)
+    pull_and_report(Caller(plugin, profile.url, profile.name, token), board, name=plugin.name, url=profile.url)
+
+
+def pull_and_report(caller, board: Path, *, name: str, url: str) -> None:
+    """Pull the board through `caller` (plugins.call.PlatformCaller: a plugin's, or the http
+    platform's) into `board`, read the solved list, and say what was found. Exits with status
+    1 when some challenges were left out and 2 when the pull or the solved list failed."""
+    import asyncio
+
+    from .platform.manual import BoardError, load_board
+    from .plugins import manifest
+    from .plugins.board import load_refs, pull_into
+    from .plugins.call import CallFailed
 
     async def run():
-        written = await pull_into(caller, board, plugin=plugin.name, url=profile.url)
+        written = await pull_into(caller, board, plugin=name, url=url)
         try:
             solved = await caller.solved()
         except CallFailed as exc:
@@ -168,11 +177,11 @@ def pull(
     except manifest.PluginError as exc:
         _fail(str(exc))
     except CallFailed as exc:
-        _fail(f"the {plugin.name} plugin could not pull the board: {exc}")
+        _fail(f"{caller.label} could not pull the board: {exc}")
     for note in written.notes:
-        typer.echo(f"{plugin.name}: {note}", err=True)
+        typer.echo(f"{name}: {note}", err=True)
     for problem in written.problems:
-        typer.echo(f"{plugin.name}: not added: {problem}", err=True)
+        typer.echo(f"{name}: not added: {problem}", err=True)
     try:
         loaded = load_board(board, empty_ok=True)
     except BoardError as exc:
@@ -188,8 +197,8 @@ def pull(
         line += f", {len(written.added)} new"
     if solved is None:
         typer.echo(line + "; nothing was submitted")
-        _fail(f"could not read the solved list from the {plugin.name} plugin: {why}; what was pulled stays in {_show(board)}")
-    on_board = set(load_refs(board, plugin=plugin.name, url=profile.url).values())
+        _fail(f"could not read the solved list from {caller.label}: {why}; what was pulled stays in {_show(board)}")
+    on_board = set(load_refs(board, plugin=name, url=url, label=caller.label, command=caller.pull_command).values())
     typer.echo(f"{line}, {len(solved & on_board)} listed as solved; nothing was submitted")
     if written.problems:
         raise typer.Exit(1)

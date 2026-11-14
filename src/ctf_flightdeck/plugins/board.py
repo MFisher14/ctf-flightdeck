@@ -16,6 +16,10 @@ A folder that holds another plugin's board, a board from another address, or cha
 flightdeck did not pull through the plugin is refused: flags would go to the wrong place.
 A second pull adds only the refs the board does not have yet.
 
+The same writer serves the built-in http platform (platform/http.py), whose caller makes the
+three calls itself: its board's record says "plugin": "http", a name no plugin can take, and
+the messages here name it by the caller's own label.
+
 What one pull may do is bounded: an answer lists at most plugins.call.MAX_CHALLENGES
 challenges, MAX_PROBLEMS of those left out are named and the rest counted, and the folders are
 made in a thread, so a run's console and lanes go on while a large board lands.
@@ -37,7 +41,7 @@ from ..addchallenge import AddError, slug
 from ..platform.ctfd import MAX_FILE_BYTES
 from ..platform.manual import CHALLENGE_FILE, CHALLENGE_KEYS, MAX_ID, BoardError, load_challenge
 from ..text import untrusted
-from .call import MAX_SHOWN, REF_RULE, Caller, scrub, valid_ref
+from .call import MAX_SHOWN, PLUGIN_PULL, REF_RULE, PlatformCaller, plugin_label, scrub, valid_ref
 from .manifest import PluginError
 
 STATE_FILE = "plugin.json"
@@ -63,21 +67,23 @@ class Written:
     notes: list[str] = field(default_factory=list)  # what the plugin wants the player to know, made safe
 
 
-def load_refs(board: Path, *, plugin: str, url: str) -> dict[str, str]:
+def load_refs(board: Path, *, plugin: str, url: str, label: str | None = None, command: str = PLUGIN_PULL) -> dict[str, str]:
     """Board id -> ref, from the plugin.json a pull through `plugin` from `url` wrote into the
     board folder. PluginError when the folder holds no such file (nothing says where its
-    flags go), or one of another plugin or another address."""
+    flags go), or one of another plugin or another address. `label` and `command`: how the
+    messages name what pulls the board and the command that does (a plugin's by default)."""
     root = Path(board).expanduser()
     path = root / STATE_FILE
+    label = label or plugin_label(plugin)
     if not (path.is_symlink() or path.exists()):
         raise PluginError(
-            f"{_show(root)} was not pulled by the {plugin} plugin, so flightdeck has nowhere to send its flags: "
-            "`flightdeck plugin pull EVENT.toml` first, or set policies.pull to auto or confirm"
+            f"{_show(root)} was not pulled by {label}, so flightdeck has nowhere to send its flags: "
+            f"`{command} EVENT.toml` first, or set policies.pull to auto or confirm"
         )
-    return _state(root, path, plugin, url)
+    return _state(root, path, plugin, url, label)
 
 
-async def pull_into(caller: Caller, board: Path, *, plugin: str, url: str) -> Written:
+async def pull_into(caller: PlatformCaller, board: Path, *, plugin: str, url: str) -> Written:
     """Pull the platform's challenges through `caller` and add the new ones to the board
     folder `board` (made if it is not there). PluginError when the folder is another board's;
     plugins.call.CallFailed when the plugin's pull fails. What a pull adds stays when a later
@@ -88,7 +94,7 @@ async def pull_into(caller: Caller, board: Path, *, plugin: str, url: str) -> Wr
         root = root.resolve()
     except (OSError, RuntimeError) as exc:
         raise PluginError(f"{_show(board)}: cannot make the board folder ({getattr(exc, 'strerror', None) or exc})") from None
-    refs = _known(root, plugin, url)
+    refs = _known(root, plugin, url, caller.label)
     token = caller.token
     written = Written()
     try:
@@ -102,6 +108,7 @@ async def pull_into(caller: Caller, board: Path, *, plugin: str, url: str) -> Wr
         built.mkdir()
         reply = await caller.pull(files, sorted(set(refs.values())))
         written.notes = list(reply.notes)
+        written.problems = list(reply.problems)  # what the caller itself left out (a file it could not fetch), before the checks here
         # The folders are made in a thread: in a run this is awaited on the console's loop, which every lane shares
         await asyncio.to_thread(_land, written, reply.challenges, root, files, built, refs, plugin, url, token)
     finally:
@@ -254,24 +261,24 @@ def _staged_file(files: Path, where: str, rel: object) -> Path:
 # ---------------------------------------------------------------------- plugin.json
 
 
-def _known(root: Path, plugin: str, url: str) -> dict[str, str]:
+def _known(root: Path, plugin: str, url: str, label: str) -> dict[str, str]:
     """The refs the board folder has, for a pull: none for a new or empty folder."""
     path = root / STATE_FILE
     if path.is_symlink() or path.exists():
-        return _state(root, path, plugin, url)
+        return _state(root, path, plugin, url, label)
     try:
         others = [entry.name for entry in root.iterdir() if entry.name not in _IGNORED]
     except OSError as exc:
         raise PluginError(f"{_show(root)}: cannot list it ({exc.strerror or exc})") from None
     if others:
         raise PluginError(
-            f"{_show(root)} is not empty and holds no {STATE_FILE}, so it is not a board the {plugin} plugin pulled: "
+            f"{_show(root)} is not empty and holds no {STATE_FILE}, so it is not a board {label} pulled: "
             "use a new folder"
         )
     return {}
 
 
-def _state(root: Path, path: Path, plugin: str, url: str) -> dict[str, str]:
+def _state(root: Path, path: Path, plugin: str, url: str, label: str) -> dict[str, str]:
     broken = PluginError(f"{_show(path)} is not a {STATE_FILE} flightdeck wrote: use a new folder for the board")
     if path.is_symlink() or not path.is_file():
         raise broken
@@ -289,7 +296,8 @@ def _state(root: Path, path: Path, plugin: str, url: str) -> dict[str, str]:
     if not isinstance(refs, dict) or not all(isinstance(cid, str) and valid_ref(ref) for cid, ref in refs.items()):
         raise broken
     if data.get("plugin") != plugin or _address(data.get("url")) != _address(url):
-        raise PluginError(f"{_show(root)} holds a board pulled by another plugin or from another address: use a new folder")
+        other = "by another plugin" if label == plugin_label(plugin) else f"by something else than {label}"
+        raise PluginError(f"{_show(root)} holds a board pulled {other} or from another address: use a new folder")
     return dict(refs)
 
 
