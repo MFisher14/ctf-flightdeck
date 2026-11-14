@@ -18,9 +18,9 @@ from rich.cells import cell_len
 from textual.widgets import DataTable
 from typer.testing import CliRunner
 
-from ctf_flightdeck import cli, config
+from ctf_flightdeck import cli, config, themes
 from ctf_flightdeck.addchallenge import slug
-from ctf_flightdeck.console import fleet, focus, room, views
+from ctf_flightdeck.console import fleet, focus, room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.commands import BY_NAME, COMMANDS, complete, needs_lane, parse
 from ctf_flightdeck.console.fleet import FleetScreen
@@ -28,14 +28,18 @@ from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.screens import HelpScreen
 from ctf_flightdeck.core.attention import SortMode
 from ctf_flightdeck.core.deck import Deck, QueueEntry
+from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Suggestion
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.world import FakeWorld
 from test_console import (
     WIDE,
+    _runs,
     assert_warning,
     bar,
+    cell,
+    color_of,
     columns,
     cursor_key,
     drive,
@@ -46,6 +50,7 @@ from test_console import (
     prompt_text,
     quiet_deck,
     region_text,
+    screen_lines,
     screen_text,
     status_line,
     step_until,
@@ -537,6 +542,76 @@ def test_the_console_draws_the_simple_header_in_both_views_and_deck_keeps_its_ow
         app.run_command("/layout deck", "L01")
         await pilot.pause()
         assert "solo ╱ docker ╱ lanes 3/4 · queue 0 ╱ ▲ 2 need you ╱ tok 0" in region_text(app, "#header")
+
+    drive(app, script, SIZE)
+
+
+# Every piece the simple header can have; what each is drawn on is the point of P66.
+EVERY = replace(CALM, team=True, containerized=False, queue=12, mock="MOCK", need=2, held="no key for the model", autopilot=True)
+LOOK_HERE = ("flightdeck", "host", "autopilot", "need", "held")  # the simple header's pieces that keep a background
+QUIET = {"event": "TEXT", "mock": "MUTED", "team": "CYAN", "queue": "TEXT", "dollars": "TEXT"}  # text on the page, in this colour
+
+
+def test_in_the_simple_header_only_look_here_has_a_background():
+    pieces = {name: part for name, _, part in views.header_pieces(EVERY, simple=True)}
+    assert set(pieces) == set(LOOK_HERE) | set(QUIET)  # every piece there is, so none is left unchecked
+    for name, colour in QUIET.items():
+        assert pieces[name][1:] == (getattr(theme, colour), theme.PAGE, False), name  # text on the page, not bold
+    for name in LOOK_HERE:
+        assert pieces[name][2] != theme.PAGE, name
+    assert pieces["need"][1:3] == (theme.WHITE, theme.RED) and pieces["held"][1:3] == (theme.INK, theme.YELLOW)
+    # As fit_header draws it, a held queue's why included: a span with no background but the page's is text.
+    text, left = views.fit_header(EVERY, 200, simple=True)
+    assert left == [] and text.plain.strip() == ("flightdeck ╱ Example CTF ╱ MOCK ╱ team ╱ host ╱ queue 12 ╱ AUTOPILOT ╱ "
+                                                 "▲ 2 need you ╱ queue held: no key for the model ╱ $1.50")
+    blocks = [text.plain[span.start:span.end].strip() for span in text.spans if span.style.bgcolor and span.style.bgcolor.name != theme.PAGE]
+    assert blocks == ["flightdeck", "host", "AUTOPILOT", "▲ 2 need you", "queue held: no key for the model"]
+
+
+@pytest.mark.parametrize("layout", [{}, {"compact": True}, {"compact": True, "simple": True}], ids=["deck", "compact", "compact-over-simple"])
+def test_the_deck_and_compact_headers_keep_every_piece_a_block(layout):
+    pieces = views.header_pieces(EVERY, **layout)
+    assert pieces and all(bg != theme.PAGE for _, _, (_, _, bg, _) in pieces), layout  # D23 holds for deck; P66 is the simple layout's
+
+
+def backgrounds(app: FlightdeckApp, row: int) -> list[tuple[int, int, str]]:
+    """The backgrounds of screen row `row` as (first column, column past the last, colour)."""
+    svg = app.export_screenshot()
+    rects = [(float(x), float(y), float(w), fill.lower()) for fill, x, y, w in re.findall(
+        r'<rect fill="(#[0-9a-fA-F]{6})" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)"', svg)]
+    tops = sorted({y for _, y, _, _ in rects})
+    runs, _ = _runs(app)
+    char = next(width / len(text) for _, _, _, width, text in runs if text)
+    return [(round(x / char), round((x + w) / char), fill) for x, y, w, fill in rects if y == tops[row]]
+
+
+def background_of(app: FlightdeckApp, needle: str, row: int = 0) -> str:
+    """The background behind every cell of `needle` on screen row `row` (one colour, or it fails)."""
+    start = screen_lines(app)[row].index(needle)
+    found = {fill for first, past, fill in backgrounds(app, row) for col in range(start, start + len(needle)) if first <= col < past}
+    assert len(found) == 1, (needle, found)
+    return found.pop()
+
+
+def test_the_console_draws_the_simple_headers_quiet_pieces_on_the_page_and_the_deck_keeps_its_blocks():
+    deck, app = three_lanes("simple", mock="MOCK")
+    deck.config = replace(deck.config, team=True)
+
+    async def script(pilot):
+        app.refresh_view()
+        await pilot.pause()
+        assert region_text(app, "#header").strip() == "flightdeck ╱ ev ╱ MOCK ╱ team ╱ ▲ 2 need you ╱ $0.00"
+        page = theme.PAGE.lower()
+        for quiet in ("ev", "MOCK", "team", "$0.00"):
+            assert background_of(app, quiet) == page, quiet
+        assert color_of(app, "MOCK", 0) == theme.MUTED.lower() and color_of(app, "team", 0) == theme.CYAN.lower()
+        assert background_of(app, "flightdeck") == theme.BLUE.lower() and background_of(app, "▲ 2 need you") == theme.RED.lower()
+        await open_focus(pilot, app, "L01")  # the lane's view has the same header
+        assert background_of(app, "ev") == page and background_of(app, "▲ 2 need you") == theme.RED.lower()
+        app.run_command("/layout deck", "L01")
+        await pilot.pause()
+        for block in ("ev", "MOCK", "team", "$0.00"):  # the deck layout's header is as it was: each piece a block
+            assert background_of(app, block) == (theme.ACCENT if block == "MOCK" else theme.SEGMENT).lower(), block
 
     drive(app, script, SIZE)
 
