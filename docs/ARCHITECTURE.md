@@ -166,7 +166,7 @@ challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY
 `EMPTY_PLATFORM`). `console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
 
-**The lane's transcript** (P54). `FocusScreen.details` is the view's one switch: as the player
+**The lane's transcript** (P63). `FocusScreen.details` is the view's one switch: as the player
 set it there (`ctrl+o`, `/details`), else off in `simple` and on in `deck` and the compact
 layout. `FocusScreen._rows()` turns the lane's log into rows for `console/lanelog.py`: with
 details on, one row for each action, drawn by `views.transcript_lines` as before; off, one for
@@ -182,7 +182,7 @@ the rows are mounted again while the player reads back. What is mounted is a win
 go, and while the player reads back the rows before and after the window are counted in a
 first and a last row, where `pgup` and `pgdn` move it 300 rows.
 
-**Selecting and copying** (P54). Selection is Textual's: a drag, a double-click (the widget
+**Selecting and copying** (P63). Selection is Textual's: a drag, a double-click (the widget
 under it: one entry) and a triple-click (its scroll container: the transcript) select text in
 any Static that holds Text. `FlightdeckApp.on_text_selected` (a mouse button came up) and
 `on_click` (a click of two or more) copy what is selected, once for each selection; the two
@@ -194,7 +194,7 @@ goes through `FlightdeckApp.copy`: Textual's OSC 52 write, then the app's `copie
 when no tool took it). `views.lane_copy()` is the text `/copy` copies. The highlight is
 `Screen > .screen--selection` in the app's styles, the palette's `selected_focus`.
 
-**The lane's card** (P54). `views.now_card()` draws what the lane needs from the player. Its
+**The lane's card** (P63). `views.now_card()` draws what the lane needs from the player. Its
 full form is a Rich panel: the approval's rows first, then every open alert with its
 suggestions as commands. With `calm=True` (details off, and never in the compact layout) it
 returns the rows of `views.calm_card()` as Text: the question, its numbered answers in the
@@ -208,7 +208,7 @@ never wrap; the Static is inside `CardScroll` (`#now-scroll`), which carries the
 of the pane and scrolls a card taller than that. The box tells the view when its width changes
 (`card_resized()`), and the calm card is drawn again for it.
 
-**A view that follows a restart** (P54). A lane that is ended so that its challenge starts
+**A view that follows a restart** (P63). A lane that is ended so that its challenge starts
 afresh is a `Kill(requeue=True)`: the deck ends it and starts a fresh lane from the queue.
 `Run.attach_files()` gives each such kill a `why` ("to restart with extra.txt"), which the
 ended lane's result has in place of who killed it, and names the fresh lanes in what it tells
