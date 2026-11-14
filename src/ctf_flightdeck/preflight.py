@@ -671,9 +671,12 @@ def describe(
 def instances_off(profile: EventProfile, policies: Policies) -> str:
     """Why flightdeck starts no instance on the platform under this profile and these policies,
     or "" when it does: it needs the [instances] table, CTFd, the rules' leave to use the
-    platform's API, and an instance policy of auto (starting one is reaching it)."""
+    platform's API, and an instance policy of auto (starting one is reaching it). A plugin's
+    platform is not named: event.platform is the profile's word, and nothing shows it."""
     if profile.instances is None:
         return "the profile has no [instances] table"
+    if profile.plugin:
+        return "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
     if profile.platform != "ctfd":
         return f'the platform is "{profile.platform}", and only CTFd has a container plugin flightdeck knows'
     if not profile.platform_automation:

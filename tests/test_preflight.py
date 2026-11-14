@@ -40,6 +40,7 @@ from ctf_flightdeck.preflight import (
     defaults,
     describe,
     example_profile,
+    instances_off,
     lane_network,
     load_profile,
     looser,
@@ -70,6 +71,7 @@ EVENT_CTFD = {
     "team": "true",
 }
 RULES_OPEN = {"ai_allowed": "true", "platform_automation": "true", "live_targets": '"allowed"'}
+INSTANCES = '\n[instances]\nplugin = "ctfd_docker"\n'  # a CTFd container plugin's table, as a profile writes it
 
 
 def toml(event=None, rules=None, policies=None, extra: str = "") -> str:
@@ -764,6 +766,26 @@ def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_no_run_plays_it_
         profile(platform="Harbour CTF")
 
 
+def test_an_instances_table_on_a_plugins_platform_is_said_to_do_nothing_without_the_profiles_word_for_it(tmp_path):
+    """check() tells every profile with an [instances] table why it starts no instance. For a
+    plugin's platform that reason must not quote event.platform: the profile may be a
+    teammate's, and only the player's config makes the word a plugin's name."""
+    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"'}
+    loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN, extra=INSTANCES)))
+    assert loaded.plugin and loaded.instances is not None
+    why = "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
+    assert instances_off(loaded, chosen) == why
+    problems = check(loaded, chosen, max_lanes=4, environ={})
+    assert [p.message for p in problems if not p.refuse and "[instances]" in p.message] == [
+        f"the [instances] table does nothing in this run: {why}, so flightdeck starts no instance "
+        "(start one on the site yourself; a lane then works from the files)"
+    ]
+    assert "harbourctf" not in "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}))
+    # a platform flightdeck has built in is its own word, and is still named
+    by_hand, policies = load_profile(write(tmp_path, toml({"name": '"Practice"', "platform": '"manual"'}, RULES_OPEN, extra=INSTANCES)))
+    assert instances_off(by_hand, policies) == 'the platform is "manual", and only CTFd has a container plugin flightdeck knows'
+
+
 def test_a_board_under_a_home_that_does_not_exist_is_an_error(tmp_path):
     event = {"name": '"Practice"', "platform": '"manual"', "board": '"~no-such-player-6631/board"'}
     message = load_error(write(tmp_path, toml(event, RULES_OPEN)))
@@ -814,10 +836,14 @@ def test_error_messages_never_show_a_string_from_the_profile(tmp_path, pasted):
         tables[table][key] = f'"{pasted}"'
         path = write(tmp_path, toml(**tables))
         if key == "platform" and pasted.startswith("pasted"):
-            # shaped like a plugin's name, so it loads: only the player's config makes it one, and nothing shows it
-            loaded, chosen = load_profile(path)
-            shown = [p.message for p in check(loaded, chosen, max_lanes=4, environ={})] + describe(loaded, chosen, environ={})
-            assert loaded.plugin and pasted not in "\n".join(shown)
+            # shaped like a plugin's name, so it loads: only the player's config makes it one, and nothing shows it,
+            # with an [instances] table (whose warning names a built-in platform) or without one
+            for extra in ("", INSTANCES):
+                loaded, chosen = load_profile(write(tmp_path, toml(**tables, extra=extra)))
+                shown = [p.message for p in check(loaded, chosen, max_lanes=4, environ={})] + describe(loaded, chosen, environ={})
+                assert loaded.plugin and (loaded.instances is not None) == bool(extra)
+                assert any("[instances]" in line for line in shown) == bool(extra)
+                assert pasted not in "\n".join(shown), extra
             continue
         message = load_error(path)
         assert pasted not in message, (table, key)
