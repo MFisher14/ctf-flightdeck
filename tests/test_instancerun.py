@@ -11,7 +11,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, DeckConfig
-from ctf_flightdeck.instancerun import CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, WAITS, InstanceRunner, Need, on_demand, plan
+from ctf_flightdeck.instancerun import CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, RETRY_MOST, WAITS, InstanceRunner, Need, on_demand, plan
 from ctf_flightdeck.platform.instances import Instance, InstanceError, InstanceRefused
 
 from test_deck import FLAG_FORMAT, MODELS, Clock, RecordingDriver, RecordingVerifier
@@ -354,6 +354,159 @@ def test_close_stops_an_instance_whose_start_got_no_answer_and_says_when_it_cann
     platform.fail["stop"] = InstanceError("no answer from the platform")
     (left,) = asyncio.run(runner.close())
     assert "the instance of Chall 0 may still run on the platform: no answer from the platform" in left
+
+
+def test_a_wanted_start_that_got_no_answer_keeps_the_one_slot_ahead_of_a_challenge_put_before_it():
+    """One slot (ctfd-owl). c0's start was done with no answer, then c1 is put ahead of it in
+    line. Given c1's turn, c1 would be refused as full every 30 s and c0's own container
+    would never be looked for again: every on-demand challenge stalls for its hour."""
+    needs = [Need("a", wanted=True, running=False, place=0, claimed=True), Need("b", wanted=True, running=False, place=-1)]
+    assert plan(needs, 1).start == ("a",) and plan(needs, 1).waiting == ("b",)
+
+    deck, runner, platform, urls, clock = lab(n=2, cap=1)
+    platform.unanswered.add("c0")
+    step(runner)
+    assert platform.up == {"c0": 31000} and runner.running == {}
+    deck.queue.sort(key=lambda entry: entry.challenge != "c1")  # the player puts c1 first
+    clock.t += 31
+    step(runner)
+    assert ("start", "c1") not in platform.calls  # it is not given the slot c0's container holds
+    assert list(runner.running) == ["c0"] and runner.adopted == set() and urls["c0"] == ("http://box.example.test:31000",)
+    deck.platform_solved("c0", "your team")
+    step(runner)
+    assert ("stop", "c0") in platform.calls and list(platform.up) == ["c1"]  # c0 was this run's, stopped, and c1 has its turn
+    assert not any(e.data.get("full") for e in deck.events)
+
+
+def test_a_start_the_runs_end_cuts_off_is_waited_for_and_its_instance_stopped_by_close():
+    """The run's end cancels the instances task while a start is out. The worker thread goes
+    on and the platform starts the instance: close() must know of it and stop it."""
+    import threading
+
+    deck, runner, platform, urls, clock = lab(n=1)
+    sent, release, done = threading.Event(), threading.Event(), threading.Event()
+    start = platform.start
+
+    def slow_start(cid):
+        sent.set()
+        release.wait(5)
+        try:
+            return start(cid)
+        finally:
+            done.set()
+
+    platform.start = slow_start
+
+    async def scenario():
+        task = asyncio.create_task(runner.step())
+        while not sent.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()  # the platform answers after the cancel
+        left = await runner.close()
+        await asyncio.to_thread(done.wait, 5)
+        return left
+
+    assert asyncio.run(scenario()) == []
+    assert platform.calls == [("status", "c0"), ("start", "c0"), ("stop", "c0")] and platform.up == {}
+
+
+class Unusable(Platform):
+    """A platform that starts the instance and names it at an address flightdeck will not use."""
+
+    def _instance(self, cid):
+        raise InstanceError(f"the platform's answer for {cid} names no usable address (chal_web.ctf.test)", up=True)
+
+    def start(self, cid):
+        try:
+            return super().start(cid)
+        except InstanceError as exc:
+            exc.maybe_done = True  # as the client marks a start's own answer
+            raise
+
+
+def test_an_instance_this_run_started_at_an_address_it_will_not_use_is_stopped_when_nobody_works_it():
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Unusable(clock=clock.now)
+    step(runner)
+    assert platform.up == {"c0": 31000} and runner.running == {} and "c0" in deck.waits
+    clock.t += 31
+    step(runner)
+    assert [c for c in platform.calls if c[0] == "start"] == [("start", "c0")]  # never sent again
+    clock.t += CLAIM_FOR  # long past the time a start with no answer is remembered
+    step(runner)
+    deck.platform_solved("c0", "your team")
+    clock.t += RETRY_MOST  # past the wait before its next try
+    step(runner)
+    assert platform.calls[-1] == ("stop", "c0") and platform.up == {}
+    assert any("the instance of Chall 0 runs at an address flightdeck will not use, and nobody works it now: flightdeck stopped it"
+               in text for text in said(deck))
+
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Unusable(clock=clock.now)
+    step(runner)
+    clock.t += CLAIM_FOR + 1
+    assert asyncio.run(runner.close()) == [] and platform.calls[-1] == ("stop", "c0") and platform.up == {}
+
+
+class UnusableFor(Unusable):
+    """Unusable for the challenges named, and a plain platform for the rest."""
+
+    def __init__(self, names, **kw) -> None:
+        super().__init__(**kw)
+        self.names = set(names)
+
+    def _instance(self, cid):
+        return super()._instance(cid) if cid in self.names else Platform._instance(self, cid)
+
+    def start(self, cid):
+        return super().start(cid) if cid in self.names else Platform.start(self, cid)
+
+
+def test_an_instance_at_an_address_it_will_not_use_keeps_its_one_slot_past_the_claim_time():
+    """One slot (ctfd-owl). c0's start was done at an address flightdeck will not use, so its
+    container holds the only slot for as long as it runs. Past CLAIM_FOR, c1 put ahead of it
+    must not get that slot: it would be refused as full every 30 s, and c0 never asked again."""
+    needs = [Need("a", wanted=True, running=False, place=0, claimed=True, held=True), Need("b", wanted=True, running=False, place=-1)]
+    assert plan(needs, 1).start == ("a",) and plan(needs, 1).waiting == ("b",)
+    needs = [Need("a", wanted=False, running=False, claimed=True, held=True), Need("b", wanted=True, running=False)]
+    assert plan(needs, 1).start == () and plan(needs, 2).start == ("b",)  # unwanted, it holds the slot until it is stopped
+
+    deck, runner, _, urls, clock = lab(n=2, cap=1)
+    platform = runner.client = UnusableFor({"c0"}, cap=1, clock=clock.now)
+    step(runner)
+    assert platform.up == {"c0": 31000} and runner.unusable == {"c0"}
+    deck.queue.sort(key=lambda entry: entry.challenge != "c1")  # the player puts c1 first
+    clock.t += CLAIM_FOR + RETRY_MOST
+    step(runner)
+    assert ("start", "c1") not in platform.calls and platform.calls[-1] == ("status", "c0")  # c0 is asked again, c1 waits
+    assert not any(e.data.get("full") for e in deck.events)
+    deck.platform_solved("c0", "your team")
+    clock.t += RETRY_MOST
+    step(runner)
+    assert platform.calls[-1] == ("stop", "c0") and platform.up == {} and runner.unusable == set()
+    step(runner)
+    assert list(platform.up) == ["c1"]  # c1 has its turn
+
+
+def test_a_start_that_finished_just_before_the_runs_end_cut_it_off_is_stopped_by_close():
+    """The start's answer comes and the cancel arrives before the task resumes: the started
+    instance is in neither `running` nor waiting to be read, unless close() still has it."""
+    deck, runner, platform, urls, clock = lab(n=1)
+
+    async def scenario():
+        task = asyncio.create_task(runner._send_start("c0"))
+        await asyncio.sleep(0)  # the start is out, in its worker thread
+        # the cancel comes in the same turn of the loop as the answer: after the start is done, before this task resumes
+        runner._starting["c0"].add_done_callback(lambda _: task.cancel())
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return await runner.close()
+
+    assert asyncio.run(scenario()) == []
+    assert platform.calls == [("start", "c0"), ("stop", "c0")] and platform.up == {}
 
 
 def test_an_adopted_instance_that_ended_and_is_started_again_by_this_run_is_this_runs():

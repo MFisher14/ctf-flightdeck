@@ -122,6 +122,19 @@ def test_owl_a_stop_asks_first_and_never_takes_another_challenges_container():
         assert fake.owl.container is None and asked(fake, OWL_ROUTE)[-1] == ("DELETE", f"{OWL_ROUTE}?challenge_id=2")
 
 
+def test_owl_a_stop_takes_this_challenges_container_even_at_an_address_flightdeck_will_not_use():
+    clock = Clock()
+    with FakeCTFd(board(OWL_TYPE)) as fake:
+        ours = client(fake, "ctfd_owl", clock)
+        fake.owl.direct_ip = "box_1.owl.example.test"  # an underscore: no host name flightdeck will use
+        fake.owl.boot(1)
+        with pytest.raises(InstanceError, match="names no usable address") as caught:
+            ours.status("boxed")
+        assert caught.value.up
+        ours.stop("boxed")
+        assert fake.owl.container is None and asked(fake, OWL_ROUTE)[-1] == ("DELETE", f"{OWL_ROUTE}?challenge_id=1")
+
+
 def test_owl_a_renew_puts_the_hour_back_until_the_plugin_says_no_more():
     clock = Clock()
     with FakeCTFd(board(OWL_TYPE)) as fake:
